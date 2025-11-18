@@ -1,18 +1,24 @@
-## Project SuperNOVA
+# SuperNOVA
 
-### Objective
+## Simple as a spreadsheet. Powerful as enterprise software.
 
-SuperNOVA aims to reinvent how people create and organize knowledge by making their data reactive, connected, structured, and truly their own. Inspired by Excel's simplicity, it goes further: allowing anyone to build complete systems with strong data relationships organized around a common, extensible ontology.
+**What if creating powerful systems was as simple as using a spreadsheet?**
 
-This shared semantic foundation serves two crucial purposes: it enables true interoperability — data created in one SuperNOVA instance can be understood and used by any other — and it provides a simple abstraction layer that both humans and AI can work with naturally. Instead of AI generating code from requirements, it collaborates directly with you by modeling entities, relationships, and automations in the same structured way you do.
+SuperNOVA reimagines how anyone — not just developers — can create tools for managing, automating, and analyzing their data. Just as spreadsheets democratized data management by making it accessible to everyone, SuperNOVA gives you one flexible environment where you can manage, automate, and analyze anything — your projects, customers, inventory, finances, or whatever matters to your life.
 
-You can explore and visualize your data to find answers efficiently, and orchestrate automated workflows that respond to every change — all running locally on your machine, with complete ownership and control, without servers or technical expertise.
+Where spreadsheets give you columns, SuperNOVA gives you **ontologies** — structured relationships between your data that stay intact as your system evolves. A shared base ontology acts like a common dictionary, enabling different SuperNOVA instances to understand each other's data without custom mappings or integrations.
+
+Where spreadsheets give you formulas, SuperNOVA gives you **automation**. Formulas recalculate values, but they can't send emails, update external systems, or trigger complex workflows. SuperNOVA reacts to every change with real automation — connecting to APIs and orchestrating multi-step processes without manual intervention.
+
+Where spreadsheets break at scale, SuperNOVA grows without limits. Excel caps at 1 million rows, Google Sheets at 10 million cells — and performance degrades long before that. SuperNOVA uses database architecture to handle billions of records efficiently. Need more? Add nodes to your cluster — another laptop, a cloud server, whatever fits your needs.
+
+Just as you can share a spreadsheet and collaborate with others, SuperNOVA enables seamless collaboration through its shared ontology. But unlike spreadsheets where multiple editors risk conflicts and overwrites, SuperNOVA provides proper conflict resolution, granular permissions, and full audit trails.
 
 ---
 
-### Why This Project Exists
+## Why This Project Exists
 
-**The Spreadsheet Paradox**
+### The Spreadsheet Dilemma
 
 Spreadsheets are the most popular software in the world. An estimated 1+ billion people use Excel alone[^1], with over 100 million professionals listing it as a core skill[^2]. Businesses of all sizes — from small startups to Fortune 500 companies — depend on spreadsheets for critical operations: 72% of enterprises use them for financial modeling and business intelligence[^3], and over 90% of administrative and managerial jobs require spreadsheet proficiency[^4].
 
@@ -39,40 +45,30 @@ Yet spreadsheets have fundamental limits that make them fragile and difficult to
 [^3]: [Global office software market research - Grand View Research](https://www.grandviewresearch.com/industry-analysis/office-software-market-report)
 [^4]: [U.S. Bureau of Labor Statistics - Spreadsheet proficiency requirements](https://www.excel4business.com/resources/research-into-excel-use.php)
 
-**The Fragmentation Problem**
+### The Fragmentation Problem
 
 Today, our data lives scattered across hundreds of applications and services. Your contacts are in one place, your projects in another, your finances elsewhere. Each silo has its own interface, its own rules, its own way of doing things. Moving data between them is painful or impossible. You can't create your own connections, your own automations, your own view of how everything relates.
 
-**You Don't Own Your Data**
+### You Don't Own Your Data
 
 Most applications store your data on their servers. You access it through their interface, under their terms. If they change their pricing, shut down, or decide to restrict features, you're stuck. Your data — your knowledge, your work, your life — is held hostage by business models you can't control.
 
-**Wasted Computing Power**
+### Wasted Computing Power
 
 Modern personal computers are extraordinarily powerful — multi-core processors, gigabytes of RAM, terabytes of storage. Yet we use them mostly as dumb terminals to access cloud services. All that computing power sits idle while we wait for distant servers to process our requests, subject to their limitations and costs.
 
-**SuperNOVA's Answer**
-
-SuperNOVA brings the power back to your machine. It combines the simplicity of spreadsheets with the sophistication of databases, the automation of modern systems, and the freedom of complete data ownership. Everything runs locally. Everything connects. Everything reacts. Your computer becomes a powerful, autonomous system that works *for you* — not for a service provider's business model.
-
 ---
 
-### Vision
+## Principles and Strategies
 
-SuperNOVA transforms static data into living information. Every change in an entity is a meaningful event: the system reacts, automates, and connects to other systems. Data ceases to be passive records and becomes orchestration points — creating a new form of distributed and transparent intelligence.
-
----
-
-### Principles and Strategies
-
-1. **Simplicity as Power**
-   SuperNOVA must be as intuitive as a spreadsheet. AI acts as an assistant, helping users build structures and automations without writing code.
+1. **Simplicity**
+   SuperNOVA must be as intuitive as a spreadsheet. AI acts as an assistant, helping users build without writing code.
 
 2. **Decentralization and Autonomy**
    Everything runs on the users’ own devices. Each machine is an independent, collaborative node capable of sharing load and data. There are no central servers — computing power and control belong to the users.
 
 3. **Open and Extensible Ontology**
-   Knowledge is structured by an ontology composed of **classes** and **relationships**. This foundation can follow standards like RDF and build upon public ontologies to ensure interoperability. Users only create what is specific to their context, extending existing classes.
+   Knowledge is structured by an ontology composed of **classes** and **relationships**. This foundation can follow standards like RDF and build upon public ontologies to ensure interoperability. Users only create what is specific to their context, extending existing classes. Through inference, the system automatically understands extended classes and their relationships — if you create a "SoftwareEngineer" that extends "Person", SuperNOVA knows it inherits all Person properties and behaviors without explicit configuration.
 
 4. **Total Reactivity**
    Everything in SuperNOVA is a reaction to persisted database changes. The system doesn’t need logs or external events — the database itself *is* the log. Each state modification triggers actions, automatic or manual, turning data into a living process.
@@ -97,11 +93,11 @@ SuperNOVA transforms static data into living information. Every change in an ent
 
 ---
 
-### Work Methodology
+## Work Methodology
 
 SuperNOVA follows a problem-driven, outcome-focused development approach:
 
-#### Quarterly Planning with OKRs
+### Quarterly Planning with OKRs
 
 Every quarter, we define **OKRs (Objectives and Key Results)** that are always aligned with the project's core objective and guiding principles. OKRs are documented in `requirements/YYYY/Q[n]/OKRS.md`.
 
@@ -109,7 +105,7 @@ Every quarter, we define **OKRs (Objectives and Key Results)** that are always a
 - **Key Results** are measurable indicators of success from the user's perspective
 - Technical implementation is a means to achieve user outcomes, not the goal itself
 
-#### Problem-Driven Development
+### Problem-Driven Development
 
 For each Key Result, we identify the **problems** that need to be solved to achieve that result. A problem can be:
 - A technical challenge that blocks the outcome
@@ -124,7 +120,7 @@ Each problem document should clearly state:
 - **How** we might approach solving it (hypotheses)
 - **Success criteria** - how we'll know the problem is solved
 
-#### From Problems to Solutions
+### From Problems to Solutions
 
 Once problems are identified and understood, we create solutions through iterative development:
 1. **Research** - Gather information, prototype, experiment
@@ -136,31 +132,68 @@ This approach keeps us focused on delivering real value rather than building fea
 
 ---
 
-### Technology Stack
+## Technology Stack
 
-SuperNOVA is built with a **minimalist, dependency-averse** philosophy: pure Rust with native rendering, rejecting web browsers, JavaScript ecosystems, and alternative runtimes.
+SuperNOVA is built with a **minimalist, pragmatic** philosophy: native technologies, rapid validation, zero complexity.
 
-**Core Stack:**
-- **Language**: Rust (single language, single toolchain)
-- **UI Framework**: Slint (declarative markup, <300 KB runtime)
-- **Database**: SurrealDB (embedded, reactive, with RocksDB backend)
-- **Build System**: Cargo only
+**MVP Stack:**
+- **Framework**: Tauri (cross-platform desktop apps with web frontend)
+- **Backend**: Rust (systems language, memory-safe, high performance)
+- **Frontend**: Svelte (reactive, minimal framework, fast)
+- **Database**: SurrealDB (multi-model, embedded/distributed, graph queries)
+- **Data Model**: RDF-inspired graph model (subject-predicate-object)
+- **Ontology**: Schema.org as base vocabulary
+- **Build System**: Cargo + npm
 
-**Why This Stack:**
+**Why This Stack for MVP:**
 
-1. **Rust** - Memory safety, performance, cross-platform without compromises
-2. **Slint** - Declarative UI perfect for structured interfaces (forms, tables), minimal dependencies
-3. **SurrealDB** - Native change observability (Live Queries), perfect for reactive architecture
+1. **Tauri** - Cross-platform from day one (macOS, Windows, Linux), small binaries, native OS integration
+2. **Rust** - Memory safety, excellent performance, strong ecosystem for backend logic
+3. **Svelte** - Minimal JavaScript framework, reactive by default, easy to learn
+4. **SurrealDB** - Native graph database with RDF-like capabilities, embedded mode for local-first, distributed mode for clustering
+5. **Schema.org** - Standard vocabulary for data portability between instances
 
-**Philosophy: Minimal Dependencies**
+**Data Architecture:**
 
-We explicitly reject:
-- ❌ WebView-based frameworks (Tauri, Electron) - avoid browser engine dependencies
-- ❌ JavaScript/Node.js ecosystem - avoid npm, bundlers, multiple languages
-- ❌ Alternative runtimes (Flutter, .NET) - avoid additional runtime dependencies
+SuperNOVA uses an RDF-inspired architecture that stores data as **triples** (subject-predicate-object):
 
-**Binary Size**: ~5-10 MB (vs ~200 MB for Electron apps)
+```
+Person (Class) → owns property → "name" (DataProperty)
+Person (Class) → owns property → "worksAt" (ObjectProperty → Organization)
+
+john:123 (Resource) → rdf:type → Person (Class)
+john:123 (Resource) → name → "John Doe" (Literal)
+john:123 (Resource) → worksAt → acme:456 (Resource)
+```
+
+This enables:
+- ✅ **Strong relationships** - Real graph queries, not fragile cell references
+- ✅ **Interoperability** - Export/import RDF (Turtle, JSON-LD) between instances
+- ✅ **Extensibility** - Extend Schema.org classes without breaking compatibility
+- ✅ **Semantic queries** - Navigate relationships naturally
+- ✅ **AI-friendly** - Structured data that both humans and AI understand
+
+**Philosophy: Cross-Platform, Local-First, Distributed-Ready**
+
+This stack delivers:
+- ✅ **Cross-platform from start** - Single codebase runs on macOS, Windows, Linux
+- ✅ **Local-first architecture** - SurrealDB embedded mode, zero-config setup
+- ✅ **Distributed-ready** - SurrealDB supports clustering out of the box
+- ✅ **Small footprint** - Tauri apps are 3-5 MB, significantly smaller than Electron
+- ✅ **Native performance** - Rust backend with native OS integration via Tauri
+- ✅ **Graph-native** - SurrealDB's graph model maps naturally to RDF concepts
+
+**Future Enhancements:**
+
+As the project matures, we'll add:
+- ⏳ Advanced RDF features (SPARQL queries, OWL reasoning)
+- ⏳ CRDT-based conflict resolution for distributed sync
+- ⏳ Plugin system for extending ontology and automations
+- ⏳ Mobile apps (iOS, Android) using Tauri's mobile support
+
+**Binary Size**: ~3-5 MB (cross-platform desktop app)
 
 **Decision References:**
 - Database selection: [P1 - Database Technology Selection](requirements/2026/Q1/O1/K1/P1.md)
 - Stack selection: [P2 - Technology Stack Selection](requirements/2026/Q1/O1/K1/P2.md)
+- RDF Architecture: [P3 - RDF Triple Store Architecture](requirements/2026/Q1/O1/K1/P3.md)
