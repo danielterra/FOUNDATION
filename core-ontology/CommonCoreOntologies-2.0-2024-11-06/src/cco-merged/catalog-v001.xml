@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<catalog prefer="public" xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+    <uri id="User Entered Import Resolution" name="https://www.commoncoreontologies.org/AgentOntology" uri="../cco-modules/AgentOntology.ttl"/>
+    <uri id="User Entered Import Resolution" name="https://www.commoncoreontologies.org/EventOntology" uri="../cco-modules/EventOntology.ttl"/>
+    <uri id="User Entered Import Resolution" name="https://www.commoncoreontologies.org/ArtifactOntology" uri="../cco-modules/ArtifactOntology.ttl"/>
+    <uri id="User Entered Import Resolution" name="https://www.commoncoreontologies.org/FacilityOntology" uri="../cco-modules/FacilityOntology.ttl"/>
+    <uri id="User Entered Import Resolution" name="https://www.commoncoreontologies.org/QualityOntology" uri="../cco-modules/QualityOntology.ttl"/>
+    <uri id="User Entered Import Resolution" name="https://www.commoncoreontologies.org/CurrencyUnitOntology" uri="../cco-modules/CurrencyUnitOntology.ttl"/>
+    <uri id="User Entered Import Resolution" name="https://www.commoncoreontologies.org/GeospatialOntology" uri="../cco-modules/GeospatialOntology.ttl"/>
+    <uri id="User Entered Import Resolution" name="http://purl.obolibrary.org/obo/bfo/2020/bfo-core.ttl" uri="../cco-imports/bfo-core.ttl"/>
+    <uri id="User Entered Import Resolution" name="https://www.commoncoreontologies.org/ExtendedRelationOntology" uri="../cco-modules/ExtendedRelationOntology.ttl"/>
+    <uri id="User Entered Import Resolution" name="https://www.commoncoreontologies.org/TimeOntology" uri="../cco-modules/TimeOntology.ttl"/>
+    <uri id="User Entered Import Resolution" name="https://www.commoncoreontologies.org/InformationEntityOntology" uri="../cco-modules/InformationEntityOntology.ttl"/>
+    <uri id="User Entered Import Resolution" name="https://www.commoncoreontologies.org/UnitsOfMeasureOntology" uri="../cco-modules/UnitsOfMeasureOntology.ttl"/>
+</catalog>
