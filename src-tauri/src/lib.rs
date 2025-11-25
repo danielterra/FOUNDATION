@@ -1,4 +1,5 @@
 mod db;
+mod ontology;
 
 use std::sync::Mutex;
 use rusqlite::Connection;
@@ -82,7 +83,7 @@ pub fn run() {
         Ok(conn) => {
             println!("Database initialized successfully");
 
-            // Print stats
+            // Print stats before import
             if let Ok(stats) = db::get_stats(&conn) {
                 println!("Database stats:");
                 println!("  Total facts: {}", stats.total_facts);
@@ -90,6 +91,30 @@ pub fn run() {
                 println!("  Transactions: {}", stats.total_transactions);
                 println!("  Entities: {}", stats.entities_count);
                 println!("  Ontology imported: {}", stats.ontology_imported);
+
+                // Import core ontologies if not already imported
+                if !stats.ontology_imported {
+                    println!("\n🚀 Importing core ontologies...");
+                    match ontology::import_all_core_ontologies(&conn) {
+                        Ok(import_stats) => {
+                            println!("\n✅ Ontology import successful!");
+                            for stat in import_stats {
+                                println!("  - {}: {} facts", stat.file, stat.facts_inserted);
+                            }
+
+                            // Print updated stats
+                            if let Ok(new_stats) = db::get_stats(&conn) {
+                                println!("\n📊 Updated database stats:");
+                                println!("  Total facts: {}", new_stats.total_facts);
+                                println!("  Active facts: {}", new_stats.active_facts);
+                                println!("  Entities: {}", new_stats.entities_count);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Failed to import ontologies: {:?}", e);
+                        }
+                    }
+                }
             }
 
             Some(conn)
