@@ -14,6 +14,18 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+// Fact structure for serialization
+#[derive(serde::Serialize)]
+struct Fact {
+    e: String,
+    a: String,
+    v: String,
+    tx: i64,
+    origin: String,
+    retracted: bool,
+    v_type: String,
+}
+
 // Database commands
 #[tauri::command]
 fn get_db_stats(state: tauri::State<AppState>) -> Result<String, String> {
@@ -22,6 +34,42 @@ fn get_db_stats(state: tauri::State<AppState>) -> Result<String, String> {
     if let Some(ref conn) = *db {
         let stats = db::get_stats(conn).map_err(|e| format!("Database error: {:?}", e))?;
         Ok(serde_json::to_string(&stats).map_err(|e| format!("Serialization error: {}", e))?)
+    } else {
+        Err("Database not initialized".to_string())
+    }
+}
+
+#[tauri::command]
+fn get_all_facts(state: tauri::State<AppState>, limit: Option<i64>) -> Result<String, String> {
+    let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    if let Some(ref conn) = *db {
+        let limit_clause = limit.unwrap_or(100);
+
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT e, a, v, tx, origin, retracted, v_type FROM facts ORDER BY tx DESC LIMIT {}",
+                limit_clause
+            ))
+            .map_err(|e| format!("Prepare error: {}", e))?;
+
+        let facts: Result<Vec<Fact>, _> = stmt
+            .query_map([], |row| {
+                Ok(Fact {
+                    e: row.get(0)?,
+                    a: row.get(1)?,
+                    v: row.get(2)?,
+                    tx: row.get(3)?,
+                    origin: row.get(4)?,
+                    retracted: row.get::<_, i32>(5)? != 0,
+                    v_type: row.get(6)?,
+                })
+            })
+            .map_err(|e| format!("Query error: {}", e))?
+            .collect();
+
+        let facts = facts.map_err(|e| format!("Row error: {}", e))?;
+        Ok(serde_json::to_string(&facts).map_err(|e| format!("Serialization error: {}", e))?)
     } else {
         Err("Database not initialized".to_string())
     }
@@ -57,7 +105,7 @@ pub fn run() {
         .manage(AppState {
             db: Mutex::new(db_conn),
         })
-        .invoke_handler(tauri::generate_handler![greet, get_db_stats])
+        .invoke_handler(tauri::generate_handler![greet, get_db_stats, get_all_facts])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
