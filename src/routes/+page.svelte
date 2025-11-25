@@ -33,7 +33,10 @@
 </script>
 
 <main class="container">
-  <h1>SuperNOVA - Database Facts</h1>
+  <div class="header">
+    <h1>SuperNOVA - Database Facts</h1>
+    <a href="/graph" class="graph-link">View Ontology Graph →</a>
+  </div>
 
   {#if loading}
     <p class="loading">Loading database...</p>
@@ -132,10 +135,32 @@
     padding: 20px;
   }
 
-  h1 {
-    text-align: center;
-    color: #2c3e50;
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     margin-bottom: 30px;
+  }
+
+  h1 {
+    color: #2c3e50;
+    margin: 0;
+  }
+
+  .graph-link {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    text-decoration: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: transform 0.2s, box-shadow 0.2s;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+  }
+
+  .graph-link:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
   }
 
   h2 {
