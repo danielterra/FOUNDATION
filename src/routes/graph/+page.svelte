@@ -8,24 +8,85 @@
   let height = 0;
   let loading = true;
   let error = null;
+  let fullGraphData = null;
+  let currentNodeId = null;
+  let currentNodeLabel = '';
 
   onMount(async () => {
     try {
       // Get graph data from Rust backend
       const graphJson = await invoke('get_ontology_graph');
-      const graphData = JSON.parse(graphJson);
-      
+      fullGraphData = JSON.parse(graphJson);
+
       loading = false;
-      
+
       // Wait for next tick to ensure container dimensions are available
       setTimeout(() => {
-        renderGraph(graphData);
+        // Find the most fundamental node (one with most incoming connections)
+        const incomingCounts = {};
+        fullGraphData.links.forEach(link => {
+          incomingCounts[link.target] = (incomingCounts[link.target] || 0) + 1;
+        });
+
+        // Find node with most incoming connections, or just pick the first
+        let rootNode = fullGraphData.nodes[0];
+        let maxCount = 0;
+        for (const node of fullGraphData.nodes) {
+          const count = incomingCounts[node.id] || 0;
+          if (count > maxCount) {
+            maxCount = count;
+            rootNode = node;
+          }
+        }
+
+        // Start with the root node
+        navigateToNode(rootNode.id);
       }, 0);
     } catch (err) {
       error = err.toString();
       loading = false;
     }
   });
+
+  function navigateToNode(nodeId) {
+    currentNodeId = nodeId;
+
+    // Find the central node
+    const centralNode = fullGraphData.nodes.find(n => n.id === nodeId);
+    if (!centralNode) return;
+
+    currentNodeLabel = centralNode.label;
+
+    // Find all directly connected nodes
+    const connectedNodeIds = new Set([nodeId]);
+    const relevantLinks = [];
+
+    fullGraphData.links.forEach(link => {
+      if (link.source === nodeId || link.source.id === nodeId) {
+        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+        connectedNodeIds.add(targetId);
+        relevantLinks.push({
+          source: nodeId,
+          target: targetId,
+          label: link.label
+        });
+      }
+      if (link.target === nodeId || link.target.id === nodeId) {
+        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+        connectedNodeIds.add(sourceId);
+        relevantLinks.push({
+          source: sourceId,
+          target: nodeId,
+          label: link.label
+        });
+      }
+    });
+
+    // Get only the connected nodes
+    const visibleNodes = fullGraphData.nodes.filter(n => connectedNodeIds.has(n.id));
+
+    renderGraph({ nodes: visibleNodes, links: relevantLinks });
+  }
 
   function renderGraph(data) {
     // Get container dimensions
@@ -91,15 +152,19 @@
       .selectAll('circle')
       .data(data.nodes)
       .join('circle')
-      .attr('r', 8)
-      .attr('fill', d => color(d.group))
-      .attr('stroke', '#fff')
-      .attr('stroke-width', 2)
+      .attr('r', d => d.id === currentNodeId ? 16 : 10)
+      .attr('fill', d => d.id === currentNodeId ? '#ffd700' : color(d.group))
+      .attr('stroke', d => d.id === currentNodeId ? '#ff6b6b' : '#fff')
+      .attr('stroke-width', d => d.id === currentNodeId ? 4 : 2)
+      .style('cursor', 'pointer')
+      .on('click', (event, d) => {
+        navigateToNode(d.id);
+      })
       .call(drag(simulation));
 
     // Add titles (tooltips)
     node.append('title')
-      .text(d => `${d.label}\n${d.id}`);
+      .text(d => `${d.label}\nClick to navigate\n${d.id}`);
 
     // Create labels
     const label = g.append('g')
@@ -170,18 +235,28 @@
   {:else if error}
     <div class="error">Error loading graph: {error}</div>
   {:else}
-    <div class="legend">
-      <div class="legend-item">
-        <span class="legend-color" style="background-color: #4299e1;"></span>
-        <span>RDF/RDFS/OWL</span>
+    <div class="info-bar">
+      <div class="current-node">
+        <span class="label">Current Node:</span>
+        <span class="value">{currentNodeLabel}</span>
       </div>
-      <div class="legend-item">
-        <span class="legend-color" style="background-color: #48bb78;"></span>
-        <span>BFO</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-color" style="background-color: #ed8936;"></span>
-        <span>CCO</span>
+      <div class="legend">
+        <div class="legend-item">
+          <span class="legend-color" style="background-color: #4299e1;"></span>
+          <span>RDF/RDFS/OWL</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color" style="background-color: #48bb78;"></span>
+          <span>BFO</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color" style="background-color: #ed8936;"></span>
+          <span>CCO</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color" style="background-color: #ffd700; border-color: #ff6b6b;"></span>
+          <span>Central Node</span>
+        </div>
       </div>
     </div>
     <div id="graph-container">
@@ -240,18 +315,42 @@
     color: #fc8181;
   }
 
-  .legend {
+  .info-bar {
     display: flex;
-    gap: 2rem;
+    justify-content: space-between;
+    align-items: center;
     padding: 1rem 2rem;
     background: rgba(0, 0, 0, 0.1);
-    justify-content: center;
+  }
+
+  .current-node {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-size: 1.1rem;
+  }
+
+  .current-node .label {
+    font-weight: 600;
+    opacity: 0.8;
+  }
+
+  .current-node .value {
+    font-weight: 700;
+    color: #ffd700;
+    text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+  }
+
+  .legend {
+    display: flex;
+    gap: 1.5rem;
   }
 
   .legend-item {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    font-size: 0.9rem;
   }
 
   .legend-color {
