@@ -410,12 +410,83 @@ pub fn import_all_core_ontologies(conn: &Connection) -> Result<Vec<ImportStats>,
         eprintln!("⚠️  Warning: {} not found", cco_merged_path.display());
     }
 
-    // Mark as imported
+    // Post-processing: Add owl:Thing as explicit root for orphan classes
+    println!("\n🔧 Post-processing: Adding owl:Thing as explicit root...");
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64;
 
+    // Ensure owl:Thing exists as a class
+    let owl_thing_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM facts WHERE e = 'http://www.w3.org/2002/07/owl#Thing' AND a = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' AND v = 'http://www.w3.org/2002/07/owl#Class' AND retracted = 0",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !owl_thing_exists {
+        conn.execute(
+            "INSERT INTO facts (e, a, v, v_number, v_integer, v_datetime, tx, origin, retracted, v_type, created_at)
+             VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, 0, ?, ?)",
+            rusqlite::params![
+                "http://www.w3.org/2002/07/owl#Thing",
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+                "http://www.w3.org/2002/07/owl#Class",
+                1,  // tx=1 (meta-ontology layer)
+                "core",
+                "ref",
+                now,
+            ],
+        )?;
+        println!("  ✅ Added owl:Thing as owl:Class");
+    }
+
+    // Find all orphan classes (owl:Class without rdfs:subClassOf)
+    let orphan_classes: Vec<String> = conn
+        .prepare(
+            "SELECT DISTINCT e FROM facts
+             WHERE a = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
+             AND v = 'http://www.w3.org/2002/07/owl#Class'
+             AND retracted = 0
+             AND e != 'http://www.w3.org/2002/07/owl#Thing'
+             AND e NOT IN (
+                 SELECT DISTINCT e FROM facts
+                 WHERE a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
+                 AND retracted = 0
+             )"
+        )?
+        .query_map([], |row| row.get(0))?
+        .filter_map(Result::ok)
+        .collect();
+
+    let orphan_count = orphan_classes.len();
+    println!("  Found {} orphan classes", orphan_count);
+
+    // Add rdfs:subClassOf owl:Thing for each orphan class
+    for orphan_class in &orphan_classes {
+        conn.execute(
+            "INSERT INTO facts (e, a, v, v_number, v_integer, v_datetime, tx, origin, retracted, v_type, created_at)
+             VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, 0, ?, ?)",
+            rusqlite::params![
+                orphan_class,
+                "http://www.w3.org/2000/01/rdf-schema#subClassOf",
+                "http://www.w3.org/2002/07/owl#Thing",
+                1,  // tx=1 (meta-ontology layer)
+                "core",
+                "ref",
+                now,
+            ],
+        )?;
+    }
+
+    if orphan_count > 0 {
+        println!("  ✅ Added {} rdfs:subClassOf owl:Thing relationships", orphan_count);
+    }
+
+    // Mark as imported
     conn.execute(
         "UPDATE metadata SET value = 'true', updated_at = ? WHERE key = 'ontology_imported'",
         (now,),

@@ -48,6 +48,16 @@ struct GraphData {
     links: Vec<GraphLink>,
 }
 
+// Search result structure
+#[derive(serde::Serialize)]
+struct SearchResult {
+    id: String,
+    label: String,
+    definition: Option<String>,
+    group: i32,
+    score: f32,
+}
+
 // Database commands
 #[tauri::command]
 fn get_db_stats(state: tauri::State<AppState>) -> Result<String, String> {
@@ -129,28 +139,105 @@ fn get_node_facts(state: tauri::State<AppState>, node_id: String) -> Result<Stri
 }
 
 #[tauri::command]
-fn get_ontology_graph(state: tauri::State<AppState>) -> Result<String, String> {
+fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<String>) -> Result<String, String> {
     let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     if let Some(ref conn) = *db {
-        // Get all classes (entities that are of type Class)
+        // Use owl:Thing as default central node
+        let central_id = central_node_id.unwrap_or_else(|| "http://www.w3.org/2002/07/owl#Thing".to_string());
+
+        // Build set of nodes to include (central + parents + siblings + 2 levels of children)
+        let mut included_nodes = std::collections::HashSet::new();
+        included_nodes.insert(central_id.clone());
+
+        // Add parent (superclass) of central node
+        let parent: Option<String> = conn
+            .query_row(
+                "SELECT v FROM facts
+                 WHERE e = ?
+                 AND a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
+                 AND retracted = 0
+                 AND v NOT LIKE '_:%'
+                 LIMIT 1",
+                [&central_id],
+                |row| row.get(0),
+            )
+            .ok();
+
+        if let Some(parent_id) = parent {
+            included_nodes.insert(parent_id.clone());
+
+            // Add siblings (other children of parent)
+            let siblings: Vec<String> = conn
+                .prepare(
+                    "SELECT e FROM facts
+                     WHERE a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
+                     AND v = ?
+                     AND retracted = 0
+                     AND e NOT LIKE '_:%'"
+                )
+                .map_err(|e| format!("Prepare error: {}", e))?
+                .query_map([&parent_id], |row| row.get(0))
+                .map_err(|e| format!("Query error: {}", e))?
+                .filter_map(Result::ok)
+                .collect();
+
+            for sibling in siblings {
+                included_nodes.insert(sibling);
+            }
+        }
+
+        // Level 1: Direct children (subclasses of central node), excluding blank nodes
+        let level1_children: Vec<String> = conn
+            .prepare(
+                "SELECT e FROM facts
+                 WHERE a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
+                 AND v = ?
+                 AND retracted = 0
+                 AND e NOT LIKE '_:%'"
+            )
+            .map_err(|e| format!("Prepare error: {}", e))?
+            .query_map([&central_id], |row| row.get(0))
+            .map_err(|e| format!("Query error: {}", e))?
+            .filter_map(Result::ok)
+            .collect();
+
+        for child in &level1_children {
+            included_nodes.insert(child.clone());
+        }
+
+        // Level 2: Children of level 1 children, excluding blank nodes
+        for level1_child in &level1_children {
+            let level2_children: Vec<String> = conn
+                .prepare(
+                    "SELECT e FROM facts
+                     WHERE a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
+                     AND v = ?
+                     AND retracted = 0
+                     AND e NOT LIKE '_:%'"
+                )
+                .map_err(|e| format!("Prepare error: {}", e))?
+                .query_map([level1_child], |row| row.get(0))
+                .map_err(|e| format!("Query error: {}", e))?
+                .filter_map(Result::ok)
+                .collect();
+
+            for child in level2_children {
+                included_nodes.insert(child);
+            }
+        }
+
+        // Get all owl:Class instances that are in our included set
         let mut nodes = Vec::new();
         let mut node_ids = std::collections::HashSet::new();
 
-        // Query for all owl:Class and rdfs:Class instances
-        // Exclude W3C vocabulary metaclasses (only include domain ontology classes: BFO, CCO, etc.)
-        // Use MIN(tx) to avoid duplicates when a class is declared as both owl:Class and rdfs:Class
         let mut stmt = conn
             .prepare(
-                "SELECT e, MIN(tx) as tx FROM facts
+                "SELECT e, tx FROM facts
                  WHERE a = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
-                 AND v IN (
-                     'http://www.w3.org/2002/07/owl#Class',
-                     'http://www.w3.org/2000/01/rdf-schema#Class'
-                 )
-                 AND e NOT LIKE 'http://www.w3.org/%'
+                 AND v = 'http://www.w3.org/2002/07/owl#Class'
                  AND retracted = 0
-                 GROUP BY e
+                 AND e NOT LIKE '_:%'
                  ORDER BY tx"
             )
             .map_err(|e| format!("Prepare error: {}", e))?;
@@ -159,6 +246,7 @@ fn get_ontology_graph(state: tauri::State<AppState>) -> Result<String, String> {
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| format!("Query error: {}", e))?
             .filter_map(Result::ok)
+            .filter(|(entity_id, _)| included_nodes.contains(entity_id))
             .collect();
 
         // Create nodes for each class
@@ -200,17 +288,13 @@ fn get_ontology_graph(state: tauri::State<AppState>) -> Result<String, String> {
             node_ids.insert(entity_id);
         }
 
-        // Get all relationships (subClassOf, domain, range)
-        // Use DISTINCT to avoid duplicate relationships
+        // Get all relationships where value is a reference (link to another entity)
         let mut links = Vec::new();
         let mut stmt = conn
             .prepare(
-                "SELECT DISTINCT e, a, v FROM facts
-                 WHERE a IN (
-                     'http://www.w3.org/2000/01/rdf-schema#subClassOf',
-                     'http://www.w3.org/2000/01/rdf-schema#domain',
-                     'http://www.w3.org/2000/01/rdf-schema#range'
-                 ) AND retracted = 0"
+                "SELECT e, a, v FROM facts
+                 WHERE retracted = 0
+                 AND v_type = 'ref'"
             )
             .map_err(|e| format!("Prepare error: {}", e))?;
 
@@ -221,11 +305,6 @@ fn get_ontology_graph(state: tauri::State<AppState>) -> Result<String, String> {
             .collect();
 
         for (source, predicate, target) in relationships {
-            // Skip blank nodes (they represent complex OWL axioms)
-            if target.starts_with("_:") {
-                continue;
-            }
-
             // Only include links between nodes we have
             if node_ids.contains(&source) && node_ids.contains(&target) {
                 let label = predicate.split(&['/', '#'][..]).last().unwrap_or("relates").to_string();
@@ -239,6 +318,150 @@ fn get_ontology_graph(state: tauri::State<AppState>) -> Result<String, String> {
 
         let graph_data = GraphData { nodes, links };
         Ok(serde_json::to_string(&graph_data).map_err(|e| format!("Serialization error: {}", e))?)
+    } else {
+        Err("Database not initialized".to_string())
+    }
+}
+
+#[tauri::command]
+fn search_classes(state: tauri::State<AppState>, query: String) -> Result<String, String> {
+    let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    if let Some(ref conn) = *db {
+        if query.trim().is_empty() {
+            return Ok(serde_json::to_string(&Vec::<SearchResult>::new()).unwrap());
+        }
+
+        // Build search pattern for LIKE queries
+        let search_pattern = format!("%{}%", query.to_lowercase());
+
+        // Get all owl:Class entities
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT e, tx FROM facts
+                 WHERE a = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
+                 AND v = 'http://www.w3.org/2002/07/owl#Class'
+                 AND retracted = 0
+                 AND e NOT LIKE '_:%'"
+            )
+            .map_err(|e| format!("Prepare error: {}", e))?;
+
+        let class_entities: Vec<(String, i64)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| format!("Query error: {}", e))?
+            .filter_map(Result::ok)
+            .collect();
+
+        let mut results = Vec::new();
+
+        for (entity_id, tx) in class_entities {
+            // Get label
+            let label: String = conn
+                .query_row(
+                    "SELECT v FROM facts WHERE e = ? AND a = 'http://www.w3.org/2000/01/rdf-schema#label' AND retracted = 0 LIMIT 1",
+                    [&entity_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|_| {
+                    entity_id.split(&['/', '#'][..]).last().unwrap_or(&entity_id).to_string()
+                });
+
+            // Clean label (remove quotes and language tags)
+            let clean_label = if label.starts_with('"') {
+                if let Some(end_quote_idx) = label[1..].find('"') {
+                    label[1..1+end_quote_idx].to_string()
+                } else {
+                    label.clone()
+                }
+            } else {
+                label.clone()
+            };
+
+            // Get definition (check multiple definition properties)
+            let definition: Option<String> = conn
+                .query_row(
+                    "SELECT v FROM facts
+                     WHERE e = ?
+                     AND a IN (
+                         'http://www.w3.org/2004/02/skos/core#definition',
+                         'http://purl.obolibrary.org/obo/IAO_0000115',
+                         'http://www.w3.org/2000/01/rdf-schema#comment'
+                     )
+                     AND retracted = 0
+                     LIMIT 1",
+                    [&entity_id],
+                    |row| row.get(0),
+                )
+                .ok()
+                .map(|def: String| {
+                    // Clean definition
+                    if def.starts_with('"') {
+                        if let Some(end_quote_idx) = def[1..].find('"') {
+                            def[1..1+end_quote_idx].to_string()
+                        } else {
+                            def
+                        }
+                    } else {
+                        def
+                    }
+                });
+
+            // Calculate relevance score with weighted matches
+            let query_lower = query.to_lowercase();
+            let label_lower = clean_label.to_lowercase();
+
+            let mut score = 0.0f32;
+
+            // Exact match in label (highest priority)
+            if label_lower == query_lower {
+                score += 100.0;
+            }
+            // Label starts with query (very high priority)
+            else if label_lower.starts_with(&query_lower) {
+                score += 50.0;
+            }
+            // Label contains query (high priority)
+            else if label_lower.contains(&query_lower) {
+                score += 30.0;
+            }
+
+            // Definition match (medium priority)
+            if let Some(def) = &definition {
+                if def.to_lowercase().contains(&query_lower) {
+                    score += 10.0;
+                }
+            }
+
+            // ID match (low priority)
+            if entity_id.to_lowercase().contains(&query_lower) {
+                score += 5.0;
+            }
+
+            // Only include if there's a match
+            if score > 0.0 {
+                let group = if tx <= 100 {
+                    1
+                } else if tx <= 10000 {
+                    2
+                } else {
+                    3
+                };
+
+                results.push(SearchResult {
+                    id: entity_id,
+                    label: clean_label,
+                    definition,
+                    group,
+                    score,
+                });
+            }
+        }
+
+        // Sort by score (descending) and limit to top 5
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(5);
+
+        Ok(serde_json::to_string(&results).map_err(|e| format!("Serialization error: {}", e))?)
     } else {
         Err("Database not initialized".to_string())
     }
@@ -298,7 +521,7 @@ pub fn run() {
         .manage(AppState {
             db: Mutex::new(db_conn),
         })
-        .invoke_handler(tauri::generate_handler![greet, get_db_stats, get_all_facts, get_node_facts, get_ontology_graph])
+        .invoke_handler(tauri::generate_handler![greet, get_db_stats, get_all_facts, get_node_facts, get_ontology_graph, search_classes])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

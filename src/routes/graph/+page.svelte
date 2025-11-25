@@ -4,6 +4,7 @@
 	import TopBar from '$lib/components/graph/TopBar.svelte';
 	import SidePanel from '$lib/components/graph/SidePanel.svelte';
 	import GraphVisualization from '$lib/components/graph/GraphVisualization.svelte';
+	import SearchBar from '$lib/components/graph/SearchBar.svelte';
 
 	let loading = true;
 	let error = null;
@@ -46,51 +47,25 @@
 		window.addEventListener('keydown', handleKeydown);
 
 		try {
-			// Get graph data from Rust backend
-			const graphJson = await invoke('get_ontology_graph');
+			// Get graph data from Rust backend starting from owl:Thing
+			const graphJson = await invoke('get_ontology_graph', {
+				centralNodeId: 'http://www.w3.org/2002/07/owl#Thing'
+			});
 			fullGraphData = JSON.parse(graphJson);
 
 			loading = false;
 
 			// Wait for next tick to ensure container dimensions are available
 			setTimeout(() => {
-				// Find the most fundamental node: one that is not a subclass of anything
-				// AND has subclasses (to ensure it's connected)
-				const hasSubClassOfOutgoing = new Set();
-				const hasSubClassOfIncoming = {};
-
-				fullGraphData.links.forEach((link) => {
-					if (link.label === 'subClassOf') {
-						const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-						const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-
-						hasSubClassOfOutgoing.add(sourceId);
-						hasSubClassOfIncoming[targetId] = (hasSubClassOfIncoming[targetId] || 0) + 1;
-					}
-				});
-
-				// Find nodes that are NOT subclasses of anything (no outgoing subClassOf)
-				// BUT have incoming subClassOf (are superclasses of something)
-				const rootCandidates = fullGraphData.nodes.filter(
-					(node) => !hasSubClassOfOutgoing.has(node.id) && hasSubClassOfIncoming[node.id] > 0
-				);
-
-				// Pick the one with most subclasses, or just pick the first node as fallback
-				let rootNode = fullGraphData.nodes[0];
-				if (rootCandidates.length > 0) {
-					rootNode = rootCandidates.reduce((best, node) =>
-						(hasSubClassOfIncoming[node.id] || 0) > (hasSubClassOfIncoming[best.id] || 0) ? node : best
-					);
-				}
-
-				// Start with the root node
-				navigateToNode(rootNode.id);
+				// Start with owl:Thing as the root node
+				navigateToNode('http://www.w3.org/2002/07/owl#Thing');
 			}, 0);
 
 			// Add window resize listener
 			const handleResize = () => {
-				if (currentNodeId) {
-					navigateToNode(currentNodeId);
+				// Just trigger re-render without reloading data
+				if (currentNodeId && visibleGraphData) {
+					visibleGraphData = { ...visibleGraphData };
 				}
 			};
 			window.addEventListener('resize', handleResize);
@@ -119,77 +94,34 @@
 		}
 	}
 
-	function navigateToNode(nodeId) {
+	async function navigateToNode(nodeId) {
 		currentNodeId = nodeId;
 
-		// Find the central node
-		const centralNode = fullGraphData.nodes.find((n) => n.id === nodeId);
-		if (!centralNode) return;
+		// Load new graph data centered on this node
+		try {
+			const graphJson = await invoke('get_ontology_graph', {
+				centralNodeId: nodeId
+			});
+			fullGraphData = JSON.parse(graphJson);
 
-		currentNodeLabel = centralNode.label;
+			// Find the central node
+			const centralNode = fullGraphData.nodes.find((n) => n.id === nodeId);
+			if (!centralNode) return;
 
-		// Load facts for this node
-		loadNodeFacts(nodeId);
+			currentNodeLabel = centralNode.label;
 
-		// Find nodes up to 2 levels away (depth: 2)
-		const connectedNodeIds = new Set([nodeId]);
-		const relevantLinks = [];
+			// Load facts for this node
+			loadNodeFacts(nodeId);
 
-		// Level 1: Direct connections
-		const level1Nodes = new Set();
-		fullGraphData.links.forEach((link) => {
-			if (link.source === nodeId || link.source.id === nodeId) {
-				const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-				connectedNodeIds.add(targetId);
-				level1Nodes.add(targetId);
-				relevantLinks.push({
-					source: nodeId,
-					target: targetId,
-					label: link.label
-				});
-			}
-			if (link.target === nodeId || link.target.id === nodeId) {
-				const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-				connectedNodeIds.add(sourceId);
-				level1Nodes.add(sourceId);
-				relevantLinks.push({
-					source: sourceId,
-					target: nodeId,
-					label: link.label
-				});
-			}
-		});
-
-		// Level 2: Connections from level 1 nodes
-		fullGraphData.links.forEach((link) => {
-			const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-			const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-
-			// If source is in level 1, add its target
-			if (level1Nodes.has(sourceId) && !connectedNodeIds.has(targetId)) {
-				connectedNodeIds.add(targetId);
-				relevantLinks.push({
-					source: sourceId,
-					target: targetId,
-					label: link.label
-				});
-			}
-			// If target is in level 1, add its source
-			if (level1Nodes.has(targetId) && !connectedNodeIds.has(sourceId)) {
-				connectedNodeIds.add(sourceId);
-				relevantLinks.push({
-					source: sourceId,
-					target: targetId,
-					label: link.label
-				});
-			}
-		});
-
-		// Get only the connected nodes
-		const visibleNodes = fullGraphData.nodes.filter((n) => connectedNodeIds.has(n.id));
-
-		// Update visible graph data with central node ID
-		visibleGraphData = { nodes: visibleNodes, links: relevantLinks, centralNodeId: nodeId };
+			// Show all nodes and links from backend
+			visibleGraphData = {
+				nodes: fullGraphData.nodes,
+				links: fullGraphData.links,
+				centralNodeId: nodeId
+			};
+		} catch (err) {
+			console.error('Failed to navigate to node:', err);
+		}
 	}
 
 	function handleNodeClick(nodeId, nodeLabel) {
@@ -222,6 +154,8 @@
 				onNodeClick={handleNodeClick}
 			/>
 		{/if}
+
+		<SearchBar onSelectClass={navigateToNode} />
 	{/if}
 </div>
 
