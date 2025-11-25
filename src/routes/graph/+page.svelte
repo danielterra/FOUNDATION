@@ -95,8 +95,6 @@
 	}
 
 	async function navigateToNode(nodeId) {
-		currentNodeId = nodeId;
-
 		// Load new graph data centered on this node
 		try {
 			const graphJson = await invoke('get_ontology_graph', {
@@ -104,20 +102,27 @@
 			});
 			fullGraphData = JSON.parse(graphJson);
 
-			// Find the central node
-			const centralNode = fullGraphData.nodes.find((n) => n.id === nodeId);
-			if (!centralNode) return;
+			// Use the canonical ID returned by backend (may differ due to equivalence)
+			const canonicalId = fullGraphData.central_node_id;
+			currentNodeId = canonicalId;
+
+			// Find the central node using the canonical ID
+			const centralNode = fullGraphData.nodes.find((n) => n.id === canonicalId);
+			if (!centralNode) {
+				console.error('Central node not found:', canonicalId);
+				return;
+			}
 
 			currentNodeLabel = centralNode.label;
 
-			// Load facts for this node
-			loadNodeFacts(nodeId);
+			// Load facts for the canonical ID
+			loadNodeFacts(canonicalId);
 
 			// Show all nodes and links from backend
 			visibleGraphData = {
 				nodes: fullGraphData.nodes,
 				links: fullGraphData.links,
-				centralNodeId: nodeId
+				centralNodeId: canonicalId
 			};
 		} catch (err) {
 			console.error('Failed to navigate to node:', err);

@@ -77,9 +77,11 @@
 
 	// Color mapping for groups
 	const groupColors = {
-		1: '#4a9eff',
-		2: '#ff6b9d',
-		3: '#50fa7b'
+		1: '#4a9eff',  // RDF/RDFS/OWL - blue
+		2: '#ff6b9d',  // BFO - pink
+		3: '#50fa7b',  // Schema.org - green
+		4: '#ffb86c',  // FOAF - orange
+		5: '#bd93f9'   // Bridge - purple
 	};
 </script>
 

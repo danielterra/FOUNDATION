@@ -29,7 +29,15 @@
 			</div>
 			<div class="legend-item">
 				<div class="legend-color legend-color-3"></div>
-				<span>CCO</span>
+				<span>Schema.org</span>
+			</div>
+			<div class="legend-item">
+				<div class="legend-color legend-color-4"></div>
+				<span>FOAF</span>
+			</div>
+			<div class="legend-item">
+				<div class="legend-color legend-color-5"></div>
+				<span>Bridge</span>
 			</div>
 		</div>
 	</div>
@@ -146,5 +154,13 @@
 
 	.legend-color-3 {
 		background: #50fa7b;
+	}
+
+	.legend-color-4 {
+		background: #ffb86c;
+	}
+
+	.legend-color-5 {
+		background: #bd93f9;
 	}
 </style>

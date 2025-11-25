@@ -1,0 +1,134 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix bfo: <http://purl.obolibrary.org/obo/> .
+@prefix schema: <https://schema.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+
+<http://supernova.app/ontology/bridge> a owl:Ontology ;
+    rdfs:label "SuperNOVA Bridge Ontology" ;
+    rdfs:comment "Bridges Schema.org and FOAF to BFO, ensuring all classes derive from BFO foundation" ;
+    owl:imports <http://purl.obolibrary.org/obo/bfo.owl> ;
+    dc:creator "SuperNOVA Team" ;
+    dc:date "2025-11-25" .
+
+# ============================================================================
+# Schema.org Classes → BFO Mappings
+# ============================================================================
+
+# Schema.org Person maps to BFO Object (Material Entity)
+schema:Person rdfs:subClassOf bfo:BFO_0000030 ;  # object
+    rdfs:comment "A person (alive, dead, undead, or fictional). Schema.org Person grounded in BFO as a material object."@en .
+
+# Schema.org Organization maps to BFO Object
+schema:Organization rdfs:subClassOf bfo:BFO_0000030 ;  # object
+    rdfs:comment "An organization such as a school, NGO, corporation, club, etc. Grounded in BFO as a material object."@en .
+
+# Schema.org Place maps to BFO Site (Spatial Region)
+schema:Place rdfs:subClassOf bfo:BFO_0000029 ;  # site
+    rdfs:comment "A somewhat fixed, physical extension. Grounded in BFO as a site."@en .
+
+# Schema.org Event maps to BFO Process
+schema:Event rdfs:subClassOf bfo:BFO_0000015 ;  # process
+    rdfs:comment "An event happening at a certain time and location. Grounded in BFO as a process."@en .
+
+# Schema.org CreativeWork maps to BFO Generically Dependent Continuant
+schema:CreativeWork rdfs:subClassOf bfo:BFO_0000031 ;  # generically dependent continuant
+    rdfs:comment "The most generic kind of creative work, including books, movies, photographs, software programs, etc. Grounded in BFO as information content."@en .
+
+# Schema.org Action maps to BFO Process
+schema:Action rdfs:subClassOf bfo:BFO_0000015 ;  # process
+    rdfs:comment "An action performed by a direct agent and indirect participants. Grounded in BFO as a process."@en .
+
+# Schema.org Thing is equivalent to OWL Thing (both represent "anything")
+# Thing is the top-level class and should NOT have any parent (not even BFO entity)
+# In the graph visualization, we'll show only schema:Thing since owl:Thing is implicit
+schema:Thing owl:equivalentClass owl:Thing ;
+    rdfs:comment "The most generic type of item in Schema.org. Equivalent to owl:Thing. Top-level class with no parent."@en .
+
+# ============================================================================
+# FOAF Classes → BFO Mappings
+# ============================================================================
+
+# FOAF Agent maps to BFO Object
+foaf:Agent rdfs:subClassOf bfo:BFO_0000030 ;  # object
+    rdfs:comment "An agent (person, group, software or physical artifact). Grounded in BFO as a material object."@en .
+
+# FOAF Person maps to BFO Object (and is equivalent to Schema.org Person)
+foaf:Person rdfs:subClassOf bfo:BFO_0000030 ;  # object
+    owl:equivalentClass schema:Person ;
+    rdfs:comment "A person. Grounded in BFO as a material object and equivalent to schema:Person."@en .
+
+# FOAF Organization maps to BFO Object (and is equivalent to Schema.org Organization)
+foaf:Organization rdfs:subClassOf bfo:BFO_0000030 ;  # object
+    owl:equivalentClass schema:Organization ;
+    rdfs:comment "An organization. Grounded in BFO as a material object and equivalent to schema:Organization."@en .
+
+# FOAF Group maps to BFO Object Aggregate
+foaf:Group rdfs:subClassOf bfo:BFO_0000027 ;  # object aggregate
+    rdfs:comment "A class of Agents. Grounded in BFO as an object aggregate."@en .
+
+# FOAF Document maps to BFO Generically Dependent Continuant (and is equivalent to Schema.org CreativeWork)
+foaf:Document rdfs:subClassOf bfo:BFO_0000031 ;  # generically dependent continuant
+    owl:equivalentClass schema:CreativeWork ;
+    rdfs:comment "A document. Grounded in BFO as information content and equivalent to schema:CreativeWork."@en .
+
+# FOAF Project maps to BFO Process
+foaf:Project rdfs:subClassOf bfo:BFO_0000015 ;  # process
+    rdfs:comment "A project (a collective endeavour). Grounded in BFO as a process."@en .
+
+# FOAF Image maps to BFO Generically Dependent Continuant
+foaf:Image rdfs:subClassOf bfo:BFO_0000031 ;  # generically dependent continuant
+    owl:equivalentClass schema:ImageObject ;
+    rdfs:comment "An image. Grounded in BFO as information content."@en .
+
+# FOAF OnlineAccount maps to BFO Generically Dependent Continuant (parent for all Account types)
+foaf:OnlineAccount rdfs:subClassOf bfo:BFO_0000031 ;  # generically dependent continuant
+    rdfs:comment "An online account. Grounded in BFO as information content. All specific account types derive from this."@en .
+
+# NOTE: OnlineChatAccount, OnlineEcommerceAccount, OnlineGamingAccount derive from OnlineAccount
+# in the FOAF ontology, so they automatically connect to BFO through OnlineAccount.
+
+# FOAF PersonalProfileDocument maps to BFO Generically Dependent Continuant
+foaf:PersonalProfileDocument rdfs:subClassOf bfo:BFO_0000031 ;  # generically dependent continuant
+    rdfs:comment "A personal profile document. Grounded in BFO as information content."@en .
+
+# FOAF LabelProperty maps to BFO Quality
+foaf:LabelProperty rdfs:subClassOf bfo:BFO_0000019 ;  # quality
+    rdfs:comment "A label property. Grounded in BFO as a quality."@en .
+
+# ============================================================================
+# Additional Useful Mappings
+# ============================================================================
+
+# Ensure schema:PostalAddress maps to BFO
+schema:PostalAddress rdfs:subClassOf bfo:BFO_0000029 ;  # site
+    rdfs:comment "The mailing address. Grounded in BFO as a site."@en .
+
+# Ensure schema:ContactPoint maps to BFO
+schema:ContactPoint rdfs:subClassOf bfo:BFO_0000031 ;  # generically dependent continuant
+    rdfs:comment "A contact point. Grounded in BFO as information content."@en .
+
+# ============================================================================
+# Property Mappings (Optional - for inference)
+# ============================================================================
+
+# Map common properties to ensure interoperability
+schema:birthDate owl:equivalentProperty foaf:birthday ;
+    rdfs:label "birth date"@en .
+
+schema:name owl:equivalentProperty foaf:name ;
+    rdfs:label "name"@en .
+
+schema:email owl:equivalentProperty foaf:mbox ;
+    rdfs:label "email"@en .
+
+# ============================================================================
+# Notes:
+# - All Schema.org and FOAF classes now properly derive from BFO
+# - This maintains the philosophical rigor of BFO while adding practical vocabulary
+# - Users interact with Schema.org/FOAF terms, but the foundation is BFO
+# - OWL reasoners can infer BFO-level relationships from Schema.org/FOAF data
+# ============================================================================

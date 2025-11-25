@@ -32,7 +32,7 @@ struct Fact {
 struct GraphNode {
     id: String,
     label: String,
-    group: i32, // 1=RDF/RDFS/OWL, 2=BFO, 3=CCO
+    group: i32, // 1=RDF/RDFS/OWL, 2=BFO, 3=Schema.org, 4=FOAF, 5=Bridge
 }
 
 #[derive(serde::Serialize)]
@@ -46,6 +46,7 @@ struct GraphLink {
 struct GraphData {
     nodes: Vec<GraphNode>,
     links: Vec<GraphLink>,
+    central_node_id: String,
 }
 
 // Search result structure
@@ -146,138 +147,277 @@ fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<Str
         // Use owl:Thing as default central node
         let central_id = central_node_id.unwrap_or_else(|| "http://www.w3.org/2002/07/owl#Thing".to_string());
 
-        // Build set of nodes to include (central + parents + siblings + 2 levels of children)
-        let mut included_nodes = std::collections::HashSet::new();
-        included_nodes.insert(central_id.clone());
+        // First, find all equivalents of the central node
+        let mut central_ids = vec![central_id.clone()];
 
-        // Add parent (superclass) of central node
-        let parent: Option<String> = conn
-            .query_row(
-                "SELECT v FROM facts
-                 WHERE e = ?
-                 AND a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
-                 AND retracted = 0
-                 AND v NOT LIKE '_:%'
-                 LIMIT 1",
-                [&central_id],
-                |row| row.get(0),
-            )
-            .ok();
+        // Query all equivalentClass relationships involving the central node
+        let equiv_query = "SELECT e, v FROM facts
+                           WHERE a = 'http://www.w3.org/2002/07/owl#equivalentClass'
+                           AND (e = ? OR v = ?)
+                           AND retracted = 0
+                           AND e NOT LIKE '_:%'
+                           AND v NOT LIKE '_:%'";
 
-        if let Some(parent_id) = parent {
-            included_nodes.insert(parent_id.clone());
-
-            // Add siblings (other children of parent)
-            let siblings: Vec<String> = conn
-                .prepare(
-                    "SELECT e FROM facts
-                     WHERE a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
-                     AND v = ?
-                     AND retracted = 0
-                     AND e NOT LIKE '_:%'"
-                )
-                .map_err(|e| format!("Prepare error: {}", e))?
-                .query_map([&parent_id], |row| row.get(0))
-                .map_err(|e| format!("Query error: {}", e))?
-                .filter_map(Result::ok)
-                .collect();
-
-            for sibling in siblings {
-                included_nodes.insert(sibling);
-            }
-        }
-
-        // Level 1: Direct children (subclasses of central node), excluding blank nodes
-        let level1_children: Vec<String> = conn
-            .prepare(
-                "SELECT e FROM facts
-                 WHERE a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
-                 AND v = ?
-                 AND retracted = 0
-                 AND e NOT LIKE '_:%'"
-            )
+        let equiv_results: Vec<(String, String)> = conn
+            .prepare(equiv_query)
             .map_err(|e| format!("Prepare error: {}", e))?
-            .query_map([&central_id], |row| row.get(0))
+            .query_map([&central_id, &central_id], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| format!("Query error: {}", e))?
             .filter_map(Result::ok)
             .collect();
 
-        for child in &level1_children {
-            included_nodes.insert(child.clone());
+        // Add all equivalent IDs
+        for (e, v) in equiv_results {
+            if e != central_id && !central_ids.contains(&e) {
+                central_ids.push(e);
+            }
+            if v != central_id && !central_ids.contains(&v) {
+                central_ids.push(v);
+            }
         }
 
-        // Level 2: Children of level 1 children, excluding blank nodes
-        for level1_child in &level1_children {
-            let level2_children: Vec<String> = conn
+        println!("[Graph] Central node '{}' has {} equivalents: {:?}",
+                 central_id, central_ids.len(), central_ids);
+
+        // Follow the graph correctly: load edges AND nodes, ensuring connectivity
+        let mut included_nodes = std::collections::HashSet::new();
+        let mut included_edges = std::collections::HashSet::new();
+
+        // Include all central equivalents
+        for id in &central_ids {
+            included_nodes.insert(id.clone());
+        }
+
+        // DOWNWARD (children and grandchildren)
+        // 1. Load edges where subClassOf points TO central (child edges from ALL equivalents)
+        let mut child_edges: Vec<(String, String)> = Vec::new();
+        for central_equiv in &central_ids {
+            let edges: Vec<(String, String)> = conn
                 .prepare(
-                    "SELECT e FROM facts
+                    "SELECT e, v FROM facts
                      WHERE a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
                      AND v = ?
                      AND retracted = 0
                      AND e NOT LIKE '_:%'"
                 )
                 .map_err(|e| format!("Prepare error: {}", e))?
-                .query_map([level1_child], |row| row.get(0))
+                .query_map([central_equiv], |row| Ok((row.get(0)?, row.get(1)?)))
                 .map_err(|e| format!("Query error: {}", e))?
                 .filter_map(Result::ok)
                 .collect();
-
-            for child in level2_children {
-                included_nodes.insert(child);
-            }
+            child_edges.extend(edges);
         }
 
-        // Get all owl:Class instances that are in our included set
-        let mut nodes = Vec::new();
-        let mut node_ids = std::collections::HashSet::new();
+        println!("[Graph] Collected {} child edges for central node", child_edges.len());
 
-        let mut stmt = conn
+        // 2. Load child nodes from these edges
+        for (child, parent) in &child_edges {
+            included_nodes.insert(child.clone());
+            included_edges.insert((child.clone(), parent.clone()));
+        }
+
+        // REMOVED: grandchildren loading for simpler 1-level visualization
+
+        // UPWARD (parents only, no grandparents)
+        // Load parent edges for all nodes (Thing has no parents in the ontology, so query returns empty)
+        let mut parent_edges: Vec<(String, String)> = Vec::new();
+        for central_equiv in &central_ids {
+            let edges: Vec<(String, String)> = conn
+                .prepare(
+                    "SELECT e, v FROM facts
+                     WHERE e = ?
+                     AND a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
+                     AND retracted = 0
+                     AND v NOT LIKE '_:%'"
+                )
+                .map_err(|e| format!("Prepare error: {}", e))?
+                .query_map([central_equiv], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(|e| format!("Query error: {}", e))?
+                .filter_map(Result::ok)
+                .collect();
+            parent_edges.extend(edges);
+        }
+
+        println!("[Graph] Collected {} parent edges for central node", parent_edges.len());
+
+        // 2. Load parent nodes from these edges
+        for (child, parent) in &parent_edges {
+            included_nodes.insert(parent.clone());
+            included_edges.insert((child.clone(), parent.clone()));
+        }
+
+        // REMOVED: grandparents loading for simpler 1-level visualization
+
+        // Build equivalence map from owl:equivalentClass relationships
+        let mut equivalence_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+        // Query all equivalentClass relationships
+        let equiv_relations: Vec<(String, String)> = conn
             .prepare(
-                "SELECT e, tx FROM facts
-                 WHERE a = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
-                 AND v = 'http://www.w3.org/2002/07/owl#Class'
+                "SELECT e, v FROM facts
+                 WHERE a = 'http://www.w3.org/2002/07/owl#equivalentClass'
                  AND retracted = 0
                  AND e NOT LIKE '_:%'
-                 ORDER BY tx"
+                 AND v NOT LIKE '_:%'"
             )
-            .map_err(|e| format!("Prepare error: {}", e))?;
-
-        let class_entities: Vec<(String, i64)> = stmt
+            .map_err(|e| format!("Prepare error: {}", e))?
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| format!("Query error: {}", e))?
             .filter_map(Result::ok)
-            .filter(|(entity_id, _)| included_nodes.contains(entity_id))
             .collect();
 
-        // Create nodes for each class
-        for (entity_id, tx) in class_entities {
-            // Get label if available
-            let mut label: String = conn
-                .query_row(
-                    "SELECT v FROM facts WHERE e = ? AND a = 'http://www.w3.org/2000/01/rdf-schema#label' AND retracted = 0 LIMIT 1",
-                    [&entity_id],
-                    |row| row.get(0),
-                )
-                .unwrap_or_else(|_| {
-                    // Extract last part of URI as fallback label
-                    entity_id.split(&['/', '#'][..]).last().unwrap_or(&entity_id).to_string()
-                });
+        // Build equivalence groups using Union-Find approach
+        // First pass: build initial mappings
+        for (e, v) in &equiv_relations {
+            if !equivalence_map.contains_key(e) {
+                equivalence_map.insert(e.clone(), e.clone());
+            }
+            if !equivalence_map.contains_key(v) {
+                equivalence_map.insert(v.clone(), v.clone());
+            }
+        }
 
-            // Remove quotes and language tags from labels (e.g., "entity"@en -> entity)
-            if label.starts_with('"') {
-                if let Some(end_quote_idx) = label[1..].find('"') {
-                    // Extract string between quotes
-                    label = label[1..1+end_quote_idx].to_string();
+        // Second pass: merge equivalence classes
+        for (e, v) in equiv_relations {
+            let mut root_e = e.clone();
+            while equivalence_map.get(&root_e).unwrap() != &root_e {
+                root_e = equivalence_map.get(&root_e).unwrap().clone();
+            }
+
+            let mut root_v = v.clone();
+            while equivalence_map.get(&root_v).unwrap() != &root_v {
+                root_v = equivalence_map.get(&root_v).unwrap().clone();
+            }
+
+            if root_e != root_v {
+                // Choose canonical: prefer schema:Thing over owl:Thing
+                let canonical = if root_e == "http://www.w3.org/2002/07/owl#Thing" {
+                    root_v.clone()
+                } else if root_v == "http://www.w3.org/2002/07/owl#Thing" {
+                    root_e.clone()
+                } else if root_e.len() < root_v.len() {
+                    root_e.clone()
+                } else {
+                    root_v.clone()
+                };
+
+                // Point both roots to canonical
+                equivalence_map.insert(root_e, canonical.clone());
+                equivalence_map.insert(root_v, canonical.clone());
+            }
+        }
+
+        // Third pass: path compression - make all point directly to root
+        let keys: Vec<String> = equivalence_map.keys().cloned().collect();
+        for key in keys {
+            let mut root = key.clone();
+            while equivalence_map.get(&root).unwrap() != &root {
+                root = equivalence_map.get(&root).unwrap().clone();
+            }
+            equivalence_map.insert(key, root);
+        }
+
+        // Build reverse map: canonical -> list of all equivalent URIs
+        let mut equiv_groups: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        for (entity, canonical) in &equivalence_map {
+            equiv_groups.entry(canonical.clone()).or_insert_with(Vec::new).push(entity.clone());
+        }
+
+        // Update included_nodes to use canonical representatives
+        let mut canonical_nodes = std::collections::HashSet::new();
+        for node in &included_nodes {
+            let canonical = equivalence_map.get(node).unwrap_or(node);
+            canonical_nodes.insert(canonical.clone());
+        }
+
+        // Update included_edges to use canonical representatives
+        let mut canonical_edges = std::collections::HashSet::new();
+        for (source, target) in &included_edges {
+            let canonical_source = equivalence_map.get(source).unwrap_or(source);
+            let canonical_target = equivalence_map.get(target).unwrap_or(target);
+            // Skip self-loops that might arise from equivalence
+            if canonical_source != canonical_target {
+                canonical_edges.insert((canonical_source.clone(), canonical_target.clone()));
+            }
+        }
+
+        // Get only the classes that we included (by querying each one directly)
+        let mut nodes = Vec::new();
+        let mut node_ids = std::collections::HashSet::new();
+
+        for entity_id in &canonical_nodes {
+            // Get all equivalent entities for this canonical
+            let default_vec = vec![entity_id.clone()];
+            let equivalent_entities = equiv_groups.get(entity_id).map(|v| v.as_slice()).unwrap_or(&default_vec[..]);
+
+            // Query to check if this entity is a class and get its tx (try all equivalents)
+            let mut class_tx: Option<i64> = None;
+            for equiv_id in equivalent_entities {
+                if let Ok(tx) = conn.query_row(
+                    "SELECT tx FROM facts
+                     WHERE e = ?
+                     AND a = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
+                     AND (v = 'http://www.w3.org/2002/07/owl#Class' OR v = 'http://www.w3.org/2000/01/rdf-schema#Class')
+                     AND retracted = 0
+                     LIMIT 1",
+                    [equiv_id],
+                    |row| row.get(0),
+                ) {
+                    class_tx = Some(tx);
+                    break;
                 }
             }
+
+            // Skip if not a class
+            let tx = match class_tx {
+                Some(t) => t,
+                None => continue,
+            };
+
+            // Collect labels from all equivalent entities
+            let mut labels = Vec::new();
+            for equiv_id in equivalent_entities {
+                if let Ok(mut label) = conn.query_row(
+                    "SELECT v FROM facts WHERE e = ? AND a = 'http://www.w3.org/2000/01/rdf-schema#label' AND retracted = 0 LIMIT 1",
+                    [equiv_id],
+                    |row| row.get::<_, String>(0),
+                ) {
+                    // Remove quotes and language tags from labels (e.g., "entity"@en -> entity)
+                    if label.starts_with('"') {
+                        if let Some(end_quote_idx) = label[1..].find('"') {
+                            label = label[1..1+end_quote_idx].to_string();
+                        }
+                    }
+                    labels.push(label);
+                } else {
+                    // Fallback: extract last part of URI
+                    let fallback = equiv_id.split(&['/', '#'][..]).last().unwrap_or(equiv_id).to_string();
+                    labels.push(fallback);
+                }
+            }
+
+            // Deduplicate labels (case-insensitive)
+            labels.sort();
+            labels.dedup_by(|a, b| a.to_lowercase() == b.to_lowercase());
+
+            // Create combined label
+            let label = if labels.len() > 1 {
+                labels.join(" ≡ ") // Show equivalence
+            } else {
+                labels.into_iter().next().unwrap_or_else(|| "Unknown".to_string())
+            };
 
             // Determine group based on transaction ID
             let group = if tx <= 100 {
                 1 // RDF/RDFS/OWL
             } else if tx <= 10000 {
                 2 // BFO
+            } else if tx <= 20000 {
+                3 // Schema.org
+            } else if tx <= 30000 {
+                4 // FOAF
             } else {
-                3 // CCO
+                5 // Bridge
             };
 
             nodes.push(GraphNode {
@@ -288,35 +428,28 @@ fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<Str
             node_ids.insert(entity_id);
         }
 
-        // Get all relationships where value is a reference (link to another entity)
+        // Use ONLY the edges we explicitly loaded (from canonical_edges)
         let mut links = Vec::new();
-        let mut stmt = conn
-            .prepare(
-                "SELECT e, a, v FROM facts
-                 WHERE retracted = 0
-                 AND v_type = 'ref'"
-            )
-            .map_err(|e| format!("Prepare error: {}", e))?;
-
-        let relationships: Vec<(String, String, String)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-            .map_err(|e| format!("Query error: {}", e))?
-            .filter_map(Result::ok)
-            .collect();
-
-        for (source, predicate, target) in relationships {
-            // Only include links between nodes we have
+        for (source, target) in canonical_edges {
+            // Double-check both nodes are in our set (should always be true)
             if node_ids.contains(&source) && node_ids.contains(&target) {
-                let label = predicate.split(&['/', '#'][..]).last().unwrap_or("relates").to_string();
+                // The predicate is always subClassOf since we only loaded those edges
                 links.push(GraphLink {
                     source,
                     target,
-                    label,
+                    label: "subClassOf".to_string(),
                 });
             }
         }
 
-        let graph_data = GraphData { nodes, links };
+        // Get the canonical ID that was actually used
+        let canonical_central_id = equivalence_map.get(&central_id).unwrap_or(&central_id).clone();
+
+        let graph_data = GraphData {
+            nodes,
+            links,
+            central_node_id: canonical_central_id
+        };
         Ok(serde_json::to_string(&graph_data).map_err(|e| format!("Serialization error: {}", e))?)
     } else {
         Err("Database not initialized".to_string())
@@ -335,12 +468,12 @@ fn search_classes(state: tauri::State<AppState>, query: String) -> Result<String
         // Build search pattern for LIKE queries
         let search_pattern = format!("%{}%", query.to_lowercase());
 
-        // Get all owl:Class entities
+        // Get all owl:Class and rdfs:Class entities
         let mut stmt = conn
             .prepare(
                 "SELECT DISTINCT e, tx FROM facts
                  WHERE a = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
-                 AND v = 'http://www.w3.org/2002/07/owl#Class'
+                 AND (v = 'http://www.w3.org/2002/07/owl#Class' OR v = 'http://www.w3.org/2000/01/rdf-schema#Class')
                  AND retracted = 0
                  AND e NOT LIKE '_:%'"
             )
@@ -443,8 +576,12 @@ fn search_classes(state: tauri::State<AppState>, query: String) -> Result<String
                     1
                 } else if tx <= 10000 {
                     2
-                } else {
+                } else if tx <= 20000 {
                     3
+                } else if tx <= 30000 {
+                    4
+                } else {
+                    5
                 };
 
                 results.push(SearchResult {
