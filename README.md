@@ -140,9 +140,9 @@ SuperNOVA is built with a **minimalist, pragmatic** philosophy: native technolog
 - **Framework**: Tauri (cross-platform desktop apps with web frontend)
 - **Backend**: Rust (systems language, memory-safe, high performance)
 - **Frontend**: Svelte (reactive, minimal framework, fast)
-- **Database**: SurrealDB (multi-model, embedded/distributed, graph queries)
+- **Database**: SQLite (embedded, zero-config, ACID-compliant, universally supported)
 - **Data Model**: RDF-inspired graph model (subject-predicate-object)
-- **Ontology**: Schema.org as base vocabulary
+- **Ontology**: BFO + Common Core Ontologies as base vocabulary
 - **Build System**: Cargo + npm
 
 **Why This Stack for MVP:**
@@ -150,8 +150,8 @@ SuperNOVA is built with a **minimalist, pragmatic** philosophy: native technolog
 1. **Tauri** - Cross-platform from day one (macOS, Windows, Linux), small binaries, native OS integration
 2. **Rust** - Memory safety, excellent performance, strong ecosystem for backend logic
 3. **Svelte** - Minimal JavaScript framework, reactive by default, easy to learn
-4. **SurrealDB** - Native graph database with RDF-like capabilities, embedded mode for local-first, distributed mode for clustering
-5. **Schema.org** - Standard vocabulary for data portability between instances
+4. **SQLite** - Battle-tested embedded database, zero-config, ACID guarantees, perfect for local-first architecture, easily replicable file-based storage
+5. **BFO + CCO** - Industry-standard upper ontology (BFO) with domain extensions (Common Core Ontologies) for interoperability and semantic richness
 
 **Data Architecture:**
 
@@ -177,11 +177,12 @@ This enables:
 
 This stack delivers:
 - ✅ **Cross-platform from start** - Single codebase runs on macOS, Windows, Linux
-- ✅ **Local-first architecture** - SurrealDB embedded mode, zero-config setup
-- ✅ **Distributed-ready** - SurrealDB supports clustering out of the box
+- ✅ **Local-first architecture** - SQLite embedded, zero-config, single file database
+- ✅ **Distributed-ready** - SQLite file easily synced, replicated via git, rsync, or custom protocols
 - ✅ **Small footprint** - Tauri apps are 3-5 MB, significantly smaller than Electron
 - ✅ **Native performance** - Rust backend with native OS integration via Tauri
-- ✅ **Graph-native** - SurrealDB's graph model maps naturally to RDF concepts
+- ✅ **Versioned ontologies** - OWL/TTL ontologies imported into SQLite, versionable in git
+- ✅ **Universal support** - SQLite runs everywhere, no dependencies, rock-solid stability
 
 **Future Enhancements:**
 
