@@ -64,19 +64,34 @@ pub struct ImportStats {
     pub tx_end: i64,
 }
 
-/// Determines value type from RDF term
-fn determine_value_type(term_str: &str) -> &'static str {
-    // Check if it's a URI reference
-    if term_str.starts_with("http://") || term_str.starts_with("https://") || term_str.contains("://") {
-        "ref"
-    } else if term_str == "true" || term_str == "false" {
-        "boolean"
-    } else if term_str.parse::<i64>().is_ok() {
-        "integer"
-    } else if term_str.parse::<f64>().is_ok() {
-        "number"
-    } else {
-        "string"
+/// Determines value type from RDF term (before string conversion)
+fn determine_value_type_from_term(term: &Term) -> &'static str {
+    match term {
+        Term::NamedNode(_) | Term::BlankNode(_) => "ref",
+        Term::Literal(lit) => {
+            // Get the literal string representation and extract value
+            let lit_str = lit.to_string();
+            let value = if lit_str.starts_with('"') {
+                if let Some(end_quote_idx) = lit_str[1..].find('"') {
+                    &lit_str[1..1+end_quote_idx]
+                } else {
+                    &lit_str
+                }
+            } else {
+                &lit_str
+            };
+
+            if value == "true" || value == "false" {
+                "boolean"
+            } else if value.parse::<i64>().is_ok() {
+                "integer"
+            } else if value.parse::<f64>().is_ok() {
+                "number"
+            } else {
+                "string"
+            }
+        },
+        Term::Triple(_) => "ref",
     }
 }
 
@@ -94,7 +109,17 @@ fn term_to_string(term: &Term) -> String {
     match term {
         Term::NamedNode(node) => node.iri.to_string(),
         Term::BlankNode(bn) => format!("_:{}", bn.id),
-        Term::Literal(lit) => lit.to_string(),
+        Term::Literal(lit) => {
+            // Get the literal value without quotes and language tags
+            // Example: "entity"@en -> entity
+            let lit_str = lit.to_string();
+            if lit_str.starts_with('"') {
+                if let Some(end_quote_idx) = lit_str[1..].find('"') {
+                    return lit_str[1..1+end_quote_idx].to_string();
+                }
+            }
+            lit_str
+        },
         Term::Triple(_) => "_:triple".to_string(), // RDF-star quoted triples
     }
 }
@@ -136,9 +161,8 @@ pub fn import_turtle_file(
 
         let subject = subject_to_string(&triple.subject);
         let predicate = triple.predicate.iri.to_string();
+        let v_type = determine_value_type_from_term(&triple.object);
         let object = term_to_string(&triple.object);
-
-        let v_type = determine_value_type(&object);
 
         let v_number: Option<f64> = if v_type == "number" {
             object.parse().ok()
@@ -151,6 +175,19 @@ pub fn import_turtle_file(
         } else {
             None
         };
+
+        // Check if fact already exists (avoid duplicates)
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM facts WHERE e = ? AND a = ? AND v = ? AND retracted = 0",
+                rusqlite::params![&subject, &predicate, &object],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+
+        if exists {
+            return Ok(()); // Skip duplicate
+        }
 
         // Insert fact
         if let Err(e) = conn.execute(
@@ -236,9 +273,8 @@ pub fn import_owl_file(
 
         let subject = subject_to_string(&triple.subject);
         let predicate = triple.predicate.iri.to_string();
+        let v_type = determine_value_type_from_term(&triple.object);
         let object = term_to_string(&triple.object);
-
-        let v_type = determine_value_type(&object);
 
         let v_number: Option<f64> = if v_type == "number" {
             object.parse().ok()
@@ -251,6 +287,19 @@ pub fn import_owl_file(
         } else {
             None
         };
+
+        // Check if fact already exists (avoid duplicates)
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM facts WHERE e = ? AND a = ? AND v = ? AND retracted = 0",
+                rusqlite::params![&subject, &predicate, &object],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+
+        if exists {
+            return Ok(()); // Skip duplicate
+        }
 
         // Insert fact
         if let Err(e) = conn.execute(

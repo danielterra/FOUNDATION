@@ -98,6 +98,37 @@ fn get_all_facts(state: tauri::State<AppState>, limit: Option<i64>) -> Result<St
 }
 
 #[tauri::command]
+fn get_node_facts(state: tauri::State<AppState>, node_id: String) -> Result<String, String> {
+    let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    if let Some(ref conn) = *db {
+        let mut stmt = conn
+            .prepare("SELECT e, a, v, tx, origin, retracted, v_type FROM facts WHERE e = ? AND retracted = 0 ORDER BY tx")
+            .map_err(|e| format!("Prepare error: {}", e))?;
+
+        let facts: Result<Vec<Fact>, _> = stmt
+            .query_map([&node_id], |row| {
+                Ok(Fact {
+                    e: row.get(0)?,
+                    a: row.get(1)?,
+                    v: row.get(2)?,
+                    tx: row.get(3)?,
+                    origin: row.get(4)?,
+                    retracted: row.get::<_, i32>(5)? != 0,
+                    v_type: row.get(6)?,
+                })
+            })
+            .map_err(|e| format!("Query error: {}", e))?
+            .collect();
+
+        let facts = facts.map_err(|e| format!("Row error: {}", e))?;
+        Ok(serde_json::to_string(&facts).map_err(|e| format!("Serialization error: {}", e))?)
+    } else {
+        Err("Database not initialized".to_string())
+    }
+}
+
+#[tauri::command]
 fn get_ontology_graph(state: tauri::State<AppState>) -> Result<String, String> {
     let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
 
@@ -107,15 +138,19 @@ fn get_ontology_graph(state: tauri::State<AppState>) -> Result<String, String> {
         let mut node_ids = std::collections::HashSet::new();
 
         // Query for all owl:Class and rdfs:Class instances
+        // Exclude W3C vocabulary metaclasses (only include domain ontology classes: BFO, CCO, etc.)
+        // Use MIN(tx) to avoid duplicates when a class is declared as both owl:Class and rdfs:Class
         let mut stmt = conn
             .prepare(
-                "SELECT DISTINCT e, tx FROM facts
-                 WHERE a IN (
-                     'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
-                 ) AND v IN (
+                "SELECT e, MIN(tx) as tx FROM facts
+                 WHERE a = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
+                 AND v IN (
                      'http://www.w3.org/2002/07/owl#Class',
                      'http://www.w3.org/2000/01/rdf-schema#Class'
-                 ) AND retracted = 0
+                 )
+                 AND e NOT LIKE 'http://www.w3.org/%'
+                 AND retracted = 0
+                 GROUP BY e
                  ORDER BY tx"
             )
             .map_err(|e| format!("Prepare error: {}", e))?;
@@ -129,7 +164,7 @@ fn get_ontology_graph(state: tauri::State<AppState>) -> Result<String, String> {
         // Create nodes for each class
         for (entity_id, tx) in class_entities {
             // Get label if available
-            let label: String = conn
+            let mut label: String = conn
                 .query_row(
                     "SELECT v FROM facts WHERE e = ? AND a = 'http://www.w3.org/2000/01/rdf-schema#label' AND retracted = 0 LIMIT 1",
                     [&entity_id],
@@ -139,6 +174,14 @@ fn get_ontology_graph(state: tauri::State<AppState>) -> Result<String, String> {
                     // Extract last part of URI as fallback label
                     entity_id.split(&['/', '#'][..]).last().unwrap_or(&entity_id).to_string()
                 });
+
+            // Remove quotes and language tags from labels (e.g., "entity"@en -> entity)
+            if label.starts_with('"') {
+                if let Some(end_quote_idx) = label[1..].find('"') {
+                    // Extract string between quotes
+                    label = label[1..1+end_quote_idx].to_string();
+                }
+            }
 
             // Determine group based on transaction ID
             let group = if tx <= 100 {
@@ -158,10 +201,11 @@ fn get_ontology_graph(state: tauri::State<AppState>) -> Result<String, String> {
         }
 
         // Get all relationships (subClassOf, domain, range)
+        // Use DISTINCT to avoid duplicate relationships
         let mut links = Vec::new();
         let mut stmt = conn
             .prepare(
-                "SELECT e, a, v FROM facts
+                "SELECT DISTINCT e, a, v FROM facts
                  WHERE a IN (
                      'http://www.w3.org/2000/01/rdf-schema#subClassOf',
                      'http://www.w3.org/2000/01/rdf-schema#domain',
@@ -177,6 +221,11 @@ fn get_ontology_graph(state: tauri::State<AppState>) -> Result<String, String> {
             .collect();
 
         for (source, predicate, target) in relationships {
+            // Skip blank nodes (they represent complex OWL axioms)
+            if target.starts_with("_:") {
+                continue;
+            }
+
             // Only include links between nodes we have
             if node_ids.contains(&source) && node_ids.contains(&target) {
                 let label = predicate.split(&['/', '#'][..]).last().unwrap_or("relates").to_string();
@@ -249,7 +298,7 @@ pub fn run() {
         .manage(AppState {
             db: Mutex::new(db_conn),
         })
-        .invoke_handler(tauri::generate_handler![greet, get_db_stats, get_all_facts, get_ontology_graph])
+        .invoke_handler(tauri::generate_handler![greet, get_db_stats, get_all_facts, get_node_facts, get_ontology_graph])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

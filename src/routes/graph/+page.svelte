@@ -11,6 +11,18 @@
   let fullGraphData = null;
   let currentNodeId = null;
   let currentNodeLabel = '';
+  let nodeFacts = [];
+  let loadingFacts = false;
+
+  // Get display name for a node (use label if available, otherwise simplify URI)
+  function getNodeDisplayName(nodeId) {
+    const node = fullGraphData?.nodes.find(n => n.id === nodeId);
+    if (node) {
+      return node.label;
+    }
+    // Fallback: simplify URI
+    return nodeId.split(/[/#]/).pop();
+  }
 
   onMount(async () => {
     try {
@@ -22,31 +34,69 @@
 
       // Wait for next tick to ensure container dimensions are available
       setTimeout(() => {
-        // Find the most fundamental node (one with most incoming connections)
-        const incomingCounts = {};
+        // Find the most fundamental node: one that is not a subclass of anything
+        // AND has subclasses (to ensure it's connected)
+        const hasSubClassOfOutgoing = new Set();
+        const hasSubClassOfIncoming = {};
+
         fullGraphData.links.forEach(link => {
-          incomingCounts[link.target] = (incomingCounts[link.target] || 0) + 1;
+          if (link.label === 'subClassOf') {
+            const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+            const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+
+            hasSubClassOfOutgoing.add(sourceId);
+            hasSubClassOfIncoming[targetId] = (hasSubClassOfIncoming[targetId] || 0) + 1;
+          }
         });
 
-        // Find node with most incoming connections, or just pick the first
+        // Find nodes that are NOT subclasses of anything (no outgoing subClassOf)
+        // BUT have incoming subClassOf (are superclasses of something)
+        const rootCandidates = fullGraphData.nodes.filter(node =>
+          !hasSubClassOfOutgoing.has(node.id) && hasSubClassOfIncoming[node.id] > 0
+        );
+
+        // Pick the one with most subclasses, or just pick the first node as fallback
         let rootNode = fullGraphData.nodes[0];
-        let maxCount = 0;
-        for (const node of fullGraphData.nodes) {
-          const count = incomingCounts[node.id] || 0;
-          if (count > maxCount) {
-            maxCount = count;
-            rootNode = node;
-          }
+        if (rootCandidates.length > 0) {
+          rootNode = rootCandidates.reduce((best, node) =>
+            (hasSubClassOfIncoming[node.id] || 0) > (hasSubClassOfIncoming[best.id] || 0) ? node : best
+          );
         }
 
         // Start with the root node
         navigateToNode(rootNode.id);
       }, 0);
+
+      // Add window resize listener
+      const handleResize = () => {
+        if (currentNodeId) {
+          navigateToNode(currentNodeId);
+        }
+      };
+      window.addEventListener('resize', handleResize);
+
+      // Cleanup on unmount
+      return () => {
+        window.removeEventListener('resize', handleResize);
+      };
     } catch (err) {
       error = err.toString();
       loading = false;
     }
   });
+
+  async function loadNodeFacts(nodeId) {
+    loadingFacts = true;
+    try {
+      const factsJson = await invoke('get_node_facts', { nodeId: nodeId });
+      nodeFacts = JSON.parse(factsJson);
+    } catch (err) {
+      console.error('Failed to load facts:', err);
+      nodeFacts = [];
+    } finally {
+      loadingFacts = false;
+    }
+  }
 
   function navigateToNode(nodeId) {
     currentNodeId = nodeId;
@@ -56,6 +106,9 @@
     if (!centralNode) return;
 
     currentNodeLabel = centralNode.label;
+
+    // Load facts for this node
+    loadNodeFacts(nodeId);
 
     // Find all directly connected nodes
     const connectedNodeIds = new Set([nodeId]);
@@ -102,19 +155,20 @@
       .attr('width', width)
       .attr('height', height);
 
-    // Color scale for groups
+    // Color scale for groups (white non-interactive nodes)
     const color = d3.scaleOrdinal()
       .domain([1, 2, 3])
-      .range(['#4299e1', '#48bb78', '#ed8936']); // blue, green, orange
+      .range(['#cccccc', '#cccccc', '#cccccc']); // white for all non-central nodes
 
-    // Create force simulation
+    // Create force simulation with stronger repulsion and spacing
     const simulation = d3.forceSimulation(data.nodes)
       .force('link', d3.forceLink(data.links)
         .id(d => d.id)
-        .distance(100))
-      .force('charge', d3.forceManyBody().strength(-300))
+        .distance(200)  // Increased from 100
+        .strength(0.5))
+      .force('charge', d3.forceManyBody().strength(-800))  // Increased from -300
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(30));
+      .force('collision', d3.forceCollide().radius(80));  // Increased from 30
 
     // Create container for zoom
     const g = svgElement.append('g');
@@ -128,14 +182,29 @@
 
     svgElement.call(zoom);
 
+    // Define arrow marker
+    svgElement.append('defs').append('marker')
+      .attr('id', 'arrowhead')
+      .attr('viewBox', '-0 -5 10 10')
+      .attr('refX', 25)
+      .attr('refY', 0)
+      .attr('orient', 'auto')
+      .attr('markerWidth', 8)
+      .attr('markerHeight', 8)
+      .append('svg:path')
+      .attr('d', 'M 0,-5 L 10 ,0 L 0,5')
+      .attr('fill', '#666')
+      .attr('stroke', 'none');
+
     // Create links
     const link = g.append('g')
       .selectAll('line')
       .data(data.links)
       .join('line')
-      .attr('stroke', '#999')
-      .attr('stroke-opacity', 0.6)
-      .attr('stroke-width', 2);
+      .attr('stroke', '#666')
+      .attr('stroke-opacity', 0.4)
+      .attr('stroke-width', 2)
+      .attr('marker-end', 'url(#arrowhead)');
 
     // Create link labels
     const linkLabel = g.append('g')
@@ -143,7 +212,7 @@
       .data(data.links)
       .join('text')
       .attr('font-size', 10)
-      .attr('fill', '#666')
+      .attr('fill', '#999')
       .attr('text-anchor', 'middle')
       .text(d => d.label);
 
@@ -153,8 +222,8 @@
       .data(data.nodes)
       .join('circle')
       .attr('r', d => d.id === currentNodeId ? 16 : 10)
-      .attr('fill', d => d.id === currentNodeId ? '#ffd700' : color(d.group))
-      .attr('stroke', d => d.id === currentNodeId ? '#ff6b6b' : '#fff')
+      .attr('fill', d => d.id === currentNodeId ? '#ff8c42' : color(d.group))
+      .attr('stroke', d => d.id === currentNodeId ? '#ffaa66' : '#444')
       .attr('stroke-width', d => d.id === currentNodeId ? 4 : 2)
       .style('cursor', 'pointer')
       .on('click', (event, d) => {
@@ -171,9 +240,15 @@
       .selectAll('text')
       .data(data.nodes)
       .join('text')
-      .attr('font-size', 12)
-      .attr('dx', 12)
-      .attr('dy', 4)
+      .attr('font-size', d => d.id === currentNodeId ? 20 : 16)
+      .attr('font-weight', d => d.id === currentNodeId ? 'bold' : 'normal')
+      .attr('dx', d => d.id === currentNodeId ? 20 : 14)
+      .attr('dy', d => d.id === currentNodeId ? 6 : 5)
+      .attr('fill', d => d.id === currentNodeId ? '#ff8c42' : '#fff')
+      .attr('stroke', '#2a2a2a')
+      .attr('stroke-width', 3)
+      .attr('paint-order', 'stroke')
+      .style('pointer-events', 'none')
       .text(d => d.label);
 
     // Update positions on each tick
@@ -259,8 +334,42 @@
         </div>
       </div>
     </div>
-    <div id="graph-container">
-      <svg bind:this={svg}></svg>
+    <div class="main-content">
+      <div id="graph-container">
+        <svg bind:this={svg}></svg>
+      </div>
+
+      <aside class="side-panel">
+        <div class="panel-header">
+          <h3>Node Facts</h3>
+          {#if nodeFacts.length > 0}
+            <span class="fact-count">{nodeFacts.length} facts</span>
+          {/if}
+        </div>
+
+        {#if loadingFacts}
+          <div class="panel-loading">Loading facts...</div>
+        {:else if nodeFacts.length === 0}
+          <div class="panel-empty">No facts found for this node</div>
+        {:else}
+          <div class="facts-form">
+            {#each nodeFacts as fact}
+              <div class="form-row">
+                <label class="form-label">{fact.a.split(/[/#]/).pop()}</label>
+                <div class="form-value">
+                  {#if fact.v_type === 'ref' && fullGraphData?.nodes.some(n => n.id === fact.v)}
+                    <button class="entity-link" on:click={() => navigateToNode(fact.v)}>
+                      {getNodeDisplayName(fact.v)}
+                    </button>
+                  {:else}
+                    {fact.v}
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </aside>
     </div>
   {/if}
 </div>
@@ -271,7 +380,7 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #1a1a1a;
     color: white;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
@@ -281,26 +390,30 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: rgba(0, 0, 0, 0.2);
+    background: #0d0d0d;
+    border-bottom: 1px solid #2a2a2a;
   }
 
   h1 {
     margin: 0;
     font-size: 1.75rem;
     font-weight: 600;
+    color: white;
   }
 
   .back-link {
-    color: white;
+    color: #ff8c42;
     text-decoration: none;
     padding: 0.5rem 1rem;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 140, 66, 0.1);
     border-radius: 0.5rem;
-    transition: background 0.2s;
+    border: 1px solid #ff8c42;
+    transition: all 0.2s;
   }
 
   .back-link:hover {
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 140, 66, 0.2);
+    transform: translateY(-1px);
   }
 
   .loading, .error {
@@ -320,7 +433,8 @@
     justify-content: space-between;
     align-items: center;
     padding: 1rem 2rem;
-    background: rgba(0, 0, 0, 0.1);
+    background: #0d0d0d;
+    border-bottom: 1px solid #2a2a2a;
   }
 
   .current-node {
@@ -332,13 +446,12 @@
 
   .current-node .label {
     font-weight: 600;
-    opacity: 0.8;
+    color: #999;
   }
 
   .current-node .value {
     font-weight: 700;
-    color: #ffd700;
-    text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+    color: #ff8c42;
   }
 
   .legend {
@@ -360,6 +473,12 @@
     border: 2px solid white;
   }
 
+  .main-content {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
   #graph-container {
     flex: 1;
     position: relative;
@@ -367,6 +486,96 @@
   }
 
   svg {
-    background: white;
+    background: #2a2a2a;
+  }
+
+  .side-panel {
+    width: 400px;
+    background: #0d0d0d;
+    border-left: 1px solid #2a2a2a;
+    display: flex;
+    flex-direction: column;
+    color: white;
+  }
+
+  .panel-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid #2a2a2a;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .panel-header h3 {
+    margin: 0;
+    font-size: 1.25rem;
+    color: white;
+  }
+
+  .fact-count {
+    background: rgba(255, 140, 66, 0.2);
+    color: #ff8c42;
+    border: 1px solid #ff8c42;
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  .panel-loading, .panel-empty {
+    padding: 2rem;
+    text-align: center;
+    color: #666;
+    font-style: italic;
+  }
+
+  .facts-form {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem;
+  }
+
+  .form-row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 1rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #2a2a2a;
+  }
+
+  .form-row:last-child {
+    border-bottom: none;
+  }
+
+  .form-label {
+    font-weight: 600;
+    color: #999;
+    font-size: 0.8rem;
+    text-align: right;
+    padding-top: 0.25rem;
+  }
+
+  .form-value {
+    color: white;
+    font-size: 0.875rem;
+    word-break: break-word;
+  }
+
+  .entity-link {
+    background: none;
+    border: none;
+    color: #ff8c42;
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 0;
+    font-size: 0.875rem;
+    font-family: inherit;
+    text-align: left;
+    transition: color 0.2s;
+  }
+
+  .entity-link:hover {
+    color: #ffaa66;
+    text-decoration: none;
   }
 </style>
