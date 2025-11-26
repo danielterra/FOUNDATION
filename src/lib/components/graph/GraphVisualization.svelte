@@ -151,16 +151,7 @@
 		nodes
 			.append('circle')
 			.attr('r', 8)
-			.attr('fill', (d) => {
-				const colors = {
-					1: '#4a9eff', // RDF/RDFS/OWL - blue
-					2: '#ff6b9d', // BFO - pink
-					3: '#50fa7b', // Schema.org - green
-					4: '#ffb86c', // FOAF - orange
-					5: '#bd93f9' // Bridge - purple
-				};
-				return colors[d.group] || '#ffffff';
-			})
+			.attr('fill', '#ff8c42')
 			.attr('stroke', 'rgba(0, 0, 0, 0.8)')
 			.attr('stroke-width', 2);
 

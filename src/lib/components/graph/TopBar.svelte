@@ -16,31 +16,6 @@
 			</svg>
 		</button>
 	</div>
-
-	<div class="floating-info-pill">
-		<div class="legend">
-			<div class="legend-item">
-				<div class="legend-color legend-color-1"></div>
-				<span>RDF/RDFS/OWL</span>
-			</div>
-			<div class="legend-item">
-				<div class="legend-color legend-color-2"></div>
-				<span>BFO</span>
-			</div>
-			<div class="legend-item">
-				<div class="legend-color legend-color-3"></div>
-				<span>Schema.org</span>
-			</div>
-			<div class="legend-item">
-				<div class="legend-color legend-color-4"></div>
-				<span>FOAF</span>
-			</div>
-			<div class="legend-item">
-				<div class="legend-color legend-color-5"></div>
-				<span>Bridge</span>
-			</div>
-		</div>
-	</div>
 </div>
 
 <style>
@@ -111,56 +86,5 @@
 		background: rgba(255, 140, 66, 0.1);
 		border-color: #ff8c42;
 		transform: scale(1.05);
-	}
-
-	.floating-info-pill {
-		background: rgba(30, 30, 30, 0.95);
-		backdrop-filter: blur(10px);
-		padding: 12px 20px;
-		border-radius: 12px;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-		pointer-events: auto;
-	}
-
-	.legend {
-		display: flex;
-		gap: 24px;
-		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
-		font-size: 13px;
-	}
-
-	.legend-item {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		color: rgba(255, 255, 255, 0.8);
-	}
-
-	.legend-color {
-		width: 12px;
-		height: 12px;
-		border-radius: 3px;
-		border: 1px solid rgba(255, 255, 255, 0.2);
-	}
-
-	.legend-color-1 {
-		background: #4a9eff;
-	}
-
-	.legend-color-2 {
-		background: #ff6b9d;
-	}
-
-	.legend-color-3 {
-		background: #50fa7b;
-	}
-
-	.legend-color-4 {
-		background: #ffb86c;
-	}
-
-	.legend-color-5 {
-		background: #bd93f9;
 	}
 </style>

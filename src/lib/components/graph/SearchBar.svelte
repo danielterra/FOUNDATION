@@ -75,14 +75,8 @@
 		}, 200);
 	}
 
-	// Color mapping for groups
-	const groupColors = {
-		1: '#4a9eff',  // RDF/RDFS/OWL - blue
-		2: '#ff6b9d',  // BFO - pink
-		3: '#50fa7b',  // Schema.org - green
-		4: '#ffb86c',  // FOAF - orange
-		5: '#bd93f9'   // Bridge - purple
-	};
+	// Single color for all nodes
+	const nodeColor = '#ff8c42';
 </script>
 
 <div class="search-container">
@@ -113,7 +107,7 @@
 					on:click={() => selectResult(result)}
 				>
 					<div class="result-header">
-						<span class="result-indicator" style="background-color: {groupColors[result.group]}" />
+						<span class="result-indicator" style="background-color: {nodeColor}" />
 						<span class="result-label">{result.label}</span>
 					</div>
 					{#if result.definition}
