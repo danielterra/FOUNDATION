@@ -4,11 +4,8 @@
 // Imports OWL/TTL ontologies into the SQLite EAVTO fact store
 //
 // Import strategy:
-// - tx: 1-100      → RDF/RDFS/OWL meta-ontology
-// - tx: 101-10000  → BFO (Basic Formal Ontology) - philosophical foundation
-// - tx: 10001-20000 → Schema.org - practical vocabulary for common entities
-// - tx: 20001-30000 → FOAF - social networking vocabulary
-// - tx: 30001+     → SuperNOVA Bridge - connects Schema.org/FOAF to BFO
+// - tx: 1-100   → RDF/RDFS/OWL meta-ontology (essential primitives)
+// - tx: 101+    → Reserved for SuperNOVA Base Ontology (to be created)
 //
 // All imported facts have origin: "core" and retracted: 0
 // ============================================================================
@@ -382,55 +379,14 @@ pub fn import_all_core_ontologies(conn: &Connection) -> Result<Vec<ImportStats>,
 
     println!("📂 Project root: {}", project_root.display());
 
-    // Layer 1: RDF/RDFS/OWL (tx: 1-100)
-    println!("📚 Layer 1: Importing RDF/RDFS/OWL meta-ontology...");
+    // Layer 1: RDF/RDFS/OWL meta-ontology (tx: 1-100)
+    println!("📚 Importing RDF/RDFS/OWL meta-ontology...");
     let rdf_path = project_root.join("core-ontology/rdf-rdfs-owl-core.ttl");
     if rdf_path.exists() {
         let stats = import_turtle_file(conn, &rdf_path, 1, "core")?;
         all_stats.push(stats);
     } else {
         eprintln!("⚠️  Warning: {} not found", rdf_path.display());
-    }
-
-    // Layer 2: BFO (tx: 101-10000)
-    println!("\n📚 Layer 2: Importing BFO (Basic Formal Ontology)...");
-    let bfo_path = project_root.join("core-ontology/bfo.owl");
-    if bfo_path.exists() {
-        let stats = import_owl_file(conn, &bfo_path, 101, "core")?;
-        all_stats.push(stats);
-    } else {
-        eprintln!("⚠️  Warning: {} not found", bfo_path.display());
-    }
-
-    // Layer 3: Schema.org (tx: 10001+)
-    println!("\n📚 Layer 3: Importing Schema.org vocabulary...");
-    let schema_path = project_root.join("core-ontology/schema-org.ttl");
-    if schema_path.exists() {
-        let stats = import_turtle_file(conn, &schema_path, 10001, "core")?;
-        all_stats.push(stats);
-    } else {
-        eprintln!("⚠️  Warning: {} not found", schema_path.display());
-    }
-
-    // Layer 4: FOAF (tx: 20001+)
-    println!("\n📚 Layer 4: Importing FOAF vocabulary...");
-    let foaf_path = project_root.join("core-ontology/foaf.rdf");
-    if foaf_path.exists() {
-        // FOAF is in RDF/XML format, need to use OWL importer
-        let stats = import_owl_file(conn, &foaf_path, 20001, "core")?;
-        all_stats.push(stats);
-    } else {
-        eprintln!("⚠️  Warning: {} not found", foaf_path.display());
-    }
-
-    // Layer 5: SuperNOVA Bridge (tx: 30001+)
-    println!("\n📚 Layer 5: Importing SuperNOVA Bridge Ontology...");
-    let bridge_path = project_root.join("core-ontology/supernova-bridge.ttl");
-    if bridge_path.exists() {
-        let stats = import_turtle_file(conn, &bridge_path, 30001, "core")?;
-        all_stats.push(stats);
-    } else {
-        eprintln!("⚠️  Warning: {} not found", bridge_path.display());
     }
 
     // Post-processing: Add owl:Thing as explicit root for orphan classes
