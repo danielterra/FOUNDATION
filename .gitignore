@@ -1,2 +1,4 @@
 node_modules
 .svelte-kit
+supernova.db
+build

@@ -1,0 +1,48 @@
+/* Science Gothic - Medium for logo/brand */
+@font-face {
+  font-family: 'Science Gothic Title';
+  src: url('/Science Gothic/static/ScienceGothic-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+}
+
+/* Science Gothic - ExtraLight for headings */
+@font-face {
+  font-family: 'Science Gothic Title';
+  src: url('/Science Gothic/static/ScienceGothic-ExtraLight.ttf') format('truetype');
+  font-weight: 200;
+  font-style: normal;
+}
+
+/* Science Gothic - SemiCondensed Light for body text */
+@font-face {
+  font-family: 'Science Gothic';
+  src: url('/Science Gothic/static/ScienceGothic_SemiCondensed-Light.ttf') format('truetype');
+  font-weight: 300;
+  font-style: normal;
+}
+
+/* Apply fonts globally */
+:root {
+  --font-title: 'Science Gothic Title', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-body: 'Science Gothic', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-body);
+  font-weight: 300;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-title);
+  font-weight: 200;
+}
