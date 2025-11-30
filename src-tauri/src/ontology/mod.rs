@@ -63,34 +63,30 @@ pub struct ImportStats {
     pub tx_end: i64,
 }
 
-/// Determines value type from RDF term (before string conversion)
-fn determine_value_type_from_term(term: &Term) -> &'static str {
+/// Determines object_type from RDF term
+fn determine_object_type_from_term(term: &Term) -> &'static str {
     match term {
-        Term::NamedNode(_) | Term::BlankNode(_) => "ref",
-        Term::Literal(lit) => {
-            // Get the literal string representation and extract value
-            let lit_str = lit.to_string();
-            let value = if lit_str.starts_with('"') {
-                if let Some(end_quote_idx) = lit_str[1..].find('"') {
-                    &lit_str[1..1+end_quote_idx]
-                } else {
-                    &lit_str
-                }
-            } else {
-                &lit_str
-            };
+        Term::NamedNode(_) => "iri",
+        Term::BlankNode(_) => "blank",
+        Term::Literal(_) => "literal",
+        Term::Triple(_) => "blank", // RDF-star quoted triples treated as blank nodes
+    }
+}
 
-            if value == "true" || value == "false" {
-                "boolean"
-            } else if value.parse::<i64>().is_ok() {
-                "integer"
-            } else if value.parse::<f64>().is_ok() {
-                "number"
-            } else {
-                "string"
-            }
-        },
-        Term::Triple(_) => "ref",
+/// Extracts datatype IRI from a literal term
+fn get_literal_datatype(lit: &rio_api::model::Literal) -> String {
+    match lit {
+        rio_api::model::Literal::Simple { .. } => "http://www.w3.org/2001/XMLSchema#string".to_string(),
+        rio_api::model::Literal::LanguageTaggedString { .. } => "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString".to_string(),
+        rio_api::model::Literal::Typed { datatype, .. } => datatype.iri.to_string(),
+    }
+}
+
+/// Extracts language tag from a literal term (if any)
+fn get_literal_language(lit: &rio_api::model::Literal) -> Option<String> {
+    match lit {
+        rio_api::model::Literal::LanguageTaggedString { language, .. } => Some(language.to_string()),
+        _ => None,
     }
 }
 
@@ -103,24 +99,49 @@ fn subject_to_string(subject: &rio_api::model::Subject) -> String {
     }
 }
 
-/// Converts RIO Term to string representation
-fn term_to_string(term: &Term) -> String {
-    match term {
-        Term::NamedNode(node) => node.iri.to_string(),
-        Term::BlankNode(bn) => format!("_:{}", bn.id),
-        Term::Literal(lit) => {
-            // Get the literal value without quotes and language tags
-            // Example: "entity"@en -> entity
-            let lit_str = lit.to_string();
-            if lit_str.starts_with('"') {
-                if let Some(end_quote_idx) = lit_str[1..].find('"') {
-                    return lit_str[1..1+end_quote_idx].to_string();
-                }
-            }
-            lit_str
-        },
-        Term::Triple(_) => "_:triple".to_string(), // RDF-star quoted triples
+/// Extracts literal value (lexical form) from a literal term
+fn get_literal_value(lit: &rio_api::model::Literal) -> String {
+    match lit {
+        rio_api::model::Literal::Simple { value } => value.to_string(),
+        rio_api::model::Literal::LanguageTaggedString { value, .. } => value.to_string(),
+        rio_api::model::Literal::Typed { value, .. } => value.to_string(),
     }
+}
+
+/// Parses typed columns from literal value and datatype
+fn parse_typed_columns(value: &str, datatype: &str) -> (Option<f64>, Option<i64>, Option<i64>, Option<i64>) {
+    let mut object_number: Option<f64> = None;
+    let mut object_integer: Option<i64> = None;
+    let mut object_datetime: Option<i64> = None;
+    let mut object_boolean: Option<i64> = None;
+
+    match datatype {
+        "http://www.w3.org/2001/XMLSchema#decimal" |
+        "http://www.w3.org/2001/XMLSchema#double" |
+        "http://www.w3.org/2001/XMLSchema#float" => {
+            object_number = value.parse().ok();
+        }
+        "http://www.w3.org/2001/XMLSchema#integer" |
+        "http://www.w3.org/2001/XMLSchema#int" |
+        "http://www.w3.org/2001/XMLSchema#long" => {
+            object_integer = value.parse().ok();
+        }
+        "http://www.w3.org/2001/XMLSchema#dateTime" => {
+            // Parse ISO 8601 datetime to Unix epoch milliseconds
+            // For now, we'll leave this as None and let the application handle it
+            object_datetime = None;
+        }
+        "http://www.w3.org/2001/XMLSchema#boolean" => {
+            object_boolean = match value {
+                "true" | "1" => Some(1),
+                "false" | "0" => Some(0),
+                _ => None,
+            };
+        }
+        _ => {}
+    }
+
+    (object_number, object_integer, object_datetime, object_boolean)
 }
 
 /// Import RDF triples from Turtle file
@@ -160,26 +181,37 @@ pub fn import_turtle_file(
 
         let subject = subject_to_string(&triple.subject);
         let predicate = triple.predicate.iri.to_string();
-        let v_type = determine_value_type_from_term(&triple.object);
-        let object = term_to_string(&triple.object);
+        let object_type = determine_object_type_from_term(&triple.object);
 
-        let v_number: Option<f64> = if v_type == "number" {
-            object.parse().ok()
-        } else {
-            None
+        // Extract object components based on type
+        let (object, object_value, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean) = match &triple.object {
+            Term::NamedNode(node) => {
+                // IRI object
+                (Some(node.iri.to_string()), None, None, None, None, None, None, None)
+            }
+            Term::BlankNode(bn) => {
+                // Blank node object
+                (Some(format!("_:{}", bn.id)), None, None, None, None, None, None, None)
+            }
+            Term::Literal(lit) => {
+                // Literal object
+                let value = get_literal_value(lit);
+                let datatype = get_literal_datatype(lit);
+                let language = get_literal_language(lit);
+                let (obj_num, obj_int, obj_dt, obj_bool) = parse_typed_columns(&value, &datatype);
+                (None, Some(value), Some(datatype), language, obj_num, obj_int, obj_dt, obj_bool)
+            }
+            Term::Triple(_) => {
+                // RDF-star quoted triple (treat as blank node)
+                (Some("_:triple".to_string()), None, None, None, None, None, None, None)
+            }
         };
 
-        let v_integer: Option<i64> = if v_type == "integer" {
-            object.parse().ok()
-        } else {
-            None
-        };
-
-        // Check if fact already exists (avoid duplicates)
+        // Check if triple already exists (avoid duplicates)
         let exists: bool = conn
             .query_row(
-                "SELECT 1 FROM facts WHERE e = ? AND a = ? AND v = ? AND retracted = 0",
-                rusqlite::params![&subject, &predicate, &object],
+                "SELECT 1 FROM triples WHERE subject = ? AND predicate = ? AND COALESCE(object, '') = ? AND COALESCE(object_value, '') = ? AND retracted = 0",
+                rusqlite::params![&subject, &predicate, &object.as_ref().unwrap_or(&String::new()), &object_value.as_ref().unwrap_or(&String::new())],
                 |_| Ok(true),
             )
             .unwrap_or(false);
@@ -188,23 +220,28 @@ pub fn import_turtle_file(
             return Ok(()); // Skip duplicate
         }
 
-        // Insert fact
+        // Insert triple
         if let Err(e) = conn.execute(
-            "INSERT INTO facts (e, a, v, v_number, v_integer, v_datetime, tx, origin, retracted, v_type, created_at)
-             VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 0, ?, ?)",
+            "INSERT INTO triples (subject, predicate, object, object_value, object_type, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean, tx, origin, retracted, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
             rusqlite::params![
                 &subject,
                 &predicate,
-                &object,
-                v_number,
-                v_integer,
+                object,
+                object_value,
+                object_type,
+                object_datatype,
+                object_language,
+                object_number,
+                object_integer,
+                object_datetime,
+                object_boolean,
                 current_tx,
                 origin,
-                v_type,
                 now,
             ],
         ) {
-            eprintln!("Warning: Failed to insert fact: {}", e);
+            eprintln!("Warning: Failed to insert triple: {}", e);
             return Ok(());
         }
 
@@ -272,26 +309,37 @@ pub fn import_owl_file(
 
         let subject = subject_to_string(&triple.subject);
         let predicate = triple.predicate.iri.to_string();
-        let v_type = determine_value_type_from_term(&triple.object);
-        let object = term_to_string(&triple.object);
+        let object_type = determine_object_type_from_term(&triple.object);
 
-        let v_number: Option<f64> = if v_type == "number" {
-            object.parse().ok()
-        } else {
-            None
+        // Extract object components based on type
+        let (object, object_value, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean) = match &triple.object {
+            Term::NamedNode(node) => {
+                // IRI object
+                (Some(node.iri.to_string()), None, None, None, None, None, None, None)
+            }
+            Term::BlankNode(bn) => {
+                // Blank node object
+                (Some(format!("_:{}", bn.id)), None, None, None, None, None, None, None)
+            }
+            Term::Literal(lit) => {
+                // Literal object
+                let value = get_literal_value(lit);
+                let datatype = get_literal_datatype(lit);
+                let language = get_literal_language(lit);
+                let (obj_num, obj_int, obj_dt, obj_bool) = parse_typed_columns(&value, &datatype);
+                (None, Some(value), Some(datatype), language, obj_num, obj_int, obj_dt, obj_bool)
+            }
+            Term::Triple(_) => {
+                // RDF-star quoted triple (treat as blank node)
+                (Some("_:triple".to_string()), None, None, None, None, None, None, None)
+            }
         };
 
-        let v_integer: Option<i64> = if v_type == "integer" {
-            object.parse().ok()
-        } else {
-            None
-        };
-
-        // Check if fact already exists (avoid duplicates)
+        // Check if triple already exists (avoid duplicates)
         let exists: bool = conn
             .query_row(
-                "SELECT 1 FROM facts WHERE e = ? AND a = ? AND v = ? AND retracted = 0",
-                rusqlite::params![&subject, &predicate, &object],
+                "SELECT 1 FROM triples WHERE subject = ? AND predicate = ? AND COALESCE(object, '') = ? AND COALESCE(object_value, '') = ? AND retracted = 0",
+                rusqlite::params![&subject, &predicate, &object.as_ref().unwrap_or(&String::new()), &object_value.as_ref().unwrap_or(&String::new())],
                 |_| Ok(true),
             )
             .unwrap_or(false);
@@ -300,23 +348,28 @@ pub fn import_owl_file(
             return Ok(()); // Skip duplicate
         }
 
-        // Insert fact
+        // Insert triple
         if let Err(e) = conn.execute(
-            "INSERT INTO facts (e, a, v, v_number, v_integer, v_datetime, tx, origin, retracted, v_type, created_at)
-             VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 0, ?, ?)",
+            "INSERT INTO triples (subject, predicate, object, object_value, object_type, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean, tx, origin, retracted, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
             rusqlite::params![
                 &subject,
                 &predicate,
-                &object,
-                v_number,
-                v_integer,
+                object,
+                object_value,
+                object_type,
+                object_datatype,
+                object_language,
+                object_number,
+                object_integer,
+                object_datetime,
+                object_boolean,
                 current_tx,
                 origin,
-                v_type,
                 now,
             ],
         ) {
-            eprintln!("Warning: Failed to insert fact: {}", e);
+            eprintln!("Warning: Failed to insert triple: {}", e);
             return Ok(());
         }
 
@@ -400,7 +453,7 @@ pub fn import_all_core_ontologies(conn: &Connection) -> Result<Vec<ImportStats>,
     // Ensure owl:Thing exists as a class
     let owl_thing_exists: bool = conn
         .query_row(
-            "SELECT 1 FROM facts WHERE e = 'http://www.w3.org/2002/07/owl#Thing' AND a = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' AND v = 'http://www.w3.org/2002/07/owl#Class' AND retracted = 0",
+            "SELECT 1 FROM triples WHERE subject = 'http://www.w3.org/2002/07/owl#Thing' AND predicate = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' AND object = 'http://www.w3.org/2002/07/owl#Class' AND retracted = 0",
             [],
             |_| Ok(true),
         )
@@ -408,15 +461,15 @@ pub fn import_all_core_ontologies(conn: &Connection) -> Result<Vec<ImportStats>,
 
     if !owl_thing_exists {
         conn.execute(
-            "INSERT INTO facts (e, a, v, v_number, v_integer, v_datetime, tx, origin, retracted, v_type, created_at)
-             VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, 0, ?, ?)",
+            "INSERT INTO triples (subject, predicate, object, object_value, object_type, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean, tx, origin, retracted, created_at)
+             VALUES (?, ?, ?, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 0, ?)",
             rusqlite::params![
                 "http://www.w3.org/2002/07/owl#Thing",
                 "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
                 "http://www.w3.org/2002/07/owl#Class",
+                "iri",
                 1,  // tx=1 (meta-ontology layer)
                 "core",
-                "ref",
                 now,
             ],
         )?;
@@ -426,14 +479,15 @@ pub fn import_all_core_ontologies(conn: &Connection) -> Result<Vec<ImportStats>,
     // Find all orphan classes (owl:Class without rdfs:subClassOf)
     let orphan_classes: Vec<String> = conn
         .prepare(
-            "SELECT DISTINCT e FROM facts
-             WHERE a = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
-             AND v = 'http://www.w3.org/2002/07/owl#Class'
+            "SELECT DISTINCT subject FROM triples
+             WHERE predicate = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
+             AND object_type = 'iri'
+             AND object = 'http://www.w3.org/2002/07/owl#Class'
              AND retracted = 0
-             AND e != 'http://www.w3.org/2002/07/owl#Thing'
-             AND e NOT IN (
-                 SELECT DISTINCT e FROM facts
-                 WHERE a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
+             AND subject != 'http://www.w3.org/2002/07/owl#Thing'
+             AND subject NOT IN (
+                 SELECT DISTINCT subject FROM triples
+                 WHERE predicate = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
                  AND retracted = 0
              )"
         )?
@@ -447,15 +501,15 @@ pub fn import_all_core_ontologies(conn: &Connection) -> Result<Vec<ImportStats>,
     // Add rdfs:subClassOf owl:Thing for each orphan class
     for orphan_class in &orphan_classes {
         conn.execute(
-            "INSERT INTO facts (e, a, v, v_number, v_integer, v_datetime, tx, origin, retracted, v_type, created_at)
-             VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, 0, ?, ?)",
+            "INSERT INTO triples (subject, predicate, object, object_value, object_type, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean, tx, origin, retracted, created_at)
+             VALUES (?, ?, ?, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 0, ?)",
             rusqlite::params![
                 orphan_class,
                 "http://www.w3.org/2000/01/rdf-schema#subClassOf",
                 "http://www.w3.org/2002/07/owl#Thing",
+                "iri",
                 1,  // tx=1 (meta-ontology layer)
                 "core",
-                "ref",
                 now,
             ],
         )?;

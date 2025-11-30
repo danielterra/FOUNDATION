@@ -1,4 +1,4 @@
-## Problem 1: Database Technology Selection
+## Problem 1: Don't Know Which Database to Use
 
 ### What
 We don't know which database technology to use for SuperNOVA's immutable, reactive data model that needs to:

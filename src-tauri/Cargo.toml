@@ -27,4 +27,5 @@ dirs = "5.0"
 rio_turtle = "0.8"
 rio_xml = "0.8"
 rio_api = "0.8"
+lazy_static = "1.4"
 
