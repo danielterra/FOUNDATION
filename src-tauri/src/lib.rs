@@ -1,5 +1,7 @@
 mod db;
 mod ontology;
+mod rdf;
+mod namespaces;
 
 use std::sync::Mutex;
 use rusqlite::Connection;
@@ -15,16 +17,27 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-// Fact structure for serialization
+// Triple structure for serialization (maps to triples table)
 #[derive(serde::Serialize)]
-struct Fact {
-    e: String,
-    a: String,
-    v: String,
+struct TripleData {
+    subject: String,
+    predicate: String,
+    object: Option<String>,           // IRI or blank node (if object_type = 'iri' or 'blank')
+    object_value: Option<String>,      // Literal value (if object_type = 'literal')
+    object_type: String,               // 'iri', 'literal', or 'blank'
+    object_datatype: Option<String>,   // Datatype IRI for literals
     tx: i64,
-    origin: String,
+    origin_id: i64,
     retracted: bool,
-    v_type: String,
+}
+
+// Simplified triple structure for UI display
+#[derive(serde::Serialize)]
+struct DisplayTriple {
+    a: String,            // attribute (predicate)
+    v: String,            // value (object or object_value)
+    v_type: String,       // value type: 'ref' for IRIs, 'literal' for literals
+    v_label: Option<String>, // optional label for the value (when v_type is 'ref')
 }
 
 // Graph structures for ontology visualization
@@ -73,7 +86,7 @@ fn get_db_stats(state: tauri::State<AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn get_all_facts(state: tauri::State<AppState>, limit: Option<i64>) -> Result<String, String> {
+fn get_all_triples(state: tauri::State<AppState>, limit: Option<i64>) -> Result<String, String> {
     let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     if let Some(ref conn) = *db {
@@ -81,59 +94,255 @@ fn get_all_facts(state: tauri::State<AppState>, limit: Option<i64>) -> Result<St
 
         let mut stmt = conn
             .prepare(&format!(
-                "SELECT e, a, v, tx, origin, retracted, v_type FROM facts ORDER BY tx DESC LIMIT {}",
+                "SELECT subject, predicate, object, object_value, object_type, object_datatype, tx, origin_id, retracted FROM triples ORDER BY tx DESC LIMIT {}",
                 limit_clause
             ))
             .map_err(|e| format!("Prepare error: {}", e))?;
 
-        let facts: Result<Vec<Fact>, _> = stmt
+        let triples: Result<Vec<TripleData>, _> = stmt
             .query_map([], |row| {
-                Ok(Fact {
-                    e: row.get(0)?,
-                    a: row.get(1)?,
-                    v: row.get(2)?,
-                    tx: row.get(3)?,
-                    origin: row.get(4)?,
-                    retracted: row.get::<_, i32>(5)? != 0,
-                    v_type: row.get(6)?,
+                Ok(TripleData {
+                    subject: row.get(0)?,
+                    predicate: row.get(1)?,
+                    object: row.get(2)?,
+                    object_value: row.get(3)?,
+                    object_type: row.get(4)?,
+                    object_datatype: row.get(5)?,
+                    tx: row.get(6)?,
+                    origin_id: row.get(7)?,
+                    retracted: row.get::<_, i32>(8)? != 0,
                 })
             })
             .map_err(|e| format!("Query error: {}", e))?
             .collect();
 
-        let facts = facts.map_err(|e| format!("Row error: {}", e))?;
-        Ok(serde_json::to_string(&facts).map_err(|e| format!("Serialization error: {}", e))?)
+        let triples = triples.map_err(|e| format!("Row error: {}", e))?;
+        Ok(serde_json::to_string(&triples).map_err(|e| format!("Serialization error: {}", e))?)
     } else {
         Err("Database not initialized".to_string())
     }
 }
 
 #[tauri::command]
-fn get_node_facts(state: tauri::State<AppState>, node_id: String) -> Result<String, String> {
+fn get_node_triples(state: tauri::State<AppState>, node_id: String) -> Result<String, String> {
     let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     if let Some(ref conn) = *db {
+        // Compress IRI from frontend (full URI -> prefix)
+        let compressed_node_id = namespaces::compress_iri(&node_id);
+
         let mut stmt = conn
-            .prepare("SELECT e, a, v, tx, origin, retracted, v_type FROM facts WHERE e = ? AND retracted = 0 ORDER BY tx")
+            .prepare("SELECT predicate, object, object_value, object_type FROM triples WHERE subject = ? AND retracted = 0 ORDER BY tx")
             .map_err(|e| format!("Prepare error: {}", e))?;
 
-        let facts: Result<Vec<Fact>, _> = stmt
-            .query_map([&node_id], |row| {
-                Ok(Fact {
-                    e: row.get(0)?,
-                    a: row.get(1)?,
-                    v: row.get(2)?,
-                    tx: row.get(3)?,
-                    origin: row.get(4)?,
-                    retracted: row.get::<_, i32>(5)? != 0,
-                    v_type: row.get(6)?,
+        let display_triples: Result<Vec<DisplayTriple>, _> = stmt
+            .query_map([&compressed_node_id], |row| {
+                let predicate: String = row.get(0)?;
+                let object: Option<String> = row.get(1)?;
+                let object_value: Option<String> = row.get(2)?;
+                let object_type: String = row.get(3)?;
+
+                // Determine value and value type for display
+                let (v, v_type) = if object_type == "iri" {
+                    (object.unwrap_or_default(), "ref".to_string())
+                } else {
+                    (object_value.unwrap_or_default(), "literal".to_string())
+                };
+
+                Ok(DisplayTriple {
+                    a: predicate,
+                    v,
+                    v_type,
+                    v_label: None,
                 })
             })
             .map_err(|e| format!("Query error: {}", e))?
             .collect();
 
-        let facts = facts.map_err(|e| format!("Row error: {}", e))?;
-        Ok(serde_json::to_string(&facts).map_err(|e| format!("Serialization error: {}", e))?)
+        let mut display_triples = display_triples.map_err(|e| format!("Row error: {}", e))?;
+
+        // Prepare label lookup statement once
+        let mut label_stmt = conn
+            .prepare("SELECT object_value FROM triples WHERE subject = ? AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1")
+            .map_err(|e| format!("Label query prepare error: {}", e))?;
+
+        // Expand IRIs and fetch labels for references
+        for triple in &mut display_triples {
+            triple.a = namespaces::expand_iri(&triple.a);
+            if triple.v_type == "ref" {
+                let compressed_ref = triple.v.clone();
+                triple.v = namespaces::expand_iri(&triple.v);
+
+                // Fetch label for the referenced node
+                if let Ok(label) = label_stmt.query_row([&compressed_ref], |row| row.get::<_, String>(0)) {
+                    triple.v_label = Some(label);
+                } else {
+                    triple.v_label = None;
+                }
+            } else {
+                triple.v_label = None;
+            }
+        }
+
+        Ok(serde_json::to_string(&display_triples).map_err(|e| format!("Serialization error: {}", e))?)
+    } else {
+        Err("Database not initialized".to_string())
+    }
+}
+
+#[tauri::command]
+fn get_node_backlinks(state: tauri::State<AppState>, node_id: String) -> Result<String, String> {
+    let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    if let Some(ref conn) = *db {
+        // Compress IRI from frontend (full URI -> prefix)
+        let compressed_node_id = namespaces::compress_iri(&node_id);
+
+        // Query for triples where this node is the OBJECT (incoming relations)
+        let mut stmt = conn
+            .prepare("SELECT subject, predicate FROM triples WHERE object = ? AND object_type = 'iri' AND retracted = 0 ORDER BY predicate")
+            .map_err(|e| format!("Prepare error: {}", e))?;
+
+        let backlinks: Result<Vec<DisplayTriple>, _> = stmt
+            .query_map([&compressed_node_id], |row| {
+                let subject: String = row.get(0)?;
+                let predicate: String = row.get(1)?;
+
+                Ok(DisplayTriple {
+                    a: predicate,
+                    v: subject,
+                    v_type: "ref".to_string(),
+                    v_label: None,
+                })
+            })
+            .map_err(|e| format!("Query error: {}", e))?
+            .collect();
+
+        let mut backlinks = backlinks.map_err(|e| format!("Row error: {}", e))?;
+
+        // Prepare label lookup statement once
+        let mut label_stmt = conn
+            .prepare("SELECT object_value FROM triples WHERE subject = ? AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1")
+            .map_err(|e| format!("Label query prepare error: {}", e))?;
+
+        // Expand IRIs and fetch labels for references
+        for triple in &mut backlinks {
+            triple.a = namespaces::expand_iri(&triple.a);
+            let compressed_ref = triple.v.clone();
+            triple.v = namespaces::expand_iri(&triple.v);
+
+            // Fetch label for the referenced node
+            if let Ok(label) = label_stmt.query_row([&compressed_ref], |row| row.get::<_, String>(0)) {
+                triple.v_label = Some(label);
+            } else {
+                triple.v_label = None;
+            }
+        }
+
+        Ok(serde_json::to_string(&backlinks).map_err(|e| format!("Serialization error: {}", e))?)
+    } else {
+        Err("Database not initialized".to_string())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct NodeStatistics {
+    children_count: i64,
+    backlinks_count: i64,
+    synonyms_count: i64,
+    related_count: i64,
+    examples_count: i64,
+}
+
+#[tauri::command]
+fn get_node_statistics(state: tauri::State<AppState>, node_id: String) -> Result<String, String> {
+    let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    if let Some(ref conn) = *db {
+        let compressed_node_id = namespaces::compress_iri(&node_id);
+
+        // Count children (things that have this as rdfs:subClassOf or rdfs:subPropertyOf or skos:broader)
+        let children_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT subject) FROM triples WHERE object = ? AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf', 'skos:broader') AND retracted = 0",
+                [&compressed_node_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        // Count all backlinks
+        let backlinks_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM triples WHERE object = ? AND object_type = 'iri' AND retracted = 0",
+                [&compressed_node_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        // Count synonyms (skos:altLabel)
+        let synonyms_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = 'skos:altLabel' AND retracted = 0",
+                [&compressed_node_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        // Count related concepts (skos:related, supernova:antonym, etc.)
+        let related_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate IN ('skos:related', 'supernova:antonym', 'rdfs:seeAlso', 'supernova:causes', 'supernova:entails') AND retracted = 0",
+                [&compressed_node_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        // Count examples (skos:example)
+        let examples_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = 'skos:example' AND retracted = 0",
+                [&compressed_node_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let stats = NodeStatistics {
+            children_count,
+            backlinks_count,
+            synonyms_count,
+            related_count,
+            examples_count,
+        };
+
+        Ok(serde_json::to_string(&stats).map_err(|e| format!("Serialization error: {}", e))?)
+    } else {
+        Err("Database not initialized".to_string())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct ApplicableProperty {
+    property_id: String,
+    property_label: String,
+    property_type: String,
+    range: Option<String>,
+    range_label: Option<String>,
+}
+
+#[tauri::command]
+fn get_applicable_properties(state: tauri::State<AppState>, node_id: String) -> Result<String, String> {
+    let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    if let Some(ref _conn) = *db {
+        let _compressed_node_id = namespaces::compress_iri(&node_id);
+
+        // TODO: Implement property discovery based on rdfs:domain and rdfs:range
+        // For now, return empty array since WordNet vocabulary doesn't define property domains/ranges
+        // This will be implemented when we import ontologies that define properties with domain/range constraints
+
+        let properties: Vec<ApplicableProperty> = vec![];
+
+        Ok(serde_json::to_string(&properties).map_err(|e| format!("Serialization error: {}", e))?)
     } else {
         Err("Database not initialized".to_string())
     }
@@ -144,19 +353,22 @@ fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<Str
     let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     if let Some(ref conn) = *db {
-        // Use owl:Thing as default central node
-        let central_id = central_node_id.unwrap_or_else(|| "http://www.w3.org/2002/07/owl#Thing".to_string());
+        // Use owl:Thing as default central node and compress to prefix
+        let central_id = central_node_id
+            .map(|id| namespaces::compress_iri(&id))
+            .unwrap_or_else(|| "owl:Thing".to_string());
 
         // First, find all equivalents of the central node
         let mut central_ids = vec![central_id.clone()];
 
         // Query all equivalentClass relationships involving the central node
-        let equiv_query = "SELECT e, v FROM facts
-                           WHERE a = 'http://www.w3.org/2002/07/owl#equivalentClass'
-                           AND (e = ? OR v = ?)
+        let equiv_query = "SELECT subject, object FROM triples
+                           WHERE predicate = 'owl:equivalentClass'
+                           AND object_type = 'iri'
+                           AND (subject = ? OR object = ?)
                            AND retracted = 0
-                           AND e NOT LIKE '_:%'
-                           AND v NOT LIKE '_:%'";
+                           AND subject NOT LIKE '_:%'
+                           AND object NOT LIKE '_:%'";
 
         let equiv_results: Vec<(String, String)> = conn
             .prepare(equiv_query)
@@ -194,11 +406,12 @@ fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<Str
         for central_equiv in &central_ids {
             let edges: Vec<(String, String)> = conn
                 .prepare(
-                    "SELECT e, v FROM facts
-                     WHERE a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
-                     AND v = ?
+                    "SELECT subject, object FROM triples
+                     WHERE predicate = 'rdfs:subClassOf'
+                     AND object_type = 'iri'
+                     AND object = ?
                      AND retracted = 0
-                     AND e NOT LIKE '_:%'"
+                     AND subject NOT LIKE '_:%'"
                 )
                 .map_err(|e| format!("Prepare error: {}", e))?
                 .query_map([central_equiv], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -224,11 +437,12 @@ fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<Str
         for central_equiv in &central_ids {
             let edges: Vec<(String, String)> = conn
                 .prepare(
-                    "SELECT e, v FROM facts
-                     WHERE e = ?
-                     AND a = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
+                    "SELECT subject, object FROM triples
+                     WHERE subject = ?
+                     AND predicate = 'rdfs:subClassOf'
+                     AND object_type = 'iri'
                      AND retracted = 0
-                     AND v NOT LIKE '_:%'"
+                     AND object NOT LIKE '_:%'"
                 )
                 .map_err(|e| format!("Prepare error: {}", e))?
                 .query_map([central_equiv], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -254,11 +468,12 @@ fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<Str
         // Query all equivalentClass relationships
         let equiv_relations: Vec<(String, String)> = conn
             .prepare(
-                "SELECT e, v FROM facts
-                 WHERE a = 'http://www.w3.org/2002/07/owl#equivalentClass'
+                "SELECT subject, object FROM triples
+                 WHERE predicate = 'owl:equivalentClass'
+                 AND object_type = 'iri'
                  AND retracted = 0
-                 AND e NOT LIKE '_:%'
-                 AND v NOT LIKE '_:%'"
+                 AND subject NOT LIKE '_:%'
+                 AND object NOT LIKE '_:%'"
             )
             .map_err(|e| format!("Prepare error: {}", e))?
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -291,9 +506,9 @@ fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<Str
 
             if root_e != root_v {
                 // Choose canonical: prefer schema:Thing over owl:Thing
-                let canonical = if root_e == "http://www.w3.org/2002/07/owl#Thing" {
+                let canonical = if root_e == "owl:Thing" {
                     root_v.clone()
-                } else if root_v == "http://www.w3.org/2002/07/owl#Thing" {
+                } else if root_v == "owl:Thing" {
                     root_e.clone()
                 } else if root_e.len() < root_v.len() {
                     root_e.clone()
@@ -354,10 +569,11 @@ fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<Str
             let mut class_tx: Option<i64> = None;
             for equiv_id in equivalent_entities {
                 if let Ok(tx) = conn.query_row(
-                    "SELECT tx FROM facts
-                     WHERE e = ?
-                     AND a = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
-                     AND (v = 'http://www.w3.org/2002/07/owl#Class' OR v = 'http://www.w3.org/2000/01/rdf-schema#Class')
+                    "SELECT tx FROM triples
+                     WHERE subject = ?
+                     AND predicate = 'rdf:type'
+                     AND object_type = 'iri'
+                     AND (object = 'owl:Class' OR object = 'rdfs:Class')
                      AND retracted = 0
                      LIMIT 1",
                     [equiv_id],
@@ -377,17 +593,12 @@ fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<Str
             // Collect labels from all equivalent entities
             let mut labels = Vec::new();
             for equiv_id in equivalent_entities {
-                if let Ok(mut label) = conn.query_row(
-                    "SELECT v FROM facts WHERE e = ? AND a = 'http://www.w3.org/2000/01/rdf-schema#label' AND retracted = 0 LIMIT 1",
+                // Try to get literal label from object_value first, then fall back to object
+                if let Ok(label) = conn.query_row(
+                    "SELECT COALESCE(object_value, object) FROM triples WHERE subject = ? AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1",
                     [equiv_id],
                     |row| row.get::<_, String>(0),
                 ) {
-                    // Remove quotes and language tags from labels (e.g., "entity"@en -> entity)
-                    if label.starts_with('"') {
-                        if let Some(end_quote_idx) = label[1..].find('"') {
-                            label = label[1..1+end_quote_idx].to_string();
-                        }
-                    }
                     labels.push(label);
                 } else {
                     // Fallback: extract last part of URI
@@ -445,10 +656,24 @@ fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<Str
         // Get the canonical ID that was actually used
         let canonical_central_id = equivalence_map.get(&central_id).unwrap_or(&central_id).clone();
 
+        // Expand all IRIs back to full form for frontend
+        let mut expanded_nodes: Vec<GraphNode> = nodes.into_iter().map(|mut node| {
+            node.id = namespaces::expand_iri(&node.id);
+            node
+        }).collect();
+
+        let expanded_links: Vec<GraphLink> = links.into_iter().map(|mut link| {
+            link.source = namespaces::expand_iri(&link.source);
+            link.target = namespaces::expand_iri(&link.target);
+            link
+        }).collect();
+
+        let expanded_central_id = namespaces::expand_iri(&canonical_central_id);
+
         let graph_data = GraphData {
-            nodes,
-            links,
-            central_node_id: canonical_central_id
+            nodes: expanded_nodes,
+            links: expanded_links,
+            central_node_id: expanded_central_id
         };
         Ok(serde_json::to_string(&graph_data).map_err(|e| format!("Serialization error: {}", e))?)
     } else {
@@ -471,11 +696,12 @@ fn search_classes(state: tauri::State<AppState>, query: String) -> Result<String
         // Get all owl:Class and rdfs:Class entities
         let mut stmt = conn
             .prepare(
-                "SELECT DISTINCT e, tx FROM facts
-                 WHERE a = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
-                 AND (v = 'http://www.w3.org/2002/07/owl#Class' OR v = 'http://www.w3.org/2000/01/rdf-schema#Class')
+                "SELECT DISTINCT subject, tx FROM triples
+                 WHERE predicate = 'rdf:type'
+                 AND object_type = 'iri'
+                 AND (object = 'owl:Class' OR object = 'rdfs:Class')
                  AND retracted = 0
-                 AND e NOT LIKE '_:%'"
+                 AND subject NOT LIKE '_:%'"
             )
             .map_err(|e| format!("Prepare error: {}", e))?;
 
@@ -488,56 +714,32 @@ fn search_classes(state: tauri::State<AppState>, query: String) -> Result<String
         let mut results = Vec::new();
 
         for (entity_id, tx) in class_entities {
-            // Get label
-            let label: String = conn
+            // Get label (prefer object_value for literals, fallback to object for IRIs)
+            let clean_label: String = conn
                 .query_row(
-                    "SELECT v FROM facts WHERE e = ? AND a = 'http://www.w3.org/2000/01/rdf-schema#label' AND retracted = 0 LIMIT 1",
+                    "SELECT COALESCE(object_value, object) FROM triples WHERE subject = ? AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1",
                     [&entity_id],
                     |row| row.get(0),
                 )
                 .unwrap_or_else(|_| {
-                    entity_id.split(&['/', '#'][..]).last().unwrap_or(&entity_id).to_string()
+                    entity_id.split(&['/', '#', ':'][..]).last().unwrap_or(&entity_id).to_string()
                 });
 
-            // Clean label (remove quotes and language tags)
-            let clean_label = if label.starts_with('"') {
-                if let Some(end_quote_idx) = label[1..].find('"') {
-                    label[1..1+end_quote_idx].to_string()
-                } else {
-                    label.clone()
-                }
-            } else {
-                label.clone()
-            };
-
-            // Get definition (check multiple definition properties)
+            // Get definition (check multiple definition properties, prefer object_value for literals)
             let definition: Option<String> = conn
                 .query_row(
-                    "SELECT v FROM facts
-                     WHERE e = ?
-                     AND a IN (
-                         'http://www.w3.org/2004/02/skos/core#definition',
-                         'http://purl.obolibrary.org/obo/IAO_0000115',
-                         'http://www.w3.org/2000/01/rdf-schema#comment'
+                    "SELECT COALESCE(object_value, object) FROM triples
+                     WHERE subject = ?
+                     AND predicate IN (
+                         'skos:definition',
+                         'rdfs:comment'
                      )
                      AND retracted = 0
                      LIMIT 1",
                     [&entity_id],
                     |row| row.get(0),
                 )
-                .ok()
-                .map(|def: String| {
-                    // Clean definition
-                    if def.starts_with('"') {
-                        if let Some(end_quote_idx) = def[1..].find('"') {
-                            def[1..1+end_quote_idx].to_string()
-                        } else {
-                            def
-                        }
-                    } else {
-                        def
-                    }
-                });
+                .ok();
 
             // Calculate relevance score with weighted matches
             let query_lower = query.to_lowercase();
@@ -598,7 +800,13 @@ fn search_classes(state: tauri::State<AppState>, query: String) -> Result<String
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(5);
 
-        Ok(serde_json::to_string(&results).map_err(|e| format!("Serialization error: {}", e))?)
+        // Expand IRIs back to full form for frontend
+        let expanded_results: Vec<SearchResult> = results.into_iter().map(|mut result| {
+            result.id = namespaces::expand_iri(&result.id);
+            result
+        }).collect();
+
+        Ok(serde_json::to_string(&expanded_results).map_err(|e| format!("Serialization error: {}", e))?)
     } else {
         Err("Database not initialized".to_string())
     }
@@ -611,38 +819,13 @@ pub fn run() {
         Ok(conn) => {
             println!("Database initialized successfully");
 
-            // Print stats before import
+            // Print database stats
             if let Ok(stats) = db::get_stats(&conn) {
                 println!("Database stats:");
-                println!("  Total facts: {}", stats.total_facts);
-                println!("  Active facts: {}", stats.active_facts);
+                println!("  Total triples: {}", stats.total_facts);
+                println!("  Active triples: {}", stats.active_facts);
                 println!("  Transactions: {}", stats.total_transactions);
                 println!("  Entities: {}", stats.entities_count);
-                println!("  Ontology imported: {}", stats.ontology_imported);
-
-                // Import core ontologies if not already imported
-                if !stats.ontology_imported {
-                    println!("\n🚀 Importing core ontologies...");
-                    match ontology::import_all_core_ontologies(&conn) {
-                        Ok(import_stats) => {
-                            println!("\n✅ Ontology import successful!");
-                            for stat in import_stats {
-                                println!("  - {}: {} facts", stat.file, stat.facts_inserted);
-                            }
-
-                            // Print updated stats
-                            if let Ok(new_stats) = db::get_stats(&conn) {
-                                println!("\n📊 Updated database stats:");
-                                println!("  Total facts: {}", new_stats.total_facts);
-                                println!("  Active facts: {}", new_stats.active_facts);
-                                println!("  Entities: {}", new_stats.entities_count);
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("❌ Failed to import ontologies: {:?}", e);
-                        }
-                    }
-                }
             }
 
             Some(conn)
@@ -658,7 +841,7 @@ pub fn run() {
         .manage(AppState {
             db: Mutex::new(db_conn),
         })
-        .invoke_handler(tauri::generate_handler![greet, get_db_stats, get_all_facts, get_node_facts, get_ontology_graph, search_classes])
+        .invoke_handler(tauri::generate_handler![greet, get_db_stats, get_all_triples, get_node_triples, get_node_backlinks, get_node_statistics, get_applicable_properties, get_ontology_graph, search_classes])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

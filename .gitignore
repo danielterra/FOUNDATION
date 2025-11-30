@@ -1,4 +1,6 @@
 node_modules
 .svelte-kit
-supernova.db
 build
+
+# Ontology build artifacts (not versioned, rebuild from WordNet)
+core-ontology/*.ttl

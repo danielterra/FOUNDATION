@@ -3574,6 +3574,7 @@ name = "supernova-tauri-app"
 version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
+ "lazy_static",
  "rio_api",
  "rio_turtle",
  "rio_xml",

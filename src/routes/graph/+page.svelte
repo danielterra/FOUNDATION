@@ -11,8 +11,11 @@
 	let fullGraphData = null;
 	let currentNodeId = null;
 	let currentNodeLabel = '';
-	let nodeFacts = [];
-	let loadingFacts = false;
+	let nodeTriples = [];
+	let nodeBacklinks = [];
+	let nodeStatistics = null;
+	let applicableProperties = [];
+	let loadingTriples = false;
 	let graphComponent;
 	let visibleGraphData = null;
 
@@ -81,16 +84,29 @@
 		}
 	});
 
-	async function loadNodeFacts(nodeId) {
-		loadingFacts = true;
+	async function loadNodeTriples(nodeId) {
+		loadingTriples = true;
 		try {
-			const factsJson = await invoke('get_node_facts', { nodeId: nodeId });
-			nodeFacts = JSON.parse(factsJson);
+			// Load triples, backlinks, statistics, and applicable properties in parallel
+			const [triplesJson, backlinksJson, statisticsJson, propertiesJson] = await Promise.all([
+				invoke('get_node_triples', { nodeId: nodeId }),
+				invoke('get_node_backlinks', { nodeId: nodeId }),
+				invoke('get_node_statistics', { nodeId: nodeId }),
+				invoke('get_applicable_properties', { nodeId: nodeId })
+			]);
+
+			nodeTriples = JSON.parse(triplesJson);
+			nodeBacklinks = JSON.parse(backlinksJson);
+			nodeStatistics = JSON.parse(statisticsJson);
+			applicableProperties = JSON.parse(propertiesJson);
 		} catch (err) {
-			console.error('Failed to load facts:', err);
-			nodeFacts = [];
+			console.error('Failed to load node data:', err);
+			nodeTriples = [];
+			nodeBacklinks = [];
+			nodeStatistics = null;
+			applicableProperties = [];
 		} finally {
-			loadingFacts = false;
+			loadingTriples = false;
 		}
 	}
 
@@ -115,8 +131,8 @@
 
 			currentNodeLabel = centralNode.label;
 
-			// Load facts for the canonical ID
-			loadNodeFacts(canonicalId);
+			// Load triples for the canonical ID
+			loadNodeTriples(canonicalId);
 
 			// Show all nodes and links from backend
 			visibleGraphData = {
@@ -145,8 +161,11 @@
 		{#if currentNodeId}
 			<SidePanel
 				{currentNodeLabel}
-				{nodeFacts}
-				{loadingFacts}
+				{nodeTriples}
+				{nodeBacklinks}
+				{nodeStatistics}
+				{applicableProperties}
+				{loadingTriples}
 				onNavigateToNode={navigateToNode}
 				{getNodeDisplayName}
 			/>
