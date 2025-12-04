@@ -1,33 +1,39 @@
-# Problem 4: Base Ontology Selection ~~and WordNet Integration~~
+## Problem 4: Base Ontology Selection
 
-## Problem Statement
+### What
 
-FOUNDATION needs a foundational ontology that provides essential concepts without coupling to application-specific data structures. ~~We've been exploring WordNet as the vocabulary source, but need to clarify its role and limitations.~~ **Update (2024-12-04):** WordNet approach rejected. Moving to manual, curated base ontology.
+FOUNDATION needs a foundational ontology that provides essential concepts without coupling to application-specific data structures.
 
-## Context
+### Why This Matters
 
-There are two distinct concerns that were getting mixed:
+**For Semantic Foundation:**
+- Provides common vocabulary for reasoning and inference
+- Enables concept discovery ("what is an agent?", "what types of processes exist?")
+- Establishes clear class hierarchy for user extensions
 
-1. **Base Ontology** (universal vocabulary)
-   - Provides concepts and semantic relationships
-   - Should be application-agnostic
-   - Examples: "dog is-a mammal", "telephone is-a device"
+**For Interoperability:**
+- Shared understanding across FOUNDATION instances
+- AI can reason about relationships between concepts
+- Users extend base concepts maintaining compatibility
 
-2. **Application Data Structure** (FOUNDATION-specific schema)
-   - Properties for instances: `hasName`, `hasAge`, `hasPhoneNumber`
-   - Business rules and constraints
-   - Should be defined separately (see [semantic-data-structure.md](semantic-data-structure.md))
+**For Maintainability:**
+- Clear separation between foundation and application concerns
+- Can evolve base ontology without breaking user data
+- Documented examples show proper usage patterns
 
-## Current State
+**For Simplicity:**
+- Only includes concepts actually needed
+- Grows incrementally based on real requirements
+- Avoids over-engineering with massive vocabularies
 
-### What We Have
-- ✅ RDF/RDFS/OWL core vocabulary ([rdf-rdfs-owl-core.ttl](../../../../core-ontology/rdf-rdfs-owl-core.ttl))
-- ✅ WordNet 2024 imported (102,154 synsets: 84,956 nouns, 13,830 verbs, 7,502 adjectives, 3,622 adverbs)
-- ✅ Semantic relations working: hypernym, meronym, holonym, antonym, etc.
-- ✅ Parser optimized for O(n) single-pass processing
-- ✅ Labels extracted from lemmas and definitions
+---
 
-### What WordNet Provides
+### Solutions
+
+<details>
+<summary><strong>Solution 1: WordNet Integration</strong> [❌ REJECTED]</summary>
+
+**What WordNet Provides:**
 - **Concepts as Classes**: Every synset becomes an `owl:Class`
   - Example: `FOUNDATION:Concept_oewn_02084442_n` = "dog, domestic dog, Canis familiaris"
 - **Semantic Relations**:
@@ -38,15 +44,11 @@ There are two distinct concerns that were getting mixed:
   - Domain: domain-topic, pertainym
 - **Metadata**: Labels (via `rdfs:label`), definitions (via `rdfs:comment`), examples (via `skos:example`)
 
-### What WordNet Does NOT Provide
+**What WordNet Does NOT Provide:**
 - ❌ Datatype properties (`hasName`, `hasAge`, `hasBirthDate`)
 - ❌ Instances (no "Lassie" or "Snoopy", only the concept "dog")
 - ❌ Domain-specific schemas (no "Customer", "Invoice", "Order")
 - ❌ Business rules or constraints
-
-## Questions to Answer
-
-### 1. Is WordNet the Right Choice?
 
 **Pros:**
 - Rich semantic network (102K+ concepts)
@@ -56,110 +58,88 @@ There are two distinct concerns that were getting mixed:
 
 **Cons:**
 - Large import size (~520K triples, 246MB database)
-- Linguistic focus (good for NLP, maybe overkill for business data?)
+- Linguistic focus (good for NLP, overkill for business data)
 - No instances, only concepts
 - English-only (WordNet 2024)
+- 30+ second import time
 
-**Alternatives to Consider:**
-- **Schema.org**: Web-focused, has instances and properties, smaller, multilingual
-- **DBpedia**: Wikipedia-based, has instances (Barack Obama, Eiffel Tower)
-- **UMBEL**: Upper-level ontology, lighter than WordNet
-- **ConceptNet**: Multilingual, simpler structure
-- **Custom minimal ontology**: Only concepts we actually need
+**Why Rejected:**
+Too comprehensive for practical use. FOUNDATION needs essential concepts, not exhaustive linguistic coverage. The overhead of 520K triples outweighs the benefit of having every possible concept pre-defined.
 
-### 2. Should We Keep All WordNet Data?
+**Implementation Attempt:**
+- Full import of WordNet 2024 (102K synsets)
+- O(n) parser in [scripts/build-database.cjs](../../../../scripts/build-database.cjs)
+- Result: Working but impractical (246MB database, 30s build time)
 
-Current import: **All synsets** (102K concepts)
+</details>
 
-Options:
-- **A) Keep all**: Rich semantic network, but large
-- **B) Filter by frequency**: Only common concepts (top 10K? 20K?)
-- **C) Filter by domain**: Only concrete nouns (remove abstract/rare terms)
-- **D) Lazy loading**: Import concepts on-demand as users reference them
-- **E) Replace with lighter alternative**: Schema.org, custom ontology
+<details>
+<summary><strong>Solution 2: Schema.org Vocabulary</strong> [⏸️ EVALUATED]</summary>
 
-### 3. How Should WordNet Integrate with User Data?
+**Characteristics:**
+- Web-focused structured data vocabulary
+- ~800 types, ~1,400 properties
+- Has instances and rich property definitions
+- Multilingual support
+- Smaller than WordNet (~50K triples)
 
-When a user creates a class like `FOUNDATION:Customer`:
+**Pros:**
+- Industry standard for web data
+- Practical, real-world concepts
+- Good coverage of common domains (Person, Organization, Event, Product)
+- Well-documented with examples
 
-**Option A - Subclass WordNet concepts:**
-```turtle
-FOUNDATION:Customer rdfs:subClassOf FOUNDATION:Concept_oewn_person_n .
-```
+**Cons:**
+- Still external dependency
+- Web-centric bias (may not fit all FOUNDATION use cases)
+- Some concepts too specific, others too abstract
 
-**Option B - SKOS mapping (loose coupling):**
-```turtle
-FOUNDATION:Customer skos:related FOUNDATION:Concept_oewn_person_n .
-```
+**Status:** Considered but not implemented. Prefer building custom ontology incrementally.
 
-**Option C - No direct link:**
-```turtle
-FOUNDATION:Customer a owl:Class .
-# User manually adds relationships if needed
-```
+</details>
 
-### 4. What About Multilingual Support?
+<details open>
+<summary><strong>Solution 3: Custom Minimal Ontology</strong> [✅ CURRENT]</summary>
 
-WordNet 2024 is English-only. Options:
-- Keep English WordNet, add translation layer later
-- Switch to multilingual alternative (ConceptNet, BabelNet)
-- Use language-tagged literals for labels
+**Approach:**
+Build minimal base ontology manually, grow incrementally based on real needs.
 
-## Implementation History
+**Core Concepts:**
 
-### Attempts Made
+Built minimal ontology covering essential concepts:
+- **AbstractThing** vs **ConcreteThing** division (ideas vs physical/digital)
+- **AgentCapacity** as mixin for entities that can act
+- Work management concepts (Goal, Problem, Solution, Task)
+- Physical infrastructure (Computer, StorageDevice)
+- Multiple inheritance pattern (e.g., Person = AgentCapacity + PhysicalThing)
 
-1. **Initial import of complex ontologies** (FOAF, Dublin Core, Schema.org)
-   - **Result**: Too complex, too many dependencies
-   - **Decision**: Removed, kept only RDF/RDFS/OWL core
+**Key Design Decisions:**
 
-2. **WordNet full import** (current)
-   - **Result**: Works, but large (246MB)
-   - **Performance**: O(n) parser, ~30s import time
-   - **Status**: ✅ Working, but questioning if it's the right approach
+1. **Naming convention**: Classes ending in "Capacity" = behavior/capability, without suffix = nature/essence
+2. **One file per class**: [core-ontology/](../../../../core-ontology/) with OOP-style property definitions
+3. **Examples in every class**: `rdfs:seeAlso` shows practical usage
+4. **Automatic dependency resolution**: Topological sort imports files in correct order
 
-3. **Attempted to add `hasName` to core ontology**
-   - **Result**: Correctly identified as mixing concerns
-   - **Decision**: Reverted, keep base ontology separate from app schema
+**Why This Works:**
+- Start small, grow incrementally based on real needs
+- Practical size and performance (~300 triples, <1s build time)
+- Maintains semantic rigor without over-engineering
+- Clear separation: base ontology provides foundation, users extend for their domains
 
-### Current Files
+</details>
 
-- [core-ontology/rdf-rdfs-owl-core.ttl](../../../../core-ontology/rdf-rdfs-owl-core.ttl) - RDF/RDFS/OWL vocabulary (189 triples)
-- [core-ontology/english-wordnet-2024.ttl](../../../../core-ontology/english-wordnet-2024.ttl) - WordNet synsets (5.7GB source)
-- [scripts/build-database.cjs](../../../../scripts/build-database.cjs) - Import script with WordNet parser
-- Database: `FOUNDATION.db` (246MB, 520K triples)
+---
 
-## Success Criteria
+### Success Criteria
 
 A successful base ontology should:
 
-1. **Provide semantic foundation** without dictating application structure
-2. **Be queryable** for concept discovery ("what is a dog?", "what are types of vehicles?")
-3. **Have reasonable size** (tradeoff: completeness vs performance)
-4. **Support multilingual** labels (future requirement)
-5. **Not conflict** with user-defined schemas
-6. **Be maintainable** (can update/extend without breaking user data)
-
-## ~~Next Steps~~ Decision Made (2024-12-04)
-
-~~Need to decide:~~
-
-1. [x] ~~Keep WordNet or explore alternatives?~~ **REJECTED WordNet** - too comprehensive, not practical
-2. [x] ~~If keeping WordNet: Full import or filtered subset?~~ **N/A** - not using WordNet
-3. [ ] How should user classes relate to base ontology concepts? - **Still relevant**
-4. [ ] Should we support multilingual from the start? - **Defer to later**
-5. [x] Document the separation between base ontology and app schema clearly - **Documented in semantic-data-structure.md**
-
-## New Approach: Manual, Curated Base Ontology
-
-**Decision:** Build minimal base ontology manually, grow incrementally based on real needs.
-
-**Starting point (Q1 focus on personal finance):**
-- Transaction, Category, Account (financial concepts)
-- Core properties: amount, date, hasCategory
-- Extend as needed for other use cases
-
-**See:** [Solution 5 in semantic-data-structure.md](semantic-data-structure.md) for implementation details.
+1. ✅ **Provide semantic foundation** without dictating application structure
+2. ✅ **Be queryable** for concept discovery ("what is an agent?", "what types of things exist?")
+3. ✅ **Have reasonable size** (tradeoff: completeness vs performance)
+4. ⏸️ **Support multilingual** labels (future requirement - defer to later)
+5. ✅ **Not conflict** with user-defined schemas
+6. ✅ **Be maintainable** (can update/extend without breaking user data)
 
 ## Related Problems
 
