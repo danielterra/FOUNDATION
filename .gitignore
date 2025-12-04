@@ -1,6 +1,3 @@
 node_modules
 .svelte-kit
 build
-
-# Ontology build artifacts (not versioned, rebuild from WordNet)
-core-ontology/*.ttl

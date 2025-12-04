@@ -1,8 +1,8 @@
-# Problem 4: Base Ontology Selection and WordNet Integration
+# Problem 4: Base Ontology Selection ~~and WordNet Integration~~
 
 ## Problem Statement
 
-FOUNDATION needs a foundational ontology that provides universal concepts (person, dog, telephone, etc.) without coupling to application-specific data structures. We've been exploring WordNet as the vocabulary source, but need to clarify its role and limitations.
+FOUNDATION needs a foundational ontology that provides essential concepts without coupling to application-specific data structures. ~~We've been exploring WordNet as the vocabulary source, but need to clarify its role and limitations.~~ **Update (2024-12-04):** WordNet approach rejected. Moving to manual, curated base ontology.
 
 ## Context
 
@@ -140,15 +140,26 @@ A successful base ontology should:
 5. **Not conflict** with user-defined schemas
 6. **Be maintainable** (can update/extend without breaking user data)
 
-## Next Steps
+## ~~Next Steps~~ Decision Made (2024-12-04)
 
-Need to decide:
+~~Need to decide:~~
 
-1. [ ] Keep WordNet or explore alternatives?
-2. [ ] If keeping WordNet: Full import or filtered subset?
-3. [ ] How should user classes relate to base ontology concepts?
-4. [ ] Should we support multilingual from the start?
-5. [ ] Document the separation between base ontology and app schema clearly
+1. [x] ~~Keep WordNet or explore alternatives?~~ **REJECTED WordNet** - too comprehensive, not practical
+2. [x] ~~If keeping WordNet: Full import or filtered subset?~~ **N/A** - not using WordNet
+3. [ ] How should user classes relate to base ontology concepts? - **Still relevant**
+4. [ ] Should we support multilingual from the start? - **Defer to later**
+5. [x] Document the separation between base ontology and app schema clearly - **Documented in semantic-data-structure.md**
+
+## New Approach: Manual, Curated Base Ontology
+
+**Decision:** Build minimal base ontology manually, grow incrementally based on real needs.
+
+**Starting point (Q1 focus on personal finance):**
+- Transaction, Category, Account (financial concepts)
+- Core properties: amount, date, hasCategory
+- Extend as needed for other use cases
+
+**See:** [Solution 5 in semantic-data-structure.md](semantic-data-structure.md) for implementation details.
 
 ## Related Problems
 

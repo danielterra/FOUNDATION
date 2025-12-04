@@ -1,39 +1,35 @@
-## Problem 3: Don't Know How to Structure Data for Semantic Architecture
+## Problem 3: Data Structure for Semantic Architecture
 
 ### What
-We don't know how to structure data to support FOUNDATION's architecture principles:
 
-**Interoperability (Principle 3)**
-- All instances share a common base ontology (FOUNDATION Base)
-- Users extend base classes for specific needs (e.g., `RecurringTransaction extends Transaction`)
-- AI must understand custom classes through their relationship to base classes
-- Why: AI can interpret any instance's worldview by reasoning over the class hierarchy, enabling seamless integration and data exchange
+We need a data structure that supports FOUNDATION's core principles while remaining simple and powerful.
 
-**Class Extension & Inference (Principle 3)**
-- Users extend base classes (Employee extends Person)
-- System must infer inherited properties automatically
-- Why: "SoftwareEngineer extends Person" should inherit all Person properties without configuration
+### Why This Matters
 
-**Immutable Timeline (Principle 5)**
-- Never update records - only insert new facts that replace old ones
-- Why: Complete history preserved for undo, audit, compliance
+**For Interoperability:**
+- Different FOUNDATION instances must understand each other's data natively
+- Users extend base concepts without breaking compatibility
+- AI can reason about custom structures through semantic relationships
 
-**Automation Reliability (Principle 4)**
-- System must reliably detect and replay every data change
-- Replaying the same sequence of changes always produces the same final state (idempotent)
-- Why: "Database itself is the log" - automations can be safely retried, tested with production data, and debugged by replaying history
+**For Immutability:**
+- Complete audit trail — nothing is lost, ever
+- Safe experimentation — fork your data, test changes, merge back
+- Time travel — see any point in your data's history
 
-**Origin Tracking (Principle 6)**
-- Every fact must track who/what asserted it (user, AI, import, automation)
-- Why: Transparency and accountability for all data changes
+**For Automation:**
+- The database itself is the log — every change triggers actions
+- Reliable, testable, debuggable — replay history to understand behavior
+- Idempotent — same changes always produce same result
 
-**Multi-Source Truth**
-- Different sources can assert conflicting facts simultaneously
-- Why: User edits while AI suggests updates and imports run
+**For Transparency:**
+- Every fact tracks its origin — user, AI, import, or automation
+- Multiple sources can coexist — you choose which to trust
+- Full accountability — who changed what, when, and why
 
-**Relationship Navigation**
-- Efficiently traverse entity relationships (Person → worksAt → Organization → locatedIn → City)
-- Why: Query across connected entities like spreadsheet formulas but without breaking
+**For Navigation:**
+- Traverse relationships naturally — follow connections like spreadsheet formulas
+- Query across entities without brittle references
+- Complex questions answered simply
 
 ---
 
@@ -71,7 +67,7 @@ We create four covering indices to optimize different RDF triple query patterns:
 
 The origin `core` is reserved for immutable base facts:
 - RDF/RDFS/OWL meta-vocabulary (essential primitives for defining classes and properties)
-- FOUNDATION Base Ontology (comprehensive foundation covering most nouns and verbs from English dictionary)
+- FOUNDATION Base Ontology (see [base-ontology-selection.md](base-ontology-selection.md))
 - System schema definitions
 - Built-in types and properties
 - These facts are never retracted and come pre-loaded in versioned database
@@ -98,215 +94,9 @@ We store RDF triples natively while maintaining performance for range queries:
 
 ---
 
-### Ontology Import Strategy
+### RDF Meta-Vocabulary Import
 
-**Solutions Attempted:**
-
-<details>
-<summary><strong>Solution 1: Import Common Core Ontologies (CCO)</strong> [❌ REJECTED]</summary>
-
-**Implementation:**
-- Imported 258+ classes from CCO
-- Attempted to use military/government ontology for personal finance
-
-**Problems Found:**
-- Military/government focus doesn't match personal finance use case
-- Cognitive overhead for users trying to understand the model
-- Most classes unused (e.g., Weapon, MilitaryOrganization, GeospatialRegion)
-- Graph visualization cluttered with irrelevant concepts
-
-**Decision:** Rejected - removed CCO entirely from FOUNDATION base ontology (2024-11-25)
-
-</details>
-
-<details>
-<summary><strong>Solution 2: Import Basic Formal Ontology (BFO)</strong> [❌ REJECTED]</summary>
-
-**Implementation:**
-- Imported BFO as upper ontology foundation
-- Used abstract concepts like Continuant, Occurrent, Entity
-
-**Problems Found:**
-- Upper ontology designed for philosophers and ontologists
-- Concepts like "Continuant" and "Occurrent" confusing for regular users
-- Adds complexity without practical value for FOUNDATION use cases
-- Users don't need to understand formal ontology theory
-
-**Decision:** Rejected - removed BFO from FOUNDATION base ontology (2024-11-25)
-
-</details>
-
-<details>
-<summary><strong>Solution 3: Import Schema.org vocabulary</strong> [❌ REJECTED]</summary>
-
-**Implementation:**
-- Imported Schema.org classes and properties
-- Attempted to use web-focused vocabulary for app data
-
-**Problems Found:**
-- Web-focused vocabulary (SEO, markup)
-- Many classes irrelevant (Recipe, Movie, MedicalCondition)
-- Requires extensive pruning and adaptation
-- Doesn't align with FOUNDATION's personal data use cases
-
-**Decision:** Rejected - removed Schema.org from FOUNDATION base ontology (2024-11-25)
-
-</details>
-
-<details open>
-<summary><strong>Solution 4: Build comprehensive ontology from WordNet semantic graph</strong> [✅ IN PROGRESS]</summary>
-
-**Implementation:**
-- Keep RDF/RDFS/OWL meta-vocabulary (essential primitives)
-- Convert WordNet synsets to OWL classes (120,630 concepts)
-- Map WordNet semantic relations to RDF properties:
-  - `wn:hypernym/hyponym` → `rdfs:subClassOf` (class hierarchy)
-  - `wn:mero_part/holo_part` → object properties (part-of relationships)
-  - `wn:causes/entails` → object properties (causation/implication)
-  - `wn:definition` → `rdfs:comment` (documentation)
-  - `wn:example` → `skos:example` (usage examples)
-- Let users extend with domain-specific classes through UI
-
-**Data Source: Open English WordNet 2024**
-- **License**: CC-BY 4.0 (permissive, commercial use OK)
-- **Coverage**: 161,705 words, 120,630 synsets, 419,168 semantic relations
-- **Structure**: Lexical concepts organized in semantic hierarchy
-- **Download**: `npm run update:wordnet` ([scripts/download-wordnet.sh](../../scripts/download-wordnet.sh))
-- **Format**: RDF/Turtle with ontolex vocabulary
-
-**Rationale:**
-- RDF/RDFS/OWL cannot be removed - they define how to define classes and properties
-- WordNet provides comprehensive English vocabulary coverage (most nouns/verbs)
-- Semantic hierarchy (hypernym/hyponym) maps naturally to `rdfs:subClassOf`
-- Human-readable definitions enable AI to understand domain-specific extensions
-- Natural language foundation applicable to any use case
-- Community-maintained, updated annually
-
-**Conversion Strategy:**
-
-```turtle
-# WordNet Synset (before conversion)
-wnid:oewn-00007846-n
-    a ontolex:LexicalConcept ;
-    wn:definition "a human being; person, singular..."@en ;
-    wn:hypernym wnid:oewn-00004475-n ;  # organism
-    wn:hyponym wnid:oewn-09628155-n ;    # adult
-    wn:mero_part wnid:oewn-04624919-n ;  # body
-
-# FOUNDATION Class (after conversion)
-sn:Person
-    a owl:Class ;
-    rdfs:subClassOf sn:Organism ;
-    rdfs:comment "a human being; person, singular..."@en ;
-    skos:example "there was too much for one person to do"@en ;
-    sn:derivedFrom wnid:oewn-00007846-n .
-
-sn:Adult
-    a owl:Class ;
-    rdfs:subClassOf sn:Person .
-
-sn:hasPart
-    a owl:ObjectProperty ;
-    rdfs:domain sn:Person ;
-    rdfs:range sn:Body .
-```
-
-**Benefits:**
-- ✅ Comprehensive coverage - 120k+ concepts from natural language
-- ✅ Semantic hierarchy - Ready-made class taxonomy via hypernym/hyponym
-- ✅ AI-friendly - Definitions enable AI to reason about extensions
-- ✅ Plain English - No academic jargon (uses everyday words)
-- ✅ Maintained - Annual updates from Open English WordNet
-- ✅ Permissive license - CC-BY 4.0 allows commercial use
-- ✅ Interoperable - RDF format enables standard export/import
-
-**Challenges:**
-- Need to convert ontolex:LexicalConcept → owl:Class
-- Filter/curate most relevant concepts (may not need all 120k)
-- Map WordNet relations to appropriate OWL/RDFS properties
-- Handle polysemy (one word, multiple meanings/synsets)
-
-**Build Process:**
-
-```bash
-# Development: Build ontology from WordNet
-npm run build:ontology
-
-# This script:
-# 1. Downloads WordNet 2024 if not present (.gitignore'd)
-# 2. Converts synsets → owl:Class → RDF triples
-# 3. Imports triples into SQLite (tx: 1-500, origin: "core")
-# 4. Creates FOUNDATION.db ready for version control
-```
-
-**Repository Structure:**
-
-```
-FOUNDATION.db                           # ✅ Single database (versioned)
-                                       #    - Base ontology (tx: 1-500, origin: "core")
-                                       #    - User data (tx: 501+, origin: "user:*")
-
-core-ontology/
-├── rdf-rdfs-owl-core.ttl          # ✅ Versioned (meta-vocabulary source)
-└── english-wordnet-2024.ttl       # ❌ Not versioned (.gitignore'd)
-
-scripts/
-├── download-wordnet.sh            # Downloads WordNet .ttl
-└── build-ontology-simple.js       # Converts WordNet → SQLite
-```
-
-**Important:** `FOUNDATION.db` at project root is the **only database** used by FOUNDATION. No other databases should be created or used.
-
-**Why SQLite Instead of .ttl in Git:**
-- ✅ **Small** - Compressed binary vs 202MB text
-- ✅ **Ready to use** - No parsing/conversion on startup
-- ✅ **Final format** - Triples already indexed and optimized
-- ✅ **Immutable** - Base ontology (origin: "core") never changes
-- ✅ **Reproducible** - Script rebuilds from WordNet when needed
-
-**Status:** ✅ In Progress
-- ✅ RDF/RDFS/OWL core imported and working
-- ✅ WordNet 2024 download script ready
-- 🔜 Create conversion script (synset → owl:Class → SQLite)
-- 🔜 Test with person/transaction concepts
-- 🔜 Commit FOUNDATION.db to git
-
-</details>
-
-**New Strategy: Build from RDF/RDFS/OWL Foundation**
-
-```
-Layer 1: RDF/RDFS/OWL Meta-Ontology (KEEP)
-  ├─ core-ontology/rdf-rdfs-owl-core.ttl
-  │  Defines: rdf:type, rdfs:Class, owl:ObjectProperty, xsd:string, etc.
-  │  Purpose: Meta-vocabulary for defining classes and properties
-  │  Status: ✅ Essential foundation - cannot be removed
-  │
-Layer 2: FOUNDATION Base Ontology (NEW - TO BE CREATED)
-  ├─ core-ontology/FOUNDATION-base.ttl
-  │  Defines: Comprehensive vocabulary covering most nouns and verbs from English dictionary
-  │  Examples: Person, Organization, Transaction, Event, Location, Document, etc.
-  │  Purpose: Natural language foundation enabling AI to understand any domain
-  │  Principles:
-  │    - Comprehensive coverage (thousands of base classes and properties)
-  │    - Clear, everyday language (no academic jargon)
-  │    - Domain-agnostic but practical
-  │    - Extensible by users
-  │
-Layer 3: FOUNDATION Domain Ontologies (USER-DEFINED)
-  ├─ Defined by users through UI
-  │  Examples: Transaction, Account, Category, Contact
-  │  Purpose: Application-specific concepts
-  │  Extends: FOUNDATION Base classes
-```
-
-**Import Order:**
-
-1. **RDF/RDFS/OWL** (tx: 1-200) - Meta-vocabulary primitives
-2. **FOUNDATION Base** (tx: 201-500) - Lightweight foundation ontology
-3. **User Domains** (tx: 501+) - Application and user-specific classes
-
-**Why import RDF/RDFS/OWL?**
+**Why import RDF/RDFS/OWL into the database?**
 
 Without these definitions in the database:
 - ❌ User creates `owl:ObjectProperty` → system doesn't know what that is
@@ -359,20 +149,16 @@ INSERT INTO triples (subject, predicate, object, object_value, object_datatype, 
 
 ---
 
-### FOUNDATION Base Ontology Design Principles
+### Success Criteria
 
-**Goal**: Design a comprehensive, natural language foundation ontology covering most English nouns and verbs
+**How we'll know the data structure problem is solved:**
 
-**Principles**:
-1. **Plain language** - No academic jargon (avoid: Continuant, Occurrent, Endurant)
-2. **Comprehensive coverage** - Thousands of classes and properties from everyday English
-3. **AI-friendly** - Enable AI to understand domain-specific extensions through natural language hierarchy
-4. **Domain agnostic** - Applicable to personal finance, health tracking, project management, etc.
-5. **Extensible** - Easy for users to subclass and adapt
+1. ✅ **Immutability works** - Can track complete history of all changes
+2. ✅ **Origin tracking works** - Every triple knows its source
+3. ✅ **Efficient queries** - Four indices enable fast lookups for all query patterns
+4. ✅ **RDF compatible** - Can export/import standard RDF formats
+5. ✅ **Schema validation** - System validates user data against RDF/RDFS/OWL vocabulary
+6. [ ] **Tested with real data** - Q1 KR1 financial tracking scenario works end-to-end
 
-**Current state** (PR #7):
-- ✅ RDF/RDFS/OWL core imported and working
-- ✅ Graph visualization working with force-directed layout
-- ⏸️ Schema.org/FOAF/BFO still imported (temporary, will be replaced)
-- 🔜 FOUNDATION Base to be created through analysis and iteration
+**Note:** For base ontology design (Entity, Agent, Event concepts), see [base-ontology-selection.md](base-ontology-selection.md)
 
