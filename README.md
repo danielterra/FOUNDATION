@@ -1,22 +1,42 @@
-# SuperNOVA
+# FOUNDATION
 
-## Simple as a spreadsheet. Powerful as enterprise software.
+## A SOLID FOUNDATION FOR FREEDOM
 
-**What if creating powerful systems was as simple as using a spreadsheet?**
+FOUNDATION reimagines how anyone — not just developers — can manage, automate, and derive knowledge from their data. Your computer. Your data. Your rules. No Big Tech gatekeepers.
 
-SuperNOVA reimagines how anyone — not just developers — can create tools for managing, automating, and analyzing their data. Just as spreadsheets democratized data management by making it accessible to everyone, SuperNOVA gives you one flexible environment where you can manage, automate, and analyze anything — your projects, customers, inventory, finances, or whatever matters to your life.
+### ONTOLOGY
 
-Where spreadsheets give you columns, SuperNOVA gives you **ontologies** — structured relationships between your data that stay intact as your system evolves. A shared base ontology acts like a common dictionary, enabling different SuperNOVA instances to understand each other's data without custom mappings or integrations.
+What if you could receive data from other systems natively, without integrations or mappings? FOUNDATION structures your data through ontology — formal relationships between entities that stay intact as your system evolves. A shared base ontology acts like a common dictionary, enabling different FOUNDATION instances to understand each other's data seamlessly.
 
-Where spreadsheets give you formulas, SuperNOVA gives you **automation**. Formulas recalculate values, but they can't send emails, update external systems, or trigger complex workflows. SuperNOVA reacts to every change with real automation — connecting to APIs and orchestrating multi-step processes without manual intervention.
+### AUTOMATION
 
-Where spreadsheets break at scale, SuperNOVA grows without limits. Excel caps at 1 million rows, Google Sheets at 10 million cells — and performance degrades long before that. SuperNOVA uses database architecture to handle billions of records efficiently. Need more? Add nodes to your cluster — another laptop, a cloud server, whatever fits your needs.
+What if your data could act on its own? FOUNDATION reacts to every change with real automation. Connect to APIs, orchestrate multi-step processes, and trigger complex workflows without manual intervention. Your data becomes a living, responsive system.
 
-Just as you can share a spreadsheet and collaborate with others, SuperNOVA enables seamless collaboration through its shared ontology. But unlike spreadsheets where multiple editors risk conflicts and overwrites, SuperNOVA provides proper conflict resolution, granular permissions, and full audit trails.
+### DISTRIBUTED POWER
+
+What if you could scale without begging cloud providers? Just open FOUNDATION on another computer and synchronize it. FOUNDATION orchestrates data across your devices — your laptop, your friend's server, your spare machine, or yes, even a cloud server if you want one. Each node contributes storage and processing power. Together they act as one powerful system. Distributed by design. Resilient by nature.
+
+### COLLABORATION
+
+What if working together didn't mean conflicts and overwrites? FOUNDATION uses an immutable database, conflict-free by nature. Nothing is altered — new facts are stored, nothing is lost, history is immutable. When information from different sources diverges, it's your choice which source to trust. Every change is traceable, every contributor accountable through full audit trails.
+
+### OWNERSHIP
+
+What if you could own and control your data? FOUNDATION runs locally on your own computer — no big Tech servers required. You own your data, you control your tools, and everything stays under your control.
+
+### LOCAL AI
+
+What if you had intelligent assistance without subscriptions or external services? FOUNDATION includes an efficient local AI that helps you build, analyze, and automate — solving most problems without ever leaving your machine or hiring external services. Private, fast, and always available.
+
+### OPEN SOURCE AND FREE
+
+What if software worked for humanity instead of shareholders? FOUNDATION is open source (GNU GPL) — no corporation owns it, no vendor locks you in, no subscription extracts rent from your work. Built by the community, for everyone. These ideas only benefit society when they're free, shared, and owned collectively by all of us (humans and our robot friends 🤖).
+
+**This is not just software. This is a statement:** Your data is not a commodity. Your computing power is not something to be rented back to you. Your freedom should not require a subscription.
 
 ---
 
-## Why This Project Exists
+## Why we need FOUNDATION?
 
 ### The Spreadsheet Dilemma
 
@@ -49,53 +69,23 @@ Yet spreadsheets have fundamental limits that make them fragile and difficult to
 
 Today, our data lives scattered across hundreds of applications and services. Your contacts are in one place, your projects in another, your finances elsewhere. Each silo has its own interface, its own rules, its own way of doing things. Moving data between them is painful or impossible. You can't create your own connections, your own automations, your own view of how everything relates.
 
-### You Don't Own Your Data
+### You Don't Own Your Data (Yet)
 
-Most applications store your data on their servers. You access it through their interface, under their terms. If they change their pricing, shut down, or decide to restrict features, you're stuck. Your data — your knowledge, your work, your life — is held hostage by business models you can't control.
+Most applications store your data on their servers. You access it through their interface, under their terms. They change pricing. They shut down. They restrict features. Your data — your knowledge, your work, your life — becomes a hostage to business models designed to extract maximum value from you.
+
+**This is not an accident. It's a business model.**
 
 ### Wasted Computing Power
 
-Modern personal computers are extraordinarily powerful — multi-core processors, gigabytes of RAM, terabytes of storage. Yet we use them mostly as dumb terminals to access cloud services. All that computing power sits idle while we wait for distant servers to process our requests, subject to their limitations and costs.
+You carry a supercomputer in your bag. Multi-core processors, gigabytes of RAM, terabytes of storage. Yet Big Tech wants you to use it as a dumb terminal — sending your data to their servers, processing it in their clouds, paying them for the privilege of using computing power you already own.
 
----
-
-## Principles and Strategies
-
-1. **Simplicity**
-   SuperNOVA must be as intuitive as a spreadsheet. AI acts as an assistant, helping users build without writing code.
-
-2. **Decentralization and Autonomy**
-   Everything runs on the users’ own devices. Each machine is an independent, collaborative node capable of sharing load and data. There are no central servers — computing power and control belong to the users.
-
-3. **Open and Extensible Ontology**
-   Knowledge is structured by an ontology composed of **classes** and **relationships**. This foundation can follow standards like RDF and build upon public ontologies to ensure interoperability. Users only create what is specific to their context, extending existing classes. Through inference, the system automatically understands extended classes and their relationships — if you create a "SoftwareEngineer" that extends "Person", SuperNOVA knows it inherits all Person properties and behaviors without explicit configuration.
-
-4. **Total Reactivity**
-   Everything in SuperNOVA is a reaction to persisted database changes. The system doesn’t need logs or external events — the database itself *is* the log. Each state modification triggers actions, automatic or manual, turning data into a living process.
-
-5. **Immutable Data**
-   No record is directly updated. Each change is the insertion of a new fact that logically replaces the previous one. The history is continuous and traceable, preserving integrity and the complete system timeline.
-
-6. **Origin and Traceability**
-   Every piece of information has an origin — whether a user, an external system, or an automation. This traceability ensures transparency and accountability for every event.
-
-7. **Open Source and Collaboration**
-   SuperNOVA is an open project built with and by the community. The codebase, base ontology, and documentation will be public, fostering innovation, trust, and collective evolution.
-
-8. **Decentralized Authentication**
-   Identity in SuperNOVA is guaranteed through **ECDSA (Elliptic Curve Digital Signature Algorithm)**. Each user shares their public key as a digital calling card, allowing others to verify their identity through data signatures. The private key never leaves the user’s computer — it’s personal, non-transferable, and secure. This approach eliminates dependencies on authentication servers and reinforces individual data sovereignty.
-
-9. **Secure and Distributed Communication**
-   Communication between computers in SuperNOVA can occur over local networks or the internet. All interactions between nodes must use **HTTPS connections**, ensuring privacy, mutual authentication, and data integrity. This secure layer is vital for maintaining decentralization without sacrificing trust.
-
-10. **Fork Your Data**
-    Just like duplicating a spreadsheet to test new ideas, SuperNOVA allows users to **fork their data**. They can experiment with changes, simulate scenarios, and validate hypotheses without affecting the main environment. Once satisfied, they can apply the modifications to the original system. This freedom fosters safety and continuous innovation.
+**Your machine is powerful. It's time to use it.**
 
 ---
 
 ## Work Methodology
 
-SuperNOVA follows a problem-driven, outcome-focused development approach:
+FOUNDATION follows a problem-driven, outcome-focused development approach:
 
 ### Quarterly Planning with OKRs
 
@@ -112,7 +102,12 @@ For each Key Result, we identify the **problems** that need to be solved to achi
 - A knowledge gap that requires research or experimentation
 - A design question that needs user validation
 
-Problems are documented in: `requirements/YYYY/Q[n]/O[n]/K[n]/P[n].md`
+Problems are documented in: `requirements/YYYY/Q[n]/O[n]/K[n]/problem-name.md`
+
+Examples:
+- `requirements/2026/Q1/O1/K1/database-selection.md`
+- `requirements/2026/Q1/O1/K1/base-ontology-selection.md`
+- `requirements/2026/Q1/O1/K1/semantic-data-structure.md`
 
 Each problem document should clearly state:
 - **What** we don't know or can't do yet
@@ -130,71 +125,45 @@ Once problems are identified and understood, we create solutions through iterati
 
 This approach keeps us focused on delivering real value rather than building features for their own sake.
 
+### How to Contribute
+
+FOUNDATION is built by people who believe technology should serve humanity, not corporations. If you share this vision, you're already part of the team.
+
+**Working on Problems:**
+
+1. **Create a branch** - Name it `username/problem-name` (e.g., `alice/local-ai-integration`)
+2. **Develop** - Work on your solution, experiment, and iterate
+3. **Document results** - Update the problem document with your findings:
+   - Mark solution as `[✅ CURRENT]`, `[❌ REJECTED]`, or `[⏸️ PAUSED]`
+   - Add what worked, what didn't, and why
+   - Include performance metrics, trade-offs discovered
+4. **Submit PR** - Share your work, even if incomplete
+
+**Important:**
+- **Failed experiments are valuable.** Document what you tried and learned — this helps everyone avoid the same pitfalls and builds collective knowledge.
+- **Keep all communication in English** (code, comments, issues, PRs, documentation) so anyone in the world can contribute.
+- **Be kind.** We're building something bigger than ourselves.
+
 ---
 
-## Technology Stack
+## Contributors
 
-SuperNOVA is built with a **minimalist, pragmatic** philosophy: native technologies, rapid validation, zero complexity.
+**Your name could be here!** 👋
 
-**MVP Stack:**
-- **Framework**: Tauri (cross-platform desktop apps with web frontend)
-- **Backend**: Rust (systems language, memory-safe, high performance)
-- **Frontend**: Svelte (reactive, minimal framework, fast)
-- **Database**: SQLite (embedded, zero-config, ACID-compliant, universally supported)
-- **Data Model**: RDF-inspired graph model (subject-predicate-object)
-- **Ontology**: BFO + Common Core Ontologies as base vocabulary
-- **Build System**: Cargo + npm
+We're just getting started. This is your chance to be part of something from the ground up — something that matters. Whether you write code, design interfaces, test features, write documentation, or simply believe in the mission — you belong here.
 
-**Why This Stack for MVP:**
+Every line of code, every bug report, every idea brings us closer to a world where people own their data and control their tools.
 
-1. **Tauri** - Cross-platform from day one (macOS, Windows, Linux), small binaries, native OS integration
-2. **Rust** - Memory safety, excellent performance, strong ecosystem for backend logic
-3. **Svelte** - Minimal JavaScript framework, reactive by default, easy to learn
-4. **SQLite** - Battle-tested embedded database, zero-config, ACID guarantees, perfect for local-first architecture, easily replicable file-based storage
-5. **BFO + CCO** - Industry-standard upper ontology (BFO) with domain extensions (Common Core Ontologies) for interoperability and semantic richness
+**Join us.**
 
-**Data Architecture:**
+---
 
-SuperNOVA uses an RDF-inspired architecture that stores data as **triples** (subject-predicate-object):
+<div align="center">
 
-```
-Person (Class) → owns property → "name" (DataProperty)
-Person (Class) → owns property → "worksAt" (ObjectProperty → Organization)
+**Conceived by [Daniel Terra](https://github.com/danielterra) in 🇧🇷**
 
-john:123 (Resource) → rdf:type → Person (Class)
-john:123 (Resource) → name → "John Doe" (Literal)
-john:123 (Resource) → worksAt → acme:456 (Resource)
-```
+*Built with ❤️ by people who believe your data should belong to you*
 
-This enables:
-- ✅ **Strong relationships** - Real graph queries, not fragile cell references
-- ✅ **Interoperability** - Export/import RDF (Turtle, JSON-LD) between instances
-- ✅ **Extensibility** - Extend Schema.org classes without breaking compatibility
-- ✅ **Semantic queries** - Navigate relationships naturally
-- ✅ **AI-friendly** - Structured data that both humans and AI understand
+*For a future where technology serves humanity, not the other way around*
 
-**Philosophy: Cross-Platform, Local-First, Distributed-Ready**
-
-This stack delivers:
-- ✅ **Cross-platform from start** - Single codebase runs on macOS, Windows, Linux
-- ✅ **Local-first architecture** - SQLite embedded, zero-config, single file database
-- ✅ **Distributed-ready** - SQLite file easily synced, replicated via git, rsync, or custom protocols
-- ✅ **Small footprint** - Tauri apps are 3-5 MB, significantly smaller than Electron
-- ✅ **Native performance** - Rust backend with native OS integration via Tauri
-- ✅ **Versioned ontologies** - OWL/TTL ontologies imported into SQLite, versionable in git
-- ✅ **Universal support** - SQLite runs everywhere, no dependencies, rock-solid stability
-
-**Future Enhancements:**
-
-As the project matures, we'll add:
-- ⏳ Advanced RDF features (SPARQL queries, OWL reasoning)
-- ⏳ CRDT-based conflict resolution for distributed sync
-- ⏳ Plugin system for extending ontology and automations
-- ⏳ Mobile apps (iOS, Android) using Tauri's mobile support
-
-**Binary Size**: ~3-5 MB (cross-platform desktop app)
-
-**Decision References:**
-- Database selection: [P1 - Database Technology Selection](requirements/2026/Q1/O1/K1/P1.md)
-- Stack selection: [P2 - Technology Stack Selection](requirements/2026/Q1/O1/K1/P2.md)
-- RDF Architecture: [P3 - RDF Triple Store Architecture](requirements/2026/Q1/O1/K1/P3.md)
+</div>

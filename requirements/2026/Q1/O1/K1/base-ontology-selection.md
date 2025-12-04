@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-SuperNOVA needs a foundational ontology that provides universal concepts (person, dog, telephone, etc.) without coupling to application-specific data structures. We've been exploring WordNet as the vocabulary source, but need to clarify its role and limitations.
+FOUNDATION needs a foundational ontology that provides universal concepts (person, dog, telephone, etc.) without coupling to application-specific data structures. We've been exploring WordNet as the vocabulary source, but need to clarify its role and limitations.
 
 ## Context
 
@@ -13,7 +13,7 @@ There are two distinct concerns that were getting mixed:
    - Should be application-agnostic
    - Examples: "dog is-a mammal", "telephone is-a device"
 
-2. **Application Data Structure** (SuperNOVA-specific schema)
+2. **Application Data Structure** (FOUNDATION-specific schema)
    - Properties for instances: `hasName`, `hasAge`, `hasPhoneNumber`
    - Business rules and constraints
    - Should be defined separately (see [semantic-data-structure.md](semantic-data-structure.md))
@@ -29,7 +29,7 @@ There are two distinct concerns that were getting mixed:
 
 ### What WordNet Provides
 - **Concepts as Classes**: Every synset becomes an `owl:Class`
-  - Example: `supernova:Concept_oewn_02084442_n` = "dog, domestic dog, Canis familiaris"
+  - Example: `FOUNDATION:Concept_oewn_02084442_n` = "dog, domestic dog, Canis familiaris"
 - **Semantic Relations**:
   - Hierarchical: hypernym/hyponym (is-a)
   - Part-whole: meronym/holonym (part-of, member-of, made-of)
@@ -80,21 +80,21 @@ Options:
 
 ### 3. How Should WordNet Integrate with User Data?
 
-When a user creates a class like `supernova:Customer`:
+When a user creates a class like `FOUNDATION:Customer`:
 
 **Option A - Subclass WordNet concepts:**
 ```turtle
-supernova:Customer rdfs:subClassOf supernova:Concept_oewn_person_n .
+FOUNDATION:Customer rdfs:subClassOf FOUNDATION:Concept_oewn_person_n .
 ```
 
 **Option B - SKOS mapping (loose coupling):**
 ```turtle
-supernova:Customer skos:related supernova:Concept_oewn_person_n .
+FOUNDATION:Customer skos:related FOUNDATION:Concept_oewn_person_n .
 ```
 
 **Option C - No direct link:**
 ```turtle
-supernova:Customer a owl:Class .
+FOUNDATION:Customer a owl:Class .
 # User manually adds relationships if needed
 ```
 
@@ -127,7 +127,7 @@ WordNet 2024 is English-only. Options:
 - [core-ontology/rdf-rdfs-owl-core.ttl](../../../../core-ontology/rdf-rdfs-owl-core.ttl) - RDF/RDFS/OWL vocabulary (189 triples)
 - [core-ontology/english-wordnet-2024.ttl](../../../../core-ontology/english-wordnet-2024.ttl) - WordNet synsets (5.7GB source)
 - [scripts/build-database.cjs](../../../../scripts/build-database.cjs) - Import script with WordNet parser
-- Database: `supernova.db` (246MB, 520K triples)
+- Database: `FOUNDATION.db` (246MB, 520K triples)
 
 ## Success Criteria
 

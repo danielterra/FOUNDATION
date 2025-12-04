@@ -1,6 +1,6 @@
 ### OKRs — Q1 2026
 
-This quarter focuses on validating the core value proposition of SuperNOVA through a concrete use case: **personal finance control**. The goal is to enable non-technical users to create and use a functional financial tracking system with custom categories and simple automation.
+This quarter focuses on validating the core value proposition of FOUNDATION through a concrete use case: **personal finance control**. The goal is to enable non-technical users to create and use a functional financial tracking system with custom categories and simple automation.
 
 **Objective: Enable non-technical users to create and use a functional personal finance tracker**
 

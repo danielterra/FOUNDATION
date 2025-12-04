@@ -1,10 +1,10 @@
 ## Problem 3: Don't Know How to Structure Data for Semantic Architecture
 
 ### What
-We don't know how to structure data to support SuperNOVA's architecture principles:
+We don't know how to structure data to support FOUNDATION's architecture principles:
 
 **Interoperability (Principle 3)**
-- All instances share a common base ontology (SuperNOVA Base)
+- All instances share a common base ontology (FOUNDATION Base)
 - Users extend base classes for specific needs (e.g., `RecurringTransaction extends Transaction`)
 - AI must understand custom classes through their relationship to base classes
 - Why: AI can interpret any instance's worldview by reasoning over the class hierarchy, enabling seamless integration and data exchange
@@ -44,7 +44,7 @@ We don't know how to structure data to support SuperNOVA's architecture principl
 
 **Core Architecture:**
 
-Store all data as RDF triples with SuperNOVA extensions for immutability and provenance:
+Store all data as RDF triples with FOUNDATION extensions for immutability and provenance:
 
 **RDF Triple (Core):**
 - **Subject** - IRI or blank node (e.g., `ex:transaction_tx001`)
@@ -53,7 +53,7 @@ Store all data as RDF triples with SuperNOVA extensions for immutability and pro
   - IRI: `ex:category_food`
   - Literal: `"45.50"^^xsd:decimal`, `"Grocery Store"^^xsd:string`
 
-**SuperNOVA Extensions:**
+**FOUNDATION Extensions:**
 - **Transaction (T)** - Monotonically increasing transaction ID (logical timestamp)
 - **Origin (O)** - Who/what asserted this triple (e.g., `user:alice`, `import:bank`, `core` for base ontology)
 - **Retracted** - Boolean flag for immutable timeline (never delete, only retract)
@@ -71,7 +71,7 @@ We create four covering indices to optimize different RDF triple query patterns:
 
 The origin `core` is reserved for immutable base facts:
 - RDF/RDFS/OWL meta-vocabulary (essential primitives for defining classes and properties)
-- SuperNOVA Base Ontology (comprehensive foundation covering most nouns and verbs from English dictionary)
+- FOUNDATION Base Ontology (comprehensive foundation covering most nouns and verbs from English dictionary)
 - System schema definitions
 - Built-in types and properties
 - These facts are never retracted and come pre-loaded in versioned database
@@ -115,7 +115,7 @@ We store RDF triples natively while maintaining performance for range queries:
 - Most classes unused (e.g., Weapon, MilitaryOrganization, GeospatialRegion)
 - Graph visualization cluttered with irrelevant concepts
 
-**Decision:** Rejected - removed CCO entirely from SuperNOVA base ontology (2024-11-25)
+**Decision:** Rejected - removed CCO entirely from FOUNDATION base ontology (2024-11-25)
 
 </details>
 
@@ -129,10 +129,10 @@ We store RDF triples natively while maintaining performance for range queries:
 **Problems Found:**
 - Upper ontology designed for philosophers and ontologists
 - Concepts like "Continuant" and "Occurrent" confusing for regular users
-- Adds complexity without practical value for SuperNOVA use cases
+- Adds complexity without practical value for FOUNDATION use cases
 - Users don't need to understand formal ontology theory
 
-**Decision:** Rejected - removed BFO from SuperNOVA base ontology (2024-11-25)
+**Decision:** Rejected - removed BFO from FOUNDATION base ontology (2024-11-25)
 
 </details>
 
@@ -147,9 +147,9 @@ We store RDF triples natively while maintaining performance for range queries:
 - Web-focused vocabulary (SEO, markup)
 - Many classes irrelevant (Recipe, Movie, MedicalCondition)
 - Requires extensive pruning and adaptation
-- Doesn't align with SuperNOVA's personal data use cases
+- Doesn't align with FOUNDATION's personal data use cases
 
-**Decision:** Rejected - removed Schema.org from SuperNOVA base ontology (2024-11-25)
+**Decision:** Rejected - removed Schema.org from FOUNDATION base ontology (2024-11-25)
 
 </details>
 
@@ -193,7 +193,7 @@ wnid:oewn-00007846-n
     wn:hyponym wnid:oewn-09628155-n ;    # adult
     wn:mero_part wnid:oewn-04624919-n ;  # body
 
-# SuperNOVA Class (after conversion)
+# FOUNDATION Class (after conversion)
 sn:Person
     a owl:Class ;
     rdfs:subClassOf sn:Organism ;
@@ -236,13 +236,13 @@ npm run build:ontology
 # 1. Downloads WordNet 2024 if not present (.gitignore'd)
 # 2. Converts synsets → owl:Class → RDF triples
 # 3. Imports triples into SQLite (tx: 1-500, origin: "core")
-# 4. Creates supernova.db ready for version control
+# 4. Creates FOUNDATION.db ready for version control
 ```
 
 **Repository Structure:**
 
 ```
-supernova.db                           # ✅ Single database (versioned)
+FOUNDATION.db                           # ✅ Single database (versioned)
                                        #    - Base ontology (tx: 1-500, origin: "core")
                                        #    - User data (tx: 501+, origin: "user:*")
 
@@ -255,7 +255,7 @@ scripts/
 └── build-ontology-simple.js       # Converts WordNet → SQLite
 ```
 
-**Important:** `supernova.db` at project root is the **only database** used by SuperNOVA. No other databases should be created or used.
+**Important:** `FOUNDATION.db` at project root is the **only database** used by FOUNDATION. No other databases should be created or used.
 
 **Why SQLite Instead of .ttl in Git:**
 - ✅ **Small** - Compressed binary vs 202MB text
@@ -269,7 +269,7 @@ scripts/
 - ✅ WordNet 2024 download script ready
 - 🔜 Create conversion script (synset → owl:Class → SQLite)
 - 🔜 Test with person/transaction concepts
-- 🔜 Commit supernova.db to git
+- 🔜 Commit FOUNDATION.db to git
 
 </details>
 
@@ -282,8 +282,8 @@ Layer 1: RDF/RDFS/OWL Meta-Ontology (KEEP)
   │  Purpose: Meta-vocabulary for defining classes and properties
   │  Status: ✅ Essential foundation - cannot be removed
   │
-Layer 2: SuperNOVA Base Ontology (NEW - TO BE CREATED)
-  ├─ core-ontology/supernova-base.ttl
+Layer 2: FOUNDATION Base Ontology (NEW - TO BE CREATED)
+  ├─ core-ontology/FOUNDATION-base.ttl
   │  Defines: Comprehensive vocabulary covering most nouns and verbs from English dictionary
   │  Examples: Person, Organization, Transaction, Event, Location, Document, etc.
   │  Purpose: Natural language foundation enabling AI to understand any domain
@@ -293,17 +293,17 @@ Layer 2: SuperNOVA Base Ontology (NEW - TO BE CREATED)
   │    - Domain-agnostic but practical
   │    - Extensible by users
   │
-Layer 3: SuperNOVA Domain Ontologies (USER-DEFINED)
+Layer 3: FOUNDATION Domain Ontologies (USER-DEFINED)
   ├─ Defined by users through UI
   │  Examples: Transaction, Account, Category, Contact
   │  Purpose: Application-specific concepts
-  │  Extends: SuperNOVA Base classes
+  │  Extends: FOUNDATION Base classes
 ```
 
 **Import Order:**
 
 1. **RDF/RDFS/OWL** (tx: 1-200) - Meta-vocabulary primitives
-2. **SuperNOVA Base** (tx: 201-500) - Lightweight foundation ontology
+2. **FOUNDATION Base** (tx: 201-500) - Lightweight foundation ontology
 3. **User Domains** (tx: 501+) - Application and user-specific classes
 
 **Why import RDF/RDFS/OWL?**
@@ -359,7 +359,7 @@ INSERT INTO triples (subject, predicate, object, object_value, object_datatype, 
 
 ---
 
-### SuperNOVA Base Ontology Design Principles
+### FOUNDATION Base Ontology Design Principles
 
 **Goal**: Design a comprehensive, natural language foundation ontology covering most English nouns and verbs
 
@@ -374,5 +374,5 @@ INSERT INTO triples (subject, predicate, object, object_value, object_datatype, 
 - ✅ RDF/RDFS/OWL core imported and working
 - ✅ Graph visualization working with force-directed layout
 - ⏸️ Schema.org/FOAF/BFO still imported (temporary, will be replaced)
-- 🔜 SuperNOVA Base to be created through analysis and iteration
+- 🔜 FOUNDATION Base to be created through analysis and iteration
 

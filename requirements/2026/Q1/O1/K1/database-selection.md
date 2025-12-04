@@ -1,7 +1,7 @@
 ## Problem 1: Don't Know Which Database to Use
 
 ### What
-We don't know which database technology to use for SuperNOVA's immutable, reactive data model that needs to:
+We don't know which database technology to use for FOUNDATION's immutable, reactive data model that needs to:
 - Work across desktop platforms (Linux, Windows, macOS)
 - Support immutable data patterns (append-only, no updates/deletes)
 - Expose changes as observable events (for reactive actions)
@@ -168,7 +168,7 @@ The chosen database technology must demonstrate:
 
 Start prototyping with **SurrealDB** as Option 1 due to:
 - Native change observability (critical for reactive architecture)
-- Best alignment with SuperNOVA principles
+- Best alignment with FOUNDATION principles
 - Cross-platform support including future mobile
 
 Have **redb** ready as fallback if SurrealDB proves too immature or complex.

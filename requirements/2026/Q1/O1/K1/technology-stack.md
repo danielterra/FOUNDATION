@@ -1,7 +1,7 @@
 ## Problem 2: Don't Know Which Technologies to Use
 
 ### What
-Select technology for each component based on SuperNOVA's unique requirements:
+Select technology for each component based on FOUNDATION's unique requirements:
 
 **Desktop Framework**
 - Must support Linux, Windows, macOS from single codebase
