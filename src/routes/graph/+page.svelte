@@ -19,6 +19,18 @@
 	let graphComponent;
 	let visibleGraphData = null;
 
+	// Available background videos
+	const backgroundVideos = [
+		'/background-space.mp4',
+		'/background-code.mp4',
+		'/background-dust.mp4',
+		'/background-edges.mp4',
+		'/background-particles.mp4'
+	];
+
+	// Select random video
+	const selectedVideo = backgroundVideos[Math.floor(Math.random() * backgroundVideos.length)];
+
 	// Get display name for a node (use label if available, otherwise simplify URI)
 	function getNodeDisplayName(nodeId) {
 		const node = fullGraphData?.nodes.find((n) => n.id === nodeId);
@@ -192,7 +204,7 @@
 		playsinline
 		class="background-video"
 	>
-		<source src="/background-space.mp4" type="video/mp4" />
+		<source src={selectedVideo} type="video/mp4" />
 	</video>
 
 	{#if loading}

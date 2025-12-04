@@ -262,8 +262,8 @@
 		right: 20px;
 		width: 380px;
 		max-height: calc(100vh - 100px);
-		background: rgba(30, 30, 30, 0.95);
-		backdrop-filter: blur(10px);
+		background: rgba(10, 10, 10, 0.7);
+		backdrop-filter: blur(20px);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 		border-radius: 12px;
 		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
