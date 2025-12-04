@@ -9,7 +9,7 @@ lazy_static::lazy_static! {
         m.insert("owl:", "http://www.w3.org/2002/07/owl#");
         m.insert("xsd:", "http://www.w3.org/2001/XMLSchema#");
         m.insert("skos:", "http://www.w3.org/2004/02/skos/core#");
-        m.insert("supernova:", "http://supernova.local/ontology/");
+        m.insert("FOUNDATION:", "http://FOUNDATION.local/ontology/");
         m
     };
 }

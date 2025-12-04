@@ -30,18 +30,18 @@
 
 	const semanticPredicates = [
 		'http://www.w3.org/2004/02/skos/core#related',
-		'http://supernova.local/ontology/antonym',
+		'http://FOUNDATION.local/ontology/antonym',
 		'http://www.w3.org/2000/01/rdf-schema#seeAlso',
-		'http://supernova.local/ontology/causes',
-		'http://supernova.local/ontology/entails',
-		'http://supernova.local/ontology/partOf',
-		'http://supernova.local/ontology/hasPart',
-		'http://supernova.local/ontology/memberOf',
-		'http://supernova.local/ontology/hasMember',
-		'http://supernova.local/ontology/madeOf',
-		'http://supernova.local/ontology/containsSubstance',
-		'http://supernova.local/ontology/domainTopic',
-		'http://supernova.local/ontology/pertainsTo'
+		'http://FOUNDATION.local/ontology/causes',
+		'http://FOUNDATION.local/ontology/entails',
+		'http://FOUNDATION.local/ontology/partOf',
+		'http://FOUNDATION.local/ontology/hasPart',
+		'http://FOUNDATION.local/ontology/memberOf',
+		'http://FOUNDATION.local/ontology/hasMember',
+		'http://FOUNDATION.local/ontology/madeOf',
+		'http://FOUNDATION.local/ontology/containsSubstance',
+		'http://FOUNDATION.local/ontology/domainTopic',
+		'http://FOUNDATION.local/ontology/pertainsTo'
 	];
 
 	// Organize triples by category
@@ -63,49 +63,44 @@
 
 <aside class="floating-side-panel">
 	<div class="panel-header">
-		<h3>{currentNodeLabel}</h3>
+		<div class="node-title-section">
+			<h3>{currentNodeLabel}</h3>
+			<span class="node-type-badge">Class</span>
+		</div>
 	</div>
 
 	{#if loadingTriples}
 		<div class="loading-state">Loading data...</div>
 	{:else}
 		<div class="panel-content">
-			<!-- Statistics Section -->
+			<!-- Quick Stats Grid -->
 			{#if nodeStatistics}
-				<section class="panel-section">
-					<button class="section-header" on:click={() => toggleSection('statistics')}>
-						<span class="section-icon">{expandedSections.statistics ? '▼' : '▶'}</span>
-						<span class="section-title">Statistics</span>
-					</button>
-					{#if expandedSections.statistics}
-						<div class="section-content stats-badges">
-							{#if nodeStatistics.children_count > 0}
-								<span class="stat-badge children">{nodeStatistics.children_count} children</span>
-							{/if}
-							{#if nodeStatistics.synonyms_count > 0}
-								<span class="stat-badge synonyms">{nodeStatistics.synonyms_count} synonyms</span>
-							{/if}
-							{#if nodeStatistics.related_count > 0}
-								<span class="stat-badge related">{nodeStatistics.related_count} related</span>
-							{/if}
-							{#if nodeStatistics.examples_count > 0}
-								<span class="stat-badge examples">{nodeStatistics.examples_count} examples</span>
-							{/if}
-							{#if nodeStatistics.backlinks_count > 0}
-								<span class="stat-badge backlinks">{nodeStatistics.backlinks_count} backlinks</span>
-							{/if}
-						</div>
-					{/if}
-				</section>
+				<div class="quick-stats-grid">
+					<div class="stat-box">
+						<span class="stat-value">{nodeStatistics.children_count || 0}</span>
+						<span class="stat-label">Types</span>
+					</div>
+					<div class="stat-box">
+						<span class="stat-value">{organizedTriples.hierarchical.length || 0}</span>
+						<span class="stat-label">Is a</span>
+					</div>
+					<div class="stat-box">
+						<span class="stat-value">{applicableProperties.length || 0}</span>
+						<span class="stat-label">Can have</span>
+					</div>
+					<div class="stat-box">
+						<span class="stat-value">{nodeStatistics.backlinks_count || 0}</span>
+						<span class="stat-label">Used by</span>
+					</div>
+				</div>
 			{/if}
 
-			<!-- Metadata Section -->
+			<!-- Description Section -->
 			{#if organizedTriples.metadata.length > 0}
 				<section class="panel-section">
 					<button class="section-header" on:click={() => toggleSection('metadata')}>
 						<span class="section-icon">{expandedSections.metadata ? '▼' : '▶'}</span>
-						<span class="section-title">Metadata</span>
-						<span class="section-count">{organizedTriples.metadata.length}</span>
+						<span class="section-title">Description</span>
 					</button>
 					{#if expandedSections.metadata}
 						<div class="section-content">
@@ -130,13 +125,12 @@
 				</section>
 			{/if}
 
-			<!-- Applicable Properties Section -->
+			<!-- Can Have Section -->
 			{#if applicableProperties.length > 0}
 				<section class="panel-section">
 					<button class="section-header" on:click={() => toggleSection('properties')}>
 						<span class="section-icon">{expandedSections.properties ? '▼' : '▶'}</span>
-						<span class="section-title">Applicable Properties</span>
-						<span class="section-count">{applicableProperties.length}</span>
+						<span class="section-title">Can have</span>
 					</button>
 					{#if expandedSections.properties}
 						<div class="section-content">
@@ -167,26 +161,20 @@
 				</section>
 			{/if}
 
-			<!-- Hierarchical Relations Section -->
+			<!-- Is A Section -->
 			{#if organizedTriples.hierarchical.length > 0}
 				<section class="panel-section">
 					<button class="section-header" on:click={() => toggleSection('hierarchical')}>
 						<span class="section-icon">{expandedSections.hierarchical ? '▼' : '▶'}</span>
-						<span class="section-title">Hierarchical</span>
-						<span class="section-count">{organizedTriples.hierarchical.length}</span>
+						<span class="section-title">Is a type of</span>
 					</button>
 					{#if expandedSections.hierarchical}
 						<div class="section-content">
 							{#each organizedTriples.hierarchical as triple}
-								<div class="form-row">
-									<label class="form-label" title={triple.a}>
-										{getPredicateLabel(triple.a)}
-									</label>
-									<div class="form-value">
-										<button class="entity-link" on:click={() => onNavigateToNode(triple.v)}>
-											{triple.v_label || getNodeDisplayName(triple.v)}
-										</button>
-									</div>
+								<div class="form-row is-a-row">
+									<button class="entity-link" on:click={() => onNavigateToNode(triple.v)}>
+										{triple.v_label || getNodeDisplayName(triple.v)}
+									</button>
 								</div>
 							{/each}
 						</div>
@@ -194,13 +182,12 @@
 				</section>
 			{/if}
 
-			<!-- Semantic Relations Section -->
+			<!-- Related Concepts Section -->
 			{#if organizedTriples.semantic.length > 0}
 				<section class="panel-section">
 					<button class="section-header" on:click={() => toggleSection('semantic')}>
 						<span class="section-icon">{expandedSections.semantic ? '▼' : '▶'}</span>
-						<span class="section-title">Semantic Relations</span>
-						<span class="section-count">{organizedTriples.semantic.length}</span>
+						<span class="section-title">Related to</span>
 					</button>
 					{#if expandedSections.semantic}
 						<div class="section-content">
@@ -221,28 +208,24 @@
 				</section>
 			{/if}
 
-			<!-- Backlinks Section -->
+			<!-- More Specific Types Section -->
 			{#if nodeBacklinks.length > 0}
 				<section class="panel-section">
 					<button class="section-header" on:click={() => toggleSection('backlinks')}>
 						<span class="section-icon">{expandedSections.backlinks ? '▼' : '▶'}</span>
-						<span class="section-title">Incoming Relations</span>
-						<span class="section-count">{nodeBacklinks.length}</span>
+						<span class="section-title">More specific types</span>
 					</button>
 					{#if expandedSections.backlinks}
 						<div class="section-content">
-							<!-- Children (subClassOf, subPropertyOf, broader pointing TO this) -->
+							<!-- More Specific Types (subClassOf pointing TO this) -->
 							{#if organizedBacklinks.children.length > 0}
 								<div class="subsection">
-									<div class="subsection-title">Children ({organizedBacklinks.children.length})</div>
+									<div class="subsection-title">Types of {currentNodeLabel} ({organizedBacklinks.children.length})</div>
 									{#each organizedBacklinks.children as backlink}
 										<div class="form-row">
 											<button class="entity-link" on:click={() => onNavigateToNode(backlink.v)}>
 												{backlink.v_label || getNodeDisplayName(backlink.v)}
 											</button>
-											<span class="backlink-predicate" title={backlink.a}>
-												via {getPredicateLabel(backlink.a)}
-											</span>
 										</div>
 									{/each}
 								</div>
@@ -251,14 +234,14 @@
 							<!-- Other References -->
 							{#if organizedBacklinks.references.length > 0}
 								<div class="subsection">
-									<div class="subsection-title">Referenced By ({organizedBacklinks.references.length})</div>
+									<div class="subsection-title">Used by ({organizedBacklinks.references.length})</div>
 									{#each organizedBacklinks.references as backlink}
 										<div class="form-row">
 											<button class="entity-link" on:click={() => onNavigateToNode(backlink.v)}>
 												{backlink.v_label || getNodeDisplayName(backlink.v)}
 											</button>
 											<span class="backlink-predicate" title={backlink.a}>
-												via {getPredicateLabel(backlink.a)}
+												{getPredicateLabel(backlink.a)}
 											</span>
 										</div>
 									{/each}
@@ -296,15 +279,82 @@
 		flex-shrink: 0;
 	}
 
+	.node-title-section {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.node-type-badge {
+		display: inline-block;
+		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
+		font-size: 9px;
+		text-transform: uppercase;
+		letter-spacing: 1px;
+		color: rgba(100, 200, 255, 0.8);
+		background: rgba(100, 200, 255, 0.12);
+		padding: 4px 8px;
+		border-radius: 3px;
+		flex-shrink: 0;
+	}
+
 	.panel-header h3 {
 		margin: 0;
 		font-family: 'Science Gothic Medium', 'Science Gothic', sans-serif;
-		font-size: 16px;
+		font-size: 18px;
 		font-weight: 500;
 		color: #ffffff;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		flex: 1;
+	}
+
+	.quick-stats-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 8px;
+		padding: 16px 24px;
+		background: rgba(255, 255, 255, 0.02);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+	}
+
+	.stat-box {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 4px;
+		padding: 12px 8px;
+		background: rgba(255, 255, 255, 0.03);
+		border-radius: 6px;
+		border: 1px solid rgba(255, 255, 255, 0.05);
+	}
+
+	.stat-box .stat-value {
+		font-family: 'Science Gothic Medium', 'Science Gothic', sans-serif;
+		font-size: 20px;
+		color: rgba(255, 140, 66, 0.9);
+		font-weight: 600;
+		line-height: 1;
+	}
+
+	.stat-box .stat-label {
+		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
+		font-size: 9px;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		color: rgba(255, 255, 255, 0.4);
+		text-align: center;
+	}
+
+	.section-help-text {
+		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
+		font-size: 10px;
+		color: rgba(255, 255, 255, 0.4);
+		font-style: italic;
+		margin-left: auto;
 	}
 
 	.panel-content {
@@ -360,47 +410,12 @@
 		padding: 8px 24px 16px 24px;
 	}
 
-	.stats-badges {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px;
-	}
-
-	.stat-badge {
-		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
-		font-size: 11px;
-		padding: 6px 12px;
-		border-radius: 6px;
-		font-weight: 500;
-	}
-
-	.stat-badge.children {
-		background: rgba(100, 150, 255, 0.15);
-		color: rgba(100, 150, 255, 0.9);
-	}
-
-	.stat-badge.synonyms {
-		background: rgba(150, 100, 255, 0.15);
-		color: rgba(150, 100, 255, 0.9);
-	}
-
-	.stat-badge.related {
-		background: rgba(255, 140, 66, 0.15);
-		color: rgba(255, 140, 66, 0.9);
-	}
-
-	.stat-badge.examples {
-		background: rgba(66, 200, 150, 0.15);
-		color: rgba(66, 200, 150, 0.9);
-	}
-
-	.stat-badge.backlinks {
-		background: rgba(255, 100, 150, 0.15);
-		color: rgba(255, 100, 150, 0.9);
-	}
-
 	.form-row {
 		margin-bottom: 12px;
+	}
+
+	.is-a-row {
+		margin-bottom: 8px;
 	}
 
 	.form-label {
@@ -546,4 +561,6 @@
 	.panel-content::-webkit-scrollbar-thumb:hover {
 		background: rgba(255, 140, 66, 0.5);
 	}
+
+	/* Remove unused stat-badge styles that were replaced by stat-box */
 </style>

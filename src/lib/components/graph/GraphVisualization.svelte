@@ -180,7 +180,9 @@
 	svg {
 		width: 100%;
 		height: 100vh;
-		background: #000000;
+		background: transparent;
 		display: block;
+		position: relative;
+		z-index: 1;
 	}
 </style>

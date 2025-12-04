@@ -5,7 +5,7 @@
 <div class="floating-top-bar">
 	<div class="left-controls">
 		<header class="floating-header">
-			<h1>SuperNOVA</h1>
+			<h1>FOUNDATION</h1>
 			<span class="screen-indicator">Ontology Graph</span>
 		</header>
 

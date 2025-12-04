@@ -1,0 +1,50 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://FOUNDATION.local/ontology/> .
+
+# =============================================================================
+# Email
+# =============================================================================
+# An email address associated with an Agent
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Email a owl:Class ;
+    rdfs:subClassOf foundation:InformationObject ;
+    rdfs:label "Email" ;
+    rdfs:comment "An email address associated with an Agent" ;
+    rdfs:seeAlso """
+Examples:
+- daniel@example.com (personal email)
+- contact@foundation.local (project email)
+- noreply@anthropic.com (system email)
+""" .
+
+# -----------------------------------------------------------------------------
+# Email Properties
+# -----------------------------------------------------------------------------
+
+foundation:address a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "address" ;
+    rdfs:comment "The actual email address string (exactly one per Email)" ;
+    rdfs:domain foundation:Email ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :email1 foundation:address "daniel@example.com" .
+""" .
+
+foundation:emailType a owl:DatatypeProperty ;
+    rdfs:label "email type" ;
+    rdfs:comment "Type of email (personal, work, system, etc.)" ;
+    rdfs:domain foundation:Email ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :email1 foundation:emailType "personal" .
+  :email2 foundation:emailType "work" .
+""" .

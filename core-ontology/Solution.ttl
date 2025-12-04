@@ -1,0 +1,36 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://FOUNDATION.local/ontology/> .
+
+# =============================================================================
+# Solution
+# =============================================================================
+# A proposed approach or implementation to solve a problem
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Solution a owl:Class ;
+    rdfs:subClassOf foundation:Concept ;
+    rdfs:label "Solution" ;
+    rdfs:comment "A proposed approach or implementation to solve a problem" ;
+    rdfs:seeAlso """
+Examples:
+- Use RDF/OWL for base ontology (solution to ontology structure problem)
+- Implement topological sort for dependency resolution
+- Add rdfs:seeAlso examples to all classes
+- Use SQLite with immutable triple store architecture
+""" .
+
+# -----------------------------------------------------------------------------
+# Solution Relationships
+# -----------------------------------------------------------------------------
+
+foundation:solves a owl:ObjectProperty ;
+    rdfs:label "solves" ;
+    rdfs:comment "Links a Solution to the Problem it addresses" ;
+    rdfs:domain foundation:Solution ;
+    rdfs:range foundation:Problem .

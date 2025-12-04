@@ -1,9 +1,9 @@
 -- ============================================================================
--- SuperNOVA Database Schema
+-- FOUNDATION Database Schema
 -- ============================================================================
 -- RDF-Native Triple Store with Transaction & Origin Tracking
 --
--- Architecture: Stores RDF triples (subject-predicate-object) with SuperNOVA extensions
+-- Architecture: Stores RDF triples (subject-predicate-object) with FOUNDATION extensions
 -- - Subject: IRI or blank node
 -- - Predicate: IRI for property
 -- - Object: IRI, Literal with datatype, or Blank node
@@ -17,7 +17,7 @@
 -- - Full RDF compatibility: Export to Turtle/JSON-LD without transformation
 -- ============================================================================
 
-PRAGMA journal_mode = WAL;
+PRAGMA journal_mode = DELETE;
 PRAGMA foreign_keys = ON;
 PRAGMA synchronous = NORMAL;
 
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS triples (
   object_datetime INTEGER,         -- Populated for xsd:dateTime (Unix epoch ms)
   object_boolean INTEGER,          -- Populated for xsd:boolean (0 = false, 1 = true)
 
-  -- SuperNOVA extensions: transaction metadata
+  -- FOUNDATION extensions: transaction metadata
   tx INTEGER NOT NULL,             -- Transaction ID (references transactions.tx)
   origin_id INTEGER NOT NULL,      -- Origin ID (references origins.id)
   retracted INTEGER NOT NULL DEFAULT 0,  -- 0 = active, 1 = retracted
@@ -152,13 +152,13 @@ INSERT OR IGNORE INTO namespaces (prefix, iri) VALUES
   ('owl', 'http://www.w3.org/2002/07/owl#'),
   ('xsd', 'http://www.w3.org/2001/XMLSchema#'),
   ('skos', 'http://www.w3.org/2004/02/skos/core#'),
-  ('supernova', 'http://supernova.local/ontology/');
+  ('FOUNDATION', 'http://FOUNDATION.local/ontology/');
 
 -- ============================================================================
 -- Origins Table
 -- ============================================================================
 -- Store origin identifiers for triples
--- Instead of repeating strings like "wordnet:synsets" 4000 times,
+-- Instead of repeating origin strings thousands of times,
 -- we store an integer ID and join when needed
 
 CREATE TABLE IF NOT EXISTS origins (
@@ -169,8 +169,7 @@ CREATE TABLE IF NOT EXISTS origins (
 
 -- Initialize common origins
 INSERT OR IGNORE INTO origins (id, name, description) VALUES
-  (1, 'rdf:core', 'RDF/RDFS/OWL core ontology'),
-  (2, 'wordnet:synsets', 'English WordNet 2024 noun synsets');
+  (1, 'rdf:core', 'RDF/RDFS/OWL core ontology');
 
 -- ============================================================================
 -- Metadata Table

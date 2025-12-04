@@ -128,7 +128,7 @@ fn get_node_triples(state: tauri::State<AppState>, node_id: String) -> Result<St
     let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     if let Some(ref conn) = *db {
-        // Compress IRI from frontend (full URI -> prefix)
+        // Compress IRI from frontend to database format
         let compressed_node_id = namespaces::compress_iri(&node_id);
 
         let mut stmt = conn
@@ -288,10 +288,10 @@ fn get_node_statistics(state: tauri::State<AppState>, node_id: String) -> Result
             )
             .unwrap_or(0);
 
-        // Count related concepts (skos:related, supernova:antonym, etc.)
+        // Count related concepts (skos:related, FOUNDATION:antonym, etc.)
         let related_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate IN ('skos:related', 'supernova:antonym', 'rdfs:seeAlso', 'supernova:causes', 'supernova:entails') AND retracted = 0",
+                "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate IN ('skos:related', 'FOUNDATION:antonym', 'rdfs:seeAlso', 'FOUNDATION:causes', 'FOUNDATION:entails') AND retracted = 0",
                 [&compressed_node_id],
                 |row| row.get(0),
             )
@@ -730,10 +730,7 @@ fn search_classes(state: tauri::State<AppState>, query: String) -> Result<String
                 .query_row(
                     "SELECT COALESCE(object_value, object) FROM triples
                      WHERE subject = ?
-                     AND predicate IN (
-                         'skos:definition',
-                         'rdfs:comment'
-                     )
+                     AND predicate IN ('skos:definition', 'rdfs:comment')
                      AND retracted = 0
                      LIMIT 1",
                     [&entity_id],

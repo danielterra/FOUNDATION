@@ -36,12 +36,45 @@
 		}
 	}
 
+	// Reload graph data from backend
+	async function reloadGraph() {
+		try {
+			loading = true;
+			error = null;
+
+			// Reload graph data centered on current node or owl:Thing if none selected
+			const targetNodeId = currentNodeId || 'http://www.w3.org/2002/07/owl#Thing';
+			const graphJson = await invoke('get_ontology_graph', {
+				centralNodeId: targetNodeId
+			});
+			fullGraphData = JSON.parse(graphJson);
+
+			loading = false;
+
+			// Navigate to the same node to refresh triples and visualization
+			if (currentNodeId) {
+				await navigateToNode(currentNodeId);
+			} else {
+				await navigateToNode('http://www.w3.org/2002/07/owl#Thing');
+			}
+		} catch (err) {
+			error = err.toString();
+			loading = false;
+		}
+	}
+
 	// Handle keyboard shortcuts
 	function handleKeydown(event) {
 		// CMD+0 or CTRL+0 to recenter
 		if ((event.metaKey || event.ctrlKey) && event.key === '0') {
 			event.preventDefault();
 			recenterGraph();
+		}
+
+		// CMD+R or CTRL+R to reload
+		if ((event.metaKey || event.ctrlKey) && event.key === 'r') {
+			event.preventDefault();
+			reloadGraph();
 		}
 	}
 
@@ -151,6 +184,17 @@
 </script>
 
 <div id="graph-container">
+	<!-- Background Video -->
+	<video
+		autoplay
+		loop
+		muted
+		playsinline
+		class="background-video"
+	>
+		<source src="/background-space.mp4" type="video/mp4" />
+	</video>
+
 	{#if loading}
 		<div class="loading">Loading ontology graph...</div>
 	{:else if error}
@@ -189,7 +233,17 @@
 		height: 100vh;
 		position: relative;
 		overflow: hidden;
-		background: #000000;
+	}
+
+	.background-video {
+		position: fixed;
+		top: 0;
+		left: 0;
+		width: 100vw;
+		height: 100vh;
+		object-fit: cover;
+		z-index: 0;
+		opacity: 0.2;
 	}
 
 	.loading,
@@ -202,7 +256,9 @@
 		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
 		font-size: 18px;
 		color: rgba(255, 255, 255, 0.7);
-		background: #000000;
+		background: transparent;
+		position: relative;
+		z-index: 1;
 	}
 
 	.error {

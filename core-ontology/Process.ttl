@@ -1,0 +1,49 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://FOUNDATION.local/ontology/> .
+
+# =============================================================================
+# Process
+# =============================================================================
+# Activities, events, actions, or things that happen over time
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Process a owl:Class ;
+    rdfs:subClassOf foundation:AbstractThing ;
+    rdfs:label "Process" ;
+    rdfs:comment "Activities, events, actions, or things that happen over time" ;
+    rdfs:seeAlso """
+Examples:
+- Software development (ongoing activity)
+- A database build (specific execution)
+- A meeting (time-bounded event)
+- Continuous integration pipeline
+- User authentication flow
+""" .
+
+# -----------------------------------------------------------------------------
+# Process-specific Properties
+# -----------------------------------------------------------------------------
+
+foundation:startedAt a owl:DatatypeProperty ;
+    rdfs:label "started at" ;
+    rdfs:comment "When this process began" ;
+    rdfs:domain foundation:Process ;
+    rdfs:range xsd:dateTime .
+
+foundation:completedAt a owl:DatatypeProperty ;
+    rdfs:label "completed at" ;
+    rdfs:comment "When this process finished" ;
+    rdfs:domain foundation:Process ;
+    rdfs:range xsd:dateTime .
+
+foundation:performedBy a owl:ObjectProperty ;
+    rdfs:label "performed by" ;
+    rdfs:comment "Who or what executed this process" ;
+    rdfs:domain foundation:Process ;
+    rdfs:range foundation:AgentCapacity .

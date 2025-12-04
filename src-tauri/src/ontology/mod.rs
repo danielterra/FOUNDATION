@@ -5,7 +5,7 @@
 //
 // Import strategy:
 // - tx: 1-100   → RDF/RDFS/OWL meta-ontology (essential primitives)
-// - tx: 101+    → Reserved for SuperNOVA Base Ontology (to be created)
+// - tx: 101+    → Reserved for FOUNDATION Base Ontology (to be created)
 //
 // All imported facts have origin: "core" and retracted: 0
 // ============================================================================
@@ -73,13 +73,14 @@ fn determine_object_type_from_term(term: &Term) -> &'static str {
     }
 }
 
-/// Extracts datatype IRI from a literal term
+/// Extracts datatype IRI from a literal term and compresses it
 fn get_literal_datatype(lit: &rio_api::model::Literal) -> String {
-    match lit {
-        rio_api::model::Literal::Simple { .. } => "http://www.w3.org/2001/XMLSchema#string".to_string(),
-        rio_api::model::Literal::LanguageTaggedString { .. } => "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString".to_string(),
-        rio_api::model::Literal::Typed { datatype, .. } => datatype.iri.to_string(),
-    }
+    let full_iri = match lit {
+        rio_api::model::Literal::Simple { .. } => "http://www.w3.org/2001/XMLSchema#string",
+        rio_api::model::Literal::LanguageTaggedString { .. } => "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString",
+        rio_api::model::Literal::Typed { datatype, .. } => datatype.iri,
+    };
+    crate::namespaces::compress_iri(full_iri)
 }
 
 /// Extracts language tag from a literal term (if any)
@@ -106,6 +107,37 @@ fn get_literal_value(lit: &rio_api::model::Literal) -> String {
         rio_api::model::Literal::LanguageTaggedString { value, .. } => value.to_string(),
         rio_api::model::Literal::Typed { value, .. } => value.to_string(),
     }
+}
+
+/// Get or create origin ID for a given origin name
+fn get_or_create_origin(conn: &Connection, origin_name: &str) -> Result<i64, ImportError> {
+    // Try to get existing origin
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM origins WHERE name = ?",
+            [origin_name],
+            |row| row.get(0),
+        )
+        .ok();
+
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+
+    // Create new origin
+    conn.execute(
+        "INSERT INTO origins (name, description) VALUES (?, ?)",
+        (origin_name, format!("Auto-generated origin for {}", origin_name)),
+    )?;
+
+    // Get the ID of the newly inserted origin
+    let id: i64 = conn.query_row(
+        "SELECT id FROM origins WHERE name = ?",
+        [origin_name],
+        |row| row.get(0),
+    )?;
+
+    Ok(id)
 }
 
 /// Parses typed columns from literal value and datatype
@@ -161,6 +193,9 @@ pub fn import_turtle_file(
     let mut facts_inserted = 0u64;
     let current_tx = tx_start;
 
+    // Get or create origin_id
+    let origin_id = get_or_create_origin(conn, origin)?;
+
     // Begin transaction
     conn.execute("BEGIN TRANSACTION", [])?;
 
@@ -179,15 +214,18 @@ pub fn import_turtle_file(
     TurtleParser::new(reader, None).parse_all(&mut |triple: Triple| {
         triples_processed += 1;
 
-        let subject = subject_to_string(&triple.subject);
-        let predicate = triple.predicate.iri.to_string();
+        // Compress IRIs to prefix notation for storage
+        let subject_full = subject_to_string(&triple.subject);
+        let subject = crate::namespaces::compress_iri(&subject_full);
+        let predicate = crate::namespaces::compress_iri(triple.predicate.iri);
         let object_type = determine_object_type_from_term(&triple.object);
 
         // Extract object components based on type
         let (object, object_value, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean) = match &triple.object {
             Term::NamedNode(node) => {
-                // IRI object
-                (Some(node.iri.to_string()), None, None, None, None, None, None, None)
+                // IRI object - compress to prefix notation
+                let compressed_iri = crate::namespaces::compress_iri(node.iri);
+                (Some(compressed_iri), None, None, None, None, None, None, None)
             }
             Term::BlankNode(bn) => {
                 // Blank node object
@@ -222,7 +260,7 @@ pub fn import_turtle_file(
 
         // Insert triple
         if let Err(e) = conn.execute(
-            "INSERT INTO triples (subject, predicate, object, object_value, object_type, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean, tx, origin, retracted, created_at)
+            "INSERT INTO triples (subject, predicate, object, object_value, object_type, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean, tx, origin_id, retracted, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
             rusqlite::params![
                 &subject,
@@ -237,7 +275,7 @@ pub fn import_turtle_file(
                 object_datetime,
                 object_boolean,
                 current_tx,
-                origin,
+                origin_id,
                 now,
             ],
         ) {
@@ -289,6 +327,9 @@ pub fn import_owl_file(
     let mut facts_inserted = 0u64;
     let current_tx = tx_start;
 
+    // Get or create origin_id
+    let origin_id = get_or_create_origin(conn, origin)?;
+
     // Begin transaction
     conn.execute("BEGIN TRANSACTION", [])?;
 
@@ -307,15 +348,18 @@ pub fn import_owl_file(
     RdfXmlParser::new(reader, None).parse_all(&mut |triple: Triple| {
         triples_processed += 1;
 
-        let subject = subject_to_string(&triple.subject);
-        let predicate = triple.predicate.iri.to_string();
+        // Compress IRIs to prefix notation for storage
+        let subject_full = subject_to_string(&triple.subject);
+        let subject = crate::namespaces::compress_iri(&subject_full);
+        let predicate = crate::namespaces::compress_iri(triple.predicate.iri);
         let object_type = determine_object_type_from_term(&triple.object);
 
         // Extract object components based on type
         let (object, object_value, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean) = match &triple.object {
             Term::NamedNode(node) => {
-                // IRI object
-                (Some(node.iri.to_string()), None, None, None, None, None, None, None)
+                // IRI object - compress to prefix notation
+                let compressed_iri = crate::namespaces::compress_iri(node.iri);
+                (Some(compressed_iri), None, None, None, None, None, None, None)
             }
             Term::BlankNode(bn) => {
                 // Blank node object
@@ -350,7 +394,7 @@ pub fn import_owl_file(
 
         // Insert triple
         if let Err(e) = conn.execute(
-            "INSERT INTO triples (subject, predicate, object, object_value, object_type, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean, tx, origin, retracted, created_at)
+            "INSERT INTO triples (subject, predicate, object, object_value, object_type, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean, tx, origin_id, retracted, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
             rusqlite::params![
                 &subject,
@@ -365,7 +409,7 @@ pub fn import_owl_file(
                 object_datetime,
                 object_boolean,
                 current_tx,
-                origin,
+                origin_id,
                 now,
             ],
         ) {
@@ -398,6 +442,86 @@ pub fn import_owl_file(
         tx_start: current_tx,
         tx_end: current_tx,
     })
+}
+
+/// Import all FOUNDATION ontologies from filesystem
+pub fn import_all_foundation_ontologies(conn: &Connection) -> Result<Vec<ImportStats>, ImportError> {
+    let mut all_stats = Vec::new();
+
+    println!("\n🏛️  Importing FOUNDATION ontologies...\n");
+
+    // Get project root directory
+    // In dev mode, CARGO_MANIFEST_DIR points to src-tauri, so we go up one level
+    let project_root = std::env::var("CARGO_MANIFEST_DIR")
+        .ok()
+        .and_then(|manifest_dir| {
+            let path = Path::new(&manifest_dir);
+            path.parent().map(|p| p.to_path_buf())
+        })
+        .unwrap_or_else(|| std::env::current_dir().unwrap());
+
+    let core_ontology_dir = project_root.join("core-ontology");
+    println!("📂 Reading from: {}", core_ontology_dir.display());
+
+    // Read all .ttl files from core-ontology directory
+    let mut ttl_files: Vec<std::path::PathBuf> = Vec::new();
+
+    match std::fs::read_dir(&core_ontology_dir) {
+        Ok(entries) => {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("ttl") {
+                        // Skip rdf-rdfs-owl-core.ttl as it's imported separately
+                        if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
+                            if filename != "rdf-rdfs-owl-core.ttl" {
+                                ttl_files.push(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("⚠️  Error reading core-ontology directory: {}", e);
+            return Err(ImportError::IoError(e));
+        }
+    }
+
+    // Sort files for consistent import order
+    ttl_files.sort();
+
+    println!("📋 Found {} FOUNDATION ontology files\n", ttl_files.len());
+
+    // Import each file with file-specific origin
+    let mut tx = 101; // Start FOUNDATION ontologies at tx 101
+
+    for file_path in ttl_files {
+        let filename = file_path.file_name().unwrap().to_str().unwrap();
+        let origin = format!("foundation:ontology:{}", filename);
+
+        println!("📄 {}", filename);
+        match import_turtle_file(conn, &file_path, tx, &origin) {
+            Ok(stats) => {
+                all_stats.push(stats);
+                tx += 1;
+            }
+            Err(e) => {
+                eprintln!("⚠️  Failed to import {}: {:?}", filename, e);
+            }
+        }
+    }
+
+    println!("\n✅ FOUNDATION ontology import complete!");
+    println!("📊 Summary:");
+    for stats in &all_stats {
+        println!(
+            "  - {}: {} triples → {} facts (tx: {})",
+            stats.file, stats.triples_processed, stats.facts_inserted, stats.tx_start
+        );
+    }
+
+    Ok(all_stats)
 }
 
 /// Import all core ontologies in the correct order

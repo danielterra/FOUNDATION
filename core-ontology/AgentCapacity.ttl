@@ -1,0 +1,116 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://FOUNDATION.local/ontology/> .
+
+# =============================================================================
+# AgentCapacity
+# =============================================================================
+# The capacity to act, make decisions, or perform actions (behavior/capability)
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:AgentCapacity a owl:Class ;
+    rdfs:subClassOf owl:Thing ;
+    rdfs:label "Agent Capacity" ;
+    rdfs:comment "The capacity to act, make decisions, or perform actions (behavior/capability, not nature)" ;
+    rdfs:seeAlso """
+Examples:
+- A person (Daniel Terra) - physical with agent capacity
+- An organization (FOUNDATION Project) - abstract with agent capacity
+- A software system (FOUNDATION AI Assistant) - digital with agent capacity
+- An autonomous robot - physical with agent capacity
+
+Note: This is a CAPACITY (behavior), not a nature. Combine with PhysicalThing,
+DigitalThing, or Concept to create concrete agent types.
+""" .
+
+# -----------------------------------------------------------------------------
+# AgentCapacity Properties - Actions & Autonomy
+# -----------------------------------------------------------------------------
+
+foundation:performs a owl:ObjectProperty ;
+    rdfs:label "performs" ;
+    rdfs:comment "Actions or processes that this agent executes" ;
+    rdfs:domain foundation:AgentCapacity ;
+    rdfs:range foundation:Process ;
+    rdfs:seeAlso """
+Example:
+  :daniel foundation:performs :task1 .
+  :claude foundation:performs :codeGeneration .
+""" .
+
+foundation:owns a owl:ObjectProperty ;
+    rdfs:label "owns" ;
+    rdfs:comment "Things that this agent has ownership/control over" ;
+    rdfs:domain foundation:AgentCapacity ;
+    rdfs:range owl:Thing ;
+    rdfs:seeAlso """
+Example:
+  :daniel foundation:owns :project1 .
+  :foundation-org foundation:owns :codebase .
+""" .
+
+foundation:delegates a owl:ObjectProperty ;
+    rdfs:label "delegates" ;
+    rdfs:comment "Delegates authority or tasks to another agent" ;
+    rdfs:domain foundation:AgentCapacity ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :manager foundation:delegates :developer .
+  :system foundation:delegates :ai-assistant .
+""" .
+
+foundation:authorizes a owl:ObjectProperty ;
+    rdfs:label "authorizes" ;
+    rdfs:comment "Grants permission for an action or access to a resource" ;
+    rdfs:domain foundation:AgentCapacity ;
+    rdfs:range owl:Thing ;
+    rdfs:seeAlso """
+Example:
+  :admin foundation:authorizes :access-to-database .
+  :daniel foundation:authorizes :code-review .
+""" .
+
+# -----------------------------------------------------------------------------
+# AgentCapacity Properties - Identity & Contact
+# -----------------------------------------------------------------------------
+
+foundation:hasEmail a owl:ObjectProperty ;
+    rdfs:label "has email" ;
+    rdfs:comment "Email addresses for contacting this agent" ;
+    rdfs:domain foundation:AgentCapacity ;
+    rdfs:range foundation:Email ;
+    rdfs:seeAlso """
+Example:
+  :daniel foundation:hasEmail :email1 .
+  :daniel foundation:hasEmail :email2 .
+""" .
+
+foundation:hasPreferredEmail a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:subPropertyOf foundation:hasEmail ;
+    rdfs:label "has preferred email" ;
+    rdfs:comment "Primary email address for contacting this agent (maximum one)" ;
+    rdfs:domain foundation:AgentCapacity ;
+    rdfs:range foundation:Email ;
+    rdfs:seeAlso """
+Example:
+  :daniel foundation:hasPreferredEmail :email1 .
+
+Note: owl:FunctionalProperty ensures maximum ONE preferred email.
+""" .
+
+foundation:isResponsibleFor a owl:ObjectProperty ;
+    rdfs:label "is responsible for" ;
+    rdfs:comment "Things or outcomes that this agent is accountable for" ;
+    rdfs:domain foundation:AgentCapacity ;
+    rdfs:range owl:Thing ;
+    rdfs:seeAlso """
+Example:
+  :developer foundation:isResponsibleFor :feature-implementation .
+  :team-lead foundation:isResponsibleFor :project-delivery .
+""" .

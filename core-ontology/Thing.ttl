@@ -1,0 +1,82 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://FOUNDATION.local/ontology/> .
+
+# =============================================================================
+# FOUNDATION Fundamental Classes
+# =============================================================================
+# Top-level ontological division under owl:Thing
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Fundamental Ontology - Top Level Division
+# -----------------------------------------------------------------------------
+
+foundation:AbstractThing a owl:Class ;
+    rdfs:subClassOf owl:Thing ;
+    rdfs:label "Abstract Thing" ;
+    rdfs:comment "Things that exist as ideas, concepts, or information but have no physical form" ;
+    rdfs:seeAlso """
+Examples:
+- A concept (the idea of 'democracy')
+- A document (this ontology specification)
+- A process (software development)
+- A quality (the color 'red')
+""" .
+
+foundation:ConcreteThing a owl:Class ;
+    rdfs:subClassOf owl:Thing ;
+    rdfs:label "Concrete Thing" ;
+    rdfs:comment "Things that exist in physical or digital form" ;
+    rdfs:seeAlso """
+Examples:
+- A person (Daniel Terra)
+- A computer (MacBook Pro)
+- A file (FOUNDATION.db)
+- A building (your house)
+""" .
+
+# -----------------------------------------------------------------------------
+# Fundamental Properties (inherited by ALL Things)
+# -----------------------------------------------------------------------------
+
+foundation:identifier a owl:DatatypeProperty ;
+    rdfs:label "identifier" ;
+    rdfs:comment "Unique identifier for this entity" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+foundation:name a owl:DatatypeProperty ;
+    rdfs:label "name" ;
+    rdfs:comment "Primary name or title" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+foundation:description a owl:DatatypeProperty ;
+    rdfs:label "description" ;
+    rdfs:comment "Detailed explanation or documentation" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+foundation:createdAt a owl:DatatypeProperty ;
+    rdfs:label "created at" ;
+    rdfs:comment "When this entity was created" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:dateTime .
+
+foundation:modifiedAt a owl:DatatypeProperty ;
+    rdfs:label "modified at" ;
+    rdfs:comment "When this entity was last modified" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:dateTime .
+
+foundation:createdBy a owl:ObjectProperty ;
+    rdfs:label "created by" ;
+    rdfs:comment "Who or what created this entity" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range foundation:AgentCapacity .

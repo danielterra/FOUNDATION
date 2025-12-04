@@ -1,0 +1,26 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://FOUNDATION.local/ontology/> .
+
+# =============================================================================
+# KeyResult
+# =============================================================================
+# A measurable outcome that indicates progress toward an Objective
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:KeyResult a owl:Class ;
+    rdfs:subClassOf foundation:Goal ;
+    rdfs:label "Key Result" ;
+    rdfs:comment "A measurable outcome that indicates progress toward an Objective" ;
+    rdfs:seeAlso """
+Examples:
+- Complete 100% of base ontology classes by Dec 31
+- Achieve 1000 triples in knowledge base
+- Reach 50 GitHub stars
+- Process 1M queries without performance issues
+""" .

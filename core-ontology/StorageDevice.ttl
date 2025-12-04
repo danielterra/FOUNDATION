@@ -1,0 +1,64 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://FOUNDATION.local/ontology/> .
+
+# =============================================================================
+# StorageDevice
+# =============================================================================
+# A physical component that stores digital information
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:StorageDevice a owl:Class ;
+    rdfs:subClassOf foundation:PhysicalThing ;
+    rdfs:label "Storage Device" ;
+    rdfs:comment "A physical component that stores digital information (exists in space-time)" ;
+    rdfs:seeAlso """
+Examples:
+- An SSD (Samsung 970 EVO)
+- A hard drive (Seagate 2TB HDD)
+- RAM memory (16GB DDR4)
+- A USB flash drive
+- An SD card
+""" .
+
+# -----------------------------------------------------------------------------
+# StorageDevice Properties
+# -----------------------------------------------------------------------------
+
+foundation:capacity a owl:DatatypeProperty ;
+    rdfs:label "capacity" ;
+    rdfs:comment "Storage capacity in gigabytes" ;
+    rdfs:domain foundation:StorageDevice ;
+    rdfs:range xsd:integer ;
+    rdfs:seeAlso """
+Example:
+  :ssd1 foundation:capacity "512"^^xsd:integer .  # 512GB SSD
+""" .
+
+foundation:storageType a owl:DatatypeProperty ;
+    rdfs:label "storage type" ;
+    rdfs:comment "Type of storage technology (SSD, HDD, RAM, etc.)" ;
+    rdfs:domain foundation:StorageDevice ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :ssd1 foundation:storageType "SSD" .
+  :hdd1 foundation:storageType "HDD" .
+  :ram1 foundation:storageType "RAM" .
+""" .
+
+foundation:isPartOf a owl:ObjectProperty ;
+    rdfs:label "is part of" ;
+    rdfs:comment "Links a storage device to the computer it is part of" ;
+    rdfs:domain foundation:StorageDevice ;
+    rdfs:range foundation:Computer ;
+    rdfs:seeAlso """
+Example:
+  :ssd1 foundation:isPartOf :macbook .
+  :disk-array foundation:isPartOf :server .
+""" .
