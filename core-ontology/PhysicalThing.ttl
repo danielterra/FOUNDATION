@@ -17,6 +17,7 @@ foundation:PhysicalThing a owl:Class ;
     rdfs:subClassOf foundation:ConcreteThing ;
     rdfs:label "Physical Thing" ;
     rdfs:comment "Tangible things that exist in the physical world" ;
+    foundation:icon "precision_manufacturing" ;
     rdfs:seeAlso """
 Examples:
 - A person (Daniel Terra)

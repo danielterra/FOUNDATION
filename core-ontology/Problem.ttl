@@ -17,6 +17,7 @@ foundation:Problem a owl:Class ;
     rdfs:subClassOf foundation:Concept ;
     rdfs:label "Problem" ;
     rdfs:comment "A challenge, knowledge gap, or obstacle that needs to be solved" ;
+    foundation:icon "error" ;
     rdfs:seeAlso """
 Examples:
 - How to structure the base ontology?

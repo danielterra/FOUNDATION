@@ -17,6 +17,7 @@ foundation:AgentCapacity a owl:Class ;
     rdfs:subClassOf owl:Thing ;
     rdfs:label "Agent Capacity" ;
     rdfs:comment "The capacity to act, make decisions, or perform actions (behavior/capability, not nature)" ;
+    foundation:icon "psychology_alt" ;
     rdfs:seeAlso """
 Examples:
 - A person (Daniel Terra) - physical with agent capacity

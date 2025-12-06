@@ -148,12 +148,83 @@
 				}
 			});
 
-		nodes
-			.append('circle')
-			.attr('r', 8)
-			.attr('fill', '#ff8c42')
-			.attr('stroke', 'rgba(0, 0, 0, 0.8)')
-			.attr('stroke-width', 2);
+		// Helper to detect icon type
+		const getIconType = (icon) => {
+			if (!icon) return null;
+			if (icon.startsWith('http://') || icon.startsWith('https://') ||
+			    icon.startsWith('file://') || icon.startsWith('data:')) {
+				return 'image';
+			}
+			return 'material-symbol';
+		};
+
+		// Add icon or circle for each node
+		nodes.each(function(d) {
+			const nodeGroup = d3.select(this);
+
+			if (d.icon) {
+				const iconType = getIconType(d.icon);
+
+				if (iconType === 'image') {
+					// Render image icon
+					nodeGroup
+						.append('foreignObject')
+						.attr('x', -16)
+						.attr('y', -16)
+						.attr('width', 32)
+						.attr('height', 32)
+						.style('pointer-events', 'none')
+						.append('xhtml:div')
+						.style('width', '100%')
+						.style('height', '100%')
+						.style('display', 'flex')
+						.style('align-items', 'center')
+						.style('justify-content', 'center')
+						.style('background', 'rgba(255, 140, 66, 0.1)')
+						.style('border', '2px solid #ff8c42')
+						.style('border-radius', '50%')
+						.style('overflow', 'hidden')
+						.style('pointer-events', 'none')
+						.html(`<img src="${d.icon}" style="width: 24px; height: 24px; object-fit: cover; pointer-events: none;" />`);
+				} else {
+					// Render Material Symbols icon
+					nodeGroup
+						.append('foreignObject')
+						.attr('x', -16)
+						.attr('y', -16)
+						.attr('width', 32)
+						.attr('height', 32)
+						.style('pointer-events', 'none')
+						.append('xhtml:div')
+						.style('width', '100%')
+						.style('height', '100%')
+						.style('display', 'flex')
+						.style('align-items', 'center')
+						.style('justify-content', 'center')
+						.style('background', 'rgba(255, 140, 66, 0.2)')
+						.style('border', '2px solid #ff8c42')
+						.style('border-radius', '50%')
+						.style('pointer-events', 'none')
+						.html(`<span class="material-symbols-outlined" style="font-size: 20px; color: #ff8c42; pointer-events: none;">${d.icon}</span>`);
+				}
+
+				// Add invisible circle for click events
+				nodeGroup
+					.append('circle')
+					.attr('r', 16)
+					.attr('fill', 'transparent')
+					.attr('stroke', 'none')
+					.style('cursor', 'pointer');
+			} else {
+				// Fallback to circle for nodes without icons
+				nodeGroup
+					.append('circle')
+					.attr('r', 8)
+					.attr('fill', '#ff8c42')
+					.attr('stroke', 'rgba(0, 0, 0, 0.8)')
+					.attr('stroke-width', 2);
+			}
+		});
 
 		nodes
 			.append('text')
@@ -162,7 +233,7 @@
 			.attr('font-weight', '500')
 			.attr('font-family', "'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif")
 			.attr('fill', 'rgba(255, 255, 255, 0.95)')
-			.attr('dx', 12)
+			.attr('dx', 20)
 			.attr('dy', 5)
 			.style('pointer-events', 'none')
 			.style('user-select', 'none');

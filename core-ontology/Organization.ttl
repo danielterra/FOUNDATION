@@ -17,6 +17,7 @@ foundation:Organization a owl:Class ;
     rdfs:subClassOf foundation:AgentCapacity , foundation:Concept ;
     rdfs:label "Organization" ;
     rdfs:comment "A group of people with a collective purpose (abstract nature with agent capacity)" ;
+    foundation:icon "corporate_fare" ;
     rdfs:seeAlso """
 Examples:
 - FOUNDATION Project (open source organization)

@@ -17,6 +17,7 @@ foundation:Status a owl:Class ;
     rdfs:subClassOf foundation:Quality ;
     rdfs:label "Status" ;
     rdfs:comment "The current state of work on a goal, problem, or solution" ;
+    foundation:icon "radio_button_checked" ;
     rdfs:seeAlso """
 Examples:
 - foundation:Pending (not started)

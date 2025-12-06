@@ -17,6 +17,7 @@ foundation:KeyResult a owl:Class ;
     rdfs:subClassOf foundation:Goal ;
     rdfs:label "Key Result" ;
     rdfs:comment "A measurable outcome that indicates progress toward an Objective" ;
+    foundation:icon "key" ;
     rdfs:seeAlso """
 Examples:
 - Complete 100% of base ontology classes by Dec 31

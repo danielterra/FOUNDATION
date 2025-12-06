@@ -17,6 +17,7 @@ foundation:Material a owl:Class ;
     rdfs:subClassOf foundation:PhysicalThing ;
     rdfs:label "Material" ;
     rdfs:comment "Physical things that do not act autonomously" ;
+    foundation:icon "texture" ;
     rdfs:seeAlso """
 Examples:
 - A desk (furniture)

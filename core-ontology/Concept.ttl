@@ -17,6 +17,7 @@ foundation:Concept a owl:Class ;
     rdfs:subClassOf foundation:AbstractThing ;
     rdfs:label "Concept" ;
     rdfs:comment "Ideas, categories, classifications, or types" ;
+    foundation:icon "lightbulb" ;
     rdfs:seeAlso """
 Examples:
 - Democracy (political concept)

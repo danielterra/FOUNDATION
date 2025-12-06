@@ -17,6 +17,7 @@ foundation:Objective a owl:Class ;
     rdfs:subClassOf foundation:Goal ;
     rdfs:label "Objective" ;
     rdfs:comment "A qualitative, ambitious goal that defines what you want to achieve" ;
+    foundation:icon "target" ;
     rdfs:seeAlso """
 Examples:
 - Build a production-ready knowledge management system

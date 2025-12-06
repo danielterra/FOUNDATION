@@ -17,6 +17,7 @@ foundation:StorageDevice a owl:Class ;
     rdfs:subClassOf foundation:PhysicalThing ;
     rdfs:label "Storage Device" ;
     rdfs:comment "A physical component that stores digital information (exists in space-time)" ;
+    foundation:icon "storage" ;
     rdfs:seeAlso """
 Examples:
 - An SSD (Samsung 970 EVO)

@@ -14,13 +14,32 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
+# Icon Property (visual representation for any entity)
+# -----------------------------------------------------------------------------
+
+foundation:icon a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "icon" ;
+    rdfs:comment "Visual representation icon. Can be: (1) Material Symbols icon name (e.g., 'person', 'flag'), or (2) Image URI (e.g., 'file:///path/image.png', 'http://example.com/icon.svg')" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Examples:
+- Material Symbols: foundation:icon "person"
+- Local file: foundation:icon "file:///Users/daniel/icons/custom.png"
+- Web URL: foundation:icon "https://example.com/logo.svg"
+- Data URI: foundation:icon "data:image/svg+xml;base64,..."
+""" .
+
+# -----------------------------------------------------------------------------
 # Fundamental Ontology - Top Level Division
 # -----------------------------------------------------------------------------
+# Note: owl:Thing is defined in rdf-rdfs-owl-core.ttl
 
 foundation:AbstractThing a owl:Class ;
     rdfs:subClassOf owl:Thing ;
     rdfs:label "Abstract Thing" ;
     rdfs:comment "Things that exist as ideas, concepts, or information but have no physical form" ;
+    foundation:icon "psychology" ;
     rdfs:seeAlso """
 Examples:
 - A concept (the idea of 'democracy')
@@ -33,6 +52,7 @@ foundation:ConcreteThing a owl:Class ;
     rdfs:subClassOf owl:Thing ;
     rdfs:label "Concrete Thing" ;
     rdfs:comment "Things that exist in physical or digital form" ;
+    foundation:icon "widgets" ;
     rdfs:seeAlso """
 Examples:
 - A person (Daniel Terra)
@@ -45,38 +65,38 @@ Examples:
 # Fundamental Properties (inherited by ALL Things)
 # -----------------------------------------------------------------------------
 
-foundation:identifier a owl:DatatypeProperty ;
+foundation:identifier a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "identifier" ;
-    rdfs:comment "Unique identifier for this entity" ;
+    rdfs:comment "Unique identifier for this entity (exactly one)" ;
     rdfs:domain owl:Thing ;
     rdfs:range xsd:string .
 
-foundation:name a owl:DatatypeProperty ;
+foundation:name a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "name" ;
-    rdfs:comment "Primary name or title" ;
+    rdfs:comment "Primary name or title (exactly one)" ;
     rdfs:domain owl:Thing ;
     rdfs:range xsd:string .
 
-foundation:description a owl:DatatypeProperty ;
+foundation:description a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "description" ;
-    rdfs:comment "Detailed explanation or documentation" ;
+    rdfs:comment "Detailed explanation or documentation (exactly one)" ;
     rdfs:domain owl:Thing ;
     rdfs:range xsd:string .
 
-foundation:createdAt a owl:DatatypeProperty ;
+foundation:createdAt a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "created at" ;
-    rdfs:comment "When this entity was created" ;
+    rdfs:comment "When this entity was created (exactly one)" ;
     rdfs:domain owl:Thing ;
     rdfs:range xsd:dateTime .
 
-foundation:modifiedAt a owl:DatatypeProperty ;
+foundation:modifiedAt a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "modified at" ;
-    rdfs:comment "When this entity was last modified" ;
+    rdfs:comment "When this entity was last modified (exactly one)" ;
     rdfs:domain owl:Thing ;
     rdfs:range xsd:dateTime .
 
-foundation:createdBy a owl:ObjectProperty ;
+foundation:createdBy a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "created by" ;
-    rdfs:comment "Who or what created this entity" ;
+    rdfs:comment "Who or what created this entity (exactly one)" ;
     rdfs:domain owl:Thing ;
     rdfs:range foundation:AgentCapacity .

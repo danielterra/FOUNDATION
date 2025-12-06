@@ -17,6 +17,7 @@ foundation:Process a owl:Class ;
     rdfs:subClassOf foundation:AbstractThing ;
     rdfs:label "Process" ;
     rdfs:comment "Activities, events, actions, or things that happen over time" ;
+    foundation:icon "autorenew" ;
     rdfs:seeAlso """
 Examples:
 - Software development (ongoing activity)

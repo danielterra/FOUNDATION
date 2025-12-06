@@ -17,6 +17,7 @@ foundation:Email a owl:Class ;
     rdfs:subClassOf foundation:InformationObject ;
     rdfs:label "Email" ;
     rdfs:comment "An email address associated with an Agent" ;
+    foundation:icon "email" ;
     rdfs:seeAlso """
 Examples:
 - daniel@example.com (personal email)

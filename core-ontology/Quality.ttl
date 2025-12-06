@@ -17,6 +17,7 @@ foundation:Quality a owl:Class ;
     rdfs:subClassOf foundation:AbstractThing ;
     rdfs:label "Quality" ;
     rdfs:comment "Properties, characteristics, or attributes" ;
+    foundation:icon "verified" ;
     rdfs:seeAlso """
 Examples:
 - A color (red, blue)

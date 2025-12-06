@@ -17,6 +17,7 @@ foundation:Task a owl:Class ;
     rdfs:subClassOf foundation:Process ;
     rdfs:label "Task" ;
     rdfs:comment "A specific action to be completed" ;
+    foundation:icon "check_circle" ;
     rdfs:seeAlso """
 Examples:
 - Create Agent.ttl file

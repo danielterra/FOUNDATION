@@ -17,6 +17,7 @@ foundation:Computer a owl:Class ;
     rdfs:subClassOf foundation:PhysicalThing ;
     rdfs:label "Computer" ;
     rdfs:comment "A programmable electronic device for processing and storing data" ;
+    foundation:icon "computer" ;
     rdfs:seeAlso """
 Examples:
 - A laptop (MacBook Pro)

@@ -17,6 +17,7 @@ foundation:SoftwareAgent a owl:Class ;
     rdfs:subClassOf foundation:AgentCapacity , foundation:DigitalThing ;
     rdfs:label "Software Agent" ;
     rdfs:comment "An AI or automated software system that acts autonomously (digital nature with agent capacity)" ;
+    foundation:icon "smart_toy" ;
     rdfs:seeAlso """
 Examples:
 - Claude (AI assistant)

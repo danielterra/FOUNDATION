@@ -17,6 +17,7 @@ foundation:InformationObject a owl:Class ;
     rdfs:subClassOf foundation:AbstractThing ;
     rdfs:label "Information Object" ;
     rdfs:comment "Data, documents, or encoded knowledge" ;
+    foundation:icon "description" ;
     rdfs:seeAlso """
 Examples:
 - A PDF document (this ontology specification)

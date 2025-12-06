@@ -1,5 +1,6 @@
 <script>
 	export let currentNodeLabel = '';
+	export let currentNodeIcon = null;
 	export let nodeTriples = [];
 	export let nodeBacklinks = [];
 	export let nodeStatistics = null;
@@ -14,7 +15,7 @@
 		properties: true,
 		hierarchical: true,
 		semantic: true,
-		backlinks: true
+		usedby: true
 	};
 
 	function toggleSection(section) {
@@ -44,6 +45,25 @@
 		'http://FOUNDATION.local/ontology/pertainsTo'
 	];
 
+	// Group properties by source (own vs inherited, and by parent class)
+	$: groupedProperties = {
+		own: applicableProperties.filter(p => !p.is_inherited),
+		inheritedByClass: applicableProperties
+			.filter(p => p.is_inherited)
+			.reduce((acc, prop) => {
+				const key = prop.source_class;
+				if (!acc[key]) {
+					acc[key] = {
+						className: prop.source_class_label,
+						classIcon: prop.source_class_icon,
+						properties: []
+					};
+				}
+				acc[key].properties.push(prop);
+				return acc;
+			}, {})
+	};
+
 	// Organize triples by category
 	$: organizedTriples = {
 		metadata: nodeTriples.filter(t => ['http://www.w3.org/2000/01/rdf-schema#label', 'http://www.w3.org/2000/01/rdf-schema#comment', 'http://www.w3.org/2004/02/skos/core#altLabel', 'http://www.w3.org/2004/02/skos/core#example'].some(p => t.a === p)),
@@ -51,19 +71,92 @@
 		semantic: nodeTriples.filter(t => semanticPredicates.some(p => t.a === p))
 	};
 
+	// Filter for "Used by" section: only show rdfs:range relationships
+	// This shows which properties have this class as their range
 	$: organizedBacklinks = {
 		children: nodeBacklinks.filter(t => hierarchicalPredicates.some(p => t.a === p)),
-		references: nodeBacklinks.filter(t => !hierarchicalPredicates.some(p => t.a === p) && !semanticPredicates.some(p => t.a === p))
+		references: nodeBacklinks.filter(t => t.a === 'http://www.w3.org/2000/01/rdf-schema#range')
 	};
+
+	// Group "Used by" references by domain class (similar to inherited properties grouping)
+	$: groupedUsedBy = organizedBacklinks.references.reduce((acc, backlink) => {
+		const domainKey = backlink.domain || 'unknown';
+		if (!acc[domainKey]) {
+			acc[domainKey] = {
+				className: backlink.domain_label || getNodeDisplayName(domainKey),
+				classIcon: backlink.domain_icon,
+				classId: domainKey,
+				properties: []
+			};
+		}
+		acc[domainKey].properties.push({
+			label: backlink.v_label || getPredicateLabel(backlink.v),
+			comment: backlink.a_comment,
+			id: backlink.v
+		});
+		return acc;
+	}, {});
+
 
 	function getPredicateLabel(predicate) {
 		return predicate.split(/[/#]/).pop();
 	}
+
+	// Helper to detect icon type
+	function getIconType(icon) {
+		if (!icon) return null;
+		if (icon.startsWith('http://') || icon.startsWith('https://') ||
+		    icon.startsWith('file://') || icon.startsWith('data:')) {
+			return 'image';
+		}
+		return 'material-symbol';
+	}
+
+	// Map XSD datatypes to appropriate Material Symbols icons
+	function getDatatypeIcon(rangeLabel) {
+		if (!rangeLabel) return 'text_fields';
+
+		const label = rangeLabel.toLowerCase();
+
+		// String types
+		if (label.includes('string') || label.includes('literal')) return 'text_fields';
+
+		// Numeric types
+		if (label.includes('integer') || label.includes('int') || label.includes('long') ||
+		    label.includes('short') || label.includes('byte')) return '123';
+		if (label.includes('decimal') || label.includes('float') || label.includes('double')) return 'decimal';
+
+		// Boolean
+		if (label.includes('boolean')) return 'toggle_on';
+
+		// Date/Time types
+		if (label.includes('datetime')) return 'calendar_clock';
+		if (label.includes('date')) return 'calendar_today';
+		if (label.includes('time')) return 'schedule';
+
+		// URI/URL
+		if (label.includes('uri') || label.includes('url') || label.includes('anyuri')) return 'link';
+
+		// Binary/Data
+		if (label.includes('base64') || label.includes('hexbinary')) return 'data_object';
+
+		// Default
+		return 'text_fields';
+	}
+
+	$: iconType = getIconType(currentNodeIcon);
 </script>
 
 <aside class="floating-side-panel">
 	<div class="panel-header">
 		<div class="node-title-section">
+			{#if currentNodeIcon}
+				{#if iconType === 'image'}
+					<img src={currentNodeIcon} alt="icon" class="node-icon-image" />
+				{:else}
+					<span class="node-icon material-symbols-outlined">{currentNodeIcon}</span>
+				{/if}
+			{/if}
 			<h3>{currentNodeLabel}</h3>
 			<span class="node-type-badge">Class</span>
 		</div>
@@ -96,7 +189,7 @@
 			{/if}
 
 			<!-- Description Section -->
-			{#if organizedTriples.metadata.length > 0}
+			{#if organizedTriples.metadata.length > 0 || organizedTriples.hierarchical.length > 0}
 				<section class="panel-section">
 					<button class="section-header" on:click={() => toggleSection('metadata')}>
 						<span class="section-icon">{expandedSections.metadata ? '▼' : '▶'}</span>
@@ -104,6 +197,28 @@
 					</button>
 					{#if expandedSections.metadata}
 						<div class="section-content">
+							<!-- Is a type of (hierarchical relationships) -->
+							{#if organizedTriples.hierarchical.length > 0}
+								<div class="form-row">
+									<label class="form-label">Is a type of</label>
+									<div class="form-value hierarchical-list">
+										{#each organizedTriples.hierarchical as triple}
+											<button class="entity-link-with-icon" on:click={() => onNavigateToNode(triple.v)}>
+												{#if triple.v_icon}
+													{#if getIconType(triple.v_icon) === 'image'}
+														<img src={triple.v_icon} alt="icon" class="entity-icon-img" />
+													{:else}
+														<span class="material-symbols-outlined entity-icon">{triple.v_icon}</span>
+													{/if}
+												{/if}
+												<span class="entity-label">{triple.v_label || getNodeDisplayName(triple.v)}</span>
+											</button>
+										{/each}
+									</div>
+								</div>
+							{/if}
+
+							<!-- Other metadata -->
 							{#each organizedTriples.metadata as triple}
 								<div class="form-row">
 									<label class="form-label" title={triple.a}>
@@ -111,8 +226,15 @@
 									</label>
 									<div class="form-value">
 										{#if triple.v_type === 'ref'}
-											<button class="entity-link" on:click={() => onNavigateToNode(triple.v)}>
-												{getNodeDisplayName(triple.v)}
+											<button class="entity-link-with-icon" on:click={() => onNavigateToNode(triple.v)}>
+												{#if triple.v_icon}
+													{#if getIconType(triple.v_icon) === 'image'}
+														<img src={triple.v_icon} alt="icon" class="entity-icon-img" />
+													{:else}
+														<span class="material-symbols-outlined entity-icon">{triple.v_icon}</span>
+													{/if}
+												{/if}
+												<span class="entity-label">{getNodeDisplayName(triple.v)}</span>
 											</button>
 										{:else}
 											<span class="literal-value">{triple.v}</span>
@@ -125,56 +247,150 @@
 				</section>
 			{/if}
 
-			<!-- Can Have Section -->
+			<!-- Properties Section -->
 			{#if applicableProperties.length > 0}
 				<section class="panel-section">
 					<button class="section-header" on:click={() => toggleSection('properties')}>
 						<span class="section-icon">{expandedSections.properties ? '▼' : '▶'}</span>
-						<span class="section-title">Can have</span>
+						<span class="section-title">Properties</span>
 					</button>
 					{#if expandedSections.properties}
 						<div class="section-content">
-							{#each applicableProperties as prop}
-								<div class="property-item">
-									<div class="property-header">
-										<button class="entity-link" on:click={() => onNavigateToNode(prop.property_id)}>
-											{prop.property_label}
-										</button>
-										<span class="property-type-badge">{prop.property_type.split(/[/#]/).pop()}</span>
-									</div>
-									{#if prop.range_label || prop.range}
-										<div class="property-range">
-											→
-											{#if prop.range}
-												<button class="entity-link-small" on:click={() => onNavigateToNode(prop.range)}>
-													{prop.range_label || prop.range.split(/[/#]/).pop()}
-												</button>
+							<!-- Own Properties -->
+							{#if groupedProperties.own.length > 0}
+								<div class="inherited-group-container">
+									<div class="inherited-icon-sticky" title="Own properties of {currentNodeLabel}">
+										{#if currentNodeIcon}
+											{#if getIconType(currentNodeIcon) === 'image'}
+												<img src={currentNodeIcon} alt={currentNodeLabel} class="inherited-icon-img" />
 											{:else}
-												<span class="range-label">{prop.range_label}</span>
+												<span class="material-symbols-outlined inherited-icon-symbol">{currentNodeIcon}</span>
+											{/if}
+										{:else}
+											<span class="inherited-icon-fallback">{currentNodeLabel}</span>
+										{/if}
+									</div>
+									<div class="inherited-properties-list">
+										{#each groupedProperties.own as prop}
+									<div class="property-item">
+										<div class="property-header">
+											<div class="property-title-line">
+												<span class="property-name">{prop.property_label}</span>
+												<div class="property-badges">
+													{#if prop.cardinality}
+														<span
+															class="cardinality-badge {prop.cardinality === 'exactly one' ? 'cardinality-single' : 'cardinality-multiple'}"
+															title={prop.cardinality}
+														>
+															<span class="material-symbols-outlined">
+																{prop.cardinality === 'exactly one' ? 'looks_one' : 'all_inclusive'}
+															</span>
+														</span>
+													{/if}
+													{#if prop.property_type === 'object'}
+														<span class="type-badge type-reference" title="Reference">
+															<span class="material-symbols-outlined">link</span>
+														</span>
+														{#if prop.range_label || prop.range}
+															{#if prop.range}
+																<button class="range-badge" on:click={() => onNavigateToNode(prop.range)} title={prop.range_label || prop.range.split(/[/#]/).pop()}>
+																	{#if prop.range_icon}
+																		{#if getIconType(prop.range_icon) === 'image'}
+																			<img src={prop.range_icon} alt="icon" class="range-icon-img" />
+																		{:else}
+																			<span class="material-symbols-outlined range-icon-symbol">{prop.range_icon}</span>
+																		{/if}
+																	{:else}
+																		{prop.range_label || prop.range.split(/[/#]/).pop()}
+																	{/if}
+																</button>
+															{:else}
+																<span class="range-badge-static">{prop.range_label}</span>
+															{/if}
+														{/if}
+													{:else}
+														<span class="type-badge type-datatype" title={prop.range_label || 'String'}>
+															<span class="material-symbols-outlined">{getDatatypeIcon(prop.range_label)}</span>
+														</span>
+													{/if}
+												</div>
+											</div>
+											{#if prop.description}
+												<div class="property-description">{prop.description}</div>
 											{/if}
 										</div>
-									{/if}
+									</div>
+										{/each}
+									</div>
 								</div>
-							{/each}
-						</div>
-					{/if}
-				</section>
-			{/if}
+							{/if}
 
-			<!-- Is A Section -->
-			{#if organizedTriples.hierarchical.length > 0}
-				<section class="panel-section">
-					<button class="section-header" on:click={() => toggleSection('hierarchical')}>
-						<span class="section-icon">{expandedSections.hierarchical ? '▼' : '▶'}</span>
-						<span class="section-title">Is a type of</span>
-					</button>
-					{#if expandedSections.hierarchical}
-						<div class="section-content">
-							{#each organizedTriples.hierarchical as triple}
-								<div class="form-row is-a-row">
-									<button class="entity-link" on:click={() => onNavigateToNode(triple.v)}>
-										{triple.v_label || getNodeDisplayName(triple.v)}
-									</button>
+							<!-- Inherited Properties grouped by parent class -->
+							{#each Object.entries(groupedProperties.inheritedByClass) as [classId, classGroup]}
+								<div class="inherited-group-container">
+									<div class="inherited-icon-sticky" title="Inherited from {classGroup.className}">
+										{#if classGroup.classIcon}
+											{#if getIconType(classGroup.classIcon) === 'image'}
+												<img src={classGroup.classIcon} alt={classGroup.className} class="inherited-icon-img" />
+											{:else}
+												<span class="material-symbols-outlined inherited-icon-symbol">{classGroup.classIcon}</span>
+											{/if}
+										{:else}
+											<span class="inherited-icon-fallback">{classGroup.className}</span>
+										{/if}
+									</div>
+									<div class="inherited-properties-list">
+										{#each classGroup.properties as prop}
+									<div class="property-item">
+										<div class="property-header">
+											<div class="property-title-line">
+												<span class="property-name">{prop.property_label}</span>
+												<div class="property-badges">
+													{#if prop.cardinality}
+														<span
+															class="cardinality-badge {prop.cardinality === 'exactly one' ? 'cardinality-single' : 'cardinality-multiple'}"
+															title={prop.cardinality}
+														>
+															<span class="material-symbols-outlined">
+																{prop.cardinality === 'exactly one' ? 'looks_one' : 'all_inclusive'}
+															</span>
+														</span>
+													{/if}
+													{#if prop.property_type === 'object'}
+														<span class="type-badge type-reference" title="Reference">
+															<span class="material-symbols-outlined">link</span>
+														</span>
+														{#if prop.range_label || prop.range}
+															{#if prop.range}
+																<button class="range-badge" on:click={() => onNavigateToNode(prop.range)} title={prop.range_label || prop.range.split(/[/#]/).pop()}>
+																	{#if prop.range_icon}
+																		{#if getIconType(prop.range_icon) === 'image'}
+																			<img src={prop.range_icon} alt="icon" class="range-icon-img" />
+																		{:else}
+																			<span class="material-symbols-outlined range-icon-symbol">{prop.range_icon}</span>
+																		{/if}
+																	{:else}
+																		{prop.range_label || prop.range.split(/[/#]/).pop()}
+																	{/if}
+																</button>
+															{:else}
+																<span class="range-badge-static">{prop.range_label}</span>
+															{/if}
+														{/if}
+													{:else}
+														<span class="type-badge type-datatype" title={prop.range_label || 'String'}>
+															<span class="material-symbols-outlined">{getDatatypeIcon(prop.range_label)}</span>
+														</span>
+													{/if}
+												</div>
+											</div>
+											{#if prop.description}
+												<div class="property-description">{prop.description}</div>
+											{/if}
+										</div>
+									</div>
+										{/each}
+									</div>
 								</div>
 							{/each}
 						</div>
@@ -208,45 +424,44 @@
 				</section>
 			{/if}
 
-			<!-- More Specific Types Section -->
-			{#if nodeBacklinks.length > 0}
+			<!-- Used By Section -->
+			{#if Object.keys(groupedUsedBy).length > 0}
 				<section class="panel-section">
-					<button class="section-header" on:click={() => toggleSection('backlinks')}>
-						<span class="section-icon">{expandedSections.backlinks ? '▼' : '▶'}</span>
-						<span class="section-title">More specific types</span>
+					<button class="section-header" on:click={() => toggleSection('usedby')}>
+						<span class="section-icon">{expandedSections.usedby ? '▼' : '▶'}</span>
+						<span class="section-title">Used by</span>
 					</button>
-					{#if expandedSections.backlinks}
+					{#if expandedSections.usedby}
 						<div class="section-content">
-							<!-- More Specific Types (subClassOf pointing TO this) -->
-							{#if organizedBacklinks.children.length > 0}
-								<div class="subsection">
-									<div class="subsection-title">Types of {currentNodeLabel} ({organizedBacklinks.children.length})</div>
-									{#each organizedBacklinks.children as backlink}
-										<div class="form-row">
-											<button class="entity-link" on:click={() => onNavigateToNode(backlink.v)}>
-												{backlink.v_label || getNodeDisplayName(backlink.v)}
-											</button>
-										</div>
-									{/each}
+							{#each Object.entries(groupedUsedBy) as [classId, classGroup]}
+								<div class="inherited-group-container">
+									<button class="inherited-icon-sticky" on:click={() => onNavigateToNode(classId)} title="{classGroup.className}">
+										{#if classGroup.classIcon}
+											{#if getIconType(classGroup.classIcon) === 'image'}
+												<img src={classGroup.classIcon} alt={classGroup.className} class="inherited-icon-img" />
+											{:else}
+												<span class="material-symbols-outlined inherited-icon-symbol">{classGroup.classIcon}</span>
+											{/if}
+										{:else}
+											<span class="inherited-icon-fallback">{classGroup.className.substring(0, 1)}</span>
+										{/if}
+									</button>
+									<div class="inherited-properties-list">
+										{#each classGroup.properties as prop}
+											<div class="property-item">
+												<div class="property-header">
+													<div class="property-title-line">
+														<span class="property-name">{prop.label}</span>
+													</div>
+												</div>
+												{#if prop.comment}
+													<div class="property-description">{prop.comment}</div>
+												{/if}
+											</div>
+										{/each}
+									</div>
 								</div>
-							{/if}
-
-							<!-- Other References -->
-							{#if organizedBacklinks.references.length > 0}
-								<div class="subsection">
-									<div class="subsection-title">Used by ({organizedBacklinks.references.length})</div>
-									{#each organizedBacklinks.references as backlink}
-										<div class="form-row">
-											<button class="entity-link" on:click={() => onNavigateToNode(backlink.v)}>
-												{backlink.v_label || getNodeDisplayName(backlink.v)}
-											</button>
-											<span class="backlink-predicate" title={backlink.a}>
-												{getPredicateLabel(backlink.a)}
-											</span>
-										</div>
-									{/each}
-								</div>
-							{/if}
+							{/each}
 						</div>
 					{/if}
 				</section>
@@ -284,6 +499,20 @@
 		justify-content: space-between;
 		align-items: center;
 		gap: 12px;
+	}
+
+	.node-icon {
+		font-size: 24px;
+		color: rgba(255, 180, 100, 0.9);
+		flex-shrink: 0;
+	}
+
+	.node-icon-image {
+		width: 24px;
+		height: 24px;
+		border-radius: 50%;
+		object-fit: cover;
+		flex-shrink: 0;
 	}
 
 	.node-type-badge {
@@ -453,6 +682,91 @@
 		text-decoration: underline;
 	}
 
+	/* Entity link inline (used in "Used by" section) */
+	.entity-link-inline {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		background: none;
+		border: none;
+		color: #ff8c42;
+		cursor: pointer;
+		text-decoration: none;
+		padding: 0;
+		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
+		font-size: 11px;
+		transition: color 0.2s;
+	}
+
+	.entity-link-inline:hover {
+		color: #ffb380;
+	}
+
+	.entity-link-inline .entity-name {
+		font-weight: 600;
+		letter-spacing: 0.3px;
+	}
+
+	.inline-icon-symbol {
+		font-size: 16px;
+		flex-shrink: 0;
+	}
+
+	.inline-icon-img {
+		width: 16px;
+		height: 16px;
+		object-fit: cover;
+		border-radius: 2px;
+		flex-shrink: 0;
+	}
+
+	/* Entity links with icons */
+	.entity-link-with-icon {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		background: none;
+		border: none;
+		color: #ff8c42;
+		cursor: pointer;
+		text-decoration: none;
+		padding: 4px 8px;
+		font-family: inherit;
+		font-size: inherit;
+		text-align: left;
+		transition: all 0.2s;
+		border-radius: 4px;
+	}
+
+	.entity-link-with-icon:hover {
+		color: #ffb380;
+		background: rgba(255, 140, 66, 0.1);
+	}
+
+	.entity-icon {
+		font-size: 16px;
+		color: rgba(255, 180, 100, 0.9);
+		flex-shrink: 0;
+	}
+
+	.entity-icon-img {
+		width: 16px;
+		height: 16px;
+		object-fit: cover;
+		border-radius: 2px;
+		flex-shrink: 0;
+	}
+
+	.entity-label {
+		flex: 1;
+	}
+
+	.hierarchical-list {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
 	.literal-value {
 		color: rgba(255, 255, 255, 0.8);
 	}
@@ -478,39 +792,243 @@
 		margin-top: 2px;
 	}
 
+	.property-group-header {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-top: 12px;
+		margin-bottom: 6px;
+		padding: 2px 0;
+		font-size: 0.75em;
+		font-weight: 400;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: rgba(255, 180, 100, 0.7);
+		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
+	}
+
+	.property-group-header:first-child {
+		margin-top: 0;
+	}
+
+	/* Inherited properties layout with sticky icon */
+	.inherited-group-container {
+		display: flex;
+		gap: 16px;
+		margin-top: 16px;
+		margin-bottom: 16px;
+		padding-bottom: 16px;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	.inherited-icon-sticky {
+		position: sticky;
+		top: 0;
+		width: 40px;
+		min-width: 40px;
+		height: 40px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(255, 180, 100, 0.1);
+		border-radius: 8px;
+		border: 1px solid rgba(255, 180, 100, 0.2);
+		flex-shrink: 0;
+		z-index: 1;
+	}
+
+	.inherited-icon-symbol {
+		font-size: 24px;
+		color: rgba(255, 180, 100, 0.9);
+	}
+
+	.inherited-icon-img {
+		width: 24px;
+		height: 24px;
+		object-fit: cover;
+		border-radius: 4px;
+	}
+
+	.inherited-icon-fallback {
+		font-size: 8px;
+		color: rgba(255, 180, 100, 0.7);
+		text-align: center;
+		text-transform: uppercase;
+	}
+
+	.inherited-properties-list {
+		flex: 1;
+		min-width: 0;
+	}
+
 	.property-item {
-		margin-bottom: 12px;
-		padding: 8px 12px;
-		background: rgba(255, 255, 255, 0.02);
-		border-radius: 6px;
-		border-left: 2px solid rgba(100, 200, 255, 0.3);
+		padding: 10px 0;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
+	}
+
+	.property-item:last-child {
+		border-bottom: none;
 	}
 
 	.property-header {
 		display: flex;
-		align-items: center;
-		gap: 8px;
-		margin-bottom: 4px;
+		flex-direction: column;
+		gap: 6px;
 	}
 
-	.property-type-badge {
-		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
-		font-size: 9px;
-		padding: 2px 6px;
-		background: rgba(100, 200, 255, 0.15);
-		color: rgba(100, 200, 255, 0.8);
-		border-radius: 3px;
-		text-transform: uppercase;
-	}
-
-	.property-range {
-		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
-		font-size: 11px;
-		color: rgba(255, 255, 255, 0.5);
-		margin-left: 8px;
+	.property-title-line {
 		display: flex;
 		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.property-name {
+		color: rgba(255, 255, 255, 0.9);
+		font-weight: 500;
+		font-size: 13px;
+		flex-shrink: 1;
+	}
+
+	.property-badges {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-shrink: 0;
+	}
+
+	.property-description {
+		font-size: 11px;
+		color: rgba(255, 255, 255, 0.5);
+		line-height: 1.5;
+		padding-left: 2px;
+	}
+
+	.cardinality-badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 2px 6px;
+		border-radius: 4px;
+		transition: all 0.2s ease;
+		cursor: help;
+	}
+
+	.cardinality-badge .material-symbols-outlined {
+		font-size: 14px;
+		font-variation-settings: 'FILL' 1, 'wght' 600, 'GRAD' 0, 'opsz' 20;
+	}
+
+	.cardinality-single {
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		color: rgba(255, 255, 255, 0.6);
+	}
+
+	.cardinality-single:hover {
+		background: rgba(255, 255, 255, 0.08);
+		border-color: rgba(255, 255, 255, 0.2);
+	}
+
+	.cardinality-multiple {
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		color: rgba(255, 255, 255, 0.6);
+	}
+
+	.cardinality-multiple:hover {
+		background: rgba(255, 255, 255, 0.08);
+		border-color: rgba(255, 255, 255, 0.2);
+	}
+
+	.type-badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 2px 6px;
+		border-radius: 4px;
+		cursor: help;
+		transition: all 0.2s ease;
+	}
+
+	.type-badge .material-symbols-outlined {
+		font-size: 14px;
+		font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+	}
+
+	.type-reference {
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		color: rgba(255, 255, 255, 0.6);
+	}
+
+	.type-datatype {
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		color: rgba(255, 255, 255, 0.6);
+	}
+
+	.range-badge {
+		display: inline-flex;
+		align-items: center;
 		gap: 4px;
+		background: rgba(255, 180, 100, 0.15);
+		border: 1px solid rgba(255, 180, 100, 0.3);
+		border-radius: 4px;
+		padding: 2px 8px;
+		font-size: 9px;
+		color: rgba(255, 180, 100, 0.9);
+		cursor: pointer;
+		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		font-weight: 600;
+		transition: all 0.2s ease;
+	}
+
+	.range-badge:hover {
+		background: rgba(255, 180, 100, 0.25);
+		border-color: rgba(255, 180, 100, 0.5);
+	}
+
+	.range-icon-symbol {
+		font-size: 14px;
+		color: rgba(255, 180, 100, 0.9);
+		flex-shrink: 0;
+	}
+
+	.range-icon-img {
+		width: 14px;
+		height: 14px;
+		object-fit: cover;
+		border-radius: 2px;
+		flex-shrink: 0;
+	}
+
+	.range-badge-static {
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 4px;
+		padding: 2px 8px;
+		font-size: 9px;
+		color: rgba(255, 255, 255, 0.6);
+		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		font-weight: 600;
+	}
+
+	.range-badge-text {
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: 4px;
+		padding: 2px 8px;
+		font-size: 10px;
+		color: rgba(255, 255, 255, 0.5);
+		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
 	}
 
 	.entity-link-small {
@@ -562,5 +1080,4 @@
 		background: rgba(255, 140, 66, 0.5);
 	}
 
-	/* Remove unused stat-badge styles that were replaced by stat-box */
 </style>

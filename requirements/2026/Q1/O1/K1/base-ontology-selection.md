@@ -104,18 +104,6 @@ Too comprehensive for practical use. FOUNDATION needs essential concepts, not ex
 **Approach:**
 Build minimal base ontology manually, grow incrementally based on real needs.
 
-**Core Concepts (25 classes):**
-
-Built minimal ontology covering essential concepts:
-- **Thing** - Root class (owl:Thing equivalent in FOUNDATION namespace)
-- **Abstract concepts**: Concept, InformationObject, Quality, Material
-- **Physical/Digital divide**: PhysicalThing, DigitalThing
-- **AgentCapacity** as mixin for entities that can act (Person, Organization, SoftwareAgent)
-- **Work management**: Goal, Objective, KeyResult, Problem, Solution, Task, Status
-- **Infrastructure**: Computer, StorageDevice
-- **Communication**: Email, Process
-- Multiple inheritance pattern (e.g., Person = AgentCapacity + PhysicalThing)
-
 **Key Design Decisions:**
 
 1. **Naming convention**: Classes ending in "Capacity" = behavior/capability, without suffix = nature/essence
@@ -123,34 +111,6 @@ Built minimal ontology covering essential concepts:
 3. **Examples in every class**: `rdfs:seeAlso` shows practical usage
 4. **Runtime import**: Moved from build-time to runtime for flexibility
 5. **Automatic dependency resolution**: Topological sort imports files in correct order
-
-**Current Implementation (Dec 2024):**
-
-- **25 custom classes** in [core-ontology/](../../../../core-ontology/)
-- **544 total triples** (189 RDF/RDFS/OWL core + 355 FOUNDATION ontology)
-- **304KB database** - extremely lightweight
-- **<1s import time** - instant startup
-- **Runtime import architecture** - flexible, no build step required
-- **Namespace compression** - stores `foundation:Person` instead of full URIs
-- **Graph visualization UI** - interactive ontology browser with semantic search
-
-**Technical Implementation:**
-
-- RDF triple store with SQLite backend ([src-tauri/src/lib.rs](../../../../src-tauri/src/lib.rs))
-- Rust-based Turtle parser with dependency resolution ([src-tauri/src/ontology/mod.rs](../../../../src-tauri/src/ontology/mod.rs))
-- Namespace compression system ([src-tauri/src/namespaces.rs](../../../../src-tauri/src/namespaces.rs))
-- Graph visualization with D3.js force-directed layout
-- Semantic search across class labels and definitions
-- User-friendly terminology (e.g., "Types" instead of "Subclasses")
-
-**Why This Works:**
-- Start small, grow incrementally based on real needs
-- Practical size and performance (~544 triples, 304KB, <1s startup)
-- Maintains semantic rigor without over-engineering
-- Clear separation: base ontology provides foundation, users extend for their domains
-- Runtime flexibility allows ontology updates without rebuild
-- Visual graph interface makes ontology accessible to non-technical users
-
 </details>
 
 ---
@@ -162,9 +122,7 @@ A successful base ontology should:
 1. ✅ **Provide semantic foundation** without dictating application structure
 2. ✅ **Be queryable** for concept discovery ("what is an agent?", "what types of things exist?")
 3. ✅ **Have reasonable size** (tradeoff: completeness vs performance)
-4. ⏸️ **Support multilingual** labels (future requirement - defer to later)
-5. ✅ **Not conflict** with user-defined schemas
-6. ✅ **Be maintainable** (can update/extend without breaking user data)
+4. ✅ **Be maintainable** (can update/extend without breaking user data)
 
 ## Related Problems
 

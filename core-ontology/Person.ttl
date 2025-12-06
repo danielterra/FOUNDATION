@@ -17,6 +17,7 @@ foundation:Person a owl:Class ;
     rdfs:subClassOf foundation:AgentCapacity , foundation:PhysicalThing ;
     rdfs:label "Person" ;
     rdfs:comment "A human being (physical nature with agent capacity)" ;
+    foundation:icon "person" ;
     rdfs:seeAlso """
 Examples:
 - Daniel Terra (developer)

@@ -38,6 +38,11 @@ struct DisplayTriple {
     v: String,            // value (object or object_value)
     v_type: String,       // value type: 'ref' for IRIs, 'literal' for literals
     v_label: Option<String>, // optional label for the value (when v_type is 'ref')
+    v_icon: Option<String>, // optional icon for the value (when v_type is 'ref')
+    a_comment: Option<String>, // optional comment for the predicate
+    domain: Option<String>, // optional domain class IRI for the predicate
+    domain_label: Option<String>, // optional label for the domain class
+    domain_icon: Option<String>, // optional icon for the domain class
 }
 
 // Graph structures for ontology visualization
@@ -46,6 +51,7 @@ struct GraphNode {
     id: String,
     label: String,
     group: i32, // 1=RDF/RDFS/OWL, 2=BFO, 3=Schema.org, 4=FOAF, 5=Bridge
+    icon: Option<String>, // Material Symbols icon name
 }
 
 #[derive(serde::Serialize)]
@@ -154,6 +160,11 @@ fn get_node_triples(state: tauri::State<AppState>, node_id: String) -> Result<St
                     v,
                     v_type,
                     v_label: None,
+                    v_icon: None,
+                    a_comment: None,
+                    domain: None,
+                    domain_label: None,
+                    domain_icon: None,
                 })
             })
             .map_err(|e| format!("Query error: {}", e))?
@@ -213,6 +224,11 @@ fn get_node_backlinks(state: tauri::State<AppState>, node_id: String) -> Result<
                     v: subject,
                     v_type: "ref".to_string(),
                     v_label: None,
+                    v_icon: None,
+                    a_comment: None,
+                    domain: None,
+                    domain_label: None,
+                    domain_icon: None,
                 })
             })
             .map_err(|e| format!("Query error: {}", e))?
@@ -220,22 +236,65 @@ fn get_node_backlinks(state: tauri::State<AppState>, node_id: String) -> Result<
 
         let mut backlinks = backlinks.map_err(|e| format!("Row error: {}", e))?;
 
-        // Prepare label lookup statement once
+        // Prepare label, icon and comment lookup statements once
         let mut label_stmt = conn
             .prepare("SELECT object_value FROM triples WHERE subject = ? AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1")
             .map_err(|e| format!("Label query prepare error: {}", e))?;
 
-        // Expand IRIs and fetch labels for references
+        let mut icon_stmt = conn
+            .prepare("SELECT object_value FROM triples WHERE subject = ? AND predicate = 'foundation:icon' AND retracted = 0 LIMIT 1")
+            .map_err(|e| format!("Icon query prepare error: {}", e))?;
+
+        let mut comment_stmt = conn
+            .prepare("SELECT object_value FROM triples WHERE subject = ? AND predicate = 'rdfs:comment' AND retracted = 0 LIMIT 1")
+            .map_err(|e| format!("Comment query prepare error: {}", e))?;
+
+        let mut domain_stmt = conn
+            .prepare("SELECT object FROM triples WHERE subject = ? AND predicate = 'rdfs:domain' AND retracted = 0 LIMIT 1")
+            .map_err(|e| format!("Domain query prepare error: {}", e))?;
+
+        // Expand IRIs and fetch labels + icons + comments for references
         for triple in &mut backlinks {
+            let compressed_predicate = triple.a.clone();
             triple.a = namespaces::expand_iri(&triple.a);
             let compressed_ref = triple.v.clone();
             triple.v = namespaces::expand_iri(&triple.v);
 
-            // Fetch label for the referenced node
+            // Fetch label for the referenced node (property)
             if let Ok(label) = label_stmt.query_row([&compressed_ref], |row| row.get::<_, String>(0)) {
                 triple.v_label = Some(label);
             } else {
                 triple.v_label = None;
+            }
+
+            // Fetch icon for the referenced node (property)
+            if let Ok(icon) = icon_stmt.query_row([&compressed_ref], |row| row.get::<_, String>(0)) {
+                triple.v_icon = Some(icon);
+            } else {
+                triple.v_icon = None;
+            }
+
+            // Fetch comment for the property (v, not the predicate a)
+            if let Ok(comment) = comment_stmt.query_row([&compressed_ref], |row| row.get::<_, String>(0)) {
+                triple.a_comment = Some(comment);
+            } else {
+                triple.a_comment = None;
+            }
+
+            // Fetch domain for the property (the class that owns this property)
+            if let Ok(domain_compressed) = domain_stmt.query_row([&compressed_ref], |row| row.get::<_, String>(0)) {
+                let domain_expanded = namespaces::expand_iri(&domain_compressed);
+                triple.domain = Some(domain_expanded);
+
+                // Fetch label for the domain class
+                if let Ok(domain_label) = label_stmt.query_row([&domain_compressed], |row| row.get::<_, String>(0)) {
+                    triple.domain_label = Some(domain_label);
+                }
+
+                // Fetch icon for the domain class
+                if let Ok(domain_icon) = icon_stmt.query_row([&domain_compressed], |row| row.get::<_, String>(0)) {
+                    triple.domain_icon = Some(domain_icon);
+                }
             }
         }
 
@@ -320,27 +379,242 @@ fn get_node_statistics(state: tauri::State<AppState>, node_id: String) -> Result
     }
 }
 
+#[tauri::command]
+fn get_node_icon(state: tauri::State<AppState>, node_id: String) -> Result<Option<String>, String> {
+    let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    if let Some(ref conn) = *db {
+        let compressed_node_id = namespaces::compress_iri(&node_id);
+
+        // Default icons for core OWL/RDF/RDFS classes
+        let default_icon = match compressed_node_id.as_str() {
+            "owl:Thing" => Some("workspaces".to_string()),
+            "rdfs:Class" => Some("grid_view".to_string()),
+            "owl:Class" => Some("grid_view".to_string()),
+            "rdf:Property" => Some("settings_ethernet".to_string()),
+            "owl:ObjectProperty" => Some("link".to_string()),
+            "owl:DatatypeProperty" => Some("text_fields".to_string()),
+            _ => None
+        };
+
+        // Query for foundation:icon annotation
+        let icon: Option<String> = conn
+            .query_row(
+                "SELECT object_value FROM triples WHERE subject = ? AND predicate = 'foundation:icon' AND retracted = 0 LIMIT 1",
+                [&compressed_node_id],
+                |row| row.get(0),
+            )
+            .ok();
+
+        // Return custom icon if found, otherwise default
+        Ok(icon.or(default_icon))
+    } else {
+        Err("Database not initialized".to_string())
+    }
+}
+
 #[derive(serde::Serialize)]
 struct ApplicableProperty {
     property_id: String,
     property_label: String,
-    property_type: String,
+    description: Option<String>,
+    property_type: String,  // "object" or "datatype"
     range: Option<String>,
     range_label: Option<String>,
+    range_icon: Option<String>,  // Icon of the range class
+    cardinality: Option<String>,  // "single", "multiple", etc.
+    source_class: String,  // Which class defines this property (for grouping)
+    source_class_label: String,  // Label of the source class
+    source_class_icon: Option<String>,  // Icon of the source class
+    is_inherited: bool,  // true if from parent class, false if from own class
 }
 
 #[tauri::command]
 fn get_applicable_properties(state: tauri::State<AppState>, node_id: String) -> Result<String, String> {
     let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    if let Some(ref _conn) = *db {
-        let _compressed_node_id = namespaces::compress_iri(&node_id);
+    if let Some(ref conn) = *db {
+        let compressed_node_id = namespaces::compress_iri(&node_id);
 
-        // TODO: Implement property discovery based on rdfs:domain and rdfs:range
-        // For now, return empty array since WordNet vocabulary doesn't define property domains/ranges
-        // This will be implemented when we import ontologies that define properties with domain/range constraints
+        // Get all parent classes (rdfs:subClassOf chain) for inheritance
+        let mut class_hierarchy = vec![compressed_node_id.clone()];
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = vec![compressed_node_id.clone()];
 
-        let properties: Vec<ApplicableProperty> = vec![];
+        // Build complete class hierarchy (BFS traversal)
+        while let Some(current) = queue.pop() {
+            if visited.contains(&current) {
+                continue;
+            }
+            visited.insert(current.clone());
+
+            // Query parent classes
+            let parents: Vec<String> = conn
+                .prepare(
+                    "SELECT object FROM triples
+                     WHERE subject = ?
+                     AND predicate = 'rdfs:subClassOf'
+                     AND object_type = 'iri'
+                     AND retracted = 0"
+                )
+                .map_err(|e| format!("Prepare error: {}", e))?
+                .query_map([&current], |row| row.get(0))
+                .map_err(|e| format!("Query error: {}", e))?
+                .filter_map(Result::ok)
+                .collect();
+
+            for parent in parents {
+                if !class_hierarchy.contains(&parent) {
+                    class_hierarchy.push(parent.clone());
+                }
+                if !visited.contains(&parent) {
+                    queue.push(parent);
+                }
+            }
+        }
+
+        // Find all properties where rdfs:domain is one of the classes in the hierarchy
+        let mut properties = Vec::new();
+        let mut seen_properties = std::collections::HashSet::new();
+
+        for class_id in &class_hierarchy {
+            let props: Vec<(String, Option<String>)> = conn
+                .prepare(
+                    "SELECT DISTINCT t1.subject, t2.object
+                     FROM triples t1
+                     LEFT JOIN triples t2 ON t1.subject = t2.subject
+                         AND t2.predicate = 'rdfs:range'
+                         AND t2.object_type = 'iri'
+                         AND t2.retracted = 0
+                     WHERE t1.predicate = 'rdfs:domain'
+                     AND t1.object = ?
+                     AND t1.object_type = 'iri'
+                     AND t1.retracted = 0"
+                )
+                .map_err(|e| format!("Prepare error: {}", e))?
+                .query_map([class_id], |row| Ok((row.get(0)?, row.get(1).ok())))
+                .map_err(|e| format!("Query error: {}", e))?
+                .filter_map(Result::ok)
+                .collect();
+
+            for (prop_id, range) in props {
+                // Avoid duplicates
+                if seen_properties.contains(&prop_id) {
+                    continue;
+                }
+                seen_properties.insert(prop_id.clone());
+
+                // Get property label - use object_value for literals
+                let prop_label: String = conn
+                    .prepare("SELECT object_value FROM triples WHERE subject = ? AND predicate = 'rdfs:label' AND retracted = 0")
+                    .ok()
+                    .and_then(|mut stmt| stmt.query_row([&prop_id], |row| row.get(0)).ok())
+                    .unwrap_or_else(|| prop_id.split([':', '#']).last().unwrap_or(&prop_id).to_string());
+
+                // Get property description (rdfs:comment) - use object_value for literals
+                let description: Option<String> = conn
+                    .prepare("SELECT object_value FROM triples WHERE subject = ? AND predicate = 'rdfs:comment' AND retracted = 0")
+                    .ok()
+                    .and_then(|mut stmt| stmt.query_row([&prop_id], |row| row.get(0)).ok());
+
+                // Get range label if range exists - use object_value for literals
+                let range_label = if let Some(ref r) = range {
+                    // Try to get label from database
+                    let label_from_db = conn
+                        .prepare("SELECT object_value FROM triples WHERE subject = ? AND predicate = 'rdfs:label' AND retracted = 0")
+                        .ok()
+                        .and_then(|mut stmt| stmt.query_row([r], |row| row.get(0)).ok());
+
+                    // If no label found, extract from IRI (e.g., "owl:Thing" -> "Thing")
+                    Some(label_from_db.unwrap_or_else(||
+                        r.split([':', '#']).last().unwrap_or(r).to_string()
+                    ))
+                } else {
+                    None
+                };
+
+                // Determine property type based on range
+                let property_type = if let Some(ref r) = range {
+                    // Check if it's an XSD datatype or rdfs:Literal
+                    if r.starts_with("xsd:") ||
+                       r.contains("/XMLSchema#") ||
+                       r.contains("Literal") ||
+                       r.contains("string") ||
+                       r.contains("integer") ||
+                       r.contains("boolean") ||
+                       r.contains("dateTime") ||
+                       r.contains("date") ||
+                       r.contains("time") ||
+                       r.contains("decimal") ||
+                       r.contains("float") ||
+                       r.contains("double") ||
+                       r.contains("anyURI") ||
+                       r.contains("base64") ||
+                       r.contains("hexBinary") {
+                        "datatype".to_string()
+                    } else {
+                        "object".to_string()
+                    }
+                } else {
+                    "object".to_string()
+                };
+
+                // Check if property is owl:FunctionalProperty (max cardinality = 1)
+                let is_functional: bool = conn
+                    .prepare("SELECT 1 FROM triples WHERE subject = ? AND predicate = 'rdf:type' AND object = 'owl:FunctionalProperty' AND retracted = 0")
+                    .ok()
+                    .and_then(|mut stmt| stmt.query_row([&prop_id], |_| Ok(true)).ok())
+                    .unwrap_or(false);
+
+                let cardinality: Option<String> = if is_functional {
+                    Some("exactly one".to_string())
+                } else {
+                    Some("one or more".to_string())
+                };
+
+                // Get source class label
+                let source_class_label: String = conn
+                    .prepare("SELECT object_value FROM triples WHERE subject = ? AND predicate = 'rdfs:label' AND retracted = 0")
+                    .ok()
+                    .and_then(|mut stmt| stmt.query_row([class_id], |row| row.get(0)).ok())
+                    .unwrap_or_else(|| class_id.split([':', '#']).last().unwrap_or(class_id).to_string());
+
+                // Get source class icon
+                let source_class_icon: Option<String> = conn
+                    .prepare("SELECT object_value FROM triples WHERE subject = ? AND predicate = 'foundation:icon' AND retracted = 0")
+                    .ok()
+                    .and_then(|mut stmt| stmt.query_row([class_id], |row| row.get(0)).ok());
+
+                // Get range icon (if range exists and is an object property)
+                let range_icon: Option<String> = if property_type == "object" {
+                    range.as_ref().and_then(|r| {
+                        conn.prepare("SELECT object_value FROM triples WHERE subject = ? AND predicate = 'foundation:icon' AND retracted = 0")
+                            .ok()
+                            .and_then(|mut stmt| stmt.query_row([r], |row| row.get(0)).ok())
+                    })
+                } else {
+                    None
+                };
+
+                properties.push(ApplicableProperty {
+                    property_id: namespaces::expand_iri(&prop_id),
+                    property_label: prop_label,
+                    description,
+                    property_type,
+                    range: range.map(|r| namespaces::expand_iri(&r)),
+                    range_label,
+                    range_icon,
+                    cardinality,
+                    source_class: class_id.clone(),
+                    source_class_label,
+                    source_class_icon,
+                    is_inherited: class_id != &compressed_node_id,
+                });
+            }
+        }
+
+        // Sort properties by label for better UX
+        properties.sort_by(|a, b| a.property_label.cmp(&b.property_label));
 
         Ok(serde_json::to_string(&properties).map_err(|e| format!("Serialization error: {}", e))?)
     } else {
@@ -631,10 +905,38 @@ fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<Str
                 5 // Bridge
             };
 
+            // Get icon for this node (checking all equivalent entities)
+            let mut icon: Option<String> = None;
+            for equiv_id in equivalent_entities {
+                // Check for foundation:icon
+                if let Ok(found_icon) = conn.query_row(
+                    "SELECT object_value FROM triples WHERE subject = ? AND predicate = 'foundation:icon' AND retracted = 0 LIMIT 1",
+                    [equiv_id],
+                    |row| row.get::<_, String>(0),
+                ) {
+                    icon = Some(found_icon);
+                    break;
+                }
+            }
+
+            // If no icon found, check for default icons for core OWL/RDF/RDFS classes
+            if icon.is_none() {
+                icon = match entity_id.as_str() {
+                    "owl:Thing" => Some("workspaces".to_string()),
+                    "rdfs:Class" => Some("grid_view".to_string()),
+                    "owl:Class" => Some("grid_view".to_string()),
+                    "rdf:Property" => Some("settings_ethernet".to_string()),
+                    "owl:ObjectProperty" => Some("link".to_string()),
+                    "owl:DatatypeProperty" => Some("text_fields".to_string()),
+                    _ => None
+                };
+            }
+
             nodes.push(GraphNode {
                 id: entity_id.clone(),
                 label,
                 group,
+                icon,
             });
             node_ids.insert(entity_id);
         }
@@ -838,7 +1140,7 @@ pub fn run() {
         .manage(AppState {
             db: Mutex::new(db_conn),
         })
-        .invoke_handler(tauri::generate_handler![greet, get_db_stats, get_all_triples, get_node_triples, get_node_backlinks, get_node_statistics, get_applicable_properties, get_ontology_graph, search_classes])
+        .invoke_handler(tauri::generate_handler![greet, get_db_stats, get_all_triples, get_node_triples, get_node_backlinks, get_node_statistics, get_node_icon, get_applicable_properties, get_ontology_graph, search_classes])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

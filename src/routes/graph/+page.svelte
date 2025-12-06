@@ -11,6 +11,7 @@
 	let fullGraphData = null;
 	let currentNodeId = null;
 	let currentNodeLabel = '';
+	let currentNodeIcon = null;
 	let nodeTriples = [];
 	let nodeBacklinks = [];
 	let nodeStatistics = null;
@@ -132,23 +133,26 @@
 	async function loadNodeTriples(nodeId) {
 		loadingTriples = true;
 		try {
-			// Load triples, backlinks, statistics, and applicable properties in parallel
-			const [triplesJson, backlinksJson, statisticsJson, propertiesJson] = await Promise.all([
+			// Load triples, backlinks, statistics, icon, and applicable properties in parallel
+			const [triplesJson, backlinksJson, statisticsJson, icon, propertiesJson] = await Promise.all([
 				invoke('get_node_triples', { nodeId: nodeId }),
 				invoke('get_node_backlinks', { nodeId: nodeId }),
 				invoke('get_node_statistics', { nodeId: nodeId }),
+				invoke('get_node_icon', { nodeId: nodeId }),
 				invoke('get_applicable_properties', { nodeId: nodeId })
 			]);
 
 			nodeTriples = JSON.parse(triplesJson);
 			nodeBacklinks = JSON.parse(backlinksJson);
 			nodeStatistics = JSON.parse(statisticsJson);
+			currentNodeIcon = icon;
 			applicableProperties = JSON.parse(propertiesJson);
 		} catch (err) {
 			console.error('Failed to load node data:', err);
 			nodeTriples = [];
 			nodeBacklinks = [];
 			nodeStatistics = null;
+			currentNodeIcon = null;
 			applicableProperties = [];
 		} finally {
 			loadingTriples = false;
@@ -217,6 +221,7 @@
 		{#if currentNodeId}
 			<SidePanel
 				{currentNodeLabel}
+				{currentNodeIcon}
 				{nodeTriples}
 				{nodeBacklinks}
 				{nodeStatistics}

@@ -15,9 +15,11 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@material-symbols/font-400": "^0.40.1",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
-    "d3": "^7.9.0"
+    "d3": "^7.9.0",
+    "material-symbols": "^0.40.1"
   },
   "devDependencies": {
     "@rdfjs/parser-n3": "^2.1.0",

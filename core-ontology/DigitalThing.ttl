@@ -17,6 +17,7 @@ foundation:DigitalThing a owl:Class ;
     rdfs:subClassOf foundation:ConcreteThing ;
     rdfs:label "Digital Thing" ;
     rdfs:comment "Digital representations or artifacts existing in computer systems" ;
+    foundation:icon "data_object" ;
     rdfs:seeAlso """
 Examples:
 - A database file (FOUNDATION.db)

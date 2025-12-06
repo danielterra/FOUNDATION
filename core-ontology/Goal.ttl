@@ -17,6 +17,7 @@ foundation:Goal a owl:Class ;
     rdfs:subClassOf foundation:Concept ;
     rdfs:label "Goal" ;
     rdfs:comment "Something to be achieved or accomplished" ;
+    foundation:icon "flag" ;
     rdfs:seeAlso """
 Examples:
 - Ship FOUNDATION 1.0 by Q1 2026
