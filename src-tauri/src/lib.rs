@@ -958,6 +958,75 @@ fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option<Str
         // Get the canonical ID that was actually used
         let canonical_central_id = equivalence_map.get(&central_id).unwrap_or(&central_id).clone();
 
+        // Add instances of the central class (if it's a class)
+        let mut stmt = conn.prepare(
+            "SELECT subject FROM triples
+             WHERE predicate = 'rdf:type'
+             AND object = ?
+             AND object_type = 'iri'
+             AND retracted = 0
+             AND subject NOT LIKE '_:%'
+             LIMIT 50"
+        ).map_err(|e| format!("Prepare error: {}", e))?;
+
+        let instances: Vec<String> = stmt
+            .query_map([&canonical_central_id], |row| row.get(0))
+            .map_err(|e| format!("Query error: {}", e))?
+            .filter_map(Result::ok)
+            .collect();
+
+        // Get icon of the central class to use for instances
+        let class_icon: Option<String> = nodes.iter()
+            .find(|n| n.id == canonical_central_id)
+            .and_then(|n| n.icon.clone());
+
+        // Add instance nodes and links
+        for instance_id in instances {
+            // Get label for instance (prefer foundation:name, fallback to rdfs:label, then IRI fragment)
+            let label: String = conn
+                .query_row(
+                    "SELECT COALESCE(object_value, object) FROM triples
+                     WHERE subject = ?
+                     AND (predicate = 'foundation:name' OR predicate = 'rdfs:label')
+                     AND retracted = 0
+                     LIMIT 1",
+                    [&instance_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|_| {
+                    instance_id.split(&['/', '#', ':'][..]).last().unwrap_or(&instance_id).to_string()
+                });
+
+            // Check if instance has a custom icon, otherwise inherit from class
+            let instance_icon: Option<String> = conn
+                .query_row(
+                    "SELECT object_value FROM triples
+                     WHERE subject = ?
+                     AND predicate = 'foundation:hasIcon'
+                     AND retracted = 0
+                     LIMIT 1",
+                    [&instance_id],
+                    |row| row.get(0),
+                )
+                .ok()
+                .or_else(|| class_icon.clone());
+
+            // Add instance node (group 6 = instance)
+            nodes.push(GraphNode {
+                id: instance_id.clone(),
+                label,
+                group: 6,
+                icon: instance_icon,
+            });
+
+            // Add rdf:type link from instance to class
+            links.push(GraphLink {
+                source: instance_id,
+                target: canonical_central_id.clone(),
+                label: "type".to_string(),
+            });
+        }
+
         // Expand all IRIs back to full form for frontend
         let mut expanded_nodes: Vec<GraphNode> = nodes.into_iter().map(|mut node| {
             node.id = namespaces::expand_iri(&node.id);
