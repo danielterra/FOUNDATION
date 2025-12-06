@@ -104,28 +104,13 @@ Too comprehensive for practical use. FOUNDATION needs essential concepts, not ex
 **Approach:**
 Build minimal base ontology manually, grow incrementally based on real needs.
 
-**Core Concepts:**
-
-Built minimal ontology covering essential concepts:
-- **AbstractThing** vs **ConcreteThing** division (ideas vs physical/digital)
-- **AgentCapacity** as mixin for entities that can act
-- Work management concepts (Goal, Problem, Solution, Task)
-- Physical infrastructure (Computer, StorageDevice)
-- Multiple inheritance pattern (e.g., Person = AgentCapacity + PhysicalThing)
-
 **Key Design Decisions:**
 
 1. **Naming convention**: Classes ending in "Capacity" = behavior/capability, without suffix = nature/essence
 2. **One file per class**: [core-ontology/](../../../../core-ontology/) with OOP-style property definitions
 3. **Examples in every class**: `rdfs:seeAlso` shows practical usage
-4. **Automatic dependency resolution**: Topological sort imports files in correct order
-
-**Why This Works:**
-- Start small, grow incrementally based on real needs
-- Practical size and performance (~300 triples, <1s build time)
-- Maintains semantic rigor without over-engineering
-- Clear separation: base ontology provides foundation, users extend for their domains
-
+4. **Runtime import**: Moved from build-time to runtime for flexibility
+5. **Automatic dependency resolution**: Topological sort imports files in correct order
 </details>
 
 ---
@@ -137,9 +122,7 @@ A successful base ontology should:
 1. ✅ **Provide semantic foundation** without dictating application structure
 2. ✅ **Be queryable** for concept discovery ("what is an agent?", "what types of things exist?")
 3. ✅ **Have reasonable size** (tradeoff: completeness vs performance)
-4. ⏸️ **Support multilingual** labels (future requirement - defer to later)
-5. ✅ **Not conflict** with user-defined schemas
-6. ✅ **Be maintainable** (can update/extend without breaking user data)
+4. ✅ **Be maintainable** (can update/extend without breaking user data)
 
 ## Related Problems
 

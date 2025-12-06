@@ -4,9 +4,9 @@
 // Manages SQLite database initialization and connection lifecycle
 //
 // The database file is created in the user's app data directory:
-// - macOS: ~/Library/Application Support/com.supernova.app/supernova.db
-// - Windows: %APPDATA%/com.supernova.app/supernova.db
-// - Linux: ~/.config/com.supernova.app/supernova.db
+// - macOS: ~/Library/Application Support/com.FOUNDATION.app/FOUNDATION.db
+// - Windows: %APPDATA%/com.FOUNDATION.app/FOUNDATION.db
+// - Linux: ~/.config/com.FOUNDATION.app/FOUNDATION.db
 //
 // On first run, the schema is initialized and base ontologies are imported.
 // ============================================================================
@@ -57,7 +57,7 @@ pub fn get_db_path() -> Result<PathBuf, DbError> {
                 "Could not determine project root"
             )))?;
 
-        let db_path = project_root.join("supernova.db");
+        let db_path = project_root.join("FOUNDATION.db");
         println!("Development mode: using database at {:?}", db_path);
         return Ok(db_path);
     }
@@ -70,14 +70,14 @@ pub fn get_db_path() -> Result<PathBuf, DbError> {
                 std::io::ErrorKind::NotFound,
                 "Could not determine app data directory"
             )))?
-            .join("com.supernova.app");
+            .join("com.FOUNDATION.app");
 
         // Create directory if it doesn't exist
         if !app_dir.exists() {
             fs::create_dir_all(&app_dir)?;
         }
 
-        Ok(app_dir.join("supernova.db"))
+        Ok(app_dir.join("FOUNDATION.db"))
     }
 }
 
@@ -89,18 +89,79 @@ pub fn db_exists() -> bool {
     }
 }
 
-/// Initialize database with schema
+/// SQL schema for database initialization
+const SCHEMA_SQL: &str = include_str!("../../../db/schema.sql");
+
+/// RDF/RDFS/OWL core ontology
+const RDF_CORE_TTL: &str = include_str!("../../../core-ontology/rdf-rdfs-owl-core.ttl");
+
+/// Create database schema
+fn create_schema(conn: &Connection) -> Result<(), DbError> {
+    println!("📋 Creating schema...");
+    conn.execute_batch(SCHEMA_SQL)?;
+    println!("✅ Schema created");
+    Ok(())
+}
+
+/// Import RDF/RDFS/OWL core ontology from embedded string
+fn import_rdf_core(conn: &Connection) -> Result<(), DbError> {
+    println!("\n📚 Importing RDF/RDFS/OWL core ontology...");
+
+    // Write embedded content to a temporary file
+    let temp_dir = std::env::temp_dir();
+    let temp_file = temp_dir.join("rdf-rdfs-owl-core.ttl");
+
+    std::fs::write(&temp_file, RDF_CORE_TTL)
+        .map_err(|e| DbError::IoError(e))?;
+
+    let stats = crate::ontology::import_turtle_file(
+        conn,
+        &temp_file,
+        1, // tx = 1 for core ontology
+        "core"
+    ).map_err(|e| DbError::SchemaError(format!("RDF core import failed: {:?}", e)))?;
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&temp_file);
+
+    println!("✅ Imported {} triples from RDF/RDFS/OWL", stats.triples_processed);
+    Ok(())
+}
+
+/// Initialize database with schema and ontology
 pub fn initialize_db(db_path: &Path) -> Result<Connection, DbError> {
-    // Database must exist - no runtime initialization
-    if !db_path.exists() {
-        return Err(DbError::SchemaError(format!(
-            "Database not found at {:?}. Run 'npm run build:db' to create it.",
-            db_path
-        )));
-    }
+    let needs_initialization = !db_path.exists();
 
     println!("Using database at: {:?}", db_path);
     let conn = Connection::open(db_path)?;
+
+    if needs_initialization {
+        println!("\n🚀 Initializing new database...\n");
+
+        // Create schema
+        create_schema(&conn)?;
+
+        // Import RDF/RDFS/OWL core
+        import_rdf_core(&conn)?;
+
+        // Import FOUNDATION ontology
+        crate::ontology::import_all_foundation_ontologies(&conn)
+            .map_err(|e| DbError::SchemaError(format!("Ontology import failed: {:?}", e)))?;
+
+        // Set metadata
+        println!("\n⚙️  Setting metadata...");
+        conn.execute(
+            "UPDATE metadata SET value = 'true', updated_at = ? WHERE key = 'ontology_imported'",
+            [std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64],
+        )?;
+        println!("✅ Metadata updated");
+
+        println!("\n✅ Database initialization complete!");
+    }
+
     Ok(conn)
 }
 
@@ -171,7 +232,7 @@ mod tests {
     #[test]
     fn test_db_initialization() {
         let temp_dir = std::env::temp_dir();
-        let test_db_path = temp_dir.join("supernova_test.db");
+        let test_db_path = temp_dir.join("FOUNDATION_test.db");
 
         // Clean up if exists
         if test_db_path.exists() {
@@ -207,7 +268,7 @@ mod tests {
     #[test]
     fn test_db_stats() {
         let temp_dir = std::env::temp_dir();
-        let test_db_path = temp_dir.join("supernova_test_stats.db");
+        let test_db_path = temp_dir.join("FOUNDATION_test_stats.db");
 
         // Clean up if exists
         if test_db_path.exists() {

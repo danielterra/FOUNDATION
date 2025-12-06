@@ -5,7 +5,7 @@
 <div class="floating-top-bar">
 	<div class="left-controls">
 		<header class="floating-header">
-			<h1>SuperNOVA</h1>
+			<h1>FOUNDATION</h1>
 			<span class="screen-indicator">Ontology Graph</span>
 		</header>
 
@@ -38,8 +38,8 @@
 	}
 
 	.floating-header {
-		background: rgba(30, 30, 30, 0.95);
-		backdrop-filter: blur(10px);
+		background: rgba(10, 10, 10, 0.7);
+		backdrop-filter: blur(20px);
 		padding: 12px 20px;
 		border-radius: 12px;
 		border: 1px solid rgba(255, 255, 255, 0.1);
@@ -68,8 +68,8 @@
 	}
 
 	.recenter-btn {
-		background: rgba(30, 30, 30, 0.95);
-		backdrop-filter: blur(10px);
+		background: rgba(10, 10, 10, 0.7);
+		backdrop-filter: blur(20px);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 		border-radius: 12px;
 		padding: 12px;

@@ -5,12 +5,16 @@
 	import SidePanel from '$lib/components/graph/SidePanel.svelte';
 	import GraphVisualization from '$lib/components/graph/GraphVisualization.svelte';
 	import SearchBar from '$lib/components/graph/SearchBar.svelte';
+	import SetupWizard from '$lib/components/SetupWizard.svelte';
 
 	let loading = true;
 	let error = null;
+	let showSetupWizard = false;
+	let checkingSetup = true;
 	let fullGraphData = null;
 	let currentNodeId = null;
 	let currentNodeLabel = '';
+	let currentNodeIcon = null;
 	let nodeTriples = [];
 	let nodeBacklinks = [];
 	let nodeStatistics = null;
@@ -36,6 +40,33 @@
 		}
 	}
 
+	// Reload graph data from backend
+	async function reloadGraph() {
+		try {
+			loading = true;
+			error = null;
+
+			// Reload graph data centered on current node or owl:Thing if none selected
+			const targetNodeId = currentNodeId || 'http://www.w3.org/2002/07/owl#Thing';
+			const graphJson = await invoke('get_ontology_graph', {
+				centralNodeId: targetNodeId
+			});
+			fullGraphData = JSON.parse(graphJson);
+
+			loading = false;
+
+			// Navigate to the same node to refresh triples and visualization
+			if (currentNodeId) {
+				await navigateToNode(currentNodeId);
+			} else {
+				await navigateToNode('http://www.w3.org/2002/07/owl#Thing');
+			}
+		} catch (err) {
+			error = err.toString();
+			loading = false;
+		}
+	}
+
 	// Handle keyboard shortcuts
 	function handleKeydown(event) {
 		// CMD+0 or CTRL+0 to recenter
@@ -43,9 +74,35 @@
 			event.preventDefault();
 			recenterGraph();
 		}
+
+		// CMD+R or CTRL+R to reload
+		if ((event.metaKey || event.ctrlKey) && event.key === 'r') {
+			event.preventDefault();
+			reloadGraph();
+		}
+	}
+
+	// Handle setup wizard completion
+	async function handleSetupComplete() {
+		showSetupWizard = false;
+		window.location.reload();
 	}
 
 	onMount(async () => {
+		// Check if initial setup is needed
+		try {
+			const setupComplete = await invoke('check_initial_setup');
+			if (!setupComplete) {
+				showSetupWizard = true;
+				checkingSetup = false;
+				return;
+			}
+		} catch (e) {
+			console.error('Setup check failed:', e);
+		}
+
+		checkingSetup = false;
+
 		// Add keyboard event listener
 		window.addEventListener('keydown', handleKeydown);
 
@@ -87,23 +144,26 @@
 	async function loadNodeTriples(nodeId) {
 		loadingTriples = true;
 		try {
-			// Load triples, backlinks, statistics, and applicable properties in parallel
-			const [triplesJson, backlinksJson, statisticsJson, propertiesJson] = await Promise.all([
+			// Load triples, backlinks, statistics, icon, and applicable properties in parallel
+			const [triplesJson, backlinksJson, statisticsJson, icon, propertiesJson] = await Promise.all([
 				invoke('get_node_triples', { nodeId: nodeId }),
 				invoke('get_node_backlinks', { nodeId: nodeId }),
 				invoke('get_node_statistics', { nodeId: nodeId }),
+				invoke('get_node_icon', { nodeId: nodeId }),
 				invoke('get_applicable_properties', { nodeId: nodeId })
 			]);
 
 			nodeTriples = JSON.parse(triplesJson);
 			nodeBacklinks = JSON.parse(backlinksJson);
 			nodeStatistics = JSON.parse(statisticsJson);
+			currentNodeIcon = icon;
 			applicableProperties = JSON.parse(propertiesJson);
 		} catch (err) {
 			console.error('Failed to load node data:', err);
 			nodeTriples = [];
 			nodeBacklinks = [];
 			nodeStatistics = null;
+			currentNodeIcon = null;
 			applicableProperties = [];
 		} finally {
 			loadingTriples = false;
@@ -151,7 +211,11 @@
 </script>
 
 <div id="graph-container">
-	{#if loading}
+	{#if checkingSetup}
+		<div class="loading">Checking setup...</div>
+	{:else if showSetupWizard}
+		<SetupWizard onComplete={handleSetupComplete} />
+	{:else if loading}
 		<div class="loading">Loading ontology graph...</div>
 	{:else if error}
 		<div class="error">Error: {error}</div>
@@ -161,6 +225,7 @@
 		{#if currentNodeId}
 			<SidePanel
 				{currentNodeLabel}
+				{currentNodeIcon}
 				{nodeTriples}
 				{nodeBacklinks}
 				{nodeStatistics}
@@ -189,7 +254,6 @@
 		height: 100vh;
 		position: relative;
 		overflow: hidden;
-		background: #000000;
 	}
 
 	.loading,
@@ -202,7 +266,9 @@
 		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
 		font-size: 18px;
 		color: rgba(255, 255, 255, 0.7);
-		background: #000000;
+		background: transparent;
+		position: relative;
+		z-index: 1;
 	}
 
 	.error {

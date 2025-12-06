@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * SuperNOVA Database Builder
+ * FOUNDATION Database Builder
  *
- * Builds the complete supernova.db with:
+ * Builds the complete FOUNDATION.db with:
  * 1. Schema (tables, indices, views)
  * 2. RDF/RDFS/OWL core ontology
  * 3. WordNet synsets as OWL classes
@@ -19,7 +19,7 @@ const { createReadStream } = require('fs');
 const { createInterface } = require('readline');
 
 const PROJECT_ROOT = path.join(__dirname, '..');
-const DB_PATH = path.join(PROJECT_ROOT, 'supernova.db');
+const DB_PATH = path.join(PROJECT_ROOT, 'FOUNDATION.db');
 const SCHEMA_PATH = path.join(PROJECT_ROOT, 'db', 'schema.sql');
 const RDF_CORE_PATH = path.join(PROJECT_ROOT, 'core-ontology', 'rdf-rdfs-owl-core.ttl');
 const WORDNET_PATH = path.join(PROJECT_ROOT, 'core-ontology', 'english-wordnet-2024.ttl');
@@ -27,7 +27,7 @@ const WORDNET_PATH = path.join(PROJECT_ROOT, 'core-ontology', 'english-wordnet-2
 const SYNSET_LIMIT = 100; // Import first 100 synsets for testing
 
 async function main() {
-  console.log('🚀 SuperNOVA Database Builder\n');
+  console.log('🚀 FOUNDATION Database Builder\n');
   console.log('================================\n');
 
   // Step 1: Delete old database
@@ -243,7 +243,7 @@ async function importWordNetSynsets(filePath, db, startTx, origin) {
 
   for (const synset of synsets) {
     const className = `Concept_${synset.id.replace(/[^a-zA-Z0-9]/g, '_')}`;
-    const classIRI = `http://supernova.local/ontology/${className}`;
+    const classIRI = `http://FOUNDATION.local/ontology/${className}`;
 
     // Triple 1: Class declaration (rdf:type owl:Class)
     triples.push({
@@ -326,7 +326,7 @@ async function importWordNetSynsets(filePath, db, startTx, origin) {
     } else {
       // Add all hypernyms
       for (const hypernym of synset.hypernyms) {
-        const parentClass = `http://supernova.local/ontology/Concept_${hypernym.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        const parentClass = `http://FOUNDATION.local/ontology/Concept_${hypernym.replace(/[^a-zA-Z0-9]/g, '_')}`;
         triples.push({
           subject: classIRI,
           predicate: 'http://www.w3.org/2000/01/rdf-schema#subClassOf',

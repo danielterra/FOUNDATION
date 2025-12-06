@@ -142,13 +142,13 @@
 		padding: 14px 20px;
 		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
 		font-size: 16px;
-		background: rgba(20, 20, 20, 0.95);
+		background: rgba(10, 10, 10, 0.7);
 		border: 1px solid rgba(255, 255, 255, 0.2);
 		border-radius: 8px;
 		color: rgba(255, 255, 255, 0.9);
 		outline: none;
 		transition: all 0.2s ease;
-		backdrop-filter: blur(10px);
+		backdrop-filter: blur(20px);
 	}
 
 	.search-input:focus {
@@ -174,11 +174,11 @@
 		left: 0;
 		right: 0;
 		margin-bottom: 8px;
-		background: rgba(20, 20, 20, 0.98);
+		background: rgba(10, 10, 10, 0.7);
 		border: 1px solid rgba(255, 255, 255, 0.2);
 		border-radius: 8px;
 		overflow: hidden;
-		backdrop-filter: blur(10px);
+		backdrop-filter: blur(20px);
 		box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
 	}
 

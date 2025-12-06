@@ -2,6 +2,7 @@
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://FOUNDATION.local/ontology/> .
 
 # ============================================================================
 # RDF/RDFS/OWL Core Vocabulary
@@ -134,7 +135,8 @@ owl:Class a rdfs:Class ;
 
 owl:Thing a owl:Class ;
     rdfs:label "Thing" ;
-    rdfs:comment "The class of OWL individuals." .
+    rdfs:comment "The class of OWL individuals." ;
+    foundation:icon "category" .
 
 owl:Nothing a owl:Class ;
     rdfs:label "Nothing" ;
