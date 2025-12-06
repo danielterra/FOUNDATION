@@ -5,9 +5,12 @@
 	import SidePanel from '$lib/components/graph/SidePanel.svelte';
 	import GraphVisualization from '$lib/components/graph/GraphVisualization.svelte';
 	import SearchBar from '$lib/components/graph/SearchBar.svelte';
+	import SetupWizard from '$lib/components/SetupWizard.svelte';
 
 	let loading = true;
 	let error = null;
+	let showSetupWizard = false;
+	let checkingSetup = true;
 	let fullGraphData = null;
 	let currentNodeId = null;
 	let currentNodeLabel = '';
@@ -19,18 +22,6 @@
 	let loadingTriples = false;
 	let graphComponent;
 	let visibleGraphData = null;
-
-	// Available background videos
-	const backgroundVideos = [
-		'/background-space.mp4',
-		'/background-code.mp4',
-		'/background-dust.mp4',
-		'/background-edges.mp4',
-		'/background-particles.mp4'
-	];
-
-	// Select random video
-	const selectedVideo = backgroundVideos[Math.floor(Math.random() * backgroundVideos.length)];
 
 	// Get display name for a node (use label if available, otherwise simplify URI)
 	function getNodeDisplayName(nodeId) {
@@ -91,7 +82,27 @@
 		}
 	}
 
+	// Handle setup wizard completion
+	async function handleSetupComplete() {
+		showSetupWizard = false;
+		window.location.reload();
+	}
+
 	onMount(async () => {
+		// Check if initial setup is needed
+		try {
+			const setupComplete = await invoke('check_initial_setup');
+			if (!setupComplete) {
+				showSetupWizard = true;
+				checkingSetup = false;
+				return;
+			}
+		} catch (e) {
+			console.error('Setup check failed:', e);
+		}
+
+		checkingSetup = false;
+
 		// Add keyboard event listener
 		window.addEventListener('keydown', handleKeydown);
 
@@ -200,18 +211,11 @@
 </script>
 
 <div id="graph-container">
-	<!-- Background Video -->
-	<video
-		autoplay
-		loop
-		muted
-		playsinline
-		class="background-video"
-	>
-		<source src={selectedVideo} type="video/mp4" />
-	</video>
-
-	{#if loading}
+	{#if checkingSetup}
+		<div class="loading">Checking setup...</div>
+	{:else if showSetupWizard}
+		<SetupWizard onComplete={handleSetupComplete} />
+	{:else if loading}
 		<div class="loading">Loading ontology graph...</div>
 	{:else if error}
 		<div class="error">Error: {error}</div>
@@ -250,17 +254,6 @@
 		height: 100vh;
 		position: relative;
 		overflow: hidden;
-	}
-
-	.background-video {
-		position: fixed;
-		top: 0;
-		left: 0;
-		width: 100vw;
-		height: 100vh;
-		object-fit: cover;
-		z-index: 0;
-		opacity: 0.2;
 	}
 
 	.loading,

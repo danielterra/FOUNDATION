@@ -30,4 +30,5 @@ rio_api = "0.8"
 lazy_static = "1.4"
 sha2 = "0.10"  # For checksums
 chrono = "0.4"  # For timestamps
+sysinfo = "0.32"  # For system information
 

@@ -169,7 +169,9 @@ CREATE TABLE IF NOT EXISTS origins (
 
 -- Initialize common origins
 INSERT OR IGNORE INTO origins (id, name, description) VALUES
-  (1, 'rdf:core', 'RDF/RDFS/OWL core ontology');
+  (1, 'rdf:core', 'RDF/RDFS/OWL core ontology'),
+  (2, 'foundation:CurrentUser', 'Data provided by the current user'),
+  (3, 'foundation:FOUNDATION', 'Data collected automatically by FOUNDATION application');
 
 -- ============================================================================
 -- Metadata Table
