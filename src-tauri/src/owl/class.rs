@@ -21,6 +21,7 @@ impl Class {
     }
 
     /// Assert that this IRI is a class (rdf:type rdfs:Class or owl:Class)
+    /// DEPRECATED: Use assert instead to ensure proper label and icon
     pub fn assert_class(&self, conn: &mut Connection, class_type: ClassType, origin: &str) -> Result<()> {
         let type_iri = match class_type {
             ClassType::RdfsClass => rdfs::CLASS,
@@ -29,6 +30,46 @@ impl Class {
 
         let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(type_iri.to_string()));
         store::assert_triples(conn, &[triple], origin)?;
+        Ok(())
+    }
+
+    /// Assert class with required metadata (label and icon)
+    /// This is the recommended way to create classes
+    pub fn assert(
+        &self,
+        conn: &mut Connection,
+        class_type: ClassType,
+        label: &str,
+        icon: &str,
+        origin: &str
+    ) -> Result<()> {
+        let type_iri = match class_type {
+            ClassType::RdfsClass => rdfs::CLASS,
+            ClassType::OwlClass => owl::CLASS,
+        };
+
+        // Create class type
+        let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(type_iri.to_string()));
+        store::assert_triples(conn, &[triple], origin)?;
+
+        // Add required label
+        let label_obj = Object::Literal {
+            value: label.to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        };
+        let label_triple = Triple::new(&self.iri, rdfs::LABEL, label_obj);
+        store::assert_triples(conn, &[label_triple], origin)?;
+
+        // Add required icon
+        let icon_obj = Object::Literal {
+            value: icon.to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        };
+        let icon_triple = Triple::new(&self.iri, "foundation:icon", icon_obj);
+        store::assert_triples(conn, &[icon_triple], origin)?;
+
         Ok(())
     }
 

@@ -5,6 +5,7 @@
 
 /// XSD Datatype enumeration
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // Complete XSD type system for future RDF compliance
 pub enum XsdType {
     // String types
     String,

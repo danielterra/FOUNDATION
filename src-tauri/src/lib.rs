@@ -126,7 +126,8 @@ pub fn run() {
         .manage(Mutex::new(db_conn.expect("Database connection required")))
         .invoke_handler(tauri::generate_handler![
             commands::setup__check,
-            commands::setup__init
+            commands::setup__init,
+            commands::entity__get
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -4,6 +4,7 @@
 
 /// Transaction metadata
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Reserved for future temporal queries
 pub struct Transaction {
     pub tx: i64,
     pub origin: String,

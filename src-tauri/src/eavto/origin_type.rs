@@ -4,6 +4,7 @@
 
 /// Origin metadata
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Reserved for provenance tracking features
 pub struct Origin {
     pub id: i64,
     pub name: String,

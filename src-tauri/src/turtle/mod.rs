@@ -15,6 +15,7 @@ use std::path::Path;
 use std::io::BufReader;
 use std::fs::File;
 use crate::eavto::{Triple, Object};
+use chrono;
 
 /// Import error types
 #[derive(Debug)]
@@ -121,28 +122,61 @@ fn rio_to_eavto_triple(rio_triple: &RioTriple, tx: i64, origin_id: i64, created_
             let datatype = get_literal_datatype(lit);
             let language = get_literal_language(lit);
 
-            // Try to parse typed literals into native types
+            // Parse typed literals into native types
+            // If parse fails, it's invalid RDF data - we should fail fast
             match datatype.as_str() {
                 "xsd:integer" | "xsd:int" | "xsd:long" => {
-                    if let Ok(i) = value.parse::<i64>() {
-                        Object::Integer(i)
-                    } else {
-                        Object::Literal { value, datatype: Some(datatype), language }
-                    }
+                    value.parse::<i64>()
+                        .map(Object::Integer)
+                        .unwrap_or_else(|e| panic!(
+                            "TURTLE PARSE ERROR: Invalid integer literal in input file\n\
+                             Value: '{}'\n\
+                             Datatype: {}\n\
+                             Error: {:?}\n\
+                             This indicates malformed RDF data in the source file.",
+                            value, datatype, e
+                        ))
                 }
                 "xsd:decimal" | "xsd:double" | "xsd:float" => {
-                    if let Ok(f) = value.parse::<f64>() {
-                        Object::Number(f)
-                    } else {
-                        Object::Literal { value, datatype: Some(datatype), language }
-                    }
+                    value.parse::<f64>()
+                        .map(Object::Number)
+                        .unwrap_or_else(|e| panic!(
+                            "TURTLE PARSE ERROR: Invalid float literal in input file\n\
+                             Value: '{}'\n\
+                             Datatype: {}\n\
+                             Error: {:?}\n\
+                             This indicates malformed RDF data in the source file.",
+                            value, datatype, e
+                        ))
                 }
                 "xsd:boolean" => {
                     match value.as_str() {
                         "true" | "1" => Object::Boolean(true),
                         "false" | "0" => Object::Boolean(false),
-                        _ => Object::Literal { value, datatype: Some(datatype), language }
+                        _ => panic!(
+                            "TURTLE PARSE ERROR: Invalid boolean literal in input file\n\
+                             Value: '{}'\n\
+                             Datatype: {}\n\
+                             Expected: 'true', 'false', '1', or '0'\n\
+                             This indicates malformed RDF data in the source file.",
+                            value, datatype
+                        )
                     }
+                }
+                "xsd:dateTime" => {
+                    // Parse ISO 8601 datetime to Unix timestamp
+                    // Format: 2025-01-28T18:38:46Z
+                    chrono::DateTime::parse_from_rfc3339(&value)
+                        .map(|dt| Object::DateTime(dt.timestamp()))
+                        .unwrap_or_else(|e| panic!(
+                            "TURTLE PARSE ERROR: Invalid dateTime literal in input file\n\
+                             Value: '{}'\n\
+                             Datatype: {}\n\
+                             Error: {:?}\n\
+                             Expected ISO 8601 format (e.g., '2025-01-28T18:38:46Z')\n\
+                             This indicates malformed RDF data in the source file.",
+                            value, datatype, e
+                        ))
                 }
                 _ => Object::Literal { value, datatype: Some(datatype), language }
             }
@@ -339,7 +373,7 @@ pub fn import_all_foundation_ontologies(conn: &mut Connection) -> Result<Vec<Imp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eavto::{test_helpers::setup_test_db, query};
+    use crate::eavto::test_helpers::setup_test_db;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -566,7 +600,7 @@ test:john a test:Person ;
 
     #[test]
     fn test_rio_to_eavto_triple_conversion() {
-        use rio_api::model::{NamedNode, Literal, Subject, Triple as RioTriple, Term};
+        use rio_api::model::{NamedNode, Subject, Triple as RioTriple, Term};
 
         let rio_triple = RioTriple {
             subject: Subject::NamedNode(NamedNode { iri: "http://example.org/test#Person" }),

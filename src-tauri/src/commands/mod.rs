@@ -9,5 +9,7 @@
 // - Each command should have tests using tauri::test::mock_app()
 
 mod setup;
+mod entity;
 
 pub use setup::*;
+pub use entity::*;

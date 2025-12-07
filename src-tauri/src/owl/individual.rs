@@ -6,7 +6,7 @@
 
 use rusqlite::Connection;
 use crate::eavto::{store, query, Triple, Object};
-use crate::owl::{Result, OwlError, vocabulary::{rdf, owl}};
+use crate::owl::{Result, OwlError, vocabulary::{rdf, rdfs, owl}};
 
 /// Represents an OWL Individual (instance of a class)
 #[derive(Debug, Clone)]
@@ -21,9 +21,45 @@ impl Individual {
     }
 
     /// Assert that this individual is an instance of a class
+    /// DEPRECATED: Use assert instead to ensure proper label and icon
     pub fn assert_type(&self, conn: &mut Connection, class_iri: &str, origin: &str) -> Result<()> {
         let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(class_iri.to_string()));
         store::assert_triples(conn, &[triple], origin)?;
+        Ok(())
+    }
+
+    /// Assert individual with required metadata (label and icon)
+    /// This is the recommended way to create individuals
+    pub fn assert(
+        &self,
+        conn: &mut Connection,
+        class_iri: &str,
+        label: &str,
+        icon: &str,
+        origin: &str
+    ) -> Result<()> {
+        // Create individual type
+        let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(class_iri.to_string()));
+        store::assert_triples(conn, &[triple], origin)?;
+
+        // Add required label
+        let label_obj = Object::Literal {
+            value: label.to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        };
+        let label_triple = Triple::new(&self.iri, rdfs::LABEL, label_obj);
+        store::assert_triples(conn, &[label_triple], origin)?;
+
+        // Add required icon
+        let icon_obj = Object::Literal {
+            value: icon.to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        };
+        let icon_triple = Triple::new(&self.iri, "foundation:icon", icon_obj);
+        store::assert_triples(conn, &[icon_triple], origin)?;
+
         Ok(())
     }
 

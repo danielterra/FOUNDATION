@@ -99,7 +99,7 @@
 	onMount(async () => {
 		// Check if initial setup is needed
 		try {
-			const setupComplete = await invoke('check_initial_setup');
+			const setupComplete = await invoke('setup__check');
 			if (!setupComplete) {
 				showSetupWizard = true;
 				checkingSetup = false;
@@ -115,19 +115,10 @@
 		window.addEventListener('keydown', handleKeydown);
 
 		try {
-			// Get graph data from Rust backend starting from CurrentUser
-			const graphJson = await invoke('get_ontology_graph', {
-				centralNodeId: 'http://foundation.local/ontology/CurrentUser'
-			});
-			fullGraphData = JSON.parse(graphJson);
+			// Start from foundation:ThisUser
+			await navigateToNode('foundation:ThisUser');
 
 			loading = false;
-
-			// Wait for next tick to ensure container dimensions are available
-			setTimeout(() => {
-				// Start with CurrentUser as the root node
-				navigateToNode('http://foundation.local/ontology/CurrentUser');
-			}, 0);
 
 			// Add window resize listener
 			const handleResize = () => {
@@ -200,37 +191,36 @@
 	}
 
 	async function navigateToNode(nodeId) {
-		// Load new graph data centered on this node
 		try {
-			const graphJson = await invoke('get_ontology_graph', {
-				centralNodeId: nodeId
+			// Get entity data with full neighborhood
+			const entityJson = await invoke('entity__get', {
+				entityId: nodeId
 			});
-			fullGraphData = JSON.parse(graphJson);
+			const entityData = JSON.parse(entityJson);
 
-			// Use the canonical ID returned by backend (may differ due to equivalence)
-			const canonicalId = fullGraphData.central_node_id;
-			currentNodeId = canonicalId;
+			currentNodeId = entityData.id;
+			currentNodeLabel = entityData.label;
+			currentNodeIcon = entityData.icon;
 
-			// Find the central node using the canonical ID
-			const centralNode = fullGraphData.nodes.find((n) => n.id === canonicalId);
-			if (!centralNode) {
-				console.error('Central node not found:', canonicalId);
-				return;
-			}
+			// Determine if it's an individual
+			isInstance = entityData.entityType === 'individual';
 
-			currentNodeLabel = centralNode.label;
-
-			// Load triples for the canonical ID
-			loadNodeTriples(canonicalId);
-
-			// Show all nodes and links from backend
+			// Set graph visualization data
 			visibleGraphData = {
-				nodes: fullGraphData.nodes,
-				links: fullGraphData.links,
-				centralNodeId: canonicalId
+				nodes: entityData.nodes,
+				links: entityData.links,
+				centralNodeId: entityData.id
 			};
+
+			// For now, skip the side panel data load
+			// We'll implement this properly later
+			nodeTriples = [];
+			nodeBacklinks = [];
+			nodeStatistics = null;
+			applicableProperties = [];
 		} catch (err) {
 			console.error('Failed to navigate to node:', err);
+			error = err.toString();
 		}
 	}
 

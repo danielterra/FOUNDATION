@@ -5,6 +5,7 @@
 use rusqlite::Connection;
 use super::triple_type::Triple;
 use super::object_type::Object;
+use chrono;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -34,6 +35,41 @@ pub fn assert_triples(
     for triple in triples {
         insert_triple(&tx, triple, tx_id, origin_id, now)?;
     }
+
+    // Before commit, validate numeric literals have typed columns
+    {
+        let mut stmt = tx.prepare(
+            "SELECT subject, predicate, object_datatype, object_number, object_integer
+             FROM triples
+             WHERE tx = ?
+             AND (
+               (object_datatype IN ('xsd:decimal', 'xsd:double', 'xsd:float') AND object_number IS NULL) OR
+               (object_datatype IN ('xsd:integer', 'xsd:int', 'xsd:long') AND object_integer IS NULL)
+             )"
+        )?;
+
+        let bad_triples: Vec<(String, String, String, Option<f64>, Option<i64>)> = stmt.query_map([tx_id], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })?.collect::<std::result::Result<Vec<_>, _>>()?;
+
+        if !bad_triples.is_empty() {
+            eprintln!("\n⚠️  FOUND {} TRIPLES WITH NUMERIC DATATYPE BUT NO TYPED COLUMN:", bad_triples.len());
+            for (idx, (subj, pred, dt, num, int)) in bad_triples.iter().enumerate().take(5) {
+                eprintln!("  #{}: {} {} (datatype={}, object_number={:?}, object_integer={:?})",
+                         idx + 1, subj, pred, dt, num, int);
+            }
+            if bad_triples.len() > 5 {
+                eprintln!("  ... and {} more", bad_triples.len() - 5);
+            }
+            eprintln!();
+        }
+    } // stmt is dropped here
 
     tx.commit()?;
     Ok(tx_id)
@@ -81,48 +117,102 @@ fn insert_triple(
     origin_id: i64,
     created_at: i64,
 ) -> rusqlite::Result<()> {
-    // Convert typed literals to strings (need to own them)
+    // Convert object to SQL columns
+    // Need to compute everything together to ensure datatype matches typed columns
     let int_str;
     let num_str;
     let bool_str;
     let dt_str;
 
-    let (object, object_value, object_datatype, object_language) = match &triple.object {
-        Object::Iri(iri) => (Some(iri.as_str()), None, None, None),
-        Object::Blank(blank) => (Some(blank.as_str()), None, None, None),
-        Object::Literal { value, datatype, language } => {
-            (None, Some(value.as_str()), datatype.as_deref(), language.as_deref())
-        }
+    let (object, object_value, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean) = match &triple.object {
+        Object::Iri(iri) => (Some(iri.as_str()), None, None, None, None, None, None, None),
+        Object::Blank(blank) => (Some(blank.as_str()), None, None, None, None, None, None, None),
+
         Object::Integer(i) => {
             int_str = i.to_string();
-            (None, Some(int_str.as_str()), Some("xsd:integer"), None)
+            (None, Some(int_str.as_str()), Some("xsd:integer"), None, None, Some(*i), None, None)
         }
         Object::Number(n) => {
             num_str = n.to_string();
-            (None, Some(num_str.as_str()), Some("xsd:decimal"), None)
+            (None, Some(num_str.as_str()), Some("xsd:decimal"), None, Some(*n), None, None, None)
         }
         Object::Boolean(b) => {
             bool_str = b.to_string();
-            (None, Some(bool_str.as_str()), Some("xsd:boolean"), None)
+            (None, Some(bool_str.as_str()), Some("xsd:boolean"), None, None, None, None, Some(if *b { 1 } else { 0 }))
         }
         Object::DateTime(dt) => {
             dt_str = dt.to_string();
-            (None, Some(dt_str.as_str()), Some("xsd:dateTime"), None)
+            (None, Some(dt_str.as_str()), Some("xsd:dateTime"), None, None, None, Some(*dt), None)
+        }
+
+        Object::Literal { value, datatype, language } => {
+            // Parse typed literals and populate typed columns
+            // If parse fails, it's a BUG - we should NOT have invalid data
+            match datatype.as_deref() {
+                Some("xsd:decimal") | Some("xsd:double") | Some("xsd:float") => {
+                    let n = value.parse::<f64>()
+                        .unwrap_or_else(|e| panic!(
+                            "PARSE ERROR: Failed to parse float literal\n\
+                             Value: '{}'\n\
+                             Datatype: {:?}\n\
+                             Triple: {} {} {}\n\
+                             Error: {:?}",
+                            value, datatype, triple.subject, triple.predicate, value, e
+                        ));
+                    (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), Some(n), None, None, None)
+                }
+                Some("xsd:integer") | Some("xsd:int") | Some("xsd:long") => {
+                    let i = value.parse::<i64>()
+                        .unwrap_or_else(|e| panic!(
+                            "PARSE ERROR: Failed to parse integer literal\n\
+                             Value: '{}'\n\
+                             Datatype: {:?}\n\
+                             Triple: {} {} {}\n\
+                             Error: {:?}",
+                            value, datatype, triple.subject, triple.predicate, value, e
+                        ));
+                    (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, Some(i), None, None)
+                }
+                Some("xsd:boolean") => {
+                    let b = match value.as_str() {
+                        "true" | "1" => 1,
+                        "false" | "0" => 0,
+                        _ => panic!(
+                            "PARSE ERROR: Invalid boolean literal\n\
+                             Value: '{}'\n\
+                             Datatype: {:?}\n\
+                             Triple: {} {} {}\n\
+                             Expected: 'true', 'false', '1', or '0'",
+                            value, datatype, triple.subject, triple.predicate, value
+                        ),
+                    };
+                    (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, None, None, Some(b))
+                }
+                Some("xsd:dateTime") => {
+                    let timestamp = chrono::DateTime::parse_from_rfc3339(value)
+                        .map(|dt| dt.timestamp())
+                        .unwrap_or_else(|e| panic!(
+                            "PARSE ERROR: Failed to parse dateTime literal\n\
+                             Value: '{}'\n\
+                             Datatype: {:?}\n\
+                             Triple: {} {} {}\n\
+                             Error: {:?}\n\
+                             Expected ISO 8601 format (e.g., '2025-01-28T18:38:46Z')",
+                            value, datatype, triple.subject, triple.predicate, value, e
+                        ));
+                    (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, None, Some(timestamp), None)
+                }
+                _ => {
+                    // Other datatype - no typed column needed
+                    (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, None, None, None)
+                }
+            }
         }
     };
 
     let object_type = triple.object.object_type();
 
-    // Extract typed columns
-    let (object_number, object_integer, object_datetime, object_boolean) = match &triple.object {
-        Object::Number(n) => (Some(*n), None, None, None),
-        Object::Integer(i) => (None, Some(*i), None, None),
-        Object::DateTime(dt) => (None, None, Some(*dt), None),
-        Object::Boolean(b) => (None, None, None, Some(if *b { 1 } else { 0 })),
-        _ => (None, None, None, None),
-    };
-
-    tx.execute(
+    let result = tx.execute(
         "INSERT INTO triples (
             subject, predicate, object, object_value, object_datatype, object_language,
             object_type, object_number, object_integer, object_datetime, object_boolean,
@@ -144,7 +234,20 @@ fn insert_triple(
             origin_id,
             created_at,
         ],
-    )?;
+    );
+
+    if let Err(e) = result {
+        eprintln!("\n❌ INSERT FAILED:");
+        eprintln!("   Subject: {}", triple.subject);
+        eprintln!("   Predicate: {}", triple.predicate);
+        eprintln!("   Object: {:?}", triple.object);
+        eprintln!("   object_datatype: {:?}", object_datatype);
+        eprintln!("   object_number: {:?}", object_number);
+        eprintln!("   object_integer: {:?}", object_integer);
+        eprintln!("   object_boolean: {:?}", object_boolean);
+        eprintln!("   Error: {}\n", e);
+        return Err(e);
+    }
 
     Ok(())
 }
