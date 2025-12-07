@@ -7,27 +7,17 @@
   let setupComplete = null; // null = checking, true = done, false = not done
 
   onMount(async () => {
-    // Check if setup exists by trying to call setup__init with a test
-    // We'll check if foundation:ThisFoundationInstance exists
     try {
-      // Try calling setup__init - if already_setup is true, redirect to graph
-      const result = await invoke('setup__init', {
-        userName: "_check_setup_",
-        email: null
-      });
+      const isDone = await invoke('setup__check');
 
-      if (result.alreadySetup) {
-        // Setup already exists, go to graph
+      if (isDone) {
         setupComplete = true;
         goto("/graph");
       } else {
-        // Oops, we just created a setup with name "_check_setup_"
-        // This shouldn't happen in production, but show setup wizard anyway
         setupComplete = false;
       }
     } catch (error) {
-      // Error means setup doesn't exist, show wizard
-      console.log('Setup not found, showing wizard');
+      console.log('Setup check failed, showing wizard:', error);
       setupComplete = false;
     }
   });

@@ -39,7 +39,19 @@ pub struct FoundationInfo {
     pub version: String,
 }
 
-/// Initialize setup: check if done, detect system, create instances, establish relationships
+/// Check if setup has been completed
+#[tauri::command]
+pub fn setup__check(
+    conn: State<'_, Mutex<Connection>>,
+) -> Result<bool, String> {
+    let conn = conn.lock().map_err(|e| e.to_string())?;
+    let foundation_instance = Individual::new("foundation:ThisFoundationInstance");
+    foundation_instance.exists(&conn)
+        .map_err(|e| format!("Failed to check setup status: {}", e))
+}
+
+/// Initialize setup: detect system, create instances, establish relationships
+/// Should only be called when setup__check returns false
 #[tauri::command]
 pub fn setup__init(
     user_name: String,
@@ -48,15 +60,7 @@ pub fn setup__init(
 ) -> Result<SetupResult, String> {
     let mut conn = conn.lock().map_err(|e| e.to_string())?;
 
-    // Check if setup already done
-    let foundation_instance = Individual::new("foundation:ThisFoundationInstance");
-    let already_setup = foundation_instance.exists(&conn)
-        .map_err(|e| format!("Failed to check setup status: {}", e))?;
-
-    if already_setup {
-        // If already setup, return existing data
-        return get_existing_setup(&conn);
-    }
+    // Don't check again - assume caller used setup__check first
 
     // Detect system information
     let hostname = hostname::get()
@@ -352,43 +356,30 @@ mod tests {
     }
 
     #[test]
-    fn test_setup_already_done() {
+    fn test_setup_check() {
         let mut conn = setup_test_db();
         setup_test_ontology(&mut conn);
-
-        // Create initial setup
-        let user = Individual::new("foundation:ThisUser");
-        user.assert_type(&mut conn, "foundation:Person", "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:name", "Jane Doe", Some("en"), "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:email", "jane@example.com", None, "test").unwrap();
-
-        let computer = Individual::new("foundation:ThisComputer");
-        computer.assert_type(&mut conn, "foundation:Computer", "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:hostname", "test-host", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:os", "linux", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:cpu", "Test CPU", None, "test").unwrap();
-        computer.add_number_property(&mut conn, "foundation:ramGB", 16.0, "test").unwrap();
-
-        let foundation = Individual::new("foundation:ThisFoundationInstance");
-        foundation.assert_type(&mut conn, "foundation:FoundationApp", "test").unwrap();
-        foundation.add_string_property(&mut conn, "foundation:version", "0.1.0", None, "test").unwrap();
 
         let app = tauri::test::mock_app();
         app.manage(Mutex::new(conn));
 
-        let result = setup__init(
-            "Ignored Name".to_string(),
-            None,
-            app.state::<Mutex<Connection>>(),
-        );
-
+        // Check before setup - should be false
+        let result = setup__check(app.state::<Mutex<Connection>>());
         assert!(result.is_ok());
-        let setup_result = result.unwrap();
-        assert!(setup_result.already_setup);
-        assert_eq!(setup_result.user.name, "Jane Doe");
-        assert_eq!(setup_result.user.email, Some("jane@example.com".to_string()));
-        assert_eq!(setup_result.computer.hostname, "test-host");
-        assert_eq!(setup_result.foundation.version, "0.1.0");
+        assert!(!result.unwrap());
+
+        // Create setup
+        {
+            let state = app.state::<Mutex<Connection>>();
+            let mut conn = state.lock().unwrap();
+            let foundation = Individual::new("foundation:ThisFoundationInstance");
+            foundation.assert_type(&mut conn, "foundation:FoundationApp", "test").unwrap();
+        }
+
+        // Check after setup - should be true
+        let result = setup__check(app.state::<Mutex<Connection>>());
+        assert!(result.is_ok());
+        assert!(result.unwrap());
     }
 
     #[test]
