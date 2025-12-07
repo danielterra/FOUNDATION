@@ -1,31 +1,13 @@
-// Command modules
-mod general__greet;
-mod db__get_stats;
-mod triple__get_all;
-mod node__get_triples;
-mod node__get_backlinks;
-mod node__get_statistics;
-mod node__get_icon;
-mod node__check_is_instance;
-mod property__get_applicable;
-mod graph__get_ontology;
-mod class__search;
-mod setup__check_initial;
-mod system__get_info;
-mod setup__complete_initial;
+// Commands module
+//
+// All Tauri commands should be defined here
+// Commands are the interface between the frontend and the Rust backend
+//
+// Design principles:
+// - Commands should use the OWL module API, not direct SQL
+// - Keep commands thin - business logic belongs in OWL module
+// - Each command should have tests using tauri::test::mock_app()
 
-// Re-export command functions
-pub use general__greet::greet;
-pub use db__get_stats::get_db_stats;
-pub use triple__get_all::get_all_triples;
-pub use node__get_triples::get_node_triples;
-pub use node__get_backlinks::get_node_backlinks;
-pub use node__get_statistics::get_node_statistics;
-pub use node__get_icon::node__get_icon;
-pub use node__check_is_instance::node__check_is_instance;
-pub use property__get_applicable::get_applicable_properties;
-pub use graph__get_ontology::get_ontology_graph;
-pub use class__search::search_classes;
-pub use setup__check_initial::check_initial_setup;
-pub use system__get_info::get_system_info;
-pub use setup__complete_initial::complete_initial_setup;
+mod setup;
+
+pub use setup::*;

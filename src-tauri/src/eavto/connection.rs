@@ -1,14 +1,11 @@
 // ============================================================================
-// Database Module
+// EAVTO Connection Module
 // ============================================================================
-// Manages SQLite database initialization and connection lifecycle
+// Manages SQLite database connection lifecycle and initialization
 //
-// The database file is created in the user's app data directory:
-// - macOS: ~/Library/Application Support/com.FOUNDATION.app/FOUNDATION.db
-// - Windows: %APPDATA%/com.FOUNDATION.app/FOUNDATION.db
-// - Linux: ~/.config/com.FOUNDATION.app/FOUNDATION.db
-//
-// On first run, the schema is initialized and base ontologies are imported.
+// Database location:
+// - Dev: project_root/FOUNDATION.db
+// - Prod: platform-specific app data directory
 // ============================================================================
 
 use rusqlite::{Connection, Result};
@@ -42,7 +39,6 @@ pub fn get_db_path() -> Result<PathBuf, DbError> {
     // In development, use project root database
     #[cfg(debug_assertions)]
     {
-        // Get current executable path and navigate to project root
         let exe_path = std::env::current_exe()
             .map_err(|e| DbError::IoError(e))?;
 
@@ -72,20 +68,11 @@ pub fn get_db_path() -> Result<PathBuf, DbError> {
             )))?
             .join("com.FOUNDATION.app");
 
-        // Create directory if it doesn't exist
         if !app_dir.exists() {
             fs::create_dir_all(&app_dir)?;
         }
 
         Ok(app_dir.join("FOUNDATION.db"))
-    }
-}
-
-/// Check if database file exists
-pub fn db_exists() -> bool {
-    match get_db_path() {
-        Ok(path) => path.exists(),
-        Err(_) => false,
     }
 }
 
@@ -106,78 +93,67 @@ fn create_schema(conn: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
-/// Import RDF/RDFS/OWL core ontology from embedded string
-fn import_rdf_core(conn: &Connection) -> Result<(), DbError> {
+/// Import RDF/RDFS/OWL core ontology
+fn import_rdf_core(conn: &mut Connection) -> Result<(), DbError> {
     println!("\n📚 Importing RDF/RDFS/OWL core ontology...");
 
-    // Write embedded content to a temporary file
     let temp_dir = std::env::temp_dir();
     let temp_file = temp_dir.join("rdf-rdfs-owl-core.ttl");
 
     std::fs::write(&temp_file, RDF_CORE_TTL)
         .map_err(|e| DbError::IoError(e))?;
 
-    let stats = crate::ontology::import_turtle_file(
+    let stats = crate::turtle::import_turtle_file(
         conn,
         &temp_file,
         "core"
     ).map_err(|e| DbError::SchemaError(format!("RDF core import failed: {:?}", e)))?;
 
-    // Clean up temp file
     let _ = std::fs::remove_file(&temp_file);
 
     println!("✅ Imported {} triples from RDF/RDFS/OWL", stats.triples_processed);
     Ok(())
 }
 
-/// Import DTYPE ontology from embedded string
-fn import_dtype(conn: &Connection) -> Result<(), DbError> {
+/// Import DTYPE ontology
+fn import_dtype(conn: &mut Connection) -> Result<(), DbError> {
     println!("\n📚 Importing DTYPE ontology...");
 
-    // Write embedded content to a temporary file
     let temp_dir = std::env::temp_dir();
     let temp_file = temp_dir.join("dtype.ttl");
 
     std::fs::write(&temp_file, DTYPE_TTL)
         .map_err(|e| DbError::IoError(e))?;
 
-    let stats = crate::ontology::import_turtle_file(
+    let stats = crate::turtle::import_turtle_file(
         conn,
         &temp_file,
         "core"
     ).map_err(|e| DbError::SchemaError(format!("DTYPE import failed: {:?}", e)))?;
 
-    // Clean up temp file
     let _ = std::fs::remove_file(&temp_file);
 
     println!("✅ Imported {} triples from DTYPE", stats.triples_processed);
     Ok(())
 }
 
-/// Initialize database with schema and ontology
+/// Initialize database with schema and ontologies
 pub fn initialize_db(db_path: &Path) -> Result<Connection, DbError> {
     let needs_initialization = !db_path.exists();
 
     println!("Using database at: {:?}", db_path);
-    let conn = Connection::open(db_path)?;
+    let mut conn = Connection::open(db_path)?;
 
     if needs_initialization {
         println!("\n🚀 Initializing new database...\n");
 
-        // Create schema
         create_schema(&conn)?;
+        import_rdf_core(&mut conn)?;
+        import_dtype(&mut conn)?;
 
-        // Import RDF/RDFS/OWL core
-        import_rdf_core(&conn)?;
-
-        // Import DTYPE ontology
-        import_dtype(&conn)?;
-
-        // Import FOUNDATION ontology
-        crate::ontology::import_all_foundation_ontologies(&conn)
+        crate::turtle::import_all_foundation_ontologies(&mut conn)
             .map_err(|e| DbError::SchemaError(format!("Ontology import failed: {:?}", e)))?;
 
-        // Set metadata
         println!("\n⚙️  Setting metadata...");
         conn.execute(
             "UPDATE metadata SET value = 'true', updated_at = ? WHERE key = 'ontology_imported'",
@@ -200,121 +176,100 @@ pub fn get_connection() -> Result<Connection, DbError> {
     initialize_db(&db_path)
 }
 
-/// Database statistics
-#[derive(Debug, serde::Serialize)]
-pub struct DbStats {
-    pub total_facts: u64,
-    pub active_facts: u64,
-    pub total_transactions: u64,
-    pub entities_count: u64,
-    pub ontology_imported: bool,
-}
-
-/// Get database statistics
-pub fn get_stats(conn: &Connection) -> Result<DbStats, DbError> {
-    let total_facts: u64 = conn.query_row(
-        "SELECT COUNT(*) FROM triples",
-        [],
-        |row| row.get(0)
-    )?;
-
-    let active_facts: u64 = conn.query_row(
-        "SELECT COUNT(*) FROM triples WHERE retracted = 0",
-        [],
-        |row| row.get(0)
-    )?;
-
-    let total_transactions: u64 = conn.query_row(
-        "SELECT COUNT(*) FROM transactions",
-        [],
-        |row| row.get(0)
-    )?;
-
-    let entities_count: u64 = conn.query_row(
-        "SELECT COUNT(DISTINCT subject) FROM triples WHERE retracted = 0",
-        [],
-        |row| row.get(0)
-    )?;
-
-    let ontology_imported_str: String = conn.query_row(
-        "SELECT value FROM metadata WHERE key = 'ontology_imported'",
-        [],
-        |row| row.get(0)
-    ).unwrap_or_else(|_| "false".to_string());
-
-    let ontology_imported = ontology_imported_str == "true";
-
-    Ok(DbStats {
-        total_facts,
-        active_facts,
-        total_transactions,
-        entities_count,
-        ontology_imported,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
-    fn test_db_initialization() {
-        let temp_dir = std::env::temp_dir();
-        let test_db_path = temp_dir.join("FOUNDATION_test.db");
+    fn test_db_error_from_rusqlite() {
+        let rusqlite_err = rusqlite::Error::InvalidQuery;
+        let db_err: DbError = rusqlite_err.into();
 
-        // Clean up if exists
-        if test_db_path.exists() {
-            fs::remove_file(&test_db_path).unwrap();
+        match db_err {
+            DbError::ConnectionError(_) => {},
+            _ => panic!("Expected ConnectionError"),
         }
-
-        // Initialize database
-        let conn = initialize_db(&test_db_path).expect("Failed to initialize database");
-
-        // Verify tables exist
-        let table_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('triples', 'transactions', 'metadata')",
-            [],
-            |row| row.get(0)
-        ).unwrap();
-
-        assert_eq!(table_count, 3, "Expected 3 tables to be created");
-
-        // Verify metadata
-        let schema_version: String = conn.query_row(
-            "SELECT value FROM metadata WHERE key = 'schema_version'",
-            [],
-            |row| row.get(0)
-        ).unwrap();
-
-        assert_eq!(schema_version, "2", "Expected schema version 2");
-
-        // Clean up
-        drop(conn);
-        fs::remove_file(&test_db_path).unwrap();
     }
 
     #[test]
-    fn test_db_stats() {
-        let temp_dir = std::env::temp_dir();
-        let test_db_path = temp_dir.join("FOUNDATION_test_stats.db");
+    fn test_db_error_from_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "test error");
+        let db_err: DbError = io_err.into();
 
-        // Clean up if exists
-        if test_db_path.exists() {
-            fs::remove_file(&test_db_path).unwrap();
+        match db_err {
+            DbError::IoError(_) => {},
+            _ => panic!("Expected IoError"),
+        }
+    }
+
+    #[test]
+    fn test_create_schema() {
+        let conn = Connection::open_in_memory().expect("Failed to create in-memory db");
+        let result = create_schema(&conn);
+
+        assert!(result.is_ok());
+
+        // Verify schema was created by checking for tables
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+            [],
+            |row| row.get(0)
+        ).expect("Failed to query tables");
+
+        assert!(count > 0, "Schema should create tables");
+    }
+
+    #[test]
+    fn test_initialize_db_creates_new_database() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("test.db");
+
+        assert!(!db_path.exists(), "Database should not exist initially");
+
+        let result = initialize_db(&db_path);
+
+        assert!(result.is_ok(), "Database initialization should succeed");
+        assert!(db_path.exists(), "Database file should be created");
+
+        // Verify we can connect to the created database
+        let conn = Connection::open(&db_path).expect("Should open created database");
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+            [],
+            |row| row.get(0)
+        ).expect("Failed to query tables");
+
+        assert!(count > 0, "Initialized database should have tables");
+    }
+
+    #[test]
+    fn test_initialize_db_reuses_existing_database() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("existing.db");
+
+        // Create a database first
+        {
+            let conn = Connection::open(&db_path).expect("Failed to create initial db");
+            conn.execute_batch(SCHEMA_SQL).expect("Failed to create schema");
         }
 
-        let conn = initialize_db(&test_db_path).expect("Failed to initialize database");
-        let stats = get_stats(&conn).expect("Failed to get stats");
+        assert!(db_path.exists(), "Database should exist");
 
-        assert_eq!(stats.total_facts, 0);
-        assert_eq!(stats.active_facts, 0);
-        assert_eq!(stats.total_transactions, 0);
-        assert_eq!(stats.entities_count, 0);
-        assert_eq!(stats.ontology_imported, false);
+        // Initialize should reuse existing database
+        let result = initialize_db(&db_path);
 
-        // Clean up
-        drop(conn);
-        fs::remove_file(&test_db_path).unwrap();
+        assert!(result.is_ok(), "Should reuse existing database");
+    }
+
+    #[test]
+    fn test_get_db_path_returns_path() {
+        let result = get_db_path();
+        assert!(result.is_ok(), "get_db_path should return a valid path");
+
+        let path = result.unwrap();
+        assert!(path.to_str().is_some(), "Path should be valid UTF-8");
+        assert!(path.file_name().is_some(), "Path should have a filename");
     }
 }

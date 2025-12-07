@@ -1,27 +1,12 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
-	import { onMount } from 'svelte';
+	import { createEventDispatcher } from 'svelte';
 
-	export let onComplete = () => {};
+	const dispatch = createEventDispatcher();
 
 	let personName = '';
-	let computerName = '';
-	let computerProcessor = '';
-	let computerMemory = '';
+	let personEmail = '';
 	let isSubmitting = false;
-
-	onMount(async () => {
-		// Get computer info from system automatically
-		try {
-			const sysInfo = await invoke('get_system_info');
-			computerName = sysInfo.hostname || 'My Computer';
-			computerProcessor = sysInfo.cpu_brand || '';
-			computerMemory = Math.round(sysInfo.total_memory_gb).toString();
-		} catch (e) {
-			console.error('Failed to get system info:', e);
-			computerName = 'My Computer';
-		}
-	});
 
 	async function complete() {
 		if (!personName.trim()) return;
@@ -29,21 +14,16 @@
 		isSubmitting = true;
 
 		try {
-			const setupData = {
-				person_name: personName,
-				person_email: null,
-				computer_name: computerName || 'My Computer',
-				computer_processor: computerProcessor || null,
-				computer_memory: computerMemory ? parseInt(computerMemory) : null
-			};
-
-			await invoke('complete_initial_setup', {
-				setupData: JSON.stringify(setupData)
+			const result = await invoke('setup__init', {
+				userName: personName,
+				email: personEmail || null
 			});
 
-			onComplete();
+			console.log('Setup completed:', result);
+			dispatch('complete', result);
 		} catch (e) {
 			console.error('Setup failed:', e);
+			alert(`Setup failed: ${e}`);
 			isSubmitting = false;
 		}
 	}
@@ -51,18 +31,25 @@
 
 <div class="wizard-overlay">
 	<div class="wizard-container">
-		<h1>Setup</h1>
+		<h1>Welcome to FOUNDATION</h1>
 
 		<input
 			type="text"
 			bind:value={personName}
 			placeholder="Your name"
 			autofocus
+			on:keydown={(e) => e.key === 'Enter' && !personEmail && complete()}
+		/>
+
+		<input
+			type="email"
+			bind:value={personEmail}
+			placeholder="Your email (optional)"
 			on:keydown={(e) => e.key === 'Enter' && complete()}
 		/>
 
 		<button on:click={complete} disabled={isSubmitting || !personName.trim()}>
-			DONE
+			{isSubmitting ? 'Setting up...' : 'Start'}
 		</button>
 	</div>
 </div>

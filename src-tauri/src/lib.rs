@@ -1,25 +1,11 @@
-mod db;
-mod ontology;
-mod rdf;
+mod turtle;
 mod namespaces;
 mod commands;
+mod eavto;
+mod owl;
 
 use std::sync::Mutex;
 use rusqlite::Connection;
-
-// Re-export commands for Tauri
-pub use commands::{
-    greet, get_db_stats, get_all_triples, get_node_triples,
-    get_node_backlinks, get_node_statistics, node__get_icon,
-    get_applicable_properties, get_ontology_graph, search_classes,
-    check_initial_setup, get_system_info, complete_initial_setup,
-    node__check_is_instance
-};
-
-// Global database connection (managed by Tauri state)
-pub struct AppState {
-    pub db: Mutex<Option<Connection>>,
-}
 
 // Triple structure for serialization (maps to triples table)
 #[derive(serde::Serialize)]
@@ -36,7 +22,7 @@ pub struct TripleData {
 }
 
 // Simplified triple structure for UI display
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct DisplayTriple {
     a: String,            // attribute (predicate)
     v: String,            // value (object or object_value)
@@ -73,7 +59,7 @@ pub struct GraphData {
 }
 
 // Search result structure
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SearchResult {
     id: String,
     label: String,
@@ -114,12 +100,12 @@ pub struct SystemInfo {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize database on startup
-    let db_conn = match db::get_connection() {
+    let db_conn = match eavto::get_connection() {
         Ok(conn) => {
             println!("Database initialized successfully");
 
             // Print database stats
-            if let Ok(stats) = db::get_stats(&conn) {
+            if let Ok(stats) = eavto::get_stats(&conn) {
                 println!("Database stats:");
                 println!("  Total triples: {}", stats.total_facts);
                 println!("  Active triples: {}", stats.active_facts);
@@ -137,24 +123,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState {
-            db: Mutex::new(db_conn),
-        })
+        .manage(Mutex::new(db_conn.expect("Database connection required")))
         .invoke_handler(tauri::generate_handler![
-            greet,
-            get_db_stats,
-            get_all_triples,
-            get_node_triples,
-            get_node_backlinks,
-            get_node_statistics,
-            node__get_icon,
-            get_applicable_properties,
-            get_ontology_graph,
-            search_classes,
-            check_initial_setup,
-            get_system_info,
-            complete_initial_setup,
-            node__check_is_instance
+            commands::setup__init
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
