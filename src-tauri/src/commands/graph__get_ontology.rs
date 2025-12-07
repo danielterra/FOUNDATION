@@ -6,10 +6,10 @@ pub fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option
     let db = state.db.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     if let Some(ref conn) = *db {
-        // Use owl:Thing as default central node and compress to prefix
+        // Use CurrentUser as default central node and compress to prefix
         let central_id = central_node_id
             .map(|id| namespaces::compress_iri(&id))
-            .unwrap_or_else(|| "owl:Thing".to_string());
+            .unwrap_or_else(|| "foundation:CurrentUser".to_string());
 
         // First, find all equivalents of the central node
         let mut central_ids = vec![central_id.clone()];
@@ -47,6 +47,8 @@ pub fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option
         // Follow the graph correctly: load edges AND nodes, ensuring connectivity
         let mut included_nodes = std::collections::HashSet::new();
         let mut included_edges = std::collections::HashSet::new();
+        // Store edge predicates for labeling: (source, target) -> predicate
+        let mut edge_predicates: std::collections::HashMap<(String, String), String> = std::collections::HashMap::new();
 
         // Include all central equivalents
         for id in &central_ids {
@@ -80,6 +82,7 @@ pub fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option
         for (child, parent) in &child_edges {
             included_nodes.insert(child.clone());
             included_edges.insert((child.clone(), parent.clone()));
+            edge_predicates.insert((child.clone(), parent.clone()), "rdfs:subClassOf".to_string());
         }
 
         // REMOVED: grandchildren loading for simpler 1-level visualization
@@ -111,9 +114,100 @@ pub fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option
         for (child, parent) in &parent_edges {
             included_nodes.insert(parent.clone());
             included_edges.insert((child.clone(), parent.clone()));
+            edge_predicates.insert((child.clone(), parent.clone()), "rdfs:subClassOf".to_string());
         }
 
         // REMOVED: grandparents loading for simpler 1-level visualization
+
+        // Check if central node is an instance (do this BEFORE equivalence mapping)
+        let central_is_instance = conn.query_row(
+            "SELECT COUNT(*) FROM triples
+             WHERE subject = ?
+             AND predicate = 'rdf:type'
+             AND object_type = 'iri'
+             AND retracted = 0
+             AND object NOT IN ('owl:Class', 'rdfs:Class')",
+            [&central_id],
+            |row| row.get::<_, i64>(0)
+        ).unwrap_or(0) > 0;
+
+        if central_is_instance {
+            // Load the classes that this instance belongs to
+            let instance_classes: Vec<String> = conn
+                .prepare(
+                    "SELECT object FROM triples
+                     WHERE subject = ?
+                     AND predicate = 'rdf:type'
+                     AND object_type = 'iri'
+                     AND retracted = 0
+                     AND object NOT IN ('owl:Class', 'rdfs:Class')"
+                )
+                .map_err(|e| format!("Prepare error: {}", e))?
+                .query_map([&central_id], |row| row.get(0))
+                .map_err(|e| format!("Query error: {}", e))?
+                .filter_map(Result::ok)
+                .collect();
+
+            // Add these classes to included_nodes (only direct classes, not their parents)
+            for class_id in &instance_classes {
+                included_nodes.insert(class_id.clone());
+                // Add rdf:type edge from instance to class
+                included_edges.insert((central_id.clone(), class_id.clone()));
+                edge_predicates.insert((central_id.clone(), class_id.clone()), "rdf:type".to_string());
+            }
+
+            // Load entities that reference this instance (backlinks/incoming relationships)
+            let backlink_edges: Vec<(String, String, String)> = conn
+                .prepare(
+                    "SELECT subject, predicate, object FROM triples
+                     WHERE object = ?
+                     AND object_type = 'iri'
+                     AND retracted = 0
+                     AND predicate != 'rdf:type'
+                     AND subject NOT LIKE '_:%'"
+                )
+                .map_err(|e| format!("Prepare error: {}", e))?
+                .query_map([&central_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .map_err(|e| format!("Query error: {}", e))?
+                .filter_map(Result::ok)
+                .collect();
+
+            // Add backlink nodes and edges
+            for (subject, predicate, object) in &backlink_edges {
+                included_nodes.insert(subject.clone());
+                included_edges.insert((subject.clone(), object.clone()));
+                edge_predicates.insert((subject.clone(), object.clone()), predicate.clone());
+            }
+
+            println!("[Graph] Loaded {} backlink edges for instance", backlink_edges.len());
+
+            // Load outgoing relationships from this instance (properties it owns)
+            let outgoing_edges: Vec<(String, String, String)> = conn
+                .prepare(
+                    "SELECT subject, predicate, object FROM triples
+                     WHERE subject = ?
+                     AND object_type = 'iri'
+                     AND retracted = 0
+                     AND predicate != 'rdf:type'
+                     AND object NOT LIKE '_:%'"
+                )
+                .map_err(|e| format!("Prepare error: {}", e))?
+                .query_map([&central_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .map_err(|e| format!("Query error: {}", e))?
+                .filter_map(Result::ok)
+                .collect();
+
+            // Add outgoing nodes and edges
+            for (subject, predicate, object) in &outgoing_edges {
+                included_nodes.insert(object.clone());
+                included_edges.insert((subject.clone(), object.clone()));
+                edge_predicates.insert((subject.clone(), object.clone()), predicate.clone());
+            }
+
+            println!("[Graph] Loaded {} outgoing edges for instance", outgoing_edges.len());
+        }
+
+        println!("[Graph] Central is instance: {}", central_is_instance);
 
         // Build equivalence map from owl:equivalentClass relationships
         let mut equivalence_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -198,14 +292,19 @@ pub fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option
             canonical_nodes.insert(canonical.clone());
         }
 
-        // Update included_edges to use canonical representatives
+        // Update included_edges to use canonical representatives and preserve predicates
         let mut canonical_edges = std::collections::HashSet::new();
+        let mut canonical_edge_predicates: std::collections::HashMap<(String, String), String> = std::collections::HashMap::new();
         for (source, target) in &included_edges {
             let canonical_source = equivalence_map.get(source).unwrap_or(source);
             let canonical_target = equivalence_map.get(target).unwrap_or(target);
             // Skip self-loops that might arise from equivalence
             if canonical_source != canonical_target {
                 canonical_edges.insert((canonical_source.clone(), canonical_target.clone()));
+                // Preserve the predicate
+                if let Some(predicate) = edge_predicates.get(&(source.clone(), target.clone())) {
+                    canonical_edge_predicates.insert((canonical_source.clone(), canonical_target.clone()), predicate.clone());
+                }
             }
         }
 
@@ -213,45 +312,74 @@ pub fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option
         let mut nodes = Vec::new();
         let mut node_ids = std::collections::HashSet::new();
 
+        let canonical_central_id = equivalence_map.get(&central_id).unwrap_or(&central_id).clone();
+
         for entity_id in &canonical_nodes {
             // Get all equivalent entities for this canonical
             let default_vec = vec![entity_id.clone()];
             let equivalent_entities = equiv_groups.get(entity_id).map(|v| v.as_slice()).unwrap_or(&default_vec[..]);
 
-            // Query to check if this entity is a class and get its tx (try all equivalents)
-            let mut class_tx: Option<i64> = None;
+            // Check if this is the central node - always include it even if not a class
+            let is_central = entity_id == &canonical_central_id;
+
+            // Check if this entity is a class (has rdf:type owl:Class or rdfs:Class)
+            let mut is_class = false;
             for equiv_id in equivalent_entities {
-                if let Ok(tx) = conn.query_row(
-                    "SELECT tx FROM triples
+                if let Ok(count) = conn.query_row(
+                    "SELECT COUNT(*) FROM triples
                      WHERE subject = ?
                      AND predicate = 'rdf:type'
                      AND object_type = 'iri'
                      AND (object = 'owl:Class' OR object = 'rdfs:Class')
-                     AND retracted = 0
-                     LIMIT 1",
+                     AND retracted = 0",
                     [equiv_id],
-                    |row| row.get(0),
+                    |row| row.get::<_, i64>(0),
                 ) {
-                    class_tx = Some(tx);
-                    break;
+                    if count > 0 {
+                        is_class = true;
+                        break;
+                    }
                 }
             }
 
-            // Skip if not a class
-            let tx = match class_tx {
-                Some(t) => t,
-                None => continue,
-            };
+            // Check if this is an instance (has rdf:type but not to owl:Class or rdfs:Class)
+            let is_instance = conn.query_row(
+                "SELECT COUNT(*) FROM triples
+                 WHERE subject = ?
+                 AND predicate = 'rdf:type'
+                 AND object_type = 'iri'
+                 AND retracted = 0
+                 AND object NOT IN ('owl:Class', 'rdfs:Class')",
+                [entity_id],
+                |row| row.get::<_, i64>(0)
+            ).unwrap_or(0) > 0;
+
+            // Include if it's a class, central node, or an instance
+            if !is_class && !is_central && !is_instance {
+                continue;
+            }
 
             // Collect labels from all equivalent entities
             let mut labels = Vec::new();
             for equiv_id in equivalent_entities {
-                // Try to get literal label from object_value first, then fall back to object
-                if let Ok(label) = conn.query_row(
-                    "SELECT COALESCE(object_value, object) FROM triples WHERE subject = ? AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1",
+                // Try foundation:name first (for instances), then rdfs:label (for classes)
+                let label_result = conn.query_row(
+                    "SELECT COALESCE(object_value, object) FROM triples
+                     WHERE subject = ? AND predicate = 'foundation:name'
+                     AND retracted = 0 LIMIT 1",
                     [equiv_id],
                     |row| row.get::<_, String>(0),
-                ) {
+                ).or_else(|_| {
+                    conn.query_row(
+                        "SELECT COALESCE(object_value, object) FROM triples
+                         WHERE subject = ? AND predicate = 'rdfs:label'
+                         AND retracted = 0 LIMIT 1",
+                        [equiv_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                });
+
+                if let Ok(label) = label_result {
                     labels.push(label);
                 } else {
                     // Fallback: extract last part of URI
@@ -271,17 +399,11 @@ pub fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option
                 labels.into_iter().next().unwrap_or_else(|| "Unknown".to_string())
             };
 
-            // Determine group based on transaction ID
-            let group = if tx <= 100 {
-                1 // RDF/RDFS/OWL
-            } else if tx <= 10000 {
-                2 // BFO
-            } else if tx <= 20000 {
-                3 // Schema.org
-            } else if tx <= 30000 {
-                4 // FOAF
+            // Determine group: classes get group 1, instances get group 6
+            let group = if is_instance {
+                6 // Instance
             } else {
-                5 // Bridge
+                1 // Class (or central node)
             };
 
             // Get icon for this node (checking all equivalent entities)
@@ -295,6 +417,33 @@ pub fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option
                 ) {
                     icon = Some(found_icon);
                     break;
+                }
+            }
+
+            // If no icon found, check if this is an instance and get icon from its class
+            if icon.is_none() {
+                for equiv_id in equivalent_entities {
+                    if let Ok(class_id) = conn.query_row(
+                        "SELECT object FROM triples
+                         WHERE subject = ?
+                         AND predicate = 'rdf:type'
+                         AND object_type = 'iri'
+                         AND retracted = 0
+                         AND object NOT IN ('owl:Class', 'rdfs:Class')
+                         LIMIT 1",
+                        [equiv_id],
+                        |row| row.get::<_, String>(0),
+                    ) {
+                        // Get icon from the class
+                        if let Ok(class_icon) = conn.query_row(
+                            "SELECT object_value FROM triples WHERE subject = ? AND predicate = 'foundation:icon' AND retracted = 0 LIMIT 1",
+                            [&class_id],
+                            |row| row.get::<_, String>(0),
+                        ) {
+                            icon = Some(class_icon);
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -320,25 +469,34 @@ pub fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option
             node_ids.insert(entity_id);
         }
 
-        // Use ONLY the edges we explicitly loaded (from canonical_edges)
+        // Build links - will include subClassOf, rdf:type, and property edges
         let mut links = Vec::new();
         for (source, target) in canonical_edges {
             // Double-check both nodes are in our set (should always be true)
             if node_ids.contains(&source) && node_ids.contains(&target) {
-                // The predicate is always subClassOf since we only loaded those edges
+                // Get the predicate label, simplify it for display
+                let predicate = canonical_edge_predicates.get(&(source.clone(), target.clone()))
+                    .map(|p| p.as_str())
+                    .unwrap_or("subClassOf");
+
+                // Simplify predicate for display: extract the local name after '/', '#', or ':'
+                let label = predicate
+                    .rsplit(|c| c == '/' || c == '#' || c == ':')
+                    .next()
+                    .unwrap_or(predicate)
+                    .to_string();
+
                 links.push(GraphLink {
                     source,
                     target,
-                    label: "subClassOf".to_string(),
+                    label,
                 });
             }
         }
 
-        // Get the canonical ID that was actually used
-        let canonical_central_id = equivalence_map.get(&central_id).unwrap_or(&central_id).clone();
-
-        // Add instances of the central class (if it's a class)
-        let mut stmt = conn.prepare(
+        // Add instances of the central class (only if central node is NOT an instance)
+        if !central_is_instance {
+            let mut stmt = conn.prepare(
             "SELECT subject FROM triples
              WHERE predicate = 'rdf:type'
              AND object = ?
@@ -366,12 +524,23 @@ pub fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option
                 .query_row(
                     "SELECT COALESCE(object_value, object) FROM triples
                      WHERE subject = ?
-                     AND (predicate = 'foundation:name' OR predicate = 'rdfs:label')
+                     AND predicate = 'foundation:name'
                      AND retracted = 0
                      LIMIT 1",
                     [&instance_id],
                     |row| row.get(0),
                 )
+                .or_else(|_| {
+                    conn.query_row(
+                        "SELECT COALESCE(object_value, object) FROM triples
+                         WHERE subject = ?
+                         AND predicate = 'rdfs:label'
+                         AND retracted = 0
+                         LIMIT 1",
+                        [&instance_id],
+                        |row| row.get(0),
+                    )
+                })
                 .unwrap_or_else(|_| {
                     instance_id.split(&['/', '#', ':'][..]).last().unwrap_or(&instance_id).to_string()
                 });
@@ -405,6 +574,7 @@ pub fn get_ontology_graph(state: tauri::State<AppState>, central_node_id: Option
                 label: "type".to_string(),
             });
         }
+        } // End if !central_is_instance
 
         // Expand all IRIs back to full form for frontend
         let mut expanded_nodes: Vec<GraphNode> = nodes.into_iter().map(|mut node| {

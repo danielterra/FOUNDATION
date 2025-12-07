@@ -180,7 +180,6 @@ fn parse_typed_columns(value: &str, datatype: &str) -> (Option<f64>, Option<i64>
 pub fn import_turtle_file(
     conn: &Connection,
     file_path: &Path,
-    tx_start: i64,
     origin: &str,
 ) -> Result<ImportStats, ImportError> {
     let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
@@ -191,7 +190,6 @@ pub fn import_turtle_file(
 
     let mut triples_processed = 0u64;
     let mut facts_inserted = 0u64;
-    let current_tx = tx_start;
 
     // Get or create origin_id
     let origin_id = get_or_create_origin(conn, origin)?;
@@ -199,16 +197,19 @@ pub fn import_turtle_file(
     // Begin transaction
     conn.execute("BEGIN TRANSACTION", [])?;
 
-    // Create transaction record
+    // Create transaction record (let AUTOINCREMENT generate tx id)
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64;
 
     conn.execute(
-        "INSERT INTO transactions (tx, origin, created_at) VALUES (?, ?, ?)",
-        (current_tx, origin, now),
+        "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
+        (origin, now),
     )?;
+
+    // Get the auto-generated tx id
+    let current_tx = conn.last_insert_rowid();
 
     // Parse Turtle file
     TurtleParser::new(reader, None).parse_all(&mut |triple: Triple| {
@@ -494,17 +495,14 @@ pub fn import_all_foundation_ontologies(conn: &Connection) -> Result<Vec<ImportS
     println!("📋 Found {} FOUNDATION ontology files\n", ttl_files.len());
 
     // Import each file with file-specific origin
-    let mut tx = 101; // Start FOUNDATION ontologies at tx 101
-
     for file_path in ttl_files {
         let filename = file_path.file_name().unwrap().to_str().unwrap();
         let origin = format!("foundation:ontology:{}", filename);
 
         println!("📄 {}", filename);
-        match import_turtle_file(conn, &file_path, tx, &origin) {
+        match import_turtle_file(conn, &file_path, &origin) {
             Ok(stats) => {
                 all_stats.push(stats);
-                tx += 1;
             }
             Err(e) => {
                 eprintln!("⚠️  Failed to import {}: {:?}", filename, e);
@@ -560,7 +558,7 @@ pub fn import_all_core_ontologies(conn: &Connection) -> Result<Vec<ImportStats>,
     println!("📚 Importing RDF/RDFS/OWL meta-ontology...");
     let rdf_path = project_root.join("core-ontology/rdf-rdfs-owl-core.ttl");
     if rdf_path.exists() {
-        let stats = import_turtle_file(conn, &rdf_path, 1, "core")?;
+        let stats = import_turtle_file(conn, &rdf_path, "core")?;
         all_stats.push(stats);
     } else {
         eprintln!("⚠️  Warning: {} not found", rdf_path.display());

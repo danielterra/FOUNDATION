@@ -3,6 +3,7 @@
 
 	export let currentNodeLabel = '';
 	export let currentNodeIcon = null;
+	export let nodeType = 'Class'; // 'Class' or 'Instance'
 
 	$: iconType = getIconType(currentNodeIcon);
 </script>
@@ -17,6 +18,6 @@
 			{/if}
 		{/if}
 		<h3>{currentNodeLabel}</h3>
-		<span class="node-type-badge">Class</span>
+		<span class="node-type-badge">{nodeType}</span>
 	</div>
 </div>

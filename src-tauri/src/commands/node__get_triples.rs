@@ -10,7 +10,7 @@ pub fn get_node_triples(state: tauri::State<AppState>, node_id: String) -> Resul
         let compressed_node_id = namespaces::compress_iri(&node_id);
 
         let mut stmt = conn
-            .prepare("SELECT predicate, object, object_value, object_type FROM triples WHERE subject = ? AND retracted = 0 ORDER BY tx")
+            .prepare("SELECT DISTINCT predicate, object, object_value, object_integer, object_type FROM triples WHERE subject = ? AND retracted = 0 ORDER BY predicate")
             .map_err(|e| format!("Prepare error: {}", e))?;
 
         let display_triples: Result<Vec<DisplayTriple>, _> = stmt
@@ -18,13 +18,20 @@ pub fn get_node_triples(state: tauri::State<AppState>, node_id: String) -> Resul
                 let predicate: String = row.get(0)?;
                 let object: Option<String> = row.get(1)?;
                 let object_value: Option<String> = row.get(2)?;
-                let object_type: String = row.get(3)?;
+                let object_integer: Option<i64> = row.get(3)?;
+                let object_type: String = row.get(4)?;
 
                 // Determine value and value type for display
                 let (v, v_type) = if object_type == "iri" {
                     (object.unwrap_or_default(), "ref".to_string())
                 } else {
-                    (object_value.unwrap_or_default(), "literal".to_string())
+                    // Try object_integer first, then object_value
+                    let value = if let Some(int_val) = object_integer {
+                        int_val.to_string()
+                    } else {
+                        object_value.unwrap_or_default()
+                    };
+                    (value, "literal".to_string())
                 };
 
                 Ok(DisplayTriple {

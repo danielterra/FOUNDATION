@@ -2,7 +2,9 @@
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix foundation: <http://FOUNDATION.local/ontology/> .
+@prefix foundation: <http://foundation.local/ontology/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
 
 # =============================================================================
 # Computer
@@ -58,7 +60,10 @@ foundation:hasMemory a owl:DatatypeProperty ;
     rdfs:comment "RAM capacity in gigabytes" ;
     rdfs:domain foundation:Computer ;
     rdfs:range xsd:integer ;
+    qudt:applicableUnit unit:Gigabyte ;
     rdfs:seeAlso """
 Example:
   :macbook foundation:hasMemory "16"^^xsd:integer .  # 16GB RAM
+
+The unit is gigabytes as specified by qudt:applicableUnit.
 """ .

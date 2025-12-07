@@ -10,9 +10,10 @@ use rusqlite::Connection;
 // Re-export commands for Tauri
 pub use commands::{
     greet, get_db_stats, get_all_triples, get_node_triples,
-    get_node_backlinks, get_node_statistics, get_node_icon,
+    get_node_backlinks, get_node_statistics, node__get_icon,
     get_applicable_properties, get_ontology_graph, search_classes,
-    check_initial_setup, get_system_info, complete_initial_setup
+    check_initial_setup, get_system_info, complete_initial_setup,
+    node__check_is_instance
 };
 
 // Global database connection (managed by Tauri state)
@@ -53,7 +54,7 @@ pub struct DisplayTriple {
 pub struct GraphNode {
     id: String,
     label: String,
-    group: i32, // 1=RDF/RDFS/OWL, 2=BFO, 3=Schema.org, 4=FOAF, 5=Bridge
+    group: i32, // 1=Class, 6=Instance
     icon: Option<String>, // Material Symbols icon name
 }
 
@@ -146,13 +147,14 @@ pub fn run() {
             get_node_triples,
             get_node_backlinks,
             get_node_statistics,
-            get_node_icon,
+            node__get_icon,
             get_applicable_properties,
             get_ontology_graph,
             search_classes,
             check_initial_setup,
             get_system_info,
-            complete_initial_setup
+            complete_initial_setup,
+            node__check_is_instance
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

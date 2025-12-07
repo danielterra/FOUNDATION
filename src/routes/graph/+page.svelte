@@ -3,6 +3,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import TopBar from '$lib/components/graph/TopBar.svelte';
 	import SidePanel from '$lib/components/graph/SidePanel.svelte';
+	import InstanceSidePanel from '$lib/components/graph/InstanceSidePanel.svelte';
 	import GraphVisualization from '$lib/components/graph/GraphVisualization.svelte';
 	import SearchBar from '$lib/components/graph/SearchBar.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
@@ -22,6 +23,7 @@
 	let loadingTriples = false;
 	let graphComponent;
 	let visibleGraphData = null;
+	let isInstance = false;
 
 	// Get display name for a node (use label if available, otherwise simplify URI)
 	function getNodeDisplayName(nodeId) {
@@ -31,6 +33,12 @@
 		}
 		// Fallback: simplify URI
 		return nodeId.split(/[/#]/).pop();
+	}
+
+	// Get icon for a node
+	function getNodeIcon(nodeId) {
+		const node = fullGraphData?.nodes.find((n) => n.id === nodeId);
+		return node?.icon || null;
 	}
 
 	// Recenter graph to initial position and reset zoom
@@ -46,8 +54,8 @@
 			loading = true;
 			error = null;
 
-			// Reload graph data centered on current node or owl:Thing if none selected
-			const targetNodeId = currentNodeId || 'http://www.w3.org/2002/07/owl#Thing';
+			// Reload graph data centered on current node or CurrentUser if none selected
+			const targetNodeId = currentNodeId || 'http://foundation.local/ontology/CurrentUser';
 			const graphJson = await invoke('get_ontology_graph', {
 				centralNodeId: targetNodeId
 			});
@@ -59,7 +67,7 @@
 			if (currentNodeId) {
 				await navigateToNode(currentNodeId);
 			} else {
-				await navigateToNode('http://www.w3.org/2002/07/owl#Thing');
+				await navigateToNode('http://foundation.local/ontology/CurrentUser');
 			}
 		} catch (err) {
 			error = err.toString();
@@ -107,9 +115,9 @@
 		window.addEventListener('keydown', handleKeydown);
 
 		try {
-			// Get graph data from Rust backend starting from owl:Thing
+			// Get graph data from Rust backend starting from CurrentUser
 			const graphJson = await invoke('get_ontology_graph', {
-				centralNodeId: 'http://www.w3.org/2002/07/owl#Thing'
+				centralNodeId: 'http://foundation.local/ontology/CurrentUser'
 			});
 			fullGraphData = JSON.parse(graphJson);
 
@@ -117,8 +125,8 @@
 
 			// Wait for next tick to ensure container dimensions are available
 			setTimeout(() => {
-				// Start with owl:Thing as the root node
-				navigateToNode('http://www.w3.org/2002/07/owl#Thing');
+				// Start with CurrentUser as the root node
+				navigateToNode('http://foundation.local/ontology/CurrentUser');
 			}, 0);
 
 			// Add window resize listener
@@ -144,20 +152,40 @@
 	async function loadNodeTriples(nodeId) {
 		loadingTriples = true;
 		try {
-			// Load triples, backlinks, statistics, icon, and applicable properties in parallel
-			const [triplesJson, backlinksJson, statisticsJson, icon, propertiesJson] = await Promise.all([
-				invoke('get_node_triples', { nodeId: nodeId }),
-				invoke('get_node_backlinks', { nodeId: nodeId }),
-				invoke('get_node_statistics', { nodeId: nodeId }),
-				invoke('get_node_icon', { nodeId: nodeId }),
-				invoke('get_applicable_properties', { nodeId: nodeId })
-			]);
+			// Check if node is an instance and load appropriate data
+			const instanceCheck = await invoke('node__check_is_instance', { nodeId: nodeId });
+			isInstance = instanceCheck;
 
-			nodeTriples = JSON.parse(triplesJson);
-			nodeBacklinks = JSON.parse(backlinksJson);
-			nodeStatistics = JSON.parse(statisticsJson);
-			currentNodeIcon = icon;
-			applicableProperties = JSON.parse(propertiesJson);
+			if (isInstance) {
+				// For instances, load only triples and icon
+				const [triplesJson, icon] = await Promise.all([
+					invoke('get_node_triples', { nodeId: nodeId }),
+					invoke('node__get_icon', { nodeId: nodeId })
+				]);
+
+				nodeTriples = JSON.parse(triplesJson);
+				currentNodeIcon = icon;
+
+				// Clear class-specific data
+				nodeBacklinks = [];
+				nodeStatistics = null;
+				applicableProperties = [];
+			} else {
+				// For classes, load all data
+				const [triplesJson, backlinksJson, statisticsJson, icon, propertiesJson] = await Promise.all([
+					invoke('get_node_triples', { nodeId: nodeId }),
+					invoke('get_node_backlinks', { nodeId: nodeId }),
+					invoke('get_node_statistics', { nodeId: nodeId }),
+					invoke('node__get_icon', { nodeId: nodeId }),
+					invoke('get_applicable_properties', { nodeId: nodeId })
+				]);
+
+				nodeTriples = JSON.parse(triplesJson);
+				nodeBacklinks = JSON.parse(backlinksJson);
+				nodeStatistics = JSON.parse(statisticsJson);
+				currentNodeIcon = icon;
+				applicableProperties = JSON.parse(propertiesJson);
+			}
 		} catch (err) {
 			console.error('Failed to load node data:', err);
 			nodeTriples = [];
@@ -165,6 +193,7 @@
 			nodeStatistics = null;
 			currentNodeIcon = null;
 			applicableProperties = [];
+			isInstance = false;
 		} finally {
 			loadingTriples = false;
 		}
@@ -223,17 +252,29 @@
 		<TopBar onRecenter={recenterGraph} />
 
 		{#if currentNodeId}
-			<SidePanel
-				{currentNodeLabel}
-				{currentNodeIcon}
-				{nodeTriples}
-				{nodeBacklinks}
-				{nodeStatistics}
-				{applicableProperties}
-				{loadingTriples}
-				onNavigateToNode={navigateToNode}
-				{getNodeDisplayName}
-			/>
+			{#if isInstance}
+				<InstanceSidePanel
+					{currentNodeLabel}
+					{currentNodeIcon}
+					{nodeTriples}
+					{loadingTriples}
+					onNavigateToNode={navigateToNode}
+					{getNodeDisplayName}
+					{getNodeIcon}
+				/>
+			{:else}
+				<SidePanel
+					{currentNodeLabel}
+					{currentNodeIcon}
+					{nodeTriples}
+					{nodeBacklinks}
+					{nodeStatistics}
+					{applicableProperties}
+					{loadingTriples}
+					onNavigateToNode={navigateToNode}
+					{getNodeDisplayName}
+				/>
+			{/if}
 		{/if}
 
 		{#if visibleGraphData}

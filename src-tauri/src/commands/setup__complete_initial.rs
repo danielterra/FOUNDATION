@@ -84,11 +84,18 @@ pub fn complete_initial_setup(state: tauri::State<AppState>, setup_data: String)
         // Computer memory (if provided)
         if let Some(memory) = data.computer_memory {
             conn.execute(
-                "INSERT INTO triples (subject, predicate, object_integer, object_type, object_datatype, tx, origin_id, created_at, retracted)
-                 VALUES (?, 'foundation:memory', ?, 'literal', 'xsd:integer', ?, ?, ?, 0)",
-                (computer_id, memory as i64, tx + 6, foundation_origin_id, now)
+                "INSERT INTO triples (subject, predicate, object_value, object_integer, object_type, object_datatype, tx, origin_id, created_at, retracted)
+                 VALUES (?, 'foundation:memory', ?, ?, 'literal', 'xsd:integer', ?, ?, ?, 0)",
+                (computer_id, memory.to_string(), memory as i64, tx + 6, foundation_origin_id, now)
             ).map_err(|e| format!("Insert error: {}", e))?;
         }
+
+        // Create ownership relationship: Person owns Computer
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object, object_type, tx, origin_id, created_at, retracted)
+             VALUES (?, 'foundation:owns', ?, 'iri', ?, ?, ?, 0)",
+            (person_id, computer_id, tx + 7, user_origin_id, now)
+        ).map_err(|e| format!("Insert error: {}", e))?;
 
         // Create SoftwareAgent instance (FOUNDATION app)
         let software_id = "foundation:FOUNDATIONApp";
@@ -97,21 +104,21 @@ pub fn complete_initial_setup(state: tauri::State<AppState>, setup_data: String)
         conn.execute(
             "INSERT INTO triples (subject, predicate, object, object_type, tx, origin_id, created_at, retracted)
              VALUES (?, 'rdf:type', 'foundation:SoftwareAgent', 'iri', ?, ?, ?, 0)",
-            (software_id, tx + 7, foundation_origin_id, now)
+            (software_id, tx + 8, foundation_origin_id, now)
         ).map_err(|e| format!("Insert error: {}", e))?;
 
         // Software name
         conn.execute(
             "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, tx, origin_id, created_at, retracted)
              VALUES (?, 'foundation:name', 'FOUNDATION', 'literal', 'xsd:string', ?, ?, ?, 0)",
-            (software_id, tx + 8, foundation_origin_id, now)
+            (software_id, tx + 9, foundation_origin_id, now)
         ).map_err(|e| format!("Insert error: {}", e))?;
 
         // Software version
         conn.execute(
             "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, tx, origin_id, created_at, retracted)
              VALUES (?, 'foundation:version', '0.1.0', 'literal', 'xsd:string', ?, ?, ?, 0)",
-            (software_id, tx + 9, foundation_origin_id, now)
+            (software_id, tx + 10, foundation_origin_id, now)
         ).map_err(|e| format!("Insert error: {}", e))?;
 
         Ok("Setup completed successfully".to_string())

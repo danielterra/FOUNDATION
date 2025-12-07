@@ -94,14 +94,14 @@
 			.append('marker')
 			.attr('id', 'arrowhead')
 			.attr('viewBox', '0 -5 10 10')
-			.attr('refX', 28)
+			.attr('refX', 10) // Arrow tip at the end (arrow is 10 units long)
 			.attr('refY', 0)
 			.attr('markerWidth', 6)
 			.attr('markerHeight', 6)
 			.attr('orient', 'auto')
 			.append('path')
 			.attr('d', 'M0,-5L10,0L0,5')
-			.attr('fill', 'rgba(255, 255, 255, 0.3)');
+			.attr('fill', 'rgba(255, 255, 255, 0.95)'); // High opacity for visibility
 
 		// Create link group
 		const linkGroup = g.append('g');
@@ -119,7 +119,14 @@
 		const { nodes: layoutNodes, links: layoutLinks, simulation } = createForceDirectedLayout(data, width, height);
 		currentSimulation = simulation;
 
-		// Draw links
+		// Debug: check if labels are present
+		console.log('[GraphViz] Links with labels:', layoutLinks.map(l => ({
+			source: l.source.id || l.source,
+			target: l.target.id || l.target,
+			label: l.label
+		})));
+
+		// Draw links stopping exactly at node edge (radius 18px)
 		const links = linkGroup
 			.selectAll('line')
 			.data(layoutLinks)
@@ -128,10 +135,116 @@
 			.attr('stroke', 'rgba(255, 255, 255, 0.5)')
 			.attr('stroke-width', 2)
 			.attr('marker-end', 'url(#arrowhead)')
-			.attr('x1', (d) => d.source.x)
-			.attr('y1', (d) => d.source.y)
-			.attr('x2', (d) => d.target.x)
-			.attr('y2', (d) => d.target.y);
+			.attr('x1', (d) => {
+				// Calculate position 18px from source center (node radius)
+				const dx = d.target.x - d.source.x;
+				const dy = d.target.y - d.source.y;
+				const dist = Math.sqrt(dx * dx + dy * dy);
+				return d.source.x + (dx / dist) * 18;
+			})
+			.attr('y1', (d) => {
+				const dx = d.target.x - d.source.x;
+				const dy = d.target.y - d.source.y;
+				const dist = Math.sqrt(dx * dx + dy * dy);
+				return d.source.y + (dy / dist) * 18;
+			})
+			.attr('x2', (d) => {
+				// Calculate position 18px from target center (arrow tip will touch edge)
+				const dx = d.target.x - d.source.x;
+				const dy = d.target.y - d.source.y;
+				const dist = Math.sqrt(dx * dx + dy * dy);
+				return d.target.x - (dx / dist) * 18;
+			})
+			.attr('y2', (d) => {
+				const dx = d.target.x - d.source.x;
+				const dy = d.target.y - d.source.y;
+				const dist = Math.sqrt(dx * dx + dy * dy);
+				return d.target.y - (dy / dist) * 18;
+			});
+
+		// Draw link labels with background
+		const linkLabelGroups = linkGroup
+			.selectAll('g.link-label')
+			.data(layoutLinks)
+			.enter()
+			.append('g')
+			.attr('class', 'link-label')
+			.attr('transform', (d) => `translate(${(d.source.x + d.target.x) / 2}, ${(d.source.y + d.target.y) / 2})`)
+			.style('pointer-events', 'none');
+
+		// Add background rectangle for each label
+		linkLabelGroups
+			.append('rect')
+			.attr('x', function(d) {
+				const textLength = (d.label || '').length * 6; // Approximate width
+				return -textLength / 2 - 4;
+			})
+			.attr('y', -10)
+			.attr('width', function(d) {
+				const textLength = (d.label || '').length * 6;
+				return textLength + 8;
+			})
+			.attr('height', 16)
+			.attr('rx', 3)
+			.attr('fill', 'rgba(0, 0, 0, 0.8)');
+
+		// Add text on top of background
+		const linkLabels = linkLabelGroups
+			.append('text')
+			.text((d) => d.label || '')
+			.attr('font-size', '11px')
+			.attr('font-family', "'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif")
+			.attr('fill', 'rgba(255, 255, 255, 0.9)')
+			.attr('text-anchor', 'middle')
+			.attr('dy', '0.3em')
+			.style('user-select', 'none');
+
+		// Drag behavior functions (without force simulation)
+		function dragstarted(event, d) {
+			d3.select(this).style('cursor', 'grabbing');
+		}
+
+		function dragged(event, d) {
+			d.x = event.x;
+			d.y = event.y;
+
+			// Manually update this node's position
+			d3.select(this).attr('transform', `translate(${d.x},${d.y})`);
+
+			// Update connected links
+			links.each(function(l) {
+				if (l.source === d || l.target === d) {
+					const link = d3.select(this);
+					const dx = l.target.x - l.source.x;
+					const dy = l.target.y - l.source.y;
+					const dist = Math.sqrt(dx * dx + dy * dy);
+
+					link.attr('x1', l.source.x + (dx / dist) * 18)
+						.attr('y1', l.source.y + (dy / dist) * 18)
+						.attr('x2', l.target.x - (dx / dist) * 18)
+						.attr('y2', l.target.y - (dy / dist) * 18);
+				}
+			});
+
+			// Update connected link labels
+			linkLabelGroups.each(function(l) {
+				if (l.source === d || l.target === d) {
+					d3.select(this).attr('transform',
+						`translate(${(l.source.x + l.target.x) / 2}, ${(l.source.y + l.target.y) / 2})`
+					);
+				}
+			});
+		}
+
+		function dragended(event, d) {
+			d3.select(this).style('cursor', 'grab');
+		}
+
+		// Create drag behavior
+		const drag = d3.drag()
+			.on('start', dragstarted)
+			.on('drag', dragged)
+			.on('end', dragended);
 
 		// Draw nodes
 		const nodes = nodeGroup
@@ -140,7 +253,8 @@
 			.enter()
 			.append('g')
 			.attr('transform', (d) => `translate(${d.x},${d.y})`)
-			.style('cursor', 'pointer')
+			.style('cursor', 'grab')
+			.call(drag)
 			.on('click', (event, d) => {
 				event.stopPropagation();
 				if (onNodeClick) {
@@ -164,6 +278,14 @@
 
 			if (d.icon) {
 				const iconType = getIconType(d.icon);
+
+				// Add dark opaque background circle to cover lines
+				nodeGroup
+					.append('circle')
+					.attr('r', 18)
+					.attr('fill', 'rgba(10, 10, 10, 0.95)')
+					.attr('stroke', 'none')
+					.style('pointer-events', 'none');
 
 				if (iconType === 'image') {
 					// Render image icon
@@ -228,9 +350,12 @@
 
 		nodes
 			.append('text')
-			.text((d) => d.label)
+			.text((d) => {
+				// Classes (group != 6) get uppercase, instances keep original case
+				return d.group === 6 ? d.label : d.label.toUpperCase();
+			})
 			.attr('font-size', '14px')
-			.attr('font-weight', '500')
+			.attr('font-weight', (d) => d.group === 6 ? '500' : 'bold')
 			.attr('font-family', "'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif")
 			.attr('fill', 'rgba(255, 255, 255, 0.95)')
 			.attr('dx', 20)
@@ -242,6 +367,8 @@
 		nodes.style('opacity', 0).transition().duration(500).style('opacity', 1);
 
 		links.style('opacity', 0).transition().duration(500).style('opacity', 1);
+
+		linkLabelGroups.style('opacity', 0).transition().duration(500).style('opacity', 1);
 	}
 </script>
 

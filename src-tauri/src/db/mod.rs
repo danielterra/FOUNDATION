@@ -95,6 +95,9 @@ const SCHEMA_SQL: &str = include_str!("../../../db/schema.sql");
 /// RDF/RDFS/OWL core ontology
 const RDF_CORE_TTL: &str = include_str!("../../../core-ontology/rdf-rdfs-owl-core.ttl");
 
+/// DTYPE (Datatype Schema) ontology
+const DTYPE_TTL: &str = include_str!("../../../core-ontology/dtype.ttl");
+
 /// Create database schema
 fn create_schema(conn: &Connection) -> Result<(), DbError> {
     println!("📋 Creating schema...");
@@ -117,7 +120,6 @@ fn import_rdf_core(conn: &Connection) -> Result<(), DbError> {
     let stats = crate::ontology::import_turtle_file(
         conn,
         &temp_file,
-        1, // tx = 1 for core ontology
         "core"
     ).map_err(|e| DbError::SchemaError(format!("RDF core import failed: {:?}", e)))?;
 
@@ -125,6 +127,30 @@ fn import_rdf_core(conn: &Connection) -> Result<(), DbError> {
     let _ = std::fs::remove_file(&temp_file);
 
     println!("✅ Imported {} triples from RDF/RDFS/OWL", stats.triples_processed);
+    Ok(())
+}
+
+/// Import DTYPE ontology from embedded string
+fn import_dtype(conn: &Connection) -> Result<(), DbError> {
+    println!("\n📚 Importing DTYPE ontology...");
+
+    // Write embedded content to a temporary file
+    let temp_dir = std::env::temp_dir();
+    let temp_file = temp_dir.join("dtype.ttl");
+
+    std::fs::write(&temp_file, DTYPE_TTL)
+        .map_err(|e| DbError::IoError(e))?;
+
+    let stats = crate::ontology::import_turtle_file(
+        conn,
+        &temp_file,
+        "core"
+    ).map_err(|e| DbError::SchemaError(format!("DTYPE import failed: {:?}", e)))?;
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&temp_file);
+
+    println!("✅ Imported {} triples from DTYPE", stats.triples_processed);
     Ok(())
 }
 
@@ -143,6 +169,9 @@ pub fn initialize_db(db_path: &Path) -> Result<Connection, DbError> {
 
         // Import RDF/RDFS/OWL core
         import_rdf_core(&conn)?;
+
+        // Import DTYPE ontology
+        import_dtype(&conn)?;
 
         // Import FOUNDATION ontology
         crate::ontology::import_all_foundation_ontologies(&conn)

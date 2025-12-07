@@ -341,6 +341,37 @@
 		text-decoration: underline;
 	}
 
+	/* Entity badge (for property references with icon) */
+	:global(.entity-badge) {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		background: rgba(255, 140, 66, 0.1);
+		border: 1px solid rgba(255, 140, 66, 0.3);
+		border-radius: 6px;
+		padding: 4px 10px;
+		cursor: pointer;
+		transition: all 0.2s;
+		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
+		font-size: 13px;
+		color: rgba(255, 255, 255, 0.9);
+	}
+
+	:global(.entity-badge:hover) {
+		background: rgba(255, 140, 66, 0.2);
+		border-color: rgba(255, 140, 66, 0.5);
+		transform: translateY(-1px);
+	}
+
+	:global(.entity-badge .badge-icon) {
+		font-size: 16px;
+		color: #ff8c42;
+	}
+
+	:global(.entity-badge .badge-label) {
+		color: rgba(255, 255, 255, 0.95);
+	}
+
 	/* Entity link inline (used in "Used by" section) */
 	:global(.entity-link-inline) {
 		display: inline-flex;

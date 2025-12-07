@@ -152,7 +152,8 @@ INSERT OR IGNORE INTO namespaces (prefix, iri) VALUES
   ('owl', 'http://www.w3.org/2002/07/owl#'),
   ('xsd', 'http://www.w3.org/2001/XMLSchema#'),
   ('skos', 'http://www.w3.org/2004/02/skos/core#'),
-  ('FOUNDATION', 'http://FOUNDATION.local/ontology/');
+  ('dtype', 'http://www.linkedmodel.org/schema/dtype#'),
+  ('foundation', 'http://foundation.local/ontology/');
 
 -- ============================================================================
 -- Origins Table
