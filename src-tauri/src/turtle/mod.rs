@@ -349,10 +349,24 @@ pub fn import_all_foundation_ontologies(
     let total_files = ttl_files.len() as u32;
     println!("📋 Found {} FOUNDATION ontology files\n", total_files);
 
-    // Import each file
+    // Import each file (with incremental import check)
     for (index, file_path) in ttl_files.iter().enumerate() {
         let filename = file_path.file_name().unwrap().to_str().unwrap();
         let origin = format!("foundation:ontology:{}", filename);
+
+        // Check if file needs reimport
+        let should_import = match needs_reimport(conn, &file_path) {
+            Ok(needs) => needs,
+            Err(e) => {
+                eprintln!("⚠️  Error checking {}: {:?}, importing anyway", filename, e);
+                true
+            }
+        };
+
+        if !should_import {
+            println!("⏭️  {} (unchanged, skipping)", filename);
+            continue;
+        }
 
         // Emit progress event BEFORE importing
         if let Some(handle) = app {
@@ -370,6 +384,11 @@ pub fn import_all_foundation_ontologies(
             Ok(stats) => {
                 total_triples += stats.triples_processed;
                 println!("   ✓ {} triples", stats.triples_processed);
+
+                // Register imported file
+                if let Err(e) = register_imported_file(conn, &file_path, &stats) {
+                    eprintln!("⚠️  Failed to register {}: {:?}", filename, e);
+                }
 
                 // Emit progress event AFTER importing with updated triples
                 if let Some(handle) = app {
@@ -693,4 +712,124 @@ test:john a test:Person ;
         assert_eq!(stats.triples_processed, 100);
         assert_eq!(stats.facts_inserted, 95);
     }
+}
+
+// ============================================================================
+// Import Tracking System
+// ============================================================================
+// Uses SQL table to track which files have been imported
+// and whether they need to be reimported based on modification time/checksum
+// ============================================================================
+
+use sha2::{Sha256, Digest};
+
+/// Register an imported file in the tracking table
+pub fn register_imported_file(
+    conn: &mut Connection,
+    file_path: &Path,
+    stats: &ImportStats,
+) -> Result<(), ImportError> {
+    let file_name = file_path.file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| ImportError::DatabaseError("Invalid file name".to_string()))?;
+
+    let file_path_str = file_path.to_string_lossy().to_string();
+
+    // Get file metadata
+    let metadata = std::fs::metadata(file_path)?;
+    let last_modified = metadata.modified()?
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    // Calculate checksum
+    let checksum = calculate_file_checksum(file_path)?;
+
+    // Get current timestamp
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    // Insert or replace record
+    conn.execute(
+        "INSERT OR REPLACE INTO ontology_files (file_path, file_name, last_modified, last_imported, checksum, triple_count)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        (
+            &file_path_str,
+            file_name,
+            last_modified,
+            now,
+            &checksum,
+            stats.triples_processed as i64,
+        ),
+    )?;
+
+    Ok(())
+}
+
+/// Check if a file needs to be reimported
+/// Returns true if:
+/// - File is not tracked yet
+/// - Checksum has changed
+/// - File modification time is newer than last import
+pub fn needs_reimport(
+    conn: &Connection,
+    file_path: &Path,
+) -> Result<bool, ImportError> {
+    let file_path_str = file_path.to_string_lossy().to_string();
+
+    // Query existing record
+    let result: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT last_modified, checksum FROM ontology_files WHERE file_path = ?1",
+            [&file_path_str],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok();
+
+    // If not tracked yet, needs import
+    let Some((stored_modified, stored_checksum)) = result else {
+        return Ok(true);
+    };
+
+    // Get current file metadata
+    let metadata = std::fs::metadata(file_path)?;
+    let current_modified = metadata.modified()?
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    // Calculate current checksum
+    let current_checksum = calculate_file_checksum(file_path)?;
+
+    // Check if checksums differ
+    if current_checksum != stored_checksum {
+        let file_name = file_path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        println!("🔄 File {} has changed (checksum mismatch)", file_name);
+        return Ok(true);
+    }
+
+    // Check if modification time is newer
+    if current_modified > stored_modified {
+        let file_name = file_path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        println!("🔄 File {} has been modified", file_name);
+        return Ok(true);
+    }
+
+    // File hasn't changed
+    Ok(false)
+}
+
+/// Calculate SHA-256 checksum of a file
+fn calculate_file_checksum(path: &Path) -> Result<String, ImportError> {
+    let file_content = std::fs::read(path)?;
+    let mut hasher = Sha256::new();
+    hasher.update(&file_content);
+    let result = hasher.finalize();
+    Ok(format!("{:x}", result))
 }

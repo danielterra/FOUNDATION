@@ -10,7 +10,10 @@
 
   onMount(async () => {
     console.log('+page: Checking if database is already initialized...');
+    checkDatabaseStatus();
+  });
 
+  async function checkDatabaseStatus() {
     try {
       // Check if database is initialized by checking if setup is complete
       // This will fail if database doesn't exist or isn't initialized
@@ -27,10 +30,26 @@
         setupComplete = false;
       }
     } catch (error) {
-      console.log('+page: Database not initialized, showing import screen:', error);
-      importing = true;
+      const errorMsg = String(error);
+      console.log('+page: Database check failed:', errorMsg);
+
+      // If error is about state not managed, database is still initializing
+      if (errorMsg.includes('state not managed') || errorMsg.includes('conn')) {
+        console.log('+page: Database still initializing...');
+
+        // Show import screen if not already showing
+        if (importing === null) {
+          importing = true;
+        }
+
+        setTimeout(() => checkDatabaseStatus(), 500);
+      } else {
+        // Other errors mean database doesn't exist, show import screen
+        console.log('+page: Database not initialized, showing import screen');
+        importing = true;
+      }
     }
-  });
+  }
 
   async function handleImportComplete() {
     console.log('+page: Import completed, checking setup status...');
@@ -48,8 +67,18 @@
         setupComplete = false;
       }
     } catch (error) {
-      console.log('+page: Setup check failed, showing wizard:', error);
-      setupComplete = false;
+      const errorMsg = String(error);
+      console.log('+page: Setup check failed:', errorMsg);
+
+      // If error is about state not managed, database is still initializing
+      if (errorMsg.includes('state not managed') || errorMsg.includes('conn')) {
+        console.log('+page: Database still initializing, retrying...');
+        setTimeout(() => checkSetup(), 500);
+      } else {
+        // Other errors, show setup wizard
+        console.log('+page: Unexpected error, showing setup wizard');
+        setupComplete = false;
+      }
     }
   }
 

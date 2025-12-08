@@ -10,6 +10,8 @@
 
 mod setup;
 mod entity;
+mod shortcuts;
 
 pub use setup::*;
 pub use entity::*;
+pub use shortcuts::*;

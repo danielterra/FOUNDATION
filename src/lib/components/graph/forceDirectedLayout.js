@@ -2,113 +2,142 @@ import * as d3 from 'd3';
 
 /**
  * Creates a force-directed graph layout for ontology visualization
- * Central node stays in the middle, connected nodes arrange around it
+ * Central node stays in the middle, other nodes are revealed gradually
  */
-export function createForceDirectedLayout(data, width, height) {
+export function createForceDirectedLayout(data, width, height, onNodeRevealed) {
 	const { nodes, links, centralNodeId } = data;
 
-	// Clone nodes to avoid mutating original data
-	const graphNodes = nodes.map((node) => ({
-		...node,
-		// Mark the central node
-		isCentral: node.id === centralNodeId
-	}));
+	// Separate central node from others
+	const centralNode = nodes.find(n => n.id === centralNodeId);
+	const otherNodes = nodes.filter(n => n.id !== centralNodeId);
 
-	// Clone links with source/target as IDs (d3 will replace with node objects)
-	const graphLinks = links.map((link) => ({
+	// Start with only central node
+	const graphNodes = [{
+		...centralNode,
+		isCentral: true,
+		fx: 0, // Fixed X at center
+		fy: 0, // Fixed Y at center
+	}];
+
+	// Categorize nodes by relationship direction
+	// Outgoing: central node is the source (links going OUT from central)
+	// Incoming: central node is the target (links coming IN to central)
+	// Bidirectional: nodes with both types of connections
+	const outgoingNodeIds = new Set();
+	const incomingNodeIds = new Set();
+	const bidirectionalNodeIds = new Set();
+
+	links.forEach(link => {
+		if (link.source === centralNodeId) {
+			outgoingNodeIds.add(link.target);
+		} else if (link.target === centralNodeId) {
+			incomingNodeIds.add(link.source);
+		}
+	});
+
+	// Find bidirectional nodes (appear in both sets)
+	outgoingNodeIds.forEach(nodeId => {
+		if (incomingNodeIds.has(nodeId)) {
+			bidirectionalNodeIds.add(nodeId);
+		}
+	});
+
+	// Remove bidirectional from outgoing/incoming to keep them separate
+	bidirectionalNodeIds.forEach(nodeId => {
+		outgoingNodeIds.delete(nodeId);
+		incomingNodeIds.delete(nodeId);
+	});
+
+
+	// Track nodes to be revealed with position based on direction
+	const nodesToReveal = otherNodes.map(node => {
+		let startY;
+		if (bidirectionalNodeIds.has(node.id)) {
+			// Bidirectional nodes start from right side (no Y bias)
+			startY = 0;
+		} else if (outgoingNodeIds.has(node.id)) {
+			// Outgoing only nodes start from top
+			startY = -height;
+		} else if (incomingNodeIds.has(node.id)) {
+			// Incoming only nodes start from bottom
+			startY = height;
+		} else {
+			// Other nodes start from top
+			startY = -height;
+		}
+
+		return {
+			...node,
+			isCentral: false,
+			x: 0,
+			y: startY
+		};
+	});
+
+	// All links (we'll filter which ones to show)
+	const allLinks = links.map((link) => ({
 		source: link.source,
 		target: link.target,
 		label: link.label
 	}));
 
-	// Analyze direction: mark incoming (left) and outgoing (right) nodes
-	const centralId = graphNodes.find(n => n.isCentral)?.id;
-	const nodeDirection = new Map();
-	graphNodes.forEach(node => {
-		nodeDirection.set(node.id, { isIncoming: false, isOutgoing: false });
-	});
-
-	// Detect direction from links relative to central node
-	graphLinks.forEach(link => {
-		const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-		const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-
-		if (centralId) {
-			// If link points TO central node, source is incoming (left)
-			if (targetId === centralId && sourceId !== centralId) {
-				if (nodeDirection.has(sourceId)) {
-					nodeDirection.get(sourceId).isIncoming = true;
-				}
-			}
-			// If link points FROM central node, target is outgoing (right)
-			if (sourceId === centralId && targetId !== centralId) {
-				if (nodeDirection.has(targetId)) {
-					nodeDirection.get(targetId).isOutgoing = true;
-				}
-			}
-		}
-	});
-
-	// Apply direction info to nodes
-	graphNodes.forEach(node => {
-		const direction = nodeDirection.get(node.id);
-		if (direction) {
-			node.isIncoming = direction.isIncoming;
-			node.isOutgoing = direction.isOutgoing;
-		}
-	});
-
-	// Custom force to position incoming left and outgoing right
-	const directionForce = () => {
-		graphNodes.forEach(node => {
-			if (node.isCentral) return; // Don't move central node
-
-			const targetX = node.isIncoming ? -250 : // Incoming on left
-			                node.isOutgoing ? 250 :  // Outgoing on right
-			                0; // Neutral stays at center
-
-			// Apply gentle force towards target X position
-			node.vx += (targetX - node.x) * 0.03;
-		});
-	};
+	// Start with empty links array
+	const graphLinks = [];
 
 	// Create force simulation
-	const simulation = d3
-		.forceSimulation(graphNodes)
-		// Attract nodes to center
-		.force('center', d3.forceCenter(0, 0))
-		// Repel nodes from each other
-		.force(
-			'charge',
-			d3.forceManyBody().strength((d) => (d.isCentral ? -1000 : -300))
-		)
-		// Spring force on links
-		.force(
-			'link',
-			d3
-				.forceLink(graphLinks)
-				.id((d) => d.id)
-				.distance(150)
-		)
-		// Prevent overlap
-		.force(
-			'collision',
-			d3.forceCollide().radius((d) => (d.isCentral ? 40 : 30))
-		)
-		// Direction force to position incoming/outgoing horizontally
-		.force('direction', directionForce);
+	const simulation = d3.forceSimulation(graphNodes)
+	.force("link", d3.forceLink(graphLinks).id(d => d.id).distance(graphNodes.length * 300).strength(1))
+	.force(
+		'collision',
+		d3.forceCollide().radius(100).strength(1)
+	)
+    //   .force("charge", d3.forceManyBody().strength(10))
+      .force("x", d3.forceX())
+      .force("y", d3.forceY());
 
-	// Run simulation synchronously for initial layout
-	simulation.stop();
-	for (let i = 0; i < 300; i++) {
-		simulation.tick();
+	// const simulation = d3
+	// 	.forceSimulation(graphNodes)
+	// 	.force('center', d3.forceCenter(0, 0))
+	// 	.force(
+	// 		'link',
+	// 		d3
+	// 			.forceLink(graphLinks)
+	// 			.id((d) => d.id)
+	// 			.strength(1)
+	// 	)
+	// 	.alphaDecay(0.09)
+	// 	.velocityDecay(0.01);
+
+	// Immediately reveal the central node
+	if (onNodeRevealed) {
+		onNodeRevealed(graphNodes[0]);
 	}
 
-	// Fix central node at center
-	const centralNode = graphNodes.find((n) => n.isCentral);
-	if (centralNode) {
-		centralNode.fx = 0;
-		centralNode.fy = 0;
+	// Helper to get current node IDs
+	const getCurrentNodeIds = () => new Set(graphNodes.map(n => n.id));
+
+	// Add all nodes at once
+	graphNodes.push(...nodesToReveal);
+	simulation.nodes(graphNodes);
+
+	// Add all valid links
+	const nodeIds = getCurrentNodeIds();
+	const validLinks = allLinks.filter(link => {
+		// Handle both string IDs and object references (after D3 processes them)
+		const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+		const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+		return nodeIds.has(sourceId) && nodeIds.has(targetId);
+	});
+
+	graphLinks.push(...validLinks);
+	simulation.force('link').links(graphLinks);
+
+	// Start simulation
+	simulation.alpha(1).restart();
+
+	// Notify callback for all nodes
+	if (onNodeRevealed) {
+		nodesToReveal.forEach(node => onNodeRevealed(node));
 	}
 
 	return {

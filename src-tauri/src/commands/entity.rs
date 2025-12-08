@@ -13,6 +13,17 @@ pub enum EntityType {
     Individual,
 }
 
+/// Search result for entities
+#[derive(Debug, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResult {
+    pub id: String,
+    pub label: String,
+    pub icon: Option<String>,
+    #[serde(rename = "type")]
+    pub entity_type: String, // "class" or "individual"
+}
+
 /// Node in the graph (Class or Individual)
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +32,8 @@ pub struct GraphNode {
     pub label: String,
     pub icon: Option<String>,
     pub group: u8, // 1 = Class, 6 = Individual
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_broken_ref: Option<bool>, // true if entity doesn't exist in database
 }
 
 /// Link between nodes (ObjectProperty)
@@ -62,6 +75,110 @@ pub struct PropertyValue {
     pub property: String,
     pub value: String,
     pub is_object_property: bool,
+}
+
+/// Search for entities (classes and individuals) by label
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn entity__search(
+    query: String,
+    limit: Option<usize>,
+    conn: State<'_, Mutex<Connection>>,
+) -> Result<String, String> {
+    let conn = conn.lock().map_err(|e| e.to_string())?;
+    let limit = limit.unwrap_or(100);
+
+    let search_pattern = format!("%{}%", query);
+    let mut results = Vec::new();
+
+    // Search in classes (rdfs:label) - case insensitive with relevance ordering
+    let class_query = "
+        SELECT DISTINCT t1.subject, t1.object_value, t2.object_value as icon
+        FROM triples t1
+        LEFT JOIN triples t2 ON t1.subject = t2.subject AND t2.predicate = 'foundation:icon' AND t2.retracted = 0
+        WHERE t1.predicate = 'rdfs:label'
+        AND t1.object_value LIKE ? COLLATE NOCASE
+        AND t1.retracted = 0
+        AND EXISTS (
+            SELECT 1 FROM triples t3
+            WHERE t3.subject = t1.subject
+            AND t3.predicate = 'rdf:type'
+            AND t3.object = 'owl:Class'
+            AND t3.retracted = 0
+        )
+        ORDER BY
+            CASE WHEN LOWER(t1.object_value) = LOWER(?) THEN 0 ELSE 1 END,
+            LENGTH(t1.object_value),
+            t1.object_value
+        LIMIT ?";
+
+    let mut stmt = conn.prepare(class_query).map_err(|e| e.to_string())?;
+    let class_rows = stmt.query_map([&search_pattern, &query, &limit.to_string()], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    }).map_err(|e| e.to_string())?;
+
+    for row in class_rows {
+        let (id, label, icon) = row.map_err(|e| e.to_string())?;
+        results.push(SearchResult {
+            id,
+            label,
+            icon,
+            entity_type: "class".to_string(),
+        });
+    }
+
+    // Search in individuals (rdfs:label) - case insensitive with relevance ordering
+    let individual_query = "
+        SELECT DISTINCT t1.subject, t1.object_value, t2.object_value as icon
+        FROM triples t1
+        LEFT JOIN triples t2 ON t1.subject = t2.subject AND t2.predicate = 'foundation:icon' AND t2.retracted = 0
+        WHERE t1.predicate = 'rdfs:label'
+        AND t1.object_value LIKE ? COLLATE NOCASE
+        AND t1.retracted = 0
+        AND EXISTS (
+            SELECT 1 FROM triples t3
+            WHERE t3.subject = t1.subject
+            AND t3.predicate = 'rdf:type'
+            AND t3.object != 'owl:Class'
+            AND t3.retracted = 0
+        )
+        ORDER BY
+            CASE WHEN LOWER(t1.object_value) = LOWER(?) THEN 0 ELSE 1 END,
+            LENGTH(t1.object_value),
+            t1.object_value
+        LIMIT ?";
+
+    let mut stmt = conn.prepare(individual_query).map_err(|e| e.to_string())?;
+    let individual_rows = stmt.query_map([&search_pattern, &query, &limit.to_string()], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    }).map_err(|e| e.to_string())?;
+
+    for row in individual_rows {
+        let (id, label, icon) = row.map_err(|e| e.to_string())?;
+        results.push(SearchResult {
+            id,
+            label,
+            icon,
+            entity_type: "individual".to_string(),
+        });
+
+        if results.len() >= limit {
+            break;
+        }
+    }
+
+    // Limit total results
+    results.truncate(limit);
+
+    serde_json::to_string(&results).map_err(|e| e.to_string())
 }
 
 /// Get entity data with its complete neighborhood for visualization
@@ -128,6 +245,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
     // Build graph visualization
     let mut nodes = Vec::new();
     let mut links = Vec::new();
+    let mut added_node_ids = std::collections::HashSet::new();
 
     // Add the class itself
     nodes.push(GraphNode {
@@ -135,27 +253,29 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         label: label.clone(),
         icon: icon.clone(),
         group: 1, // Class
+        is_broken_ref: None,
     });
+    added_node_ids.insert(class_id.to_string());
 
     // Add super-classes as nodes
     for super_class in &super_classes {
-        if super_class == "owl:Thing" {
-            continue; // Skip owl:Thing to reduce clutter
+        if !added_node_ids.contains(super_class) {
+            let super_class_obj = Class::new(super_class);
+            let super_label = super_class_obj.get_label(conn)
+                .unwrap_or(None)
+                .unwrap_or_else(|| super_class.split('/').last().unwrap_or(super_class).to_string());
+
+            let super_icon = super_class_obj.get_icon(conn).unwrap_or(None);
+
+            nodes.push(GraphNode {
+                id: super_class.clone(),
+                label: super_label,
+                icon: super_icon,
+                group: 1,
+                is_broken_ref: None,
+            });
+            added_node_ids.insert(super_class.clone());
         }
-
-        let super_class_obj = Class::new(super_class);
-        let super_label = super_class_obj.get_label(conn)
-            .unwrap_or(None)
-            .unwrap_or_else(|| super_class.split('/').last().unwrap_or(super_class).to_string());
-
-        let super_icon = super_class_obj.get_icon(conn).unwrap_or(None);
-
-        nodes.push(GraphNode {
-            id: super_class.clone(),
-            label: super_label,
-            icon: super_icon,
-            group: 1,
-        });
 
         links.push(GraphLink {
             source: class_id.to_string(),
@@ -166,19 +286,23 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
 
     // Add sub-classes as nodes
     for sub_class in &sub_classes {
-        let sub_class_obj = Class::new(sub_class);
-        let sub_label = sub_class_obj.get_label(conn)
-            .unwrap_or(None)
-            .unwrap_or_else(|| sub_class.split('/').last().unwrap_or(sub_class).to_string());
+        if !added_node_ids.contains(sub_class) {
+            let sub_class_obj = Class::new(sub_class);
+            let sub_label = sub_class_obj.get_label(conn)
+                .unwrap_or(None)
+                .unwrap_or_else(|| sub_class.split('/').last().unwrap_or(sub_class).to_string());
 
-        let sub_icon = sub_class_obj.get_icon(conn).unwrap_or(None);
+            let sub_icon = sub_class_obj.get_icon(conn).unwrap_or(None);
 
-        nodes.push(GraphNode {
-            id: sub_class.clone(),
-            label: sub_label,
-            icon: sub_icon,
-            group: 1,
-        });
+            nodes.push(GraphNode {
+                id: sub_class.clone(),
+                label: sub_label,
+                icon: sub_icon,
+                group: 1,
+                is_broken_ref: None,
+            });
+            added_node_ids.insert(sub_class.clone());
+        }
 
         links.push(GraphLink {
             source: sub_class.clone(),
@@ -189,15 +313,19 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
 
     // Add instances as nodes
     for instance in &instances {
-        let inst_label = get_individual_label(conn, instance)?;
-        let inst_icon = get_individual_icon(conn, instance)?;
+        if !added_node_ids.contains(instance) {
+            let inst_label = get_individual_label(conn, instance)?;
+            let inst_icon = get_individual_icon(conn, instance)?;
 
-        nodes.push(GraphNode {
-            id: instance.clone(),
-            label: inst_label,
-            icon: inst_icon,
-            group: 6, // Individual
-        });
+            nodes.push(GraphNode {
+                id: instance.clone(),
+                label: inst_label,
+                icon: inst_icon,
+                group: 6, // Individual
+                is_broken_ref: None,
+            });
+            added_node_ids.insert(instance.clone());
+        }
 
         links.push(GraphLink {
             source: instance.clone(),
@@ -275,6 +403,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     // Build graph visualization
     let mut nodes = Vec::new();
     let mut links = Vec::new();
+    let mut added_node_ids = std::collections::HashSet::new();
 
     // Add the individual itself
     nodes.push(GraphNode {
@@ -282,23 +411,29 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         label: label.clone(),
         icon: icon.clone(),
         group: 6, // Individual
+        is_broken_ref: None,
     });
+    added_node_ids.insert(individual_id.to_string());
 
     // Add its classes as nodes
     for class_id in &types {
-        let class = Class::new(class_id);
-        let class_label = class.get_label(conn)
-            .unwrap_or(None)
-            .unwrap_or_else(|| class_id.split('/').last().unwrap_or(class_id).to_string());
+        if !added_node_ids.contains(class_id) {
+            let class = Class::new(class_id);
+            let class_label = class.get_label(conn)
+                .unwrap_or(None)
+                .unwrap_or_else(|| class_id.split('/').last().unwrap_or(class_id).to_string());
 
-        let class_icon = class.get_icon(conn).unwrap_or(None);
+            let class_icon = class.get_icon(conn).unwrap_or(None);
 
-        nodes.push(GraphNode {
-            id: class_id.clone(),
-            label: class_label,
-            icon: class_icon,
-            group: 1, // Class
-        });
+            nodes.push(GraphNode {
+                id: class_id.clone(),
+                label: class_label,
+                icon: class_icon,
+                group: 1, // Class
+                is_broken_ref: None,
+            });
+            added_node_ids.insert(class_id.clone());
+        }
 
         links.push(GraphLink {
             source: individual_id.to_string(),
@@ -310,15 +445,24 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     // Add related individuals via ObjectProperties (outgoing relationships)
     for prop in &properties {
         if prop.is_object_property {
-            let related_label = get_individual_label(conn, &prop.value)?;
-            let related_icon = get_individual_icon(conn, &prop.value)?;
+            if !added_node_ids.contains(&prop.value) {
+                let entity_exists_flag = entity_exists(conn, &prop.value);
+                let related_label = get_individual_label(conn, &prop.value)?;
+                let related_icon = if entity_exists_flag {
+                    get_individual_icon(conn, &prop.value)?
+                } else {
+                    Some("warning".to_string()) // Use warning icon for broken refs
+                };
 
-            nodes.push(GraphNode {
-                id: prop.value.clone(),
-                label: related_label,
-                icon: related_icon,
-                group: 6,
-            });
+                nodes.push(GraphNode {
+                    id: prop.value.clone(),
+                    label: related_label,
+                    icon: related_icon,
+                    group: 6,
+                    is_broken_ref: if entity_exists_flag { None } else { Some(true) },
+                });
+                added_node_ids.insert(prop.value.clone());
+            }
 
             links.push(GraphLink {
                 source: individual_id.to_string(),
@@ -346,15 +490,24 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     for row in backlink_rows {
         let (subject, predicate) = row.map_err(|e| e.to_string())?;
 
-        let subject_label = get_individual_label(conn, &subject)?;
-        let subject_icon = get_individual_icon(conn, &subject)?;
+        if !added_node_ids.contains(&subject) {
+            let entity_exists_flag = entity_exists(conn, &subject);
+            let subject_label = get_individual_label(conn, &subject)?;
+            let subject_icon = if entity_exists_flag {
+                get_individual_icon(conn, &subject)?
+            } else {
+                Some("warning".to_string()) // Use warning icon for broken refs
+            };
 
-        nodes.push(GraphNode {
-            id: subject.clone(),
-            label: subject_label,
-            icon: subject_icon,
-            group: 6,
-        });
+            nodes.push(GraphNode {
+                id: subject.clone(),
+                label: subject_label,
+                icon: subject_icon,
+                group: 6,
+                is_broken_ref: if entity_exists_flag { None } else { Some(true) },
+            });
+            added_node_ids.insert(subject.clone());
+        }
 
         links.push(GraphLink {
             source: subject,
@@ -398,6 +551,17 @@ fn get_sub_classes(conn: &Connection, class_id: &str) -> Result<Vec<String>, Str
     Ok(sub_classes)
 }
 
+/// Check if an entity exists in the database (has at least one triple)
+fn entity_exists(conn: &Connection, entity_id: &str) -> bool {
+    let query = "SELECT 1 FROM triples WHERE subject = ? AND retracted = 0 LIMIT 1";
+
+    if let Ok(mut stmt) = conn.prepare(query) {
+        stmt.query_row([entity_id], |_| Ok(())).is_ok()
+    } else {
+        false
+    }
+}
+
 fn get_individual_label(conn: &Connection, individual_id: &str) -> Result<String, String> {
     // Use rdfs:label - standard RDF property for labels
     let query = "SELECT object_value FROM triples
@@ -412,10 +576,22 @@ fn get_individual_label(conn: &Connection, individual_id: &str) -> Result<String
     }
 
     // Fallback to last part of IRI
-    Ok(individual_id.split(':').last()
-        .or_else(|| individual_id.split('/').last())
-        .unwrap_or(individual_id)
-        .to_string())
+    // First try to extract from URL-style IRI (after last /)
+    if let Some(last_segment) = individual_id.split('/').last() {
+        if !last_segment.is_empty() && last_segment != individual_id {
+            return Ok(last_segment.to_string());
+        }
+    }
+
+    // Then try CURIE-style (after :)
+    if let Some(local_name) = individual_id.split(':').last() {
+        if !local_name.is_empty() && !local_name.starts_with("//") {
+            return Ok(local_name.to_string());
+        }
+    }
+
+    // Last resort: return full IRI
+    Ok(individual_id.to_string())
 }
 
 fn get_individual_icon(conn: &Connection, individual_id: &str) -> Result<Option<String>, String> {
@@ -495,6 +671,99 @@ mod tests {
         // Add icon via direct triple assertion
         let dog_icon = Individual::new("test:Dog");
         dog_icon.add_string_property(conn, "foundation:icon", "pets", None, "test").unwrap();
+    }
+
+    #[test]
+    fn test_entity_search_classes() {
+        let mut conn = setup_test_db();
+        setup_test_ontology(&mut conn);
+
+        let app = tauri::test::mock_app();
+        app.manage(Mutex::new(conn));
+
+        let result = entity__search(
+            "Person".to_string(),
+            Some(5),
+            app.state::<Mutex<Connection>>(),
+        );
+
+        assert!(result.is_ok());
+        let json = result.unwrap();
+        assert!(json.contains("Person"));
+        assert!(json.contains("\"type\":\"class\""));
+    }
+
+    #[test]
+    fn test_entity_search_individuals() {
+        let mut conn = setup_test_db();
+        setup_test_ontology(&mut conn);
+
+        // Create individual
+        let john = Individual::new("test:John");
+        john.assert(&mut conn, "test:Person", "John Doe", "person", "test").unwrap();
+        john.add_string_property(&mut conn, "rdfs:label", "John Doe", None, "test").unwrap();
+
+        let app = tauri::test::mock_app();
+        app.manage(Mutex::new(conn));
+
+        let result = entity__search(
+            "John".to_string(),
+            Some(5),
+            app.state::<Mutex<Connection>>(),
+        );
+
+        assert!(result.is_ok());
+        let json = result.unwrap();
+        assert!(json.contains("John"));
+        assert!(json.contains("\"type\":\"individual\""));
+    }
+
+    #[test]
+    fn test_entity_search_no_results() {
+        let mut conn = setup_test_db();
+        setup_test_ontology(&mut conn);
+
+        let app = tauri::test::mock_app();
+        app.manage(Mutex::new(conn));
+
+        let result = entity__search(
+            "NonExistent".to_string(),
+            Some(5),
+            app.state::<Mutex<Connection>>(),
+        );
+
+        assert!(result.is_ok());
+        let json = result.unwrap();
+        assert_eq!(json, "[]");
+    }
+
+    #[test]
+    fn test_entity_search_limit() {
+        let mut conn = setup_test_db();
+        setup_test_ontology(&mut conn);
+
+        // Create multiple individuals with similar labels
+        for i in 1..=10 {
+            let id = format!("test:Person{}", i);
+            let label = format!("Person {}", i);
+            let person = Individual::new(&id);
+            person.assert(&mut conn, "test:Person", &label, "person", "test").unwrap();
+            person.add_string_property(&mut conn, "rdfs:label", &label, None, "test").unwrap();
+        }
+
+        let app = tauri::test::mock_app();
+        app.manage(Mutex::new(conn));
+
+        let result = entity__search(
+            "Person".to_string(),
+            Some(3),
+            app.state::<Mutex<Connection>>(),
+        );
+
+        assert!(result.is_ok());
+        let json = result.unwrap();
+        let results: Vec<SearchResult> = serde_json::from_str(&json).unwrap();
+        assert!(results.len() <= 3);
     }
 
     #[test]
@@ -740,11 +1009,10 @@ mod tests {
     fn test_get_individual_label_fallback_slash() {
         let conn = setup_test_db();
 
-        // When using URL-like IRI, split(':') returns "http", so fallback continues to split('/')
+        // When using URL-like IRI, should extract last segment after /
         let result = get_individual_label(&conn, "http://example.org/John");
         assert!(result.is_ok());
-        // split(':').last() returns "//example.org/John"
-        assert_eq!(result.unwrap(), "//example.org/John");
+        assert_eq!(result.unwrap(), "John");
     }
 
     #[test]
@@ -754,6 +1022,20 @@ mod tests {
         let result = get_individual_label(&conn, "NoSeparator");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "NoSeparator");
+    }
+
+    #[test]
+    fn test_get_individual_label_qudt_uri() {
+        let conn = setup_test_db();
+
+        // Test QUDT-style URIs
+        let result = get_individual_label(&conn, "http://qudt.org/vocab/sou/CGS-GAUSS");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "CGS-GAUSS");
+
+        let result2 = get_individual_label(&conn, "http://qudt.org/vocab/dimensionvector/A0E0L0I0M1H0T0D0");
+        assert!(result2.is_ok());
+        assert_eq!(result2.unwrap(), "A0E0L0I0M1H0T0D0");
     }
 
     #[test]
@@ -789,12 +1071,14 @@ mod tests {
             label: "Test Node".to_string(),
             icon: Some("icon".to_string()),
             group: 1,
+            is_broken_ref: None,
         };
 
         assert_eq!(node.id, "test:Node");
         assert_eq!(node.label, "Test Node");
         assert_eq!(node.icon, Some("icon".to_string()));
         assert_eq!(node.group, 1);
+        assert_eq!(node.is_broken_ref, None);
     }
 
     #[test]
@@ -853,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_class_data_skips_owl_thing() {
+    fn test_get_class_data_includes_owl_thing() {
         let mut conn = setup_test_db();
         setup_test_ontology(&mut conn);
 
@@ -861,9 +1145,9 @@ mod tests {
         assert!(result.is_ok());
 
         let data = result.unwrap();
-        // Check that owl:Thing is not in the nodes
+        // Check that owl:Thing is now included in the nodes
         let owl_thing_node = data.nodes.iter().find(|n| n.id == "owl:Thing");
-        assert!(owl_thing_node.is_none());
+        assert!(owl_thing_node.is_some());
     }
 
     #[test]
@@ -1096,6 +1380,7 @@ mod tests {
                 label: "Node".to_string(),
                 icon: None,
                 group: 1,
+                is_broken_ref: None,
             }],
             links: vec![GraphLink {
                 source: "test:A".to_string(),
@@ -1145,6 +1430,7 @@ mod tests {
             label: "Label".to_string(),
             icon: Some("icon".to_string()),
             group: 1,
+            is_broken_ref: None,
         };
 
         let cloned = node.clone();

@@ -192,6 +192,25 @@ INSERT OR IGNORE INTO metadata (key, value, updated_at) VALUES
   ('ontology_imported', 'false', strftime('%s', 'now') * 1000);
 
 -- ============================================================================
+-- Ontology Files Table
+-- ============================================================================
+-- Track imported ontology files for incremental reimport
+-- This is separate from the triple store to avoid circular dependencies
+-- (we need this table to know which files to import, including DigitalThing.ttl)
+
+CREATE TABLE IF NOT EXISTS ontology_files (
+  file_path TEXT PRIMARY KEY,          -- Full path to the file
+  file_name TEXT NOT NULL,             -- Just the filename (e.g., "Thing.ttl")
+  last_modified INTEGER NOT NULL,      -- Unix timestamp (seconds) when file was last modified on disk
+  last_imported INTEGER NOT NULL,      -- Unix timestamp (seconds) when file was last imported into DB
+  checksum TEXT NOT NULL,              -- SHA-256 hash of file contents for integrity verification
+  triple_count INTEGER NOT NULL        -- Number of triples imported from this file
+);
+
+CREATE INDEX IF NOT EXISTS idx_ontology_files_name ON ontology_files(file_name);
+CREATE INDEX IF NOT EXISTS idx_ontology_files_modified ON ontology_files(last_modified);
+
+-- ============================================================================
 -- Views for Common Queries
 -- ============================================================================
 

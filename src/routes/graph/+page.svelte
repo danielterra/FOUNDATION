@@ -4,6 +4,7 @@
 	import TopBar from '$lib/components/graph/TopBar.svelte';
 	import GraphVisualization from '$lib/components/graph/GraphVisualization.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
+	import KeyboardShortcuts from '$lib/components/KeyboardShortcuts.svelte';
 
 	let loading = true;
 	let error = null;
@@ -14,6 +15,8 @@
 	let currentNodeLabel = '';
 	let graphComponent;
 	let visibleGraphData = null;
+	let shortcuts = [];
+	let topBarComponent;
 
 
 	// Recenter graph to initial position and reset zoom
@@ -44,6 +47,14 @@
 
 	// Handle keyboard shortcuts
 	function handleKeydown(event) {
+		// CMD+F or CTRL+F to focus search
+		if ((event.metaKey || event.ctrlKey) && event.key === 'f') {
+			event.preventDefault();
+			if (topBarComponent) {
+				topBarComponent.focusSearch();
+			}
+		}
+
 		// CMD+0 or CTRL+0 to recenter
 		if ((event.metaKey || event.ctrlKey) && event.key === '0') {
 			event.preventDefault();
@@ -64,6 +75,14 @@
 	}
 
 	onMount(async () => {
+		// Load keyboard shortcuts from backend
+		try {
+			const shortcutsJson = await invoke('shortcuts__get_all');
+			shortcuts = JSON.parse(shortcutsJson);
+		} catch (e) {
+			console.error('Failed to load shortcuts:', e);
+		}
+
 		// Check if initial setup is needed
 		try {
 			const setupComplete = await invoke('setup__check');
@@ -146,7 +165,7 @@
 	{:else if error}
 		<div class="error">Error: {error}</div>
 	{:else}
-		<TopBar onRecenter={recenterGraph} screenName="Ontology Graph" />
+		<TopBar bind:this={topBarComponent} onRecenter={recenterGraph} onSearch={handleNodeClick} screenName="Ontology Graph" />
 
 		{#if visibleGraphData}
 			<GraphVisualization
@@ -155,6 +174,8 @@
 				onNodeClick={handleNodeClick}
 			/>
 		{/if}
+
+		<KeyboardShortcuts {shortcuts} />
 	{/if}
 </div>
 

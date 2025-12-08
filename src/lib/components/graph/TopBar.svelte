@@ -1,8 +1,17 @@
 <script>
 	import Card from '$lib/components/Card.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
+	import Search from '$lib/components/graph/Search.svelte';
 
-	let { onRecenter, screenName = 'Ontology Graph' } = $props();
+	let { onRecenter, onSearch, screenName = 'Ontology Graph' } = $props();
+	let searchComponent;
+
+	// Expose focusSearch method to parent
+	export function focusSearch() {
+		if (searchComponent) {
+			searchComponent.focus();
+		}
+	}
 </script>
 
 <div class="floating-top-bar">
@@ -15,6 +24,10 @@
 		</Card>
 
 		<IconButton icon="center_focus_strong" hint="Recenter graph (⌘0)" onclick={onRecenter} />
+	</div>
+
+	<div class="right-controls">
+		<Search bind:this={searchComponent} onSelectResult={onSearch} />
 	</div>
 </div>
 
@@ -38,6 +51,13 @@
 	}
 
 	.left-controls :global(.card) {
+		pointer-events: auto;
+	}
+
+	.right-controls {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
 		pointer-events: auto;
 	}
 

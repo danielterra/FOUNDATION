@@ -3,9 +3,7 @@
 // ============================================================================
 // Manages SQLite database connection lifecycle and initialization
 //
-// Database location:
-// - Dev: project_root/FOUNDATION.db
-// - Prod: platform-specific app data directory
+// Database location: ~/Documents/Foundation/FOUNDATION.db
 // ============================================================================
 
 use rusqlite::{Connection, Result};
@@ -33,47 +31,27 @@ impl From<std::io::Error> for DbError {
 }
 
 /// Get the path to the database file
-/// In development: uses project root database
-/// In production: uses user's app data directory
+/// Uses ~/Documents/Foundation/FOUNDATION.db for both dev and production
 pub fn get_db_path() -> Result<PathBuf, DbError> {
-    // In development, use project root database
-    #[cfg(debug_assertions)]
-    {
-        let exe_path = std::env::current_exe()
-            .map_err(|e| DbError::IoError(e))?;
+    // Use Documents/Foundation directory for all builds
+    let documents_dir = dirs::document_dir()
+        .ok_or_else(|| DbError::IoError(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Could not determine Documents directory"
+        )))?;
 
-        // Navigate up from target/debug/ to project root
-        let project_root = exe_path
-            .parent() // target/debug/
-            .and_then(|p| p.parent()) // target/
-            .and_then(|p| p.parent()) // src-tauri/
-            .and_then(|p| p.parent()) // project root
-            .ok_or_else(|| DbError::IoError(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "Could not determine project root"
-            )))?;
+    let foundation_dir = documents_dir.join("Foundation");
 
-        let db_path = project_root.join("FOUNDATION.db");
-        println!("Development mode: using database at {:?}", db_path);
-        return Ok(db_path);
+    // Create Foundation directory if it doesn't exist
+    if !foundation_dir.exists() {
+        println!("Creating Foundation directory at {:?}", foundation_dir);
+        fs::create_dir_all(&foundation_dir)?;
     }
 
-    // In production, use app data directory
-    #[cfg(not(debug_assertions))]
-    {
-        let app_dir = dirs::data_dir()
-            .ok_or_else(|| DbError::IoError(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "Could not determine app data directory"
-            )))?
-            .join("com.FOUNDATION.app");
+    let db_path = foundation_dir.join("FOUNDATION.db");
+    println!("Using database at {:?}", db_path);
 
-        if !app_dir.exists() {
-            fs::create_dir_all(&app_dir)?;
-        }
-
-        Ok(app_dir.join("FOUNDATION.db"))
-    }
+    Ok(db_path)
 }
 
 /// SQL schema for database initialization
@@ -199,10 +177,21 @@ fn initialize_db_with_progress(db_path: &Path, app: Option<&tauri::AppHandle>) -
 
         println!("\n✅ Database initialization complete! Total triples: {}", total_triples);
     } else {
-        println!("ℹ️  Database already exists, skipping import");
-        // Emit completion immediately if database already exists
+        println!("ℹ️  Database already exists, checking for ontology updates...");
+
+        // Check for modified ontology files and reimport if needed
+        let modified_count = crate::turtle::import_all_foundation_ontologies(&mut conn, app, 0)
+            .map_err(|e| DbError::SchemaError(format!("Ontology update check failed: {:?}", e)))?;
+
+        if modified_count > 0 {
+            println!("✅ Reimported {} modified triples", modified_count);
+        } else {
+            println!("✅ All ontology files up to date");
+        }
+
+        // Emit completion
         if let Some(handle) = app {
-            println!("📡 Emitting import-complete (database already exists)");
+            println!("📡 Emitting import-complete");
             let _ = handle.emit("import-complete", ());
         }
     }

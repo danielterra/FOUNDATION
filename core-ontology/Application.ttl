@@ -1,0 +1,45 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Application
+# =============================================================================
+# A software application that can be directly executed by users
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Application a owl:Class ;
+    rdfs:subClassOf foundation:Software ;
+    rdfs:label "Application" ;
+    rdfs:comment "A software application that can be directly executed by users (more specific than Software)" ;
+    foundation:icon "apps" ;
+    rdfs:seeAlso """
+Examples:
+- FOUNDATION (knowledge management desktop app)
+- Visual Studio Code (code editor)
+- Chrome (web browser)
+- Docker Desktop (container management UI)
+""" .
+
+# =============================================================================
+# FoundationApp
+# =============================================================================
+# The FOUNDATION knowledge management application itself
+# This is a specialized Application class for FOUNDATION instances
+# =============================================================================
+
+foundation:FoundationApp a owl:Class ;
+    rdfs:subClassOf foundation:Application ;
+    rdfs:label "FOUNDATION App" ;
+    rdfs:comment "The FOUNDATION knowledge management application - a self-aware ontology-based system that tracks its own changes" ;
+    foundation:icon "account_tree" ;
+    rdfs:seeAlso """
+Examples:
+- foundation:ThisFoundationInstance (this installation)
+- Another FOUNDATION installation on a different computer
+""" .
