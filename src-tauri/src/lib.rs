@@ -97,33 +97,55 @@ pub struct SystemInfo {
     total_memory_gb: f64,
 }
 
+// Import progress tracking
+#[derive(Clone, serde::Serialize)]
+pub struct ImportProgress {
+    pub stage: String,       // "core", "dtype", "foundation"
+    pub current_file: String, // Nome do arquivo sendo importado
+    pub current: u32,        // Arquivo atual (1-based)
+    pub total: u32,          // Total de arquivos
+    pub triples: u64,        // Total de triples importados até agora
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize database on startup
-    let db_conn = match eavto::get_connection() {
-        Ok(conn) => {
-            println!("Database initialized successfully");
-
-            // Print database stats
-            if let Ok(stats) = eavto::get_stats(&conn) {
-                println!("Database stats:");
-                println!("  Total triples: {}", stats.total_facts);
-                println!("  Active triples: {}", stats.active_facts);
-                println!("  Transactions: {}", stats.total_transactions);
-                println!("  Entities: {}", stats.entities_count);
-            }
-
-            Some(conn)
-        }
-        Err(e) => {
-            eprintln!("Failed to initialize database: {:?}", e);
-            None
-        }
-    };
+    use tauri::{Manager, Emitter};
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(Mutex::new(db_conn.expect("Database connection required")))
+        .setup(|app| {
+            // Initialize database with event emission
+            let app_handle = app.handle().clone();
+
+            std::thread::spawn(move || {
+                match eavto::initialize_with_progress(app_handle.clone()) {
+                    Ok(conn) => {
+                        println!("Database initialized successfully");
+
+                        // Print database stats
+                        if let Ok(stats) = eavto::get_stats(&conn) {
+                            println!("Database stats:");
+                            println!("  Total triples: {}", stats.total_facts);
+                            println!("  Active triples: {}", stats.active_facts);
+                            println!("  Transactions: {}", stats.total_transactions);
+                            println!("  Entities: {}", stats.entities_count);
+                        }
+
+                        // Store connection in state
+                        app_handle.manage(Mutex::new(conn));
+
+                        // Emit completion event
+                        let _ = app_handle.emit("import-complete", ());
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to initialize database: {:?}", e);
+                        let _ = app_handle.emit("import-error", format!("{:?}", e));
+                    }
+                }
+            });
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::setup__check,
             commands::setup__init,

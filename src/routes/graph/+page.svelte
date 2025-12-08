@@ -2,10 +2,7 @@
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import TopBar from '$lib/components/graph/TopBar.svelte';
-	import SidePanel from '$lib/components/graph/SidePanel.svelte';
-	import InstanceSidePanel from '$lib/components/graph/InstanceSidePanel.svelte';
 	import GraphVisualization from '$lib/components/graph/GraphVisualization.svelte';
-	import SearchBar from '$lib/components/graph/SearchBar.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 
 	let loading = true;
@@ -15,31 +12,9 @@
 	let fullGraphData = null;
 	let currentNodeId = null;
 	let currentNodeLabel = '';
-	let currentNodeIcon = null;
-	let nodeTriples = [];
-	let nodeBacklinks = [];
-	let nodeStatistics = null;
-	let applicableProperties = [];
-	let loadingTriples = false;
 	let graphComponent;
 	let visibleGraphData = null;
-	let isInstance = false;
 
-	// Get display name for a node (use label if available, otherwise simplify URI)
-	function getNodeDisplayName(nodeId) {
-		const node = fullGraphData?.nodes.find((n) => n.id === nodeId);
-		if (node) {
-			return node.label;
-		}
-		// Fallback: simplify URI
-		return nodeId.split(/[/#]/).pop();
-	}
-
-	// Get icon for a node
-	function getNodeIcon(nodeId) {
-		const node = fullGraphData?.nodes.find((n) => n.id === nodeId);
-		return node?.icon || null;
-	}
 
 	// Recenter graph to initial position and reset zoom
 	function recenterGraph() {
@@ -54,21 +29,13 @@
 			loading = true;
 			error = null;
 
-			// Reload graph data centered on current node or CurrentUser if none selected
+			// Reload the current node (or CurrentUser if none selected)
 			const targetNodeId = currentNodeId || 'http://foundation.local/ontology/CurrentUser';
-			const graphJson = await invoke('get_ontology_graph', {
-				centralNodeId: targetNodeId
-			});
-			fullGraphData = JSON.parse(graphJson);
+
+			// Use entity__get to reload the node data (same as clicking on a node)
+			await navigateToNode(targetNodeId);
 
 			loading = false;
-
-			// Navigate to the same node to refresh triples and visualization
-			if (currentNodeId) {
-				await navigateToNode(currentNodeId);
-			} else {
-				await navigateToNode('http://foundation.local/ontology/CurrentUser');
-			}
 		} catch (err) {
 			error = err.toString();
 			loading = false;
@@ -140,55 +107,6 @@
 		}
 	});
 
-	async function loadNodeTriples(nodeId) {
-		loadingTriples = true;
-		try {
-			// Check if node is an instance and load appropriate data
-			const instanceCheck = await invoke('node__check_is_instance', { nodeId: nodeId });
-			isInstance = instanceCheck;
-
-			if (isInstance) {
-				// For instances, load only triples and icon
-				const [triplesJson, icon] = await Promise.all([
-					invoke('get_node_triples', { nodeId: nodeId }),
-					invoke('node__get_icon', { nodeId: nodeId })
-				]);
-
-				nodeTriples = JSON.parse(triplesJson);
-				currentNodeIcon = icon;
-
-				// Clear class-specific data
-				nodeBacklinks = [];
-				nodeStatistics = null;
-				applicableProperties = [];
-			} else {
-				// For classes, load all data
-				const [triplesJson, backlinksJson, statisticsJson, icon, propertiesJson] = await Promise.all([
-					invoke('get_node_triples', { nodeId: nodeId }),
-					invoke('get_node_backlinks', { nodeId: nodeId }),
-					invoke('get_node_statistics', { nodeId: nodeId }),
-					invoke('node__get_icon', { nodeId: nodeId }),
-					invoke('get_applicable_properties', { nodeId: nodeId })
-				]);
-
-				nodeTriples = JSON.parse(triplesJson);
-				nodeBacklinks = JSON.parse(backlinksJson);
-				nodeStatistics = JSON.parse(statisticsJson);
-				currentNodeIcon = icon;
-				applicableProperties = JSON.parse(propertiesJson);
-			}
-		} catch (err) {
-			console.error('Failed to load node data:', err);
-			nodeTriples = [];
-			nodeBacklinks = [];
-			nodeStatistics = null;
-			currentNodeIcon = null;
-			applicableProperties = [];
-			isInstance = false;
-		} finally {
-			loadingTriples = false;
-		}
-	}
 
 	async function navigateToNode(nodeId) {
 		try {
@@ -200,10 +118,6 @@
 
 			currentNodeId = entityData.id;
 			currentNodeLabel = entityData.label;
-			currentNodeIcon = entityData.icon;
-
-			// Determine if it's an individual
-			isInstance = entityData.entityType === 'individual';
 
 			// Set graph visualization data
 			visibleGraphData = {
@@ -211,13 +125,6 @@
 				links: entityData.links,
 				centralNodeId: entityData.id
 			};
-
-			// For now, skip the side panel data load
-			// We'll implement this properly later
-			nodeTriples = [];
-			nodeBacklinks = [];
-			nodeStatistics = null;
-			applicableProperties = [];
 		} catch (err) {
 			console.error('Failed to navigate to node:', err);
 			error = err.toString();
@@ -239,33 +146,7 @@
 	{:else if error}
 		<div class="error">Error: {error}</div>
 	{:else}
-		<TopBar onRecenter={recenterGraph} />
-
-		{#if currentNodeId}
-			{#if isInstance}
-				<InstanceSidePanel
-					{currentNodeLabel}
-					{currentNodeIcon}
-					{nodeTriples}
-					{loadingTriples}
-					onNavigateToNode={navigateToNode}
-					{getNodeDisplayName}
-					{getNodeIcon}
-				/>
-			{:else}
-				<SidePanel
-					{currentNodeLabel}
-					{currentNodeIcon}
-					{nodeTriples}
-					{nodeBacklinks}
-					{nodeStatistics}
-					{applicableProperties}
-					{loadingTriples}
-					onNavigateToNode={navigateToNode}
-					{getNodeDisplayName}
-				/>
-			{/if}
-		{/if}
+		<TopBar onRecenter={recenterGraph} screenName="Ontology Graph" />
 
 		{#if visibleGraphData}
 			<GraphVisualization
@@ -274,8 +155,6 @@
 				onNodeClick={handleNodeClick}
 			/>
 		{/if}
-
-		<SearchBar onSelectClass={navigateToNode} />
 	{/if}
 </div>
 
@@ -294,15 +173,14 @@
 		align-items: center;
 		width: 100%;
 		height: 100vh;
-		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
 		font-size: 18px;
-		color: rgba(255, 255, 255, 0.7);
+		color: var(--color-neutral);
 		background: transparent;
 		position: relative;
 		z-index: 1;
 	}
 
 	.error {
-		color: #ff6b9d;
+		color: var(--color-danger);
 	}
 </style>

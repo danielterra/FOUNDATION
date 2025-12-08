@@ -295,9 +295,15 @@ pub fn import_turtle_file(
     })
 }
 
-/// Import all FOUNDATION ontologies from filesystem
-pub fn import_all_foundation_ontologies(conn: &mut Connection) -> Result<Vec<ImportStats>, ImportError> {
-    let mut all_stats = Vec::new();
+/// Import all FOUNDATION ontologies from filesystem with progress events
+pub fn import_all_foundation_ontologies(
+    conn: &mut Connection,
+    app: Option<&tauri::AppHandle>,
+    base_triples: u64
+) -> Result<u64, ImportError> {
+    use tauri::{Manager, Emitter};
+
+    let mut total_triples = 0u64;
 
     println!("\n🏛️  Importing FOUNDATION ontologies...\n");
 
@@ -340,17 +346,41 @@ pub fn import_all_foundation_ontologies(conn: &mut Connection) -> Result<Vec<Imp
 
     ttl_files.sort();
 
-    println!("📋 Found {} FOUNDATION ontology files\n", ttl_files.len());
+    let total_files = ttl_files.len() as u32;
+    println!("📋 Found {} FOUNDATION ontology files\n", total_files);
 
     // Import each file
-    for file_path in ttl_files {
+    for (index, file_path) in ttl_files.iter().enumerate() {
         let filename = file_path.file_name().unwrap().to_str().unwrap();
         let origin = format!("foundation:ontology:{}", filename);
+
+        // Emit progress event BEFORE importing
+        if let Some(handle) = app {
+            let _ = handle.emit("import-progress", crate::ImportProgress {
+                stage: "foundation".to_string(),
+                current_file: filename.to_string(),
+                current: 3 + index as u32,  // +3 because core and dtype are 1 and 2
+                total: 3 + total_files,      // core + dtype + foundation files
+                triples: base_triples + total_triples,
+            });
+        }
 
         println!("📄 {}", filename);
         match import_turtle_file(conn, &file_path, &origin) {
             Ok(stats) => {
-                all_stats.push(stats);
+                total_triples += stats.triples_processed;
+                println!("   ✓ {} triples", stats.triples_processed);
+
+                // Emit progress event AFTER importing with updated triples
+                if let Some(handle) = app {
+                    let _ = handle.emit("import-progress", crate::ImportProgress {
+                        stage: "foundation".to_string(),
+                        current_file: filename.to_string(),
+                        current: 3 + index as u32 + 1,  // Mark as completed
+                        total: 3 + total_files,
+                        triples: base_triples + total_triples,
+                    });
+                }
             }
             Err(e) => {
                 eprintln!("⚠️  Failed to import {}: {:?}", filename, e);
@@ -359,15 +389,9 @@ pub fn import_all_foundation_ontologies(conn: &mut Connection) -> Result<Vec<Imp
     }
 
     println!("\n✅ FOUNDATION ontology import complete!");
-    println!("📊 Summary:");
-    for stats in &all_stats {
-        println!(
-            "  - {}: {} triples → {} facts (tx: {})",
-            stats.file, stats.triples_processed, stats.facts_inserted, stats.tx_start
-        );
-    }
+    println!("📊 Total triples from foundation files: {}", total_triples);
 
-    Ok(all_stats)
+    Ok(total_triples)
 }
 
 #[cfg(test)]

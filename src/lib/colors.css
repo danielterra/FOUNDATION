@@ -1,0 +1,60 @@
+/*
+ * FOUNDATION - Semantic Color System
+ *
+ * Este arquivo centraliza todas as cores do sistema usando nomenclatura semântica.
+ * NUNCA use cores diretas (hex ou rgba) nos componentes - sempre use as variáveis CSS definidas aqui.
+ *
+ * PRINCÍPIO: Cada cor tem um significado semântico específico baseado em seu uso no sistema.
+ * Todas as variações de cor são calculadas automaticamente usando color-mix() a partir das cores base.
+ */
+
+:root {
+	/* ========================================
+	 * CORES BASE - Definições primárias
+	 * Todas as outras cores derivam destas
+	 * ======================================== */
+
+	--color-interactive-base: #ff8c42;                   /* Laranja - indica que o elemento é interagível */
+	--color-transition-base: #a855f7;                    /* Roxo - indica que algo está em transição/mudança */
+	--color-danger-base: #ff3b3b;                        /* Vermelho - cor de perigo/erro */
+	--color-black: rgb(0, 0, 0);                         /* Preto puro */
+	--color-white: rgb(255, 255, 255);                   /* Branco puro */
+
+	/* ========================================
+	 * INTERACTIVE - Elementos com os quais o usuário pode interagir
+	 * Calculados a partir de --color-interactive-base
+	 * ======================================== */
+
+	--color-interactive: var(--color-interactive-base);                                      /* Base - laranja puro */
+	--color-interactive-hover: color-mix(in srgb, var(--color-interactive-base) 85%, white);  /* Hover - mais claro */
+	--color-interactive-active: color-mix(in srgb, var(--color-interactive-base) 70%, white); /* Active - ainda mais claro */
+	--color-interactive-disabled: color-mix(in srgb, var(--color-interactive-base) 30%, black); /* Disabled - mais escuro */
+
+	/* ========================================
+	 * TRANSITION - Elementos em transição, mudança ou carregamento
+	 * ======================================== */
+
+	--color-transition: var(--color-transition-base);
+
+	/* ========================================
+	 * DANGER - Elementos de perigo, erro e alerta
+	 * Calculados a partir de --color-danger-base
+	 * ======================================== */
+
+	--color-danger: var(--color-danger-base);                                      /* Base - vermelho puro */
+	--color-danger-hover: color-mix(in srgb, var(--color-danger-base) 85%, white);  /* Hover - mais claro */
+	--color-danger-active: color-mix(in srgb, var(--color-danger-base) 70%, white); /* Active - ainda mais claro */
+	--color-danger-disabled: color-mix(in srgb, var(--color-danger-base) 30%, black); /* Disabled - mais escuro */
+
+	/* ========================================
+	 * NEUTRAL - Conteúdo neutro (branco)
+	 * Usado em: textos, edges, elementos sem cor semântica específica
+	 * Calculados a partir de --color-white e --color-black
+	 * ======================================== */
+
+	--color-neutral: color-mix(in srgb, var(--color-white) 85%, black);      /* Base - tom médio */
+	--color-neutral-hover: color-mix(in srgb, var(--color-white) 92%, black); /* Hover - mais claro */
+	--color-neutral-active: var(--color-white);                               /* Active - 100% branco */
+	--color-neutral-disabled: color-mix(in srgb, var(--color-white) 30%, black); /* Disabled - mais escuro */
+	--color-neutral-on-interactive: var(--color-black);
+}

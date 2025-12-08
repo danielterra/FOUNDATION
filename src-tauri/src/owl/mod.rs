@@ -18,7 +18,6 @@ pub mod vocabulary;
 pub use class::{Class, ClassType};
 pub use property::{Property, ObjectProperty, DatatypeProperty, PropertyType};
 pub use individual::Individual;
-pub use vocabulary::Vocabulary;
 
 use rusqlite::Connection;
 use crate::eavto::{store, Triple, Object};

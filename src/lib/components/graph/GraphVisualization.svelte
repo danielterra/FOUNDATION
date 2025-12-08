@@ -20,26 +20,26 @@
 	};
 
 	// Visual configuration for OWL entities
-	// DESIGN PRINCIPLE: Orange (#ff8c42) = Interactive/Clickable ONLY
+	// DESIGN PRINCIPLE: var(--color-interactive) = Elementos interagíveis (clicáveis)
 	const OWL_VISUAL = {
 		CLASS: {
 			nodeRadius: 18,
-			borderColor: '#ff8c42',        // Orange - clickable/navigable
-			backgroundColor: 'rgba(255, 140, 66, 0.15)',
+			borderColor: 'var(--color-interactive)',
+			backgroundColor: 'var(--color-interactive)',  // Usará opacity no CSS inline
 			textTransform: 'uppercase',
 			fontWeight: 'bold'
 		},
 		INDIVIDUAL: {
 			nodeRadius: 18,
-			borderColor: '#ff8c42',        // Orange - clickable/navigable
-			backgroundColor: 'rgba(255, 140, 66, 0.15)',
+			borderColor: 'var(--color-interactive)',
+			backgroundColor: 'var(--color-interactive)',  // Usará opacity no CSS inline
 			textTransform: 'none',
 			fontWeight: '500'
 		},
 		PROPERTY: {
-			labelBackground: 'rgba(0, 0, 0, 0.8)',
-			labelColor: 'rgba(255, 255, 255, 0.6)',  // Dimmed - not interactive
-			linkColor: 'rgba(255, 255, 255, 0.3)',   // Dimmed - not interactive
+			labelBackground: 'var(--color-black)',
+			labelColor: 'var(--color-neutral)',
+			linkColor: 'var(--color-neutral)',
 			linkWidth: 1.5
 		}
 	};
@@ -323,7 +323,7 @@
 				nodeGroup
 					.append('circle')
 					.attr('r', config.nodeRadius)
-					.attr('fill', 'rgba(10, 10, 10, 0.95)')
+					.attr('fill', 'color-mix(in srgb, var(--color-black) 95%, transparent)')
 					.attr('stroke', 'none')
 					.style('pointer-events', 'none');
 
@@ -342,7 +342,7 @@
 						.style('display', 'flex')
 						.style('align-items', 'center')
 						.style('justify-content', 'center')
-						.style('background', config.backgroundColor)
+						.style('background', 'var(--color-black)')
 						.style('border', `2px solid ${config.borderColor}`)
 						.style('border-radius', '50%')
 						.style('overflow', 'hidden')
@@ -363,7 +363,7 @@
 						.style('display', 'flex')
 						.style('align-items', 'center')
 						.style('justify-content', 'center')
-						.style('background', config.backgroundColor)
+						.style('background', 'var(--color-black)')
 						.style('border', `2px solid ${config.borderColor}`)
 						.style('border-radius', '50%')
 						.style('pointer-events', 'none')
@@ -383,10 +383,25 @@
 					.append('circle')
 					.attr('r', 8)
 					.attr('fill', config.borderColor)
-					.attr('stroke', 'rgba(0, 0, 0, 0.8)')
+					.attr('stroke', 'color-mix(in srgb, var(--color-black) 80%, transparent)')
 					.attr('stroke-width', 2);
 			}
 		});
+
+		// Add background rectangles for labels
+		nodes
+			.append('rect')
+			.attr('x', 18)
+			.attr('y', -10)
+			.attr('width', (d) => {
+				const config = getNodeVisualConfig(d);
+				const label = config.textTransform === 'uppercase' ? d.label.toUpperCase() : d.label;
+				return label.length * 8.5 + 8; // Approximate width based on character count
+			})
+			.attr('height', 20)
+			.attr('rx', 4)
+			.attr('fill', 'var(--color-black)')
+			.style('pointer-events', 'none');
 
 		// Add labels (Class names in UPPERCASE, Individual names in original case)
 		nodes
@@ -397,9 +412,8 @@
 			})
 			.attr('font-size', '14px')
 			.attr('font-weight', (d) => getNodeVisualConfig(d).fontWeight)
-			.attr('font-family', "'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif")
-			.attr('fill', 'rgba(255, 255, 255, 0.95)')
-			.attr('dx', 20)
+			.attr('fill', 'var(--color-neutral)')
+			.attr('dx', 24)
 			.attr('dy', 5)
 			.style('pointer-events', 'none')
 			.style('user-select', 'none');

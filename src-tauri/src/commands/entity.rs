@@ -160,7 +160,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         links.push(GraphLink {
             source: class_id.to_string(),
             target: super_class.clone(),
-            label: "subClassOf".to_string(),
+            label: get_property_label(conn, "rdfs:subClassOf"),
         });
     }
 
@@ -183,7 +183,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         links.push(GraphLink {
             source: sub_class.clone(),
             target: class_id.to_string(),
-            label: "subClassOf".to_string(),
+            label: get_property_label(conn, "rdfs:subClassOf"),
         });
     }
 
@@ -202,7 +202,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         links.push(GraphLink {
             source: instance.clone(),
             target: class_id.to_string(),
-            label: "rdf:type".to_string(),
+            label: get_property_label(conn, "rdf:type"),
         });
     }
 
@@ -303,7 +303,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         links.push(GraphLink {
             source: individual_id.to_string(),
             target: class_id.clone(),
-            label: "rdf:type".to_string(),
+            label: get_property_label(conn, "rdf:type"),
         });
     }
 
@@ -323,7 +323,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             links.push(GraphLink {
                 source: individual_id.to_string(),
                 target: prop.value.clone(),
-                label: prop.property.clone(),
+                label: get_property_label(conn, &prop.property),
             });
         }
     }
@@ -392,6 +392,40 @@ fn get_individual_icon(conn: &Connection, individual_id: &str) -> Result<Option<
     let result = stmt.query_row([individual_id], |row| row.get::<_, String>(0));
 
     Ok(result.ok())
+}
+
+/// Get the friendly label for a property (rdfs:label) or fallback to last part of IRI
+fn get_property_label(conn: &Connection, property_iri: &str) -> String {
+    // Try to get rdfs:label from the ontology
+    let query = "SELECT object_value FROM triples
+                 WHERE subject = ? AND predicate = 'rdfs:label'
+                 AND retracted = 0 LIMIT 1";
+
+    if let Ok(mut stmt) = conn.prepare(query) {
+        if let Ok(label) = stmt.query_row([property_iri], |row| row.get::<_, String>(0)) {
+            return label;
+        }
+    }
+
+    // Fallback: extract local name from IRI/CURIE
+    // For CURIE like "rdfs:subClassOf" -> "subClassOf"
+    if let Some(colon_pos) = property_iri.find(':') {
+        // Skip URL schemes (http:, https:, file:)
+        if !property_iri[..colon_pos].contains('/') {
+            let after_colon = &property_iri[colon_pos + 1..];
+            // Check if it's not "//..." (part of URL)
+            if !after_colon.starts_with("//") {
+                return after_colon.to_string();
+            }
+        }
+    }
+
+    // For full IRI like "http://example.org/ont#hasParent" -> "hasParent"
+    property_iri
+        .split(|c| c == '/' || c == '#')
+        .last()
+        .unwrap_or(property_iri)
+        .to_string()
 }
 
 #[cfg(test)]

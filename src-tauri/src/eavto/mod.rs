@@ -66,6 +66,7 @@ pub use connection::{
     get_connection,
     get_db_path,
     initialize_db,
+    initialize_with_progress,
     DbError,
 };
 

@@ -1,5 +1,6 @@
 <script>
   import '$lib/fonts.css';
+  import '$lib/colors.css';
 
   // Available background videos
   const backgroundVideos = [

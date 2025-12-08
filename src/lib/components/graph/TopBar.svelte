@@ -1,20 +1,20 @@
 <script>
-	export let onRecenter;
+	import Card from '$lib/components/Card.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
+
+	let { onRecenter, screenName = 'Ontology Graph' } = $props();
 </script>
 
 <div class="floating-top-bar">
 	<div class="left-controls">
-		<header class="floating-header">
-			<h1>FOUNDATION</h1>
-			<span class="screen-indicator">Ontology Graph</span>
-		</header>
+		<Card>
+			<header class="floating-header">
+				<h1>FOUNDATION</h1>
+				<span class="screen-indicator">{screenName}</span>
+			</header>
+		</Card>
 
-		<button class="recenter-btn" on:click={onRecenter} title="Recenter graph (⌘0)">
-			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-				<circle cx="12" cy="12" r="10" stroke-width="2" />
-				<circle cx="12" cy="12" r="3" fill="currentColor" />
-			</svg>
-		</button>
+		<IconButton icon="center_focus_strong" hint="Recenter graph (⌘0)" onclick={onRecenter} />
 	</div>
 </div>
 
@@ -34,57 +34,31 @@
 	.left-controls {
 		display: flex;
 		align-items: center;
-		gap: 16px;
+		gap: 1rem;
+	}
+
+	.left-controls :global(.card) {
+		pointer-events: auto;
 	}
 
 	.floating-header {
-		background: rgba(10, 10, 10, 0.7);
-		backdrop-filter: blur(20px);
-		padding: 12px 20px;
-		border-radius: 12px;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 		display: flex;
 		align-items: center;
-		gap: 12px;
-		pointer-events: auto;
+		gap: 0.75rem;
 	}
 
 	.floating-header h1 {
 		margin: 0;
-		font-family: 'Science Gothic Medium', 'Science Gothic', sans-serif;
-		font-size: 20px;
+		font-size: 1.25rem;
 		font-weight: 500;
-		color: #ffffff;
-		letter-spacing: 0.5px;
+		color: var(--color-neutral-active);
+		letter-spacing: 0.03rem;
 	}
 
 	.screen-indicator {
-		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
-		font-size: 14px;
-		color: rgba(255, 255, 255, 0.6);
-		padding-left: 12px;
-		border-left: 1px solid rgba(255, 255, 255, 0.15);
-	}
-
-	.recenter-btn {
-		background: rgba(10, 10, 10, 0.7);
-		backdrop-filter: blur(20px);
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 12px;
-		padding: 12px;
-		cursor: pointer;
-		color: #ff8c42;
-		transition: all 0.2s;
-		pointer-events: auto;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.recenter-btn:hover {
-		background: rgba(255, 140, 66, 0.1);
-		border-color: #ff8c42;
-		transform: scale(1.05);
+		font-size: 0.875rem;
+		color: var(--color-neutral);
+		padding-left: 0.75rem;
+		border-left: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
 	}
 </style>

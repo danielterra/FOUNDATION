@@ -94,8 +94,20 @@ fn create_schema(conn: &Connection) -> Result<(), DbError> {
 }
 
 /// Import RDF/RDFS/OWL core ontology
-fn import_rdf_core(conn: &mut Connection) -> Result<(), DbError> {
+fn import_rdf_core(conn: &mut Connection, app: Option<&tauri::AppHandle>) -> Result<u64, DbError> {
+    use tauri::{Manager, Emitter};
+
     println!("\n📚 Importing RDF/RDFS/OWL core ontology...");
+
+    if let Some(handle) = app {
+        let _ = handle.emit("import-progress", crate::ImportProgress {
+            stage: "core".to_string(),
+            current_file: "rdf-rdfs-owl-core.ttl".to_string(),
+            current: 1,
+            total: 3, // core + dtype + foundation files
+            triples: 0,
+        });
+    }
 
     let temp_dir = std::env::temp_dir();
     let temp_file = temp_dir.join("rdf-rdfs-owl-core.ttl");
@@ -112,12 +124,24 @@ fn import_rdf_core(conn: &mut Connection) -> Result<(), DbError> {
     let _ = std::fs::remove_file(&temp_file);
 
     println!("✅ Imported {} triples from RDF/RDFS/OWL", stats.triples_processed);
-    Ok(())
+    Ok(stats.triples_processed)
 }
 
 /// Import DTYPE ontology
-fn import_dtype(conn: &mut Connection) -> Result<(), DbError> {
+fn import_dtype(conn: &mut Connection, app: Option<&tauri::AppHandle>, total_triples: u64) -> Result<u64, DbError> {
+    use tauri::{Manager, Emitter};
+
     println!("\n📚 Importing DTYPE ontology...");
+
+    if let Some(handle) = app {
+        let _ = handle.emit("import-progress", crate::ImportProgress {
+            stage: "dtype".to_string(),
+            current_file: "dtype.ttl".to_string(),
+            current: 2,
+            total: 3,
+            triples: total_triples,
+        });
+    }
 
     let temp_dir = std::env::temp_dir();
     let temp_file = temp_dir.join("dtype.ttl");
@@ -134,11 +158,18 @@ fn import_dtype(conn: &mut Connection) -> Result<(), DbError> {
     let _ = std::fs::remove_file(&temp_file);
 
     println!("✅ Imported {} triples from DTYPE", stats.triples_processed);
-    Ok(())
+    Ok(stats.triples_processed)
 }
 
 /// Initialize database with schema and ontologies
 pub fn initialize_db(db_path: &Path) -> Result<Connection, DbError> {
+    initialize_db_with_progress(db_path, None)
+}
+
+/// Initialize database with progress events
+fn initialize_db_with_progress(db_path: &Path, app: Option<&tauri::AppHandle>) -> Result<Connection, DbError> {
+    use tauri::{Manager, Emitter};
+
     let needs_initialization = !db_path.exists();
 
     println!("Using database at: {:?}", db_path);
@@ -148,10 +179,12 @@ pub fn initialize_db(db_path: &Path) -> Result<Connection, DbError> {
         println!("\n🚀 Initializing new database...\n");
 
         create_schema(&conn)?;
-        import_rdf_core(&mut conn)?;
-        import_dtype(&mut conn)?;
 
-        crate::turtle::import_all_foundation_ontologies(&mut conn)
+        let mut total_triples = 0u64;
+        total_triples += import_rdf_core(&mut conn, app)?;
+        total_triples += import_dtype(&mut conn, app, total_triples)?;
+
+        total_triples += crate::turtle::import_all_foundation_ontologies(&mut conn, app, total_triples)
             .map_err(|e| DbError::SchemaError(format!("Ontology import failed: {:?}", e)))?;
 
         println!("\n⚙️  Setting metadata...");
@@ -164,10 +197,23 @@ pub fn initialize_db(db_path: &Path) -> Result<Connection, DbError> {
         )?;
         println!("✅ Metadata updated");
 
-        println!("\n✅ Database initialization complete!");
+        println!("\n✅ Database initialization complete! Total triples: {}", total_triples);
+    } else {
+        println!("ℹ️  Database already exists, skipping import");
+        // Emit completion immediately if database already exists
+        if let Some(handle) = app {
+            println!("📡 Emitting import-complete (database already exists)");
+            let _ = handle.emit("import-complete", ());
+        }
     }
 
     Ok(conn)
+}
+
+/// Initialize database with progress events for Tauri
+pub fn initialize_with_progress(app: tauri::AppHandle) -> Result<Connection, DbError> {
+    let db_path = get_db_path()?;
+    initialize_db_with_progress(&db_path, Some(&app))
 }
 
 /// Get or create database connection
