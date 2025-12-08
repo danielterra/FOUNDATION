@@ -104,13 +104,36 @@ Too comprehensive for practical use. FOUNDATION needs essential concepts, not ex
 **Approach:**
 Build minimal base ontology manually, grow incrementally based on real needs.
 
+**Core Ontology Structure:**
+
+1. **External Vocabularies**:
+   - **DTYPE** (Datatype Schema): 288 triples for typed data (unit-aware properties)
+   - **QUDT** (Quantities, Units, Dimensions, Types): 48K+ triples for scientific units and quantities
+   - **RDF/RDFS/OWL Core**: Standard W3C vocabulary
+
 **Key Design Decisions:**
 
-1. **Naming convention**: Classes ending in "Capacity" = behavior/capability, without suffix = nature/essence
-2. **One file per class**: [core-ontology/](../../../../core-ontology/) with OOP-style property definitions
-3. **Examples in every class**: `rdfs:seeAlso` shows practical usage
-4. **Runtime import**: Moved from build-time to runtime for flexibility
-5. **Automatic dependency resolution**: Topological sort imports files in correct order
+1. **Naming Convention**:
+   - Classes ending in "Capacity" = behavior/capability (e.g., `AgentCapacity`)
+   - Without suffix = nature/essence (e.g., `Person`, `Computer`)
+
+2. **One File Per Class**:
+   - Each class in separate .ttl file in [core-ontology/](../../../../core-ontology/)
+   - OOP-style: class definition + its specific properties in same file
+   - Example: `Person.ttl` defines both `foundation:Person` class and person-specific properties
+
+3. **Documentation in Ontology**:
+   - Every class has `rdfs:label`, `rdfs:comment`, `foundation:icon`
+   - `rdfs:seeAlso` contains practical usage examples
+   - Examples use real data from FOUNDATION instances
+
+4. **Runtime Import**:
+   - Ontology loaded at application startup (not build-time)
+   - Progress events emitted during import for UI feedback
+   - Graceful handling of missing/malformed ontology files
+
+5. **Dependency Resolution**:
+   - Foundation classes imported via directory scan
 </details>
 
 ---

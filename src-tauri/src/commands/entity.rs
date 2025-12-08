@@ -307,7 +307,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         });
     }
 
-    // Add related individuals via ObjectProperties
+    // Add related individuals via ObjectProperties (outgoing relationships)
     for prop in &properties {
         if prop.is_object_property {
             let related_label = get_individual_label(conn, &prop.value)?;
@@ -326,6 +326,41 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                 label: get_property_label(conn, &prop.property),
             });
         }
+    }
+
+    // Add related individuals via incoming ObjectProperties (backlinks)
+    let backlink_query = "SELECT subject, predicate
+                          FROM triples
+                          WHERE object = ? AND object_type = 'iri'
+                          AND predicate != 'rdf:type'
+                          AND retracted = 0";
+
+    let mut stmt = conn.prepare(backlink_query).map_err(|e| e.to_string())?;
+    let backlink_rows = stmt.query_map([individual_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+        ))
+    }).map_err(|e| e.to_string())?;
+
+    for row in backlink_rows {
+        let (subject, predicate) = row.map_err(|e| e.to_string())?;
+
+        let subject_label = get_individual_label(conn, &subject)?;
+        let subject_icon = get_individual_icon(conn, &subject)?;
+
+        nodes.push(GraphNode {
+            id: subject.clone(),
+            label: subject_label,
+            icon: subject_icon,
+            group: 6,
+        });
+
+        links.push(GraphLink {
+            source: subject,
+            target: individual_id.to_string(),
+            label: get_property_label(conn, &predicate),
+        });
     }
 
     Ok(EntityData {
