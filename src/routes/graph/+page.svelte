@@ -5,18 +5,20 @@
 	import GraphVisualization from '$lib/components/graph/GraphVisualization.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import KeyboardShortcuts from '$lib/components/KeyboardShortcuts.svelte';
+	import EntityInspectorPanel from '$lib/components/graph/EntityInspectorPanel.svelte';
 
-	let loading = true;
-	let error = null;
-	let showSetupWizard = false;
-	let checkingSetup = true;
-	let fullGraphData = null;
-	let currentNodeId = null;
-	let currentNodeLabel = '';
-	let graphComponent;
-	let visibleGraphData = null;
-	let shortcuts = [];
-	let topBarComponent;
+	let loading = $state(true);
+	let error = $state(null);
+	let showSetupWizard = $state(false);
+	let checkingSetup = $state(true);
+	let fullGraphData = $state(null);
+	let currentNodeId = $state(null);
+	let currentNodeLabel = $state('');
+	let graphComponent = $state();
+	let visibleGraphData = $state(null);
+	let shortcuts = $state([]);
+	let topBarComponent = $state();
+	let inspectorPanels = $state([]);
 
 
 	// Recenter graph to initial position and reset zoom
@@ -150,8 +152,39 @@
 		}
 	}
 
-	function handleNodeClick(nodeId, nodeLabel) {
-		navigateToNode(nodeId);
+	function handleNodeClick(nodeId, nodeLabel, nodeIcon) {
+		// Se clicar no node central, abre o painel
+		if (nodeId === currentNodeId) {
+			openInspectorPanel(nodeId, nodeLabel, nodeIcon);
+		} else {
+			// Se clicar em outro node, navega para ele
+			navigateToNode(nodeId);
+		}
+	}
+
+	function openInspectorPanel(nodeId, nodeLabel, nodeIcon) {
+		// Calculate position offset for new panels
+		const baseX = window.innerWidth - 420;
+		const baseY = 100;
+		const offset = inspectorPanels.length * 30;
+
+		// Create new panel
+		const newPanel = {
+			id: `${nodeId}-${Date.now()}`,
+			entityId: nodeId,
+			entityLabel: nodeLabel,
+			entityIcon: nodeIcon,
+			position: {
+				x: baseX - offset,
+				y: baseY + offset
+			}
+		};
+
+		inspectorPanels = [...inspectorPanels, newPanel];
+	}
+
+	function closeInspectorPanel(panelId) {
+		inspectorPanels = inspectorPanels.filter(p => p.id !== panelId);
 	}
 </script>
 
@@ -178,6 +211,16 @@
 		<KeyboardShortcuts {shortcuts} />
 	{/if}
 </div>
+
+{#each inspectorPanels as panel (panel.id)}
+	<EntityInspectorPanel
+		entityId={panel.entityId}
+		entityLabel={panel.entityLabel}
+		entityIcon={panel.entityIcon}
+		position={panel.position}
+		onClose={() => closeInspectorPanel(panel.id)}
+	/>
+{/each}
 
 <style>
 	#graph-container {

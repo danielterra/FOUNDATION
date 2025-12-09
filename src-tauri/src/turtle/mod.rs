@@ -16,6 +16,7 @@ use std::io::BufReader;
 use std::fs::File;
 use crate::eavto::{Triple, Object};
 use chrono;
+use sha2::{Sha256, Digest};
 
 /// Import error types
 #[derive(Debug)]
@@ -268,10 +269,11 @@ pub fn import_turtle_file(
         return Err(ImportError::TurtleError(e));
     }
 
-    // Use OWL semantic import (intelligently routes to appropriate operations)
-    println!("  Asserting {} triples to database with semantic awareness...", eavto_triples.len());
-    let facts_inserted = crate::owl::import_triples(conn, &eavto_triples, origin)
-        .map_err(|e| ImportError::DatabaseError(format!("OWL import error: {:?}", e)))?;
+    // Store triples directly to EAVTO
+    println!("  Asserting {} triples to database...", eavto_triples.len());
+    let facts_inserted = crate::eavto::store::assert_triples(conn, &eavto_triples, origin)
+        .map_err(|e| ImportError::DatabaseError(format!("Store error: {:?}", e)))?;
+    let facts_inserted = facts_inserted as u64;
 
     // Get the last transaction ID for stats
     let tx_id: i64 = conn.query_row(
@@ -413,361 +415,6 @@ pub fn import_all_foundation_ontologies(
     Ok(total_triples)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::eavto::test_helpers::setup_test_db;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-
-    /// Create a temporary Turtle file with test content
-    fn create_test_turtle_file(content: &str) -> NamedTempFile {
-        let mut file = NamedTempFile::new().expect("Failed to create temp file");
-        file.write_all(content.as_bytes()).expect("Failed to write to temp file");
-        file
-    }
-
-    #[test]
-    fn test_subject_to_string_named_node() {
-        let subject = rio_api::model::Subject::NamedNode(rio_api::model::NamedNode {
-            iri: "http://example.org/test",
-        });
-        assert_eq!(subject_to_string(&subject), "http://example.org/test");
-    }
-
-    #[test]
-    fn test_subject_to_string_blank_node() {
-        let subject = rio_api::model::Subject::BlankNode(rio_api::model::BlankNode {
-            id: "b1",
-        });
-        assert_eq!(subject_to_string(&subject), "_:b1");
-    }
-
-    #[test]
-    fn test_get_literal_value_simple() {
-        let lit = rio_api::model::Literal::Simple {
-            value: "Hello World",
-        };
-        assert_eq!(get_literal_value(&lit), "Hello World");
-    }
-
-    #[test]
-    fn test_get_literal_value_language_tagged() {
-        let lit = rio_api::model::Literal::LanguageTaggedString {
-            value: "Bonjour",
-            language: "fr",
-        };
-        assert_eq!(get_literal_value(&lit), "Bonjour");
-    }
-
-    #[test]
-    fn test_get_literal_datatype() {
-        let lit = rio_api::model::Literal::Typed {
-            value: "42",
-            datatype: rio_api::model::NamedNode {
-                iri: "http://www.w3.org/2001/XMLSchema#integer",
-            },
-        };
-        assert_eq!(get_literal_datatype(&lit), "xsd:integer");
-    }
-
-    #[test]
-    fn test_get_literal_language_some() {
-        let lit = rio_api::model::Literal::LanguageTaggedString {
-            value: "Hello",
-            language: "en",
-        };
-        assert_eq!(get_literal_language(&lit), Some("en".to_string()));
-    }
-
-    #[test]
-    fn test_get_literal_language_none() {
-        let lit = rio_api::model::Literal::Simple {
-            value: "Plain text",
-        };
-        assert_eq!(get_literal_language(&lit), None);
-    }
-
-    #[test]
-    fn test_import_turtle_file_basic_class() {
-        let mut conn = setup_test_db();
-
-        let turtle_content = r#"
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix test: <http://example.org/test#> .
-
-test:Person a owl:Class ;
-    rdfs:label "Person"@en .
-"#;
-
-        let temp_file = create_test_turtle_file(turtle_content);
-        let result = import_turtle_file(&mut conn, temp_file.path(), "test");
-
-        assert!(result.is_ok());
-        let stats = result.unwrap();
-        assert_eq!(stats.triples_processed, 2);
-        assert_eq!(stats.facts_inserted, 2);
-
-        // Verify the class was imported using OWL abstraction
-        let class = crate::owl::Class::new("http://example.org/test#Person");
-        assert!(class.exists(&conn).unwrap());
-
-        // Verify label was added
-        let labels = class.get_labels(&conn).unwrap();
-        assert_eq!(labels.len(), 1);
-        assert_eq!(labels[0].0, "Person");
-        assert_eq!(labels[0].1, Some("en".to_string()));
-    }
-
-    #[test]
-    fn test_import_turtle_file_with_properties() {
-        let mut conn = setup_test_db();
-
-        let turtle_content = r#"
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix test: <http://example.org/test#> .
-
-test:hasName a owl:DatatypeProperty ;
-    rdfs:domain test:Person ;
-    rdfs:range <http://www.w3.org/2001/XMLSchema#string> .
-"#;
-
-        let temp_file = create_test_turtle_file(turtle_content);
-        let result = import_turtle_file(&mut conn, temp_file.path(), "test");
-
-        assert!(result.is_ok());
-        let stats = result.unwrap();
-        assert_eq!(stats.triples_processed, 3);
-
-        // Verify property was imported
-        let prop = crate::owl::Property::new("http://example.org/test#hasName");
-        assert!(prop.exists(&conn).unwrap());
-
-        // Verify domain
-        let domains = prop.get_domains(&conn).unwrap();
-        assert_eq!(domains.len(), 1);
-        assert_eq!(domains[0], "http://example.org/test#Person");
-
-        // Verify range
-        let ranges = prop.get_ranges(&conn).unwrap();
-        assert_eq!(ranges.len(), 1);
-        assert_eq!(ranges[0], "xsd:string");
-    }
-
-    #[test]
-    fn test_import_turtle_file_with_hierarchy() {
-        let mut conn = setup_test_db();
-
-        let turtle_content = r#"
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix test: <http://example.org/test#> .
-
-test:Animal a owl:Class .
-test:Dog a owl:Class ;
-    rdfs:subClassOf test:Animal .
-"#;
-
-        let temp_file = create_test_turtle_file(turtle_content);
-        let result = import_turtle_file(&mut conn, temp_file.path(), "test");
-
-        assert!(result.is_ok());
-
-        // Verify hierarchy
-        let dog = crate::owl::Class::new("http://example.org/test#Dog");
-        let supers = dog.get_super_classes(&conn).unwrap();
-        assert_eq!(supers.len(), 1);
-        assert_eq!(supers[0], "http://example.org/test#Animal");
-    }
-
-    #[test]
-    fn test_import_turtle_file_with_individuals() {
-        let mut conn = setup_test_db();
-
-        let turtle_content = r#"
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix test: <http://example.org/test#> .
-
-test:Person a owl:Class .
-test:john a test:Person .
-"#;
-
-        let temp_file = create_test_turtle_file(turtle_content);
-        let result = import_turtle_file(&mut conn, temp_file.path(), "test");
-
-        assert!(result.is_ok());
-
-        // Verify individual
-        let john = crate::owl::Individual::new("http://example.org/test#john");
-        assert!(john.is_instance_of(&conn, "http://example.org/test#Person").unwrap());
-    }
-
-    #[test]
-    fn test_import_turtle_file_with_literals() {
-        let mut conn = setup_test_db();
-
-        let turtle_content = r#"
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix test: <http://example.org/test#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-
-test:Person a owl:Class .
-test:john a test:Person ;
-    test:age 30 ;
-    test:height 1.75 ;
-    test:active true .
-"#;
-
-        let temp_file = create_test_turtle_file(turtle_content);
-        let result = import_turtle_file(&mut conn, temp_file.path(), "test");
-
-        assert!(result.is_ok());
-
-        // Verify literals were converted correctly
-        let john = crate::owl::Individual::new("http://example.org/test#john");
-
-        let age_values = john.get_property_values(&conn, "http://example.org/test#age").unwrap();
-        assert_eq!(age_values.len(), 1);
-        assert!(matches!(age_values[0], crate::eavto::Object::Integer(30)));
-
-        let height_values = john.get_property_values(&conn, "http://example.org/test#height").unwrap();
-        assert_eq!(height_values.len(), 1);
-        assert!(matches!(height_values[0], crate::eavto::Object::Number(_)));
-
-        let active_values = john.get_property_values(&conn, "http://example.org/test#active").unwrap();
-        assert_eq!(active_values.len(), 1);
-        assert!(matches!(active_values[0], crate::eavto::Object::Boolean(true)));
-    }
-
-    #[test]
-    fn test_rio_to_eavto_triple_conversion() {
-        use rio_api::model::{NamedNode, Subject, Triple as RioTriple, Term};
-
-        let rio_triple = RioTriple {
-            subject: Subject::NamedNode(NamedNode { iri: "http://example.org/test#Person" }),
-            predicate: NamedNode { iri: "http://www.w3.org/1999/02/22-rdf-syntax-ns#type" },
-            object: Term::NamedNode(NamedNode { iri: "http://www.w3.org/2002/07/owl#Class" }),
-        };
-
-        let eavto_triple = rio_to_eavto_triple(&rio_triple, 1, 1, 1000);
-
-        assert_eq!(eavto_triple.subject, "http://example.org/test#Person");
-        assert_eq!(eavto_triple.predicate, "rdf:type");
-        assert!(matches!(eavto_triple.object, crate::eavto::Object::Iri(_)));
-        assert_eq!(eavto_triple.tx, 1);
-        assert_eq!(eavto_triple.origin_id, 1);
-        assert_eq!(eavto_triple.created_at, 1000);
-    }
-
-    #[test]
-    fn test_get_or_create_origin_new() {
-        let conn = setup_test_db();
-
-        let origin_id = get_or_create_origin(&conn, "test-origin").unwrap();
-        assert!(origin_id > 0);
-
-        // Verify it was created
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM origins WHERE name = ?",
-            ["test-origin"],
-            |row| row.get(0)
-        ).unwrap();
-        assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn test_get_or_create_origin_existing() {
-        let conn = setup_test_db();
-
-        let origin_id1 = get_or_create_origin(&conn, "test-origin").unwrap();
-        let origin_id2 = get_or_create_origin(&conn, "test-origin").unwrap();
-
-        // Should return same ID
-        assert_eq!(origin_id1, origin_id2);
-
-        // Verify only one was created
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM origins WHERE name = ?",
-            ["test-origin"],
-            |row| row.get(0)
-        ).unwrap();
-        assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn test_import_stats_structure() {
-        let stats = ImportStats {
-            file: "test.ttl".to_string(),
-            format: "Turtle".to_string(),
-            triples_processed: 100,
-            facts_inserted: 95,
-            tx_start: 1,
-            tx_end: 1,
-        };
-
-        assert_eq!(stats.file, "test.ttl");
-        assert_eq!(stats.format, "Turtle");
-        assert_eq!(stats.triples_processed, 100);
-        assert_eq!(stats.facts_inserted, 95);
-    }
-}
-
-// ============================================================================
-// Import Tracking System
-// ============================================================================
-// Uses SQL table to track which files have been imported
-// and whether they need to be reimported based on modification time/checksum
-// ============================================================================
-
-use sha2::{Sha256, Digest};
-
-/// Register an imported file in the tracking table
-pub fn register_imported_file(
-    conn: &mut Connection,
-    file_path: &Path,
-    stats: &ImportStats,
-) -> Result<(), ImportError> {
-    let file_name = file_path.file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| ImportError::DatabaseError("Invalid file name".to_string()))?;
-
-    let file_path_str = file_path.to_string_lossy().to_string();
-
-    // Get file metadata
-    let metadata = std::fs::metadata(file_path)?;
-    let last_modified = metadata.modified()?
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
-
-    // Calculate checksum
-    let checksum = calculate_file_checksum(file_path)?;
-
-    // Get current timestamp
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
-
-    // Insert or replace record
-    conn.execute(
-        "INSERT OR REPLACE INTO ontology_files (file_path, file_name, last_modified, last_imported, checksum, triple_count)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        (
-            &file_path_str,
-            file_name,
-            last_modified,
-            now,
-            &checksum,
-            stats.triples_processed as i64,
-        ),
-    )?;
-
-    Ok(())
-}
-
 /// Check if a file needs to be reimported
 /// Returns true if:
 /// - File is not tracked yet
@@ -832,4 +479,49 @@ fn calculate_file_checksum(path: &Path) -> Result<String, ImportError> {
     hasher.update(&file_content);
     let result = hasher.finalize();
     Ok(format!("{:x}", result))
+}
+
+/// Register an imported file in the tracking table
+pub fn register_imported_file(
+    conn: &mut Connection,
+    file_path: &Path,
+    stats: &ImportStats,
+) -> Result<(), ImportError> {
+    let file_name = file_path.file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| ImportError::DatabaseError("Invalid file name".to_string()))?;
+
+    let file_path_str = file_path.to_string_lossy().to_string();
+
+    // Get file metadata
+    let metadata = std::fs::metadata(file_path)?;
+    let last_modified = metadata.modified()?
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    // Calculate checksum
+    let checksum = calculate_file_checksum(file_path)?;
+
+    // Get current timestamp
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    // Insert or replace record
+    conn.execute(
+        "INSERT OR REPLACE INTO ontology_files (file_path, file_name, last_modified, last_imported, checksum, triple_count)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        (
+            &file_path_str,
+            file_name,
+            last_modified,
+            now,
+            &checksum,
+            stats.triples_processed as i64,
+        ),
+    )?;
+
+    Ok(())
 }

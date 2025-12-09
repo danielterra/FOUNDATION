@@ -3,7 +3,7 @@ use tauri::State;
 use rusqlite::Connection;
 use std::sync::Mutex;
 
-use crate::owl::{Class, Individual};
+use crate::owl::{Class, Individual, Property};
 
 /// Entity type in OWL ontology
 #[derive(Debug, Serialize, Clone)]
@@ -56,12 +56,12 @@ pub struct EntityData {
     pub comment: Option<String>,
 
     // For Classes
-    pub super_classes: Vec<String>,
-    pub sub_classes: Vec<String>,
-    pub instances: Vec<String>,
+    pub super_classes: Vec<crate::owl::Thing>,
+    pub sub_classes: Vec<crate::owl::Thing>,
+    pub instances: Vec<crate::owl::Thing>,
 
     // For Individuals
-    pub types: Vec<String>,
+    pub types: Vec<crate::owl::Thing>,
     pub properties: Vec<PropertyValue>,
 
     // Graph visualization data
@@ -73,8 +73,13 @@ pub struct EntityData {
 #[serde(rename_all = "camelCase")]
 pub struct PropertyValue {
     pub property: String,
+    pub property_label: String,
+    pub property_comment: Option<String>,
     pub value: String,
+    pub value_label: Option<String>, // For object properties, the label of the target entity
     pub is_object_property: bool,
+    pub source_class: Option<String>, // For classes: which class defines this property (for grouping inherited properties)
+    pub source_class_label: Option<String>,
 }
 
 /// Search for entities (classes and individuals) by label
@@ -88,90 +93,34 @@ pub fn entity__search(
     let conn = conn.lock().map_err(|e| e.to_string())?;
     let limit = limit.unwrap_or(100);
 
-    let search_pattern = format!("%{}%", query);
     let mut results = Vec::new();
 
-    // Search in classes (rdfs:label) - case insensitive with relevance ordering
-    let class_query = "
-        SELECT DISTINCT t1.subject, t1.object_value, t2.object_value as icon
-        FROM triples t1
-        LEFT JOIN triples t2 ON t1.subject = t2.subject AND t2.predicate = 'foundation:icon' AND t2.retracted = 0
-        WHERE t1.predicate = 'rdfs:label'
-        AND t1.object_value LIKE ? COLLATE NOCASE
-        AND t1.retracted = 0
-        AND EXISTS (
-            SELECT 1 FROM triples t3
-            WHERE t3.subject = t1.subject
-            AND t3.predicate = 'rdf:type'
-            AND t3.object = 'owl:Class'
-            AND t3.retracted = 0
-        )
-        ORDER BY
-            CASE WHEN LOWER(t1.object_value) = LOWER(?) THEN 0 ELSE 1 END,
-            LENGTH(t1.object_value),
-            t1.object_value
-        LIMIT ?";
+    // Search classes using OWL abstraction
+    let class_results = crate::owl::search_classes(&conn, &query, limit)
+        .map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare(class_query).map_err(|e| e.to_string())?;
-    let class_rows = stmt.query_map([&search_pattern, &query, &limit.to_string()], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?,
-        ))
-    }).map_err(|e| e.to_string())?;
-
-    for row in class_rows {
-        let (id, label, icon) = row.map_err(|e| e.to_string())?;
+    for class_result in class_results {
         results.push(SearchResult {
-            id,
-            label,
-            icon,
+            id: class_result.id,
+            label: class_result.label,
+            icon: class_result.icon,
             entity_type: "class".to_string(),
         });
     }
 
-    // Search in individuals (rdfs:label) - case insensitive with relevance ordering
-    let individual_query = "
-        SELECT DISTINCT t1.subject, t1.object_value, t2.object_value as icon
-        FROM triples t1
-        LEFT JOIN triples t2 ON t1.subject = t2.subject AND t2.predicate = 'foundation:icon' AND t2.retracted = 0
-        WHERE t1.predicate = 'rdfs:label'
-        AND t1.object_value LIKE ? COLLATE NOCASE
-        AND t1.retracted = 0
-        AND EXISTS (
-            SELECT 1 FROM triples t3
-            WHERE t3.subject = t1.subject
-            AND t3.predicate = 'rdf:type'
-            AND t3.object != 'owl:Class'
-            AND t3.retracted = 0
-        )
-        ORDER BY
-            CASE WHEN LOWER(t1.object_value) = LOWER(?) THEN 0 ELSE 1 END,
-            LENGTH(t1.object_value),
-            t1.object_value
-        LIMIT ?";
+    // Search individuals using OWL abstraction
+    let remaining_limit = limit.saturating_sub(results.len());
+    if remaining_limit > 0 {
+        let individual_results = crate::owl::search_individuals(&conn, &query, remaining_limit)
+            .map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare(individual_query).map_err(|e| e.to_string())?;
-    let individual_rows = stmt.query_map([&search_pattern, &query, &limit.to_string()], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?,
-        ))
-    }).map_err(|e| e.to_string())?;
-
-    for row in individual_rows {
-        let (id, label, icon) = row.map_err(|e| e.to_string())?;
-        results.push(SearchResult {
-            id,
-            label,
-            icon,
-            entity_type: "individual".to_string(),
-        });
-
-        if results.len() >= limit {
-            break;
+        for individual_result in individual_results {
+            results.push(SearchResult {
+                id: individual_result.id,
+                label: individual_result.label,
+                icon: individual_result.icon,
+                entity_type: "individual".to_string(),
+            });
         }
     }
 
@@ -202,16 +151,15 @@ pub fn entity__get(
 }
 
 fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityType, String> {
-    // Check if it's a class
+    // Check if it's a class (has rdf:type owl:Class)
     let class = Class::new(entity_id);
     if class.exists(conn).map_err(|e| e.to_string())? {
         return Ok(EntityType::Class);
     }
 
-    // Check if it's an individual (has rdf:type)
+    // Check if it's an individual (has rdf:type pointing to something other than owl:Class)
     let individual = Individual::new(entity_id);
-    let types = individual.get_types(conn).map_err(|e| e.to_string())?;
-    if !types.is_empty() {
+    if individual.exists(conn).map_err(|e| e.to_string())? {
         return Ok(EntityType::Individual);
     }
 
@@ -219,28 +167,22 @@ fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityTyp
 }
 
 fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, String> {
-    let class = Class::new(class_id);
-
-    // Get basic info
-    let label = class.get_label(conn)
-        .map_err(|e| e.to_string())?
-        .unwrap_or_else(|| class_id.split('/').last().unwrap_or(class_id).to_string());
-
-    let icon = class.get_icon(conn)
+    // Get complete class data using OWL abstraction
+    let class = Class::get(conn, class_id)
         .map_err(|e| e.to_string())?;
 
-    let comment = class.get_comment(conn)
+    let label = class.label.unwrap_or_else(|| class_id.to_string());
+    let icon = class.icon;
+    let comment = class.comment;
+
+    // Get instances separately (may be thousands)
+    let instance_iris = Class::get_instances(conn, class_id)
         .map_err(|e| e.to_string())?;
 
-    // Get class hierarchy
-    let super_classes = class.get_super_classes(conn)
-        .map_err(|e| e.to_string())?;
-
-    let sub_classes = get_sub_classes(conn, class_id)?;
-
-    // Get instances
-    let instances = class.get_instances(conn)
-        .map_err(|e| e.to_string())?;
+    // Convert instances to Thing objects
+    let instances: Vec<crate::owl::Thing> = instance_iris.iter()
+        .map(|iri| crate::owl::Thing::get(conn, iri))
+        .collect();
 
     // Build graph visualization
     let mut nodes = Vec::new();
@@ -252,85 +194,107 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         id: class_id.to_string(),
         label: label.clone(),
         icon: icon.clone(),
-        group: 1, // Class
+        group: 1,
         is_broken_ref: None,
     });
     added_node_ids.insert(class_id.to_string());
 
     // Add super-classes as nodes
-    for super_class in &super_classes {
-        if !added_node_ids.contains(super_class) {
-            let super_class_obj = Class::new(super_class);
-            let super_label = super_class_obj.get_label(conn)
-                .unwrap_or(None)
-                .unwrap_or_else(|| super_class.split('/').last().unwrap_or(super_class).to_string());
-
-            let super_icon = super_class_obj.get_icon(conn).unwrap_or(None);
-
+    for super_class in &class.super_classes {
+        if !added_node_ids.contains(&super_class.iri) {
             nodes.push(GraphNode {
-                id: super_class.clone(),
-                label: super_label,
-                icon: super_icon,
+                id: super_class.iri.clone(),
+                label: super_class.label.clone(),
+                icon: super_class.icon.clone(),
                 group: 1,
                 is_broken_ref: None,
             });
-            added_node_ids.insert(super_class.clone());
+            added_node_ids.insert(super_class.iri.clone());
         }
 
         links.push(GraphLink {
             source: class_id.to_string(),
-            target: super_class.clone(),
-            label: get_property_label(conn, "rdfs:subClassOf"),
+            target: super_class.iri.clone(),
+            label: "subClassOf".to_string(),
         });
     }
 
     // Add sub-classes as nodes
-    for sub_class in &sub_classes {
-        if !added_node_ids.contains(sub_class) {
-            let sub_class_obj = Class::new(sub_class);
-            let sub_label = sub_class_obj.get_label(conn)
-                .unwrap_or(None)
-                .unwrap_or_else(|| sub_class.split('/').last().unwrap_or(sub_class).to_string());
-
-            let sub_icon = sub_class_obj.get_icon(conn).unwrap_or(None);
-
+    for sub_class in &class.sub_classes {
+        if !added_node_ids.contains(&sub_class.iri) {
             nodes.push(GraphNode {
-                id: sub_class.clone(),
-                label: sub_label,
-                icon: sub_icon,
+                id: sub_class.iri.clone(),
+                label: sub_class.label.clone(),
+                icon: sub_class.icon.clone(),
                 group: 1,
                 is_broken_ref: None,
             });
-            added_node_ids.insert(sub_class.clone());
+            added_node_ids.insert(sub_class.iri.clone());
         }
 
         links.push(GraphLink {
-            source: sub_class.clone(),
+            source: sub_class.iri.clone(),
             target: class_id.to_string(),
-            label: get_property_label(conn, "rdfs:subClassOf"),
+            label: "subClassOf".to_string(),
         });
     }
 
     // Add instances as nodes
     for instance in &instances {
-        if !added_node_ids.contains(instance) {
-            let inst_label = get_individual_label(conn, instance)?;
-            let inst_icon = get_individual_icon(conn, instance)?;
-
+        if !added_node_ids.contains(&instance.iri) {
             nodes.push(GraphNode {
-                id: instance.clone(),
-                label: inst_label,
-                icon: inst_icon,
-                group: 6, // Individual
+                id: instance.iri.clone(),
+                label: instance.label.clone(),
+                icon: instance.icon.clone(),
+                group: 6,
                 is_broken_ref: None,
             });
-            added_node_ids.insert(instance.clone());
+            added_node_ids.insert(instance.iri.clone());
         }
 
         links.push(GraphLink {
-            source: instance.clone(),
+            source: instance.iri.clone(),
             target: class_id.to_string(),
-            label: get_property_label(conn, "rdf:type"),
+            label: "type".to_string(),
+        });
+    }
+
+    // Build properties list from class.properties
+    let mut properties = Vec::new();
+    for (property_iri, source_class_iri) in &class.properties {
+        // Get property data using OWL abstraction
+        let prop = Property::get(conn, property_iri)
+            .map_err(|e| e.to_string())?;
+
+        let property_label = prop.label.unwrap_or_else(|| property_iri.clone());
+        let property_comment = prop.comment;
+
+        // Determine if it's an object property and get range
+        let is_object_property = prop.property_type == crate::owl::PropertyType::ObjectProperty;
+        let value = prop.ranges.first()
+            .map(|range_iri| {
+                let range_thing = crate::owl::Thing::get(conn, range_iri);
+                range_thing.label
+            })
+            .unwrap_or_else(|| "Any".to_string());
+
+        // Get source class label (only if different from current class)
+        let (source_class, source_class_label) = if source_class_iri != class_id {
+            let source_thing = crate::owl::Thing::get(conn, source_class_iri);
+            (Some(source_class_iri.clone()), Some(source_thing.label))
+        } else {
+            (None, None)
+        };
+
+        properties.push(PropertyValue {
+            property: property_iri.clone(),
+            property_label,
+            property_comment,
+            value: value.clone(),
+            value_label: Some(value),
+            is_object_property,
+            source_class,
+            source_class_label,
         });
     }
 
@@ -340,63 +304,61 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         entity_type: EntityType::Class,
         icon,
         comment,
-        super_classes,
-        sub_classes,
+        super_classes: class.super_classes.clone(),
+        sub_classes: class.sub_classes.clone(),
         instances,
         types: vec![],
-        properties: vec![],
+        properties,
         nodes,
         links,
     })
 }
 
 fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityData, String> {
-    let individual = Individual::new(individual_id);
-
-    // Get basic info
-    let label = get_individual_label(conn, individual_id)?;
-    let icon = get_individual_icon(conn, individual_id)?;
-
-    // Get types (classes this individual belongs to)
-    let types = individual.get_types(conn)
+    // Get complete individual data using OWL abstraction
+    let individual = Individual::get(conn, individual_id)
         .map_err(|e| e.to_string())?;
 
+    let label = individual.label.unwrap_or_else(|| individual_id.to_string());
+    let icon = individual.icon;
+    let comment = individual.comment;
+
+    // Build properties list
     let mut properties = Vec::new();
-    let mut property_iris = std::collections::HashSet::new();
-
-    // Query all triples for this individual to get property values
-    let query = "SELECT predicate, object, object_value, object_type
-                 FROM triples
-                 WHERE subject = ? AND predicate != 'rdf:type'
-                 AND retracted = 0
-                 ORDER BY predicate";
-
-    let mut stmt = conn.prepare(query).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([individual_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, Option<String>>(1)?,
-            row.get::<_, Option<String>>(2)?,
-            row.get::<_, String>(3)?,
-        ))
-    }).map_err(|e| e.to_string())?;
-
-    for row in rows {
-        let (predicate, object_iri, object_value, object_type) = row.map_err(|e| e.to_string())?;
-
-        property_iris.insert(predicate.clone());
-
-        let is_object_property = object_type == "iri";
-        let value = if is_object_property {
-            object_iri.unwrap_or_default()
+    for (property_iri, value_obj) in &individual.properties {
+        // Get property metadata using OWL abstraction
+        let prop_result = Property::get(conn, property_iri);
+        let (property_label, property_comment) = if let Ok(prop) = prop_result {
+            (prop.label.unwrap_or_else(|| property_iri.clone()), prop.comment)
         } else {
-            object_value.unwrap_or_default()
+            (property_iri.clone(), None)
+        };
+
+        // Determine type and extract value
+        let is_object_property = value_obj.is_iri();
+        let value = if is_object_property {
+            value_obj.as_iri().unwrap_or("").to_string()
+        } else {
+            value_obj.as_literal().unwrap_or_default()
+        };
+
+        // For object properties, get the label of the target entity
+        let value_label = if is_object_property {
+            let target_thing = crate::owl::Thing::get(conn, &value);
+            Some(target_thing.label)
+        } else {
+            None
         };
 
         properties.push(PropertyValue {
-            property: predicate,
+            property: property_iri.clone(),
+            property_label,
+            property_comment,
             value,
+            value_label,
             is_object_property,
+            source_class: None,
+            source_class_label: None,
         });
     }
 
@@ -410,35 +372,28 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         id: individual_id.to_string(),
         label: label.clone(),
         icon: icon.clone(),
-        group: 6, // Individual
+        group: 6,
         is_broken_ref: None,
     });
     added_node_ids.insert(individual_id.to_string());
 
     // Add its classes as nodes
-    for class_id in &types {
-        if !added_node_ids.contains(class_id) {
-            let class = Class::new(class_id);
-            let class_label = class.get_label(conn)
-                .unwrap_or(None)
-                .unwrap_or_else(|| class_id.split('/').last().unwrap_or(class_id).to_string());
-
-            let class_icon = class.get_icon(conn).unwrap_or(None);
-
+    for class_thing in &individual.types {
+        if !added_node_ids.contains(&class_thing.iri) {
             nodes.push(GraphNode {
-                id: class_id.clone(),
-                label: class_label,
-                icon: class_icon,
-                group: 1, // Class
+                id: class_thing.iri.clone(),
+                label: class_thing.label.clone(),
+                icon: class_thing.icon.clone(),
+                group: 1,
                 is_broken_ref: None,
             });
-            added_node_ids.insert(class_id.clone());
+            added_node_ids.insert(class_thing.iri.clone());
         }
 
         links.push(GraphLink {
             source: individual_id.to_string(),
-            target: class_id.clone(),
-            label: get_property_label(conn, "rdf:type"),
+            target: class_thing.iri.clone(),
+            label: "type".to_string(),
         });
     }
 
@@ -446,18 +401,13 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     for prop in &properties {
         if prop.is_object_property {
             if !added_node_ids.contains(&prop.value) {
-                let entity_exists_flag = entity_exists(conn, &prop.value);
-                let related_label = get_individual_label(conn, &prop.value)?;
-                let related_icon = if entity_exists_flag {
-                    get_individual_icon(conn, &prop.value)?
-                } else {
-                    Some("warning".to_string()) // Use warning icon for broken refs
-                };
+                let related_thing = crate::owl::Thing::get(conn, &prop.value);
+                let entity_exists_flag = Individual::new(&prop.value).exists(conn).unwrap_or(false);
 
                 nodes.push(GraphNode {
                     id: prop.value.clone(),
-                    label: related_label,
-                    icon: related_icon,
+                    label: related_thing.label,
+                    icon: if entity_exists_flag { related_thing.icon } else { Some("warning".to_string()) },
                     group: 6,
                     is_broken_ref: if entity_exists_flag { None } else { Some(true) },
                 });
@@ -467,12 +417,13 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             links.push(GraphLink {
                 source: individual_id.to_string(),
                 target: prop.value.clone(),
-                label: get_property_label(conn, &prop.property),
+                label: prop.property_label.clone(),
             });
         }
     }
 
     // Add related individuals via incoming ObjectProperties (backlinks)
+    // Still need raw query for reverse lookups
     let backlink_query = "SELECT subject, predicate
                           FROM triples
                           WHERE object = ? AND object_type = 'iri'
@@ -488,31 +439,32 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     }).map_err(|e| e.to_string())?;
 
     for row in backlink_rows {
-        let (subject, predicate) = row.map_err(|e| e.to_string())?;
+        let (subject, predicate_iri) = row.map_err(|e| e.to_string())?;
 
         if !added_node_ids.contains(&subject) {
-            let entity_exists_flag = entity_exists(conn, &subject);
-            let subject_label = get_individual_label(conn, &subject)?;
-            let subject_icon = if entity_exists_flag {
-                get_individual_icon(conn, &subject)?
-            } else {
-                Some("warning".to_string()) // Use warning icon for broken refs
-            };
+            let subject_thing = crate::owl::Thing::get(conn, &subject);
+            let entity_exists_flag = Individual::new(&subject).exists(conn).unwrap_or(false);
 
             nodes.push(GraphNode {
                 id: subject.clone(),
-                label: subject_label,
-                icon: subject_icon,
+                label: subject_thing.label,
+                icon: if entity_exists_flag { subject_thing.icon } else { Some("warning".to_string()) },
                 group: 6,
                 is_broken_ref: if entity_exists_flag { None } else { Some(true) },
             });
             added_node_ids.insert(subject.clone());
         }
 
+        // Get property label
+        let prop_label = Property::get(conn, &predicate_iri)
+            .ok()
+            .and_then(|p| p.label)
+            .unwrap_or_else(|| predicate_iri.clone());
+
         links.push(GraphLink {
             source: subject,
             target: individual_id.to_string(),
-            label: get_property_label(conn, &predicate),
+            label: prop_label,
         });
     }
 
@@ -521,946 +473,13 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         label,
         entity_type: EntityType::Individual,
         icon,
-        comment: None,
+        comment,
         super_classes: vec![],
         sub_classes: vec![],
         instances: vec![],
-        types,
+        types: individual.types.clone(),
         properties,
         nodes,
         links,
     })
-}
-
-fn get_sub_classes(conn: &Connection, class_id: &str) -> Result<Vec<String>, String> {
-    let query = "SELECT DISTINCT subject
-                 FROM triples
-                 WHERE predicate = 'rdfs:subClassOf'
-                 AND object = ?
-                 AND retracted = 0";
-
-    let mut stmt = conn.prepare(query).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([class_id], |row| row.get(0))
-        .map_err(|e| e.to_string())?;
-
-    let mut sub_classes = Vec::new();
-    for row in rows {
-        sub_classes.push(row.map_err(|e| e.to_string())?);
-    }
-
-    Ok(sub_classes)
-}
-
-/// Check if an entity exists in the database (has at least one triple)
-fn entity_exists(conn: &Connection, entity_id: &str) -> bool {
-    let query = "SELECT 1 FROM triples WHERE subject = ? AND retracted = 0 LIMIT 1";
-
-    if let Ok(mut stmt) = conn.prepare(query) {
-        stmt.query_row([entity_id], |_| Ok(())).is_ok()
-    } else {
-        false
-    }
-}
-
-fn get_individual_label(conn: &Connection, individual_id: &str) -> Result<String, String> {
-    // Use rdfs:label - standard RDF property for labels
-    let query = "SELECT object_value FROM triples
-                 WHERE subject = ? AND predicate = 'rdfs:label'
-                 AND retracted = 0 LIMIT 1";
-
-    let mut stmt = conn.prepare(query).map_err(|e| e.to_string())?;
-    let result = stmt.query_row([individual_id], |row| row.get::<_, String>(0));
-
-    if let Ok(label) = result {
-        return Ok(label);
-    }
-
-    // Fallback to last part of IRI
-    // First try to extract from URL-style IRI (after last /)
-    if let Some(last_segment) = individual_id.split('/').last() {
-        if !last_segment.is_empty() && last_segment != individual_id {
-            return Ok(last_segment.to_string());
-        }
-    }
-
-    // Then try CURIE-style (after :)
-    if let Some(local_name) = individual_id.split(':').last() {
-        if !local_name.is_empty() && !local_name.starts_with("//") {
-            return Ok(local_name.to_string());
-        }
-    }
-
-    // Last resort: return full IRI
-    Ok(individual_id.to_string())
-}
-
-fn get_individual_icon(conn: &Connection, individual_id: &str) -> Result<Option<String>, String> {
-    let query = "SELECT object_value FROM triples
-                 WHERE subject = ? AND predicate = 'foundation:icon'
-                 AND retracted = 0 LIMIT 1";
-
-    let mut stmt = conn.prepare(query).map_err(|e| e.to_string())?;
-    let result = stmt.query_row([individual_id], |row| row.get::<_, String>(0));
-
-    Ok(result.ok())
-}
-
-/// Get the friendly label for a property (rdfs:label) or fallback to last part of IRI
-fn get_property_label(conn: &Connection, property_iri: &str) -> String {
-    // Try to get rdfs:label from the ontology
-    let query = "SELECT object_value FROM triples
-                 WHERE subject = ? AND predicate = 'rdfs:label'
-                 AND retracted = 0 LIMIT 1";
-
-    if let Ok(mut stmt) = conn.prepare(query) {
-        if let Ok(label) = stmt.query_row([property_iri], |row| row.get::<_, String>(0)) {
-            return label;
-        }
-    }
-
-    // Fallback: extract local name from IRI/CURIE
-    // For CURIE like "rdfs:subClassOf" -> "subClassOf"
-    if let Some(colon_pos) = property_iri.find(':') {
-        // Skip URL schemes (http:, https:, file:)
-        if !property_iri[..colon_pos].contains('/') {
-            let after_colon = &property_iri[colon_pos + 1..];
-            // Check if it's not "//..." (part of URL)
-            if !after_colon.starts_with("//") {
-                return after_colon.to_string();
-            }
-        }
-    }
-
-    // For full IRI like "http://example.org/ont#hasParent" -> "hasParent"
-    property_iri
-        .split(|c| c == '/' || c == '#')
-        .last()
-        .unwrap_or(property_iri)
-        .to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::eavto::test_helpers::setup_test_db;
-    use crate::owl::{Class, ClassType};
-    use tauri::Manager;
-
-    fn setup_test_ontology(conn: &mut Connection) {
-        // Create base classes
-        let person = Class::new("test:Person");
-        person.assert_class(conn, ClassType::OwlClass, "test").unwrap();
-        person.add_super_class(conn, "owl:Thing", "test").unwrap();
-        person.add_label(conn, "Person", Some("en"), "test").unwrap();
-        person.add_comment(conn, "A person entity", Some("en"), "test").unwrap();
-
-        // Add icon via direct triple assertion
-        let icon_individual = Individual::new("test:Person");
-        icon_individual.add_string_property(conn, "foundation:icon", "person", None, "test").unwrap();
-
-        let animal = Class::new("test:Animal");
-        animal.assert_class(conn, ClassType::OwlClass, "test").unwrap();
-        animal.add_super_class(conn, "owl:Thing", "test").unwrap();
-        animal.add_label(conn, "Animal", Some("en"), "test").unwrap();
-
-        let dog = Class::new("test:Dog");
-        dog.assert_class(conn, ClassType::OwlClass, "test").unwrap();
-        dog.add_super_class(conn, "test:Animal", "test").unwrap();
-        dog.add_label(conn, "Dog", Some("en"), "test").unwrap();
-
-        // Add icon via direct triple assertion
-        let dog_icon = Individual::new("test:Dog");
-        dog_icon.add_string_property(conn, "foundation:icon", "pets", None, "test").unwrap();
-    }
-
-    #[test]
-    fn test_entity_search_classes() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let app = tauri::test::mock_app();
-        app.manage(Mutex::new(conn));
-
-        let result = entity__search(
-            "Person".to_string(),
-            Some(5),
-            app.state::<Mutex<Connection>>(),
-        );
-
-        assert!(result.is_ok());
-        let json = result.unwrap();
-        assert!(json.contains("Person"));
-        assert!(json.contains("\"type\":\"class\""));
-    }
-
-    #[test]
-    fn test_entity_search_individuals() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        // Create individual
-        let john = Individual::new("test:John");
-        john.assert(&mut conn, "test:Person", "John Doe", "person", "test").unwrap();
-        john.add_string_property(&mut conn, "rdfs:label", "John Doe", None, "test").unwrap();
-
-        let app = tauri::test::mock_app();
-        app.manage(Mutex::new(conn));
-
-        let result = entity__search(
-            "John".to_string(),
-            Some(5),
-            app.state::<Mutex<Connection>>(),
-        );
-
-        assert!(result.is_ok());
-        let json = result.unwrap();
-        assert!(json.contains("John"));
-        assert!(json.contains("\"type\":\"individual\""));
-    }
-
-    #[test]
-    fn test_entity_search_no_results() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let app = tauri::test::mock_app();
-        app.manage(Mutex::new(conn));
-
-        let result = entity__search(
-            "NonExistent".to_string(),
-            Some(5),
-            app.state::<Mutex<Connection>>(),
-        );
-
-        assert!(result.is_ok());
-        let json = result.unwrap();
-        assert_eq!(json, "[]");
-    }
-
-    #[test]
-    fn test_entity_search_limit() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        // Create multiple individuals with similar labels
-        for i in 1..=10 {
-            let id = format!("test:Person{}", i);
-            let label = format!("Person {}", i);
-            let person = Individual::new(&id);
-            person.assert(&mut conn, "test:Person", &label, "person", "test").unwrap();
-            person.add_string_property(&mut conn, "rdfs:label", &label, None, "test").unwrap();
-        }
-
-        let app = tauri::test::mock_app();
-        app.manage(Mutex::new(conn));
-
-        let result = entity__search(
-            "Person".to_string(),
-            Some(3),
-            app.state::<Mutex<Connection>>(),
-        );
-
-        assert!(result.is_ok());
-        let json = result.unwrap();
-        let results: Vec<SearchResult> = serde_json::from_str(&json).unwrap();
-        assert!(results.len() <= 3);
-    }
-
-    #[test]
-    fn test_entity_get_class() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let app = tauri::test::mock_app();
-        app.manage(Mutex::new(conn));
-
-        let result = entity__get(
-            "test:Person".to_string(),
-            app.state::<Mutex<Connection>>(),
-        );
-
-        assert!(result.is_ok());
-        let json = result.unwrap();
-        assert!(json.contains("Person"));
-        assert!(json.contains("\"entityType\":\"class\""));
-    }
-
-    #[test]
-    fn test_entity_get_individual() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        // Create individual
-        let john = Individual::new("test:John");
-        john.assert(&mut conn, "test:Person", "John Doe", "person", "test").unwrap();
-        john.add_string_property(&mut conn, "rdfs:label", "John Doe", None, "test").unwrap();
-        john.add_string_property(&mut conn, "test:age", "30", None, "test").unwrap();
-
-        let app = tauri::test::mock_app();
-        app.manage(Mutex::new(conn));
-
-        let result = entity__get(
-            "test:John".to_string(),
-            app.state::<Mutex<Connection>>(),
-        );
-
-        assert!(result.is_ok());
-        let json = result.unwrap();
-        assert!(json.contains("John"));
-        assert!(json.contains("\"entityType\":\"individual\""));
-    }
-
-    #[test]
-    fn test_entity_get_nonexistent() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let app = tauri::test::mock_app();
-        app.manage(Mutex::new(conn));
-
-        let result = entity__get(
-            "test:NonExistent".to_string(),
-            app.state::<Mutex<Connection>>(),
-        );
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not found"));
-    }
-
-    #[test]
-    fn test_determine_entity_type_class() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let result = determine_entity_type(&conn, "test:Person");
-        assert!(result.is_ok());
-        match result.unwrap() {
-            EntityType::Class => {},
-            _ => panic!("Expected EntityType::Class"),
-        }
-    }
-
-    #[test]
-    fn test_determine_entity_type_individual() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let john = Individual::new("test:John");
-        john.assert(&mut conn, "test:Person", "John", "person", "test").unwrap();
-
-        let result = determine_entity_type(&conn, "test:John");
-        assert!(result.is_ok());
-        match result.unwrap() {
-            EntityType::Individual => {},
-            _ => panic!("Expected EntityType::Individual"),
-        }
-    }
-
-    #[test]
-    fn test_determine_entity_type_not_found() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let result = determine_entity_type(&conn, "test:Unknown");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_get_class_data_with_hierarchy() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let result = get_class_data(&conn, "test:Dog");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        assert_eq!(data.id, "test:Dog");
-        assert_eq!(data.label, "Dog");
-        assert_eq!(data.icon, Some("pets".to_string()));
-        assert!(data.super_classes.contains(&"test:Animal".to_string()));
-        assert_eq!(data.sub_classes.len(), 0);
-    }
-
-    #[test]
-    fn test_get_class_data_with_instances() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        // Create instances
-        let john = Individual::new("test:John");
-        john.assert(&mut conn, "test:Person", "John", "person", "test").unwrap();
-
-        let jane = Individual::new("test:Jane");
-        jane.assert(&mut conn, "test:Person", "Jane", "person", "test").unwrap();
-
-        let result = get_class_data(&conn, "test:Person");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        assert_eq!(data.instances.len(), 2);
-        assert!(data.instances.contains(&"test:John".to_string()));
-        assert!(data.instances.contains(&"test:Jane".to_string()));
-    }
-
-    #[test]
-    fn test_get_class_data_graph_nodes() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let result = get_class_data(&conn, "test:Dog");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        assert!(data.nodes.len() >= 2); // Dog + Animal (owl:Thing is skipped)
-        assert!(data.links.len() >= 1); // Dog -> Animal
-    }
-
-    #[test]
-    fn test_get_individual_data_basic() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let john = Individual::new("test:John");
-        john.assert(&mut conn, "test:Person", "John Doe", "person", "test").unwrap();
-        john.add_string_property(&mut conn, "rdfs:label", "John Doe", None, "test").unwrap();
-        john.add_string_property(&mut conn, "test:email", "john@test.com", None, "test").unwrap();
-        john.add_integer_property(&mut conn, "test:age", 30, "test").unwrap();
-
-        let result = get_individual_data(&conn, "test:John");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        assert_eq!(data.id, "test:John");
-        assert_eq!(data.label, "John Doe");
-        assert!(data.types.contains(&"test:Person".to_string()));
-        assert!(data.properties.len() >= 2); // email + age (not rdfs:label which is used for label)
-    }
-
-    #[test]
-    fn test_get_individual_data_with_relationships() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let john = Individual::new("test:John");
-        john.assert(&mut conn, "test:Person", "John", "person", "test").unwrap();
-        john.add_string_property(&mut conn, "rdfs:label", "John", None, "test").unwrap();
-
-        let jane = Individual::new("test:Jane");
-        jane.assert(&mut conn, "test:Person", "Jane", "person", "test").unwrap();
-        jane.add_string_property(&mut conn, "rdfs:label", "Jane", None, "test").unwrap();
-
-        // Add relationship
-        john.add_object_property(&mut conn, "test:knows", "test:Jane", "test").unwrap();
-
-        let result = get_individual_data(&conn, "test:John");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        assert!(data.nodes.len() >= 3); // John + Jane + Person class
-        assert!(data.links.len() >= 2); // John -> Person + John -> Jane
-    }
-
-    #[test]
-    fn test_get_sub_classes() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let result = get_sub_classes(&conn, "test:Animal");
-        assert!(result.is_ok());
-
-        let sub_classes = result.unwrap();
-        assert_eq!(sub_classes.len(), 1);
-        assert!(sub_classes.contains(&"test:Dog".to_string()));
-    }
-
-    #[test]
-    fn test_get_sub_classes_no_children() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let result = get_sub_classes(&conn, "test:Dog");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 0);
-    }
-
-    #[test]
-    fn test_get_individual_label_with_rdfs_label() {
-        let mut conn = setup_test_db();
-
-        let john = Individual::new("test:John");
-        // assert() already adds rdfs:label with "John Doe"
-        john.assert(&mut conn, "owl:Thing", "John Doe", "test", "test").unwrap();
-
-        let result = get_individual_label(&conn, "test:John");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "John Doe");
-    }
-
-    #[test]
-    fn test_get_individual_label_fallback_colon() {
-        let conn = setup_test_db();
-
-        let result = get_individual_label(&conn, "test:John");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "John");
-    }
-
-    #[test]
-    fn test_get_individual_label_fallback_slash() {
-        let conn = setup_test_db();
-
-        // When using URL-like IRI, should extract last segment after /
-        let result = get_individual_label(&conn, "http://example.org/John");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "John");
-    }
-
-    #[test]
-    fn test_get_individual_label_fallback_full_iri() {
-        let conn = setup_test_db();
-
-        let result = get_individual_label(&conn, "NoSeparator");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "NoSeparator");
-    }
-
-    #[test]
-    fn test_get_individual_label_qudt_uri() {
-        let conn = setup_test_db();
-
-        // Test QUDT-style URIs
-        let result = get_individual_label(&conn, "http://qudt.org/vocab/sou/CGS-GAUSS");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "CGS-GAUSS");
-
-        let result2 = get_individual_label(&conn, "http://qudt.org/vocab/dimensionvector/A0E0L0I0M1H0T0D0");
-        assert!(result2.is_ok());
-        assert_eq!(result2.unwrap(), "A0E0L0I0M1H0T0D0");
-    }
-
-    #[test]
-    fn test_get_individual_icon_with_value() {
-        let mut conn = setup_test_db();
-
-        let john = Individual::new("test:John");
-        // assert() already adds foundation:icon with "account_circle"
-        john.assert(&mut conn, "owl:Thing", "John", "account_circle", "test").unwrap();
-
-        let result = get_individual_icon(&conn, "test:John");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Some("account_circle".to_string()));
-    }
-
-    #[test]
-    fn test_get_individual_icon_without_value() {
-        let mut conn = setup_test_db();
-
-        let john = Individual::new("test:John");
-        // Use assert_type instead of assert to avoid adding icon
-        john.assert_type(&mut conn, "owl:Thing", "test").unwrap();
-
-        let result = get_individual_icon(&conn, "test:John");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), None);
-    }
-
-    #[test]
-    fn test_graph_node_struct() {
-        let node = GraphNode {
-            id: "test:Node".to_string(),
-            label: "Test Node".to_string(),
-            icon: Some("icon".to_string()),
-            group: 1,
-            is_broken_ref: None,
-        };
-
-        assert_eq!(node.id, "test:Node");
-        assert_eq!(node.label, "Test Node");
-        assert_eq!(node.icon, Some("icon".to_string()));
-        assert_eq!(node.group, 1);
-        assert_eq!(node.is_broken_ref, None);
-    }
-
-    #[test]
-    fn test_graph_link_struct() {
-        let link = GraphLink {
-            source: "test:A".to_string(),
-            target: "test:B".to_string(),
-            label: "knows".to_string(),
-        };
-
-        assert_eq!(link.source, "test:A");
-        assert_eq!(link.target, "test:B");
-        assert_eq!(link.label, "knows");
-    }
-
-    #[test]
-    fn test_property_value_struct() {
-        let prop = PropertyValue {
-            property: "test:age".to_string(),
-            value: "30".to_string(),
-            is_object_property: false,
-        };
-
-        assert_eq!(prop.property, "test:age");
-        assert_eq!(prop.value, "30");
-        assert!(!prop.is_object_property);
-    }
-
-    #[test]
-    fn test_entity_type_enum() {
-        let class_type = EntityType::Class;
-        let individual_type = EntityType::Individual;
-
-        // Test serialization
-        let class_json = serde_json::to_string(&class_type).unwrap();
-        assert_eq!(class_json, "\"class\"");
-
-        let individual_json = serde_json::to_string(&individual_type).unwrap();
-        assert_eq!(individual_json, "\"individual\"");
-    }
-
-    #[test]
-    fn test_get_class_data_without_label() {
-        let mut conn = setup_test_db();
-
-        let no_label = Class::new("test:NoLabel");
-        no_label.assert_class(&mut conn, ClassType::OwlClass, "test").unwrap();
-        no_label.add_super_class(&mut conn, "owl:Thing", "test").unwrap();
-
-        let result = get_class_data(&conn, "test:NoLabel");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        // split('/').last() returns full IRI since there's no '/'
-        assert_eq!(data.label, "test:NoLabel");
-    }
-
-    #[test]
-    fn test_get_class_data_includes_owl_thing() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let result = get_class_data(&conn, "test:Person");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        // Check that owl:Thing is now included in the nodes
-        let owl_thing_node = data.nodes.iter().find(|n| n.id == "owl:Thing");
-        assert!(owl_thing_node.is_some());
-    }
-
-    #[test]
-    fn test_get_individual_data_with_icon() {
-        let mut conn = setup_test_db();
-
-        let john = Individual::new("test:John");
-        // assert() already adds icon as 4th parameter
-        john.assert(&mut conn, "owl:Thing", "John", "star", "test").unwrap();
-
-        let result = get_individual_data(&conn, "test:John");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        assert_eq!(data.icon, Some("star".to_string()));
-    }
-
-    #[test]
-    fn test_property_value_object_property() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let john = Individual::new("test:John");
-        john.assert(&mut conn, "test:Person", "John", "person", "test").unwrap();
-        john.add_string_property(&mut conn, "rdfs:label", "John", None, "test").unwrap();
-
-        let jane = Individual::new("test:Jane");
-        jane.assert(&mut conn, "test:Person", "Jane", "person", "test").unwrap();
-        jane.add_string_property(&mut conn, "rdfs:label", "Jane", None, "test").unwrap();
-
-        john.add_object_property(&mut conn, "test:spouse", "test:Jane", "test").unwrap();
-
-        let result = get_individual_data(&conn, "test:John");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        let spouse_prop = data.properties.iter().find(|p| p.property == "test:spouse");
-        assert!(spouse_prop.is_some());
-        let prop = spouse_prop.unwrap();
-        assert!(prop.is_object_property);
-        assert_eq!(prop.value, "test:Jane");
-    }
-
-    #[test]
-    fn test_get_class_data_with_comment() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let result = get_class_data(&conn, "test:Person");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        assert_eq!(data.comment, Some("A person entity".to_string()));
-    }
-
-    #[test]
-    fn test_get_class_data_with_url_iri() {
-        let mut conn = setup_test_db();
-
-        let url_class = Class::new("http://example.org/MyClass");
-        url_class.assert_class(&mut conn, ClassType::OwlClass, "test").unwrap();
-        url_class.add_super_class(&mut conn, "owl:Thing", "test").unwrap();
-
-        let result = get_class_data(&conn, "http://example.org/MyClass");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        assert_eq!(data.id, "http://example.org/MyClass");
-        assert_eq!(data.label, "MyClass"); // Fallback to last part after /
-    }
-
-    #[test]
-    fn test_get_class_data_without_icon() {
-        let mut conn = setup_test_db();
-
-        let no_icon = Class::new("test:NoIcon");
-        no_icon.assert_class(&mut conn, ClassType::OwlClass, "test").unwrap();
-        no_icon.add_super_class(&mut conn, "owl:Thing", "test").unwrap();
-        no_icon.add_label(&mut conn, "No Icon", Some("en"), "test").unwrap();
-
-        let result = get_class_data(&conn, "test:NoIcon");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        assert_eq!(data.icon, None);
-    }
-
-    #[test]
-    fn test_get_class_data_without_comment() {
-        let mut conn = setup_test_db();
-
-        let no_comment = Class::new("test:NoComment");
-        no_comment.assert_class(&mut conn, ClassType::OwlClass, "test").unwrap();
-        no_comment.add_super_class(&mut conn, "owl:Thing", "test").unwrap();
-        no_comment.add_label(&mut conn, "No Comment", Some("en"), "test").unwrap();
-
-        let result = get_class_data(&conn, "test:NoComment");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        assert_eq!(data.comment, None);
-    }
-
-    #[test]
-    fn test_get_individual_data_without_properties() {
-        let mut conn = setup_test_db();
-
-        let simple = Individual::new("test:Simple");
-        simple.assert(&mut conn, "owl:Thing", "Simple", "icon", "test").unwrap();
-
-        let result = get_individual_data(&conn, "test:Simple");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        // Should have nodes for the individual and its class
-        assert!(data.nodes.len() >= 2);
-        // Should have link to the class
-        assert!(data.links.len() >= 1);
-    }
-
-    #[test]
-    fn test_get_individual_data_multiple_types() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let multi = Individual::new("test:Multi");
-        multi.assert(&mut conn, "test:Person", "Multi", "icon", "test").unwrap();
-        multi.assert_type(&mut conn, "test:Animal", "test").unwrap();
-
-        let result = get_individual_data(&conn, "test:Multi");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        assert_eq!(data.types.len(), 2);
-        assert!(data.types.contains(&"test:Person".to_string()));
-        assert!(data.types.contains(&"test:Animal".to_string()));
-    }
-
-    #[test]
-    fn test_get_class_data_with_multiple_super_classes() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let multi = Class::new("test:MultiSuper");
-        multi.assert_class(&mut conn, ClassType::OwlClass, "test").unwrap();
-        multi.add_super_class(&mut conn, "test:Person", "test").unwrap();
-        multi.add_super_class(&mut conn, "test:Animal", "test").unwrap();
-        multi.add_label(&mut conn, "Multi Super", Some("en"), "test").unwrap();
-
-        let result = get_class_data(&conn, "test:MultiSuper");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        assert!(data.super_classes.len() >= 2);
-        assert!(data.nodes.len() >= 3); // self + 2 super classes
-    }
-
-    #[test]
-    fn test_entity_get_property_type() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let app = tauri::test::mock_app();
-        app.manage(Mutex::new(conn));
-
-        // owl:ObjectProperty doesn't exist as a class or individual, so it should return "not found"
-        let result = entity__get(
-            "owl:ObjectProperty".to_string(),
-            app.state::<Mutex<Connection>>(),
-        );
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("not found") || err.contains("unknown type"));
-    }
-
-    #[test]
-    fn test_get_individual_label_with_language_tag() {
-        let mut conn = setup_test_db();
-
-        let multi_lang = Individual::new("test:MultiLang");
-        multi_lang.assert(&mut conn, "owl:Thing", "English Label", "icon", "test").unwrap();
-        // The assert already adds rdfs:label, so we test with that
-
-        let result = get_individual_label(&conn, "test:MultiLang");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "English Label");
-    }
-
-    #[test]
-    fn test_get_sub_classes_multiple() {
-        let mut conn = setup_test_db();
-        setup_test_ontology(&mut conn);
-
-        let child1 = Class::new("test:Child1");
-        child1.assert_class(&mut conn, ClassType::OwlClass, "test").unwrap();
-        child1.add_super_class(&mut conn, "test:Animal", "test").unwrap();
-
-        let child2 = Class::new("test:Child2");
-        child2.assert_class(&mut conn, ClassType::OwlClass, "test").unwrap();
-        child2.add_super_class(&mut conn, "test:Animal", "test").unwrap();
-
-        let result = get_sub_classes(&conn, "test:Animal");
-        assert!(result.is_ok());
-
-        let sub_classes = result.unwrap();
-        assert!(sub_classes.len() >= 2); // Dog + Child1 + Child2
-        assert!(sub_classes.contains(&"test:Dog".to_string()));
-    }
-
-    #[test]
-    fn test_entity_data_struct_fields() {
-        let entity_data = EntityData {
-            id: "test:Entity".to_string(),
-            label: "Test Entity".to_string(),
-            entity_type: EntityType::Class,
-            icon: Some("icon".to_string()),
-            comment: Some("comment".to_string()),
-            super_classes: vec!["test:Super".to_string()],
-            sub_classes: vec!["test:Sub".to_string()],
-            instances: vec!["test:Instance".to_string()],
-            types: vec!["test:Type".to_string()],
-            properties: vec![PropertyValue {
-                property: "test:prop".to_string(),
-                value: "value".to_string(),
-                is_object_property: false,
-            }],
-            nodes: vec![GraphNode {
-                id: "test:Node".to_string(),
-                label: "Node".to_string(),
-                icon: None,
-                group: 1,
-                is_broken_ref: None,
-            }],
-            links: vec![GraphLink {
-                source: "test:A".to_string(),
-                target: "test:B".to_string(),
-                label: "link".to_string(),
-            }],
-        };
-
-        assert_eq!(entity_data.id, "test:Entity");
-        assert_eq!(entity_data.label, "Test Entity");
-        assert_eq!(entity_data.super_classes.len(), 1);
-        assert_eq!(entity_data.sub_classes.len(), 1);
-        assert_eq!(entity_data.instances.len(), 1);
-        assert_eq!(entity_data.types.len(), 1);
-        assert_eq!(entity_data.properties.len(), 1);
-        assert_eq!(entity_data.nodes.len(), 1);
-        assert_eq!(entity_data.links.len(), 1);
-    }
-
-    #[test]
-    fn test_get_individual_data_with_data_properties() {
-        let mut conn = setup_test_db();
-
-        let john = Individual::new("test:John");
-        john.assert(&mut conn, "owl:Thing", "John", "icon", "test").unwrap();
-        john.add_string_property(&mut conn, "test:name", "John Doe", None, "test").unwrap();
-        john.add_integer_property(&mut conn, "test:age", 30, "test").unwrap();
-        john.add_number_property(&mut conn, "test:height", 1.75, "test").unwrap();
-
-        let result = get_individual_data(&conn, "test:John");
-        assert!(result.is_ok());
-
-        let data = result.unwrap();
-        // Should have at least name, age, height properties
-        assert!(data.properties.len() >= 3);
-
-        // Check that properties are not marked as object properties
-        let name_prop = data.properties.iter().find(|p| p.property == "test:name");
-        assert!(name_prop.is_some());
-        assert!(!name_prop.unwrap().is_object_property);
-    }
-
-    #[test]
-    fn test_graph_node_clone() {
-        let node = GraphNode {
-            id: "test:1".to_string(),
-            label: "Label".to_string(),
-            icon: Some("icon".to_string()),
-            group: 1,
-            is_broken_ref: None,
-        };
-
-        let cloned = node.clone();
-        assert_eq!(cloned.id, node.id);
-        assert_eq!(cloned.label, node.label);
-        assert_eq!(cloned.icon, node.icon);
-        assert_eq!(cloned.group, node.group);
-    }
-
-    #[test]
-    fn test_graph_link_clone() {
-        let link = GraphLink {
-            source: "test:A".to_string(),
-            target: "test:B".to_string(),
-            label: "knows".to_string(),
-        };
-
-        let cloned = link.clone();
-        assert_eq!(cloned.source, link.source);
-        assert_eq!(cloned.target, link.target);
-        assert_eq!(cloned.label, link.label);
-    }
-
-    #[test]
-    fn test_entity_type_clone() {
-        let entity_type = EntityType::Class;
-        let cloned = entity_type.clone();
-
-        let json1 = serde_json::to_string(&entity_type).unwrap();
-        let json2 = serde_json::to_string(&cloned).unwrap();
-        assert_eq!(json1, json2);
-    }
 }

@@ -6,41 +6,128 @@
 
 use rusqlite::Connection;
 use crate::eavto::{store, query, Triple, Object};
-use crate::owl::{Result, OwlError, vocabulary::{rdf, rdfs, owl}};
+use crate::owl::{Result, OwlError, Thing, vocabulary::{rdf, rdfs, owl}};
 
-/// Represents an OWL/RDFS Class
+/// Represents an OWL/RDFS Class with all its data
 #[derive(Debug, Clone)]
 pub struct Class {
     pub iri: String,
+    pub label: Option<String>,
+    pub icon: Option<String>,
+    pub comment: Option<String>,
+    pub super_classes: Vec<Thing>,
+    pub sub_classes: Vec<Thing>,
+    pub properties: Vec<(String, String)>, // (property_iri, source_class_iri)
 }
 
 impl Class {
-    /// Create a new Class reference
+    /// Create a new empty Class reference (only IRI)
     pub fn new(iri: impl Into<String>) -> Self {
-        Self { iri: iri.into() }
+        Self {
+            iri: iri.into(),
+            label: None,
+            icon: None,
+            comment: None,
+            super_classes: Vec::new(),
+            sub_classes: Vec::new(),
+            properties: Vec::new(),
+        }
     }
 
-    /// Assert that this IRI is a class (rdf:type rdfs:Class or owl:Class)
-    /// DEPRECATED: Use assert instead to ensure proper label and icon
-    pub fn assert_class(&self, conn: &mut Connection, class_type: ClassType, origin: &str) -> Result<()> {
-        let type_iri = match class_type {
-            ClassType::RdfsClass => rdfs::CLASS,
-            ClassType::OwlClass => owl::CLASS,
-        };
+    /// Get complete class data from database
+    pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Self> {
+        let iri = iri.into();
 
-        let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(type_iri.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
+        // Get label
+        let label_result = query::get_by_entity_predicate(conn, &iri, rdfs::LABEL)?;
+        let label = label_result.triples.first()
+            .and_then(|t| t.object.as_literal());
+
+        // Get icon
+        let icon_result = query::get_by_entity_predicate(conn, &iri, "foundation:icon")?;
+        let icon = icon_result.triples.first()
+            .and_then(|t| t.object.as_literal());
+
+        // Get comment
+        let comment_result = query::get_by_entity_predicate(conn, &iri, rdfs::COMMENT)?;
+        let comment = comment_result.triples.first()
+            .and_then(|t| t.object.as_literal());
+
+        // Get super classes with their info (shallow - no recursion)
+        let super_result = query::get_by_entity_predicate(conn, &iri, rdfs::SUB_CLASS_OF)?;
+        let super_classes: Vec<Thing> = super_result.triples.iter()
+            .filter_map(|t| t.object.as_iri())
+            .map(|super_iri| Thing::get(conn, super_iri))
+            .collect();
+
+        // Get sub classes with their info (shallow - no recursion)
+        let sub_result = query::get_by_predicate_object(conn, rdfs::SUB_CLASS_OF, &iri)?;
+        let sub_classes: Vec<Thing> = sub_result.triples.iter()
+            .map(|t| Thing::get(conn, &t.subject))
+            .collect();
+
+        // Get properties with source
+        let properties = Self::get_properties(conn, &iri)?;
+
+        Ok(Self {
+            iri,
+            label,
+            icon,
+            comment,
+            super_classes,
+            sub_classes,
+            properties,
+        })
+    }
+
+    /// Get all properties for this class (declared, used, and inherited)
+    /// Returns Vec<(property_iri, source_class_iri)>
+    fn get_properties(
+        conn: &Connection,
+        class_iri: &str
+    ) -> Result<Vec<(String, String)>> {
+        let mut all_properties: Vec<(String, String)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // Add declared properties (rdfs:domain points to this class)
+        let declared_result = query::get_by_predicate_object(conn, rdfs::DOMAIN, class_iri)?;
+        for triple in declared_result.triples {
+            if seen.insert(triple.subject.clone()) {
+                all_properties.push((triple.subject.clone(), class_iri.to_string()));
+            }
+        }
+
+        // Add inherited properties from superclasses recursively
+        let super_result = query::get_by_entity_predicate(conn, class_iri, rdfs::SUB_CLASS_OF)?;
+        let super_classes: Vec<String> = super_result.triples.iter()
+            .filter_map(|t| t.object.as_iri())
+            .map(|s| s.to_string())
+            .collect();
+
+        for super_class_iri in super_classes {
+            if super_class_iri != "owl:Thing" {
+                // Recursively get properties from superclass
+                let inherited_props = Self::get_properties(conn, &super_class_iri)?;
+                for (prop, source) in inherited_props {
+                    if seen.insert(prop.clone()) {
+                        all_properties.push((prop, source));
+                    }
+                }
+            }
+        }
+
+        Ok(all_properties)
     }
 
     /// Assert class with required metadata (label and icon)
-    /// This is the recommended way to create classes
+    /// If super_class is None, automatically assigns owl:Thing as parent
     pub fn assert(
         &self,
         conn: &mut Connection,
         class_type: ClassType,
         label: &str,
         icon: &str,
+        super_class: Option<&str>,
         origin: &str
     ) -> Result<()> {
         let type_iri = match class_type {
@@ -48,7 +135,7 @@ impl Class {
             ClassType::OwlClass => owl::CLASS,
         };
 
-        // Create class type
+        // Create class type (instance of owl:Class or rdfs:Class)
         let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(type_iri.to_string()));
         store::assert_triples(conn, &[triple], origin)?;
 
@@ -70,104 +157,12 @@ impl Class {
         let icon_triple = Triple::new(&self.iri, "foundation:icon", icon_obj);
         store::assert_triples(conn, &[icon_triple], origin)?;
 
+        // Add subClassOf relationship (defaults to owl:Thing if not specified)
+        let parent = super_class.unwrap_or(owl::THING);
+        let subclass_triple = Triple::new(&self.iri, rdfs::SUB_CLASS_OF, Object::Iri(parent.to_string()));
+        store::assert_triples(conn, &[subclass_triple], origin)?;
+
         Ok(())
-    }
-
-    /// Add rdfs:label to this class
-    pub fn add_label(&self, conn: &mut Connection, label: &str, language: Option<&str>, origin: &str) -> Result<()> {
-        let object = Object::Literal {
-            value: label.to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: language.map(|l| l.to_string()),
-        };
-
-        let triple = Triple::new(&self.iri, rdfs::LABEL, object);
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Add rdfs:comment to this class
-    pub fn add_comment(&self, conn: &mut Connection, comment: &str, language: Option<&str>, origin: &str) -> Result<()> {
-        let object = Object::Literal {
-            value: comment.to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: language.map(|l| l.to_string()),
-        };
-
-        let triple = Triple::new(&self.iri, rdfs::COMMENT, object);
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Add rdfs:subClassOf relationship
-    pub fn add_super_class(&self, conn: &mut Connection, super_class: &str, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.iri, rdfs::SUB_CLASS_OF, Object::Iri(super_class.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Add owl:equivalentClass relationship
-    pub fn add_equivalent_class(&self, conn: &mut Connection, equivalent: &str, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.iri, owl::EQUIVALENT_CLASS, Object::Iri(equivalent.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Add owl:disjointWith relationship
-    pub fn add_disjoint_class(&self, conn: &mut Connection, disjoint: &str, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.iri, owl::DISJOINT_WITH, Object::Iri(disjoint.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Get all super classes (rdfs:subClassOf)
-    pub fn get_super_classes(&self, conn: &Connection) -> Result<Vec<String>> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, rdfs::SUB_CLASS_OF)?;
-        Ok(result.triples.iter()
-            .filter_map(|t| t.object.as_iri())
-            .map(|s| s.to_string())
-            .collect())
-    }
-
-    /// Get all labels
-    pub fn get_labels(&self, conn: &Connection) -> Result<Vec<(String, Option<String>)>> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, rdfs::LABEL)?;
-        Ok(result.triples.iter()
-            .filter_map(|t| {
-                if let Object::Literal { value, language, .. } = &t.object {
-                    Some((value.clone(), language.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect())
-    }
-
-    /// Get first label (most common use case)
-    pub fn get_label(&self, conn: &Connection) -> Result<Option<String>> {
-        let labels = self.get_labels(conn)?;
-        Ok(labels.first().map(|(label, _)| label.clone()))
-    }
-
-    /// Get comments
-    pub fn get_comments(&self, conn: &Connection) -> Result<Vec<String>> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, rdfs::COMMENT)?;
-        Ok(result.triples.iter()
-            .filter_map(|t| t.object.as_literal())
-            .collect())
-    }
-
-    /// Get first comment
-    pub fn get_comment(&self, conn: &Connection) -> Result<Option<String>> {
-        let comments = self.get_comments(conn)?;
-        Ok(comments.first().cloned())
-    }
-
-    /// Get icon (foundation:icon)
-    pub fn get_icon(&self, conn: &Connection) -> Result<Option<String>> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, "foundation:icon")?;
-        Ok(result.triples.first()
-            .and_then(|t| t.object.as_literal()))
     }
 
     /// Check if this class exists (has rdf:type rdfs:Class or owl:Class)
@@ -182,22 +177,12 @@ impl Class {
         }))
     }
 
-    /// Get all instances of this class
-    pub fn get_instances(&self, conn: &Connection) -> Result<Vec<String>> {
-        // Query all triples where predicate is rdf:type and object is this class
-        let result = query::get_by_predicate(conn, rdf::TYPE)?;
+    /// Get all instances of this class (returned as IRIs only)
+    /// Call separately when needed - can be thousands of instances
+    pub fn get_instances(conn: &Connection, class_iri: &str) -> Result<Vec<String>> {
+        let result = query::get_by_predicate_object(conn, rdf::TYPE, class_iri)?;
         Ok(result.triples.iter()
-            .filter_map(|t| {
-                if let Object::Iri(class_iri) = &t.object {
-                    if class_iri == &self.iri {
-                        Some(t.subject.clone())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
+            .map(|t| t.subject.clone())
             .collect())
     }
 }
@@ -215,44 +200,25 @@ mod tests {
     use crate::eavto::test_helpers::setup_test_db;
 
     #[test]
-    fn test_assert_owl_class() {
+    fn test_assert_and_get_class() {
         let mut conn = setup_test_db();
         let class = Class::new("foundation:TestClass");
 
-        let result = class.assert_class(&mut conn, ClassType::OwlClass, "test");
+        // Assert class with label and icon (will default to owl:Thing as parent)
+        let result = class.assert(&mut conn, ClassType::OwlClass, "Test Class", "test-icon", None, "test");
         assert!(result.is_ok());
 
         // Verify it exists
         assert!(class.exists(&conn).unwrap());
-    }
 
-    #[test]
-    fn test_add_label() {
-        let mut conn = setup_test_db();
-        let class = Class::new("foundation:LabelTest");
-
-        class.assert_class(&mut conn, ClassType::OwlClass, "test").unwrap();
-        class.add_label(&mut conn, "Test Label", Some("en"), "test").unwrap();
-
-        let labels = class.get_labels(&conn).unwrap();
-        assert_eq!(labels.len(), 1);
-        assert_eq!(labels[0].0, "Test Label");
-        assert_eq!(labels[0].1, Some("en".to_string()));
-    }
-
-    #[test]
-    fn test_add_super_class() {
-        let mut conn = setup_test_db();
-        let class = Class::new("foundation:SubClass");
-        let super_class = Class::new("foundation:SuperClass");
-
-        class.assert_class(&mut conn, ClassType::OwlClass, "test").unwrap();
-        super_class.assert_class(&mut conn, ClassType::OwlClass, "test").unwrap();
-        class.add_super_class(&mut conn, "foundation:SuperClass", "test").unwrap();
-
-        let supers = class.get_super_classes(&conn).unwrap();
-        assert_eq!(supers.len(), 1);
-        assert_eq!(supers[0], "foundation:SuperClass");
+        // Get complete class data
+        let class_data = Class::get(&conn, "foundation:TestClass").unwrap();
+        assert_eq!(class_data.iri, "foundation:TestClass");
+        assert_eq!(class_data.label, Some("Test Class".to_string()));
+        assert_eq!(class_data.icon, Some("test-icon".to_string()));
+        // Should have owl:Thing as super class
+        assert_eq!(class_data.super_classes.len(), 1);
+        assert_eq!(class_data.super_classes[0].iri, "owl:Thing");
     }
 
     #[test]
@@ -260,16 +226,40 @@ mod tests {
         let mut conn = setup_test_db();
         let class = Class::new("foundation:Person");
 
-        class.assert_class(&mut conn, ClassType::OwlClass, "test").unwrap();
+        class.assert(&mut conn, ClassType::OwlClass, "Person", "person-icon", None, "test").unwrap();
 
         // Create instances
         let triple1 = Triple::new("foundation:John", rdf::TYPE, Object::Iri("foundation:Person".to_string()));
         let triple2 = Triple::new("foundation:Jane", rdf::TYPE, Object::Iri("foundation:Person".to_string()));
         store::assert_triples(&mut conn, &[triple1, triple2], "test").unwrap();
 
-        let instances = class.get_instances(&conn).unwrap();
+        // Get instances separately
+        let instances = Class::get_instances(&conn, "foundation:Person").unwrap();
         assert_eq!(instances.len(), 2);
         assert!(instances.contains(&"foundation:John".to_string()));
         assert!(instances.contains(&"foundation:Jane".to_string()));
+    }
+
+    #[test]
+    fn test_class_hierarchy() {
+        let mut conn = setup_test_db();
+
+        // Create super class (with owl:Thing as parent)
+        let super_class = Class::new("foundation:Animal");
+        super_class.assert(&mut conn, ClassType::OwlClass, "Animal", "animal-icon", None, "test").unwrap();
+
+        // Create sub class (with Animal as parent)
+        let sub_class = Class::new("foundation:Dog");
+        sub_class.assert(&mut conn, ClassType::OwlClass, "Dog", "dog-icon", Some("foundation:Animal"), "test").unwrap();
+
+        // Get super class data and check sub classes
+        let animal_data = Class::get(&conn, "foundation:Animal").unwrap();
+        assert_eq!(animal_data.sub_classes.len(), 1);
+        assert_eq!(animal_data.sub_classes[0].iri, "foundation:Dog");
+
+        // Get sub class data and check super classes
+        let dog_data = Class::get(&conn, "foundation:Dog").unwrap();
+        assert_eq!(dog_data.super_classes.len(), 1);
+        assert_eq!(dog_data.super_classes[0].iri, "foundation:Animal");
     }
 }

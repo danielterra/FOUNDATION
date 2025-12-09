@@ -368,22 +368,24 @@
 			d.fx = null;
 			d.fy = null;
 
-			// Check if this was a click (minimal movement) with CMD key
+			// Check if this was a click (minimal movement)
 			if (dragStartPos) {
 				const dx = Math.abs(event.x - dragStartPos.x);
 				const dy = Math.abs(event.y - dragStartPos.y);
 				const wasClick = dx < 5 && dy < 5; // Less than 5px movement = click
 
-				if (wasClick && (event.sourceEvent?.metaKey || event.sourceEvent?.ctrlKey)) {
-					// CMD+Click to toggle focus mode
-					if (focusedNodeId === d.id) {
-						clearFocusMode();
-					} else {
-						applyFocusMode(d.id);
+				if (wasClick) {
+					if (event.sourceEvent?.metaKey || event.sourceEvent?.ctrlKey) {
+						// CMD+Click to toggle focus mode
+						if (focusedNodeId === d.id) {
+							clearFocusMode();
+						} else {
+							applyFocusMode(d.id);
+						}
+					} else if (onNodeClick) {
+						// Regular click
+						onNodeClick(d.id, d.label, d.icon);
 					}
-				} else if (wasClick && onNodeClick) {
-					// Regular click - existing behavior
-					onNodeClick(d.id, d.label);
 				}
 
 				dragStartPos = null;

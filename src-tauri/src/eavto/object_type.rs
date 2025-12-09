@@ -103,6 +103,24 @@ impl Object {
     }
 }
 
+impl PartialEq for Object {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Object::Iri(a), Object::Iri(b)) => a == b,
+            (Object::Blank(a), Object::Blank(b)) => a == b,
+            (
+                Object::Literal { value: v1, datatype: d1, language: l1 },
+                Object::Literal { value: v2, datatype: d2, language: l2 }
+            ) => v1 == v2 && d1 == d2 && l1 == l2,
+            (Object::Integer(a), Object::Integer(b)) => a == b,
+            (Object::Number(a), Object::Number(b)) => (a - b).abs() < f64::EPSILON,
+            (Object::Boolean(a), Object::Boolean(b)) => a == b,
+            (Object::DateTime(a), Object::DateTime(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

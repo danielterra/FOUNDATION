@@ -8,20 +8,127 @@ use rusqlite::Connection;
 use crate::eavto::{store, query, Triple, Object};
 use crate::owl::{Result, OwlError, vocabulary::{rdf, rdfs, owl}};
 
-/// Base Property type
+/// Base Property type with complete data
 #[derive(Debug, Clone)]
 pub struct Property {
     pub iri: String,
+    pub label: Option<String>,
+    pub comment: Option<String>,
+    pub property_type: PropertyType,
+    pub domains: Vec<String>,
+    pub ranges: Vec<String>,
+    pub super_properties: Vec<String>,
+    pub is_functional: bool,
+    pub is_transitive: bool,
+    pub is_symmetric: bool,
+    pub inverse_of: Option<String>,
 }
 
 impl Property {
-    /// Create a new Property reference
+    /// Create a new Property reference (for asserting)
     pub fn new(iri: impl Into<String>) -> Self {
-        Self { iri: iri.into() }
+        Self {
+            iri: iri.into(),
+            label: None,
+            comment: None,
+            property_type: PropertyType::RdfProperty,
+            domains: vec![],
+            ranges: vec![],
+            super_properties: vec![],
+            is_functional: false,
+            is_transitive: false,
+            is_symmetric: false,
+            inverse_of: None,
+        }
     }
 
-    /// Assert that this IRI is a property
-    pub fn assert_property(&self, conn: &mut Connection, property_type: PropertyType, origin: &str) -> Result<()> {
+    /// Get complete property data
+    pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Self> {
+        let iri = iri.into();
+
+        // Get label
+        let label_result = query::get_by_entity_predicate(conn, &iri, rdfs::LABEL)?;
+        let label = label_result.triples.first().and_then(|t| t.object.as_literal());
+
+        // Get comment
+        let comment_result = query::get_by_entity_predicate(conn, &iri, rdfs::COMMENT)?;
+        let comment = comment_result.triples.first().and_then(|t| t.object.as_literal());
+
+        // Get property type
+        let types_result = query::get_by_entity_predicate(conn, &iri, rdf::TYPE)?;
+        let mut property_type = PropertyType::RdfProperty;
+        let mut is_functional = false;
+        let mut is_transitive = false;
+        let mut is_symmetric = false;
+
+        for triple in &types_result.triples {
+            if let Some(type_iri) = triple.object.as_iri() {
+                match type_iri {
+                    t if t == owl::OBJECT_PROPERTY => property_type = PropertyType::ObjectProperty,
+                    t if t == owl::DATATYPE_PROPERTY => property_type = PropertyType::DatatypeProperty,
+                    t if t == owl::ANNOTATION_PROPERTY => property_type = PropertyType::AnnotationProperty,
+                    t if t == owl::FUNCTIONAL_PROPERTY => is_functional = true,
+                    t if t == owl::TRANSITIVE_PROPERTY => is_transitive = true,
+                    t if t == owl::SYMMETRIC_PROPERTY => is_symmetric = true,
+                    _ => {}
+                }
+            }
+        }
+
+        // Get domains
+        let domains_result = query::get_by_entity_predicate(conn, &iri, rdfs::DOMAIN)?;
+        let domains: Vec<String> = domains_result.triples.iter()
+            .filter_map(|t| t.object.as_iri())
+            .map(|s| s.to_string())
+            .collect();
+
+        // Get ranges
+        let ranges_result = query::get_by_entity_predicate(conn, &iri, rdfs::RANGE)?;
+        let ranges: Vec<String> = ranges_result.triples.iter()
+            .filter_map(|t| t.object.as_iri())
+            .map(|s| s.to_string())
+            .collect();
+
+        // Get super properties
+        let super_result = query::get_by_entity_predicate(conn, &iri, rdfs::SUB_PROPERTY_OF)?;
+        let super_properties: Vec<String> = super_result.triples.iter()
+            .filter_map(|t| t.object.as_iri())
+            .map(|s| s.to_string())
+            .collect();
+
+        // Get inverse
+        let inverse_result = query::get_by_entity_predicate(conn, &iri, owl::INVERSE_OF)?;
+        let inverse_of = inverse_result.triples.first()
+            .and_then(|t| t.object.as_iri())
+            .map(|s| s.to_string());
+
+        Ok(Self {
+            iri,
+            label,
+            comment,
+            property_type,
+            domains,
+            ranges,
+            super_properties,
+            is_functional,
+            is_transitive,
+            is_symmetric,
+            inverse_of,
+        })
+    }
+
+    /// Assert a new property with metadata
+    pub fn assert(
+        &self,
+        conn: &mut Connection,
+        property_type: PropertyType,
+        label: &str,
+        comment: Option<&str>,
+        domain: Option<&str>,
+        range: Option<&str>,
+        origin: &str
+    ) -> Result<()> {
+        // Assert property type
         let type_iri = match property_type {
             PropertyType::RdfProperty => rdf::PROPERTY,
             PropertyType::ObjectProperty => owl::OBJECT_PROPERTY,
@@ -29,74 +136,36 @@ impl Property {
             PropertyType::AnnotationProperty => owl::ANNOTATION_PROPERTY,
         };
 
-        let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(type_iri.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
+        let mut triples = vec![
+            Triple::new(&self.iri, rdf::TYPE, Object::Iri(type_iri.to_string())),
+            Triple::new(&self.iri, rdfs::LABEL, Object::Literal {
+                value: label.to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ];
+
+        // Add comment if provided
+        if let Some(comment_text) = comment {
+            triples.push(Triple::new(&self.iri, rdfs::COMMENT, Object::Literal {
+                value: comment_text.to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }));
+        }
+
+        // Add domain if provided
+        if let Some(domain_class) = domain {
+            triples.push(Triple::new(&self.iri, rdfs::DOMAIN, Object::Iri(domain_class.to_string())));
+        }
+
+        // Add range if provided
+        if let Some(range_class) = range {
+            triples.push(Triple::new(&self.iri, rdfs::RANGE, Object::Iri(range_class.to_string())));
+        }
+
+        store::assert_triples(conn, &triples, origin)?;
         Ok(())
-    }
-
-    /// Add rdfs:label
-    pub fn add_label(&self, conn: &mut Connection, label: &str, language: Option<&str>, origin: &str) -> Result<()> {
-        let object = Object::Literal {
-            value: label.to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: language.map(|l| l.to_string()),
-        };
-
-        let triple = Triple::new(&self.iri, rdfs::LABEL, object);
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Add rdfs:comment
-    pub fn add_comment(&self, conn: &mut Connection, comment: &str, language: Option<&str>, origin: &str) -> Result<()> {
-        let object = Object::Literal {
-            value: comment.to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: language.map(|l| l.to_string()),
-        };
-
-        let triple = Triple::new(&self.iri, rdfs::COMMENT, object);
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Add rdfs:domain (class that this property applies to)
-    pub fn add_domain(&self, conn: &mut Connection, domain_class: &str, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.iri, rdfs::DOMAIN, Object::Iri(domain_class.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Add rdfs:range (value type of this property)
-    pub fn add_range(&self, conn: &mut Connection, range_class: &str, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.iri, rdfs::RANGE, Object::Iri(range_class.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Add rdfs:subPropertyOf relationship
-    pub fn add_super_property(&self, conn: &mut Connection, super_property: &str, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.iri, rdfs::SUB_PROPERTY_OF, Object::Iri(super_property.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Get domain classes
-    pub fn get_domains(&self, conn: &Connection) -> Result<Vec<String>> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, rdfs::DOMAIN)?;
-        Ok(result.triples.iter()
-            .filter_map(|t| t.object.as_iri())
-            .map(|s| s.to_string())
-            .collect())
-    }
-
-    /// Get range classes
-    pub fn get_ranges(&self, conn: &Connection) -> Result<Vec<String>> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, rdfs::RANGE)?;
-        Ok(result.triples.iter()
-            .filter_map(|t| t.object.as_iri())
-            .map(|s| s.to_string())
-            .collect())
     }
 
     /// Check if this property exists
@@ -104,106 +173,13 @@ impl Property {
         let result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
         Ok(!result.triples.is_empty())
     }
-
-    /// Get label
-    pub fn get_label(&self, conn: &Connection) -> Result<Option<String>> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, rdfs::LABEL)?;
-        Ok(result.triples.first()
-            .and_then(|t| t.object.as_literal()))
-    }
-
-    /// Get comment
-    pub fn get_comment(&self, conn: &Connection) -> Result<Option<String>> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, rdfs::COMMENT)?;
-        Ok(result.triples.first()
-            .and_then(|t| t.object.as_literal()))
-    }
-
-    /// Check if property is functional
-    pub fn is_functional(&self, conn: &Connection) -> Result<bool> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
-        Ok(result.triples.iter().any(|t| {
-            if let Object::Iri(type_iri) = &t.object {
-                type_iri == owl::FUNCTIONAL_PROPERTY
-            } else {
-                false
-            }
-        }))
-    }
 }
 
-/// ObjectProperty (relates individuals to individuals)
-#[derive(Debug, Clone)]
-pub struct ObjectProperty {
-    pub property: Property,
-}
+/// ObjectProperty is just an alias - use Property with PropertyType::ObjectProperty
+pub type ObjectProperty = Property;
 
-impl ObjectProperty {
-    pub fn new(iri: impl Into<String>) -> Self {
-        Self {
-            property: Property::new(iri),
-        }
-    }
-
-    /// Assert as owl:ObjectProperty
-    pub fn assert(&self, conn: &mut Connection, origin: &str) -> Result<()> {
-        self.property.assert_property(conn, PropertyType::ObjectProperty, origin)
-    }
-
-    /// Add owl:inverseOf
-    pub fn add_inverse(&self, conn: &mut Connection, inverse: &str, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.property.iri, owl::INVERSE_OF, Object::Iri(inverse.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Mark as owl:FunctionalProperty
-    pub fn mark_functional(&self, conn: &mut Connection, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.property.iri, rdf::TYPE, Object::Iri(owl::FUNCTIONAL_PROPERTY.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Mark as owl:TransitiveProperty
-    pub fn mark_transitive(&self, conn: &mut Connection, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.property.iri, rdf::TYPE, Object::Iri(owl::TRANSITIVE_PROPERTY.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Mark as owl:SymmetricProperty
-    pub fn mark_symmetric(&self, conn: &mut Connection, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.property.iri, rdf::TYPE, Object::Iri(owl::SYMMETRIC_PROPERTY.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-}
-
-/// DatatypeProperty (relates individuals to literals)
-#[derive(Debug, Clone)]
-pub struct DatatypeProperty {
-    pub property: Property,
-}
-
-impl DatatypeProperty {
-    pub fn new(iri: impl Into<String>) -> Self {
-        Self {
-            property: Property::new(iri),
-        }
-    }
-
-    /// Assert as owl:DatatypeProperty
-    pub fn assert(&self, conn: &mut Connection, origin: &str) -> Result<()> {
-        self.property.assert_property(conn, PropertyType::DatatypeProperty, origin)
-    }
-
-    /// Mark as owl:FunctionalProperty
-    pub fn mark_functional(&self, conn: &mut Connection, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.property.iri, rdf::TYPE, Object::Iri(owl::FUNCTIONAL_PROPERTY.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-}
+/// DatatypeProperty is just an alias - use Property with PropertyType::DatatypeProperty
+pub type DatatypeProperty = Property;
 
 /// Property type classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,60 +196,82 @@ mod tests {
     use crate::eavto::test_helpers::setup_test_db;
 
     #[test]
-    fn test_assert_object_property() {
-        let mut conn = setup_test_db();
-        let prop = ObjectProperty::new("foundation:hasParent");
-
-        let result = prop.assert(&mut conn, "test");
-        assert!(result.is_ok());
-        assert!(prop.property.exists(&conn).unwrap());
-    }
-
-    #[test]
-    fn test_add_domain_range() {
+    fn test_assert_and_get() {
         let mut conn = setup_test_db();
         let prop = Property::new("foundation:hasAge");
 
-        prop.assert_property(&mut conn, PropertyType::DatatypeProperty, "test").unwrap();
-        prop.add_domain(&mut conn, "foundation:Person", "test").unwrap();
-        prop.add_range(&mut conn, "xsd:integer", "test").unwrap();
+        // Assert property with metadata
+        let result = prop.assert(
+            &mut conn,
+            PropertyType::DatatypeProperty,
+            "has age",
+            Some("The age of a person"),
+            Some("foundation:Person"),
+            Some("xsd:integer"),
+            "test"
+        );
+        assert!(result.is_ok());
 
-        let domains = prop.get_domains(&conn).unwrap();
-        let ranges = prop.get_ranges(&conn).unwrap();
-
-        assert_eq!(domains.len(), 1);
-        assert_eq!(domains[0], "foundation:Person");
-        assert_eq!(ranges.len(), 1);
-        assert_eq!(ranges[0], "xsd:integer");
+        // Get complete property data
+        let property = Property::get(&conn, "foundation:hasAge").unwrap();
+        assert_eq!(property.iri, "foundation:hasAge");
+        assert_eq!(property.label, Some("has age".to_string()));
+        assert_eq!(property.comment, Some("The age of a person".to_string()));
+        assert_eq!(property.property_type, PropertyType::DatatypeProperty);
+        assert_eq!(property.domains.len(), 1);
+        assert_eq!(property.domains[0], "foundation:Person");
+        assert_eq!(property.ranges.len(), 1);
+        assert_eq!(property.ranges[0], "xsd:integer");
     }
 
     #[test]
-    fn test_object_property_inverse() {
+    fn test_object_property() {
         let mut conn = setup_test_db();
-        let prop = ObjectProperty::new("foundation:hasChild");
+        let prop = Property::new("foundation:hasParent");
 
-        prop.assert(&mut conn, "test").unwrap();
-        prop.add_inverse(&mut conn, "foundation:hasParent", "test").unwrap();
+        // Assert object property
+        prop.assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "has parent",
+            None,
+            Some("foundation:Person"),
+            Some("foundation:Person"),
+            "test"
+        ).unwrap();
 
-        let result = query::get_by_entity_predicate(&conn, "foundation:hasChild", owl::INVERSE_OF).unwrap();
-        assert_eq!(result.triples.len(), 1);
+        // Get and verify
+        let property = Property::get(&conn, "foundation:hasParent").unwrap();
+        assert_eq!(property.property_type, PropertyType::ObjectProperty);
+        assert!(property.exists(&conn).unwrap());
     }
 
     #[test]
-    fn test_mark_functional() {
+    fn test_property_characteristics() {
         let mut conn = setup_test_db();
-        let prop = ObjectProperty::new("foundation:hasMother");
+        let prop = Property::new("foundation:hasParent");
 
-        prop.assert(&mut conn, "test").unwrap();
-        prop.mark_functional(&mut conn, "test").unwrap();
+        // Assert property
+        prop.assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "has parent",
+            None,
+            None,
+            None,
+            "test"
+        ).unwrap();
 
-        let result = query::get_by_entity_predicate(&conn, "foundation:hasMother", rdf::TYPE).unwrap();
-        assert!(result.triples.iter().any(|t| {
-            if let Object::Iri(iri) = &t.object {
-                iri == owl::FUNCTIONAL_PROPERTY
-            } else {
-                false
-            }
-        }));
+        // Add functional characteristic
+        let functional_triple = Triple::new(
+            "foundation:hasParent",
+            rdf::TYPE,
+            Object::Iri(owl::FUNCTIONAL_PROPERTY.to_string())
+        );
+        store::assert_triples(&mut conn, &[functional_triple], "test").unwrap();
+
+        // Get and verify
+        let property = Property::get(&conn, "foundation:hasParent").unwrap();
+        assert!(property.is_functional);
     }
 }

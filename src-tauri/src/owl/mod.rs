@@ -13,14 +13,16 @@
 mod class;
 mod property;
 mod individual;
+mod thing;
 pub mod vocabulary;
 
 pub use class::{Class, ClassType};
 pub use property::{Property, ObjectProperty, DatatypeProperty, PropertyType};
 pub use individual::Individual;
+pub use thing::Thing;
+pub use crate::eavto::Object;
 
 use rusqlite::Connection;
-use crate::eavto::{store, Triple, Object};
 
 /// OWL operation errors
 #[derive(Debug)]
@@ -28,6 +30,7 @@ pub enum OwlError {
     DatabaseError(String),
     ValidationError(String),
     NotFound(String),
+    InvalidOperation(String),
 }
 
 impl std::fmt::Display for OwlError {
@@ -36,6 +39,7 @@ impl std::fmt::Display for OwlError {
             OwlError::DatabaseError(msg) => write!(f, "Database error: {}", msg),
             OwlError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
             OwlError::NotFound(msg) => write!(f, "Not found: {}", msg),
+            OwlError::InvalidOperation(msg) => write!(f, "Invalid operation: {}", msg),
         }
     }
 }
@@ -56,83 +60,138 @@ impl From<Box<dyn std::error::Error>> for OwlError {
 
 type Result<T> = std::result::Result<T, OwlError>;
 
-/// Import triples with semantic awareness
-/// This function intelligently routes triples to appropriate OWL operations
-pub fn import_triples(conn: &mut Connection, triples: &[Triple], origin: &str) -> Result<u64> {
+/// Search result for classes and individuals
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    pub id: String,
+    pub label: String,
+    pub icon: Option<String>,
+    pub is_class: bool,
+}
+
+/// Search for classes by label (case-insensitive, ranked by relevance)
+pub fn search_classes(conn: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
     use vocabulary::{rdf, rdfs, owl};
+    use crate::eavto::query;
 
-    let mut facts_inserted = 0u64;
+    // Get all classes
+    let all_classes_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::CLASS)?;
 
-    for triple in triples {
-        // Detect semantic patterns and use appropriate OWL operations
-        match (triple.predicate.as_str(), &triple.object) {
-            // Class declarations
-            (rdf::TYPE, Object::Iri(class_type)) if class_type == rdfs::CLASS || class_type == owl::CLASS => {
-                let class = Class::new(&triple.subject);
-                let class_type_enum = if class_type == owl::CLASS {
-                    class::ClassType::OwlClass
-                } else {
-                    class::ClassType::RdfsClass
-                };
-                class.assert_class(conn, class_type_enum, origin)?;
-                facts_inserted += 1;
+    let mut results = Vec::new();
+    let query_lower = query.to_lowercase();
+
+    for triple in all_classes_result.triples {
+        let class_iri = &triple.subject;
+
+        // Get thing (basic entity info)
+        let thing = Thing::get(conn, class_iri);
+        let label_lower = thing.label.to_lowercase();
+
+        // Check if matches query (case-insensitive)
+        if label_lower.contains(&query_lower) {
+            // Calculate relevance score (lower is better)
+            let score = if label_lower == query_lower {
+                0 // Exact match
+            } else if label_lower.starts_with(&query_lower) {
+                1 // Starts with query
+            } else {
+                2 // Contains query
+            };
+
+            results.push((score, SearchResult {
+                id: class_iri.clone(),
+                label: thing.label,
+                icon: thing.icon,
+                is_class: true,
+            }));
+        }
+    }
+
+    // Sort by relevance score, then label length, then alphabetically
+    results.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.label.len().cmp(&b.1.label.len()))
+            .then_with(|| a.1.label.cmp(&b.1.label))
+    });
+
+    // Take top results and remove scores
+    Ok(results.into_iter().take(limit).map(|(_, r)| r).collect())
+}
+
+/// Search for individuals by label (case-insensitive, ranked by relevance)
+pub fn search_individuals(conn: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+    use vocabulary::{rdf, rdfs, owl};
+    use crate::eavto::query;
+
+    // Get all entities with rdf:type that are NOT owl:Class
+    let all_types_result = query::get_by_predicate(conn, rdf::TYPE)?;
+
+    let mut seen = std::collections::HashSet::new();
+    let mut results = Vec::new();
+    let query_lower = query.to_lowercase();
+
+    for triple in all_types_result.triples {
+        // Skip if it's a class
+        if let Object::Iri(type_iri) = &triple.object {
+            if type_iri == owl::CLASS {
+                continue;
             }
+        }
 
-            // Property declarations
-            (rdf::TYPE, Object::Iri(prop_type)) if prop_type == owl::OBJECT_PROPERTY => {
-                let prop = ObjectProperty::new(&triple.subject);
-                prop.assert(conn, origin)?;
-                facts_inserted += 1;
-            }
+        let individual_iri = &triple.subject;
 
-            (rdf::TYPE, Object::Iri(prop_type)) if prop_type == owl::DATATYPE_PROPERTY => {
-                let prop = DatatypeProperty::new(&triple.subject);
-                prop.assert(conn, origin)?;
-                facts_inserted += 1;
-            }
+        // Skip if already processed
+        if !seen.insert(individual_iri.clone()) {
+            continue;
+        }
 
-            // Class hierarchy
-            (rdfs::SUB_CLASS_OF, Object::Iri(super_class)) => {
-                let class = Class::new(&triple.subject);
-                class.add_super_class(conn, super_class, origin)?;
-                facts_inserted += 1;
-            }
+        let individual = Individual::new(individual_iri);
 
-            // Labels
-            (rdfs::LABEL, Object::Literal { value, language, .. }) => {
-                // Try as class first, then property, then individual
-                let class = Class::new(&triple.subject);
-                class.add_label(conn, value, language.as_deref(), origin)?;
-                facts_inserted += 1;
-            }
+        // Get label
+        let label_result = query::get_by_entity_predicate(conn, individual_iri, rdfs::LABEL)?;
+        if let Some(label_triple) = label_result.triples.first() {
+            if let Object::Literal { value: label, .. } = &label_triple.object {
+                let label_lower = label.to_lowercase();
 
-            // Domain and Range
-            (rdfs::DOMAIN, Object::Iri(domain_class)) => {
-                let prop = Property::new(&triple.subject);
-                prop.add_domain(conn, domain_class, origin)?;
-                facts_inserted += 1;
-            }
+                // Check if matches query (case-insensitive)
+                if label_lower.contains(&query_lower) {
+                    // Get icon
+                    let icon_result = query::get_by_entity_predicate(conn, individual_iri, "foundation:icon")?;
+                    let icon = icon_result.triples.first().and_then(|t| {
+                        if let Object::Literal { value, .. } = &t.object {
+                            Some(value.clone())
+                        } else {
+                            None
+                        }
+                    });
 
-            (rdfs::RANGE, Object::Iri(range_class)) => {
-                let prop = Property::new(&triple.subject);
-                prop.add_range(conn, range_class, origin)?;
-                facts_inserted += 1;
-            }
+                    // Calculate relevance score (lower is better)
+                    let score = if label_lower == query_lower {
+                        0 // Exact match
+                    } else if label_lower.starts_with(&query_lower) {
+                        1 // Starts with query
+                    } else {
+                        2 // Contains query
+                    };
 
-            // Instance type declarations
-            (rdf::TYPE, Object::Iri(class_iri)) => {
-                let individual = Individual::new(&triple.subject);
-                individual.assert_type(conn, class_iri, origin)?;
-                facts_inserted += 1;
-            }
-
-            // Generic triples - fallback to direct EAVTO storage
-            _ => {
-                store::assert_triples(conn, &[triple.clone()], origin)?;
-                facts_inserted += 1;
+                    results.push((score, SearchResult {
+                        id: individual_iri.clone(),
+                        label: label.clone(),
+                        icon,
+                        is_class: false,
+                    }));
+                }
             }
         }
     }
 
-    Ok(facts_inserted)
+    // Sort by relevance score, then label length, then alphabetically
+    results.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.label.len().cmp(&b.1.label.len()))
+            .then_with(|| a.1.label.cmp(&b.1.label))
+    });
+
+    // Take top results and remove scores
+    Ok(results.into_iter().take(limit).map(|(_, r)| r).collect())
 }

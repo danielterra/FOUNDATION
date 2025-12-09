@@ -2,30 +2,96 @@
 // OWL Individual - Individual/Instance Operations
 // ============================================================================
 // High-level operations for managing individuals (instances of classes)
+//
+// IMPORTANT: Individuals are instances, NOT classes
+// - Individuals use rdf:type to declare their class
+// - Individuals NEVER use rdfs:subClassOf (that's for classes)
+// - Example: foundation:John rdf:type foundation:Person (NOT subClassOf)
 // ============================================================================
 
 use rusqlite::Connection;
 use crate::eavto::{store, query, Triple, Object};
-use crate::owl::{Result, OwlError, vocabulary::{rdf, rdfs, owl}};
+use crate::owl::{Result, OwlError, Thing, Class, vocabulary::{rdf, rdfs}};
 
 /// Represents an OWL Individual (instance of a class)
+///
+/// An Individual is an instance of a Class, not a Class itself.
+/// It uses rdf:type to declare its class membership.
+///
+/// Example:
+/// ```text
+/// foundation:John rdf:type foundation:Person .  // John is an instance
+/// foundation:Person rdf:type owl:Class .         // Person is a class
+/// ```
 #[derive(Debug, Clone)]
 pub struct Individual {
     pub iri: String,
+    pub label: Option<String>,
+    pub icon: Option<String>,
+    pub comment: Option<String>,
+    pub types: Vec<Thing>,
+    pub properties: Vec<(String, Object)>, // (property_iri, value)
 }
 
 impl Individual {
-    /// Create a new Individual reference
+    /// Create a new empty Individual reference (only IRI)
     pub fn new(iri: impl Into<String>) -> Self {
-        Self { iri: iri.into() }
+        Self {
+            iri: iri.into(),
+            label: None,
+            icon: None,
+            comment: None,
+            types: Vec::new(),
+            properties: Vec::new(),
+        }
     }
 
-    /// Assert that this individual is an instance of a class
-    /// DEPRECATED: Use assert instead to ensure proper label and icon
-    pub fn assert_type(&self, conn: &mut Connection, class_iri: &str, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(class_iri.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
+    /// Get complete individual data from database
+    pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Self> {
+        let iri = iri.into();
+
+        // Get label
+        let label_result = query::get_by_entity_predicate(conn, &iri, rdfs::LABEL)?;
+        let label = label_result.triples.first()
+            .and_then(|t| t.object.as_literal());
+
+        // Get icon
+        let icon_result = query::get_by_entity_predicate(conn, &iri, "foundation:icon")?;
+        let icon = icon_result.triples.first()
+            .and_then(|t| t.object.as_literal());
+
+        // Get comment
+        let comment_result = query::get_by_entity_predicate(conn, &iri, rdfs::COMMENT)?;
+        let comment = comment_result.triples.first()
+            .and_then(|t| t.object.as_literal());
+
+        // Get types (classes)
+        let types_result = query::get_by_entity_predicate(conn, &iri, rdf::TYPE)?;
+        let types: Vec<Thing> = types_result.triples.iter()
+            .filter_map(|t| t.object.as_iri())
+            .map(|type_iri| Thing::get(conn, type_iri))
+            .collect();
+
+        // Get all properties (excluding metadata)
+        let all_triples = query::get_by_entity(conn, &iri)?;
+        let properties: Vec<(String, Object)> = all_triples.triples.into_iter()
+            .filter(|t| {
+                t.predicate != rdf::TYPE
+                    && t.predicate != rdfs::LABEL
+                    && t.predicate != rdfs::COMMENT
+                    && t.predicate != "foundation:icon"
+            })
+            .map(|t| (t.predicate, t.object))
+            .collect();
+
+        Ok(Self {
+            iri,
+            label,
+            icon,
+            comment,
+            types,
+            properties,
+        })
     }
 
     /// Assert individual with required metadata (label and icon)
@@ -63,165 +129,47 @@ impl Individual {
         Ok(())
     }
 
-    /// Add a property value (object property)
-    pub fn add_object_property(&self, conn: &mut Connection, property: &str, value_iri: &str, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.iri, property, Object::Iri(value_iri.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
+    /// Add a property to this individual
+    /// Validates that the property is defined in the individual's class or inherited from parent classes
+    pub fn add_property(&self, conn: &mut Connection, property: &str, value: Object, origin: &str) -> Result<()> {
+        // Get individual's types (classes)
+        let types_result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
 
-    /// Add a datatype property value
-    pub fn add_datatype_property(&self, conn: &mut Connection, property: &str, value: Object, origin: &str) -> Result<()> {
+        if types_result.triples.is_empty() {
+            return Err(OwlError::NotFound(format!("Individual {} has no rdf:type", self.iri)));
+        }
+
+        // Check if property is valid for any of the individual's classes
+        let mut property_is_valid = false;
+
+        for triple in &types_result.triples {
+            if let Some(class_iri) = triple.object.as_iri() {
+                // Get class with all its properties (including inherited)
+                if let Ok(class) = Class::get(conn, class_iri) {
+                    // Check if property exists in this class or its parents
+                    if class.properties.iter().any(|(prop_iri, _)| prop_iri == property) {
+                        property_is_valid = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !property_is_valid {
+            return Err(OwlError::InvalidOperation(
+                format!("Property {} is not defined in any class of individual {}", property, self.iri)
+            ));
+        }
+
+        // Property is valid, assert the triple
         let triple = Triple::new(&self.iri, property, value);
         store::assert_triples(conn, &[triple], origin)?;
         Ok(())
-    }
-
-    /// Add a literal string property
-    pub fn add_string_property(&self, conn: &mut Connection, property: &str, value: &str, language: Option<&str>, origin: &str) -> Result<()> {
-        let object = Object::Literal {
-            value: value.to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: language.map(|l| l.to_string()),
-        };
-        self.add_datatype_property(conn, property, object, origin)
-    }
-
-    /// Add an integer property
-    pub fn add_integer_property(&self, conn: &mut Connection, property: &str, value: i64, origin: &str) -> Result<()> {
-        let object = Object::Integer(value);
-        self.add_datatype_property(conn, property, object, origin)
-    }
-
-    /// Add a number property
-    pub fn add_number_property(&self, conn: &mut Connection, property: &str, value: f64, origin: &str) -> Result<()> {
-        let object = Object::Number(value);
-        self.add_datatype_property(conn, property, object, origin)
-    }
-
-    /// Add a boolean property
-    pub fn add_boolean_property(&self, conn: &mut Connection, property: &str, value: bool, origin: &str) -> Result<()> {
-        let object = Object::Boolean(value);
-        self.add_datatype_property(conn, property, object, origin)
-    }
-
-    /// Add owl:sameAs relationship
-    pub fn add_same_as(&self, conn: &mut Connection, other_iri: &str, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.iri, owl::SAME_AS, Object::Iri(other_iri.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Add owl:differentFrom relationship
-    pub fn add_different_from(&self, conn: &mut Connection, other_iri: &str, origin: &str) -> Result<()> {
-        let triple = Triple::new(&self.iri, owl::DIFFERENT_FROM, Object::Iri(other_iri.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
-        Ok(())
-    }
-
-    /// Get all types (classes) of this individual
-    pub fn get_types(&self, conn: &Connection) -> Result<Vec<String>> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
-        Ok(result.triples.iter()
-            .filter_map(|t| t.object.as_iri())
-            .map(|s| s.to_string())
-            .collect())
-    }
-
-    /// Get all triples where this individual is the subject
-    pub fn get_all_properties(&self, conn: &Connection) -> Result<Vec<Triple>> {
-        let result = query::get_by_entity(conn, &self.iri)?;
-        Ok(result.triples)
-    }
-
-    /// Get values of a specific property
-    pub fn get_property_values(&self, conn: &Connection, property: &str) -> Result<Vec<Object>> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, property)?;
-        Ok(result.triples.iter()
-            .map(|t| t.object.clone())
-            .collect())
     }
 
     /// Check if this individual exists (has at least one triple)
     pub fn exists(&self, conn: &Connection) -> Result<bool> {
         let result = query::get_by_entity(conn, &self.iri)?;
         Ok(!result.triples.is_empty())
-    }
-
-    /// Check if this individual is an instance of a specific class
-    pub fn is_instance_of(&self, conn: &Connection, class_iri: &str) -> Result<bool> {
-        let types = self.get_types(conn)?;
-        Ok(types.contains(&class_iri.to_string()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::eavto::test_helpers::setup_test_db;
-
-    #[test]
-    fn test_assert_type() {
-        let mut conn = setup_test_db();
-        let individual = Individual::new("foundation:john");
-
-        let result = individual.assert_type(&mut conn, "foundation:Person", "test");
-        assert!(result.is_ok());
-
-        let types = individual.get_types(&conn).unwrap();
-        assert_eq!(types.len(), 1);
-        assert_eq!(types[0], "foundation:Person");
-    }
-
-    #[test]
-    fn test_add_properties() {
-        let mut conn = setup_test_db();
-        let individual = Individual::new("foundation:john");
-
-        individual.assert_type(&mut conn, "foundation:Person", "test").unwrap();
-        individual.add_string_property(&mut conn, "foundation:name", "John Doe", Some("en"), "test").unwrap();
-        individual.add_integer_property(&mut conn, "foundation:age", 30, "test").unwrap();
-        individual.add_boolean_property(&mut conn, "foundation:isActive", true, "test").unwrap();
-
-        let properties = individual.get_all_properties(&conn).unwrap();
-        assert!(properties.len() >= 4); // type + name + age + isActive
-    }
-
-    #[test]
-    fn test_object_property() {
-        let mut conn = setup_test_db();
-        let john = Individual::new("foundation:john");
-        let mary = Individual::new("foundation:mary");
-
-        john.assert_type(&mut conn, "foundation:Person", "test").unwrap();
-        mary.assert_type(&mut conn, "foundation:Person", "test").unwrap();
-        john.add_object_property(&mut conn, "foundation:knows", "foundation:mary", "test").unwrap();
-
-        let knows_values = john.get_property_values(&conn, "foundation:knows").unwrap();
-        assert_eq!(knows_values.len(), 1);
-        assert_eq!(knows_values[0].as_iri(), Some("foundation:mary"));
-    }
-
-    #[test]
-    fn test_is_instance_of() {
-        let mut conn = setup_test_db();
-        let individual = Individual::new("foundation:myDog");
-
-        individual.assert_type(&mut conn, "foundation:Dog", "test").unwrap();
-
-        assert!(individual.is_instance_of(&conn, "foundation:Dog").unwrap());
-        assert!(!individual.is_instance_of(&conn, "foundation:Cat").unwrap());
-    }
-
-    #[test]
-    fn test_same_as() {
-        let mut conn = setup_test_db();
-        let individual = Individual::new("foundation:john");
-
-        individual.add_same_as(&mut conn, "dbpedia:John_Doe", "test").unwrap();
-
-        let same_as = individual.get_property_values(&conn, owl::SAME_AS).unwrap();
-        assert_eq!(same_as.len(), 1);
-        assert_eq!(same_as[0].as_iri(), Some("dbpedia:John_Doe"));
     }
 }

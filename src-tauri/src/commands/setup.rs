@@ -3,7 +3,7 @@ use tauri::State;
 use rusqlite::Connection;
 use std::sync::Mutex;
 
-use crate::owl::Individual;
+use crate::owl::{Individual, Object};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,10 +78,22 @@ pub fn setup__init(
     let user = Individual::new("foundation:ThisUser");
     user.assert(&mut conn, "foundation:Person", &user_name, "person", "setup")
         .map_err(|e| format!("Failed to create Person: {}", e))?;
-    user.add_string_property(&mut conn, "foundation:name", &user_name, Some("en"), "setup")
+
+    let name_obj = Object::Literal {
+        value: user_name.clone(),
+        datatype: Some("xsd:string".to_string()),
+        language: Some("en".to_string()),
+    };
+    user.add_property(&mut conn, "foundation:name", name_obj, "setup")
         .map_err(|e| format!("Failed to add user name: {}", e))?;
+
     if let Some(ref email_val) = email {
-        user.add_string_property(&mut conn, "foundation:email", email_val, None, "setup")
+        let email_obj = Object::Literal {
+            value: email_val.clone(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        };
+        user.add_property(&mut conn, "foundation:email", email_obj, "setup")
             .map_err(|e| format!("Failed to add user email: {}", e))?;
     }
 
@@ -89,13 +101,32 @@ pub fn setup__init(
     let computer = Individual::new("foundation:ThisComputer");
     computer.assert(&mut conn, "foundation:Computer", &hostname, "computer", "setup")
         .map_err(|e| format!("Failed to create Computer: {}", e))?;
-    computer.add_string_property(&mut conn, "foundation:hostname", &hostname, None, "setup")
+
+    let hostname_obj = Object::Literal {
+        value: hostname.clone(),
+        datatype: Some("xsd:string".to_string()),
+        language: None,
+    };
+    computer.add_property(&mut conn, "foundation:hostname", hostname_obj, "setup")
         .map_err(|e| format!("Failed to add hostname: {}", e))?;
-    computer.add_string_property(&mut conn, "foundation:os", &os, None, "setup")
+
+    let os_obj = Object::Literal {
+        value: os.clone(),
+        datatype: Some("xsd:string".to_string()),
+        language: None,
+    };
+    computer.add_property(&mut conn, "foundation:os", os_obj, "setup")
         .map_err(|e| format!("Failed to add OS: {}", e))?;
-    computer.add_string_property(&mut conn, "foundation:cpu", &cpu, None, "setup")
+
+    let cpu_obj = Object::Literal {
+        value: cpu.clone(),
+        datatype: Some("xsd:string".to_string()),
+        language: None,
+    };
+    computer.add_property(&mut conn, "foundation:cpu", cpu_obj, "setup")
         .map_err(|e| format!("Failed to add CPU: {}", e))?;
-    computer.add_number_property(&mut conn, "foundation:ramGB", ram_gb, "setup")
+
+    computer.add_property(&mut conn, "foundation:ramGB", Object::Number(ram_gb), "setup")
         .map_err(|e| format!("Failed to add RAM: {}", e))?;
 
     // Create FOUNDATION instance with metadata
@@ -104,13 +135,19 @@ pub fn setup__init(
     let foundation = Individual::new("foundation:ThisFoundationInstance");
     foundation.assert(&mut conn, "foundation:FoundationApp", &foundation_label, "apps", "setup")
         .map_err(|e| format!("Failed to create FoundationApp: {}", e))?;
-    foundation.add_string_property(&mut conn, "foundation:version", &version, None, "setup")
+
+    let version_obj = Object::Literal {
+        value: version.clone(),
+        datatype: Some("xsd:string".to_string()),
+        language: None,
+    };
+    foundation.add_property(&mut conn, "foundation:version", version_obj, "setup")
         .map_err(|e| format!("Failed to add version: {}", e))?;
 
     // Establish relationships
-    computer.add_object_property(&mut conn, "foundation:hasUser", "foundation:ThisUser", "setup")
+    computer.add_property(&mut conn, "foundation:hasUser", Object::Iri("foundation:ThisUser".to_string()), "setup")
         .map_err(|e| format!("Failed to link Computer -> User: {}", e))?;
-    foundation.add_object_property(&mut conn, "foundation:runsOn", "foundation:ThisComputer", "setup")
+    foundation.add_property(&mut conn, "foundation:runsOn", Object::Iri("foundation:ThisComputer".to_string()), "setup")
         .map_err(|e| format!("Failed to link FOUNDATION -> Computer: {}", e))?;
 
     Ok(SetupResult {
@@ -136,56 +173,53 @@ pub fn setup__init(
 
 /// Get existing setup data when setup is already done
 fn get_existing_setup(conn: &Connection) -> Result<SetupResult, String> {
-    let user = Individual::new("foundation:ThisUser");
-    let computer = Individual::new("foundation:ThisComputer");
-    let foundation = Individual::new("foundation:ThisFoundationInstance");
+    let user = Individual::get(conn, "foundation:ThisUser")
+        .map_err(|e| format!("Failed to get user: {}", e))?;
+    let computer = Individual::get(conn, "foundation:ThisComputer")
+        .map_err(|e| format!("Failed to get computer: {}", e))?;
+    let foundation = Individual::get(conn, "foundation:ThisFoundationInstance")
+        .map_err(|e| format!("Failed to get foundation: {}", e))?;
 
     // Get user data
-    let name_values = user.get_property_values(conn, "foundation:name")
-        .map_err(|e| format!("Failed to get user name: {}", e))?;
-    let name = name_values.first()
-        .and_then(|v| v.as_literal())
+    let name = user.properties.iter()
+        .find(|(prop, _)| prop == "foundation:name")
+        .and_then(|(_, val)| val.as_literal())
         .ok_or("User name not found")?;
 
-    let email_values = user.get_property_values(conn, "foundation:email")
-        .map_err(|e| format!("Failed to get user email: {}", e))?;
-    let email = email_values.first().and_then(|v| v.as_literal());
+    let email = user.properties.iter()
+        .find(|(prop, _)| prop == "foundation:email")
+        .and_then(|(_, val)| val.as_literal());
 
     // Get computer data
-    let hostname = computer.get_property_values(conn, "foundation:hostname")
-        .map_err(|e| format!("Failed to get hostname: {}", e))?
-        .first()
-        .and_then(|v| v.as_literal())
+    let hostname = computer.properties.iter()
+        .find(|(prop, _)| prop == "foundation:hostname")
+        .and_then(|(_, val)| val.as_literal())
         .ok_or("Hostname not found")?;
 
-    let os = computer.get_property_values(conn, "foundation:os")
-        .map_err(|e| format!("Failed to get OS: {}", e))?
-        .first()
-        .and_then(|v| v.as_literal())
+    let os = computer.properties.iter()
+        .find(|(prop, _)| prop == "foundation:os")
+        .and_then(|(_, val)| val.as_literal())
         .ok_or("OS not found")?;
 
-    let cpu = computer.get_property_values(conn, "foundation:cpu")
-        .map_err(|e| format!("Failed to get CPU: {}", e))?
-        .first()
-        .and_then(|v| v.as_literal())
+    let cpu = computer.properties.iter()
+        .find(|(prop, _)| prop == "foundation:cpu")
+        .and_then(|(_, val)| val.as_literal())
         .ok_or("CPU not found")?;
 
-    let ram_gb = computer.get_property_values(conn, "foundation:ramGB")
-        .map_err(|e| format!("Failed to get RAM: {}", e))?
-        .first()
-        .and_then(|v| match v {
-            crate::eavto::Object::Number(n) => Some(*n),
-            crate::eavto::Object::Integer(i) => Some(*i as f64),
-            crate::eavto::Object::Literal { value, .. } => value.parse::<f64>().ok(),
+    let ram_gb = computer.properties.iter()
+        .find(|(prop, _)| prop == "foundation:ramGB")
+        .and_then(|(_, val)| match val {
+            Object::Number(n) => Some(*n),
+            Object::Integer(i) => Some(*i as f64),
+            Object::Literal { value, .. } => value.parse::<f64>().ok(),
             _ => None,
         })
         .ok_or("RAM not found")?;
 
     // Get foundation data
-    let version = foundation.get_property_values(conn, "foundation:version")
-        .map_err(|e| format!("Failed to get version: {}", e))?
-        .first()
-        .and_then(|v| v.as_literal())
+    let version = foundation.properties.iter()
+        .find(|(prop, _)| prop == "foundation:version")
+        .and_then(|(_, val)| val.as_literal())
         .ok_or("Version not found")?;
 
     Ok(SetupResult {
@@ -319,20 +353,50 @@ mod tests {
     use tauri::Manager;
 
     fn setup_test_ontology(conn: &mut Connection) {
-        use crate::owl::ClassType;
+        use crate::owl::{ClassType, Property, PropertyType};
 
         // Create necessary classes
         let person = Class::new("foundation:Person");
-        person.assert_class(conn, ClassType::OwlClass, "test").unwrap();
-        person.add_super_class(conn, "owl:Thing", "test").unwrap();
+        person.assert(conn, ClassType::OwlClass, "Person", "person", Some("owl:Thing"), "test").unwrap();
 
         let computer = Class::new("foundation:Computer");
-        computer.assert_class(conn, ClassType::OwlClass, "test").unwrap();
-        computer.add_super_class(conn, "owl:Thing", "test").unwrap();
+        computer.assert(conn, ClassType::OwlClass, "Computer", "computer", Some("owl:Thing"), "test").unwrap();
 
         let foundation_app = Class::new("foundation:FoundationApp");
-        foundation_app.assert_class(conn, ClassType::OwlClass, "test").unwrap();
-        foundation_app.add_super_class(conn, "owl:Thing", "test").unwrap();
+        foundation_app.assert(conn, ClassType::OwlClass, "Foundation App", "apps", Some("owl:Thing"), "test").unwrap();
+
+        // Define properties for Person class
+        Property::new("foundation:name").assert(
+            conn, PropertyType::DatatypeProperty, "name", None, Some("foundation:Person"), None, "test"
+        ).unwrap();
+        Property::new("foundation:email").assert(
+            conn, PropertyType::DatatypeProperty, "email", None, Some("foundation:Person"), None, "test"
+        ).unwrap();
+
+        // Define properties for Computer class
+        Property::new("foundation:hostname").assert(
+            conn, PropertyType::DatatypeProperty, "hostname", None, Some("foundation:Computer"), None, "test"
+        ).unwrap();
+        Property::new("foundation:os").assert(
+            conn, PropertyType::DatatypeProperty, "os", None, Some("foundation:Computer"), None, "test"
+        ).unwrap();
+        Property::new("foundation:cpu").assert(
+            conn, PropertyType::DatatypeProperty, "cpu", None, Some("foundation:Computer"), None, "test"
+        ).unwrap();
+        Property::new("foundation:ramGB").assert(
+            conn, PropertyType::DatatypeProperty, "ramGB", None, Some("foundation:Computer"), None, "test"
+        ).unwrap();
+        Property::new("foundation:hasUser").assert(
+            conn, PropertyType::ObjectProperty, "hasUser", None, Some("foundation:Computer"), Some("foundation:Person"), "test"
+        ).unwrap();
+
+        // Define properties for FoundationApp class
+        Property::new("foundation:version").assert(
+            conn, PropertyType::DatatypeProperty, "version", None, Some("foundation:FoundationApp"), None, "test"
+        ).unwrap();
+        Property::new("foundation:runsOn").assert(
+            conn, PropertyType::ObjectProperty, "runsOn", None, Some("foundation:FoundationApp"), Some("foundation:Computer"), "test"
+        ).unwrap();
     }
 
     #[test]
@@ -414,19 +478,43 @@ mod tests {
         // Setup system first
         let user = Individual::new("foundation:ThisUser");
         user.assert(&mut conn, "foundation:Person", "Jane Doe", "person", "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:name", "Jane Doe", Some("en"), "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:email", "jane@example.com", None, "test").unwrap();
+        user.add_property(&mut conn, "foundation:name", Object::Literal {
+            value: "Jane Doe".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: Some("en".to_string()),
+        }, "test").unwrap();
+        user.add_property(&mut conn, "foundation:email", Object::Literal {
+            value: "jane@example.com".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let computer = Individual::new("foundation:ThisComputer");
         computer.assert(&mut conn, "foundation:Computer", "test-host", "computer", "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:hostname", "test-host", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:os", "linux", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:cpu", "Test CPU", None, "test").unwrap();
-        computer.add_number_property(&mut conn, "foundation:ramGB", 16.0, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:hostname", Object::Literal {
+            value: "test-host".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:os", Object::Literal {
+            value: "linux".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:cpu", Object::Literal {
+            value: "Test CPU".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:ramGB", Object::Number(16.0), "test").unwrap();
 
         let foundation = Individual::new("foundation:ThisFoundationInstance");
         foundation.assert(&mut conn, "foundation:FoundationApp", "FOUNDATION v1.0", "apps", "test").unwrap();
-        foundation.add_string_property(&mut conn, "foundation:version", "1.0.0", None, "test").unwrap();
+        foundation.add_property(&mut conn, "foundation:version", Object::Literal {
+            value: "1.0.0".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         // Test get_existing_setup
         let result = get_existing_setup(&conn);
@@ -451,18 +539,38 @@ mod tests {
         // Setup without email
         let user = Individual::new("foundation:ThisUser");
         user.assert(&mut conn, "foundation:Person", "John", "person", "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:name", "John", Some("en"), "test").unwrap();
+        user.add_property(&mut conn, "foundation:name", Object::Literal {
+            value: "John".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: Some("en".to_string()),
+        }, "test").unwrap();
 
         let computer = Individual::new("foundation:ThisComputer");
         computer.assert(&mut conn, "foundation:Computer", "host", "computer", "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:hostname", "host", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:os", "macos", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:cpu", "M1", None, "test").unwrap();
-        computer.add_number_property(&mut conn, "foundation:ramGB", 8.0, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:hostname", Object::Literal {
+            value: "host".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:os", Object::Literal {
+            value: "macos".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:cpu", Object::Literal {
+            value: "M1".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:ramGB", Object::Number(8.0), "test").unwrap();
 
         let foundation = Individual::new("foundation:ThisFoundationInstance");
         foundation.assert(&mut conn, "foundation:FoundationApp", "FOUNDATION", "apps", "test").unwrap();
-        foundation.add_string_property(&mut conn, "foundation:version", "0.1.0", None, "test").unwrap();
+        foundation.add_property(&mut conn, "foundation:version", Object::Literal {
+            value: "0.1.0".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let result = get_existing_setup(&conn);
         assert!(result.is_ok());
@@ -479,14 +587,30 @@ mod tests {
         // Setup without user data
         let computer = Individual::new("foundation:ThisComputer");
         computer.assert(&mut conn, "foundation:Computer", "host", "computer", "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:hostname", "host", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:os", "linux", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:cpu", "CPU", None, "test").unwrap();
-        computer.add_number_property(&mut conn, "foundation:ramGB", 8.0, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:hostname", Object::Literal {
+            value: "host".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:os", Object::Literal {
+            value: "linux".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:cpu", Object::Literal {
+            value: "CPU".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:ramGB", Object::Number(8.0), "test").unwrap();
 
         let foundation = Individual::new("foundation:ThisFoundationInstance");
         foundation.assert(&mut conn, "foundation:FoundationApp", "FOUNDATION", "apps", "test").unwrap();
-        foundation.add_string_property(&mut conn, "foundation:version", "0.1.0", None, "test").unwrap();
+        foundation.add_property(&mut conn, "foundation:version", Object::Literal {
+            value: "0.1.0".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let result = get_existing_setup(&conn);
         assert!(result.is_err());
@@ -501,18 +625,34 @@ mod tests {
         // Setup without computer hostname
         let user = Individual::new("foundation:ThisUser");
         user.assert(&mut conn, "foundation:Person", "User", "person", "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:name", "User", Some("en"), "test").unwrap();
+        user.add_property(&mut conn, "foundation:name", Object::Literal {
+            value: "User".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: Some("en".to_string()),
+        }, "test").unwrap();
 
         let computer = Individual::new("foundation:ThisComputer");
         computer.assert(&mut conn, "foundation:Computer", "host", "computer", "test").unwrap();
         // Missing hostname
-        computer.add_string_property(&mut conn, "foundation:os", "linux", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:cpu", "CPU", None, "test").unwrap();
-        computer.add_number_property(&mut conn, "foundation:ramGB", 8.0, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:os", Object::Literal {
+            value: "linux".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:cpu", Object::Literal {
+            value: "CPU".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:ramGB", Object::Number(8.0), "test").unwrap();
 
         let foundation = Individual::new("foundation:ThisFoundationInstance");
         foundation.assert(&mut conn, "foundation:FoundationApp", "FOUNDATION", "apps", "test").unwrap();
-        foundation.add_string_property(&mut conn, "foundation:version", "0.1.0", None, "test").unwrap();
+        foundation.add_property(&mut conn, "foundation:version", Object::Literal {
+            value: "0.1.0".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let result = get_existing_setup(&conn);
         assert!(result.is_err());
@@ -553,12 +693,16 @@ mod tests {
         // Verify relationships exist
         let state = app.state::<Mutex<Connection>>();
         let conn = state.lock().unwrap();
-        let computer = Individual::new("foundation:ThisComputer");
-        let has_user = computer.get_property_values(&conn, "foundation:hasUser").unwrap();
+        let computer = Individual::get(&conn, "foundation:ThisComputer").unwrap();
+        let has_user: Vec<_> = computer.properties.iter()
+            .filter(|(prop, _)| prop == "foundation:hasUser")
+            .collect();
         assert!(!has_user.is_empty());
 
-        let foundation = Individual::new("foundation:ThisFoundationInstance");
-        let runs_on = foundation.get_property_values(&conn, "foundation:runsOn").unwrap();
+        let foundation = Individual::get(&conn, "foundation:ThisFoundationInstance").unwrap();
+        let runs_on: Vec<_> = foundation.properties.iter()
+            .filter(|(prop, _)| prop == "foundation:runsOn")
+            .collect();
         assert!(!runs_on.is_empty());
     }
 
@@ -610,18 +754,34 @@ mod tests {
 
         let user = Individual::new("foundation:ThisUser");
         user.assert(&mut conn, "foundation:Person", "User", "person", "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:name", "User", Some("en"), "test").unwrap();
+        user.add_property(&mut conn, "foundation:name", Object::Literal {
+            value: "User".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: Some("en".to_string()),
+        }, "test").unwrap();
 
         let computer = Individual::new("foundation:ThisComputer");
         computer.assert(&mut conn, "foundation:Computer", "host", "computer", "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:hostname", "host", None, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:hostname", Object::Literal {
+            value: "host".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
         // Missing OS
-        computer.add_string_property(&mut conn, "foundation:cpu", "CPU", None, "test").unwrap();
-        computer.add_number_property(&mut conn, "foundation:ramGB", 8.0, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:cpu", Object::Literal {
+            value: "CPU".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:ramGB", Object::Number(8.0), "test").unwrap();
 
         let foundation = Individual::new("foundation:ThisFoundationInstance");
         foundation.assert(&mut conn, "foundation:FoundationApp", "FOUNDATION", "apps", "test").unwrap();
-        foundation.add_string_property(&mut conn, "foundation:version", "0.1.0", None, "test").unwrap();
+        foundation.add_property(&mut conn, "foundation:version", Object::Literal {
+            value: "0.1.0".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let result = get_existing_setup(&conn);
         assert!(result.is_err());
@@ -635,18 +795,34 @@ mod tests {
 
         let user = Individual::new("foundation:ThisUser");
         user.assert(&mut conn, "foundation:Person", "User", "person", "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:name", "User", Some("en"), "test").unwrap();
+        user.add_property(&mut conn, "foundation:name", Object::Literal {
+            value: "User".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: Some("en".to_string()),
+        }, "test").unwrap();
 
         let computer = Individual::new("foundation:ThisComputer");
         computer.assert(&mut conn, "foundation:Computer", "host", "computer", "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:hostname", "host", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:os", "linux", None, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:hostname", Object::Literal {
+            value: "host".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:os", Object::Literal {
+            value: "linux".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
         // Missing CPU
-        computer.add_number_property(&mut conn, "foundation:ramGB", 8.0, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:ramGB", Object::Number(8.0), "test").unwrap();
 
         let foundation = Individual::new("foundation:ThisFoundationInstance");
         foundation.assert(&mut conn, "foundation:FoundationApp", "FOUNDATION", "apps", "test").unwrap();
-        foundation.add_string_property(&mut conn, "foundation:version", "0.1.0", None, "test").unwrap();
+        foundation.add_property(&mut conn, "foundation:version", Object::Literal {
+            value: "0.1.0".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let result = get_existing_setup(&conn);
         assert!(result.is_err());
@@ -660,18 +836,38 @@ mod tests {
 
         let user = Individual::new("foundation:ThisUser");
         user.assert(&mut conn, "foundation:Person", "User", "person", "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:name", "User", Some("en"), "test").unwrap();
+        user.add_property(&mut conn, "foundation:name", Object::Literal {
+            value: "User".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: Some("en".to_string()),
+        }, "test").unwrap();
 
         let computer = Individual::new("foundation:ThisComputer");
         computer.assert(&mut conn, "foundation:Computer", "host", "computer", "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:hostname", "host", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:os", "linux", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:cpu", "CPU", None, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:hostname", Object::Literal {
+            value: "host".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:os", Object::Literal {
+            value: "linux".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:cpu", Object::Literal {
+            value: "CPU".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
         // Missing RAM
 
         let foundation = Individual::new("foundation:ThisFoundationInstance");
         foundation.assert(&mut conn, "foundation:FoundationApp", "FOUNDATION", "apps", "test").unwrap();
-        foundation.add_string_property(&mut conn, "foundation:version", "0.1.0", None, "test").unwrap();
+        foundation.add_property(&mut conn, "foundation:version", Object::Literal {
+            value: "0.1.0".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let result = get_existing_setup(&conn);
         assert!(result.is_err());
@@ -685,14 +881,30 @@ mod tests {
 
         let user = Individual::new("foundation:ThisUser");
         user.assert(&mut conn, "foundation:Person", "User", "person", "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:name", "User", Some("en"), "test").unwrap();
+        user.add_property(&mut conn, "foundation:name", Object::Literal {
+            value: "User".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: Some("en".to_string()),
+        }, "test").unwrap();
 
         let computer = Individual::new("foundation:ThisComputer");
         computer.assert(&mut conn, "foundation:Computer", "host", "computer", "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:hostname", "host", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:os", "linux", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:cpu", "CPU", None, "test").unwrap();
-        computer.add_number_property(&mut conn, "foundation:ramGB", 8.0, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:hostname", Object::Literal {
+            value: "host".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:os", Object::Literal {
+            value: "linux".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:cpu", Object::Literal {
+            value: "CPU".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:ramGB", Object::Number(8.0), "test").unwrap();
 
         let foundation = Individual::new("foundation:ThisFoundationInstance");
         foundation.assert(&mut conn, "foundation:FoundationApp", "FOUNDATION", "apps", "test").unwrap();
@@ -710,19 +922,39 @@ mod tests {
 
         let user = Individual::new("foundation:ThisUser");
         user.assert(&mut conn, "foundation:Person", "User", "person", "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:name", "User", Some("en"), "test").unwrap();
+        user.add_property(&mut conn, "foundation:name", Object::Literal {
+            value: "User".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: Some("en".to_string()),
+        }, "test").unwrap();
 
         let computer = Individual::new("foundation:ThisComputer");
         computer.assert(&mut conn, "foundation:Computer", "host", "computer", "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:hostname", "host", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:os", "linux", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:cpu", "CPU", None, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:hostname", Object::Literal {
+            value: "host".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:os", Object::Literal {
+            value: "linux".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:cpu", Object::Literal {
+            value: "CPU".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
         // Add RAM as integer instead of float
-        computer.add_integer_property(&mut conn, "foundation:ramGB", 16, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:ramGB", Object::Integer(16), "test").unwrap();
 
         let foundation = Individual::new("foundation:ThisFoundationInstance");
         foundation.assert(&mut conn, "foundation:FoundationApp", "FOUNDATION", "apps", "test").unwrap();
-        foundation.add_string_property(&mut conn, "foundation:version", "0.1.0", None, "test").unwrap();
+        foundation.add_property(&mut conn, "foundation:version", Object::Literal {
+            value: "0.1.0".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let result = get_existing_setup(&conn);
         assert!(result.is_ok());
@@ -843,19 +1075,43 @@ mod tests {
 
         let user = Individual::new("foundation:ThisUser");
         user.assert(&mut conn, "foundation:Person", "User", "person", "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:name", "User", Some("en"), "test").unwrap();
+        user.add_property(&mut conn, "foundation:name", Object::Literal {
+            value: "User".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: Some("en".to_string()),
+        }, "test").unwrap();
 
         let computer = Individual::new("foundation:ThisComputer");
         computer.assert(&mut conn, "foundation:Computer", "host", "computer", "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:hostname", "host", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:os", "linux", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:cpu", "CPU", None, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:hostname", Object::Literal {
+            value: "host".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:os", Object::Literal {
+            value: "linux".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:cpu", Object::Literal {
+            value: "CPU".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
         // Add RAM as string that can be parsed
-        computer.add_string_property(&mut conn, "foundation:ramGB", "32.5", None, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:ramGB", Object::Literal {
+            value: "32.5".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let foundation = Individual::new("foundation:ThisFoundationInstance");
         foundation.assert(&mut conn, "foundation:FoundationApp", "FOUNDATION", "apps", "test").unwrap();
-        foundation.add_string_property(&mut conn, "foundation:version", "0.1.0", None, "test").unwrap();
+        foundation.add_property(&mut conn, "foundation:version", Object::Literal {
+            value: "0.1.0".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let result = get_existing_setup(&conn);
         assert!(result.is_ok());
@@ -870,19 +1126,43 @@ mod tests {
 
         let user = Individual::new("foundation:ThisUser");
         user.assert(&mut conn, "foundation:Person", "User", "person", "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:name", "User", Some("en"), "test").unwrap();
+        user.add_property(&mut conn, "foundation:name", Object::Literal {
+            value: "User".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: Some("en".to_string()),
+        }, "test").unwrap();
 
         let computer = Individual::new("foundation:ThisComputer");
         computer.assert(&mut conn, "foundation:Computer", "host", "computer", "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:hostname", "host", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:os", "linux", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:cpu", "CPU", None, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:hostname", Object::Literal {
+            value: "host".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:os", Object::Literal {
+            value: "linux".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:cpu", Object::Literal {
+            value: "CPU".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
         // Add RAM as string that cannot be parsed
-        computer.add_string_property(&mut conn, "foundation:ramGB", "invalid", None, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:ramGB", Object::Literal {
+            value: "invalid".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let foundation = Individual::new("foundation:ThisFoundationInstance");
         foundation.assert(&mut conn, "foundation:FoundationApp", "FOUNDATION", "apps", "test").unwrap();
-        foundation.add_string_property(&mut conn, "foundation:version", "0.1.0", None, "test").unwrap();
+        foundation.add_property(&mut conn, "foundation:version", Object::Literal {
+            value: "0.1.0".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let result = get_existing_setup(&conn);
         assert!(result.is_err());
@@ -1055,18 +1335,38 @@ mod tests {
 
         let user = Individual::new("foundation:ThisUser");
         user.assert(&mut conn, "foundation:Person", "", "person", "test").unwrap();
-        user.add_string_property(&mut conn, "foundation:name", "", Some("en"), "test").unwrap();
+        user.add_property(&mut conn, "foundation:name", Object::Literal {
+            value: "".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: Some("en".to_string()),
+        }, "test").unwrap();
 
         let computer = Individual::new("foundation:ThisComputer");
         computer.assert(&mut conn, "foundation:Computer", "", "computer", "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:hostname", "", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:os", "", None, "test").unwrap();
-        computer.add_string_property(&mut conn, "foundation:cpu", "", None, "test").unwrap();
-        computer.add_number_property(&mut conn, "foundation:ramGB", 0.0, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:hostname", Object::Literal {
+            value: "".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:os", Object::Literal {
+            value: "".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:cpu", Object::Literal {
+            value: "".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
+        computer.add_property(&mut conn, "foundation:ramGB", Object::Number(0.0), "test").unwrap();
 
         let foundation = Individual::new("foundation:ThisFoundationInstance");
         foundation.assert(&mut conn, "foundation:FoundationApp", "", "apps", "test").unwrap();
-        foundation.add_string_property(&mut conn, "foundation:version", "", None, "test").unwrap();
+        foundation.add_property(&mut conn, "foundation:version", Object::Literal {
+            value: "".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "test").unwrap();
 
         let result = get_existing_setup(&conn);
         assert!(result.is_ok());

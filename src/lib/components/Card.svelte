@@ -12,10 +12,9 @@
 
 <style>
 	.card {
-		background: var(--bg-color);
-		opacity: 0.8;
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
+		background: rgba(0, 0, 0, 0.8);
+		backdrop-filter: blur(2px);
+		-webkit-backdrop-filter: blur(2px);
 		border-radius: 16px;
 		padding: 1rem;
 		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
