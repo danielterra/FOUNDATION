@@ -25,3 +25,27 @@ Examples:
 - A user of the system
 - A project contributor
 """ .
+
+# -----------------------------------------------------------------------------
+# Person Properties
+# -----------------------------------------------------------------------------
+
+foundation:name a owl:DatatypeProperty ;
+    rdfs:label "name" ;
+    rdfs:comment "The name of a person" ;
+    rdfs:domain foundation:Person ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :john foundation:name "John Doe" .
+""" .
+
+foundation:email a owl:DatatypeProperty ;
+    rdfs:label "email" ;
+    rdfs:comment "Email address of a person" ;
+    rdfs:domain foundation:Person ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :john foundation:email "john@example.com" .
+""" .

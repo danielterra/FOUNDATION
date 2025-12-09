@@ -1,5 +1,7 @@
 # FOUNDATION
 
+![FOUNDATION Screenshot](static/Screenshot1.png)
+
 ## A SOLID FOUNDATION FOR FREEDOM
 
 FOUNDATION reimagines how anyone — not just developers — can manage, automate, and derive knowledge from their data. Your computer. Your data. Your rules. No Big Tech gatekeepers.

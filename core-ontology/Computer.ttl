@@ -67,3 +67,54 @@ Example:
 
 The unit is gigabytes as specified by qudt:applicableUnit.
 """ .
+
+foundation:hostname a owl:DatatypeProperty ;
+    rdfs:label "hostname" ;
+    rdfs:comment "Network hostname of the computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:hostname "daniels-macbook" .
+""" .
+
+foundation:os a owl:DatatypeProperty ;
+    rdfs:label "operating system" ;
+    rdfs:comment "Operating system running on the computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:os "macos" .
+  :server foundation:os "linux" .
+""" .
+
+foundation:cpu a owl:DatatypeProperty ;
+    rdfs:label "CPU" ;
+    rdfs:comment "CPU/processor information (simplified property)" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:cpu "Apple M1" .
+""" .
+
+foundation:ramGB a owl:DatatypeProperty ;
+    rdfs:label "RAM GB" ;
+    rdfs:comment "RAM capacity in gigabytes (simplified property)" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:ramGB "16.0"^^xsd:decimal .
+""" .
+
+foundation:hasUser a owl:ObjectProperty ;
+    rdfs:label "has user" ;
+    rdfs:comment "Person who uses this computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range foundation:Person ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:hasUser :daniel .
+""" .

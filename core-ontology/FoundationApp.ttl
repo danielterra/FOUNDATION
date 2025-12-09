@@ -1,0 +1,49 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# FoundationApp
+# =============================================================================
+# Represents the FOUNDATION application itself
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:FoundationApp a owl:Class ;
+    rdfs:subClassOf foundation:DigitalThing ;
+    rdfs:label "FOUNDATION App" ;
+    rdfs:comment "The FOUNDATION application - a semantic knowledge management system" ;
+    foundation:icon "apps" ;
+    rdfs:seeAlso """
+Examples:
+- The running instance of FOUNDATION on a user's computer
+- A specific installation of FOUNDATION
+""" .
+
+# -----------------------------------------------------------------------------
+# FoundationApp Properties
+# -----------------------------------------------------------------------------
+
+foundation:version a owl:DatatypeProperty ;
+    rdfs:label "version" ;
+    rdfs:comment "Version number of the FOUNDATION application" ;
+    rdfs:domain foundation:FoundationApp ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :thisFoundation foundation:version "0.1.0" .
+""" .
+
+foundation:runsOn a owl:ObjectProperty ;
+    rdfs:label "runs on" ;
+    rdfs:comment "Computer that this application runs on" ;
+    rdfs:domain foundation:FoundationApp ;
+    rdfs:range foundation:Computer ;
+    rdfs:seeAlso """
+Example:
+  :thisFoundation foundation:runsOn :macbook .
+""" .
