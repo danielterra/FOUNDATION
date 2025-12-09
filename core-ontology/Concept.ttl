@@ -1,0 +1,27 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Concept
+# =============================================================================
+# Ideas, categories, classifications, or types
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Concept a owl:Class ;
+    rdfs:subClassOf foundation:AbstractThing ;
+    rdfs:label "Concept" ;
+    rdfs:comment "Ideas, categories, classifications, or types" ;
+    foundation:icon "lightbulb" ;
+    rdfs:seeAlso """
+Examples:
+- Democracy (political concept)
+- Object-Oriented Programming (software concept)
+- Sustainability (environmental concept)
+- A classification scheme (Dewey Decimal System)
+""" .

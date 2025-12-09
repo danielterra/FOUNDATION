@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "supernova-tauri-app",
+  "productName": "FOUNDATION-tauri-app",
   "version": "0.1.0",
-  "identifier": "com.daniel.supernova-tauri-app",
+  "identifier": "com.daniel.FOUNDATION-tauri-app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,9 +12,10 @@
   "app": {
     "windows": [
       {
-        "title": "supernova-tauri-app",
+        "title": "FOUNDATION",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "maximized": true
       }
     ],
     "security": {

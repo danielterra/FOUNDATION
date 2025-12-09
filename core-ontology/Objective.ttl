@@ -1,0 +1,36 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Objective
+# =============================================================================
+# A qualitative, ambitious goal that defines what you want to achieve
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Objective a owl:Class ;
+    rdfs:subClassOf foundation:Goal ;
+    rdfs:label "Objective" ;
+    rdfs:comment "A qualitative, ambitious goal that defines what you want to achieve" ;
+    foundation:icon "target" ;
+    rdfs:seeAlso """
+Examples:
+- Build a production-ready knowledge management system
+- Establish FOUNDATION as a viable alternative to proprietary tools
+- Create a sustainable open-source community
+""" .
+
+# -----------------------------------------------------------------------------
+# Objective Relationships
+# -----------------------------------------------------------------------------
+
+foundation:hasKeyResult a owl:ObjectProperty ;
+    rdfs:label "has key result" ;
+    rdfs:comment "Links an Objective to its measurable Key Results" ;
+    rdfs:domain foundation:Objective ;
+    rdfs:range foundation:KeyResult .

@@ -1,0 +1,28 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Quality
+# =============================================================================
+# Properties, characteristics, or attributes
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Quality a owl:Class ;
+    rdfs:subClassOf foundation:AbstractThing ;
+    rdfs:label "Quality" ;
+    rdfs:comment "Properties, characteristics, or attributes" ;
+    foundation:icon "verified" ;
+    rdfs:seeAlso """
+Examples:
+- A color (red, blue)
+- A status (completed, pending)
+- A priority level (high, medium, low)
+- Performance (fast, slow)
+- Complexity (simple, complex)
+""" .

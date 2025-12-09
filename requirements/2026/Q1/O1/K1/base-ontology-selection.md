@@ -104,28 +104,36 @@ Too comprehensive for practical use. FOUNDATION needs essential concepts, not ex
 **Approach:**
 Build minimal base ontology manually, grow incrementally based on real needs.
 
-**Core Concepts:**
+**Core Ontology Structure:**
 
-Built minimal ontology covering essential concepts:
-- **AbstractThing** vs **ConcreteThing** division (ideas vs physical/digital)
-- **AgentCapacity** as mixin for entities that can act
-- Work management concepts (Goal, Problem, Solution, Task)
-- Physical infrastructure (Computer, StorageDevice)
-- Multiple inheritance pattern (e.g., Person = AgentCapacity + PhysicalThing)
+1. **External Vocabularies**:
+   - **DTYPE** (Datatype Schema): 288 triples for typed data (unit-aware properties)
+   - **QUDT** (Quantities, Units, Dimensions, Types): 48K+ triples for scientific units and quantities
+   - **RDF/RDFS/OWL Core**: Standard W3C vocabulary
 
 **Key Design Decisions:**
 
-1. **Naming convention**: Classes ending in "Capacity" = behavior/capability, without suffix = nature/essence
-2. **One file per class**: [core-ontology/](../../../../core-ontology/) with OOP-style property definitions
-3. **Examples in every class**: `rdfs:seeAlso` shows practical usage
-4. **Automatic dependency resolution**: Topological sort imports files in correct order
+1. **Naming Convention**:
+   - Classes ending in "Capacity" = behavior/capability (e.g., `AgentCapacity`)
+   - Without suffix = nature/essence (e.g., `Person`, `Computer`)
 
-**Why This Works:**
-- Start small, grow incrementally based on real needs
-- Practical size and performance (~300 triples, <1s build time)
-- Maintains semantic rigor without over-engineering
-- Clear separation: base ontology provides foundation, users extend for their domains
+2. **One File Per Class**:
+   - Each class in separate .ttl file in [core-ontology/](../../../../core-ontology/)
+   - OOP-style: class definition + its specific properties in same file
+   - Example: `Person.ttl` defines both `foundation:Person` class and person-specific properties
 
+3. **Documentation in Ontology**:
+   - Every class has `rdfs:label`, `rdfs:comment`, `foundation:icon`
+   - `rdfs:seeAlso` contains practical usage examples
+   - Examples use real data from FOUNDATION instances
+
+4. **Runtime Import**:
+   - Ontology loaded at application startup (not build-time)
+   - Progress events emitted during import for UI feedback
+   - Graceful handling of missing/malformed ontology files
+
+5. **Dependency Resolution**:
+   - Foundation classes imported via directory scan
 </details>
 
 ---
@@ -137,9 +145,7 @@ A successful base ontology should:
 1. ✅ **Provide semantic foundation** without dictating application structure
 2. ✅ **Be queryable** for concept discovery ("what is an agent?", "what types of things exist?")
 3. ✅ **Have reasonable size** (tradeoff: completeness vs performance)
-4. ⏸️ **Support multilingual** labels (future requirement - defer to later)
-5. ✅ **Not conflict** with user-defined schemas
-6. ✅ **Be maintainable** (can update/extend without breaking user data)
+4. ✅ **Be maintainable** (can update/extend without breaking user data)
 
 ## Related Problems
 

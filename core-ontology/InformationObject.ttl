@@ -1,0 +1,28 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# InformationObject
+# =============================================================================
+# Data, documents, or encoded knowledge
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:InformationObject a owl:Class ;
+    rdfs:subClassOf foundation:AbstractThing ;
+    rdfs:label "Information Object" ;
+    rdfs:comment "Data, documents, or encoded knowledge" ;
+    foundation:icon "description" ;
+    rdfs:seeAlso """
+Examples:
+- A PDF document (this ontology specification)
+- A database record (user profile data)
+- Source code (FOUNDATION codebase)
+- A scientific paper
+- A user manual
+""" .

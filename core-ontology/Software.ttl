@@ -1,0 +1,54 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Software
+# =============================================================================
+# Executable code or programs (broader than Application)
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Software a owl:Class ;
+    rdfs:subClassOf foundation:DigitalThing ;
+    rdfs:label "Software" ;
+    rdfs:comment "Executable code or programs - includes applications, libraries, services, and scripts" ;
+    foundation:icon "code" ;
+    rdfs:seeAlso """
+Examples:
+- An application (FOUNDATION, VS Code)
+- A library (React, numpy)
+- A service/daemon (PostgreSQL server, Docker daemon)
+- A script (backup.sh, deploy.py)
+- A driver (GPU driver, printer driver)
+""" .
+
+# -----------------------------------------------------------------------------
+# Software Properties
+# -----------------------------------------------------------------------------
+
+foundation:version a owl:DatatypeProperty ;
+    rdfs:label "version" ;
+    rdfs:comment "Version string of the software (e.g., '1.0.0', '2.5.3-beta')" ;
+    rdfs:domain foundation:Software ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :foundation-app foundation:version "0.1.0" .
+  :react-library foundation:version "18.2.0" .
+""" .
+
+foundation:runsOn a owl:ObjectProperty ;
+    rdfs:label "runs on" ;
+    rdfs:comment "The computer or system where this software is installed and running" ;
+    rdfs:domain foundation:Software ;
+    rdfs:range foundation:Computer ;
+    rdfs:seeAlso """
+Example:
+  :foundation-app foundation:runsOn :my-macbook .
+  :postgres-server foundation:runsOn :production-server .
+""" .

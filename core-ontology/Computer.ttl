@@ -1,0 +1,120 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+
+# =============================================================================
+# Computer
+# =============================================================================
+# A programmable electronic device that processes and stores data
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Computer a owl:Class ;
+    rdfs:subClassOf foundation:PhysicalThing ;
+    rdfs:label "Computer" ;
+    rdfs:comment "A programmable electronic device for processing and storing data" ;
+    foundation:icon "computer" ;
+    rdfs:seeAlso """
+Examples:
+- A laptop (MacBook Pro)
+- A server (AWS EC2 instance physical hardware)
+- A smartphone (iPhone, Android)
+- A desktop workstation
+- An embedded system (Raspberry Pi)
+""" .
+
+# -----------------------------------------------------------------------------
+# Computer Properties
+# -----------------------------------------------------------------------------
+
+foundation:hasStorage a owl:ObjectProperty ;
+    rdfs:label "has storage" ;
+    rdfs:comment "Storage devices that are part of or connected to this computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range foundation:StorageDevice ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:hasStorage :ssd1 .
+  :server foundation:hasStorage :disk-array .
+""" .
+
+foundation:hasProcessor a owl:DatatypeProperty ;
+    rdfs:label "has processor" ;
+    rdfs:comment "CPU/processor information" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:hasProcessor "Apple M1" .
+  :server foundation:hasProcessor "Intel Xeon E5-2680" .
+""" .
+
+foundation:hasMemory a owl:DatatypeProperty ;
+    rdfs:label "has memory" ;
+    rdfs:comment "RAM capacity in gigabytes" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:integer ;
+    qudt:applicableUnit unit:Gigabyte ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:hasMemory "16"^^xsd:integer .  # 16GB RAM
+
+The unit is gigabytes as specified by qudt:applicableUnit.
+""" .
+
+foundation:hostname a owl:DatatypeProperty ;
+    rdfs:label "hostname" ;
+    rdfs:comment "Network hostname of the computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:hostname "daniels-macbook" .
+""" .
+
+foundation:os a owl:DatatypeProperty ;
+    rdfs:label "operating system" ;
+    rdfs:comment "Operating system running on the computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:os "macos" .
+  :server foundation:os "linux" .
+""" .
+
+foundation:cpu a owl:DatatypeProperty ;
+    rdfs:label "CPU" ;
+    rdfs:comment "CPU/processor information (simplified property)" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:cpu "Apple M1" .
+""" .
+
+foundation:ramGB a owl:DatatypeProperty ;
+    rdfs:label "RAM GB" ;
+    rdfs:comment "RAM capacity in gigabytes (simplified property)" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:ramGB "16.0"^^xsd:decimal .
+""" .
+
+foundation:hasUser a owl:ObjectProperty ;
+    rdfs:label "has user" ;
+    rdfs:comment "Person who uses this computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range foundation:Person ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:hasUser :daniel .
+""" .

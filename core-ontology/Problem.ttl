@@ -1,0 +1,37 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Problem
+# =============================================================================
+# A challenge, knowledge gap, or obstacle that needs to be solved
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Problem a owl:Class ;
+    rdfs:subClassOf foundation:Concept ;
+    rdfs:label "Problem" ;
+    rdfs:comment "A challenge, knowledge gap, or obstacle that needs to be solved" ;
+    foundation:icon "error" ;
+    rdfs:seeAlso """
+Examples:
+- How to structure the base ontology?
+- Which database technology best fits our needs?
+- How to handle circular dependencies in imports?
+- How to make examples clear for all classes?
+""" .
+
+# -----------------------------------------------------------------------------
+# Problem Relationships
+# -----------------------------------------------------------------------------
+
+foundation:blocks a owl:ObjectProperty ;
+    rdfs:label "blocks" ;
+    rdfs:comment "Links a Problem to the Goal it prevents from being achieved" ;
+    rdfs:domain foundation:Problem ;
+    rdfs:range foundation:Goal .

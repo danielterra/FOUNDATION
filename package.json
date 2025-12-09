@@ -1,5 +1,5 @@
 {
-  "name": "supernova",
+  "name": "FOUNDATION",
   "version": "0.1.0",
   "description": "Simple as a spreadsheet. Powerful as enterprise software",
   "type": "module",
@@ -9,15 +9,15 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json --watch",
-    "tauri": "tauri",
-    "update:wordnet": "bash scripts/download-wordnet.sh",
-    "build:db": "rm -f supernova.db supernova.db-shm supernova.db-wal && node scripts/build-database.cjs"
+    "tauri": "tauri dev"
   },
   "license": "MIT",
   "dependencies": {
+    "@material-symbols/font-400": "^0.40.1",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
-    "d3": "^7.9.0"
+    "d3": "^7.9.0",
+    "material-symbols": "^0.40.1"
   },
   "devDependencies": {
     "@rdfjs/parser-n3": "^2.1.0",

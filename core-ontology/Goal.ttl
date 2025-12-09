@@ -1,0 +1,49 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Goal
+# =============================================================================
+# Something to be achieved or accomplished
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Goal a owl:Class ;
+    rdfs:subClassOf foundation:Concept ;
+    rdfs:label "Goal" ;
+    rdfs:comment "Something to be achieved or accomplished" ;
+    foundation:icon "flag" ;
+    rdfs:seeAlso """
+Examples:
+- Ship FOUNDATION 1.0 by Q1 2026
+- Learn Rust programming language
+- Improve database performance
+- Complete the ontology implementation
+""" .
+
+# -----------------------------------------------------------------------------
+# Goal Properties
+# -----------------------------------------------------------------------------
+
+foundation:successCriteria a owl:DatatypeProperty ;
+    rdfs:label "success criteria" ;
+    rdfs:comment "How we'll know when this is successfully completed" ;
+    rdfs:domain foundation:Goal ;
+    rdfs:range xsd:string .
+
+foundation:quarter a owl:DatatypeProperty ;
+    rdfs:label "quarter" ;
+    rdfs:comment "Fiscal quarter (e.g., Q1 2026)" ;
+    rdfs:domain foundation:Goal ;
+    rdfs:range xsd:string .
+
+foundation:priority a owl:DatatypeProperty ;
+    rdfs:label "priority" ;
+    rdfs:comment "Importance level (high, medium, low)" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .

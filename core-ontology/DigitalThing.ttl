@@ -1,0 +1,103 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# DigitalThing
+# =============================================================================
+# Digital representations or artifacts existing in computer systems
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:DigitalThing a owl:Class ;
+    rdfs:subClassOf foundation:ConcreteThing ;
+    rdfs:label "Digital Thing" ;
+    rdfs:comment "Digital representations or artifacts existing in computer systems" ;
+    foundation:icon "data_object" ;
+    rdfs:seeAlso """
+Examples:
+- A database file (FOUNDATION.db)
+- An executable program (FOUNDATION app)
+- A digital image (PNG, JPEG)
+- A website (https://foundation.local)
+- A Docker container
+""" .
+
+# -----------------------------------------------------------------------------
+# Digital Thing Properties
+# -----------------------------------------------------------------------------
+
+foundation:url a owl:DatatypeProperty ;
+    rdfs:label "URL" ;
+    rdfs:comment "Web address or location" ;
+    rdfs:domain foundation:DigitalThing ;
+    rdfs:range xsd:anyURI ;
+    rdfs:seeAlso """
+Example:
+  :foundation-app foundation:url "https://foundation.local" .
+""" .
+
+foundation:storedIn a owl:ObjectProperty ;
+    rdfs:label "stored in" ;
+    rdfs:comment "The storage device where this digital thing physically resides" ;
+    rdfs:domain foundation:DigitalThing ;
+    rdfs:range foundation:StorageDevice ;
+    rdfs:seeAlso """
+Example:
+  :foundation-db foundation:storedIn :ssd1 .
+  :docker-image foundation:storedIn :disk-array .
+""" .
+
+foundation:filePath a owl:DatatypeProperty ;
+    rdfs:label "file path" ;
+    rdfs:comment "Absolute or relative file system path" ;
+    rdfs:domain foundation:DigitalThing ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :thing-ttl foundation:filePath "core-ontology/Thing.ttl" .
+""" .
+
+foundation:lastModified a owl:DatatypeProperty ;
+    rdfs:label "last modified" ;
+    rdfs:comment "Timestamp when this file was last modified on disk" ;
+    rdfs:domain foundation:DigitalThing ;
+    rdfs:range xsd:dateTime ;
+    rdfs:seeAlso """
+Example:
+  :thing-ttl foundation:lastModified "2024-12-04T10:30:00Z"^^xsd:dateTime .
+""" .
+
+foundation:lastImported a owl:DatatypeProperty ;
+    rdfs:label "last imported" ;
+    rdfs:comment "Timestamp when this file was last imported into the database" ;
+    rdfs:domain foundation:DigitalThing ;
+    rdfs:range xsd:dateTime ;
+    rdfs:seeAlso """
+Example:
+  :thing-ttl foundation:lastImported "2024-12-04T10:25:00Z"^^xsd:dateTime .
+""" .
+
+foundation:checksum a owl:DatatypeProperty ;
+    rdfs:label "checksum" ;
+    rdfs:comment "SHA-256 hash of file contents for integrity verification" ;
+    rdfs:domain foundation:DigitalThing ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :thing-ttl foundation:checksum "a3b5c8d9e1f2..." .
+""" .
+
+foundation:tripleCount a owl:DatatypeProperty ;
+    rdfs:label "triple count" ;
+    rdfs:comment "Number of RDF triples contained in or imported from this digital thing" ;
+    rdfs:domain foundation:DigitalThing ;
+    rdfs:range xsd:integer ;
+    rdfs:seeAlso """
+Example:
+  :thing-ttl foundation:tripleCount "42"^^xsd:integer .
+""" .

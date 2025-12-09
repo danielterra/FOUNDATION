@@ -1,0 +1,38 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Task
+# =============================================================================
+# A specific action to be completed
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Task a owl:Class ;
+    rdfs:subClassOf foundation:Process ;
+    rdfs:label "Task" ;
+    rdfs:comment "A specific action to be completed" ;
+    foundation:icon "check_circle" ;
+    rdfs:seeAlso """
+Examples:
+- Create Agent.ttl file
+- Add examples to all ontology classes
+- Run npm run build:db
+- Update README with new features
+- Fix circular dependency bug
+""" .
+
+# -----------------------------------------------------------------------------
+# Task Relationships
+# -----------------------------------------------------------------------------
+
+foundation:contributesTo a owl:ObjectProperty ;
+    rdfs:label "contributes to" ;
+    rdfs:comment "Links a Task to the Goal or Solution it helps achieve" ;
+    rdfs:domain foundation:Task ;
+    rdfs:range owl:Thing .

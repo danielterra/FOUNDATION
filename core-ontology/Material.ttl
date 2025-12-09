@@ -1,0 +1,28 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Material
+# =============================================================================
+# Physical things that do not act autonomously
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Material a owl:Class ;
+    rdfs:subClassOf foundation:PhysicalThing ;
+    rdfs:label "Material" ;
+    rdfs:comment "Physical things that do not act autonomously" ;
+    foundation:icon "texture" ;
+    rdfs:seeAlso """
+Examples:
+- A desk (furniture)
+- A server rack (hardware infrastructure)
+- A keyboard (input device)
+- Raw materials (wood, metal)
+- A printed document
+""" .

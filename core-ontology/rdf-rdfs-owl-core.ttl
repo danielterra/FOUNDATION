@@ -2,6 +2,7 @@
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
 
 # ============================================================================
 # RDF/RDFS/OWL Core Vocabulary
@@ -75,13 +76,13 @@ rdfs:Container a rdfs:Class ;
 # ----------------------------------------------------------------------------
 
 rdfs:subClassOf a rdf:Property ;
-    rdfs:label "subClassOf" ;
+    rdfs:label "subclass of" ;
     rdfs:comment "The subject is a subclass of a class." ;
     rdfs:domain rdfs:Class ;
     rdfs:range rdfs:Class .
 
 rdfs:subPropertyOf a rdf:Property ;
-    rdfs:label "subPropertyOf" ;
+    rdfs:label "subproperty of" ;
     rdfs:comment "The subject is a subproperty of a property." ;
     rdfs:domain rdf:Property ;
     rdfs:range rdf:Property .
@@ -111,13 +112,13 @@ rdfs:comment a rdf:Property ;
     rdfs:range rdfs:Literal .
 
 rdfs:seeAlso a rdf:Property ;
-    rdfs:label "seeAlso" ;
+    rdfs:label "see also" ;
     rdfs:comment "Further information about the subject resource." ;
     rdfs:domain rdfs:Resource ;
     rdfs:range rdfs:Resource .
 
 rdfs:isDefinedBy a rdf:Property ;
-    rdfs:label "isDefinedBy" ;
+    rdfs:label "is defined by" ;
     rdfs:comment "The definition of the subject resource." ;
     rdfs:subPropertyOf rdfs:seeAlso ;
     rdfs:domain rdfs:Resource ;
@@ -134,7 +135,8 @@ owl:Class a rdfs:Class ;
 
 owl:Thing a owl:Class ;
     rdfs:label "Thing" ;
-    rdfs:comment "The class of OWL individuals." .
+    rdfs:comment "The class of OWL individuals." ;
+    foundation:icon "category" .
 
 owl:Nothing a owl:Class ;
     rdfs:label "Nothing" ;
@@ -146,52 +148,52 @@ owl:Nothing a owl:Class ;
 # ----------------------------------------------------------------------------
 
 owl:ObjectProperty a rdfs:Class ;
-    rdfs:label "ObjectProperty" ;
+    rdfs:label "Object Property" ;
     rdfs:comment "The class of object properties." ;
     rdfs:subClassOf rdf:Property .
 
 owl:DatatypeProperty a rdfs:Class ;
-    rdfs:label "DatatypeProperty" ;
+    rdfs:label "Datatype Property" ;
     rdfs:comment "The class of data properties." ;
     rdfs:subClassOf rdf:Property .
 
 owl:AnnotationProperty a rdfs:Class ;
-    rdfs:label "AnnotationProperty" ;
+    rdfs:label "Annotation Property" ;
     rdfs:comment "The class of annotation properties." ;
     rdfs:subClassOf rdf:Property .
 
 owl:FunctionalProperty a rdfs:Class ;
-    rdfs:label "FunctionalProperty" ;
+    rdfs:label "Functional Property" ;
     rdfs:comment "The class of functional properties." ;
     rdfs:subClassOf rdf:Property .
 
 owl:InverseFunctionalProperty a rdfs:Class ;
-    rdfs:label "InverseFunctionalProperty" ;
+    rdfs:label "Inverse Functional Property" ;
     rdfs:comment "The class of inverse-functional properties." ;
     rdfs:subClassOf owl:ObjectProperty .
 
 owl:TransitiveProperty a rdfs:Class ;
-    rdfs:label "TransitiveProperty" ;
+    rdfs:label "Transitive Property" ;
     rdfs:comment "The class of transitive properties." ;
     rdfs:subClassOf owl:ObjectProperty .
 
 owl:SymmetricProperty a rdfs:Class ;
-    rdfs:label "SymmetricProperty" ;
+    rdfs:label "Symmetric Property" ;
     rdfs:comment "The class of symmetric properties." ;
     rdfs:subClassOf owl:ObjectProperty .
 
 owl:AsymmetricProperty a rdfs:Class ;
-    rdfs:label "AsymmetricProperty" ;
+    rdfs:label "Asymmetric Property" ;
     rdfs:comment "The class of asymmetric properties." ;
     rdfs:subClassOf owl:ObjectProperty .
 
 owl:ReflexiveProperty a rdfs:Class ;
-    rdfs:label "ReflexiveProperty" ;
+    rdfs:label "Reflexive Property" ;
     rdfs:comment "The class of reflexive properties." ;
     rdfs:subClassOf owl:ObjectProperty .
 
 owl:IrreflexiveProperty a rdfs:Class ;
-    rdfs:label "IrreflexiveProperty" ;
+    rdfs:label "Irreflexive Property" ;
     rdfs:comment "The class of irreflexive properties." ;
     rdfs:subClassOf owl:ObjectProperty .
 
@@ -200,37 +202,37 @@ owl:IrreflexiveProperty a rdfs:Class ;
 # ----------------------------------------------------------------------------
 
 owl:inverseOf a rdf:Property ;
-    rdfs:label "inverseOf" ;
+    rdfs:label "inverse of" ;
     rdfs:comment "The property that determines that two given properties are inverse." ;
     rdfs:domain owl:ObjectProperty ;
     rdfs:range owl:ObjectProperty .
 
 owl:equivalentClass a rdf:Property ;
-    rdfs:label "equivalentClass" ;
+    rdfs:label "equivalent class" ;
     rdfs:comment "The property that determines that two given classes are equivalent." ;
     rdfs:domain owl:Class ;
     rdfs:range owl:Class .
 
 owl:equivalentProperty a rdf:Property ;
-    rdfs:label "equivalentProperty" ;
+    rdfs:label "equivalent property" ;
     rdfs:comment "The property that determines that two given properties are equivalent." ;
     rdfs:domain rdf:Property ;
     rdfs:range rdf:Property .
 
 owl:disjointWith a rdf:Property ;
-    rdfs:label "disjointWith" ;
+    rdfs:label "disjoint with" ;
     rdfs:comment "The property that determines that two given classes are disjoint." ;
     rdfs:domain owl:Class ;
     rdfs:range owl:Class .
 
 owl:sameAs a rdf:Property ;
-    rdfs:label "sameAs" ;
+    rdfs:label "same as" ;
     rdfs:comment "The property that determines that two given individuals are equal." ;
     rdfs:domain owl:Thing ;
     rdfs:range owl:Thing .
 
 owl:differentFrom a rdf:Property ;
-    rdfs:label "differentFrom" ;
+    rdfs:label "different from" ;
     rdfs:comment "The property that determines that two given individuals are different." ;
     rdfs:domain owl:Thing ;
     rdfs:range owl:Thing .
@@ -273,13 +275,13 @@ xsd:time a rdfs:Datatype ;
     rdfs:comment "The time datatype." .
 
 xsd:dateTime a rdfs:Datatype ;
-    rdfs:label "dateTime" ;
+    rdfs:label "date time" ;
     rdfs:comment "The dateTime datatype." .
 
 xsd:dateTimeStamp a rdfs:Datatype ;
-    rdfs:label "dateTimeStamp" ;
+    rdfs:label "date time stamp" ;
     rdfs:comment "The dateTimeStamp datatype." .
 
 xsd:anyURI a rdfs:Datatype ;
-    rdfs:label "anyURI" ;
+    rdfs:label "any URI" ;
     rdfs:comment "The anyURI datatype." .

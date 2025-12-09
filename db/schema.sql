@@ -1,9 +1,9 @@
 -- ============================================================================
--- SuperNOVA Database Schema
+-- FOUNDATION Database Schema
 -- ============================================================================
 -- RDF-Native Triple Store with Transaction & Origin Tracking
 --
--- Architecture: Stores RDF triples (subject-predicate-object) with SuperNOVA extensions
+-- Architecture: Stores RDF triples (subject-predicate-object) with FOUNDATION extensions
 -- - Subject: IRI or blank node
 -- - Predicate: IRI for property
 -- - Object: IRI, Literal with datatype, or Blank node
@@ -17,7 +17,7 @@
 -- - Full RDF compatibility: Export to Turtle/JSON-LD without transformation
 -- ============================================================================
 
-PRAGMA journal_mode = WAL;
+PRAGMA journal_mode = DELETE;
 PRAGMA foreign_keys = ON;
 PRAGMA synchronous = NORMAL;
 
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS triples (
   object_datetime INTEGER,         -- Populated for xsd:dateTime (Unix epoch ms)
   object_boolean INTEGER,          -- Populated for xsd:boolean (0 = false, 1 = true)
 
-  -- SuperNOVA extensions: transaction metadata
+  -- FOUNDATION extensions: transaction metadata
   tx INTEGER NOT NULL,             -- Transaction ID (references transactions.tx)
   origin_id INTEGER NOT NULL,      -- Origin ID (references origins.id)
   retracted INTEGER NOT NULL DEFAULT 0,  -- 0 = active, 1 = retracted
@@ -152,13 +152,14 @@ INSERT OR IGNORE INTO namespaces (prefix, iri) VALUES
   ('owl', 'http://www.w3.org/2002/07/owl#'),
   ('xsd', 'http://www.w3.org/2001/XMLSchema#'),
   ('skos', 'http://www.w3.org/2004/02/skos/core#'),
-  ('supernova', 'http://supernova.local/ontology/');
+  ('dtype', 'http://www.linkedmodel.org/schema/dtype#'),
+  ('foundation', 'http://foundation.local/ontology/');
 
 -- ============================================================================
 -- Origins Table
 -- ============================================================================
 -- Store origin identifiers for triples
--- Instead of repeating strings like "wordnet:synsets" 4000 times,
+-- Instead of repeating origin strings thousands of times,
 -- we store an integer ID and join when needed
 
 CREATE TABLE IF NOT EXISTS origins (
@@ -170,7 +171,8 @@ CREATE TABLE IF NOT EXISTS origins (
 -- Initialize common origins
 INSERT OR IGNORE INTO origins (id, name, description) VALUES
   (1, 'rdf:core', 'RDF/RDFS/OWL core ontology'),
-  (2, 'wordnet:synsets', 'English WordNet 2024 noun synsets');
+  (2, 'foundation:CurrentUser', 'Data provided by the current user'),
+  (3, 'foundation:FOUNDATION', 'Data collected automatically by FOUNDATION application');
 
 -- ============================================================================
 -- Metadata Table
@@ -188,6 +190,25 @@ INSERT OR IGNORE INTO metadata (key, value, updated_at) VALUES
   ('schema_version', '3', strftime('%s', 'now') * 1000),
   ('created_at', strftime('%s', 'now') * 1000, strftime('%s', 'now') * 1000),
   ('ontology_imported', 'false', strftime('%s', 'now') * 1000);
+
+-- ============================================================================
+-- Ontology Files Table
+-- ============================================================================
+-- Track imported ontology files for incremental reimport
+-- This is separate from the triple store to avoid circular dependencies
+-- (we need this table to know which files to import, including DigitalThing.ttl)
+
+CREATE TABLE IF NOT EXISTS ontology_files (
+  file_path TEXT PRIMARY KEY,          -- Full path to the file
+  file_name TEXT NOT NULL,             -- Just the filename (e.g., "Thing.ttl")
+  last_modified INTEGER NOT NULL,      -- Unix timestamp (seconds) when file was last modified on disk
+  last_imported INTEGER NOT NULL,      -- Unix timestamp (seconds) when file was last imported into DB
+  checksum TEXT NOT NULL,              -- SHA-256 hash of file contents for integrity verification
+  triple_count INTEGER NOT NULL        -- Number of triples imported from this file
+);
+
+CREATE INDEX IF NOT EXISTS idx_ontology_files_name ON ontology_files(file_name);
+CREATE INDEX IF NOT EXISTS idx_ontology_files_modified ON ontology_files(last_modified);
 
 -- ============================================================================
 -- Views for Common Queries

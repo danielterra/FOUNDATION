@@ -1,0 +1,51 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Person
+# =============================================================================
+# A human being
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Person a owl:Class ;
+    rdfs:subClassOf foundation:AgentCapacity , foundation:PhysicalThing ;
+    rdfs:label "Person" ;
+    rdfs:comment "A human being (physical nature with agent capacity)" ;
+    foundation:icon "person" ;
+    rdfs:seeAlso """
+Examples:
+- Daniel Terra (developer)
+- A team member
+- A user of the system
+- A project contributor
+""" .
+
+# -----------------------------------------------------------------------------
+# Person Properties
+# -----------------------------------------------------------------------------
+
+foundation:name a owl:DatatypeProperty ;
+    rdfs:label "name" ;
+    rdfs:comment "The name of a person" ;
+    rdfs:domain foundation:Person ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :john foundation:name "John Doe" .
+""" .
+
+foundation:email a owl:DatatypeProperty ;
+    rdfs:label "email" ;
+    rdfs:comment "Email address of a person" ;
+    rdfs:domain foundation:Person ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :john foundation:email "john@example.com" .
+""" .

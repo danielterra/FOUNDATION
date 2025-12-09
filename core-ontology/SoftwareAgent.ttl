@@ -1,0 +1,28 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# SoftwareAgent
+# =============================================================================
+# An AI or automated software system that acts autonomously
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:SoftwareAgent a owl:Class ;
+    rdfs:subClassOf foundation:AgentCapacity , foundation:DigitalThing ;
+    rdfs:label "Software Agent" ;
+    rdfs:comment "An AI or automated software system that acts autonomously (digital nature with agent capacity)" ;
+    foundation:icon "smart_toy" ;
+    rdfs:seeAlso """
+Examples:
+- Claude (AI assistant)
+- FOUNDATION AI Assistant (local AI)
+- A chatbot
+- An automation script
+- A CI/CD pipeline agent
+""" .

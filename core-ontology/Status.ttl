@@ -1,0 +1,65 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Status
+# =============================================================================
+# The current state of work on a goal, problem, or solution
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Status a owl:Class ;
+    rdfs:subClassOf foundation:Quality ;
+    rdfs:label "Status" ;
+    rdfs:comment "The current state of work on a goal, problem, or solution" ;
+    foundation:icon "radio_button_checked" ;
+    rdfs:seeAlso """
+Examples:
+- foundation:Pending (not started)
+- foundation:InProgress (currently working)
+- foundation:Completed (finished successfully)
+- foundation:Rejected (tried but abandoned)
+- foundation:Paused (temporarily suspended)
+""" .
+
+# -----------------------------------------------------------------------------
+# Status Individuals
+# -----------------------------------------------------------------------------
+
+foundation:Pending a foundation:Status ;
+    rdfs:label "Pending" ;
+    rdfs:comment "Not yet started" .
+
+foundation:InProgress a foundation:Status ;
+    rdfs:label "In Progress" ;
+    rdfs:comment "Currently being worked on" .
+
+foundation:Completed a foundation:Status ;
+    rdfs:label "Completed" ;
+    rdfs:comment "Successfully finished" .
+
+foundation:Rejected a foundation:Status ;
+    rdfs:label "Rejected" ;
+    rdfs:comment "Attempted but rejected after evaluation" .
+
+foundation:Paused a foundation:Status ;
+    rdfs:label "Paused" ;
+    rdfs:comment "Temporarily suspended" .
+
+# -----------------------------------------------------------------------------
+# Status Relationships
+# -----------------------------------------------------------------------------
+
+foundation:hasStatus a owl:ObjectProperty ;
+    rdfs:label "has status" ;
+    rdfs:comment "The current state of work" ;
+    rdfs:range foundation:Status .
+
+foundation:dependsOn a owl:ObjectProperty ;
+    rdfs:label "depends on" ;
+    rdfs:comment "Indicates a dependency between work items" .

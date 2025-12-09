@@ -2,32 +2,24 @@
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import TopBar from '$lib/components/graph/TopBar.svelte';
-	import SidePanel from '$lib/components/graph/SidePanel.svelte';
 	import GraphVisualization from '$lib/components/graph/GraphVisualization.svelte';
-	import SearchBar from '$lib/components/graph/SearchBar.svelte';
+	import SetupWizard from '$lib/components/SetupWizard.svelte';
+	import KeyboardShortcuts from '$lib/components/KeyboardShortcuts.svelte';
+	import EntityInspectorPanel from '$lib/components/graph/EntityInspectorPanel.svelte';
 
-	let loading = true;
-	let error = null;
-	let fullGraphData = null;
-	let currentNodeId = null;
-	let currentNodeLabel = '';
-	let nodeTriples = [];
-	let nodeBacklinks = [];
-	let nodeStatistics = null;
-	let applicableProperties = [];
-	let loadingTriples = false;
-	let graphComponent;
-	let visibleGraphData = null;
+	let loading = $state(true);
+	let error = $state(null);
+	let showSetupWizard = $state(false);
+	let checkingSetup = $state(true);
+	let fullGraphData = $state(null);
+	let currentNodeId = $state(null);
+	let currentNodeLabel = $state('');
+	let graphComponent = $state();
+	let visibleGraphData = $state(null);
+	let shortcuts = $state([]);
+	let topBarComponent = $state();
+	let inspectorPanels = $state([]);
 
-	// Get display name for a node (use label if available, otherwise simplify URI)
-	function getNodeDisplayName(nodeId) {
-		const node = fullGraphData?.nodes.find((n) => n.id === nodeId);
-		if (node) {
-			return node.label;
-		}
-		// Fallback: simplify URI
-		return nodeId.split(/[/#]/).pop();
-	}
 
 	// Recenter graph to initial position and reset zoom
 	function recenterGraph() {
@@ -36,33 +28,85 @@
 		}
 	}
 
+	// Reload graph data from backend
+	async function reloadGraph() {
+		try {
+			loading = true;
+			error = null;
+
+			// Reload the current node (or CurrentUser if none selected)
+			const targetNodeId = currentNodeId || 'http://foundation.local/ontology/CurrentUser';
+
+			// Use entity__get to reload the node data (same as clicking on a node)
+			await navigateToNode(targetNodeId);
+
+			loading = false;
+		} catch (err) {
+			error = err.toString();
+			loading = false;
+		}
+	}
+
 	// Handle keyboard shortcuts
 	function handleKeydown(event) {
+		// CMD+F or CTRL+F to focus search
+		if ((event.metaKey || event.ctrlKey) && event.key === 'f') {
+			event.preventDefault();
+			if (topBarComponent) {
+				topBarComponent.focusSearch();
+			}
+		}
+
 		// CMD+0 or CTRL+0 to recenter
 		if ((event.metaKey || event.ctrlKey) && event.key === '0') {
 			event.preventDefault();
 			recenterGraph();
 		}
+
+		// CMD+R or CTRL+R to reload
+		if ((event.metaKey || event.ctrlKey) && event.key === 'r') {
+			event.preventDefault();
+			reloadGraph();
+		}
+	}
+
+	// Handle setup wizard completion
+	async function handleSetupComplete() {
+		showSetupWizard = false;
+		window.location.reload();
 	}
 
 	onMount(async () => {
+		// Load keyboard shortcuts from backend
+		try {
+			const shortcutsJson = await invoke('shortcuts__get_all');
+			shortcuts = JSON.parse(shortcutsJson);
+		} catch (e) {
+			console.error('Failed to load shortcuts:', e);
+		}
+
+		// Check if initial setup is needed
+		try {
+			const setupComplete = await invoke('setup__check');
+			if (!setupComplete) {
+				showSetupWizard = true;
+				checkingSetup = false;
+				return;
+			}
+		} catch (e) {
+			console.error('Setup check failed:', e);
+		}
+
+		checkingSetup = false;
+
 		// Add keyboard event listener
 		window.addEventListener('keydown', handleKeydown);
 
 		try {
-			// Get graph data from Rust backend starting from owl:Thing
-			const graphJson = await invoke('get_ontology_graph', {
-				centralNodeId: 'http://www.w3.org/2002/07/owl#Thing'
-			});
-			fullGraphData = JSON.parse(graphJson);
+			// Start from foundation:ThisUser
+			await navigateToNode('foundation:ThisUser');
 
 			loading = false;
-
-			// Wait for next tick to ensure container dimensions are available
-			setTimeout(() => {
-				// Start with owl:Thing as the root node
-				navigateToNode('http://www.w3.org/2002/07/owl#Thing');
-			}, 0);
 
 			// Add window resize listener
 			const handleResize = () => {
@@ -84,92 +128,77 @@
 		}
 	});
 
-	async function loadNodeTriples(nodeId) {
-		loadingTriples = true;
-		try {
-			// Load triples, backlinks, statistics, and applicable properties in parallel
-			const [triplesJson, backlinksJson, statisticsJson, propertiesJson] = await Promise.all([
-				invoke('get_node_triples', { nodeId: nodeId }),
-				invoke('get_node_backlinks', { nodeId: nodeId }),
-				invoke('get_node_statistics', { nodeId: nodeId }),
-				invoke('get_applicable_properties', { nodeId: nodeId })
-			]);
-
-			nodeTriples = JSON.parse(triplesJson);
-			nodeBacklinks = JSON.parse(backlinksJson);
-			nodeStatistics = JSON.parse(statisticsJson);
-			applicableProperties = JSON.parse(propertiesJson);
-		} catch (err) {
-			console.error('Failed to load node data:', err);
-			nodeTriples = [];
-			nodeBacklinks = [];
-			nodeStatistics = null;
-			applicableProperties = [];
-		} finally {
-			loadingTriples = false;
-		}
-	}
 
 	async function navigateToNode(nodeId) {
-		// Load new graph data centered on this node
 		try {
-			const graphJson = await invoke('get_ontology_graph', {
-				centralNodeId: nodeId
+			// Get entity data with full neighborhood
+			const entityJson = await invoke('entity__get', {
+				entityId: nodeId
 			});
-			fullGraphData = JSON.parse(graphJson);
+			const entityData = JSON.parse(entityJson);
 
-			// Use the canonical ID returned by backend (may differ due to equivalence)
-			const canonicalId = fullGraphData.central_node_id;
-			currentNodeId = canonicalId;
+			currentNodeId = entityData.id;
+			currentNodeLabel = entityData.label;
 
-			// Find the central node using the canonical ID
-			const centralNode = fullGraphData.nodes.find((n) => n.id === canonicalId);
-			if (!centralNode) {
-				console.error('Central node not found:', canonicalId);
-				return;
-			}
-
-			currentNodeLabel = centralNode.label;
-
-			// Load triples for the canonical ID
-			loadNodeTriples(canonicalId);
-
-			// Show all nodes and links from backend
+			// Set graph visualization data
 			visibleGraphData = {
-				nodes: fullGraphData.nodes,
-				links: fullGraphData.links,
-				centralNodeId: canonicalId
+				nodes: entityData.nodes,
+				links: entityData.links,
+				centralNodeId: entityData.id
 			};
 		} catch (err) {
 			console.error('Failed to navigate to node:', err);
+			error = err.toString();
 		}
 	}
 
-	function handleNodeClick(nodeId, nodeLabel) {
-		navigateToNode(nodeId);
+	function handleNodeClick(nodeId, nodeLabel, nodeIcon) {
+		// Se clicar no node central, abre o painel
+		if (nodeId === currentNodeId) {
+			openInspectorPanel(nodeId, nodeLabel, nodeIcon);
+		} else {
+			// Se clicar em outro node, navega para ele
+			navigateToNode(nodeId);
+		}
+	}
+
+	function openInspectorPanel(nodeId, nodeLabel, nodeIcon) {
+		// Calculate position offset for new panels
+		const baseX = window.innerWidth - 420;
+		const baseY = 100;
+		const offset = inspectorPanels.length * 30;
+
+		// Create new panel
+		const newPanel = {
+			id: `${nodeId}-${Date.now()}`,
+			entityId: nodeId,
+			entityLabel: nodeLabel,
+			entityIcon: nodeIcon,
+			position: {
+				x: baseX - offset,
+				y: baseY + offset
+			}
+		};
+
+		inspectorPanels = [...inspectorPanels, newPanel];
+	}
+
+	function closeInspectorPanel(panelId) {
+		inspectorPanels = inspectorPanels.filter(p => p.id !== panelId);
 	}
 </script>
 
 <div id="graph-container">
-	{#if loading}
+	{#if checkingSetup}
+		<div class="loading">Checking setup...</div>
+	{:else if showSetupWizard}
+		<SetupWizard onComplete={handleSetupComplete} />
+	{:else if loading}
 		<div class="loading">Loading ontology graph...</div>
 	{:else if error}
 		<div class="error">Error: {error}</div>
 	{:else}
-		<TopBar onRecenter={recenterGraph} />
-
-		{#if currentNodeId}
-			<SidePanel
-				{currentNodeLabel}
-				{nodeTriples}
-				{nodeBacklinks}
-				{nodeStatistics}
-				{applicableProperties}
-				{loadingTriples}
-				onNavigateToNode={navigateToNode}
-				{getNodeDisplayName}
-			/>
-		{/if}
+		<TopBar bind:this={topBarComponent} onRecenter={recenterGraph} onSearch={handleNodeClick} screenName="Ontology Graph" />
 
 		{#if visibleGraphData}
 			<GraphVisualization
@@ -179,9 +208,19 @@
 			/>
 		{/if}
 
-		<SearchBar onSelectClass={navigateToNode} />
+		<KeyboardShortcuts {shortcuts} />
 	{/if}
 </div>
+
+{#each inspectorPanels as panel (panel.id)}
+	<EntityInspectorPanel
+		entityId={panel.entityId}
+		entityLabel={panel.entityLabel}
+		entityIcon={panel.entityIcon}
+		position={panel.position}
+		onClose={() => closeInspectorPanel(panel.id)}
+	/>
+{/each}
 
 <style>
 	#graph-container {
@@ -189,7 +228,6 @@
 		height: 100vh;
 		position: relative;
 		overflow: hidden;
-		background: #000000;
 	}
 
 	.loading,
@@ -199,13 +237,14 @@
 		align-items: center;
 		width: 100%;
 		height: 100vh;
-		font-family: 'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif;
 		font-size: 18px;
-		color: rgba(255, 255, 255, 0.7);
-		background: #000000;
+		color: var(--color-neutral);
+		background: transparent;
+		position: relative;
+		z-index: 1;
 	}
 
 	.error {
-		color: #ff6b9d;
+		color: var(--color-danger);
 	}
 </style>
