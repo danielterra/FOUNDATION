@@ -1,4 +1,5 @@
 <script>
+	import { onDestroy } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import Card from '$lib/components/Card.svelte';
 
@@ -10,6 +11,7 @@
 	let showResults = $state(false);
 	let selectedIndex = $state(-1);
 	let inputElement;
+	let debounceTimer;
 
 	// Expose focus method to parent
 	export function focus() {
@@ -48,7 +50,27 @@
 	}
 
 	function handleInput() {
-		performSearch(searchQuery);
+		// Clear previous timer
+		if (debounceTimer) {
+			clearTimeout(debounceTimer);
+		}
+
+		// If query is too short, clear results immediately
+		if (!searchQuery || searchQuery.trim().length < 2) {
+			searchResults = [];
+			showResults = false;
+			selectedIndex = -1;
+			isSearching = false;
+			return;
+		}
+
+		// Show searching state immediately
+		isSearching = true;
+
+		// Debounce the actual search by 500ms
+		debounceTimer = setTimeout(() => {
+			performSearch(searchQuery);
+		}, 500);
 	}
 
 	function handleResultClick(result) {
@@ -124,6 +146,13 @@
 		if (type === 'individual') return 'Instance';
 		return type;
 	}
+
+	// Cleanup on component destroy
+	onDestroy(() => {
+		if (debounceTimer) {
+			clearTimeout(debounceTimer);
+		}
+	});
 </script>
 
 <div class="search-container">

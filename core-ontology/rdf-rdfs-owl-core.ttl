@@ -243,45 +243,56 @@ owl:differentFrom a rdf:Property ;
 
 xsd:string a rdfs:Datatype ;
     rdfs:label "string" ;
-    rdfs:comment "The string datatype." .
+    rdfs:comment "The string datatype." ;
+    foundation:icon "title" .
 
 xsd:boolean a rdfs:Datatype ;
     rdfs:label "boolean" ;
-    rdfs:comment "The boolean datatype." .
+    rdfs:comment "The boolean datatype." ;
+    foundation:icon "toggle_on" .
 
 xsd:decimal a rdfs:Datatype ;
     rdfs:label "decimal" ;
-    rdfs:comment "The decimal datatype." .
+    rdfs:comment "The decimal datatype." ;
+    foundation:icon "decimal_increase" .
 
 xsd:integer a rdfs:Datatype ;
     rdfs:label "integer" ;
     rdfs:comment "The integer datatype." ;
-    rdfs:subClassOf xsd:decimal .
+    rdfs:subClassOf xsd:decimal ;
+    foundation:icon "numbers" .
 
 xsd:double a rdfs:Datatype ;
     rdfs:label "double" ;
-    rdfs:comment "The double datatype." .
+    rdfs:comment "The double datatype." ;
+    foundation:icon "function" .
 
 xsd:float a rdfs:Datatype ;
     rdfs:label "float" ;
-    rdfs:comment "The float datatype." .
+    rdfs:comment "The float datatype." ;
+    foundation:icon "calculate" .
 
 xsd:date a rdfs:Datatype ;
     rdfs:label "date" ;
-    rdfs:comment "The date datatype." .
+    rdfs:comment "The date datatype." ;
+    foundation:icon "calendar_today" .
 
 xsd:time a rdfs:Datatype ;
     rdfs:label "time" ;
-    rdfs:comment "The time datatype." .
+    rdfs:comment "The time datatype." ;
+    foundation:icon "schedule" .
 
 xsd:dateTime a rdfs:Datatype ;
     rdfs:label "date time" ;
-    rdfs:comment "The dateTime datatype." .
+    rdfs:comment "The dateTime datatype." ;
+    foundation:icon "event" .
 
 xsd:dateTimeStamp a rdfs:Datatype ;
     rdfs:label "date time stamp" ;
-    rdfs:comment "The dateTimeStamp datatype." .
+    rdfs:comment "The dateTimeStamp datatype." ;
+    foundation:icon "schedule_send" .
 
 xsd:anyURI a rdfs:Datatype ;
     rdfs:label "any URI" ;
-    rdfs:comment "The anyURI datatype." .
+    rdfs:comment "The anyURI datatype." ;
+    foundation:icon "link" .

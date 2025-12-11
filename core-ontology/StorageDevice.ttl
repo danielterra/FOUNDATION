@@ -36,9 +36,14 @@ foundation:capacity a owl:DatatypeProperty ;
     rdfs:comment "Storage capacity in gigabytes" ;
     rdfs:domain foundation:StorageDevice ;
     rdfs:range xsd:integer ;
+    qudt:hasUnit unit:GigaBYTE ;
+    qudt:applicableUnit unit:TeraBYTE ;
+    qudt:applicableUnit unit:MegaBYTE ;
     rdfs:seeAlso """
 Example:
   :ssd1 foundation:capacity "512"^^xsd:integer .  # 512GB SSD
+
+Values are in Gigabytes (qudt:hasUnit unit:GigaBYTE).
 """ .
 
 foundation:storageType a owl:DatatypeProperty ;

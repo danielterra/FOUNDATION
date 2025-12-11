@@ -148,7 +148,8 @@
 			};
 		} catch (err) {
 			console.error('Failed to navigate to node:', err);
-			error = err.toString();
+			// Don't set global error - just log it
+			// This prevents hiding the TopBar when individual panels fail
 		}
 	}
 
@@ -219,6 +220,9 @@
 		entityIcon={panel.entityIcon}
 		position={panel.position}
 		onClose={() => closeInspectorPanel(panel.id)}
+		onNavigateToEntity={(entityId, entityLabel, entityIcon) => {
+			navigateToNode(entityId);
+		}}
 	/>
 {/each}
 

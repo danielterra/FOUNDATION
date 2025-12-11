@@ -22,6 +22,7 @@ pub struct Property {
     pub is_transitive: bool,
     pub is_symmetric: bool,
     pub inverse_of: Option<String>,
+    pub unit: Option<String>,
 }
 
 impl Property {
@@ -39,6 +40,7 @@ impl Property {
             is_transitive: false,
             is_symmetric: false,
             inverse_of: None,
+            unit: None,
         }
     }
 
@@ -102,6 +104,12 @@ impl Property {
             .and_then(|t| t.object.as_iri())
             .map(|s| s.to_string());
 
+        // Get QUDT unit
+        let unit_result = query::get_by_entity_predicate(conn, &iri, "qudt:hasUnit")?;
+        let unit = unit_result.triples.first()
+            .and_then(|t| t.object.as_iri())
+            .map(|s| s.to_string());
+
         Ok(Self {
             iri,
             label,
@@ -114,10 +122,14 @@ impl Property {
             is_transitive,
             is_symmetric,
             inverse_of,
+            unit,
         })
     }
 
     /// Assert a new property with metadata
+    ///
+    /// IMPORTANT: If range is a numeric type (xsd:decimal, xsd:integer, xsd:float, xsd:double),
+    /// you MUST provide a unit parameter with a valid QUDT unit (e.g., "unit:GigaBYTE")
     pub fn assert(
         &self,
         conn: &mut Connection,
@@ -126,8 +138,37 @@ impl Property {
         comment: Option<&str>,
         domain: Option<&str>,
         range: Option<&str>,
+        unit: Option<&str>,
         origin: &str
     ) -> Result<()> {
+        // Validate that numeric ranges have a unit
+        if let Some(range_value) = range {
+            let is_numeric = matches!(
+                range_value,
+                "xsd:decimal" | "xsd:integer" | "xsd:float" | "xsd:double"
+            );
+
+            if is_numeric && unit.is_none() {
+                return Err(crate::owl::OwlError::ValidationError(
+                    format!(
+                        "Property '{}' has numeric range '{}' but no qudt:unit specified. \
+                         Numeric properties MUST have a unit (e.g., unit:GigaBYTE, unit:Second, unit:Meter)",
+                        self.iri, range_value
+                    )
+                ));
+            }
+
+            if !is_numeric && unit.is_some() {
+                return Err(crate::owl::OwlError::ValidationError(
+                    format!(
+                        "Property '{}' has non-numeric range '{}' but qudt:unit was specified. \
+                         Only numeric properties can have units.",
+                        self.iri, range_value
+                    )
+                ));
+            }
+        }
+
         // Assert property type
         let type_iri = match property_type {
             PropertyType::RdfProperty => rdf::PROPERTY,
@@ -164,6 +205,11 @@ impl Property {
             triples.push(Triple::new(&self.iri, rdfs::RANGE, Object::Iri(range_class.to_string())));
         }
 
+        // Add QUDT unit if provided (required for numeric ranges)
+        if let Some(unit_iri) = unit {
+            triples.push(Triple::new(&self.iri, "qudt:hasUnit", Object::Iri(unit_iri.to_string())));
+        }
+
         store::assert_triples(conn, &triples, origin)?;
         Ok(())
     }
@@ -196,11 +242,11 @@ mod tests {
     use crate::eavto::test_helpers::setup_test_db;
 
     #[test]
-    fn test_assert_and_get() {
+    fn test_assert_numeric_property_requires_unit() {
         let mut conn = setup_test_db();
         let prop = Property::new("foundation:hasAge");
 
-        // Assert property with metadata
+        // Try to assert numeric property WITHOUT unit - should fail
         let result = prop.assert(
             &mut conn,
             PropertyType::DatatypeProperty,
@@ -208,6 +254,27 @@ mod tests {
             Some("The age of a person"),
             Some("foundation:Person"),
             Some("xsd:integer"),
+            None, // NO UNIT - should fail
+            "test"
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("qudt:unit"));
+    }
+
+    #[test]
+    fn test_assert_numeric_property_with_unit() {
+        let mut conn = setup_test_db();
+        let prop = Property::new("foundation:hasAge");
+
+        // Assert numeric property WITH unit - should succeed
+        let result = prop.assert(
+            &mut conn,
+            PropertyType::DatatypeProperty,
+            "has age",
+            Some("The age of a person"),
+            Some("foundation:Person"),
+            Some("xsd:integer"),
+            Some("unit:YR"), // WITH UNIT - should succeed
             "test"
         );
         assert!(result.is_ok());
@@ -229,7 +296,7 @@ mod tests {
         let mut conn = setup_test_db();
         let prop = Property::new("foundation:hasParent");
 
-        // Assert object property
+        // Assert object property (no unit needed for object properties)
         prop.assert(
             &mut conn,
             PropertyType::ObjectProperty,
@@ -237,6 +304,7 @@ mod tests {
             None,
             Some("foundation:Person"),
             Some("foundation:Person"),
+            None, // Object properties don't need units
             "test"
         ).unwrap();
 
@@ -244,6 +312,69 @@ mod tests {
         let property = Property::get(&conn, "foundation:hasParent").unwrap();
         assert_eq!(property.property_type, PropertyType::ObjectProperty);
         assert!(property.exists(&conn).unwrap());
+    }
+
+    #[test]
+    fn test_non_numeric_property_cannot_have_unit() {
+        let mut conn = setup_test_db();
+        let prop = Property::new("foundation:hasName");
+
+        // Try to assert string property WITH unit - should fail
+        let result = prop.assert(
+            &mut conn,
+            PropertyType::DatatypeProperty,
+            "has name",
+            None,
+            Some("foundation:Person"),
+            Some("xsd:string"),
+            Some("unit:GigaBYTE"), // String property with unit - should fail
+            "test"
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("non-numeric"));
+    }
+
+    #[test]
+    fn test_all_numeric_types_require_unit() {
+        let mut conn = setup_test_db();
+
+        // Test all numeric types
+        let numeric_types = vec![
+            ("xsd:decimal", "unit:Meter"),
+            ("xsd:integer", "unit:YR"),
+            ("xsd:float", "unit:KiloGM"),
+            ("xsd:double", "unit:Second"),
+        ];
+
+        for (i, (xsd_type, unit)) in numeric_types.iter().enumerate() {
+            let prop = Property::new(&format!("test:prop{}", i));
+
+            // Without unit - should fail
+            let result = prop.assert(
+                &mut conn,
+                PropertyType::DatatypeProperty,
+                "test prop",
+                None,
+                None,
+                Some(xsd_type),
+                None,
+                "test"
+            );
+            assert!(result.is_err(), "Should fail for {} without unit", xsd_type);
+
+            // With unit - should succeed
+            let result = prop.assert(
+                &mut conn,
+                PropertyType::DatatypeProperty,
+                "test prop",
+                None,
+                None,
+                Some(xsd_type),
+                Some(unit),
+                "test"
+            );
+            assert!(result.is_ok(), "Should succeed for {} with unit", xsd_type);
+        }
     }
 
     #[test]
@@ -256,6 +387,7 @@ mod tests {
             &mut conn,
             PropertyType::ObjectProperty,
             "has parent",
+            None,
             None,
             None,
             None,

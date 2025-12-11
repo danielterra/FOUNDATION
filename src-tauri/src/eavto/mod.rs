@@ -33,6 +33,7 @@ pub mod query;
 pub mod store;
 pub mod connection;
 pub mod stats;
+pub mod executor;
 
 // Test helpers (public for use in other module tests)
 #[cfg(test)]
@@ -74,3 +75,5 @@ pub use stats::{
     get_stats,
     DbStats,
 };
+
+pub use executor::DbExecutor;

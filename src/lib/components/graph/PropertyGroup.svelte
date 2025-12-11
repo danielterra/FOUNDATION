@@ -4,7 +4,7 @@
 	let {
 		groupLabel = null,
 		properties = [],
-		onValueClick = null
+		onNavigateToEntity = null
 	} = $props();
 </script>
 
@@ -20,7 +20,11 @@
 			label={property.label}
 			comment={property.comment}
 			value={property.value}
-			onValueClick={property.isObjectProperty ? onValueClick : null}
+			valueLabel={property.valueLabel}
+			valueIcon={property.valueIcon}
+			unit={property.unit}
+			unitLabel={property.unitLabel}
+			onValueClick={property.isObjectProperty && onNavigateToEntity ? () => onNavigateToEntity(property.value, property.valueLabel, property.valueIcon) : null}
 		/>
 	{/each}
 </div>

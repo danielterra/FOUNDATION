@@ -97,7 +97,10 @@ foundation:tripleCount a owl:DatatypeProperty ;
     rdfs:comment "Number of RDF triples contained in or imported from this digital thing" ;
     rdfs:domain foundation:DigitalThing ;
     rdfs:range xsd:integer ;
+    qudt:hasUnit unit:NUM ;
     rdfs:seeAlso """
 Example:
   :thing-ttl foundation:tripleCount "42"^^xsd:integer .
+
+Values are dimensionless counts (qudt:hasUnit unit:NUM).
 """ .

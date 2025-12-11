@@ -5,7 +5,6 @@ mod eavto;
 mod owl;
 
 use std::sync::Mutex;
-use rusqlite::Connection;
 
 // Triple structure for serialization (maps to triples table)
 #[derive(serde::Serialize)]
@@ -131,8 +130,9 @@ pub fn run() {
                             println!("  Entities: {}", stats.entities_count);
                         }
 
-                        // Store connection in state
-                        app_handle.manage(Mutex::new(conn));
+                        // Create async executor and store in state
+                        let executor = eavto::DbExecutor::new(conn);
+                        app_handle.manage(executor);
 
                         // Emit completion event
                         let _ = app_handle.emit("import-complete", ());

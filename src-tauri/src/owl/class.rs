@@ -262,4 +262,20 @@ mod tests {
         assert_eq!(dog_data.super_classes.len(), 1);
         assert_eq!(dog_data.super_classes[0].iri, "foundation:Animal");
     }
+
+    #[test]
+    fn test_single_subclass_of_relationship() {
+        let mut conn = setup_test_db();
+
+        // Create class with explicit parent
+        let test_class = Class::new("foundation:TestClass");
+        test_class.assert(&mut conn, ClassType::OwlClass, "Test Class", "test-icon", Some("owl:Thing"), "test").unwrap();
+
+        // Get class data
+        let class_data = Class::get(&conn, "foundation:TestClass").unwrap();
+
+        // Should have exactly 1 super class
+        assert_eq!(class_data.super_classes.len(), 1, "Expected exactly 1 super class, found {}", class_data.super_classes.len());
+        assert_eq!(class_data.super_classes[0].iri, "owl:Thing");
+    }
 }

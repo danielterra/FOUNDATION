@@ -32,6 +32,7 @@ sha2 = "0.10"  # For checksums
 chrono = "0.4"  # For timestamps
 sysinfo = "0.32"  # For system information
 hostname = "0.4"  # For hostname detection
+tokio = { version = "1", features = ["sync", "rt-multi-thread"] }  # For async executor
 
 [dev-dependencies]
 tempfile = "3.8"  # Temporary files for tests

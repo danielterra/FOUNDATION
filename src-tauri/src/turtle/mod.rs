@@ -331,8 +331,8 @@ pub fn import_all_foundation_ontologies(
                     let path = entry.path();
                     if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("ttl") {
                         if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
-                            // Skip files already imported
-                            if filename != "rdf-rdfs-owl-core.ttl" && filename != "dtype.ttl" {
+                            // Skip dtype.ttl (reserved for future use)
+                            if filename != "dtype.ttl" {
                                 ttl_files.push(path);
                             }
                         }

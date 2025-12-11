@@ -1,8 +1,8 @@
 use serde::Serialize;
 use tauri::State;
 use rusqlite::Connection;
-use std::sync::Mutex;
 
+use crate::eavto::DbExecutor;
 use crate::owl::{Class, Individual, Property};
 
 /// Entity type in OWL ontology
@@ -77,77 +77,82 @@ pub struct PropertyValue {
     pub property_comment: Option<String>,
     pub value: String,
     pub value_label: Option<String>, // For object properties, the label of the target entity
+    pub value_icon: Option<String>, // For object properties, the icon of the target entity
     pub is_object_property: bool,
     pub source_class: Option<String>, // For classes: which class defines this property (for grouping inherited properties)
     pub source_class_label: Option<String>,
+    pub unit: Option<String>, // QUDT unit IRI (e.g., "unit:GigaBYTE")
+    pub unit_label: Option<String>, // QUDT unit label (e.g., "Gigabyte")
 }
 
 /// Search for entities (classes and individuals) by label
 #[tauri::command]
 #[allow(non_snake_case)]
-pub fn entity__search(
+pub async fn entity__search(
     query: String,
     limit: Option<usize>,
-    conn: State<'_, Mutex<Connection>>,
+    executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    let conn = conn.lock().map_err(|e| e.to_string())?;
-    let limit = limit.unwrap_or(100);
+    // Use EAVTO executor for async read (won't block UI)
+    executor.read(move |conn| {
+        let limit = limit.unwrap_or(100);
+        let mut results = Vec::new();
 
-    let mut results = Vec::new();
-
-    // Search classes using OWL abstraction
-    let class_results = crate::owl::search_classes(&conn, &query, limit)
-        .map_err(|e| e.to_string())?;
-
-    for class_result in class_results {
-        results.push(SearchResult {
-            id: class_result.id,
-            label: class_result.label,
-            icon: class_result.icon,
-            entity_type: "class".to_string(),
-        });
-    }
-
-    // Search individuals using OWL abstraction
-    let remaining_limit = limit.saturating_sub(results.len());
-    if remaining_limit > 0 {
-        let individual_results = crate::owl::search_individuals(&conn, &query, remaining_limit)
+        // Search classes using OWL abstraction
+        let class_results = crate::owl::search_classes(conn, &query, limit)
             .map_err(|e| e.to_string())?;
 
-        for individual_result in individual_results {
+        for class_result in class_results {
             results.push(SearchResult {
-                id: individual_result.id,
-                label: individual_result.label,
-                icon: individual_result.icon,
-                entity_type: "individual".to_string(),
+                id: class_result.id,
+                label: class_result.label,
+                icon: class_result.icon,
+                entity_type: "class".to_string(),
             });
         }
-    }
 
-    // Limit total results
-    results.truncate(limit);
+        // Search individuals using OWL abstraction
+        let remaining_limit = limit.saturating_sub(results.len());
+        if remaining_limit > 0 {
+            let individual_results = crate::owl::search_individuals(conn, &query, remaining_limit)
+                .map_err(|e| e.to_string())?;
 
-    serde_json::to_string(&results).map_err(|e| e.to_string())
+            for individual_result in individual_results {
+                results.push(SearchResult {
+                    id: individual_result.id,
+                    label: individual_result.label,
+                    icon: individual_result.icon,
+                    entity_type: "individual".to_string(),
+                });
+            }
+        }
+
+        // Limit total results
+        results.truncate(limit);
+
+        serde_json::to_string(&results).map_err(|e| e.to_string())
+    }).await
 }
 
 /// Get entity data with its complete neighborhood for visualization
 #[tauri::command]
 #[allow(non_snake_case)]
-pub fn entity__get(
+pub async fn entity__get(
     entity_id: String,
-    conn: State<'_, Mutex<Connection>>,
+    executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    let conn = conn.lock().map_err(|e| e.to_string())?;
+    // Use EAVTO executor for async read (won't block UI)
+    executor.read(move |conn| {
+        // Determine entity type by checking what it is
+        let entity_type = determine_entity_type(conn, &entity_id)?;
 
-    // Determine entity type by checking what it is
-    let entity_type = determine_entity_type(&conn, &entity_id)?;
+        let data = match entity_type {
+            EntityType::Class => get_class_data(conn, &entity_id)?,
+            EntityType::Individual => get_individual_data(conn, &entity_id)?,
+        };
 
-    let data = match entity_type {
-        EntityType::Class => get_class_data(&conn, &entity_id)?,
-        EntityType::Individual => get_individual_data(&conn, &entity_id)?,
-    };
-
-    serde_json::to_string(&data).map_err(|e| e.to_string())
+        serde_json::to_string(&data).map_err(|e| e.to_string())
+    }).await
 }
 
 fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityType, String> {
@@ -271,12 +276,12 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
 
         // Determine if it's an object property and get range
         let is_object_property = prop.property_type == crate::owl::PropertyType::ObjectProperty;
-        let value = prop.ranges.first()
+        let (value, value_label, value_icon) = prop.ranges.first()
             .map(|range_iri| {
                 let range_thing = crate::owl::Thing::get(conn, range_iri);
-                range_thing.label
+                (range_iri.clone(), range_thing.label, range_thing.icon)
             })
-            .unwrap_or_else(|| "Any".to_string());
+            .unwrap_or_else(|| ("owl:Thing".to_string(), "Any".to_string(), None));
 
         // Get source class label (only if different from current class)
         let (source_class, source_class_label) = if source_class_iri != class_id {
@@ -286,15 +291,41 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             (None, None)
         };
 
+        // Get unit symbol if property has a unit (e.g., "GB" instead of "GigaByte")
+        let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
+            // Try to get qudt:symbol first, fallback to rdfs:label
+            let symbol_result = crate::eavto::query::get_by_entity_predicate(conn, unit_iri, "qudt:symbol");
+            let unit_display = if let Ok(result) = symbol_result {
+                result.triples.first()
+                    .and_then(|t| t.object.as_literal())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            };
+
+            // Fallback to label if no symbol found
+            let unit_display = unit_display.or_else(|| {
+                let unit_thing = crate::owl::Thing::get(conn, unit_iri);
+                Some(unit_thing.label)
+            });
+
+            (Some(unit_iri.clone()), unit_display)
+        } else {
+            (None, None)
+        };
+
         properties.push(PropertyValue {
             property: property_iri.clone(),
             property_label,
             property_comment,
-            value: value.clone(),
-            value_label: Some(value),
+            value,
+            value_label: Some(value_label),
+            value_icon,
             is_object_property,
             source_class,
             source_class_label,
+            unit,
+            unit_label,
         });
     }
 
@@ -328,10 +359,36 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     for (property_iri, value_obj) in &individual.properties {
         // Get property metadata using OWL abstraction
         let prop_result = Property::get(conn, property_iri);
-        let (property_label, property_comment) = if let Ok(prop) = prop_result {
-            (prop.label.unwrap_or_else(|| property_iri.clone()), prop.comment)
+        let (property_label, property_comment, unit, unit_label) = if let Ok(prop) = prop_result {
+            let label = prop.label.clone().unwrap_or_else(|| property_iri.clone());
+            let comment = prop.comment.clone();
+
+            // Get unit symbol if property has a unit (e.g., "GB" instead of "GigaByte")
+            let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
+                // Try to get qudt:symbol first, fallback to rdfs:label
+                let symbol_result = crate::eavto::query::get_by_entity_predicate(conn, unit_iri, "qudt:symbol");
+                let unit_display = if let Ok(result) = symbol_result {
+                    result.triples.first()
+                        .and_then(|t| t.object.as_literal())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                };
+
+                // Fallback to label if no symbol found
+                let unit_display = unit_display.or_else(|| {
+                    let unit_thing = crate::owl::Thing::get(conn, unit_iri);
+                    Some(unit_thing.label)
+                });
+
+                (Some(unit_iri.clone()), unit_display)
+            } else {
+                (None, None)
+            };
+
+            (label, comment, unit, unit_label)
         } else {
-            (property_iri.clone(), None)
+            (property_iri.clone(), None, None, None)
         };
 
         // Determine type and extract value
@@ -342,12 +399,20 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             value_obj.as_literal().unwrap_or_default()
         };
 
-        // For object properties, get the label of the target entity
-        let value_label = if is_object_property {
+        // For object properties, get the label and icon of the target entity
+        // For datatype properties, get the icon of the datatype
+        let (value_label, value_icon) = if is_object_property {
             let target_thing = crate::owl::Thing::get(conn, &value);
-            Some(target_thing.label)
+            (Some(target_thing.label), target_thing.icon)
         } else {
-            None
+            // Get datatype icon for literal values
+            let datatype_icon = if let Some(dt_iri) = value_obj.datatype() {
+                let datatype_thing = crate::owl::Thing::get(conn, dt_iri);
+                datatype_thing.icon
+            } else {
+                None
+            };
+            (None, datatype_icon)
         };
 
         properties.push(PropertyValue {
@@ -356,9 +421,12 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             property_comment,
             value,
             value_label,
+            value_icon,
             is_object_property,
             source_class: None,
             source_class_label: None,
+            unit,
+            unit_label,
         });
     }
 

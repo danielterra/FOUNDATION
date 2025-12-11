@@ -10,7 +10,8 @@
 		entityLabel = '',
 		entityIcon = null,
 		position = { x: window.innerWidth - 420, y: 100 },
-		onClose = () => {}
+		onClose = () => {},
+		onNavigateToEntity = null
 	} = $props();
 
 	let isDragging = $state(false);
@@ -64,8 +65,12 @@
 					id: prop.property,
 					label: prop.propertyLabel,
 					comment: prop.propertyComment,
-					value: prop.valueLabel || prop.value,
-					isObjectProperty: prop.isObjectProperty
+					value: prop.value,
+					valueLabel: prop.valueLabel,
+					valueIcon: prop.valueIcon,
+					isObjectProperty: prop.isObjectProperty,
+					unit: prop.unit,
+					unitLabel: prop.unitLabel
 				});
 			}
 
@@ -103,10 +108,18 @@
 
 	function handleMouseMove(event) {
 		if (isDragging) {
-			position = {
-				x: event.clientX - dragOffset.x,
-				y: event.clientY - dragOffset.y
-			};
+			const panelWidth = 400;
+			const panelHeight = panel?.offsetHeight || 300;
+
+			// Calculate new position
+			let newX = event.clientX - dragOffset.x;
+			let newY = event.clientY - dragOffset.y;
+
+			// Constrain to viewport bounds
+			newX = Math.max(0, Math.min(newX, window.innerWidth - panelWidth));
+			newY = Math.max(0, Math.min(newY, window.innerHeight - panelHeight));
+
+			position = { x: newX, y: newY };
 		}
 	}
 
@@ -128,6 +141,7 @@
 >
 	<Card>
 		{#snippet children()}
+			<div class="panel-wrapper">
 			<div class="panel-header" onmousedown={handleMouseDown}>
 				<div class="panel-header-drag">
 					<span class="drag-handle">⋮⋮</span>
@@ -152,6 +166,10 @@
 				{:else if entityData}
 					<div class="entity-info">
 						<PropertyRow
+							label="IRI"
+							value={entityData.id}
+						/>
+						<PropertyRow
 							label="Type"
 							value={entityData.type}
 						/>
@@ -160,6 +178,7 @@
 							<PropertyGroup
 								groupLabel={group.sourceClassLabel}
 								properties={group.properties}
+								onNavigateToEntity={onNavigateToEntity}
 							/>
 						{/each}
 					</div>
@@ -167,6 +186,7 @@
 					<div class="error">Failed to load entity data</div>
 				{/if}
 			</div>
+		</div>
 		{/snippet}
 	</Card>
 </div>
@@ -176,7 +196,7 @@
 		position: fixed;
 		width: 400px;
 		min-height: 300px;
-		max-height: 80vh;
+		max-height: 70vh;
 		z-index: 1000;
 		display: flex;
 		flex-direction: column;
@@ -188,13 +208,25 @@
 		user-select: none;
 	}
 
+	.panel-wrapper {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		max-height: 70vh;
+		overflow: hidden;
+	}
+
 	.panel-header {
+		position: sticky;
+		top: 0;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		padding: 0 0 12px 0;
 		margin-bottom: 12px;
 		border-bottom: 1px solid var(--color-border);
+		background: var(--color-black);
+		z-index: 1;
 	}
 
 	.panel-header-drag {
@@ -267,6 +299,8 @@
 	.panel-content {
 		flex: 1;
 		overflow-y: auto;
+		overflow-x: hidden;
+		min-height: 0;
 	}
 
 	.loading,
