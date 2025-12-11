@@ -31,6 +31,7 @@ pub struct Individual {
     pub comment: Option<String>,
     pub types: Vec<Thing>,
     pub properties: Vec<(String, Object)>, // (property_iri, value)
+    pub backlinks: Vec<(String, String, Object)>, // (source_entity, property_iri, value) - entities that reference this individual
 }
 
 impl Individual {
@@ -43,6 +44,7 @@ impl Individual {
             comment: None,
             types: Vec::new(),
             properties: Vec::new(),
+            backlinks: Vec::new(),
         }
     }
 
@@ -72,25 +74,32 @@ impl Individual {
             .map(|type_iri| Thing::get(conn, type_iri))
             .collect();
 
-        // Get all properties (excluding metadata)
+        // Get all properties (excluding metadata like label, icon, comment)
         let all_triples = query::get_by_entity(conn, &iri)?;
         let properties: Vec<(String, Object)> = all_triples.triples.into_iter()
             .filter(|t| {
-                t.predicate != rdf::TYPE
-                    && t.predicate != rdfs::LABEL
+                t.predicate != rdfs::LABEL
                     && t.predicate != rdfs::COMMENT
                     && t.predicate != "foundation:icon"
             })
             .map(|t| (t.predicate, t.object))
             .collect();
 
+        // Get backlinks - entities that reference this individual
+        let backlinks_result = query::get_by_object(conn, &iri)?;
+        let backlinks: Vec<(String, String, Object)> = backlinks_result.triples.iter()
+            .filter(|t| t.subject != iri && t.predicate != rdf::TYPE) // Exclude self-references and rdf:type
+            .map(|t| (t.subject.clone(), t.predicate.clone(), t.object.clone()))
+            .collect();
+
         Ok(Self {
-            iri,
+            iri: iri.clone(),
             label,
             icon,
             comment,
             types,
             properties,
+            backlinks,
         })
     }
 

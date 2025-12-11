@@ -89,6 +89,27 @@ pub fn get_by_predicate_object(
     Ok(QueryResult::new(triples))
 }
 
+/// Query by object (e.g., all triples that reference a specific entity)
+pub fn get_by_object(
+    conn: &Connection,
+    object: &str,
+) -> Result<QueryResult> {
+    let mut stmt = conn.prepare(
+        "SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                object_type, object_number, object_integer, object_datetime, object_boolean,
+                tx, origin_id, retracted, created_at
+         FROM triples
+         WHERE object = ? AND object_type = 'iri' AND retracted = 0
+         ORDER BY tx DESC"
+    )?;
+
+    let triples = stmt
+        .query_map([object], row_to_triple)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(QueryResult::new(triples))
+}
+
 /// Query entity state at specific time (ET - temporal query)
 pub fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResult> {
     let mut stmt = conn.prepare(

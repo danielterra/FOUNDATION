@@ -51,18 +51,18 @@ pub struct GraphLink {
 pub struct EntityData {
     pub id: String,
     pub label: String,
-    pub entity_type: EntityType,
     pub icon: Option<String>,
     pub comment: Option<String>,
 
-    // For Classes
-    pub super_classes: Vec<crate::owl::Thing>,
-    pub sub_classes: Vec<crate::owl::Thing>,
-    pub instances: Vec<crate::owl::Thing>,
+    // RDF semantic data
+    pub types: Vec<crate::owl::Thing>, // rdf:type (for individuals)
+    pub super_classes: Vec<crate::owl::Thing>, // rdfs:subClassOf (for classes)
+    pub sub_classes: Vec<crate::owl::Thing>, // inverse of rdfs:subClassOf (for classes)
+    pub instances: Vec<crate::owl::Thing>, // entities with rdf:type pointing to this class
 
-    // For Individuals
-    pub types: Vec<crate::owl::Thing>,
+    // Properties and relationships
     pub properties: Vec<PropertyValue>,
+    pub backlinks: Vec<PropertyValue>, // Properties from other entities pointing to this one
 
     // Graph visualization data
     pub nodes: Vec<GraphNode>,
@@ -180,14 +180,6 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
     let icon = class.icon;
     let comment = class.comment;
 
-    // Get instances separately (may be thousands)
-    let instance_iris = Class::get_instances(conn, class_id)
-        .map_err(|e| e.to_string())?;
-
-    // Convert instances to Thing objects
-    let instances: Vec<crate::owl::Thing> = instance_iris.iter()
-        .map(|iri| crate::owl::Thing::get(conn, iri))
-        .collect();
 
     // Build graph visualization
     let mut nodes = Vec::new();
@@ -244,28 +236,44 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         });
     }
 
-    // Add instances as nodes
-    for instance in &instances {
-        if !added_node_ids.contains(&instance.iri) {
-            nodes.push(GraphNode {
-                id: instance.iri.clone(),
-                label: instance.label.clone(),
-                icon: instance.icon.clone(),
-                group: 6,
-                is_broken_ref: None,
-            });
-            added_node_ids.insert(instance.iri.clone());
-        }
-
-        links.push(GraphLink {
-            source: instance.iri.clone(),
-            target: class_id.to_string(),
-            label: "type".to_string(),
-        });
-    }
 
     // Build properties list from class.properties
     let mut properties = Vec::new();
+
+    // Add rdf:type properties first
+    for type_thing in &class.types {
+        properties.push(PropertyValue {
+            property: "rdf:type".to_string(),
+            property_label: "type".to_string(),
+            property_comment: Some("The type of this entity".to_string()),
+            value: type_thing.iri.clone(),
+            value_label: Some(type_thing.label.clone()),
+            value_icon: type_thing.icon.clone(),
+            is_object_property: true,
+            source_class: None,
+            source_class_label: None,
+            unit: None,
+            unit_label: None,
+        });
+    }
+
+    // Add rdfs:subClassOf properties
+    for super_class in &class.super_classes {
+        properties.push(PropertyValue {
+            property: "rdfs:subClassOf".to_string(),
+            property_label: "subClassOf".to_string(),
+            property_comment: Some("Parent class of this class".to_string()),
+            value: super_class.iri.clone(),
+            value_label: Some(super_class.label.clone()),
+            value_icon: super_class.icon.clone(),
+            is_object_property: true,
+            source_class: None,
+            source_class_label: None,
+            unit: None,
+            unit_label: None,
+        });
+    }
+
     for (property_iri, source_class_iri) in &class.properties {
         // Get property data using OWL abstraction
         let prop = Property::get(conn, property_iri)
@@ -329,17 +337,46 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         });
     }
 
+    // Process backlinks (instances of this class)
+    let mut backlinks = Vec::new();
+    for (source_entity, property_iri, _value_obj) in &class.backlinks {
+        // Get property metadata
+        let prop_result = Property::get(conn, property_iri);
+        let (property_label, property_comment) = if let Ok(prop) = prop_result {
+            (prop.label.unwrap_or_else(|| property_iri.clone()), prop.comment)
+        } else {
+            (property_iri.clone(), None)
+        };
+
+        // Get source entity info
+        let source_thing = crate::owl::Thing::get(conn, source_entity);
+
+        backlinks.push(PropertyValue {
+            property: property_iri.clone(),
+            property_label,
+            property_comment,
+            value: source_entity.clone(),
+            value_label: Some(source_thing.label),
+            value_icon: source_thing.icon,
+            is_object_property: true,
+            source_class: None,
+            source_class_label: None,
+            unit: None,
+            unit_label: None,
+        });
+    }
+
     Ok(EntityData {
         id: class_id.to_string(),
         label,
-        entity_type: EntityType::Class,
         icon,
         comment,
+        types: class.types.clone(),
         super_classes: class.super_classes.clone(),
         sub_classes: class.sub_classes.clone(),
-        instances,
-        types: vec![],
+        instances: vec![],
         properties,
+        backlinks,
         nodes,
         links,
     })
@@ -536,17 +573,46 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         });
     }
 
+    // Process backlinks
+    let mut backlinks = Vec::new();
+    for (source_entity, property_iri, _value_obj) in &individual.backlinks {
+        // Get property metadata
+        let prop_result = Property::get(conn, property_iri);
+        let (property_label, property_comment) = if let Ok(prop) = prop_result {
+            (prop.label.unwrap_or_else(|| property_iri.clone()), prop.comment)
+        } else {
+            (property_iri.clone(), None)
+        };
+
+        // Get source entity info
+        let source_thing = crate::owl::Thing::get(conn, source_entity);
+
+        backlinks.push(PropertyValue {
+            property: property_iri.clone(),
+            property_label,
+            property_comment,
+            value: source_entity.clone(),
+            value_label: Some(source_thing.label),
+            value_icon: source_thing.icon,
+            is_object_property: true,
+            source_class: None,
+            source_class_label: None,
+            unit: None,
+            unit_label: None,
+        });
+    }
+
     Ok(EntityData {
         id: individual_id.to_string(),
         label,
-        entity_type: EntityType::Individual,
         icon,
         comment,
+        types: individual.types.clone(),
         super_classes: vec![],
         sub_classes: vec![],
         instances: vec![],
-        types: individual.types.clone(),
         properties,
+        backlinks,
         nodes,
         links,
     })

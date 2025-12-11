@@ -25,7 +25,7 @@
 
       if (isSetupDone) {
         setupComplete = true;
-        goto("/graph");
+        goto("/canvas");
       } else {
         setupComplete = false;
       }
@@ -62,7 +62,7 @@
 
       if (isDone) {
         setupComplete = true;
-        goto("/graph");
+        goto("/canvas");
       } else {
         setupComplete = false;
       }
@@ -85,7 +85,7 @@
   function handleSetupComplete(event) {
     console.log('+page: Setup wizard completed:', event.detail);
     setupComplete = true;
-    goto("/graph");
+    goto("/canvas");
   }
 </script>
 
@@ -99,7 +99,7 @@
   {:else if setupComplete === false}
     <SetupWizard onComplete={handleSetupComplete} />
   {:else}
-    <p class="redirecting">Redirecting to graph view...</p>
+    <p class="redirecting">Redirecting to canvas...</p>
   {/if}
 </main>
 

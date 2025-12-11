@@ -14,11 +14,10 @@
 		onNavigateToEntity = null
 	} = $props();
 
-	let isDragging = $state(false);
-	let dragOffset = $state({ x: 0, y: 0 });
 	let panel;
 	let entityData = $state(null);
 	let loading = $state(true);
+	let isFolded = $state(true); // Start folded (minimized)
 
 	// Helper to detect icon type
 	function getIconType(icon) {
@@ -28,6 +27,29 @@
 			return 'image';
 		}
 		return 'material-symbol';
+	}
+
+	// Get type display text - show what's defined in RDF
+	function getTypeText(data) {
+		if (!data) return '';
+
+		const typeLabels = [];
+
+		// Show rdf:type if present
+		if (data.types && data.types.length > 0) {
+			typeLabels.push(...data.types.map(t => t.label));
+		}
+
+		// Show rdfs:subClassOf if present (for classes)
+		if (data.superClasses && data.superClasses.length > 0) {
+			typeLabels.push(data.superClasses.map(c => c.label).join(', '));
+		}
+
+		return typeLabels.join(', ');
+	}
+
+	function toggleFold() {
+		isFolded = !isFolded;
 	}
 
 	onMount(async () => {
@@ -42,9 +64,18 @@
 			});
 			const data = JSON.parse(dataJson);
 
-			// Filter out rdfs:label and foundation:icon (already shown in header)
+			// Filter out rdfs:label, rdfs:comment and foundation:icon (already shown in header or not needed)
 			const filteredProperties = (data.properties || []).filter(
-				prop => prop.property !== 'rdfs:label' && prop.property !== 'foundation:icon'
+				prop => prop.property !== 'rdfs:label'
+					&& prop.property !== 'rdfs:comment'
+					&& prop.property !== 'foundation:icon'
+			);
+
+			// Filter backlinks (already filtered in backend, but just in case)
+			const filteredBacklinks = (data.backlinks || []).filter(
+				prop => prop.property !== 'rdfs:label'
+					&& prop.property !== 'rdfs:comment'
+					&& prop.property !== 'foundation:icon'
 			);
 
 			// Group properties by source class
@@ -82,11 +113,26 @@
 				return 0;
 			});
 
+			// Process backlinks
+			const backlinks = filteredBacklinks.map(prop => ({
+				id: prop.property,
+				label: prop.propertyLabel,
+				comment: prop.propertyComment,
+				value: prop.value,
+				valueLabel: prop.valueLabel,
+				valueIcon: prop.valueIcon,
+				isObjectProperty: prop.isObjectProperty,
+				unit: prop.unit,
+				unitLabel: prop.unitLabel
+			}));
+
 			entityData = {
 				id: entityId,
 				label: entityLabel,
-				type: data.entityType,
-				propertyGroups: groupsArray
+				types: data.types || [],
+				superClasses: data.superClasses || [],
+				propertyGroups: groupsArray,
+				backlinks
 			};
 			loading = false;
 		} catch (err) {
@@ -95,55 +141,17 @@
 		}
 	}
 
-	function handleMouseDown(event) {
-		if (event.target.closest('.panel-header-drag')) {
-			isDragging = true;
-			dragOffset = {
-				x: event.clientX - position.x,
-				y: event.clientY - position.y
-			};
-			event.preventDefault();
-		}
-	}
-
-	function handleMouseMove(event) {
-		if (isDragging) {
-			const panelWidth = 400;
-			const panelHeight = panel?.offsetHeight || 300;
-
-			// Calculate new position
-			let newX = event.clientX - dragOffset.x;
-			let newY = event.clientY - dragOffset.y;
-
-			// Constrain to viewport bounds
-			newX = Math.max(0, Math.min(newX, window.innerWidth - panelWidth));
-			newY = Math.max(0, Math.min(newY, window.innerHeight - panelHeight));
-
-			position = { x: newX, y: newY };
-		}
-	}
-
-	function handleMouseUp() {
-		isDragging = false;
-	}
 </script>
-
-<svelte:window
-	onmousemove={handleMouseMove}
-	onmouseup={handleMouseUp}
-/>
 
 <div
 	bind:this={panel}
 	class="entity-inspector-panel"
-	class:dragging={isDragging}
-	style="left: {position.x}px; top: {position.y}px;"
 >
 	<Card>
 		{#snippet children()}
-			<div class="panel-wrapper">
-			<div class="panel-header" onmousedown={handleMouseDown}>
-				<div class="panel-header-drag">
+			<div class="panel-wrapper" class:folded={isFolded}>
+			<div class="panel-header panel-drag-handle">
+				<div class="panel-header-drag panel-drag-handle">
 					<span class="drag-handle">⋮⋮</span>
 					{#if entityIcon}
 						{@const iconType = getIconType(entityIcon)}
@@ -155,12 +163,26 @@
 							{/if}
 						</div>
 					{/if}
-					<span class="panel-title">{entityLabel || entityId}</span>
+					<div class="header-text">
+						<span class="panel-title">{entityLabel || entityId}</span>
+						{#if !loading && entityData}
+							{@const typeText = getTypeText(entityData)}
+							{#if typeText}
+								<span class="panel-type">{typeText}</span>
+							{/if}
+						{/if}
+					</div>
 				</div>
-				<button class="close-button" onclick={onClose} type="button">✕</button>
+				<div class="header-buttons">
+					<button class="fold-button" onclick={toggleFold} type="button">
+						<span class="material-symbols-outlined">{isFolded ? 'unfold_more' : 'unfold_less'}</span>
+					</button>
+					<button class="close-button" onclick={onClose} type="button">✕</button>
+				</div>
 			</div>
 
-			<div class="panel-content">
+			{#if !isFolded}
+			<div class="panel-content" onwheel={(e) => e.stopPropagation()}>
 				{#if loading}
 					<div class="loading">Loading...</div>
 				{:else if entityData}
@@ -168,10 +190,6 @@
 						<PropertyRow
 							label="IRI"
 							value={entityData.id}
-						/>
-						<PropertyRow
-							label="Type"
-							value={entityData.type}
 						/>
 
 						{#each entityData.propertyGroups as group}
@@ -181,11 +199,20 @@
 								onNavigateToEntity={onNavigateToEntity}
 							/>
 						{/each}
+
+						{#if entityData.backlinks && entityData.backlinks.length > 0}
+							<PropertyGroup
+								groupLabel="Backlinks"
+								properties={entityData.backlinks}
+								onNavigateToEntity={onNavigateToEntity}
+							/>
+						{/if}
 					</div>
 				{:else}
 					<div class="error">Failed to load entity data</div>
 				{/if}
 			</div>
+			{/if}
 		</div>
 		{/snippet}
 	</Card>
@@ -193,27 +220,24 @@
 
 <style>
 	.entity-inspector-panel {
-		position: fixed;
+		position: relative;
 		width: 400px;
-		min-height: 300px;
-		max-height: 70vh;
 		z-index: 1000;
 		display: flex;
 		flex-direction: column;
 		isolation: isolate;
 	}
 
-	.entity-inspector-panel.dragging {
-		cursor: grabbing;
-		user-select: none;
-	}
-
 	.panel-wrapper {
 		display: flex;
 		flex-direction: column;
 		height: 100%;
-		max-height: 70vh;
 		overflow: hidden;
+	}
+
+	.panel-wrapper:not(.folded) {
+		min-height: 300px;
+		max-height: 600px;
 	}
 
 	.panel-header {
@@ -222,23 +246,43 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		background: var(--color-black);
+		z-index: 1;
+	}
+
+	.panel-wrapper:not(.folded) .panel-header {
 		padding: 0 0 12px 0;
 		margin-bottom: 12px;
 		border-bottom: 1px solid var(--color-border);
-		background: var(--color-black);
-		z-index: 1;
 	}
 
 	.panel-header-drag {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		cursor: grab;
 		flex: 1;
 		min-width: 0;
 	}
 
-	.panel-header-drag:active {
+	.header-text {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.header-buttons {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.panel-drag-handle {
+		cursor: grab;
+	}
+
+	.panel-drag-handle:active {
 		cursor: grabbing;
 	}
 
@@ -271,24 +315,50 @@
 	}
 
 	.panel-title {
-		font-size: 18px;
+		font-size: 16px;
+		font-weight: 600;
 		color: var(--color-neutral);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 
+	.panel-type {
+		font-size: 11px;
+		color: var(--color-neutral-disabled);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.fold-button,
 	.close-button {
 		background: none;
 		border: none;
 		color: var(--color-neutral);
-		font-size: 18px;
 		cursor: pointer;
-		padding: 4px 8px;
+		padding: 4px;
 		line-height: 1;
 		border-radius: 4px;
 		transition: background 0.2s, color 0.2s;
 		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.fold-button {
+		font-size: 20px;
+		color: var(--color-interactive);
+	}
+
+	.fold-button:hover {
+		background: var(--color-neutral-dim);
+		color: var(--color-primary);
+	}
+
+	.close-button {
+		font-size: 18px;
 	}
 
 	.close-button:hover {

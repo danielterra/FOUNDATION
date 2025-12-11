@@ -15,9 +15,11 @@ pub struct Class {
     pub label: Option<String>,
     pub icon: Option<String>,
     pub comment: Option<String>,
+    pub types: Vec<Thing>, // rdf:type (e.g., owl:Class, rdfs:Class)
     pub super_classes: Vec<Thing>,
     pub sub_classes: Vec<Thing>,
     pub properties: Vec<(String, String)>, // (property_iri, source_class_iri)
+    pub backlinks: Vec<(String, String, Object)>, // (source_entity, property_iri, value) - entities that reference this class
 }
 
 impl Class {
@@ -28,9 +30,11 @@ impl Class {
             label: None,
             icon: None,
             comment: None,
+            types: Vec::new(),
             super_classes: Vec::new(),
             sub_classes: Vec::new(),
             properties: Vec::new(),
+            backlinks: Vec::new(),
         }
     }
 
@@ -53,6 +57,13 @@ impl Class {
         let comment = comment_result.triples.first()
             .and_then(|t| t.object.as_literal());
 
+        // Get types (rdf:type)
+        let types_result = query::get_by_entity_predicate(conn, &iri, rdf::TYPE)?;
+        let types: Vec<Thing> = types_result.triples.iter()
+            .filter_map(|t| t.object.as_iri())
+            .map(|type_iri| Thing::get(conn, type_iri))
+            .collect();
+
         // Get super classes with their info (shallow - no recursion)
         let super_result = query::get_by_entity_predicate(conn, &iri, rdfs::SUB_CLASS_OF)?;
         let super_classes: Vec<Thing> = super_result.triples.iter()
@@ -69,14 +80,22 @@ impl Class {
         // Get properties with source
         let properties = Self::get_properties(conn, &iri)?;
 
+        // Get backlinks - instances of this class (rdf:type references)
+        let backlinks_result = query::get_by_predicate_object(conn, rdf::TYPE, &iri)?;
+        let backlinks: Vec<(String, String, Object)> = backlinks_result.triples.iter()
+            .map(|t| (t.subject.clone(), rdf::TYPE.to_string(), Object::Iri(iri.clone())))
+            .collect();
+
         Ok(Self {
             iri,
             label,
             icon,
             comment,
+            types,
             super_classes,
             sub_classes,
             properties,
+            backlinks,
         })
     }
 
