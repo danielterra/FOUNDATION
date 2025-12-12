@@ -10,6 +10,8 @@
 		entityLabel = '',
 		entityIcon = null,
 		position = { x: window.innerWidth - 420, y: 100 },
+		isFolded = $bindable(true),
+		onFoldChange = null,
 		onClose = () => {},
 		onNavigateToEntity = null
 	} = $props();
@@ -17,7 +19,6 @@
 	let panel;
 	let entityData = $state(null);
 	let loading = $state(true);
-	let isFolded = $state(true); // Start folded (minimized)
 
 	// Helper to detect icon type
 	function getIconType(icon) {
@@ -49,7 +50,12 @@
 	}
 
 	function toggleFold() {
-		isFolded = !isFolded;
+		const newFoldState = !isFolded;
+		if (onFoldChange) {
+			onFoldChange(newFoldState);
+		} else {
+			isFolded = newFoldState;
+		}
 	}
 
 	onMount(async () => {
