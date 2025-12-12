@@ -31,9 +31,11 @@ pub struct GraphNode {
     pub id: String,
     pub label: String,
     pub icon: Option<String>,
-    pub group: u8, // 1 = Class, 6 = Individual
+    pub group: u8, // 1 = Class, 6 = Individual, 7 = Literal Value
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_broken_ref: Option<bool>, // true if entity doesn't exist in database
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_literal: Option<bool>, // true if this is a literal value node
 }
 
 /// Link between nodes (ObjectProperty)
@@ -193,6 +195,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         icon: icon.clone(),
         group: 1,
         is_broken_ref: None,
+        is_literal: None,
     });
     added_node_ids.insert(class_id.to_string());
 
@@ -205,6 +208,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
                 icon: super_class.icon.clone(),
                 group: 1,
                 is_broken_ref: None,
+                is_literal: None,
             });
             added_node_ids.insert(super_class.iri.clone());
         }
@@ -225,6 +229,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
                 icon: sub_class.icon.clone(),
                 group: 1,
                 is_broken_ref: None,
+                is_literal: None,
             });
             added_node_ids.insert(sub_class.iri.clone());
         }
@@ -234,6 +239,63 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             target: class_id.to_string(),
             label: "subClassOf".to_string(),
         });
+    }
+
+    // Add properties' ranges as nodes (showing what types this class can point to)
+    for (property_iri, _source_class_iri) in &class.properties {
+        let prop = Property::get(conn, property_iri)
+            .map_err(|e| e.to_string())?;
+
+        let property_label = prop.label.clone().unwrap_or_else(|| property_iri.clone());
+
+        if prop.property_type == crate::owl::PropertyType::ObjectProperty {
+            // ObjectProperty: Add range classes as nodes
+            for range_iri in &prop.ranges {
+                if !added_node_ids.contains(range_iri) {
+                    let range_thing = crate::owl::Thing::get(conn, range_iri);
+                    nodes.push(GraphNode {
+                        id: range_iri.clone(),
+                        label: range_thing.label,
+                        icon: range_thing.icon,
+                        group: 1, // Ranges are usually classes
+                        is_broken_ref: None,
+                        is_literal: None,
+                    });
+                    added_node_ids.insert(range_iri.clone());
+                }
+
+                links.push(GraphLink {
+                    source: class_id.to_string(),
+                    target: range_iri.clone(),
+                    label: property_label.clone(),
+                });
+            }
+        } else {
+            // DataProperty: Add datatype as literal node
+            for range_iri in &prop.ranges {
+                let literal_node_id = format!("{}#datatype#{}", class_id, range_iri);
+
+                if !added_node_ids.contains(&literal_node_id) {
+                    let range_thing = crate::owl::Thing::get(conn, range_iri);
+
+                    nodes.push(GraphNode {
+                        id: literal_node_id.clone(),
+                        label: range_thing.label,
+                        icon: range_thing.icon,
+                        group: 7, // Literal/datatype node
+                        is_broken_ref: None,
+                        is_literal: Some(true),
+                    });
+                    added_node_ids.insert(literal_node_id.clone());
+                }
+
+                links.push(GraphLink {
+                    source: class_id.to_string(),
+                    target: literal_node_id,
+                    label: property_label.clone(),
+                });
+            }
+        }
     }
 
 
@@ -479,6 +541,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         icon: icon.clone(),
         group: 6,
         is_broken_ref: None,
+        is_literal: None,
     });
     added_node_ids.insert(individual_id.to_string());
 
@@ -491,6 +554,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                 icon: class_thing.icon.clone(),
                 group: 1,
                 is_broken_ref: None,
+                is_literal: None,
             });
             added_node_ids.insert(class_thing.iri.clone());
         }
@@ -502,9 +566,10 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         });
     }
 
-    // Add related individuals via ObjectProperties (outgoing relationships)
+    // Add related entities via all properties (both ObjectProperties and DataProperties)
     for prop in &properties {
         if prop.is_object_property {
+            // ObjectProperty: add related individual as node
             if !added_node_ids.contains(&prop.value) {
                 let related_thing = crate::owl::Thing::get(conn, &prop.value);
                 let entity_exists_flag = Individual::new(&prop.value).exists(conn).unwrap_or(false);
@@ -515,6 +580,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                     icon: if entity_exists_flag { related_thing.icon } else { Some("warning".to_string()) },
                     group: 6,
                     is_broken_ref: if entity_exists_flag { None } else { Some(true) },
+                    is_literal: None,
                 });
                 added_node_ids.insert(prop.value.clone());
             }
@@ -522,6 +588,35 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             links.push(GraphLink {
                 source: individual_id.to_string(),
                 target: prop.value.clone(),
+                label: prop.property_label.clone(),
+            });
+        } else {
+            // DataProperty: add literal value as node
+            // Create unique ID for literal node (property + value)
+            let literal_node_id = format!("{}#literal#{}", individual_id, &prop.property);
+
+            if !added_node_ids.contains(&literal_node_id) {
+                // Format display value with unit if available
+                let display_value = if let Some(unit_label) = &prop.unit_label {
+                    format!("{} {}", prop.value, unit_label)
+                } else {
+                    prop.value.clone()
+                };
+
+                nodes.push(GraphNode {
+                    id: literal_node_id.clone(),
+                    label: display_value,
+                    icon: prop.value_icon.clone(),
+                    group: 7, // New group for literal values
+                    is_broken_ref: None,
+                    is_literal: Some(true),
+                });
+                added_node_ids.insert(literal_node_id.clone());
+            }
+
+            links.push(GraphLink {
+                source: individual_id.to_string(),
+                target: literal_node_id,
                 label: prop.property_label.clone(),
             });
         }
@@ -556,6 +651,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                 icon: if entity_exists_flag { subject_thing.icon } else { Some("warning".to_string()) },
                 group: 6,
                 is_broken_ref: if entity_exists_flag { None } else { Some(true) },
+                is_literal: None,
             });
             added_node_ids.insert(subject.clone());
         }

@@ -11,7 +11,9 @@
 mod setup;
 mod entity;
 mod shortcuts;
+mod logging;
 
 pub use setup::*;
 pub use entity::*;
 pub use shortcuts::*;
+pub use logging::*;

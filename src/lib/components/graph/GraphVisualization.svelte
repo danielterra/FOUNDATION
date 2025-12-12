@@ -20,7 +20,8 @@
 	// OWL node types (matching backend group numbers)
 	const NODE_TYPE = {
 		CLASS: 1,           // owl:Class - represents a class/concept
-		INDIVIDUAL: 6       // Individual - instance of a class
+		INDIVIDUAL: 6,      // Individual - instance of a class
+		LITERAL: 7          // Literal value or datatype
 	};
 
 	// Visual configuration for OWL entities
@@ -40,6 +41,13 @@
 			textTransform: 'none',
 			fontWeight: '500'
 		},
+		LITERAL: {
+			nodeRadius: 14,
+			borderColor: 'var(--color-neutral)',
+			backgroundColor: 'var(--color-neutral)',
+			textTransform: 'none',
+			fontWeight: '400'
+		},
 		PROPERTY: {
 			labelBackground: 'var(--color-black)',
 			labelColor: 'var(--color-neutral)',
@@ -49,7 +57,9 @@
 	};
 
 	function getNodeVisualConfig(node) {
-		return node.group === NODE_TYPE.INDIVIDUAL ? OWL_VISUAL.INDIVIDUAL : OWL_VISUAL.CLASS;
+		if (node.group === NODE_TYPE.LITERAL) return OWL_VISUAL.LITERAL;
+		if (node.group === NODE_TYPE.INDIVIDUAL) return OWL_VISUAL.INDIVIDUAL;
+		return OWL_VISUAL.CLASS;
 	}
 
 	// Focus mode functions

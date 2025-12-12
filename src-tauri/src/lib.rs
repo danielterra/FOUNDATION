@@ -117,9 +117,12 @@ pub fn run() {
             let app_handle = app.handle().clone();
 
             std::thread::spawn(move || {
+                commands::log_backend(&app_handle, "info", "Database initialization starting...");
+
                 match eavto::initialize_with_progress(app_handle.clone()) {
                     Ok(conn) => {
                         println!("Database initialized successfully");
+                        commands::log_backend(&app_handle, "info", "Database initialized successfully");
 
                         // Print database stats
                         if let Ok(stats) = eavto::get_stats(&conn) {
@@ -128,6 +131,12 @@ pub fn run() {
                             println!("  Active triples: {}", stats.active_facts);
                             println!("  Transactions: {}", stats.total_transactions);
                             println!("  Entities: {}", stats.entities_count);
+
+                            let stats_msg = format!(
+                                "Database stats - Total triples: {}, Active: {}, Transactions: {}, Entities: {}",
+                                stats.total_facts, stats.active_facts, stats.total_transactions, stats.entities_count
+                            );
+                            commands::log_backend(&app_handle, "info", &stats_msg);
                         }
 
                         // Create async executor and store in state
@@ -136,9 +145,11 @@ pub fn run() {
 
                         // Emit completion event
                         let _ = app_handle.emit("import-complete", ());
+                        commands::log_backend(&app_handle, "info", "Database initialization complete");
                     }
                     Err(e) => {
                         eprintln!("Failed to initialize database: {:?}", e);
+                        commands::log_backend(&app_handle, "error", &format!("Failed to initialize database: {:?}", e));
                         let _ = app_handle.emit("import-error", format!("{:?}", e));
                     }
                 }
@@ -151,7 +162,10 @@ pub fn run() {
             commands::setup__init,
             commands::entity__get,
             commands::entity__search,
-            commands::shortcuts__get_all
+            commands::shortcuts__get_all,
+            commands::log_frontend,
+            commands::get_log_file_path_command,
+            commands::clear_logs
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,6 +1,8 @@
 <script>
   import '$lib/fonts.css';
   import '$lib/colors.css';
+  import { initializeLogging } from '$lib/logging.js';
+  import { onMount } from 'svelte';
 
   // Available background videos
   const backgroundVideos = [
@@ -13,6 +15,11 @@
 
   // Select random video
   const selectedVideo = backgroundVideos[Math.floor(Math.random() * backgroundVideos.length)];
+
+  // Initialize logging when app mounts
+  onMount(() => {
+    initializeLogging();
+  });
 </script>
 
 <!-- Background Video (global) -->
