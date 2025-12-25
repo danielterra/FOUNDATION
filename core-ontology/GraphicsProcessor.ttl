@@ -1,0 +1,78 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+
+# =============================================================================
+# GraphicsProcessor
+# =============================================================================
+# A graphics processing unit (GPU) for rendering graphics and parallel computing
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:GraphicsProcessor a owl:Class ;
+    rdfs:subClassOf foundation:PhysicalThing ;
+    rdfs:label "Graphics Processor" ;
+    rdfs:comment "A graphics processing unit (GPU) specialized for rendering graphics and parallel computation" ;
+    foundation:icon "image" ;
+    rdfs:seeAlso """
+Examples:
+- NVIDIA GeForce RTX 4090
+- AMD Radeon RX 7900 XTX
+- Apple M3 Max GPU (38-core)
+- Intel Arc A770
+""" .
+
+# -----------------------------------------------------------------------------
+# GraphicsProcessor Properties
+# -----------------------------------------------------------------------------
+
+foundation:gpuModel a owl:DatatypeProperty ;
+    rdfs:label "GPU model" ;
+    rdfs:comment "Commercial model name/number of the graphics processor" ;
+    rdfs:domain foundation:GraphicsProcessor ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :gpu1 foundation:gpuModel "NVIDIA GeForce RTX 4090" .
+  :gpu2 foundation:gpuModel "AMD Radeon RX 7900 XTX" .
+""" .
+
+foundation:vramCapacity a owl:DatatypeProperty ;
+    rdfs:label "VRAM capacity" ;
+    rdfs:comment "Video memory (VRAM) capacity in gigabytes" ;
+    rdfs:domain foundation:GraphicsProcessor ;
+    rdfs:range xsd:integer ;
+    qudt:hasUnit unit:GigaBYTE ;
+    qudt:applicableUnit unit:MegaBYTE ;
+    rdfs:seeAlso """
+Example:
+  :gpu1 foundation:vramCapacity "24"^^xsd:integer .  # 24GB VRAM
+""" .
+
+foundation:computeUnits a owl:DatatypeProperty ;
+    rdfs:label "compute units" ;
+    rdfs:comment "Number of compute units/streaming multiprocessors" ;
+    rdfs:domain foundation:GraphicsProcessor ;
+    rdfs:range xsd:integer ;
+    qudt:hasUnit unit:NUM ;
+    rdfs:seeAlso """
+Example:
+  :gpu1 foundation:computeUnits "128"^^xsd:integer .
+""" .
+
+foundation:gpuClockSpeed a owl:DatatypeProperty ;
+    rdfs:label "GPU clock speed" ;
+    rdfs:comment "Base GPU clock frequency in GHz" ;
+    rdfs:domain foundation:GraphicsProcessor ;
+    rdfs:range xsd:decimal ;
+    qudt:hasUnit unit:GigaHZ ;
+    rdfs:seeAlso """
+Example:
+  :gpu1 foundation:gpuClockSpeed "2.52"^^xsd:decimal .  # 2.52 GHz
+""" .

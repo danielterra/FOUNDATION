@@ -6,3 +6,11 @@ build
 FOUNDATION.db
 FOUNDATION.db-shm
 FOUNDATION.db-wal
+
+# Coverage files
+lcov.info
+*.profraw
+*.profdata
+src-tauri/target/llvm-cov
+src-tauri/target/llvm-cov-target
+src-tauri/target/coverage

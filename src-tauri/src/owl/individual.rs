@@ -181,4 +181,37 @@ impl Individual {
         let result = query::get_by_entity(conn, &self.iri)?;
         Ok(!result.triples.is_empty())
     }
+
+    /// Find individuals of a specific class that match property constraints
+    ///
+    /// This uses an efficient SQL JOIN query to find all individuals matching all criteria.
+    /// Can be used with one or multiple properties.
+    ///
+    /// Example:
+    /// ```
+    /// // Single property
+    /// let releases = Individual::find_by_class_and_properties(
+    ///     conn,
+    ///     "foundation:SoftwareRelease",
+    ///     &[("foundation:versionNumber", "0.1.0")]
+    /// )?;
+    ///
+    /// // Multiple properties
+    /// let releases = Individual::find_by_class_and_properties(
+    ///     conn,
+    ///     "foundation:SoftwareRelease",
+    ///     &[
+    ///         ("foundation:versionNumber", "0.1.0"),
+    ///         ("foundation:releaseOf", "foundation:FoundationProduct"),
+    ///     ]
+    /// )?;
+    /// ```
+    pub fn find_by_class_and_properties(
+        conn: &Connection,
+        class_iri: &str,
+        properties: &[(&str, &str)],
+    ) -> Result<Vec<String>> {
+        query::find_by_class_and_properties(conn, class_iri, properties)
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))
+    }
 }

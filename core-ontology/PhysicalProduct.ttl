@@ -1,0 +1,62 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# PhysicalProduct
+# =============================================================================
+# A tangible product that exists in physical form
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:PhysicalProduct a owl:Class ;
+    rdfs:subClassOf foundation:Product ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:manufacturedBy ;
+          owl:minCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Physical Product" ;
+    rdfs:comment "A tangible product that has physical form and can be touched, manufactured, and shipped" ;
+    foundation:icon "inventory_2" ;
+    rdfs:seeAlso """
+Examples:
+- iPhone 15 Pro (smartphone model)
+- MacBook Pro M3 (laptop model)
+- Dell XPS 13 (laptop model)
+- Samsung Galaxy S24 (smartphone model)
+
+Note: This represents the PRODUCT MODEL, not individual units.
+Individual physical instances would be PhysicalThing entities.
+
+Cardinality constraints:
+- manufacturedBy: at least 1 (required, physical product must have manufacturer(s))
+""" .
+
+# -----------------------------------------------------------------------------
+# PhysicalProduct Properties
+# -----------------------------------------------------------------------------
+
+foundation:modelNumber a owl:DatatypeProperty ;
+    rdfs:label "model number" ;
+    rdfs:comment "The manufacturer's model number or SKU" ;
+    rdfs:domain foundation:PhysicalProduct ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :iPhone15Pro foundation:modelNumber "A2848" .
+  :DellXPS13 foundation:modelNumber "9320" .
+""" .
+
+foundation:manufacturedBy a owl:ObjectProperty ;
+    rdfs:label "manufactured by" ;
+    rdfs:comment "The organization that manufactures this physical product" ;
+    rdfs:domain foundation:PhysicalProduct ;
+    rdfs:range foundation:Organization ;
+    rdfs:seeAlso """
+Example:
+  :iPhone15Pro foundation:manufacturedBy :Apple .
+  :DellXPS13 foundation:manufacturedBy :Dell .
+""" .

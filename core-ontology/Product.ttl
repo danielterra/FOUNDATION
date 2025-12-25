@@ -1,0 +1,64 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Product
+# =============================================================================
+# A product concept - something that can be owned, sold, or used
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Product a owl:Class ;
+    rdfs:subClassOf foundation:Concept ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:ownedBy ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Product" ;
+    rdfs:comment "A product concept representing something that can be owned, produced, sold, or used by organizations or individuals" ;
+    foundation:icon "inventory" ;
+    rdfs:seeAlso """
+Examples:
+- iPhone (physical product)
+- FOUNDATION Software (abstract product)
+- PostgreSQL Database (abstract product)
+- Dell Laptop (physical product)
+
+Products can be:
+- Physical (tangible goods)
+- Abstract (software, services, intellectual property)
+
+Cardinality constraints:
+- ownedBy: 0-1 (optional, product may have single owner)
+""" .
+
+# -----------------------------------------------------------------------------
+# Product Properties
+# -----------------------------------------------------------------------------
+
+foundation:ownedBy a owl:ObjectProperty ;
+    rdfs:label "owned by" ;
+    rdfs:comment "The organization that owns or produces this product" ;
+    rdfs:domain foundation:Product ;
+    rdfs:range foundation:Organization ;
+    rdfs:seeAlso """
+Example:
+  foundation:FoundationProduct foundation:ownedBy foundation:AnthropicOrg .
+  :iPhone foundation:ownedBy :Apple .
+  :PostgreSQL foundation:ownedBy :PostgreSQLFoundation .
+""" .
+
+foundation:productName a owl:DatatypeProperty ;
+    rdfs:label "product name" ;
+    rdfs:comment "The commercial or official name of the product" ;
+    rdfs:domain foundation:Product ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :iphone foundation:productName "iPhone 15 Pro" .
+  foundation:FoundationProduct foundation:productName "FOUNDATION" .
+""" .

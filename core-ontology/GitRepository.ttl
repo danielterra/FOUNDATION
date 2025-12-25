@@ -1,0 +1,92 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# GitRepository
+# =============================================================================
+# A Git version control repository containing source code and history
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:GitRepository a owl:Class ;
+    rdfs:subClassOf foundation:DigitalThing ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:repositoryUrl ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hostedOn ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Git Repository" ;
+    rdfs:comment "A Git version control repository containing source code, documentation, and version history" ;
+    foundation:icon "source" ;
+    rdfs:seeAlso """
+Examples:
+- https://github.com/danielterra/FOUNDATION
+- https://github.com/torvalds/linux
+- https://gitlab.com/gitlab-org/gitlab
+- https://github.com/microsoft/vscode
+
+A Git repository stores:
+- Source code files
+- Commit history
+- Branches and tags
+- Configuration and documentation
+
+Cardinality constraints:
+- repositoryUrl: exactly 1 (required unique identifier)
+- hostedOn: 0-1 (optional, single hosting platform)
+- defaultBranch: 0-1 (optional, typically 'main' or 'master')
+""" .
+
+# -----------------------------------------------------------------------------
+# GitRepository Properties
+# -----------------------------------------------------------------------------
+
+foundation:repositoryUrl a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "repository URL" ;
+    rdfs:comment "The URL where the Git repository is hosted" ;
+    rdfs:domain foundation:GitRepository ;
+    rdfs:range xsd:anyURI ;
+    rdfs:seeAlso """
+Example:
+  :FoundationRepo foundation:repositoryUrl "https://github.com/danielterra/FOUNDATION"^^xsd:anyURI .
+  :LinuxRepo foundation:repositoryUrl "https://github.com/torvalds/linux"^^xsd:anyURI .
+""" .
+
+foundation:defaultBranch a owl:DatatypeProperty ;
+    rdfs:label "default branch" ;
+    rdfs:comment "The default branch name (e.g., 'main', 'master', 'develop')" ;
+    rdfs:domain foundation:GitRepository ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :FoundationRepo foundation:defaultBranch "main" .
+  :LegacyRepo foundation:defaultBranch "master" .
+""" .
+
+foundation:currentCommit a owl:DatatypeProperty ;
+    rdfs:label "current commit" ;
+    rdfs:comment "The current commit SHA hash" ;
+    rdfs:domain foundation:GitRepository ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :FoundationRepo foundation:currentCommit "3e9062c50202f05c09b25f43dcef1d8ffaedc489" .
+""" .
+
+foundation:hostedOn a owl:ObjectProperty ;
+    rdfs:label "hosted on" ;
+    rdfs:comment "The platform where the repository is hosted" ;
+    rdfs:domain foundation:GitRepository ;
+    rdfs:range foundation:Organization ;
+    rdfs:seeAlso """
+Example:
+  :FoundationRepo foundation:hostedOn :GitHub .
+  :GitLabRepo foundation:hostedOn :GitLab .
+  :BitbucketRepo foundation:hostedOn :Bitbucket .
+""" .

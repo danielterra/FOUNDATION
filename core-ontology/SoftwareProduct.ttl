@@ -1,0 +1,42 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# SoftwareProduct
+# =============================================================================
+# Represents a software product concept (not an installation)
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:SoftwareProduct a owl:Class ;
+    rdfs:subClassOf foundation:AbstractProduct ;
+    rdfs:label "Software Product" ;
+    rdfs:comment "A software product concept, independent of specific installations or versions" ;
+    foundation:icon "code" ;
+    rdfs:seeAlso """
+Examples:
+- FOUNDATION (knowledge management system)
+- Visual Studio Code (code editor)
+- PostgreSQL (database system)
+- React (JavaScript library)
+- Docker (containerization platform)
+
+Note: This represents the SOFTWARE PRODUCT, not a specific installation.
+Installations are instances of foundation:Application or foundation:Software
+linked via foundation:productOf.
+
+Example:
+  foundation:FoundationProduct a foundation:SoftwareProduct ;
+    rdfs:label "FOUNDATION" ;
+    foundation:developedBy foundation:AnthropicOrg ;
+    foundation:licenseType "GPL-3.0" .
+
+  foundation:ThisFoundationInstance a foundation:Application ;
+    foundation:productOf foundation:FoundationProduct ;
+    foundation:version "0.1.0" .
+""" .

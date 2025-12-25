@@ -1,0 +1,107 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+
+# =============================================================================
+# Processor
+# =============================================================================
+# A central processing unit (CPU) that executes instructions
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Processor a owl:Class ;
+    rdfs:subClassOf foundation:PhysicalThing ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:processorModel ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:architecture ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:coreCount ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:clockSpeed ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Processor" ;
+    rdfs:comment "A central processing unit (CPU) that executes program instructions" ;
+    foundation:icon "memory" ;
+    rdfs:seeAlso """
+Examples:
+- Intel Core i9-13900K
+- AMD Ryzen 9 7950X
+- Apple M3 Max
+- ARM Cortex-A78
+
+Cardinality constraints:
+- processorModel: exactly 1 (required identifier)
+- architecture: exactly 1 (required specification)
+- coreCount: exactly 1 (required specification)
+- clockSpeed: 0-1 (optional, base frequency)
+- manufacturedBy: 0+ (optional manufacturer link)
+""" .
+
+# -----------------------------------------------------------------------------
+# Processor Properties
+# -----------------------------------------------------------------------------
+
+foundation:processorModel a owl:DatatypeProperty ;
+    rdfs:label "processor model" ;
+    rdfs:comment "Commercial model name/number of the processor" ;
+    rdfs:domain foundation:Processor ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :cpu1 foundation:processorModel "Apple M3 Max" .
+  :cpu2 foundation:processorModel "Intel Core i9-13900K" .
+""" .
+
+foundation:manufacturedBy a owl:ObjectProperty ;
+    rdfs:label "manufactured by" ;
+    rdfs:comment "Organization that manufactures this processor" ;
+    rdfs:domain foundation:Processor ;
+    rdfs:range foundation:Organization ;
+    rdfs:seeAlso """
+Example:
+  :cpu1 foundation:manufacturedBy :apple .
+  :cpu2 foundation:manufacturedBy :intel .
+""" .
+
+foundation:coreCount a owl:DatatypeProperty ;
+    rdfs:label "core count" ;
+    rdfs:comment "Number of physical processor cores" ;
+    rdfs:domain foundation:Processor ;
+    rdfs:range xsd:integer ;
+    qudt:hasUnit unit:NUM ;
+    rdfs:seeAlso """
+Example:
+  :cpu1 foundation:coreCount "16"^^xsd:integer .
+""" .
+
+foundation:clockSpeed a owl:DatatypeProperty ;
+    rdfs:label "clock speed" ;
+    rdfs:comment "Base clock frequency in GHz" ;
+    rdfs:domain foundation:Processor ;
+    rdfs:range xsd:decimal ;
+    qudt:hasUnit unit:GigaHZ ;
+    rdfs:seeAlso """
+Example:
+  :cpu1 foundation:clockSpeed "3.2"^^xsd:decimal .  # 3.2 GHz
+""" .
+
+foundation:architecture a owl:DatatypeProperty ;
+    rdfs:label "architecture" ;
+    rdfs:comment "Processor architecture (x86_64, ARM64, etc.)" ;
+    rdfs:domain foundation:Processor ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :cpu1 foundation:architecture "ARM64" .
+  :cpu2 foundation:architecture "x86_64" .
+""" .

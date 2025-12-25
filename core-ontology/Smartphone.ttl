@@ -1,0 +1,91 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+
+# =============================================================================
+# Smartphone
+# =============================================================================
+# A mobile computer with touchscreen interface and cellular connectivity
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Smartphone a owl:Class ;
+    rdfs:subClassOf foundation:Computer ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hasPhoneNumber ;
+          owl:minCardinality "0"^^xsd:nonNegativeInteger ;
+          owl:maxCardinality "2"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hasIMEI ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:screenSize ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Smartphone" ;
+    rdfs:comment "A mobile computer with touchscreen interface, cellular connectivity, and mobile operating system" ;
+    foundation:icon "smartphone" ;
+    rdfs:seeAlso """
+Examples:
+- iPhone 15 Pro
+- Samsung Galaxy S24
+- Google Pixel 8
+- OnePlus 12
+
+Cardinality constraints:
+- hasPhoneNumber: 0-2 (supports no SIM, single SIM, or dual SIM)
+- hasIMEI: exactly 1 (required unique identifier)
+- screenSize: exactly 1 (required specification)
+""" .
+
+# -----------------------------------------------------------------------------
+# Smartphone Properties
+# -----------------------------------------------------------------------------
+
+foundation:hasIMEI a owl:DatatypeProperty ;
+    rdfs:label "has IMEI" ;
+    rdfs:comment "International Mobile Equipment Identity number" ;
+    rdfs:domain foundation:Smartphone ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :iphone foundation:hasIMEI "123456789012345" .
+""" .
+
+foundation:hasPhoneNumber a owl:DatatypeProperty ;
+    rdfs:label "has phone number" ;
+    rdfs:comment "Phone number associated with the device (can have multiple numbers for dual-SIM or eSIM)" ;
+    rdfs:domain foundation:Smartphone ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :iphone foundation:hasPhoneNumber "+5511999999999" .
+  :iphone foundation:hasPhoneNumber "+5511888888888" .
+""" .
+
+foundation:screenSize a owl:DatatypeProperty ;
+    rdfs:label "screen size" ;
+    rdfs:comment "Diagonal screen size" ;
+    rdfs:domain foundation:Smartphone ;
+    rdfs:range xsd:decimal ;
+    qudt:unit unit:INCH ;
+    rdfs:seeAlso """
+Example:
+  :iphone foundation:screenSize "6.7"^^xsd:decimal .
+""" .
+
+foundation:hasMobileCarrier a owl:ObjectProperty ;
+    rdfs:label "has mobile carrier" ;
+    rdfs:comment "Mobile network carrier/operator providing cellular service" ;
+    rdfs:domain foundation:Smartphone ;
+    rdfs:range foundation:Organization ;
+    rdfs:seeAlso """
+Example:
+  :iphone foundation:hasMobileCarrier :vivo .
+  :android foundation:hasMobileCarrier :tim .
+""" .

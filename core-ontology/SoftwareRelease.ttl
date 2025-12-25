@@ -1,0 +1,136 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# SoftwareRelease
+# =============================================================================
+# A specific version/release of a software product that can be installed or purchased
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:SoftwareRelease a owl:Class ;
+    rdfs:subClassOf foundation:Concept ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:releaseOf ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:versionNumber ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Software Release" ;
+    rdfs:comment "A specific version/release of a software product that can be distributed, installed, or purchased" ;
+    foundation:icon "new_releases" ;
+    rdfs:seeAlso """
+Examples:
+- FOUNDATION v0.1.0
+- Visual Studio Code v1.85.0
+- PostgreSQL 16.1
+- React 18.2.0
+
+This represents a SPECIFIC VERSION that can be:
+- Downloaded and installed
+- Purchased or licensed
+- Distributed to users
+
+Hierarchy:
+  SoftwareProduct (e.g., "Visual Studio Code")
+    ↓ has multiple releases
+  SoftwareRelease (e.g., "VS Code 1.85.0")
+    ↓ can be installed as
+  Software/Application (e.g., "VS Code 1.85.0 on my MacBook")
+
+Cardinality constraints:
+- releaseOf: exactly 1 (must be release of a specific product)
+- versionNumber: exactly 1 (required version identifier)
+- licenseType: 0-1 (optional, may differ per version)
+- releaseDate: 0-1 (optional release date)
+""" .
+
+# -----------------------------------------------------------------------------
+# SoftwareRelease Properties
+# -----------------------------------------------------------------------------
+
+foundation:releaseOf a owl:ObjectProperty ;
+    rdfs:label "release of" ;
+    rdfs:comment "Links this release to its software product" ;
+    rdfs:domain foundation:SoftwareRelease ;
+    rdfs:range foundation:SoftwareProduct ;
+    rdfs:seeAlso """
+Example:
+  :Foundation_v0_1_0 foundation:releaseOf foundation:FoundationProduct .
+  :VSCode_v1_85_0 foundation:releaseOf :VSCodeProduct .
+""" .
+
+foundation:versionNumber a owl:DatatypeProperty ;
+    rdfs:label "version number" ;
+    rdfs:comment "The version number or identifier (e.g., '1.0.0', '2.5.3-beta')" ;
+    rdfs:domain foundation:SoftwareRelease ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :Foundation_v0_1_0 foundation:versionNumber "0.1.0" .
+  :VSCode_v1_85_0 foundation:versionNumber "1.85.0" .
+  :React_v18_2_0 foundation:versionNumber "18.2.0" .
+""" .
+
+foundation:releaseDate a owl:DatatypeProperty ;
+    rdfs:label "release date" ;
+    rdfs:comment "The date when this version was released" ;
+    rdfs:domain foundation:SoftwareRelease ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :Foundation_v0_1_0 foundation:releaseDate "2025-01-15"^^xsd:date .
+  :VSCode_v1_85_0 foundation:releaseDate "2023-11-30"^^xsd:date .
+""" .
+
+foundation:licenseType a owl:DatatypeProperty ;
+    rdfs:label "license type" ;
+    rdfs:comment "The type of license for this specific release (may differ between versions)" ;
+    rdfs:domain foundation:SoftwareRelease ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :Foundation_v0_1_0 foundation:licenseType "GPL-3.0" .
+  :VSCode_v1_85_0 foundation:licenseType "MIT" .
+  :OracleDB_v19c foundation:licenseType "Proprietary" .
+
+Note: License can change between versions (e.g., open source → proprietary)
+""" .
+
+foundation:changelog a owl:DatatypeProperty ;
+    rdfs:label "changelog" ;
+    rdfs:comment "Description of changes in this release" ;
+    rdfs:domain foundation:SoftwareRelease ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :Foundation_v0_1_0 foundation:changelog "Initial release with basic ontology support" .
+""" .
+
+foundation:downloadUrl a owl:DatatypeProperty ;
+    rdfs:label "download URL" ;
+    rdfs:comment "URL where this specific version can be downloaded" ;
+    rdfs:domain foundation:SoftwareRelease ;
+    rdfs:range xsd:anyURI ;
+    rdfs:seeAlso """
+Example:
+  :Foundation_v0_1_0 foundation:downloadUrl "https://github.com/danielterra/FOUNDATION/releases/tag/v0.1.0"^^xsd:anyURI .
+""" .
+
+# =============================================================================
+# FOUNDATION Release Instances
+# =============================================================================
+
+foundation:FoundationRelease_0_1_0 a foundation:SoftwareRelease , owl:NamedIndividual ;
+    rdfs:label "FOUNDATION v0.1.0" ;
+    rdfs:comment "Initial release of FOUNDATION knowledge management system" ;
+    foundation:releaseOf foundation:FoundationProduct ;
+    foundation:versionNumber "0.1.0" ;
+    foundation:licenseType "MIT" ;
+    foundation:releaseDate "2025-12-16"^^xsd:date ;
+    foundation:changelog "Initial release with core ontology support, semantic graph visualization, and EAV-TO database" .

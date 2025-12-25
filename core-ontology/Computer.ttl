@@ -16,7 +16,22 @@
 # =============================================================================
 
 foundation:Computer a owl:Class ;
-    rdfs:subClassOf foundation:PhysicalThing ;
+    rdfs:subClassOf foundation:PhysicalThing ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hasProcessor ;
+          owl:minCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hasMemory ;
+          owl:minCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hasStorage ;
+          owl:minCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hasOperatingSystem ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hostname ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ;
     rdfs:label "Computer" ;
     rdfs:comment "A programmable electronic device for processing and storing data" ;
     foundation:icon "computer" ;
@@ -27,6 +42,15 @@ Examples:
 - A smartphone (iPhone, Android)
 - A desktop workstation
 - An embedded system (Raspberry Pi)
+
+Cardinality constraints:
+- hasProcessor: at least 1 (servers may have multiple CPUs)
+- hasMemory: at least 1 (may have multiple RAM modules)
+- hasStorage: at least 1 (may have multiple drives)
+- hasOperatingSystem: exactly 1 (only one OS running)
+- hostname: exactly 1 (unique network identifier)
+- hasGraphicsProcessor: 0+ (optional, may have multiple GPUs)
+- hasNetworkInterface: 0+ (optional, may have multiple adapters)
 """ .
 
 # -----------------------------------------------------------------------------
@@ -44,30 +68,25 @@ Example:
   :server foundation:hasStorage :disk-array .
 """ .
 
-foundation:hasProcessor a owl:DatatypeProperty ;
+foundation:hasProcessor a owl:ObjectProperty ;
     rdfs:label "has processor" ;
-    rdfs:comment "CPU/processor information" ;
+    rdfs:comment "Links computer to its CPU/processor component" ;
     rdfs:domain foundation:Computer ;
-    rdfs:range xsd:string ;
+    rdfs:range foundation:Processor ;
     rdfs:seeAlso """
 Example:
-  :macbook foundation:hasProcessor "Apple M1" .
-  :server foundation:hasProcessor "Intel Xeon E5-2680" .
+  :macbook foundation:hasProcessor :m3-max-cpu .
+  :server foundation:hasProcessor :xeon-cpu .
 """ .
 
-foundation:hasMemory a owl:DatatypeProperty ;
+foundation:hasMemory a owl:ObjectProperty ;
     rdfs:label "has memory" ;
-    rdfs:comment "RAM capacity in gigabytes" ;
+    rdfs:comment "Links computer to its RAM memory component" ;
     rdfs:domain foundation:Computer ;
-    rdfs:range xsd:integer ;
-    qudt:hasUnit unit:GigaBYTE ;
-    qudt:applicableUnit unit:MegaBYTE ;
-    qudt:applicableUnit unit:TeraBYTE ;
+    rdfs:range foundation:Memory ;
     rdfs:seeAlso """
 Example:
-  :macbook foundation:hasMemory "16"^^xsd:integer .  # 16GB RAM
-
-Values are in Gigabytes (qudt:hasUnit unit:GigaBYTE).
+  :macbook foundation:hasMemory :ram-16gb .
 """ .
 
 foundation:hostname a owl:DatatypeProperty ;
@@ -80,25 +99,37 @@ Example:
   :macbook foundation:hostname "daniels-macbook" .
 """ .
 
-foundation:os a owl:DatatypeProperty ;
-    rdfs:label "operating system" ;
-    rdfs:comment "Operating system running on the computer" ;
+foundation:hasOperatingSystem a owl:ObjectProperty ;
+    rdfs:label "has operating system" ;
+    rdfs:comment "Links computer to its operating system" ;
     rdfs:domain foundation:Computer ;
-    rdfs:range xsd:string ;
+    rdfs:range foundation:OperatingSystem ;
     rdfs:seeAlso """
 Example:
-  :macbook foundation:os "macos" .
-  :server foundation:os "linux" .
+  :macbook foundation:hasOperatingSystem :macos-sequoia .
+  :server foundation:hasOperatingSystem :ubuntu-2404 .
 """ .
 
-foundation:cpu a owl:DatatypeProperty ;
-    rdfs:label "CPU" ;
-    rdfs:comment "CPU/processor information (simplified property)" ;
+foundation:hasGraphicsProcessor a owl:ObjectProperty ;
+    rdfs:label "has graphics processor" ;
+    rdfs:comment "Links computer to its GPU component" ;
     rdfs:domain foundation:Computer ;
-    rdfs:range xsd:string ;
+    rdfs:range foundation:GraphicsProcessor ;
     rdfs:seeAlso """
 Example:
-  :macbook foundation:cpu "Apple M1" .
+  :macbook foundation:hasGraphicsProcessor :m3-max-gpu .
+  :workstation foundation:hasGraphicsProcessor :rtx4090 .
+""" .
+
+foundation:hasNetworkInterface a owl:ObjectProperty ;
+    rdfs:label "has network interface" ;
+    rdfs:comment "Network interfaces that are part of or connected to this computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range foundation:NetworkInterface ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:hasNetworkInterface :wifi-adapter .
+  :server foundation:hasNetworkInterface :eth0 .
 """ .
 
 foundation:hasUser a owl:ObjectProperty ;

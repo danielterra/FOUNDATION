@@ -1,0 +1,59 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# AbstractProduct
+# =============================================================================
+# An intangible product (software, services, intellectual property)
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:AbstractProduct a owl:Class ;
+    rdfs:subClassOf foundation:Product ;
+    rdfs:label "Abstract Product" ;
+    rdfs:comment "An intangible product such as software, services, or intellectual property that does not have physical form" ;
+    foundation:icon "category" ;
+    rdfs:seeAlso """
+Examples:
+- FOUNDATION (software product)
+- Visual Studio Code (software product)
+- PostgreSQL (database software product)
+- Microsoft 365 (software service product)
+- AWS S3 (cloud service product)
+
+This represents the PRODUCT concept, not specific installations or subscriptions.
+Installations are linked via foundation:productOf.
+""" .
+
+# -----------------------------------------------------------------------------
+# AbstractProduct Properties
+# -----------------------------------------------------------------------------
+
+foundation:developedBy a owl:ObjectProperty ;
+    rdfs:label "developed by" ;
+    rdfs:comment "The organization that develops this abstract product" ;
+    rdfs:domain foundation:AbstractProduct ;
+    rdfs:range foundation:Organization ;
+    rdfs:seeAlso """
+Example:
+  foundation:FoundationProduct foundation:developedBy foundation:AnthropicOrg .
+  :VSCode foundation:developedBy :Microsoft .
+  :PostgreSQL foundation:developedBy :PostgreSQLFoundation .
+""" .
+
+foundation:licenseType a owl:DatatypeProperty ;
+    rdfs:label "license type" ;
+    rdfs:comment "The type of license under which this product is distributed" ;
+    rdfs:domain foundation:AbstractProduct ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  foundation:FoundationProduct foundation:licenseType "GPL-3.0" .
+  :VSCode foundation:licenseType "MIT" .
+  :PostgreSQL foundation:licenseType "PostgreSQL License" .
+""" .

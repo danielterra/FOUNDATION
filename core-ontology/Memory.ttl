@@ -1,0 +1,81 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+
+# =============================================================================
+# Memory
+# =============================================================================
+# Random Access Memory (RAM) for temporary data storage
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Memory a owl:Class ;
+    rdfs:subClassOf foundation:PhysicalThing ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:memoryCapacity ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:memoryType ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:memorySpeed ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Memory" ;
+    rdfs:comment "Random Access Memory (RAM) module for volatile data storage" ;
+    foundation:icon "memory" ;
+    rdfs:seeAlso """
+Examples:
+- 16GB DDR5-5600 SODIMM
+- 32GB DDR4-3200 DIMM
+- 8GB LPDDR5
+
+Cardinality constraints:
+- memoryCapacity: exactly 1 (required specification)
+- memoryType: exactly 1 (required specification)
+- memorySpeed: 0-1 (optional frequency specification)
+""" .
+
+# -----------------------------------------------------------------------------
+# Memory Properties
+# -----------------------------------------------------------------------------
+
+foundation:memoryCapacity a owl:DatatypeProperty ;
+    rdfs:label "memory capacity" ;
+    rdfs:comment "Total memory capacity in gigabytes" ;
+    rdfs:domain foundation:Memory ;
+    rdfs:range xsd:integer ;
+    qudt:hasUnit unit:GigaBYTE ;
+    qudt:applicableUnit unit:MegaBYTE ;
+    qudt:applicableUnit unit:TeraBYTE ;
+    rdfs:seeAlso """
+Example:
+  :ram1 foundation:memoryCapacity "16"^^xsd:integer .  # 16GB
+""" .
+
+foundation:memoryType a owl:DatatypeProperty ;
+    rdfs:label "memory type" ;
+    rdfs:comment "Type of memory technology (DDR4, DDR5, LPDDR5, etc.)" ;
+    rdfs:domain foundation:Memory ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :ram1 foundation:memoryType "DDR5" .
+  :ram2 foundation:memoryType "LPDDR5" .
+""" .
+
+foundation:memorySpeed a owl:DatatypeProperty ;
+    rdfs:label "memory speed" ;
+    rdfs:comment "Memory speed/frequency in MHz" ;
+    rdfs:domain foundation:Memory ;
+    rdfs:range xsd:integer ;
+    qudt:hasUnit unit:MegaHZ ;
+    rdfs:seeAlso """
+Example:
+  :ram1 foundation:memorySpeed "5600"^^xsd:integer .  # 5600 MHz
+""" .

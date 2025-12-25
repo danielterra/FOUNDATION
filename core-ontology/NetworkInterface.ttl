@@ -1,0 +1,89 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+
+# =============================================================================
+# NetworkInterface
+# =============================================================================
+# A network interface card or adapter for network connectivity
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:NetworkInterface a owl:Class ;
+    rdfs:subClassOf foundation:PhysicalThing ;
+    rdfs:label "Network Interface" ;
+    rdfs:comment "A network interface card or adapter that provides network connectivity" ;
+    foundation:icon "wifi" ;
+    rdfs:seeAlso """
+Examples:
+- Ethernet adapter (RJ45)
+- Wi-Fi adapter (802.11ax)
+- Bluetooth adapter
+- Cellular modem (5G)
+""" .
+
+# -----------------------------------------------------------------------------
+# NetworkInterface Properties
+# -----------------------------------------------------------------------------
+
+foundation:interfaceName a owl:DatatypeProperty ;
+    rdfs:label "interface name" ;
+    rdfs:comment "System name of the network interface" ;
+    rdfs:domain foundation:NetworkInterface ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :eth0 foundation:interfaceName "en0" .
+  :wifi0 foundation:interfaceName "wlan0" .
+""" .
+
+foundation:macAddress a owl:DatatypeProperty ;
+    rdfs:label "MAC address" ;
+    rdfs:comment "Media Access Control (MAC) hardware address" ;
+    rdfs:domain foundation:NetworkInterface ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :eth0 foundation:macAddress "00:1A:2B:3C:4D:5E" .
+""" .
+
+foundation:interfaceType a owl:DatatypeProperty ;
+    rdfs:label "interface type" ;
+    rdfs:comment "Type of network interface (Ethernet, Wi-Fi, Bluetooth, etc.)" ;
+    rdfs:domain foundation:NetworkInterface ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :eth0 foundation:interfaceType "Ethernet" .
+  :wifi0 foundation:interfaceType "Wi-Fi" .
+""" .
+
+foundation:maxSpeed a owl:DatatypeProperty ;
+    rdfs:label "max speed" ;
+    rdfs:comment "Maximum network speed in Mbps" ;
+    rdfs:domain foundation:NetworkInterface ;
+    rdfs:range xsd:integer ;
+    qudt:hasUnit unit:MegaBIT-PER-SEC ;
+    qudt:applicableUnit unit:GigaBIT-PER-SEC ;
+    rdfs:seeAlso """
+Example:
+  :eth0 foundation:maxSpeed "1000"^^xsd:integer .  # 1 Gbps
+  :wifi0 foundation:maxSpeed "2400"^^xsd:integer .  # Wi-Fi 6E
+""" .
+
+foundation:ipAddress a owl:DatatypeProperty ;
+    rdfs:label "IP address" ;
+    rdfs:comment "Current IPv4 or IPv6 address assigned to this interface" ;
+    rdfs:domain foundation:NetworkInterface ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :eth0 foundation:ipAddress "192.168.1.100" .
+  :eth0 foundation:ipAddress "2001:0db8:85a3::8a2e:0370:7334" .
+""" .

@@ -14,6 +14,7 @@
 	let fullGraphData = $state(null);
 	let currentNodeId = $state(null);
 	let currentNodeLabel = $state('');
+	let currentNodeIcon = $state(null);
 	let graphComponent = $state();
 	let visibleGraphData = $state(null);
 	let shortcuts = $state([]);
@@ -139,6 +140,7 @@
 
 			currentNodeId = entityData.id;
 			currentNodeLabel = entityData.label;
+			currentNodeIcon = entityData.icon;
 
 			// Set graph visualization data
 			visibleGraphData = {
@@ -154,11 +156,11 @@
 	}
 
 	function handleNodeClick(nodeId, nodeLabel, nodeIcon) {
-		// Se clicar no node central, abre o painel
+		// Se clicar no node central, abre o painel flutuante
 		if (nodeId === currentNodeId) {
 			openInspectorPanel(nodeId, nodeLabel, nodeIcon);
 		} else {
-			// Se clicar em outro node, navega para ele
+			// Se clicar em outro node, navega para ele (inspector será atualizado automaticamente)
 			navigateToNode(nodeId);
 		}
 	}
@@ -201,13 +203,33 @@
 	{:else}
 		<TopBar bind:this={topBarComponent} onRecenter={recenterGraph} onSearch={handleNodeClick} screenName="Ontology Graph" />
 
-		{#if visibleGraphData}
-			<GraphVisualization
-				bind:this={graphComponent}
-				graphData={visibleGraphData}
-				onNodeClick={handleNodeClick}
-			/>
-		{/if}
+		<div class="graph-layout">
+			<div class="graph-area">
+				{#if visibleGraphData}
+					<GraphVisualization
+						bind:this={graphComponent}
+						graphData={visibleGraphData}
+						onNodeClick={handleNodeClick}
+					/>
+				{/if}
+			</div>
+
+			{#if currentNodeId}
+				<div class="inspector-sidebar">
+					<EntityInspectorPanel
+						entityId={currentNodeId}
+						entityLabel={currentNodeLabel}
+						entityIcon={currentNodeIcon}
+						position={null}
+						onClose={() => {}}
+						onNavigateToEntity={(entityId, entityLabel, entityIcon) => {
+							navigateToNode(entityId);
+						}}
+						isFixed={true}
+					/>
+				</div>
+			{/if}
+		</div>
 
 		<KeyboardShortcuts {shortcuts} />
 	{/if}
@@ -232,6 +254,29 @@
 		height: 100vh;
 		position: relative;
 		overflow: hidden;
+	}
+
+	.graph-layout {
+		display: flex;
+		width: 100%;
+		height: 100%;
+		position: relative;
+	}
+
+	.graph-area {
+		flex: 1;
+		position: relative;
+		overflow: hidden;
+	}
+
+	.inspector-sidebar {
+		width: 400px;
+		height: 100%;
+		border-left: 1px solid var(--color-neutral-dark);
+		background: var(--color-black);
+		position: relative;
+		z-index: 10;
+		overflow-y: auto;
 	}
 
 	.loading,

@@ -1,0 +1,70 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Service
+# =============================================================================
+# An intangible offering that provides value through actions, labor, or expertise
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Service a owl:Class ;
+    rdfs:subClassOf foundation:AbstractProduct ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:providedBy ;
+          owl:minCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Service" ;
+    rdfs:comment "An intangible offering that provides value through actions, labor, expertise, or access rather than transfer of physical goods" ;
+    foundation:icon "handyman" ;
+    rdfs:seeAlso """
+Examples:
+- Residential cleaning service
+- Computer repair service
+- Business consulting service
+- Software development service
+- AWS S3 (cloud storage service - SaaS)
+- Netflix (streaming service)
+- Uber (transportation service)
+- Food delivery service
+
+Services can be:
+- Physical services (cleaning, repair, transportation)
+- Professional services (consulting, legal, accounting)
+- Digital services (SaaS, streaming, cloud computing)
+
+Cardinality constraints:
+- providedBy: at least 1 (required, service must have provider(s))
+""" .
+
+# -----------------------------------------------------------------------------
+# Service Properties
+# -----------------------------------------------------------------------------
+
+foundation:providedBy a owl:ObjectProperty ;
+    rdfs:label "provided by" ;
+    rdfs:comment "The organization or person that provides this service" ;
+    rdfs:domain foundation:Service ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :CleaningService foundation:providedBy :CleaningCompany .
+  :AwsS3 foundation:providedBy :AWS .
+  :ConsultingService foundation:providedBy :JohnDoeConsultant .
+""" .
+
+foundation:recurringService a owl:DatatypeProperty ;
+    rdfs:label "recurring service" ;
+    rdfs:comment "Whether the service is provided on a recurring/subscription basis" ;
+    rdfs:domain foundation:Service ;
+    rdfs:range xsd:boolean ;
+    rdfs:seeAlso """
+Example:
+  :MonthlyCleaningService foundation:recurringService true .
+  :OneTimeRepair foundation:recurringService false .
+  :NetflixSubscription foundation:recurringService true .
+""" .

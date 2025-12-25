@@ -1,0 +1,78 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# OperatingSystem
+# =============================================================================
+# Software that manages computer hardware and provides services for programs
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:OperatingSystem a owl:Class ;
+    rdfs:subClassOf foundation:Software ;
+    rdfs:label "Operating System" ;
+    rdfs:comment "Software that manages computer hardware and software resources and provides common services for computer programs" ;
+    foundation:icon "settings" ;
+    rdfs:seeAlso """
+Examples:
+- macOS Sequoia 15.1
+- Windows 11 Pro
+- Ubuntu 24.04 LTS
+- Android 14
+- iOS 18
+""" .
+
+# -----------------------------------------------------------------------------
+# OperatingSystem Properties
+# -----------------------------------------------------------------------------
+
+foundation:osName a owl:DatatypeProperty ;
+    rdfs:label "OS name" ;
+    rdfs:comment "Name of the operating system (macOS, Windows, Linux, etc.)" ;
+    rdfs:domain foundation:OperatingSystem ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macos foundation:osName "macOS" .
+  :windows foundation:osName "Windows" .
+  :linux foundation:osName "Linux" .
+""" .
+
+foundation:osVersion a owl:DatatypeProperty ;
+    rdfs:label "OS version" ;
+    rdfs:comment "Version number or name of the operating system" ;
+    rdfs:domain foundation:OperatingSystem ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macos foundation:osVersion "15.1" .
+  :windows foundation:osVersion "11 Pro" .
+  :ubuntu foundation:osVersion "24.04 LTS" .
+""" .
+
+foundation:osKernel a owl:DatatypeProperty ;
+    rdfs:label "OS kernel" ;
+    rdfs:comment "Kernel type or version (Darwin, Linux, NT, etc.)" ;
+    rdfs:domain foundation:OperatingSystem ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macos foundation:osKernel "Darwin 25.1.0" .
+  :ubuntu foundation:osKernel "Linux 6.5.0" .
+""" .
+
+foundation:osArchitecture a owl:DatatypeProperty ;
+    rdfs:label "OS architecture" ;
+    rdfs:comment "Operating system architecture (64-bit, ARM64, etc.)" ;
+    rdfs:domain foundation:OperatingSystem ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macos foundation:osArchitecture "ARM64" .
+  :windows foundation:osArchitecture "x86_64" .
+""" .

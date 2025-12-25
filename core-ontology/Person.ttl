@@ -14,7 +14,10 @@
 # =============================================================================
 
 foundation:Person a owl:Class ;
-    rdfs:subClassOf foundation:AgentCapacity , foundation:PhysicalThing ;
+    rdfs:subClassOf foundation:AgentCapacity , foundation:PhysicalThing ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:name ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ;
     rdfs:label "Person" ;
     rdfs:comment "A human being (physical nature with agent capacity)" ;
     foundation:icon "person" ;
@@ -24,6 +27,10 @@ Examples:
 - A team member
 - A user of the system
 - A project contributor
+
+Cardinality constraints:
+- name: exactly 1 (required unique identifier)
+- email: 0+ (optional, may have multiple email addresses)
 """ .
 
 # -----------------------------------------------------------------------------
@@ -38,14 +45,4 @@ foundation:name a owl:DatatypeProperty ;
     rdfs:seeAlso """
 Example:
   :john foundation:name "John Doe" .
-""" .
-
-foundation:email a owl:DatatypeProperty ;
-    rdfs:label "email" ;
-    rdfs:comment "Email address of a person" ;
-    rdfs:domain foundation:Person ;
-    rdfs:range xsd:string ;
-    rdfs:seeAlso """
-Example:
-  :john foundation:email "john@example.com" .
 """ .

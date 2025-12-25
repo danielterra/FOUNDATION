@@ -14,7 +14,13 @@
 # =============================================================================
 
 foundation:Email a owl:Class ;
-    rdfs:subClassOf foundation:InformationObject ;
+    rdfs:subClassOf foundation:InformationObject ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:address ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:emailType ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
     rdfs:label "Email" ;
     rdfs:comment "An email address associated with an Agent" ;
     foundation:icon "email" ;
@@ -23,6 +29,10 @@ Examples:
 - daniel@example.com (personal email)
 - contact@foundation.local (project email)
 - noreply@anthropic.com (system email)
+
+Cardinality constraints:
+- address: exactly 1 (required, also defined as owl:FunctionalProperty)
+- emailType: 0-1 (optional classification)
 """ .
 
 # -----------------------------------------------------------------------------

@@ -27,19 +27,21 @@ Examples:
 """ .
 
 # =============================================================================
-# FoundationApp
+# FoundationProduct
 # =============================================================================
-# The FOUNDATION knowledge management application itself
-# This is a specialized Application class for FOUNDATION instances
+# The FOUNDATION software product concept
 # =============================================================================
 
-foundation:FoundationApp a owl:Class ;
-    rdfs:subClassOf foundation:Application ;
-    rdfs:label "FOUNDATION App" ;
-    rdfs:comment "The FOUNDATION knowledge management application - a self-aware ontology-based system that tracks its own changes" ;
+foundation:FoundationProduct a foundation:SoftwareProduct ;
+    rdfs:label "FOUNDATION" ;
+    rdfs:comment "Knowledge management system with semantic ontology support" ;
     foundation:icon "account_tree" ;
     rdfs:seeAlso """
-Examples:
-- foundation:ThisFoundationInstance (this installation)
-- Another FOUNDATION installation on a different computer
+This represents the FOUNDATION product concept.
+
+Installations link to this via foundation:productOf:
+  foundation:ThisFoundationInstance a foundation:Application ;
+    foundation:productOf foundation:FoundationProduct ;
+    foundation:version "0.1.0" ;
+    foundation:runsOn foundation:ThisComputer .
 """ .

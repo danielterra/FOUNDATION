@@ -110,6 +110,108 @@ pub fn get_by_object(
     Ok(QueryResult::new(triples))
 }
 
+/// Find entities by class and properties in a single query
+///
+/// This performs an efficient SQL JOIN to find entities that match a class and property constraints.
+/// Can be used with one or multiple properties.
+///
+/// Example:
+/// ```
+/// // Single property
+/// let releases = find_by_class_and_properties(
+///     conn,
+///     "foundation:SoftwareRelease",
+///     &[("foundation:versionNumber", "0.1.0")]
+/// )?;
+///
+/// // Multiple properties
+/// let release = find_by_class_and_properties(
+///     conn,
+///     "foundation:SoftwareRelease",
+///     &[
+///         ("foundation:versionNumber", "0.1.0"),
+///         ("foundation:releaseOf", "foundation:FoundationProduct"),
+///     ]
+/// )?;
+/// ```
+pub fn find_by_class_and_properties(
+    conn: &Connection,
+    class_iri: &str,
+    properties: &[(&str, &str)],
+) -> Result<Vec<String>> {
+    if properties.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Build dynamic query with multiple JOINs
+    let mut query = String::from(
+        "SELECT DISTINCT t0.subject
+         FROM triples t0"
+    );
+
+    // Add JOIN for each property
+    for (i, _) in properties.iter().enumerate() {
+        let table_num = i + 1;
+        query.push_str(&format!(
+            "\n         INNER JOIN triples t{} ON t0.subject = t{}.subject",
+            table_num, table_num
+        ));
+    }
+
+    // Add WHERE clause for class
+    query.push_str(&format!(
+        "\n         WHERE t0.predicate = 'rdf:type'
+           AND t0.object = '{}'
+           AND t0.retracted = 0",
+        class_iri
+    ));
+
+    // Add WHERE clause for each property
+    for (i, (prop_iri, _)) in properties.iter().enumerate() {
+        let table_num = i + 1;
+        query.push_str(&format!(
+            "\n           AND t{}.predicate = '{}'
+           AND t{}.retracted = 0",
+            table_num, prop_iri, table_num
+        ));
+    }
+
+    // Add value matching (supports both literal and IRI)
+    for (i, (_, value)) in properties.iter().enumerate() {
+        let table_num = i + 1;
+        query.push_str(&format!(
+            "\n           AND (t{}.object_value = '{}' OR t{}.object = '{}')",
+            table_num, value, table_num, value
+        ));
+    }
+
+    let mut stmt = conn.prepare(&query)?;
+    let entities: Vec<String> = stmt
+        .query_map([], |row| row.get(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(entities)
+}
+
+/// Find entities by attribute value (works for any property)
+pub fn find_entities_by_attribute_value(
+    conn: &Connection,
+    attribute: &str,
+    value: &str,
+) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT subject
+         FROM triples
+         WHERE predicate = ? AND object_value = ? AND retracted = 0"
+    )?;
+
+    let entities: Vec<String> = stmt
+        .query_map([attribute, value], |row| row.get(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(entities)
+}
+
 /// Query entity state at specific time (ET - temporal query)
 pub fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResult> {
     let mut stmt = conn.prepare(

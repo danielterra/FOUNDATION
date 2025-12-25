@@ -13,7 +13,8 @@
 		isFolded = $bindable(true),
 		onFoldChange = null,
 		onClose = () => {},
-		onNavigateToEntity = null
+		onNavigateToEntity = null,
+		isFixed = false
 	} = $props();
 
 	let panel;
@@ -58,8 +59,11 @@
 		}
 	}
 
-	onMount(async () => {
-		await loadEntityData();
+	// Reagir a mudanças no entityId
+	$effect(() => {
+		if (entityId) {
+			loadEntityData();
+		}
 	});
 
 	async function loadEntityData() {
@@ -152,11 +156,13 @@
 <div
 	bind:this={panel}
 	class="entity-inspector-panel"
+	class:fixed={isFixed}
 >
-	<Card>
-		{#snippet children()}
-			<div class="panel-wrapper" class:folded={isFolded}>
-			<div class="panel-header panel-drag-handle">
+	{#if !isFixed}
+		<Card>
+			{#snippet children()}
+				<div class="panel-wrapper" class:folded={isFolded}>
+				<div class="panel-header panel-drag-handle">
 				<div class="panel-header-drag panel-drag-handle">
 					<span class="drag-handle">⋮⋮</span>
 					{#if entityIcon}
@@ -222,6 +228,67 @@
 		</div>
 		{/snippet}
 	</Card>
+	{:else}
+		<div class="fixed-panel-wrapper">
+			<div class="panel-header">
+				<div class="panel-header-content">
+					{#if entityIcon}
+						{@const iconType = getIconType(entityIcon)}
+						<div class="entity-icon">
+							{#if iconType === 'image'}
+								<img src={entityIcon} alt={entityLabel} />
+							{:else}
+								<span class="material-symbols-outlined">{entityIcon}</span>
+							{/if}
+						</div>
+					{/if}
+					<div class="header-text">
+						<span class="panel-title">{entityLabel || entityId}</span>
+						{#if !loading && entityData}
+							{@const typeText = getTypeText(entityData)}
+							{#if typeText}
+								<span class="panel-type">{typeText}</span>
+							{/if}
+						{/if}
+					</div>
+				</div>
+				<div class="header-buttons">
+					<button class="close-button" onclick={onClose} type="button">✕</button>
+				</div>
+			</div>
+
+			<div class="panel-content">
+				{#if loading}
+					<div class="loading">Loading...</div>
+				{:else if entityData}
+					<div class="entity-info">
+						<PropertyRow
+							label="IRI"
+							value={entityData.id}
+						/>
+
+						{#each entityData.propertyGroups as group}
+							<PropertyGroup
+								groupLabel={group.sourceClassLabel}
+								properties={group.properties}
+								onNavigateToEntity={onNavigateToEntity}
+							/>
+						{/each}
+
+						{#if entityData.backlinks && entityData.backlinks.length > 0}
+							<PropertyGroup
+								groupLabel="Backlinks"
+								properties={entityData.backlinks}
+								onNavigateToEntity={onNavigateToEntity}
+							/>
+						{/if}
+					</div>
+				{:else}
+					<div class="error">Failed to load entity data</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -232,6 +299,47 @@
 		display: flex;
 		flex-direction: column;
 		isolation: isolate;
+	}
+
+	.entity-inspector-panel.fixed {
+		width: 100%;
+		height: 100%;
+		z-index: auto;
+	}
+
+	.fixed-panel-wrapper {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		width: 100%;
+		padding: 24px;
+		padding-top: 100px;
+		overflow: hidden;
+	}
+
+	.fixed-panel-wrapper .panel-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding-bottom: 16px;
+		margin-bottom: 16px;
+		border-bottom: 1px solid var(--color-border);
+		flex-shrink: 0;
+	}
+
+	.fixed-panel-wrapper .panel-header-content {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.fixed-panel-wrapper .panel-content {
+		flex: 1;
+		overflow-y: auto;
+		overflow-x: hidden;
+		min-height: 0;
 	}
 
 	.panel-wrapper {

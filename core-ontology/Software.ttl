@@ -14,32 +14,51 @@
 # =============================================================================
 
 foundation:Software a owl:Class ;
-    rdfs:subClassOf foundation:DigitalThing ;
+    rdfs:subClassOf foundation:DigitalThing ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:installedFrom ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
     rdfs:label "Software" ;
-    rdfs:comment "Executable code or programs - includes applications, libraries, services, and scripts" ;
+    rdfs:comment "An installed instance of software running on a computer" ;
     foundation:icon "code" ;
     rdfs:seeAlso """
 Examples:
-- An application (FOUNDATION, VS Code)
-- A library (React, numpy)
-- A service/daemon (PostgreSQL server, Docker daemon)
-- A script (backup.sh, deploy.py)
-- A driver (GPU driver, printer driver)
+- FOUNDATION v0.1.0 running on my MacBook
+- VS Code 1.85.0 installed on production server
+- PostgreSQL 16.1 running on database server
+
+Hierarchy:
+  SoftwareProduct → SoftwareRelease → Software (installation)
+
+  Example:
+    FoundationProduct (the product)
+      → Foundation_v0_1_0 (release/version)
+        → ThisFoundationInstance (installation on this computer)
+
+Cardinality constraints:
+- installedFrom: 0-1 (optional, links to specific version/release installed)
+- hasRepository: 0+ (optional, may have multiple repositories - mirrors, forks)
+- runsOn: 0+ (optional, may run on multiple computers)
 """ .
 
 # -----------------------------------------------------------------------------
 # Software Properties
 # -----------------------------------------------------------------------------
 
-foundation:version a owl:DatatypeProperty ;
-    rdfs:label "version" ;
-    rdfs:comment "Version string of the software (e.g., '1.0.0', '2.5.3-beta')" ;
+foundation:installedFrom a owl:ObjectProperty ;
+    rdfs:label "installed from" ;
+    rdfs:comment "Links this software installation to the specific release/version that was installed" ;
     rdfs:domain foundation:Software ;
-    rdfs:range xsd:string ;
+    rdfs:range foundation:SoftwareRelease ;
     rdfs:seeAlso """
 Example:
-  :foundation-app foundation:version "0.1.0" .
-  :react-library foundation:version "18.2.0" .
+  :ThisFoundationInstance foundation:installedFrom :Foundation_v0_1_0 .
+  :MyVSCode foundation:installedFrom :VSCode_v1_85_0 .
+
+  :Foundation_v0_1_0 a foundation:SoftwareRelease ;
+    foundation:releaseOf foundation:FoundationProduct ;
+    foundation:versionNumber "0.1.0" ;
+    foundation:licenseType "GPL-3.0" .
 """ .
 
 foundation:runsOn a owl:ObjectProperty ;
@@ -51,4 +70,24 @@ foundation:runsOn a owl:ObjectProperty ;
 Example:
   :foundation-app foundation:runsOn :my-macbook .
   :postgres-server foundation:runsOn :production-server .
+""" .
+
+foundation:hasRepository a owl:ObjectProperty ;
+    rdfs:label "has repository" ;
+    rdfs:comment "Links software to its source code Git repository" ;
+    rdfs:domain foundation:Software ;
+    rdfs:range foundation:GitRepository ;
+    rdfs:seeAlso """
+Example:
+  :ThisFoundationInstance foundation:hasRepository :FoundationGitRepo .
+  :VSCodeApp foundation:hasRepository :VSCodeGitRepo .
+
+  :FoundationGitRepo a foundation:GitRepository ;
+    foundation:repositoryUrl "https://github.com/danielterra/FOUNDATION"^^xsd:anyURI ;
+    foundation:defaultBranch "main" .
+
+Note:
+- Software installations may reference the same repository
+- Open source software typically has public repositories
+- Proprietary software may not have an accessible repository
 """ .
