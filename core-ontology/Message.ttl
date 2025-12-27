@@ -1,0 +1,192 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Message & Communication Medium
+# =============================================================================
+# A discrete unit of communication between agents, transmitted through a medium
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Message a owl:Class ;
+    rdfs:subClassOf foundation:InformationObject ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:sender ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:sentAt ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Message" ;
+    rdfs:comment "A discrete unit of communication from one sender to one or more receivers, transmitted through a medium. Can contain text, audio, video, images, or files." ;
+    foundation:icon "chat_bubble" ;
+    rdfs:seeAlso """
+Examples:
+- Text: User asks AI "What is 2+2?"
+- Audio: Voice message in WhatsApp
+- Video: Video message sent via chat
+- Image: Photo shared in conversation
+- File: PDF document attached to email
+- Mixed: Email with text + attachments
+
+Cardinality constraints:
+- sender: exactly 1 (who sent it)
+- receiver: 0-N (can have multiple receivers)
+- sentAt: exactly 1 (timestamp)
+- content: 0-1 (text content, optional)
+- hasAttachment: 0-N (audio, video, images, files)
+- transmittedVia: 0-1 (optional medium/channel)
+- partOfConversation: 0-1 (optional conversation grouping)
+- messageType: 0-1 (text, audio, video, image, file, mixed)
+
+Note: At least one of 'content' or 'hasAttachment' should be present.
+""" .
+
+# Note: CommunicationMedium class is defined in CommunicationMedium.ttl
+
+# -----------------------------------------------------------------------------
+# Message Properties
+# -----------------------------------------------------------------------------
+
+foundation:content a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "content" ;
+    rdfs:comment "The actual text content of the message" ;
+    rdfs:domain foundation:Message ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :msg1 foundation:content "What is 2+2?" .
+  :msg2 foundation:content "The answer is 4" .
+""" .
+
+foundation:sender a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "sender" ;
+    rdfs:comment "The agent who sent this message (exactly one sender)" ;
+    rdfs:domain foundation:Message ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :msg1 foundation:sender foundation:ThisUser .
+  :msg2 foundation:sender foundation:LocalAIAssistant .
+
+Note: AgentCapacity covers both Person and SoftwareAgent.
+""" .
+
+foundation:receiver a owl:ObjectProperty ;
+    rdfs:label "receiver" ;
+    rdfs:comment "An agent who receives this message (can have multiple receivers)" ;
+    rdfs:domain foundation:Message ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  # One-to-one message:
+  :msg1 foundation:receiver foundation:LocalAIAssistant .
+
+  # One-to-many message (broadcast):
+  :msg2 foundation:receiver :alice .
+  :msg2 foundation:receiver :bob .
+  :msg2 foundation:receiver :charlie .
+
+  # Group message (transmittedVia captures the group):
+  :msg3 foundation:transmittedVia :whatsappFamilyGroup .
+  :msg3 foundation:receiver :mom .
+  :msg3 foundation:receiver :dad .
+""" .
+
+foundation:transmittedVia a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "transmitted via" ;
+    rdfs:comment "The medium/channel through which this message was transmitted" ;
+    rdfs:domain foundation:Message ;
+    rdfs:range foundation:CommunicationMedium ;
+    rdfs:seeAlso """
+Example:
+  :msg1 foundation:transmittedVia :foundationChatInterface .
+  :msg2 foundation:transmittedVia :whatsappFamilyGroup .
+  :msg3 foundation:transmittedVia :gmailService .
+  :msg4 foundation:transmittedVia :postalService .
+
+Where:
+  :foundationChatInterface rdf:type foundation:Application .
+  :whatsappFamilyGroup rdf:type foundation:CommunicationMedium .
+  :gmailService rdf:type foundation:Service .
+  :postalService rdf:type foundation:Service .
+""" .
+
+foundation:sentAt a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "sent at" ;
+    rdfs:comment "Timestamp when the message was sent (ISO 8601 format)" ;
+    rdfs:domain foundation:Message ;
+    rdfs:range xsd:dateTime ;
+    rdfs:seeAlso """
+Example:
+  :msg1 foundation:sentAt "2025-12-27T14:23:45Z"^^xsd:dateTime .
+""" .
+
+foundation:receivedAt a owl:DatatypeProperty ;
+    rdfs:label "received at" ;
+    rdfs:comment "Timestamp when the message was received (can differ from sentAt for async)" ;
+    rdfs:domain foundation:Message ;
+    rdfs:range xsd:dateTime ;
+    rdfs:seeAlso """
+Example:
+  :msg1 foundation:sentAt "2025-12-27T14:23:45Z"^^xsd:dateTime .
+  :msg1 foundation:receivedAt "2025-12-27T14:23:47Z"^^xsd:dateTime .
+""" .
+
+foundation:partOfConversation a owl:ObjectProperty ;
+    rdfs:label "part of conversation" ;
+    rdfs:comment "Links a message to the conversation it belongs to" ;
+    rdfs:domain foundation:Message ;
+    rdfs:range foundation:Conversation ;
+    rdfs:seeAlso """
+Example:
+  :msg1 foundation:partOfConversation :conv1 .
+  :msg2 foundation:partOfConversation :conv1 .
+""" .
+
+foundation:hasAttachment a owl:ObjectProperty ;
+    rdfs:label "has attachment" ;
+    rdfs:comment "Links to a file, image, audio, or video attached to this message (can have multiple attachments)" ;
+    rdfs:domain foundation:Message ;
+    rdfs:range foundation:DigitalThing ;
+    rdfs:seeAlso """
+Examples:
+  # Text with single image:
+  :msg1 foundation:content "Check out this photo!" .
+  :msg1 foundation:hasAttachment :photo1 .
+
+  # Email with multiple attachments (text + files):
+  :msg2 foundation:content "See attached files" .
+  :msg2 foundation:hasAttachment :contract_pdf .
+  :msg2 foundation:hasAttachment :spreadsheet_xlsx .
+  :msg2 foundation:hasAttachment :presentation_pptx .
+
+  # Voice message only (no text):
+  :msg3 foundation:hasAttachment :audio1 .
+  :audio1 rdf:type foundation:AudioFile .
+
+  # Video message:
+  :msg4 foundation:hasAttachment :video1 .
+  :video1 rdf:type foundation:VideoFile .
+""" .
+
+foundation:messageType a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "message type" ;
+    rdfs:comment "Type classification of the message content" ;
+    rdfs:domain foundation:Message ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Examples:
+  :msg1 foundation:messageType "text" .       # Text only
+  :msg2 foundation:messageType "audio" .      # Audio only
+  :msg3 foundation:messageType "video" .      # Video only
+  :msg4 foundation:messageType "image" .      # Image only
+  :msg5 foundation:messageType "file" .       # File only
+  :msg6 foundation:messageType "mixed" .      # Text + attachments (like email)
+
+Suggested values: text, audio, video, image, file, mixed
+""" .

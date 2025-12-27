@@ -3,6 +3,7 @@ mod namespaces;
 mod commands;
 mod eavto;
 mod owl;
+mod ai;
 
 use std::sync::Mutex;
 
@@ -165,7 +166,13 @@ pub fn run() {
             commands::shortcuts__get_all,
             commands::log_frontend,
             commands::get_log_file_path_command,
-            commands::clear_logs
+            commands::clear_logs,
+            commands::ai__initialize,
+            commands::ai__generate,
+            commands::chat__send_message,
+            commands::chat__get_recent_messages,
+            commands::chat__get_conversation_info,
+            commands::chat__send_and_reply
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

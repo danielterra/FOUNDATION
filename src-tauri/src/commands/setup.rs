@@ -256,6 +256,19 @@ pub async fn setup__init(
     foundation.add_property(conn, "foundation:installedFrom", Object::Iri(release_iri.clone()), "setup")
         .map_err(|e| format!("Failed to link to SoftwareRelease: {}", e))?;
 
+    // Create Local AI Assistant instance
+    let ai_assistant = Individual::new("foundation:LocalAIAssistant");
+    ai_assistant.assert(conn, "foundation:SoftwareAgent", "FOUNDATION AI Assistant", "ai", "setup")
+        .map_err(|e| format!("Failed to create AI assistant: {}", e))?;
+
+    let ai_description = Object::Literal {
+        value: "Local AI assistant powered by Phi-4-mini, running completely offline for full privacy".to_string(),
+        datatype: Some("xsd:string".to_string()),
+        language: Some("en".to_string()),
+    };
+    ai_assistant.add_property(conn, "rdfs:comment", ai_description, "setup")
+        .map_err(|e| format!("Failed to add AI description: {}", e))?;
+
     // Establish relationships
     computer.add_property(conn, "foundation:hasUser", Object::Iri("foundation:ThisUser".to_string()), "setup")
         .map_err(|e| format!("Failed to link Computer -> User: {}", e))?;

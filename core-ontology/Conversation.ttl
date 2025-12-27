@@ -1,0 +1,119 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Conversation
+# =============================================================================
+# A collection of related messages between participants
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Conversation a owl:Class ;
+    rdfs:subClassOf foundation:InformationObject ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:startedAt ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Conversation" ;
+    rdfs:comment "A collection of related messages between participants, forming a dialogue or exchange" ;
+    foundation:icon "forum" ;
+    rdfs:seeAlso """
+Examples:
+- Chat conversation with AI assistant
+- WhatsApp group chat thread
+- Email thread/chain
+- Slack channel discussion
+- Phone call transcript
+
+Cardinality constraints:
+- startedAt: exactly 1 (when conversation began)
+- endedAt: 0-1 (optional, if conversation has concluded)
+- hasParticipant: 1-N (at least one participant, usually 2+)
+- hasMessage: 0-N (can be empty initially)
+- topic: 0-1 (optional subject/title)
+""" .
+
+# -----------------------------------------------------------------------------
+# Conversation Properties
+# -----------------------------------------------------------------------------
+
+foundation:startedAt a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "started at" ;
+    rdfs:comment "Timestamp when the conversation began (ISO 8601 format)" ;
+    rdfs:domain foundation:Conversation ;
+    rdfs:range xsd:dateTime ;
+    rdfs:seeAlso """
+Example:
+  :conv1 foundation:startedAt "2025-12-27T14:00:00Z"^^xsd:dateTime .
+""" .
+
+foundation:endedAt a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "ended at" ;
+    rdfs:comment "Timestamp when the conversation concluded (optional)" ;
+    rdfs:domain foundation:Conversation ;
+    rdfs:range xsd:dateTime ;
+    rdfs:seeAlso """
+Example:
+  :conv1 foundation:endedAt "2025-12-27T15:30:00Z"^^xsd:dateTime .
+""" .
+
+foundation:hasParticipant a owl:ObjectProperty ;
+    rdfs:label "has participant" ;
+    rdfs:comment "An agent participating in this conversation" ;
+    rdfs:domain foundation:Conversation ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :conv1 foundation:hasParticipant foundation:ThisUser .
+  :conv1 foundation:hasParticipant foundation:LocalAIAssistant .
+
+  # Group conversation:
+  :conv2 foundation:hasParticipant :alice .
+  :conv2 foundation:hasParticipant :bob .
+  :conv2 foundation:hasParticipant :charlie .
+""" .
+
+foundation:hasMessage a owl:ObjectProperty ;
+    rdfs:label "has message" ;
+    rdfs:comment "A message that is part of this conversation (inverse of partOfConversation)" ;
+    rdfs:domain foundation:Conversation ;
+    rdfs:range foundation:Message ;
+    rdfs:seeAlso """
+Example:
+  :conv1 foundation:hasMessage :msg1 .
+  :conv1 foundation:hasMessage :msg2 .
+  :conv1 foundation:hasMessage :msg3 .
+
+Note: This is the inverse property of foundation:partOfConversation.
+You can use either direction to link messages and conversations.
+""" .
+
+foundation:topic a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "topic" ;
+    rdfs:comment "The subject or topic of the conversation (optional)" ;
+    rdfs:domain foundation:Conversation ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :conv1 foundation:topic "Math help session" .
+  :conv2 foundation:topic "Project planning discussion" .
+  :conv3 foundation:topic "Weekend plans" .
+""" .
+
+foundation:conversationStatus a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "conversation status" ;
+    rdfs:comment "Current status of the conversation (active, archived, closed, etc.)" ;
+    rdfs:domain foundation:Conversation ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :conv1 foundation:conversationStatus "active" .
+  :conv2 foundation:conversationStatus "archived" .
+  :conv3 foundation:conversationStatus "closed" .
+
+Suggested values: active, archived, closed, paused
+""" .

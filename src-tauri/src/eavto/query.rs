@@ -309,8 +309,14 @@ fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
                 Object::Integer(int)
             } else if let Some(num) = object_number {
                 Object::Number(num)
-            } else if let Some(dt) = object_datetime {
-                Object::DateTime(dt)
+            } else if let Some(_dt) = object_datetime {
+                // For DateTime, return the object_value (ISO8601 string) instead of the timestamp
+                // This ensures as_literal() returns the full ISO date string, not just the Unix timestamp
+                Object::Literal {
+                    value: object_value.unwrap(),
+                    datatype: object_datatype,
+                    language: object_language,
+                }
             } else if let Some(bool_val) = object_boolean {
                 Object::Boolean(bool_val != 0)
             } else {
