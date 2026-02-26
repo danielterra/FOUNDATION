@@ -1,9 +1,65 @@
 use serde::Serialize;
-use tauri::State;
-use rusqlite::Connection;
+use tauri::{State, AppHandle, Emitter, Manager};
 
-use crate::eavto::DbExecutor;
+use crate::eavto::{self, DbExecutor};
 use crate::owl::{Individual, Object};
+
+/// Initialize the application database
+/// This MUST be called before any other commands that use the database
+/// The frontend should call this on startup and handle permission requests
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn initialize_app(
+    app: AppHandle,
+) -> Result<(), String> {
+    // Skip initialization during CI/CD or build process
+    // The build process runs the app to collect metadata but doesn't need DB
+    if std::env::var("CI").is_ok()
+        || std::env::var("GITHUB_ACTIONS").is_ok()
+        || std::env::var("TAURI_ENV_DEBUG").is_ok() // Set during tauri build
+    {
+        super::log_backend("info", "Skipping database initialization (build/CI mode)");
+        // Create dummy executor for build mode
+        let dummy_conn = rusqlite::Connection::open_in_memory()
+            .map_err(|e| format!("Failed to create in-memory connection: {}", e))?;
+        let executor = DbExecutor::new(dummy_conn);
+        app.manage(executor);
+        let _ = app.emit("import-complete", ());
+        return Ok(());
+    }
+
+    super::log_backend("info", "Initializing database...");
+
+    // Initialize database (blocking - runs in async context so won't block UI)
+    let conn = eavto::initialize_with_progress(app.clone())
+        .map_err(|e| {
+            let error_msg = format!("Failed to initialize database: {:?}", e);
+            super::log_backend("error", &error_msg);
+            let _ = app.emit("import-error", error_msg.clone());
+            error_msg
+        })?;
+
+    super::log_backend("info", "Database initialized successfully");
+
+    // Print stats
+    if let Ok(stats) = eavto::get_stats(&conn) {
+        let stats_msg = format!(
+            "Database stats - Triples: {}, Active: {}, Transactions: {}, Entities: {}",
+            stats.total_facts, stats.active_facts, stats.total_transactions, stats.entities_count
+        );
+        super::log_backend("info", &stats_msg);
+    }
+
+    // Register executor in Tauri state
+    let executor = DbExecutor::new(conn);
+    app.manage(executor);
+
+    // Emit completion event
+    let _ = app.emit("import-complete", ());
+    super::log_backend("info", "Database initialization complete");
+
+    Ok(())
+}
 
 #[derive(Debug, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

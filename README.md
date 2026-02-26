@@ -2,6 +2,19 @@
 
 ![FOUNDATION Screenshot](static/Screenshot1.png)
 
+**Version 0.1.0 (Alpha)** - AI-powered ontology management system with long-term memory
+
+[![Download for macOS](https://img.shields.io/badge/Download-macOS-blue?style=for-the-badge&logo=apple)](https://github.com/danielterra/FOUNDATION/releases/latest/download/FOUNDATION_0.1.0_universal.dmg)
+[![Download for Windows](https://img.shields.io/badge/Download-Windows-blue?style=for-the-badge&logo=windows)](https://github.com/danielterra/FOUNDATION/releases/latest/download/FOUNDATION_0.1.0_x64_en-US.msi)
+[![Download for Linux](https://img.shields.io/badge/Download-Linux-blue?style=for-the-badge&logo=linux)](https://github.com/danielterra/FOUNDATION/releases/latest/download/foundation_0.1.0_amd64.AppImage)
+
+## Quick Start
+
+1. **Download** the installer for your platform (links above)
+2. **Install** and launch FOUNDATION
+3. **Configure** your Claude API key (get one at [console.anthropic.com](https://console.anthropic.com/))
+4. **Start chatting** with your AI assistant that remembers everything!
+
 ## A SOLID FOUNDATION FOR FREEDOM
 
 FOUNDATION reimagines how anyone — not just developers — can manage, automate, and derive knowledge from their data. Your computer. Your data. Your rules. No Big Tech gatekeepers.
@@ -90,9 +103,27 @@ You carry a supercomputer in your bag. Multi-core processors, gigabytes of RAM, 
 ### Running the Project
 
 ```bash
-npm run tauri  # Start development server
-npm run logs   # View recent application logs
+npm run tauri         # Start development server
+npm run logs          # View recent application logs
+npm run clear:chat    # Clear chat history
 ```
+
+### Building Release Executables
+
+```bash
+# Build for current platform
+npm run build:release
+
+# Build for specific platforms
+npm run tauri:build:mac      # macOS Universal (Apple Silicon + Intel)
+npm run tauri:build:windows  # Windows x64
+npm run tauri:build:linux    # Linux x64
+
+# Or use the script
+./scripts/build-release.sh
+```
+
+**Note**: To build for Windows and Linux from macOS, use GitHub Actions (push a tag like `v0.1.0`) or build on each platform natively.
 
 ### Important Paths
 

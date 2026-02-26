@@ -309,16 +309,45 @@ pub fn import_all_foundation_ontologies(
 
     println!("\n🏛️  Importing FOUNDATION ontologies...\n");
 
-    // Get project root directory
-    let project_root = std::env::var("CARGO_MANIFEST_DIR")
-        .ok()
-        .and_then(|manifest_dir| {
-            let path = Path::new(&manifest_dir);
-            path.parent().map(|p| p.to_path_buf())
-        })
-        .unwrap_or_else(|| std::env::current_dir().unwrap());
+    // Get core-ontology directory using Tauri's official API
+    let core_ontology_dir = if let Some(app_handle) = app {
+        // Production: use Tauri's resolve_resource API
+        // According to docs: ../core-ontology becomes _up_/core-ontology in bundle
+        // We need to resolve the individual directory path
+        match app_handle.path().resource_dir() {
+            Ok(resource_dir) => {
+                // Resources with ../ are placed in _up_ subdirectory
+                let ontology_path = resource_dir.join("_up_").join("core-ontology");
+                println!("📂 Resolved resource path: {}", ontology_path.display());
+                ontology_path
+            },
+            Err(e) => {
+                println!("⚠️  Failed to get resource dir: {:?}, falling back to dev path", e);
+                // Fallback to dev path
+                let project_root = std::env::var("CARGO_MANIFEST_DIR")
+                    .ok()
+                    .and_then(|manifest_dir| {
+                        let path = Path::new(&manifest_dir);
+                        path.parent().map(|p| p.to_path_buf())
+                    })
+                    .unwrap_or_else(|| std::env::current_dir().unwrap());
+                project_root.join("core-ontology")
+            }
+        }
+    } else {
+        // Development: use project root
+        let project_root = std::env::var("CARGO_MANIFEST_DIR")
+            .ok()
+            .and_then(|manifest_dir| {
+                let path = Path::new(&manifest_dir);
+                path.parent().map(|p| p.to_path_buf())
+            })
+            .unwrap_or_else(|| std::env::current_dir().unwrap());
+        let ontology_path = project_root.join("core-ontology");
+        println!("📂 Using dev path: {}", ontology_path.display());
+        ontology_path
+    };
 
-    let core_ontology_dir = project_root.join("core-ontology");
     println!("📂 Reading from: {}", core_ontology_dir.display());
 
     // Read all .ttl files

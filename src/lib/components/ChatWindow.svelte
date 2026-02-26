@@ -20,21 +20,34 @@
 	// Load recent messages on mount and request location
 	onMount(async () => {
 		console.log('[ChatWindow] Component mounted - NEW VERSION WITH DOWNLOAD BUTTON');
-		// Check if API key is already stored in ontology
-		try {
-			const storedKey = await invoke('ai__get_api_key');
-			if (storedKey) {
-				apiKey = storedKey;
-				await initializeAI(storedKey);
-			} else {
+
+		// Wait for database to be initialized before accessing it
+		const { listen } = await import('@tauri-apps/api/event');
+		const unlisten = await listen('import-complete', async () => {
+			console.log('[ChatWindow] Database initialized, loading API key...');
+
+			// Check if API key is already stored in ontology
+			try {
+				const storedKey = await invoke('ai__get_api_key');
+				if (storedKey) {
+					apiKey = storedKey;
+					await initializeAI(storedKey);
+				} else {
+					showApiKeyInput = true;
+				}
+			} catch (err) {
+				console.error('Failed to get API key:', err);
 				showApiKeyInput = true;
 			}
-		} catch (err) {
-			console.error('Failed to get API key:', err);
-			showApiKeyInput = true;
-		}
-		await loadMessages();
+			await loadMessages();
+		});
+
 		requestLocation();
+
+		// Cleanup listener on unmount
+		return () => {
+			unlisten();
+		};
 	});
 
 	async function initializeAI(key) {

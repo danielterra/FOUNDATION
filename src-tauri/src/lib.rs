@@ -5,8 +5,6 @@ mod eavto;
 mod owl;
 mod ai;
 
-use std::sync::Mutex;
-
 // Triple structure for serialization (maps to triples table)
 #[derive(serde::Serialize)]
 pub struct TripleData {
@@ -113,52 +111,14 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
-            // Initialize database with event emission
-            let app_handle = app.handle().clone();
-
-            std::thread::spawn(move || {
-                commands::log_backend( "info", "Database initialization starting...");
-
-                match eavto::initialize_with_progress(app_handle.clone()) {
-                    Ok(conn) => {
-                        println!("Database initialized successfully");
-                        commands::log_backend( "info", "Database initialized successfully");
-
-                        // Print database stats
-                        if let Ok(stats) = eavto::get_stats(&conn) {
-                            println!("Database stats:");
-                            println!("  Total triples: {}", stats.total_facts);
-                            println!("  Active triples: {}", stats.active_facts);
-                            println!("  Transactions: {}", stats.total_transactions);
-                            println!("  Entities: {}", stats.entities_count);
-
-                            let stats_msg = format!(
-                                "Database stats - Total triples: {}, Active: {}, Transactions: {}, Entities: {}",
-                                stats.total_facts, stats.active_facts, stats.total_transactions, stats.entities_count
-                            );
-                            commands::log_backend( "info", &stats_msg);
-                        }
-
-                        // Create async executor and store in state
-                        let executor = eavto::DbExecutor::new(conn);
-                        app_handle.manage(executor);
-
-                        // Emit completion event
-                        let _ = app_handle.emit("import-complete", ());
-                        commands::log_backend( "info", "Database initialization complete");
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to initialize database: {:?}", e);
-                        commands::log_backend( "error", &format!("Failed to initialize database: {:?}", e));
-                        let _ = app_handle.emit("import-error", format!("{:?}", e));
-                    }
-                }
-            });
-
+        .setup(|_app| {
+            // Setup is intentionally minimal - initialization happens via initialize_app command
+            // This allows the app to start quickly and not block during build/CI
+            // The initialize_app command will register the DbExecutor when called
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::initialize_app,
             commands::setup__check,
             commands::setup__init,
             commands::entity__get,

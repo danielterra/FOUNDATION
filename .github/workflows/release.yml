@@ -1,0 +1,79 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-22.04, windows-latest]
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'FOUNDATION ${{ github.ref_name }}'
+          releaseBody: |
+            ## FOUNDATION ${{ github.ref_name }} (Alpha)
+
+            AI-powered ontology management system with long-term memory.
+
+            ### Installation
+
+            **macOS**: Download the `.dmg` file, open it, and drag FOUNDATION to your Applications folder.
+
+            **Windows**: Download the `.msi` installer and run it.
+
+            **Linux**: Download the `.AppImage` file, make it executable (`chmod +x`), and run it.
+
+            ### Setup
+
+            1. Launch FOUNDATION
+            2. Click the chat icon to open the AI assistant
+            3. Enter your Claude API key (get one at https://console.anthropic.com/)
+            4. Start chatting! The AI will remember everything you tell it.
+
+            ### What's New
+
+            - Initial alpha release
+            - Claude API integration with tool calling
+            - Persistent semantic memory
+            - Dynamic ontology management
+            - Chat interface with tool visualization
+
+            See the [README](https://github.com/danielterra/FOUNDATION/blob/main/README.md) for more information.
+          releaseDraft: true
+          prerelease: true

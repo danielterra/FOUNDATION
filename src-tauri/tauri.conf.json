@@ -32,8 +32,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "shortDescription": "AI-powered ontology management system with long-term memory",
+    "longDescription": "FOUNDATION is an AI assistant with persistent memory that organizes knowledge as semantic ontologies. It remembers everything you tell it across conversations and provides intelligent, context-aware interactions.",
+    "copyright": "Copyright (c) 2026 Daniel Terra",
+    "category": "Productivity",
+    "licenseFile": "../LICENSE",
     "resources": [
-      "resources/phi-4-mini-instruct-q4_k_m.gguf"
+      "../core-ontology"
     ]
   }
 }

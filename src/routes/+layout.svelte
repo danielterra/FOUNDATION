@@ -4,6 +4,7 @@
   import { initializeLogging } from '$lib/logging.js';
   import ChatWindow from '$lib/components/ChatWindow.svelte';
   import { onMount } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
 
   // Available background videos
   const backgroundVideos = [
@@ -17,9 +18,19 @@
   // Select random video
   const selectedVideo = backgroundVideos[Math.floor(Math.random() * backgroundVideos.length)];
 
-  // Initialize logging when app mounts
+  // Initialize logging and database when app mounts
   onMount(async () => {
     initializeLogging();
+
+    // Initialize database - this will request folder permissions if needed
+    try {
+      await invoke('initialize_app');
+      console.log('[App] Database initialized successfully');
+    } catch (err) {
+      console.error('[App] Failed to initialize database:', err);
+      // TODO: Show error UI with "Retry" button
+      alert('Failed to initialize database. Please check permissions and try again.');
+    }
   });
 </script>
 

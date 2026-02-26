@@ -10,6 +10,11 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json --watch",
     "tauri": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:mac": "tauri build --target universal-apple-darwin",
+    "tauri:build:windows": "tauri build --target x86_64-pc-windows-msvc",
+    "tauri:build:linux": "tauri build --target x86_64-unknown-linux-gnu",
+    "build:release": "npm run build && npm run tauri:build",
     "logs": "./scripts/show-logs.sh \"$@\"",
     "clear:chat": "./scripts/clear-chat-history.sh"
   },

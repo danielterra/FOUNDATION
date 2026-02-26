@@ -9,6 +9,8 @@
 use rusqlite::{Connection, Result};
 use std::path::{Path, PathBuf};
 use std::fs;
+use std::fmt;
+use std::error::Error;
 
 /// Database initialization error types
 #[derive(Debug)]
@@ -16,6 +18,26 @@ pub enum DbError {
     ConnectionError(rusqlite::Error),
     SchemaError(String),
     IoError(std::io::Error),
+}
+
+impl fmt::Display for DbError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DbError::ConnectionError(e) => write!(f, "Database connection error: {}", e),
+            DbError::SchemaError(msg) => write!(f, "Database schema error: {}", msg),
+            DbError::IoError(e) => write!(f, "IO error: {}", e),
+        }
+    }
+}
+
+impl Error for DbError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            DbError::ConnectionError(e) => Some(e),
+            DbError::IoError(e) => Some(e),
+            DbError::SchemaError(_) => None,
+        }
+    }
 }
 
 impl From<rusqlite::Error> for DbError {

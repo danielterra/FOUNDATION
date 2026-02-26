@@ -337,7 +337,12 @@ pub async fn chat__get_recent_messages(
                                 input: input.clone(),
                                 tool_use_id: tool_use_id.clone(),
                             });
-                            log_backend("info", &format!("[CHAT] Added ToolUse: {} ({}) with input: {}", tool_use_iri, tool_name, if input.len() > 100 { &format!("{}...", &input[..100]) } else { &input }));
+                            let input_preview = if input.len() > 100 {
+                                format!("{}...", &input[..100])
+                            } else {
+                                input.clone()
+                            };
+                            log_backend("info", &format!("[CHAT] Added ToolUse: {} ({}) with input: {}", tool_use_iri, tool_name, input_preview));
                         } else {
                             log_backend("warn", &format!("[CHAT] Failed to load Individual for ToolUse: {}", tool_use_iri));
                         }
