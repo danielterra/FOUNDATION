@@ -116,6 +116,14 @@ impl Class {
             }
         }
 
+        // Add universal properties from rdfs:Resource (all classes inherit from it)
+        let resource_props_result = query::get_by_predicate_object(conn, rdfs::DOMAIN, "rdfs:Resource")?;
+        for triple in resource_props_result.triples {
+            if seen.insert(triple.subject.clone()) {
+                all_properties.push((triple.subject.clone(), "rdfs:Resource".to_string()));
+            }
+        }
+
         // Add inherited properties from superclasses recursively
         let super_result = query::get_by_entity_predicate(conn, class_iri, rdfs::SUB_CLASS_OF)?;
         let super_classes: Vec<String> = super_result.triples.iter()
@@ -124,7 +132,7 @@ impl Class {
             .collect();
 
         for super_class_iri in super_classes {
-            if super_class_iri != "owl:Thing" {
+            if super_class_iri != "owl:Thing" && super_class_iri != "rdfs:Resource" {
                 // Recursively get properties from superclass
                 let inherited_props = Self::get_properties(conn, &super_class_iri)?;
                 for (prop, source) in inherited_props {

@@ -1,33 +1,204 @@
 use crate::ai;
-use tauri::{AppHandle, Manager};
+use crate::ai::{ChatMessage, GenerateRequest};
+use crate::ai::functions::{self, FunctionCall, FunctionResult};
+use crate::eavto::{DbExecutor, query};
+use crate::owl::{Individual, Object};
+use tauri::{AppHandle, Manager, State};
+use serde_json::Value;
 
 #[tauri::command]
-pub async fn ai__initialize(app: AppHandle) -> Result<(), String> {
-    use std::path::PathBuf;
+pub async fn ai__save_api_key(
+    app: AppHandle,
+    api_key: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    super::log_backend(&app, "info", "Saving API key to ontology");
 
-    // In development mode, use resources/ from CARGO_MANIFEST_DIR
-    // In production, use the bundled resources
-    let model_path = if cfg!(debug_assertions) {
-        // Development mode - use src-tauri/resources/
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join("phi-4-mini-instruct-q4_k_m.gguf")
+    executor.write(move |conn| {
+        // Find existing Claude API key credential owned by ThisUser
+        let existing_keys = query::get_by_predicate_object(conn, "foundation:ownedBy", "foundation:ThisUser");
+
+        if let Ok(result) = existing_keys {
+            // Filter to find Claude API key specifically
+            for triple in result.triples {
+                let credential_iri = &triple.subject;
+
+                // Check if this credential is for Claude AI Service
+                if let Ok(cred_for) = query::get_by_entity_predicate(conn, credential_iri, "foundation:credentialFor") {
+                    if cred_for.triples.iter().any(|t| {
+                        t.object.as_iri().map(|iri| iri == "foundation:ClaudeAIService").unwrap_or(false)
+                    }) {
+                        // Check if it's an APIKey type
+                        if let Ok(types) = query::get_by_entity_predicate(conn, credential_iri, "rdf:type") {
+                            if types.triples.iter().any(|t| {
+                                t.object.as_iri().map(|iri| iri == "foundation:APIKey").unwrap_or(false)
+                            }) {
+                                // Found existing Claude API key, remove it
+                                let all_triples = query::get_by_entity(conn, credential_iri)
+                                    .map_err(|e| format!("Failed to get credential triples: {}", e))?;
+
+                                if !all_triples.triples.is_empty() {
+                                    crate::eavto::store::retract_triples(conn, &all_triples.triples, "ai")
+                                        .map_err(|e| format!("Failed to retract old credential: {}", e))?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Create new APIKey credential
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        let api_key_iri = format!("foundation:ClaudeAPIKey_{}", timestamp);
+        let credential = Individual::new(&api_key_iri);
+
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Assert as APIKey
+        credential.assert(
+            conn,
+            "foundation:APIKey",
+            "Claude AI API Key",
+            "vpn_key",
+            "ai"
+        ).map_err(|e| format!("Failed to create APIKey: {}", e))?;
+
+        // Link to service
+        credential.add_property(
+            conn,
+            "foundation:credentialFor",
+            Object::Iri("foundation:ClaudeAIService".to_string()),
+            "ai"
+        ).map_err(|e| format!("Failed to link to service: {}", e))?;
+
+        // Link to owner
+        credential.add_property(
+            conn,
+            "foundation:ownedBy",
+            Object::Iri("foundation:ThisUser".to_string()),
+            "ai"
+        ).map_err(|e| format!("Failed to set owner: {}", e))?;
+
+        // Set the actual key value
+        credential.add_property(
+            conn,
+            "foundation:credentialValue",
+            Object::Literal {
+                value: api_key,
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            },
+            "ai"
+        ).map_err(|e| format!("Failed to set credential value: {}", e))?;
+
+        // Set created timestamp
+        credential.add_property(
+            conn,
+            "foundation:credentialCreatedAt",
+            Object::Literal {
+                value: now,
+                datatype: Some("xsd:dateTime".to_string()),
+                language: None,
+            },
+            "ai"
+        ).map_err(|e| format!("Failed to set created timestamp: {}", e))?;
+
+        Ok("API key saved".to_string())
+    }).await?;
+
+    super::log_backend(&app, "info", "API key saved successfully");
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ai__get_api_key(
+    executor: State<'_, DbExecutor>,
+) -> Result<Option<String>, String> {
+    executor.read(|conn| {
+        // Find credentials owned by ThisUser
+        let owned_creds = query::get_by_predicate_object(conn, "foundation:ownedBy", "foundation:ThisUser")
+            .ok();
+
+        if let Some(result) = owned_creds {
+            // Look for Claude API key
+            for triple in result.triples {
+                let credential_iri = &triple.subject;
+
+                // Check if it's for Claude AI Service
+                if let Ok(cred_for) = query::get_by_entity_predicate(conn, credential_iri, "foundation:credentialFor") {
+                    if cred_for.triples.iter().any(|t| {
+                        t.object.as_iri().map(|iri| iri == "foundation:ClaudeAIService").unwrap_or(false)
+                    }) {
+                        // Check if it's an APIKey
+                        if let Ok(types) = query::get_by_entity_predicate(conn, credential_iri, "rdf:type") {
+                            if types.triples.iter().any(|t| {
+                                t.object.as_iri().map(|iri| iri == "foundation:APIKey").unwrap_or(false)
+                            }) {
+                                // Get the credential value
+                                if let Ok(value_result) = query::get_by_entity_predicate(conn, credential_iri, "foundation:credentialValue") {
+                                    if let Some(value) = value_result.triples.first().and_then(|t| t.object.as_literal()) {
+                                        return Ok(Some(value));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }).await
+}
+
+#[tauri::command]
+pub async fn ai__initialize(
+    app: AppHandle,
+    api_key: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    super::log_backend(&app, "info", "Initializing AI with Claude API");
+
+    // Get default model from ontology
+    let model_identifier = executor.read(|conn| {
+        // Find models offered by ClaudeAIService where isDefaultModel = true
+        let models = query::get_by_predicate_object(conn, "foundation:offeredBy", "foundation:ClaudeAIService")
+            .ok();
+
+        if let Some(result) = models {
+            for triple in result.triples {
+                let model_iri = &triple.subject;
+
+                // Check if this is the default model
+                if let Ok(is_default) = query::get_by_entity_predicate(conn, model_iri, "foundation:isDefaultModel") {
+                    if is_default.triples.iter().any(|t| {
+                        t.object.as_literal().map(|v| v == "true").unwrap_or(false)
+                    }) {
+                        // Get the model identifier
+                        if let Ok(identifier_result) = query::get_by_entity_predicate(conn, model_iri, "foundation:modelIdentifier") {
+                            if let Some(identifier) = identifier_result.triples.first().and_then(|t| t.object.as_literal()) {
+                                return Ok(Some(identifier));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }).await.map_err(|e: String| format!("Failed to query default model: {}", e))?;
+
+    if let Some(model) = &model_identifier {
+        super::log_backend(&app, "info", &format!("Using model from ontology: {}", model));
     } else {
-        // Production mode - use Tauri's resource resolution
-        app.path()
-            .resolve("phi-4-mini-instruct-q4_k_m.gguf", tauri::path::BaseDirectory::Resource)
-            .map_err(|e| format!("Failed to resolve model path: {}", e))?
-    };
-
-    if !model_path.exists() {
-        return Err(format!("Model not found at: {:?}", model_path));
+        super::log_backend(&app, "warn", "No default model found in ontology, using hardcoded fallback");
     }
 
-    super::log_backend(&app, "info", &format!("Initializing AI model from: {:?}", model_path));
+    ai::initialize_ai_with_model(api_key, model_identifier).await?;
 
-    ai::initialize_ai(model_path)?;
-
-    super::log_backend(&app, "info", "AI model initialized successfully");
+    super::log_backend(&app, "info", "AI initialized successfully");
 
     Ok(())
 }
@@ -35,57 +206,104 @@ pub async fn ai__initialize(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn ai__generate(
     app: AppHandle,
-    prompt: String,
+    messages: Vec<ChatMessage>,
     max_tokens: Option<u32>,
+    temperature: Option<f32>,
+    system: Option<String>,
 ) -> Result<String, String> {
-    let max_tokens = max_tokens.unwrap_or(100);
+    super::log_backend(&app, "info", &format!("Generating AI response with {} messages", messages.len()));
 
-    super::log_backend(&app, "info", &format!("Generating AI response for prompt: {}", prompt));
+    let request = GenerateRequest {
+        messages,
+        max_tokens,
+        temperature,
+        system,
+    };
 
-    let response = ai::generate_response(&prompt, max_tokens)?;
+    let response = ai::generate_response(request).await?;
 
     super::log_backend(&app, "info", &format!("AI response generated: {} chars", response.len()));
 
     Ok(response)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ai::AI_INSTANCE;
+#[tauri::command]
+pub async fn ai__list_available_models(
+    app: AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<Value, String> {
+    super::log_backend(&app, "info", "Listing available models from Claude API");
 
-    #[test]
-    fn test_ai_generate_without_initialization() {
-        // Clear AI instance to ensure clean state
-        {
-            let mut instance = AI_INSTANCE.lock().unwrap();
-            *instance = None;
-        }
+    // Get API endpoint from ontology
+    let api_info = executor.read(|conn| {
+        let models_endpoint = query::get_by_entity_predicate(conn, "foundation:ClaudeAIService", "foundation:apiModelsEndpoint")
+            .ok()
+            .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()));
 
-        // Try to generate without initializing
-        let result = ai::generate_response("Hello", 10);
+        let api_version = query::get_by_entity_predicate(conn, "foundation:ClaudeAIService", "foundation:apiVersion")
+            .ok()
+            .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()));
 
-        // Should fail because AI not initialized
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("AI not initialized"));
+        Ok((models_endpoint, api_version))
+    }).await?;
+
+    let (endpoint, version) = api_info;
+    let endpoint = endpoint.ok_or("API models endpoint not found in ontology")?;
+    let version = version.ok_or("API version not found in ontology")?;
+
+    // Get API key
+    let api_key_result = ai__get_api_key(executor).await?;
+    let api_key = api_key_result.ok_or("API key not found. Please configure your Claude API key first.")?;
+
+    // Call the API
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&endpoint)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", version)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to call models API: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("API request failed with status {}: {}", status, error_text));
     }
 
-    #[test]
-    fn test_ai_generate_response_parameter_handling() {
-        // Clear AI instance
-        {
-            let mut instance = AI_INSTANCE.lock().unwrap();
-            *instance = None;
-        }
+    let models_json: Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-        // Test with different max_tokens values
-        let result1 = ai::generate_response("Test", 0);
-        assert!(result1.is_err()); // Will fail due to not initialized
+    super::log_backend(&app, "info", &format!("Retrieved models: {}", models_json));
 
-        let result2 = ai::generate_response("Test", 100);
-        assert!(result2.is_err()); // Will fail due to not initialized
+    Ok(models_json)
+}
 
-        // Both should fail with same error (not initialized)
-        assert_eq!(result1.unwrap_err(), result2.unwrap_err());
-    }
+#[tauri::command]
+pub async fn ai__get_available_functions() -> Result<Value, String> {
+    let functions = functions::get_available_functions();
+    serde_json::to_value(functions)
+        .map_err(|e| format!("Failed to serialize functions: {}", e))
+}
+
+#[tauri::command]
+pub async fn ai__execute_function(
+    app: AppHandle,
+    name: String,
+    arguments: Value,
+    executor: State<'_, DbExecutor>,
+) -> Result<FunctionResult, String> {
+    super::log_backend(&app, "info", &format!("Executing function: {} with args: {}", name, arguments));
+
+    let call = FunctionCall { name, arguments };
+
+    let result = executor.read(move |conn| {
+        Ok(functions::execute_function(conn, &call))
+    }).await.map_err(|e| format!("Failed to execute function: {}", e))?;
+
+    super::log_backend(&app, "info", &format!("Function result: success={}", result.success));
+
+    Ok(result)
 }

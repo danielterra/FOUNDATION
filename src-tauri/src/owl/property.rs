@@ -219,6 +219,32 @@ impl Property {
         let result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
         Ok(!result.triples.is_empty())
     }
+
+    /// Check if a property is functional (has at most one value per subject)
+    ///
+    /// Returns true if the property is marked as owl:FunctionalProperty in the ontology.
+    /// This is used by the query layer to determine whether to return one value or multiple values.
+    ///
+    /// IMPORTANT: This method uses get_by_entity_predicate_internal with check_functional=false
+    /// to avoid infinite recursion.
+    pub fn is_functional(conn: &Connection, property_iri: &str) -> Result<bool> {
+        let types_result = crate::eavto::query::get_by_entity_predicate_internal(
+            conn,
+            property_iri,
+            rdf::TYPE,
+            false
+        )?;
+
+        for triple in &types_result.triples {
+            if let Some(type_iri) = triple.object.as_iri() {
+                if type_iri == owl::FUNCTIONAL_PROPERTY {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
 }
 
 /// ObjectProperty is just an alias - use Property with PropertyType::ObjectProperty

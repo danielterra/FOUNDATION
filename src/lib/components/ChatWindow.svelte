@@ -12,11 +12,71 @@
 	let isLoading = $state(false);
 	let showHistory = $state(false);
 	let chatContainer = $state(null);
+	let userLocation = $state(null);
+	let apiKey = $state('');
+	let isInitialized = $state(false);
+	let showApiKeyInput = $state(false);
 
-	// Load recent messages on mount
+	// Load recent messages on mount and request location
 	onMount(async () => {
+		// Check if API key is already stored in ontology
+		try {
+			const storedKey = await invoke('ai__get_api_key');
+			if (storedKey) {
+				apiKey = storedKey;
+				await initializeAI(storedKey);
+			} else {
+				showApiKeyInput = true;
+			}
+		} catch (err) {
+			console.error('Failed to get API key:', err);
+			showApiKeyInput = true;
+		}
 		await loadMessages();
+		requestLocation();
 	});
+
+	async function initializeAI(key) {
+		try {
+			await invoke('ai__initialize', { apiKey: key });
+			isInitialized = true;
+			showApiKeyInput = false;
+			console.log('AI initialized successfully');
+		} catch (err) {
+			console.error('Failed to initialize AI:', err);
+			alert('Failed to initialize AI. Please check your API key.');
+			isInitialized = false;
+		}
+	}
+
+	async function saveApiKey() {
+		if (!apiKey.trim()) return;
+
+		try {
+			await invoke('ai__save_api_key', { apiKey: apiKey });
+			await initializeAI(apiKey);
+		} catch (err) {
+			console.error('Failed to save API key:', err);
+			alert('Failed to save API key: ' + err);
+		}
+	}
+
+	function requestLocation() {
+		if ('geolocation' in navigator) {
+			navigator.geolocation.getCurrentPosition(
+				(position) => {
+					userLocation = {
+						latitude: position.coords.latitude,
+						longitude: position.coords.longitude
+					};
+					console.log('Location obtained:', userLocation);
+				},
+				(error) => {
+					console.warn('Failed to get location:', error.message);
+				}
+			);
+		}
+	}
 
 	async function loadMessages() {
 		try {
@@ -31,21 +91,26 @@
 	}
 
 	async function sendMessage() {
-		if (!inputText.trim() || isLoading) return;
+		if (!inputText.trim() || isLoading || !isInitialized) return;
 
 		const content = inputText.trim();
 		inputText = '';
 		isLoading = true;
 
 		try {
-			// Send user message and get AI reply
-			const newMessages = await invoke('chat__send_and_reply', { content });
+			// Send user message and get AI reply with location if available
+			const newMessages = await invoke('chat__send_and_reply', {
+				content,
+				latitude: userLocation?.latitude ?? null,
+				longitude: userLocation?.longitude ?? null
+			});
 
 			// Update messages with the response (user message + AI reply)
 			messages = newMessages;
 			scrollToBottom();
 		} catch (err) {
 			console.error('Failed to send message:', err);
+			alert('Failed to send message: ' + err);
 		} finally {
 			isLoading = false;
 		}
@@ -84,7 +149,24 @@
 	<div class="chat-window">
 		<Card>
 			{#snippet children()}
-				<!-- Messages -->
+				<!-- API Key Input -->
+				{#if showApiKeyInput}
+					<div class="api-key-setup">
+						<h3>Setup Claude API</h3>
+						<p>Enter your Anthropic API key to enable AI chat:</p>
+						<input
+							type="password"
+							bind:value={apiKey}
+							placeholder="sk-ant-..."
+							onkeydown={(e) => e.key === 'Enter' && saveApiKey()}
+						/>
+						<button onclick={saveApiKey} disabled={!apiKey.trim()}>
+							Save API Key
+						</button>
+						<small>Your API key is securely stored in your local ontology database</small>
+					</div>
+				{:else}
+					<!-- Messages -->
 				<div class="chat-messages" bind:this={chatContainer}>
 					{#if messages.length === 0}
 						<div class="empty-state">
@@ -138,6 +220,7 @@
 						</span>
 					</button>
 				</div>
+				{/if}
 			{/snippet}
 		</Card>
 	</div>
@@ -426,5 +509,67 @@
 
 	.chat-messages::-webkit-scrollbar-thumb:hover {
 		background: color-mix(in srgb, var(--color-white) 30%, transparent);
+	}
+
+	/* API Key Setup */
+	.api-key-setup {
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+		padding: 20px;
+	}
+
+	.api-key-setup h3 {
+		margin: 0;
+		color: var(--color-neutral-active);
+		font-size: 18px;
+	}
+
+	.api-key-setup p {
+		margin: 0;
+		color: var(--color-neutral);
+		font-size: 14px;
+	}
+
+	.api-key-setup input {
+		padding: 12px 16px;
+		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--color-white) 5%, transparent);
+		color: var(--color-neutral-active);
+		font-family: inherit;
+		font-size: 14px;
+	}
+
+	.api-key-setup input:focus {
+		outline: none;
+		border-color: var(--color-interactive);
+	}
+
+	.api-key-setup button {
+		padding: 12px 24px;
+		border: none;
+		border-radius: 8px;
+		background: var(--color-interactive);
+		color: var(--color-neutral-on-interactive);
+		font-size: 14px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.api-key-setup button:hover:not(:disabled) {
+		background: var(--color-interactive-hover);
+	}
+
+	.api-key-setup button:disabled {
+		background: var(--color-neutral-disabled);
+		cursor: not-allowed;
+		opacity: 0.5;
+	}
+
+	.api-key-setup small {
+		color: var(--color-neutral-disabled);
+		font-size: 12px;
 	}
 </style>

@@ -85,6 +85,76 @@ You carry a supercomputer in your bag. Multi-core processors, gigabytes of RAM, 
 
 ---
 
+## Development
+
+### Running the Project
+
+```bash
+npm run tauri  # Start development server
+npm run logs   # View recent application logs
+```
+
+### Important Paths
+
+- **User Database**: `~/Documents/Foundation/FOUNDATION.db` - Main SQLite database with all user data
+- **Application Logs**: `~/Library/Application Support/org.w3id.foundation/application.log` (macOS)
+- **Core Ontology**: `core-ontology/*.ttl` - Base ontology definitions loaded on initialization
+
+### Architecture Layers
+
+FOUNDATION is organized in three distinct layers, each with clear responsibilities:
+
+```mermaid
+graph TB
+    Frontend[Frontend Layer<br/>Svelte Components]
+    Commands[Commands Layer<br/>src-tauri/src/commands/<br/>Tauri Commands & Business Logic]
+    OWL[OWL Layer<br/>src-tauri/src/owl/<br/>Ontology Operations]
+    EAVTO[EAVTO Layer<br/>src-tauri/src/eavto/<br/>Append-Only Triple Store]
+    SQLite[(SQLite Database<br/>~/Documents/Foundation/FOUNDATION.db)]
+
+    Frontend -->|invoke commands| Commands
+    Commands -->|MUST use| OWL
+    OWL -->|MUST use| EAVTO
+    EAVTO -->|direct SQL| SQLite
+
+    style Frontend fill:#e1f5ff
+    style Commands fill:#fff4e1
+    style OWL fill:#ffe1f5
+    style EAVTO fill:#e1ffe1
+    style SQLite fill:#f0f0f0
+```
+
+#### 1. EAVTO Layer (`src-tauri/src/eavto/`)
+The **foundation layer** that manages the append-only triple store database:
+- **Responsibility**: Direct SQLite operations, triple storage and querying
+- **Key principle**: Append-only semantics - queries return only the most recent values by default
+- **API**: `query.rs` (read operations), `store.rs` (write operations)
+- **Used by**: OWL layer only
+
+#### 2. OWL Layer (`src-tauri/src/owl/`)
+The **ontology layer** that provides semantic understanding:
+- **Responsibility**: OWL/RDFS operations (classes, properties, individuals)
+- **Key principle**: All operations MUST use the EAVTO layer, never direct SQL access
+- **API**: `Class`, `Property`, `Individual` structs with high-level operations
+- **Used by**: Commands layer
+
+#### 3. Commands Layer (`src-tauri/src/commands/`)
+The **application layer** that exposes functionality to the frontend:
+- **Responsibility**: Tauri commands, business logic, API endpoints
+- **Key principle**: All ontology operations MUST use the OWL layer
+- **API**: Functions decorated with `#[tauri::command]`
+- **Used by**: Frontend (Svelte components)
+
+**CRITICAL**: Each layer must only use the layer below it. The OWL layer must never bypass EAVTO and access SQL directly, and commands must never bypass OWL to access EAVTO directly. This separation ensures maintainability and prevents issues like infinite recursion.
+
+### Debugging
+
+Use `npm run logs` to check recent application logs. All frontend and backend errors are logged centrally. To query the database directly:
+
+```bash
+sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT COUNT(*) FROM triples WHERE retracted = 0;"
+```
+
 ## Work Methodology
 
 FOUNDATION follows a problem-driven, outcome-focused development approach:

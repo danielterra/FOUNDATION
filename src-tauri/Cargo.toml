@@ -33,11 +33,8 @@ chrono = "0.4"  # For timestamps
 sysinfo = "0.32"  # For system information
 hostname = "0.4"  # For hostname detection
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }  # For async executor and tests
-llama-cpp-2 = "0.1"  # For local AI inference
+reqwest = { version = "0.12", features = ["json"] }  # For HTTP API calls
+async-trait = "0.1"  # For async trait definitions
 
 [dev-dependencies]
 tempfile = "3.8"  # Temporary files for tests
-serial_test = "3.0"  # For serial test execution
-
-[profile.test]
-opt-level = 0

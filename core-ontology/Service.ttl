@@ -68,3 +68,66 @@ Example:
   :OneTimeRepair foundation:recurringService false .
   :NetflixSubscription foundation:recurringService true .
 """ .
+
+foundation:apiBaseUrl a owl:DatatypeProperty ;
+    rdfs:label "API base URL" ;
+    rdfs:comment "Base URL for the service's API endpoints" ;
+    rdfs:domain foundation:Service ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :ClaudeAIService foundation:apiBaseUrl "https://api.anthropic.com/v1" .
+  :OpenAIService foundation:apiBaseUrl "https://api.openai.com/v1" .
+""" .
+
+foundation:apiModelsEndpoint a owl:DatatypeProperty ;
+    rdfs:label "API models endpoint" ;
+    rdfs:comment "API endpoint to list available models for this service" ;
+    rdfs:domain foundation:Service ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :ClaudeAIService foundation:apiModelsEndpoint "https://api.anthropic.com/v1/models" .
+  :OpenAIService foundation:apiModelsEndpoint "https://api.openai.com/v1/models" .
+""" .
+
+foundation:apiMessagesEndpoint a owl:DatatypeProperty ;
+    rdfs:label "API messages endpoint" ;
+    rdfs:comment "API endpoint to send messages/prompts to the AI service" ;
+    rdfs:domain foundation:Service ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :ClaudeAIService foundation:apiMessagesEndpoint "https://api.anthropic.com/v1/messages" .
+  :OpenAIService foundation:apiMessagesEndpoint "https://api.openai.com/v1/chat/completions" .
+""" .
+
+foundation:apiVersion a owl:DatatypeProperty ;
+    rdfs:label "API version" ;
+    rdfs:comment "Version identifier for the API (used in headers or URL)" ;
+    rdfs:domain foundation:Service ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :ClaudeAIService foundation:apiVersion "2023-06-01" .
+""" .
+
+foundation:apiDocumentation a owl:DatatypeProperty ;
+    rdfs:label "API documentation" ;
+    rdfs:comment "URL to the official API documentation" ;
+    rdfs:domain foundation:Service ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :ClaudeAIService foundation:apiDocumentation "https://docs.anthropic.com/en/docs/about-claude/models" .
+""" .
+
+foundation:website a owl:DatatypeProperty ;
+    rdfs:label "website" ;
+    rdfs:comment "Official website URL" ;
+    rdfs:domain foundation:Organization ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :AnthropicOrganization foundation:website "https://www.anthropic.com" .
+""" .

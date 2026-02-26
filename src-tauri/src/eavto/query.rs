@@ -10,6 +10,9 @@ use super::query_result_type::QueryResult;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Query triples by entity (E - subject)
+///
+/// Returns only the most recent (current) value for each predicate.
+/// In append-only databases, this represents the current state of the entity.
 pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
@@ -17,14 +20,21 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE subject = ? AND retracted = 0
-         ORDER BY tx DESC"
+         ORDER BY predicate, tx DESC"
     )?;
 
-    let triples = stmt
+    let all_triples: Vec<Triple> = stmt
         .query_map([entity], row_to_triple)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    Ok(QueryResult::new(triples))
+    // Keep only the most recent value for each predicate (current state)
+    let mut seen_predicates = std::collections::HashSet::new();
+    let current_triples: Vec<Triple> = all_triples
+        .into_iter()
+        .filter(|t| seen_predicates.insert(t.predicate.clone()))
+        .collect();
+
+    Ok(QueryResult::new(current_triples))
 }
 
 /// Query triples by predicate (V - value/property)
@@ -46,25 +56,93 @@ pub fn get_by_predicate(conn: &Connection, predicate: &str) -> Result<QueryResul
 }
 
 /// Query triples by subject and predicate (EV)
+///
+/// Returns current state based on property characteristics:
+/// - Functional properties (owl:FunctionalProperty): Single most recent value
+/// - Non-functional properties: Most recent value for EACH distinct object
+///
+/// Example:
+/// - `Person -> email -> value` (functional): returns 1 triple (latest email)
+/// - `Person -> sentMessage -> [msg1, msg2]` (non-functional): returns 2 triples (latest state of each message)
 pub fn get_by_entity_predicate(
     conn: &Connection,
     entity: &str,
     predicate: &str,
 ) -> Result<QueryResult> {
-    let mut stmt = conn.prepare(
-        "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                object_type, object_number, object_integer, object_datetime, object_boolean,
-                tx, origin_id, retracted, created_at
-         FROM triples
-         WHERE subject = ? AND predicate = ? AND retracted = 0
-         ORDER BY tx DESC"
-    )?;
+    get_by_entity_predicate_internal(conn, entity, predicate, true)
+}
 
-    let triples = stmt
-        .query_map([entity, predicate], row_to_triple)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+/// Internal implementation with check_functional parameter
+///
+/// The `check_functional` parameter controls whether to check if the property is functional.
+/// Set to false when calling from Property::is_functional to avoid infinite recursion.
+pub fn get_by_entity_predicate_internal(
+    conn: &Connection,
+    entity: &str,
+    predicate: &str,
+    check_functional: bool,
+) -> Result<QueryResult> {
+    // Check if property is functional (only if check_functional is true)
+    let is_functional = if check_functional {
+        crate::owl::Property::is_functional(conn, predicate)
+            .unwrap_or(false) // Default to non-functional if can't determine
+    } else {
+        false // Skip functional check to avoid recursion
+    };
 
-    Ok(QueryResult::new(triples))
+    if is_functional {
+        // Functional property: return only the single most recent value
+        let mut stmt = conn.prepare(
+            "SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                    object_type, object_number, object_integer, object_datetime, object_boolean,
+                    tx, origin_id, retracted, created_at
+             FROM triples
+             WHERE subject = ? AND predicate = ? AND retracted = 0
+             ORDER BY tx DESC
+             LIMIT 1"
+        )?;
+
+        let triples = stmt
+            .query_map([entity, predicate], row_to_triple)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(QueryResult::new(triples))
+    } else {
+        // Non-functional property: return most recent value for each distinct object
+        let mut stmt = conn.prepare(
+            "SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                    object_type, object_number, object_integer, object_datetime, object_boolean,
+                    tx, origin_id, retracted, created_at
+             FROM triples
+             WHERE subject = ? AND predicate = ? AND retracted = 0
+             ORDER BY object, object_value, tx DESC"
+        )?;
+
+        let all_triples: Vec<Triple> = stmt
+            .query_map([entity, predicate], row_to_triple)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        // Keep only the most recent triple for each distinct object
+        let mut seen_objects = std::collections::HashSet::new();
+        let current_triples: Vec<Triple> = all_triples
+            .into_iter()
+            .filter(|t| {
+                // Create unique key for this object
+                let key = match &t.object {
+                    Object::Iri(iri) => format!("iri:{}", iri),
+                    Object::Blank(id) => format!("blank:{}", id),
+                    Object::Literal { value, .. } => format!("lit:{}", value),
+                    Object::Integer(i) => format!("int:{}", i),
+                    Object::Number(n) => format!("num:{}", n),
+                    Object::Boolean(b) => format!("bool:{}", b),
+                    Object::DateTime(dt) => format!("dt:{}", dt),
+                };
+                seen_objects.insert(key)
+            })
+            .collect();
+
+        Ok(QueryResult::new(current_triples))
+    }
 }
 
 /// Query by predicate and object (e.g., all properties with a specific domain)

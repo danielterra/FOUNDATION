@@ -4,7 +4,6 @@
   import { initializeLogging } from '$lib/logging.js';
   import ChatWindow from '$lib/components/ChatWindow.svelte';
   import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
 
   // Available background videos
   const backgroundVideos = [
@@ -18,18 +17,9 @@
   // Select random video
   const selectedVideo = backgroundVideos[Math.floor(Math.random() * backgroundVideos.length)];
 
-  // Initialize logging and AI when app mounts
+  // Initialize logging when app mounts
   onMount(async () => {
     initializeLogging();
-
-    // Initialize AI model
-    try {
-      console.log('Initializing AI model...');
-      await invoke('ai__initialize');
-      console.log('AI model initialized successfully');
-    } catch (err) {
-      console.error('Failed to initialize AI:', err);
-    }
   });
 </script>
 

@@ -1,0 +1,176 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# AIModel
+# =============================================================================
+# A specific version/variant of an AI language model offered by a service
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:AIModel a owl:Class ;
+    rdfs:subClassOf foundation:Concept ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:modelIdentifier ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:offeredBy ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "AI Model" ;
+    rdfs:comment "A specific version or variant of an AI language model (e.g., Claude 3.5 Sonnet, GPT-4)" ;
+    foundation:icon "psychology_alt" ;
+    rdfs:seeAlso """
+Examples:
+- Claude 3.5 Sonnet (claude-3-5-sonnet-20240620)
+- Claude 3 Opus (claude-3-opus-20240229)
+- GPT-4 Turbo
+- Gemini 1.5 Pro
+
+Cardinality constraints:
+- modelIdentifier: exactly 1 (required, unique ID for API calls)
+- offeredBy: exactly 1 (required, which service provides this model)
+""" .
+
+# -----------------------------------------------------------------------------
+# AIModel Properties
+# -----------------------------------------------------------------------------
+
+foundation:modelIdentifier a owl:DatatypeProperty ;
+    rdfs:label "model identifier" ;
+    rdfs:comment "The unique identifier used to reference this model in API calls (examples: 'claude-sonnet-4-5', 'claude-3-opus-20240229')" ;
+    rdfs:domain foundation:AIModel ;
+    rdfs:range xsd:string .
+
+foundation:offeredBy a owl:ObjectProperty ;
+    rdfs:label "offered by" ;
+    rdfs:comment "The AI service that provides this model" ;
+    rdfs:domain foundation:AIModel ;
+    rdfs:range foundation:Service .
+
+foundation:modelVersion a owl:DatatypeProperty ;
+    rdfs:label "model version" ;
+    rdfs:comment "Human-readable version of the model (e.g., '3.5', '4.0', '4.5')" ;
+    rdfs:domain foundation:AIModel ;
+    rdfs:range xsd:string .
+
+foundation:contextWindow a owl:DatatypeProperty ;
+    rdfs:label "context window" ;
+    rdfs:comment "Maximum number of tokens the model can process in one request (examples: 200000, 128000)" ;
+    rdfs:domain foundation:AIModel ;
+    rdfs:range xsd:integer .
+
+foundation:modelCapability a owl:DatatypeProperty ;
+    rdfs:label "model capability" ;
+    rdfs:comment "Key capability or strength of this model (e.g., 'coding', 'writing', 'analysis', 'reasoning')" ;
+    rdfs:domain foundation:AIModel ;
+    rdfs:range xsd:string .
+
+foundation:isDefaultModel a owl:DatatypeProperty ;
+    rdfs:label "is default model" ;
+    rdfs:comment "Whether this model should be used as the default for its service (true or false)" ;
+    rdfs:domain foundation:AIModel ;
+    rdfs:range xsd:boolean .
+
+foundation:modelReleaseDate a owl:DatatypeProperty ;
+    rdfs:label "model release date" ;
+    rdfs:comment "When this specific model version was released (format: YYYY-MM-DD)" ;
+    rdfs:domain foundation:AIModel ;
+    rdfs:range xsd:date .
+
+# =============================================================================
+# Claude Model Instances
+# =============================================================================
+
+# Claude 3.5 Sonnet Latest (uses alias - may require higher API tier)
+foundation:Claude35SonnetLatest a foundation:AIModel ;
+    rdfs:label "Claude 3.5 Sonnet (Latest)" ;
+    rdfs:comment "Latest Claude 3.5 Sonnet - uses alias that automatically points to newest version" ;
+    foundation:icon "psychology_alt" ;
+    foundation:modelIdentifier "claude-3-5-sonnet-latest" ;
+    foundation:offeredBy foundation:ClaudeAIService ;
+    foundation:modelVersion "3.5" ;
+    foundation:contextWindow 200000 ;
+    foundation:modelCapability "coding" ;
+    foundation:modelCapability "reasoning" ;
+    foundation:modelCapability "analysis" ;
+    foundation:isDefaultModel false ;
+    foundation:modelReleaseDate "2024-10-22"^^xsd:date .
+
+# Claude 3.5 Sonnet (specific dated version - keeping as default for compatibility)
+foundation:Claude35Sonnet20241022 a foundation:AIModel ;
+    rdfs:label "Claude 3.5 Sonnet (2024-10-22)" ;
+    rdfs:comment "Specific dated version of Claude 3.5 Sonnet - using for backward compatibility" ;
+    foundation:icon "psychology_alt" ;
+    foundation:modelIdentifier "claude-3-5-sonnet-20241022" ;
+    foundation:offeredBy foundation:ClaudeAIService ;
+    foundation:modelVersion "3.5" ;
+    foundation:contextWindow 200000 ;
+    foundation:modelCapability "coding" ;
+    foundation:modelCapability "reasoning" ;
+    foundation:modelCapability "analysis" ;
+    foundation:isDefaultModel false ;
+    foundation:modelReleaseDate "2024-10-22"^^xsd:date .
+
+# Claude Sonnet 4.5 (RECOMMENDED DEFAULT for current API)
+foundation:ClaudeSonnet45 a foundation:AIModel ;
+    rdfs:label "Claude Sonnet 4.5" ;
+    rdfs:comment "Best model for agents, coding, and computer use - September 2025 release" ;
+    foundation:icon "psychology_alt" ;
+    foundation:modelIdentifier "claude-sonnet-4-5" ;
+    foundation:offeredBy foundation:ClaudeAIService ;
+    foundation:modelVersion "4.5" ;
+    foundation:contextWindow 200000 ;
+    foundation:modelCapability "agents" ;
+    foundation:modelCapability "coding" ;
+    foundation:modelCapability "computer_use" ;
+    foundation:modelCapability "reasoning" ;
+    foundation:isDefaultModel true ;
+    foundation:modelReleaseDate "2025-09-29"^^xsd:date .
+
+# Claude 3 Opus (DEPRECATED - for backward compatibility only)
+foundation:Claude3Opus20240229 a foundation:AIModel ;
+    rdfs:label "Claude 3 Opus (2024-02-29) [DEPRECATED]" ;
+    rdfs:comment "DEPRECATED: Claude 3.x models retired in late 2025. Use Claude 4.x models instead." ;
+    foundation:icon "psychology_alt" ;
+    foundation:modelIdentifier "claude-3-opus-20240229" ;
+    foundation:offeredBy foundation:ClaudeAIService ;
+    foundation:modelVersion "3.0" ;
+    foundation:contextWindow 200000 ;
+    foundation:modelCapability "writing" ;
+    foundation:modelCapability "complex_tasks" ;
+    foundation:modelCapability "creativity" ;
+    foundation:isDefaultModel false ;
+    foundation:modelReleaseDate "2024-02-29"^^xsd:date .
+
+# Claude 3.5 Haiku
+foundation:Claude35Haiku20241022 a foundation:AIModel ;
+    rdfs:label "Claude 3.5 Haiku" ;
+    rdfs:comment "Fastest Claude model for near-instant responsiveness" ;
+    foundation:icon "flash_on" ;
+    foundation:modelIdentifier "claude-3-5-haiku-20241022" ;
+    foundation:offeredBy foundation:ClaudeAIService ;
+    foundation:modelVersion "3.5" ;
+    foundation:contextWindow 200000 ;
+    foundation:modelCapability "speed" ;
+    foundation:modelCapability "efficiency" ;
+    foundation:isDefaultModel false ;
+    foundation:modelReleaseDate "2024-10-22"^^xsd:date .
+
+# Claude 3.7 Sonnet (with extended thinking)
+foundation:Claude37Sonnet20250219 a foundation:AIModel ;
+    rdfs:label "Claude 3.7 Sonnet" ;
+    rdfs:comment "High-performance model with early extended thinking capabilities" ;
+    foundation:icon "psychology_alt" ;
+    foundation:modelIdentifier "claude-3-7-sonnet-20250219" ;
+    foundation:offeredBy foundation:ClaudeAIService ;
+    foundation:modelVersion "3.7" ;
+    foundation:contextWindow 200000 ;
+    foundation:modelCapability "extended_thinking" ;
+    foundation:modelCapability "reasoning" ;
+    foundation:isDefaultModel false ;
+    foundation:modelReleaseDate "2025-02-19"^^xsd:date .

@@ -1,0 +1,32 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Claude AI Service Instance
+# =============================================================================
+# Anthropic's Claude AI API service
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:ClaudeAIService a foundation:Service ;
+    rdfs:label "Claude AI API" ;
+    rdfs:comment "Anthropic's Claude AI API service for natural language processing" ;
+    foundation:icon "psychology" ;
+    foundation:providedBy foundation:AnthropicOrganization ;
+    foundation:recurringService true ;
+    foundation:apiBaseUrl "https://api.anthropic.com/v1" ;
+    foundation:apiModelsEndpoint "https://api.anthropic.com/v1/models" ;
+    foundation:apiMessagesEndpoint "https://api.anthropic.com/v1/messages" ;
+    foundation:apiVersion "2023-06-01" ;
+    foundation:apiDocumentation "https://docs.anthropic.com/en/docs/about-claude/models" .
+
+foundation:AnthropicOrganization a foundation:Organization ;
+    rdfs:label "Anthropic" ;
+    rdfs:comment "AI safety company that created Claude" ;
+    foundation:icon "corporate_fare" ;
+    foundation:website "https://www.anthropic.com" .

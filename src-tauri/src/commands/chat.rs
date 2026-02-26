@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::eavto::{DbExecutor, query};
 use crate::owl::{Individual, Object, Thing};
+use crate::ai::functions::{self, FunctionCall};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +33,8 @@ pub struct ConversationInfo {
 #[allow(non_snake_case)]
 pub async fn chat__send_message(
     content: String,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     executor.write(move |conn| {
@@ -139,7 +142,7 @@ pub async fn chat__send_message(
             conn,
             "foundation:sentAt",
             Object::Literal {
-                value: now,
+                value: now.clone(),
                 datatype: Some("xsd:dateTime".to_string()),
                 language: None,
             },
@@ -165,6 +168,64 @@ pub async fn chat__send_message(
             },
             "chat"
         ).map_err(|e| format!("Failed to set messageType: {}", e))?;
+
+        // Update user location if provided
+        if let (Some(lat), Some(lon)) = (latitude, longitude) {
+            let user = Individual::new("foundation:ThisUser");
+
+            // Create a location record with timestamp
+            let location_iri = format!("foundation:Location_{}", timestamp);
+            let location = Individual::new(&location_iri);
+
+            location.assert(
+                conn,
+                "foundation:Location",
+                &format!("Location at {}", now.clone()),
+                "location",
+                "chat"
+            ).map_err(|e| format!("Failed to create location: {}", e))?;
+
+            location.add_property(
+                conn,
+                "foundation:latitude",
+                Object::Literal {
+                    value: lat.to_string(),
+                    datatype: Some("xsd:double".to_string()),
+                    language: None,
+                },
+                "chat"
+            ).map_err(|e| format!("Failed to set latitude: {}", e))?;
+
+            location.add_property(
+                conn,
+                "foundation:longitude",
+                Object::Literal {
+                    value: lon.to_string(),
+                    datatype: Some("xsd:double".to_string()),
+                    language: None,
+                },
+                "chat"
+            ).map_err(|e| format!("Failed to set longitude: {}", e))?;
+
+            location.add_property(
+                conn,
+                "foundation:recordedAt",
+                Object::Literal {
+                    value: now.clone(),
+                    datatype: Some("xsd:dateTime".to_string()),
+                    language: None,
+                },
+                "chat"
+            ).map_err(|e| format!("Failed to set recordedAt: {}", e))?;
+
+            // Link location to user
+            user.add_property(
+                conn,
+                "foundation:hasLocation",
+                Object::Iri(location_iri),
+                "chat"
+            ).map_err(|e| format!("Failed to link location to user: {}", e))?;
+        }
 
         Ok(message_iri)
     }).await
@@ -301,15 +362,192 @@ pub async fn chat__get_conversation_info(
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn chat__send_and_reply(
+    app: AppHandle,
     content: String,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<MessageInfo>, String> {
-    // First, send the user message
-    let user_message_iri = chat__send_message(content.clone(), executor.clone()).await?;
+    // First, send the user message with location
+    let user_message_iri = chat__send_message(content.clone(), latitude, longitude, executor.clone()).await?;
 
-    // Generate AI response using the AI module
-    let ai_response = crate::ai::generate_response(&content, 150)
+    // Get user and AI information from database
+    let (user_name, ai_name) = executor.read(|conn| {
+        let user_thing = Thing::get(conn, "foundation:ThisUser");
+        let ai_thing = Thing::get(conn, "foundation:LocalAIAssistant");
+        Ok((user_thing.label, ai_thing.label))
+    }).await.map_err(|e| format!("Failed to get user/AI info: {}", e))?;
+
+    // Get current date/time and locale information
+    let now = chrono::Local::now();
+    let date_time = now.format("%Y-%m-%d %H:%M:%S %Z").to_string();
+    let locale = std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_string());
+
+    // Extract language and country from locale (e.g., "pt_BR.UTF-8" -> lang: "pt", country: "BR")
+    let locale_parts: Vec<&str> = locale.split('.').next().unwrap_or("en_US").split('_').collect();
+    let language = locale_parts.first().unwrap_or(&"en").to_string();
+    let country = locale_parts.get(1).unwrap_or(&"US").to_string();
+
+    // Build context information with location if available
+    let location_info = if let (Some(lat), Some(lon)) = (latitude, longitude) {
+        format!("- User location: latitude {}, longitude {}\n", lat, lon)
+    } else {
+        String::new()
+    };
+
+    let context = format!(
+        "CONTEXT:\n\
+        - Current date/time: {}\n\
+        - System language: {}\n\
+        - System locale: {} (country: {})\n\
+        {}\
+        - User IRI: foundation:ThisUser (name: {})\n\
+        - Your IRI: foundation:LocalAIAssistant (name: {})\n\n",
+        date_time,
+        language,
+        locale,
+        country,
+        location_info,
+        user_name,
+        ai_name
+    );
+
+    // Get recent conversation history (excluding the message we just saved)
+    let history = chat__get_recent_messages(Some(10), executor.clone()).await?;
+
+    // Build conversation history string (exclude the last message which is the one we just saved)
+    let mut conversation_history = String::new();
+    for msg in history.iter().rev().skip(1).rev() {
+        let sender_label = &msg.sender_label;
+        let msg_content = &msg.content;
+        conversation_history.push_str(&format!("{}: {}\n", sender_label, msg_content));
+    }
+
+    // Build prompt with context, system instructions and function definitions
+    let system_prompt = functions::get_system_prompt_with_functions();
+    let context_clone = context.clone();
+    let system_prompt_clone = system_prompt.clone();
+    let content_clone = content.clone();
+
+    let full_prompt = format!("{}{}{}{}: {}", context, system_prompt, conversation_history, user_name, content);
+
+    // Log prompt size for monitoring
+    super::log_backend(&app, "info", &format!("AI prompt length: {} chars, ~{} tokens (limit: 16384)",
+        full_prompt.len(), full_prompt.len() / 4));
+
+    // Build messages for Claude API
+    let messages = vec![
+        crate::ai::ChatMessage {
+            role: "user".to_string(),
+            content: format!("{}{}: {}", conversation_history, user_name, content),
+        },
+    ];
+
+    let request = crate::ai::GenerateRequest {
+        messages,
+        max_tokens: Some(1024),
+        temperature: Some(0.3),
+        system: Some(format!("{}{}", context, system_prompt)),
+    };
+
+    // Generate AI response using the AI module with low temperature for precision
+    let ai_raw_response = crate::ai::generate_response(request).await
         .map_err(|e| format!("Failed to generate AI response: {}", e))?;
+
+    super::log_backend(&app, "info", &format!("AI raw response: {}", ai_raw_response));
+
+    // Extract JSON from <json>...</json> tags if present
+    let json_content = if let Some(start_idx) = ai_raw_response.find("<json>") {
+        if let Some(end_idx) = ai_raw_response.find("</json>") {
+            &ai_raw_response[start_idx + 6..end_idx]
+        } else {
+            ai_raw_response.trim()
+        }
+    } else {
+        ai_raw_response.trim()
+    };
+
+    super::log_backend(&app, "info", &format!("Extracted content: {}", json_content));
+
+    // Check if response is a function call (JSON format)
+    let ai_response = if let Ok(function_call) = serde_json::from_str::<serde_json::Value>(json_content) {
+        super::log_backend(&app, "info", "AI response parsed as JSON");
+        // Check if it has "function" and "arguments" fields
+        if let (Some(func_name), Some(args)) = (function_call.get("function"), function_call.get("arguments")) {
+            if let Some(func_name_str) = func_name.as_str() {
+                super::log_backend(&app, "info", &format!("Executing function: {} with args: {}", func_name_str, args));
+
+                // Execute the function
+                let call = FunctionCall {
+                    name: func_name_str.to_string(),
+                    arguments: args.clone(),
+                };
+
+                let func_result = executor.read(move |conn| {
+                    Ok(functions::execute_function(conn, &call))
+                }).await.map_err(|e| format!("Failed to execute function: {}", e))?;
+
+                super::log_backend(&app, "info", &format!("Function executed. Success: {}", func_result.success));
+
+                // Let AI interpret the function result
+                if func_result.success {
+                    if let Some(result) = &func_result.result {
+                        // Build a new prompt with the function result for AI to interpret
+                        let result_str = serde_json::to_string_pretty(result)
+                            .unwrap_or_else(|_| result.to_string());
+
+                        super::log_backend(&app, "info", &format!("Function result: {}", result_str));
+
+                        // Build simple, direct interpretation prompt
+                        let interpretation_prompt = format!(
+                            "Question: {}\n\nData:\n{}\n\nProvide a direct answer based on the data:",
+                            content_clone, result_str
+                        );
+
+                        super::log_backend(&app, "info", "Generating interpretation response...");
+
+                        // Generate with higher temperature for more natural responses
+                        let interpretation_request = crate::ai::GenerateRequest {
+                            messages: vec![crate::ai::ChatMessage {
+                                role: "user".to_string(),
+                                content: interpretation_prompt,
+                            }],
+                            max_tokens: Some(512),
+                            temperature: Some(0.7),
+                            system: None,
+                        };
+
+                        match crate::ai::generate_response(interpretation_request).await {
+                            Ok(interpreted) => {
+                                super::log_backend(&app, "info", &format!("Interpretation generated: {}", interpreted));
+                                interpreted
+                            },
+                            Err(e) => {
+                                super::log_backend(&app, "error", &format!("Failed to generate interpretation: {}", e));
+                                format!("Based on the data, here's what I found:\n{}", result_str)
+                            }
+                        }
+                    } else {
+                        super::log_backend(&app, "warn", "Function returned no result");
+                        "I couldn't find any data.".to_string()
+                    }
+                } else {
+                    let error_msg = func_result.error.unwrap_or_else(|| "Unknown error".to_string());
+                    super::log_backend(&app, "error", &format!("Function error: {}", error_msg));
+                    format!("Sorry, I encountered an error: {}", error_msg)
+                }
+            } else {
+                super::log_backend(&app, "warn", "Function name is not a string");
+                ai_raw_response
+            }
+        } else {
+            super::log_backend(&app, "warn", "JSON doesn't have function/arguments fields");
+            ai_raw_response
+        }
+    } else {
+        super::log_backend(&app, "info", "AI response is not JSON (normal text response)");
+        ai_raw_response
+    };
 
     // Save AI response as a message
     executor.write(move |conn| {
