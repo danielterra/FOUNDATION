@@ -20,12 +20,14 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@fontsource/monaspace-krypton": "^5.2.5",
     "@material-symbols/font-400": "^0.40.1",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "@types/dagre": "^0.7.53",
     "d3": "^7.9.0",
     "dagre": "^0.8.5",
+    "marked": "^17.0.3",
     "material-symbols": "^0.40.1"
   },
   "devDependencies": {

@@ -25,7 +25,7 @@
 
       if (isSetupDone) {
         setupComplete = true;
-        goto("/graph");
+        goto("/home");
       } else {
         setupComplete = false;
       }
@@ -62,7 +62,7 @@
 
       if (isDone) {
         setupComplete = true;
-        goto("/graph");
+        goto("/home");
       } else {
         setupComplete = false;
       }
@@ -85,7 +85,7 @@
   function handleSetupComplete(event) {
     console.log('+page: Setup wizard completed:', event.detail);
     setupComplete = true;
-    goto("/graph");
+    goto("/home");
   }
 </script>
 
