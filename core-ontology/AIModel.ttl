@@ -60,9 +60,17 @@ foundation:modelVersion a owl:DatatypeProperty ;
 
 foundation:contextWindow a owl:DatatypeProperty ;
     rdfs:label "context window" ;
-    rdfs:comment "Maximum number of tokens the model can process in one request (examples: 200000, 128000)" ;
+    rdfs:comment "Maximum number of tokens the model can process in one request (input tokens - examples: 200000, 128000)" ;
     rdfs:domain foundation:AIModel ;
-    rdfs:range xsd:integer .
+    rdfs:range xsd:integer ;
+    qudt:hasUnit unit:TokenCount .
+
+foundation:maxInputTokens a owl:DatatypeProperty ;
+    rdfs:label "max input tokens" ;
+    rdfs:comment "Maximum number of tokens to SEND to the model per request (limits total input: system + tools + history + message). Default is 20% of context window. User can customize this value to control costs and context usage." ;
+    rdfs:domain foundation:AIModel ;
+    rdfs:range xsd:integer ;
+    qudt:hasUnit unit:TokenCount .
 
 foundation:modelCapability a owl:DatatypeProperty ;
     rdfs:label "model capability" ;
@@ -125,6 +133,7 @@ foundation:ClaudeSonnet45 a foundation:AIModel ;
     foundation:offeredBy foundation:ClaudeAIService ;
     foundation:modelVersion "4.5" ;
     foundation:contextWindow 200000 ;
+    foundation:maxInputTokens 40000 ;
     foundation:modelCapability "agents" ;
     foundation:modelCapability "coding" ;
     foundation:modelCapability "computer_use" ;

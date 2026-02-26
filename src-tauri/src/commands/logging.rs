@@ -2,7 +2,6 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use chrono::Local;
-use tauri::{AppHandle, Manager, Runtime};
 
 #[derive(Debug, serde::Deserialize)]
 pub struct LogEntry {
@@ -11,10 +10,15 @@ pub struct LogEntry {
     timestamp: String,
 }
 
-fn get_log_file_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    let app_dir = app.path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+fn get_log_file_path() -> Result<PathBuf, String> {
+    // Use dirs::data_local_dir() which is cross-platform:
+    // - macOS: ~/Library/Application Support
+    // - Linux: ~/.local/share
+    // - Windows: C:\Users\<User>\AppData\Local
+    let data_dir = dirs::data_local_dir()
+        .ok_or_else(|| "Failed to get app data directory".to_string())?;
+
+    let app_dir = data_dir.join("org.w3id.foundation");
 
     std::fs::create_dir_all(&app_dir)
         .map_err(|e| format!("Failed to create app data dir: {}", e))?;
@@ -23,8 +27,8 @@ fn get_log_file_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> 
 }
 
 /// Internal function to write log to file
-fn write_log<R: Runtime>(app: &AppHandle<R>, source: &str, level: &str, message: &str) -> Result<(), String> {
-    let log_path = get_log_file_path(app)?;
+fn write_log(source: &str, level: &str, message: &str) -> Result<(), String> {
+    let log_path = get_log_file_path()?;
 
     let mut file = OpenOptions::new()
         .create(true)
@@ -42,27 +46,27 @@ fn write_log<R: Runtime>(app: &AppHandle<R>, source: &str, level: &str, message:
 }
 
 /// Public function to log from Rust backend
-pub fn log_backend<R: Runtime>(app: &AppHandle<R>, level: &str, message: &str) {
-    if let Err(e) = write_log(app, "BACKEND", level, message) {
+pub fn log_backend(level: &str, message: &str) {
+    if let Err(e) = write_log("BACKEND", level, message) {
         eprintln!("Failed to write backend log: {}", e);
     }
 }
 
 
 #[tauri::command]
-pub fn log_frontend<R: Runtime>(app: AppHandle<R>, level: String, message: String) -> Result<(), String> {
-    write_log(&app, "FRONTEND", &level, &message)
+pub fn log_frontend(level: String, message: String) -> Result<(), String> {
+    write_log("FRONTEND", &level, &message)
 }
 
 #[tauri::command]
-pub fn get_log_file_path_command<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
-    let path = get_log_file_path(&app)?;
+pub fn get_log_file_path_command() -> Result<String, String> {
+    let path = get_log_file_path()?;
     Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-pub fn clear_logs<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    let log_path = get_log_file_path(&app)?;
+pub fn clear_logs() -> Result<(), String> {
+    let log_path = get_log_file_path()?;
 
     if log_path.exists() {
         std::fs::remove_file(&log_path)

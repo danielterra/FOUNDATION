@@ -12,7 +12,7 @@ pub async fn ai__save_api_key(
     api_key: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
-    super::log_backend(&app, "info", "Saving API key to ontology");
+    super::log_backend("info", "Saving API key to ontology");
 
     executor.write(move |conn| {
         // Find existing Claude API key credential owned by ThisUser
@@ -107,7 +107,7 @@ pub async fn ai__save_api_key(
         Ok("API key saved".to_string())
     }).await?;
 
-    super::log_backend(&app, "info", "API key saved successfully");
+    super::log_backend("info", "API key saved successfully");
 
     Ok(())
 }
@@ -159,7 +159,7 @@ pub async fn ai__initialize(
     api_key: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
-    super::log_backend(&app, "info", "Initializing AI with Claude API");
+    super::log_backend("info", "Initializing AI with Claude API");
 
     // Get default model from ontology
     let model_identifier = executor.read(|conn| {
@@ -191,14 +191,14 @@ pub async fn ai__initialize(
     }).await.map_err(|e: String| format!("Failed to query default model: {}", e))?;
 
     if let Some(model) = &model_identifier {
-        super::log_backend(&app, "info", &format!("Using model from ontology: {}", model));
+        super::log_backend("info", &format!("Using model from ontology: {}", model));
     } else {
-        super::log_backend(&app, "warn", "No default model found in ontology, using hardcoded fallback");
+        super::log_backend("warn", "No default model found in ontology, using hardcoded fallback");
     }
 
     ai::initialize_ai_with_model(api_key, model_identifier).await?;
 
-    super::log_backend(&app, "info", "AI initialized successfully");
+    super::log_backend("info", "AI initialized successfully");
 
     Ok(())
 }
@@ -211,20 +211,21 @@ pub async fn ai__generate(
     temperature: Option<f32>,
     system: Option<String>,
 ) -> Result<String, String> {
-    super::log_backend(&app, "info", &format!("Generating AI response with {} messages", messages.len()));
+    super::log_backend("info", &format!("Generating AI response with {} messages", messages.len()));
 
     let request = GenerateRequest {
         messages,
         max_tokens,
         temperature,
         system,
+        tools: None,
     };
 
     let response = ai::generate_response(request).await?;
 
-    super::log_backend(&app, "info", &format!("AI response generated: {} chars", response.len()));
+    super::log_backend("info", &format!("AI response generated: {} chars", response.content.len()));
 
-    Ok(response)
+    Ok(response.content)
 }
 
 #[tauri::command]
@@ -232,7 +233,7 @@ pub async fn ai__list_available_models(
     app: AppHandle,
     executor: State<'_, DbExecutor>,
 ) -> Result<Value, String> {
-    super::log_backend(&app, "info", "Listing available models from Claude API");
+    super::log_backend("info", "Listing available models from Claude API");
 
     // Get API endpoint from ontology
     let api_info = executor.read(|conn| {
@@ -276,7 +277,7 @@ pub async fn ai__list_available_models(
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    super::log_backend(&app, "info", &format!("Retrieved models: {}", models_json));
+    super::log_backend("info", &format!("Retrieved models: {}", models_json));
 
     Ok(models_json)
 }
@@ -295,15 +296,19 @@ pub async fn ai__execute_function(
     arguments: Value,
     executor: State<'_, DbExecutor>,
 ) -> Result<FunctionResult, String> {
-    super::log_backend(&app, "info", &format!("Executing function: {} with args: {}", name, arguments));
+    super::log_backend("info", &format!("Executing function: {} with args: {}", name, arguments));
 
     let call = FunctionCall { name, arguments };
 
-    let result = executor.read(move |conn| {
-        Ok(functions::execute_function(conn, &call))
+    let result_json = executor.write(move |conn| {
+        let result = functions::execute_function(conn, &call);
+        serde_json::to_string(&result).map_err(|e| e.to_string())
     }).await.map_err(|e| format!("Failed to execute function: {}", e))?;
 
-    super::log_backend(&app, "info", &format!("Function result: success={}", result.success));
+    let result: FunctionResult = serde_json::from_str(&result_json)
+        .map_err(|e| format!("Failed to parse result: {}", e))?;
+
+    super::log_backend("info", &format!("Function result: success={}", result.success));
 
     Ok(result)
 }

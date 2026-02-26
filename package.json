@@ -10,7 +10,8 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json --watch",
     "tauri": "tauri dev",
-    "logs": "tail -100 \"$HOME/Library/Application Support/org.w3id.foundation/application.log\" | grep -E \"(ERROR|INFO|WARN)\" --color=never"
+    "logs": "./scripts/show-logs.sh \"$@\"",
+    "clear:chat": "./scripts/clear-chat-history.sh"
   },
   "license": "MIT",
   "dependencies": {

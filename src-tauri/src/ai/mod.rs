@@ -5,12 +5,31 @@ use tokio::sync::Mutex;
 pub mod functions;
 pub mod providers;
 
-use providers::{AIProvider, ClaudeProvider};
+use providers::{AIProvider, ClaudeProvider, MessageContent, ContentBlock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    #[serde(flatten)]
+    pub content: MessageContent,
+}
+
+impl ChatMessage {
+    /// Create a simple text message
+    pub fn text(role: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            content: MessageContent::Text(text.into()),
+        }
+    }
+
+    /// Create a message with content blocks (text, tool_use, tool_result)
+    pub fn with_blocks(role: impl Into<String>, blocks: Vec<ContentBlock>) -> Self {
+        Self {
+            role: role.into(),
+            content: MessageContent::ContentBlocks(blocks),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +38,21 @@ pub struct GenerateRequest {
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub system: Option<String>,
+    pub tools: Option<Vec<providers::ClaudeTool>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateResponse {
+    pub content: String,
+    pub tool_calls: Vec<ToolCall>,
+    pub stop_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub input: serde_json::Value,
 }
 
 pub struct AIAssistant {
@@ -30,7 +64,7 @@ impl AIAssistant {
         Self { provider }
     }
 
-    pub async fn generate(&self, request: GenerateRequest) -> Result<String, String> {
+    pub async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, String> {
         self.provider.generate(request).await
     }
 }
@@ -65,7 +99,7 @@ pub async fn initialize_ai_with_model(api_key: String, model_identifier: Option<
     Ok(())
 }
 
-pub async fn generate_response(request: GenerateRequest) -> Result<String, String> {
+pub async fn generate_response(request: GenerateRequest) -> Result<GenerateResponse, String> {
     let instance = AI_INSTANCE.lock().await;
 
     match instance.as_ref() {

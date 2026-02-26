@@ -14,6 +14,8 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 /// Returns only the most recent (current) value for each predicate.
 /// In append-only databases, this represents the current state of the entity.
 pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
+    let start = std::time::Instant::now();
+
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_datetime, object_boolean,
@@ -33,6 +35,9 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
         .into_iter()
         .filter(|t| seen_predicates.insert(t.predicate.clone()))
         .collect();
+
+    let elapsed = start.elapsed();
+    crate::commands::log_backend("info", &format!("[EAVTO] get_by_entity({}) took {:?}", entity, elapsed));
 
     Ok(QueryResult::new(current_triples))
 }
@@ -82,6 +87,8 @@ pub fn get_by_entity_predicate_internal(
     predicate: &str,
     check_functional: bool,
 ) -> Result<QueryResult> {
+    let start = std::time::Instant::now();
+
     // Check if property is functional (only if check_functional is true)
     let is_functional = if check_functional {
         crate::owl::Property::is_functional(conn, predicate)
@@ -105,6 +112,9 @@ pub fn get_by_entity_predicate_internal(
         let triples = stmt
             .query_map([entity, predicate], row_to_triple)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let elapsed = start.elapsed();
+        crate::commands::log_backend("info", &format!("[EAVTO] get_by_entity_predicate({}, {}) [functional] took {:?}", entity, predicate, elapsed));
 
         Ok(QueryResult::new(triples))
     } else {
@@ -140,6 +150,9 @@ pub fn get_by_entity_predicate_internal(
                 seen_objects.insert(key)
             })
             .collect();
+
+        let elapsed = start.elapsed();
+        crate::commands::log_backend("info", &format!("[EAVTO] get_by_entity_predicate({}, {}) [non-functional] took {:?}", entity, predicate, elapsed));
 
         Ok(QueryResult::new(current_triples))
     }

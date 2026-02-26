@@ -26,10 +26,13 @@ async function sendLogToBackend(level, args) {
       return String(arg);
     }).join(' ');
 
-    await invoke('log_frontend', { level, message });
+    const result = await invoke('log_frontend', { level, message });
+    originalConsole.log('✅ Log sent to backend successfully:', level, message.substring(0, 50));
   } catch (err) {
-    // Silently fail if logging fails - don't want to break the app
-    originalConsole.error('Failed to send log to backend:', err);
+    // Show error prominently - this is important for debugging
+    originalConsole.error('❌ FAILED TO SEND LOG TO BACKEND:', err);
+    originalConsole.error('Message was:', args);
+    originalConsole.error('Error details:', JSON.stringify(err));
   }
 }
 
@@ -50,6 +53,14 @@ function createWrappedMethod(level, originalMethod) {
  * Initialize logging interception
  */
 export function initializeLogging() {
+  // Check if we're in Tauri (Tauri v2 uses __TAURI_INTERNALS__)
+  const isTauri = window.__TAURI_INTERNALS__ !== undefined;
+
+  if (!isTauri) {
+    originalConsole.warn('⚠️ Not running in Tauri - logs will only appear in browser console');
+    return;
+  }
+
   // Set up console wrappers - they will fail silently if not in Tauri
   console.log = createWrappedMethod('log', originalConsole.log);
   console.warn = createWrappedMethod('warn', originalConsole.warn);

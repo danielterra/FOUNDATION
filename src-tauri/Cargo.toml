@@ -35,6 +35,7 @@ hostname = "0.4"  # For hostname detection
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }  # For async executor and tests
 reqwest = { version = "0.12", features = ["json"] }  # For HTTP API calls
 async-trait = "0.1"  # For async trait definitions
+tiktoken-rs = "0.6"  # For accurate token counting (Claude/GPT compatible)
 
 [dev-dependencies]
 tempfile = "3.8"  # Temporary files for tests
