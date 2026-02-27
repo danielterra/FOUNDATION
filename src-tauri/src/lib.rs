@@ -137,7 +137,14 @@ pub fn run() {
             commands::chat__send_message,
             commands::chat__get_recent_messages,
             commands::chat__get_conversation_info,
-            commands::chat__send_and_reply
+            commands::chat__send_and_reply,
+            commands::widget__list_types,
+            commands::widget__get_all,
+            commands::widget__add,
+            commands::widget__remove,
+            commands::widget__update_position,
+            commands::widget__update_size,
+            commands::widget__clear_all
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

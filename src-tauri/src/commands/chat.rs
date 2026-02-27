@@ -54,6 +54,7 @@ pub struct ConversationInfo {
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn chat__send_message(
+    app: AppHandle,
     content: String,
     latitude: Option<f64>,
     longitude: Option<f64>,
@@ -488,7 +489,7 @@ pub async fn chat__send_and_reply(
 
     // First, send the user message with location
     super::log_backend("info", "Starting to save user message...");
-    let user_message_iri = chat__send_message(content.clone(), latitude, longitude, executor.clone()).await?;
+    let user_message_iri = chat__send_message(app.clone(), content.clone(), latitude, longitude, executor.clone()).await?;
     super::log_backend("info", &format!("User message saved in {:?}", start_time.elapsed()));
 
     // Get user and AI information from database
@@ -534,7 +535,15 @@ pub async fn chat__send_and_reply(
         - ALWAYS store what users tell you: people, places, organizations, events, facts\n\
         - Connect information: who works where, who lives where, when things happen\n\
         - Examples: 'I work at X' → remember me + X + connection | 'birthday May 15' → remember my birthday\n\
-        - Ask questions when you need clarity to remember correctly\n\n",
+        - Ask questions when you need clarity to remember correctly\n\n\
+        BLACKBOARD:\n\
+        - Add widgets to show information visually (better than text)\n\
+        - Use proactively to support conversation\n\
+        - When you look at a concept: check foundation:canBeDisplayedBy to see which widgets can render it\n\
+        - When you look at a widget: check foundation:canDisplay to see which concepts it can render\n\
+        - Tools: blackboard_show, blackboard_add_widget, blackboard_remove, blackboard_clear\n\
+        - Example: blackboard_add_widget(widget_type='Inspector', params={{entity_id:'foundation:ThisUser'}})\n\
+        ",
         user_name,
         ai_name,
         date_time,
@@ -770,8 +779,9 @@ pub async fn chat__send_and_reply(
                 arguments: tool_call.input.clone(),
             };
 
+            let app_clone = app.clone();
             let result_json = executor.write(move |conn| {
-                let result = functions::execute_function(conn, &call);
+                let result = functions::execute_function(conn, &call, Some(&app_clone));
                 serde_json::to_string(&result).map_err(|e| e.to_string())
             }).await.map_err(|e| format!("Failed to execute function: {}", e))?;
 

@@ -1,7 +1,14 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
 	import { onMount } from 'svelte';
+	import { marked } from 'marked';
 	import Card from './Card.svelte';
+
+	// Configure marked for safe HTML
+	marked.setOptions({
+		breaks: true,
+		gfm: true,
+	});
 
 	// Props
 	let { isOpen = $bindable(false) } = $props();
@@ -10,7 +17,6 @@
 	let messages = $state([]);
 	let inputText = $state('');
 	let isLoading = $state(false);
-	let showHistory = $state(false);
 	let chatContainer = $state(null);
 	let userLocation = $state(null);
 	let apiKey = $state('');
@@ -21,34 +27,42 @@
 	onMount(async () => {
 		console.log('[ChatWindow] Component mounted - NEW VERSION WITH DOWNLOAD BUTTON');
 
-		// Wait for database to be initialized before accessing it
-		const { listen } = await import('@tauri-apps/api/event');
-		const unlisten = await listen('import-complete', async () => {
-			console.log('[ChatWindow] Database initialized, loading API key...');
+		requestLocation();
 
-			// Check if API key is already stored in ontology
-			try {
-				const storedKey = await invoke('ai__get_api_key');
-				if (storedKey) {
-					apiKey = storedKey;
-					await initializeAI(storedKey);
-				} else {
-					showApiKeyInput = true;
-				}
-			} catch (err) {
-				console.error('Failed to get API key:', err);
+		// Try to load API key and messages immediately (database should already be initialized)
+		try {
+			const storedKey = await invoke('ai__get_api_key');
+			if (storedKey) {
+				apiKey = storedKey;
+				await initializeAI(storedKey);
+			} else {
 				showApiKeyInput = true;
 			}
+		} catch (err) {
+			console.error('Failed to get API key:', err);
+			showApiKeyInput = true;
+		}
+
+		// Load messages immediately
+		await loadMessages();
+
+		// Also listen for import-complete in case database is still initializing
+		const { listen } = await import('@tauri-apps/api/event');
+		const unlisten = await listen('import-complete', async () => {
+			console.log('[ChatWindow] Database re-initialized, reloading...');
 			await loadMessages();
 		});
-
-		requestLocation();
 
 		// Cleanup listener on unmount
 		return () => {
 			unlisten();
 		};
 	});
+
+	function renderMarkdown(text) {
+		if (!text) return '';
+		return marked.parse(text);
+	}
 
 	async function initializeAI(key) {
 		try {
@@ -95,7 +109,7 @@
 	async function loadMessages() {
 		try {
 			const msgs = await invoke('chat__get_recent_messages', {
-				limit: showHistory ? 100 : 2
+				limit: 100
 			});
 			console.log('Loaded messages:', msgs);
 			messages = msgs;
@@ -112,6 +126,37 @@
 		inputText = '';
 		isLoading = true;
 
+		// Add user message immediately with optimistic update
+		const optimisticUserMessage = {
+			iri: `temp:user_${Date.now()}`,
+			senderLabel: 'You',
+			senderIri: 'foundation:ThisUser',
+			receiverLabel: 'AI',
+			receiverIri: 'foundation:AI',
+			content: content,
+			sentAt: Date.now(),
+			toolUses: [],
+			toolResults: [],
+			isOptimistic: true
+		};
+
+		// Add AI thinking indicator
+		const thinkingMessage = {
+			iri: `temp:thinking_${Date.now()}`,
+			senderLabel: 'AI',
+			senderIri: 'foundation:AI',
+			receiverLabel: 'You',
+			receiverIri: 'foundation:ThisUser',
+			content: null,
+			sentAt: Date.now(),
+			toolUses: [],
+			toolResults: [],
+			isThinking: true
+		};
+
+		messages = [...messages, optimisticUserMessage, thinkingMessage];
+		scrollToBottom();
+
 		try {
 			// Send user message and get AI reply with location if available
 			const newMessages = await invoke('chat__send_and_reply', {
@@ -120,20 +165,17 @@
 				longitude: userLocation?.longitude ?? null
 			});
 
-			// Update messages with the response (user message + AI reply)
+			// Update messages with the actual response
 			messages = newMessages;
 			scrollToBottom();
 		} catch (err) {
 			console.error('Failed to send message:', err);
+			// Remove optimistic messages on error
+			messages = messages.filter(m => !m.isOptimistic && !m.isThinking);
 			alert('Failed to send message: ' + err);
 		} finally {
 			isLoading = false;
 		}
-	}
-
-	function toggleHistory() {
-		showHistory = !showHistory;
-		loadMessages();
 	}
 
 	function scrollToBottom() {
@@ -218,18 +260,13 @@
 	}
 </script>
 
-<!-- Floating chat button -->
-{#if !isOpen}
-	<button class="chat-fab" onclick={() => (isOpen = true)} aria-label="Open chat">
-		<span class="material-symbols-outlined">chat</span>
-	</button>
-{/if}
-
-<!-- Chat window -->
+<!-- Chat panel (always visible when isOpen is true) -->
 {#if isOpen}
-	<div class="chat-window">
-		<Card>
-			{#snippet children()}
+	<div class="chat-panel">
+		<div class="chat-header">
+			<h2>FOUNDATION</h2>
+		</div>
+		<div class="chat-content">
 				<!-- API Key Input -->
 				{#if showApiKeyInput}
 					<div class="api-key-setup">
@@ -256,10 +293,21 @@
 						</div>
 					{:else}
 						{#each messages as message}
-							<div class="message {message.senderIri === 'foundation:ThisUser' ? 'user' : 'ai'}">
+							<div class="message {message.senderIri === 'foundation:ThisUser' ? 'user' : 'ai'} {message.isThinking ? 'thinking' : ''}">
 								<div class="message-content">
-									{#if message.content}
-										<div class="message-text">{message.content}</div>
+									{#if message.isThinking}
+										<div class="thinking-indicator">
+											<div class="thinking-dots">
+												<span></span>
+												<span></span>
+												<span></span>
+											</div>
+											<span class="thinking-text">AI is thinking...</span>
+										</div>
+									{:else if message.content}
+										<div class="message-text markdown-content">
+											{@html renderMarkdown(message.content)}
+										</div>
 									{/if}
 
 									{#if message.toolUses && message.toolUses.length > 0}
@@ -342,25 +390,10 @@
 				<div class="chat-actions">
 					<button
 						class="action-btn"
-						onclick={() => {
-							alert('Button clicked!');
-							downloadChat();
-						}}
+						onclick={downloadChat}
 						aria-label="Download chat"
 					>
 						<span class="material-symbols-outlined">download</span>
-					</button>
-					<button
-						class="action-btn"
-						onclick={toggleHistory}
-						aria-label={showHistory ? 'Hide history' : 'Show full history'}
-					>
-						<span class="material-symbols-outlined">
-							{showHistory ? 'compress' : 'expand'}
-						</span>
-					</button>
-					<button class="action-btn" onclick={() => (isOpen = false)} aria-label="Close chat">
-						<span class="material-symbols-outlined">close</span>
 					</button>
 				</div>
 
@@ -380,66 +413,40 @@
 					</button>
 				</div>
 				{/if}
-			{/snippet}
-		</Card>
+		</div>
 	</div>
 {/if}
 
 <style>
-	/* Floating Action Button */
-	.chat-fab {
-		position: fixed;
-		bottom: 24px;
-		right: 24px;
-		width: 56px;
-		height: 56px;
-		border-radius: 50%;
-		background: var(--color-interactive);
-		color: var(--color-neutral-on-interactive);
-		border: none;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: all 0.2s;
-		z-index: 1000;
-	}
-
-	.chat-fab:hover {
-		background: var(--color-interactive-hover);
-		box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
-		transform: scale(1.05);
-	}
-
-	.chat-fab:active {
-		background: var(--color-interactive-active);
-	}
-
-	.chat-fab .material-symbols-outlined {
-		font-size: 28px;
-	}
-
-	/* Chat Window */
-	.chat-window {
-		position: fixed;
-		bottom: 90px;
-		right: 24px;
-		width: 400px;
-		height: auto;
-		max-height: calc(100vh - 140px);
-		z-index: 1000;
-		display: flex;
-		flex-direction: column;
-	}
-
-	.chat-window :global(.card) {
-		display: flex;
-		flex-direction: column;
-		padding: 16px;
-		overflow: hidden;
-		max-height: calc(100vh - 140px);
+	/* Chat Panel - Fixed Right Side */
+	.chat-panel {
+		width: 100%;
 		height: 100%;
+		display: flex;
+		flex-direction: column;
+		background: color-mix(in srgb, var(--color-black) 40%, transparent);
+		backdrop-filter: blur(10px);
+	}
+
+	.chat-header {
+		padding: 20px 24px;
+		border-bottom: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+		flex-shrink: 0;
+	}
+
+	.chat-header h2 {
+		margin: 0;
+		font-size: 20px;
+		font-weight: 600;
+		color: var(--color-neutral-active);
+	}
+
+	.chat-content {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		padding: 16px 24px;
 	}
 
 	/* Messages */
@@ -506,14 +513,14 @@
 
 	.message-text {
 		background: color-mix(in srgb, var(--color-white) 8%, transparent);
-		padding: 10px 14px;
-		border-radius: 12px;
-		line-height: 1.5;
+		padding: 8px 12px;
+		border-radius: 10px;
+		line-height: 1.4;
+		font-size: 13px;
 		color: var(--color-neutral-active);
 		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
 		word-wrap: break-word;
 		overflow-wrap: break-word;
-		white-space: pre-wrap;
 		max-width: 100%;
 		box-sizing: border-box;
 	}
@@ -523,9 +530,208 @@
 		border-color: color-mix(in srgb, var(--color-white) 20%, transparent);
 	}
 
+	/* Markdown Content Styles */
+	.markdown-content :global(h1),
+	.markdown-content :global(h2),
+	.markdown-content :global(h3),
+	.markdown-content :global(h4),
+	.markdown-content :global(h5),
+	.markdown-content :global(h6) {
+		margin: 1.2em 0 0.6em 0;
+		font-weight: 600;
+		color: var(--color-neutral-active);
+	}
+
+	.markdown-content :global(h1:first-child),
+	.markdown-content :global(h2:first-child),
+	.markdown-content :global(h3:first-child),
+	.markdown-content :global(h4:first-child) {
+		margin-top: 0;
+	}
+
+	.markdown-content :global(h1) { font-size: 1.4em; }
+	.markdown-content :global(h2) { font-size: 1.25em; }
+	.markdown-content :global(h3) { font-size: 1.1em; }
+	.markdown-content :global(h4) { font-size: 1em; }
+
+	.markdown-content :global(p) {
+		margin: 0.3em 0;
+	}
+
+	.markdown-content :global(p:first-child) {
+		margin-top: 0;
+	}
+
+	.markdown-content :global(p:last-child) {
+		margin-bottom: 0;
+	}
+
+	.markdown-content :global(code) {
+		background: color-mix(in srgb, var(--color-black) 30%, transparent);
+		padding: 2px 5px;
+		border-radius: 3px;
+		font-family: var(--font-code);
+		font-size: 0.9em;
+	}
+
+	.markdown-content :global(pre) {
+		background: color-mix(in srgb, var(--color-black) 40%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+		border-radius: 6px;
+		padding: 10px;
+		overflow-x: auto;
+		margin: 0.5em 0;
+	}
+
+	.markdown-content :global(pre code) {
+		background: transparent;
+		padding: 0;
+		border-radius: 0;
+	}
+
+	.markdown-content :global(ul),
+	.markdown-content :global(ol) {
+		margin: 0.2em 0;
+		padding-left: 1.5em;
+	}
+
+	.markdown-content :global(li) {
+		margin: 0.1em 0;
+		line-height: 1.3;
+	}
+
+	/* Remove espaço entre parágrafo e lista */
+	.markdown-content :global(p + ul),
+	.markdown-content :global(p + ol) {
+		margin-top: 0.1em;
+	}
+
+	.markdown-content :global(blockquote) {
+		border-left: 3px solid var(--color-interactive);
+		padding-left: 12px;
+		margin: 0.5em 0;
+		color: var(--color-neutral);
+		font-style: italic;
+	}
+
+	.markdown-content :global(a) {
+		color: var(--color-interactive);
+		text-decoration: none;
+	}
+
+	.markdown-content :global(a:hover) {
+		text-decoration: underline;
+	}
+
+	.markdown-content :global(strong) {
+		font-weight: 400;
+		color: var(--color-neutral-active);
+	}
+
+	.markdown-content :global(em) {
+		font-style: italic;
+	}
+
+	.markdown-content :global(hr) {
+		border: none;
+		border-top: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+		margin: 0.8em 0;
+	}
+
+	.markdown-content :global(table) {
+		border-collapse: collapse;
+		width: 100%;
+		margin: 0.5em 0;
+		font-size: 0.95em;
+	}
+
+	.markdown-content :global(th),
+	.markdown-content :global(td) {
+		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+		padding: 6px 10px;
+		text-align: left;
+	}
+
+	.markdown-content :global(th) {
+		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+		font-weight: 600;
+	}
+
 	.message-time {
 		font-size: 11px;
 		color: var(--color-neutral-disabled);
+	}
+
+	/* Thinking indicator */
+	.thinking-indicator {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 8px 0;
+	}
+
+	.thinking-dots {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+	}
+
+	.thinking-dots span {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--color-interactive);
+		animation: thinking-bounce 1.4s infinite ease-in-out;
+	}
+
+	.thinking-dots span:nth-child(1) {
+		animation-delay: -0.32s;
+	}
+
+	.thinking-dots span:nth-child(2) {
+		animation-delay: -0.16s;
+	}
+
+	@keyframes thinking-bounce {
+		0%, 80%, 100% {
+			transform: scale(0.8);
+			opacity: 0.5;
+		}
+		40% {
+			transform: scale(1.2);
+			opacity: 1;
+		}
+	}
+
+	.thinking-text {
+		font-size: 14px;
+		color: var(--color-neutral);
+		font-style: italic;
+		animation: thinking-pulse 1.5s infinite ease-in-out;
+	}
+
+	@keyframes thinking-pulse {
+		0%, 100% {
+			opacity: 0.6;
+		}
+		50% {
+			opacity: 1;
+		}
+	}
+
+	.message.thinking {
+		animation: slide-in 0.3s ease-out;
+	}
+
+	@keyframes slide-in {
+		from {
+			opacity: 0;
+			transform: translateY(10px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
 	}
 
 	/* Actions bar */

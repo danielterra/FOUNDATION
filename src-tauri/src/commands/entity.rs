@@ -413,6 +413,23 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         // Get source entity info
         let source_thing = crate::owl::Thing::get(conn, source_entity);
 
+        // Get source entity's primary type (class)
+        let source_types_result = crate::eavto::query::get_by_entity_predicate(conn, source_entity, "rdf:type");
+        let (source_class_iri, source_class_label) = if let Ok(types) = source_types_result {
+            if let Some(first_type) = types.triples.first() {
+                if let Some(class_iri) = first_type.object.as_iri() {
+                    let class_thing = crate::owl::Thing::get(conn, class_iri);
+                    (Some(class_iri.to_string()), Some(class_thing.label))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
         backlinks.push(PropertyValue {
             property: property_iri.clone(),
             property_label,
@@ -421,8 +438,8 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             value_label: Some(source_thing.label),
             value_icon: source_thing.icon,
             is_object_property: true,
-            source_class: None,
-            source_class_label: None,
+            source_class: source_class_iri,
+            source_class_label,
             unit: None,
             unit_label: None,
         });
@@ -683,6 +700,23 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         // Get source entity info
         let source_thing = crate::owl::Thing::get(conn, source_entity);
 
+        // Get source entity's primary type (class)
+        let source_types_result = crate::eavto::query::get_by_entity_predicate(conn, source_entity, "rdf:type");
+        let (source_class_iri, source_class_label) = if let Ok(types) = source_types_result {
+            if let Some(first_type) = types.triples.first() {
+                if let Some(class_iri) = first_type.object.as_iri() {
+                    let class_thing = crate::owl::Thing::get(conn, class_iri);
+                    (Some(class_iri.to_string()), Some(class_thing.label))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
         backlinks.push(PropertyValue {
             property: property_iri.clone(),
             property_label,
@@ -691,8 +725,8 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             value_label: Some(source_thing.label),
             value_icon: source_thing.icon,
             is_object_property: true,
-            source_class: None,
-            source_class_label: None,
+            source_class: source_class_iri,
+            source_class_label,
             unit: None,
             unit_label: None,
         });

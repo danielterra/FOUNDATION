@@ -299,9 +299,10 @@ pub async fn ai__execute_function(
     super::log_backend("info", &format!("Executing function: {} with args: {}", name, arguments));
 
     let call = FunctionCall { name, arguments };
+    let app_clone = app.clone();
 
     let result_json = executor.write(move |conn| {
-        let result = functions::execute_function(conn, &call);
+        let result = functions::execute_function(conn, &call, Some(&app_clone));
         serde_json::to_string(&result).map_err(|e| e.to_string())
     }).await.map_err(|e| format!("Failed to execute function: {}", e))?;
 

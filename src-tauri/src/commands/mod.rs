@@ -14,6 +14,7 @@ mod shortcuts;
 mod logging;
 mod ai;
 mod chat;
+pub mod widget;
 
 pub use setup::*;
 pub use entity::*;
@@ -21,3 +22,4 @@ pub use shortcuts::*;
 pub use logging::*;
 pub use ai::*;
 pub use chat::*;
+pub use widget::*;
