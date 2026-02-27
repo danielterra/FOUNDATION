@@ -1,0 +1,167 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Widget & Blackboard
+# =============================================================================
+# Represents visual widgets displayed on the FOUNDATION blackboard/canvas
+# to support conversation and information visualization
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Blackboard a owl:Class ;
+    rdfs:subClassOf foundation:DigitalThing ;
+    rdfs:label "Blackboard" ;
+    rdfs:comment "Visual workspace where widgets are displayed to support conversation and show information in a better way than plain text" ;
+    foundation:icon "dashboard" ;
+    rdfs:seeAlso """
+Examples:
+- The main blackboard canvas in FOUNDATION
+- A visual workspace showing Inspector widgets for entities
+""" .
+
+foundation:Widget a owl:Class ;
+    rdfs:subClassOf foundation:DigitalThing ;
+    rdfs:label "Widget" ;
+    rdfs:comment "Visual component displayed on the blackboard to show information. Base class for all widget types." ;
+    foundation:icon "widgets" ;
+    rdfs:seeAlso """
+Examples:
+- An Inspector widget showing details of a Person class
+- A widget displaying a knowledge graph
+- Any visual component that helps explain information
+""" .
+
+foundation:InspectorWidget a owl:Class ;
+    rdfs:subClassOf foundation:Widget ;
+    rdfs:label "Inspector Widget" ;
+    rdfs:comment "Widget that displays detailed information about a class or instance, including hierarchy, properties, relationships, and values" ;
+    foundation:icon "info" ;
+    foundation:canDisplay owl:Thing ;
+    rdfs:seeAlso """
+Examples:
+- Inspector showing foundation:ThisUser with all properties
+- Inspector displaying foundation:Person class hierarchy
+- Inspector revealing all relationships of an Organization instance
+
+Parameters:
+- entity_id (required): The IRI of the class or instance to inspect
+
+Can display: ANY concept or instance (owl:Thing)
+""" .
+
+# -----------------------------------------------------------------------------
+# Widget Properties
+# -----------------------------------------------------------------------------
+
+foundation:widgetType a owl:DatatypeProperty ;
+    rdfs:label "widget type" ;
+    rdfs:comment "Type identifier for the widget (e.g., 'inspector', 'graph', 'timeline')" ;
+    rdfs:domain foundation:Widget ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :widget_123 foundation:widgetType "inspector" .
+""" .
+
+foundation:displaysEntity a owl:ObjectProperty ;
+    rdfs:label "displays entity" ;
+    rdfs:comment "The entity (class or instance) that this widget displays information about" ;
+    rdfs:domain foundation:Widget ;
+    rdfs:range owl:Thing ;
+    rdfs:seeAlso """
+Example:
+  :widget_123 foundation:displaysEntity foundation:ThisUser .
+""" .
+
+foundation:canBeDisplayedBy a owl:ObjectProperty ;
+    rdfs:label "can be displayed by" ;
+    rdfs:comment "Indicates which widget types can display/render this concept or instance. Link from a class to applicable widget classes." ;
+    rdfs:domain owl:Class ;
+    rdfs:range foundation:Widget ;
+    rdfs:seeAlso """
+Example:
+  foundation:Person foundation:canBeDisplayedBy foundation:InspectorWidget .
+  foundation:Organization foundation:canBeDisplayedBy foundation:InspectorWidget .
+
+This allows the AI to discover: when looking at Person class, it knows InspectorWidget can display it.
+""" .
+
+foundation:canDisplay a owl:ObjectProperty ;
+    rdfs:label "can display" ;
+    rdfs:comment "Indicates which concepts this widget type can display/render. Link from widget class to applicable concept classes." ;
+    rdfs:domain foundation:Widget ;
+    rdfs:range owl:Class ;
+    owl:inverseOf foundation:canBeDisplayedBy ;
+    rdfs:seeAlso """
+Example:
+  foundation:InspectorWidget foundation:canDisplay owl:Thing .
+
+This means InspectorWidget can display any concept (since owl:Thing is the root).
+""" .
+
+foundation:positionX a owl:DatatypeProperty ;
+    rdfs:label "position X" ;
+    rdfs:comment "X coordinate position of the widget on the blackboard canvas" ;
+    rdfs:domain foundation:Widget ;
+    rdfs:range xsd:double ;
+    rdfs:seeAlso """
+Example:
+  :widget_123 foundation:positionX "150.0"^^xsd:double .
+""" .
+
+foundation:positionY a owl:DatatypeProperty ;
+    rdfs:label "position Y" ;
+    rdfs:comment "Y coordinate position of the widget on the blackboard canvas" ;
+    rdfs:domain foundation:Widget ;
+    rdfs:range xsd:double ;
+    rdfs:seeAlso """
+Example:
+  :widget_123 foundation:positionY "200.0"^^xsd:double .
+""" .
+
+foundation:widgetWidth a owl:DatatypeProperty ;
+    rdfs:label "widget width" ;
+    rdfs:comment "Width of the widget in pixels" ;
+    rdfs:domain foundation:Widget ;
+    rdfs:range xsd:double ;
+    rdfs:seeAlso """
+Example:
+  :widget_123 foundation:widgetWidth "400.0"^^xsd:double .
+""" .
+
+foundation:widgetHeight a owl:DatatypeProperty ;
+    rdfs:label "widget height" ;
+    rdfs:comment "Height of the widget in pixels" ;
+    rdfs:domain foundation:Widget ;
+    rdfs:range xsd:double ;
+    rdfs:seeAlso """
+Example:
+  :widget_123 foundation:widgetHeight "600.0"^^xsd:double .
+""" .
+
+foundation:onBlackboard a owl:ObjectProperty ;
+    rdfs:label "on blackboard" ;
+    rdfs:comment "Links a widget to the blackboard it is displayed on" ;
+    rdfs:domain foundation:Widget ;
+    rdfs:range foundation:Blackboard ;
+    rdfs:seeAlso """
+Example:
+  :widget_123 foundation:onBlackboard :mainBlackboard .
+""" .
+
+foundation:hasWidget a owl:ObjectProperty ;
+    rdfs:label "has widget" ;
+    rdfs:comment "Links a blackboard to widgets displayed on it" ;
+    rdfs:domain foundation:Blackboard ;
+    rdfs:range foundation:Widget ;
+    owl:inverseOf foundation:onBlackboard ;
+    rdfs:seeAlso """
+Example:
+  :mainBlackboard foundation:hasWidget :widget_123 .
+""" .

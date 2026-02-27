@@ -126,6 +126,37 @@
 		inputText = '';
 		isLoading = true;
 
+		// Add user message immediately with optimistic update
+		const optimisticUserMessage = {
+			iri: `temp:user_${Date.now()}`,
+			senderLabel: 'You',
+			senderIri: 'foundation:ThisUser',
+			receiverLabel: 'AI',
+			receiverIri: 'foundation:AI',
+			content: content,
+			sentAt: Date.now(),
+			toolUses: [],
+			toolResults: [],
+			isOptimistic: true
+		};
+
+		// Add AI thinking indicator
+		const thinkingMessage = {
+			iri: `temp:thinking_${Date.now()}`,
+			senderLabel: 'AI',
+			senderIri: 'foundation:AI',
+			receiverLabel: 'You',
+			receiverIri: 'foundation:ThisUser',
+			content: null,
+			sentAt: Date.now(),
+			toolUses: [],
+			toolResults: [],
+			isThinking: true
+		};
+
+		messages = [...messages, optimisticUserMessage, thinkingMessage];
+		scrollToBottom();
+
 		try {
 			// Send user message and get AI reply with location if available
 			const newMessages = await invoke('chat__send_and_reply', {
@@ -134,11 +165,13 @@
 				longitude: userLocation?.longitude ?? null
 			});
 
-			// Update messages with the response (user message + AI reply)
+			// Update messages with the actual response
 			messages = newMessages;
 			scrollToBottom();
 		} catch (err) {
 			console.error('Failed to send message:', err);
+			// Remove optimistic messages on error
+			messages = messages.filter(m => !m.isOptimistic && !m.isThinking);
 			alert('Failed to send message: ' + err);
 		} finally {
 			isLoading = false;
@@ -260,9 +293,18 @@
 						</div>
 					{:else}
 						{#each messages as message}
-							<div class="message {message.senderIri === 'foundation:ThisUser' ? 'user' : 'ai'}">
+							<div class="message {message.senderIri === 'foundation:ThisUser' ? 'user' : 'ai'} {message.isThinking ? 'thinking' : ''}">
 								<div class="message-content">
-									{#if message.content}
+									{#if message.isThinking}
+										<div class="thinking-indicator">
+											<div class="thinking-dots">
+												<span></span>
+												<span></span>
+												<span></span>
+											</div>
+											<span class="thinking-text">AI is thinking...</span>
+										</div>
+									{:else if message.content}
 										<div class="message-text markdown-content">
 											{@html renderMarkdown(message.content)}
 										</div>
@@ -618,6 +660,78 @@
 	.message-time {
 		font-size: 11px;
 		color: var(--color-neutral-disabled);
+	}
+
+	/* Thinking indicator */
+	.thinking-indicator {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 8px 0;
+	}
+
+	.thinking-dots {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+	}
+
+	.thinking-dots span {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--color-interactive);
+		animation: thinking-bounce 1.4s infinite ease-in-out;
+	}
+
+	.thinking-dots span:nth-child(1) {
+		animation-delay: -0.32s;
+	}
+
+	.thinking-dots span:nth-child(2) {
+		animation-delay: -0.16s;
+	}
+
+	@keyframes thinking-bounce {
+		0%, 80%, 100% {
+			transform: scale(0.8);
+			opacity: 0.5;
+		}
+		40% {
+			transform: scale(1.2);
+			opacity: 1;
+		}
+	}
+
+	.thinking-text {
+		font-size: 14px;
+		color: var(--color-neutral);
+		font-style: italic;
+		animation: thinking-pulse 1.5s infinite ease-in-out;
+	}
+
+	@keyframes thinking-pulse {
+		0%, 100% {
+			opacity: 0.6;
+		}
+		50% {
+			opacity: 1;
+		}
+	}
+
+	.message.thinking {
+		animation: slide-in 0.3s ease-out;
+	}
+
+	@keyframes slide-in {
+		from {
+			opacity: 0;
+			transform: translateY(10px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
 	}
 
 	/* Actions bar */

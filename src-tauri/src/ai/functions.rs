@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use rusqlite::Connection;
+use tauri::Emitter;
 use crate::owl::{Class, Individual};
 use crate::eavto::query;
 
@@ -516,15 +517,55 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
+        FunctionDefinition {
+            name: "blackboard_show".to_string(),
+            description: "See what is currently being displayed on the blackboard/canvas. Returns a list of active widgets.".to_string(),
+            parameters: vec![],
+        },
+        FunctionDefinition {
+            name: "blackboard_add_widget".to_string(),
+            description: "Add a widget to the blackboard to display information visually. The system will automatically position the widget. Use remember_concepts to search for available widget types (foundation:Widget subclasses).".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "widget_type".to_string(),
+                    param_type: "string".to_string(),
+                    description: "The type of widget to add (e.g., 'Inspector'). Search for foundation:Widget subclasses to find available types.".to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "params".to_string(),
+                    param_type: "object".to_string(),
+                    description: "Widget-specific parameters as a JSON object. For Inspector: {\"entity_id\": \"foundation:SomeEntity\"}".to_string(),
+                    required: true,
+                },
+            ],
+        },
+        FunctionDefinition {
+            name: "blackboard_remove".to_string(),
+            description: "Remove a specific widget from the blackboard by its ID.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "widget_id".to_string(),
+                    param_type: "string".to_string(),
+                    description: "The ID of the widget to remove".to_string(),
+                    required: true,
+                },
+            ],
+        },
+        FunctionDefinition {
+            name: "blackboard_clear".to_string(),
+            description: "Clear all widgets from the blackboard. Use this to start fresh.".to_string(),
+            parameters: vec![],
+        },
     ]
 }
 
 /// Execute a function call
-pub fn execute_function(conn: &mut Connection, call: &FunctionCall) -> FunctionResult {
+pub fn execute_function(conn: &mut Connection, call: &FunctionCall, app: Option<&tauri::AppHandle>) -> FunctionResult {
     match call.name.as_str() {
-        "learn_concept" => create_class(conn, &call.arguments),
-        "learn_thing" => create_instance(conn, &call.arguments),
-        "learn_thing_detail" => add_property_value(conn, &call.arguments),
+        "learn_concept" => create_class(conn, &call.arguments, app),
+        "learn_thing" => create_instance(conn, &call.arguments, app),
+        "learn_thing_detail" => add_property_value(conn, &call.arguments, app),
         "learn_connection_type" => create_property(conn, &call.arguments),
         "remember_concept" => get_class(conn, &call.arguments),
         "remember_thing" => get_instance(conn, &call.arguments),
@@ -534,12 +575,16 @@ pub fn execute_function(conn: &mut Connection, call: &FunctionCall) -> FunctionR
         "remember_concept_tree" => get_class_hierarchy(conn, &call.arguments),
         "remember_connection_types" => search_properties(conn, &call.arguments),
         "remember_things_by_details" => find_instances_by_property(conn, &call.arguments),
-        "forget_concept" => delete_class(conn, &call.arguments),
-        "forget_thing" => delete_instance(conn, &call.arguments),
-        "forget_connection_type" => delete_property(conn, &call.arguments),
-        "forget_thing_detail" => remove_property_value(conn, &call.arguments),
-        "update_concept" => update_class(conn, &call.arguments),
-        "update_thing" => update_instance(conn, &call.arguments),
+        "forget_concept" => delete_class(conn, &call.arguments, app),
+        "forget_thing" => delete_instance(conn, &call.arguments, app),
+        "forget_connection_type" => delete_property(conn, &call.arguments, app),
+        "forget_thing_detail" => remove_property_value(conn, &call.arguments, app),
+        "update_concept" => update_class(conn, &call.arguments, app),
+        "update_thing" => update_instance(conn, &call.arguments, app),
+        "blackboard_show" => blackboard_show(conn),
+        "blackboard_add_widget" => blackboard_add_widget(conn, &call.arguments, app),
+        "blackboard_remove" => blackboard_remove(conn, &call.arguments, app),
+        "blackboard_clear" => blackboard_clear(conn, app),
         _ => FunctionResult {
             success: false,
             result: None,
@@ -788,7 +833,7 @@ fn get_instance(conn: &Connection, args: &Value) -> FunctionResult {
     }
 }
 
-fn create_class(conn: &mut Connection, args: &Value) -> FunctionResult {
+fn create_class(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
@@ -834,6 +879,11 @@ fn create_class(conn: &mut Connection, args: &Value) -> FunctionResult {
             store::assert_triples(conn, &[comment_triple], "ai")?;
         }
 
+        // Emit entity-updated event
+        if let Some(app_handle) = app {
+            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
+        }
+
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
             "iri": iri,
@@ -853,7 +903,7 @@ fn create_class(conn: &mut Connection, args: &Value) -> FunctionResult {
     }
 }
 
-fn create_instance(conn: &mut Connection, args: &Value) -> FunctionResult {
+fn create_instance(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
     let class_iri = match args.get("class_iri").and_then(|v| v.as_str()) {
         Some(class_iri) => class_iri,
         None => return FunctionResult {
@@ -903,6 +953,11 @@ fn create_instance(conn: &mut Connection, args: &Value) -> FunctionResult {
             store::assert_triples(conn, &[comment_triple], "ai")?;
         }
 
+        // Emit entity-updated event
+        if let Some(app_handle) = app {
+            app_handle.emit("entity-updated", serde_json::json!({"entityId": generated_iri.clone()})).ok();
+        }
+
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
             "iri": generated_iri,
@@ -922,7 +977,7 @@ fn create_instance(conn: &mut Connection, args: &Value) -> FunctionResult {
     }
 }
 
-pub fn add_property_value(conn: &mut Connection, args: &Value) -> FunctionResult {
+pub fn add_property_value(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
     let instance_iri = match args.get("instance_iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
@@ -968,6 +1023,11 @@ pub fn add_property_value(conn: &mut Connection, args: &Value) -> FunctionResult
 
         let individual = Individual::new(instance_iri);
         individual.add_property(conn, property_iri, object, "ai")?;
+
+        // Emit entity-updated event
+        if let Some(app_handle) = app {
+            app_handle.emit("entity-updated", serde_json::json!({"entityId": instance_iri})).ok();
+        }
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
@@ -1163,7 +1223,7 @@ pub fn get_property(conn: &Connection, args: &Value) -> FunctionResult {
     }
 }
 
-pub fn delete_class(conn: &mut Connection, args: &Value) -> FunctionResult {
+pub fn delete_class(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
@@ -1185,6 +1245,11 @@ pub fn delete_class(conn: &mut Connection, args: &Value) -> FunctionResult {
             .collect();
 
         store::retract_triples(conn, &triples_to_retract, "ai")?;
+
+        // Emit entity-updated event
+        if let Some(app_handle) = app {
+            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
+        }
 
         Ok::<_, Box<dyn std::error::Error>>(serde_json::json!({
             "success": true,
@@ -1204,7 +1269,7 @@ pub fn delete_class(conn: &mut Connection, args: &Value) -> FunctionResult {
     }
 }
 
-pub fn delete_instance(conn: &mut Connection, args: &Value) -> FunctionResult {
+pub fn delete_instance(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
@@ -1226,6 +1291,11 @@ pub fn delete_instance(conn: &mut Connection, args: &Value) -> FunctionResult {
             .collect();
 
         store::retract_triples(conn, &triples_to_retract, "ai")?;
+
+        // Emit entity-updated event
+        if let Some(app_handle) = app {
+            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
+        }
 
         Ok::<_, Box<dyn std::error::Error>>(serde_json::json!({
             "success": true,
@@ -1245,7 +1315,7 @@ pub fn delete_instance(conn: &mut Connection, args: &Value) -> FunctionResult {
     }
 }
 
-pub fn delete_property(conn: &mut Connection, args: &Value) -> FunctionResult {
+pub fn delete_property(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
@@ -1258,19 +1328,45 @@ pub fn delete_property(conn: &mut Connection, args: &Value) -> FunctionResult {
     match (|| {
         use crate::eavto::{store, query, Triple};
 
-        // Get all triples where this IRI is the subject
+        // IMPORTANT: First, retract all triples that use this property as predicate
+        // This ensures that when a property is removed from a class, all facts using it are also removed
+        let facts_using_property = query::get_by_predicate(conn, iri)?;
+        let mut affected_entities = std::collections::HashSet::new();
+
+        let facts_to_retract: Vec<Triple> = facts_using_property.triples.into_iter()
+            .map(|t| {
+                affected_entities.insert(t.subject.clone());
+                Triple::new(t.subject, t.predicate, t.object)
+            })
+            .collect();
+
+        if !facts_to_retract.is_empty() {
+            store::retract_triples(conn, &facts_to_retract, "ai")?;
+        }
+
+        // Then, get all triples where this property IRI is the subject (property definition)
         let triples_result = query::get_by_entity(conn, iri)?;
 
-        // Retract all triples
+        // Retract property definition triples
         let triples_to_retract: Vec<Triple> = triples_result.triples.into_iter()
             .map(|t| Triple::new(t.subject, t.predicate, t.object))
             .collect();
 
         store::retract_triples(conn, &triples_to_retract, "ai")?;
 
+        // Emit entity-updated events for all affected entities
+        let affected_count = affected_entities.len();
+        if let Some(app_handle) = app {
+            for entity_id in affected_entities {
+                app_handle.emit("entity-updated", serde_json::json!({"entityId": entity_id})).ok();
+            }
+            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
+        }
+
         Ok::<_, Box<dyn std::error::Error>>(serde_json::json!({
             "success": true,
             "message": format!("Property {} deleted successfully", iri),
+            "affectedEntities": affected_count,
         }))
     })() {
         Ok(result) => FunctionResult {
@@ -1286,7 +1382,7 @@ pub fn delete_property(conn: &mut Connection, args: &Value) -> FunctionResult {
     }
 }
 
-pub fn update_class(conn: &mut Connection, args: &Value) -> FunctionResult {
+pub fn update_class(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
@@ -1360,6 +1456,11 @@ pub fn update_class(conn: &mut Connection, args: &Value) -> FunctionResult {
             updated_fields.push("superClass");
         }
 
+        // Emit entity-updated event
+        if let Some(app_handle) = app {
+            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
+        }
+
         Ok::<_, Box<dyn std::error::Error>>(serde_json::json!({
             "success": true,
             "message": format!("Class {} updated successfully", iri),
@@ -1379,7 +1480,7 @@ pub fn update_class(conn: &mut Connection, args: &Value) -> FunctionResult {
     }
 }
 
-pub fn update_instance(conn: &mut Connection, args: &Value) -> FunctionResult {
+pub fn update_instance(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
@@ -1440,6 +1541,11 @@ pub fn update_instance(conn: &mut Connection, args: &Value) -> FunctionResult {
             updated_fields.push("comment");
         }
 
+        // Emit entity-updated event
+        if let Some(app_handle) = app {
+            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
+        }
+
         Ok::<_, Box<dyn std::error::Error>>(serde_json::json!({
             "success": true,
             "message": format!("Instance {} updated successfully", iri),
@@ -1459,7 +1565,7 @@ pub fn update_instance(conn: &mut Connection, args: &Value) -> FunctionResult {
     }
 }
 
-pub fn remove_property_value(conn: &mut Connection, args: &Value) -> FunctionResult {
+pub fn remove_property_value(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
     let instance_iri = match args.get("instance_iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
@@ -1502,6 +1608,12 @@ pub fn remove_property_value(conn: &mut Connection, args: &Value) -> FunctionRes
 
             if matches {
                 store::retract_triples(conn, &[Triple::new(instance_iri, property_iri, triple.object)], "ai")?;
+
+                // Emit entity-updated event
+                if let Some(app_handle) = app {
+                    app_handle.emit("entity-updated", serde_json::json!({"entityId": instance_iri})).ok();
+                }
+
                 return Ok::<_, Box<dyn std::error::Error>>(serde_json::json!({
                     "success": true,
                     "message": format!("Property value removed from {}", instance_iri),
@@ -1659,6 +1771,160 @@ pub fn find_instances_by_property(conn: &Connection, args: &Value) -> FunctionRe
             success: false,
             result: None,
             error: Some(e.to_string()),
+        },
+    }
+}
+
+// Blackboard/Widget functions
+fn blackboard_show(conn: &Connection) -> FunctionResult {
+    use crate::commands::widget;
+
+    match widget::db_get_all_widgets(conn) {
+        Ok(widgets) => FunctionResult {
+            success: true,
+            result: Some(serde_json::to_value(widgets).unwrap()),
+            error: None,
+        },
+        Err(e) => FunctionResult {
+            success: false,
+            result: None,
+            error: Some(e),
+        },
+    }
+}
+
+fn blackboard_add_widget(conn: &Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
+    use crate::commands::widget::{self, Widget, Position, Size};
+
+    let widget_type = match args.get("widget_type").and_then(|v| v.as_str()) {
+        Some(t) => t.to_lowercase(),
+        None => return FunctionResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: widget_type".to_string()),
+        },
+    };
+
+    let params = match args.get("params") {
+        Some(p) => p,
+        None => return FunctionResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: params".to_string()),
+        },
+    };
+
+    // Validate widget type
+    if widget_type != "inspector" {
+        return FunctionResult {
+            success: false,
+            result: None,
+            error: Some(format!("Unknown widget type: {}. Available types: Inspector", widget_type)),
+        };
+    }
+
+    // Extract entity_id from params for Inspector widget
+    let entity_id = match params.get("entity_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => return FunctionResult {
+            success: false,
+            result: None,
+            error: Some("Inspector widget requires 'entity_id' in params".to_string()),
+        },
+    };
+
+    // Auto-position: calculate position based on existing widgets
+    let position = match widget::db_get_all_widgets(conn) {
+        Ok(widgets) => {
+            // Simple auto-layout: stack widgets diagonally with offset
+            let offset = widgets.len() as f64 * 50.0;
+            Position { x: 100.0 + offset, y: 100.0 + offset }
+        },
+        Err(_) => Position { x: 100.0, y: 100.0 }, // Fallback to default
+    };
+
+    let widget_obj = Widget {
+        id: format!("widget_{}_{}", widget_type, chrono::Utc::now().timestamp_millis()),
+        widget_type: widget_type.to_string(),
+        entity_id: entity_id.to_string(),
+        position,
+        size: Size { width: 400.0, height: 600.0 },
+    };
+
+    match widget::db_insert_widget(conn, &widget_obj) {
+        Ok(_) => {
+            // Emit event to frontend if app handle is available
+            if let Some(app_handle) = app {
+                app_handle.emit("widget-added", widget_obj.clone()).ok();
+            }
+
+            FunctionResult {
+                success: true,
+                result: Some(serde_json::to_value(widget_obj).unwrap()),
+                error: None,
+            }
+        },
+        Err(e) => FunctionResult {
+            success: false,
+            result: None,
+            error: Some(e),
+        },
+    }
+}
+
+fn blackboard_remove(conn: &Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
+    use crate::commands::widget;
+
+    let widget_id = match args.get("widget_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => return FunctionResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: widget_id".to_string()),
+        },
+    };
+
+    match widget::db_delete_widget(conn, widget_id) {
+        Ok(_) => {
+            // Emit event to frontend if app handle is available
+            if let Some(app_handle) = app {
+                app_handle.emit("widget-removed", widget_id.to_string()).ok();
+            }
+
+            FunctionResult {
+                success: true,
+                result: Some(serde_json::json!({"message": "Widget removed"})),
+                error: None,
+            }
+        },
+        Err(e) => FunctionResult {
+            success: false,
+            result: None,
+            error: Some(e),
+        },
+    }
+}
+
+fn blackboard_clear(conn: &Connection, app: Option<&tauri::AppHandle>) -> FunctionResult {
+    use crate::commands::widget;
+
+    match widget::db_clear_all_widgets(conn) {
+        Ok(_) => {
+            // Emit event to frontend if app handle is available
+            if let Some(app_handle) = app {
+                app_handle.emit("widgets-cleared", ()).ok();
+            }
+
+            FunctionResult {
+                success: true,
+                result: Some(serde_json::json!({"message": "All widgets cleared"})),
+                error: None,
+            }
+        },
+        Err(e) => FunctionResult {
+            success: false,
+            result: None,
+            error: Some(e),
         },
     }
 }

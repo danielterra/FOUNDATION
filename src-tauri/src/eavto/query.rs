@@ -11,8 +11,9 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Query triples by entity (E - subject)
 ///
-/// Returns only the most recent (current) value for each predicate.
-/// In append-only databases, this represents the current state of the entity.
+/// Returns current state of all predicates for the entity:
+/// - For functional properties: only the most recent value
+/// - For non-functional properties: all distinct current values (deduped by object)
 pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
     let start = std::time::Instant::now();
 
@@ -22,18 +23,34 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE subject = ? AND retracted = 0
-         ORDER BY predicate, tx DESC"
+         ORDER BY predicate, object, object_value, tx DESC"
     )?;
 
     let all_triples: Vec<Triple> = stmt
         .query_map([entity], row_to_triple)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    // Keep only the most recent value for each predicate (current state)
-    let mut seen_predicates = std::collections::HashSet::new();
+    // Group by predicate and keep most recent value for each unique (predicate, object) pair
+    // This allows multiple values for the same predicate but deduplicates updates to the same value
+    let mut seen_pairs = std::collections::HashSet::new();
     let current_triples: Vec<Triple> = all_triples
         .into_iter()
-        .filter(|t| seen_predicates.insert(t.predicate.clone()))
+        .filter(|t| {
+            // Create a unique key for (predicate, object) pair
+            let object_key = match &t.object {
+                Object::Iri(iri) => format!("iri:{}", iri),
+                Object::Literal { value, datatype, language } => {
+                    format!("lit:{}:{}:{}", value, datatype.as_deref().unwrap_or(""), language.as_deref().unwrap_or(""))
+                },
+                Object::Blank(id) => format!("blank:{}", id),
+                Object::Integer(n) => format!("int:{}", n),
+                Object::Number(n) => format!("num:{}", n),
+                Object::Boolean(b) => format!("bool:{}", b),
+                Object::DateTime(dt) => format!("dt:{}", dt),
+            };
+            let key = format!("{}|{}", t.predicate, object_key);
+            seen_pairs.insert(key)
+        })
         .collect();
 
     let elapsed = start.elapsed();
