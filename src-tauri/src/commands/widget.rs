@@ -156,6 +156,7 @@ pub fn db_clear_all_widgets(conn: &Connection) -> Result<(), String> {
 
 /// List all available widget types
 #[tauri::command]
+#[allow(non_snake_case)]
 pub fn widget__list_types() -> Vec<WidgetType> {
     vec![
         WidgetType {
@@ -168,6 +169,7 @@ pub fn widget__list_types() -> Vec<WidgetType> {
 
 /// Get all widgets currently on the blackboard
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn widget__get_all(executor: State<'_, DbExecutor>) -> Result<Vec<Widget>, String> {
     executor.read(|conn| {
         db_get_all_widgets(conn)
@@ -176,6 +178,7 @@ pub async fn widget__get_all(executor: State<'_, DbExecutor>) -> Result<Vec<Widg
 
 /// Add a new widget to the blackboard
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn widget__add(
     app: AppHandle,
     widget_type: String,
@@ -215,6 +218,7 @@ pub async fn widget__add(
 
 /// Remove a widget from the blackboard
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn widget__remove(
     app: AppHandle,
     widget_id: String,
@@ -234,6 +238,7 @@ pub async fn widget__remove(
 
 /// Update widget position
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn widget__update_position(
     widget_id: String,
     position: Position,
@@ -248,6 +253,7 @@ pub async fn widget__update_position(
 
 /// Update widget size
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn widget__update_size(
     widget_id: String,
     size: Size,
@@ -262,6 +268,7 @@ pub async fn widget__update_size(
 
 /// Clear all widgets from the blackboard
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn widget__clear_all(
     app: AppHandle,
     executor: State<'_, DbExecutor>

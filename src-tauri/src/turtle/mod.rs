@@ -21,9 +21,13 @@ use sha2::{Sha256, Digest};
 /// Import error types
 #[derive(Debug)]
 pub enum ImportError {
+    #[allow(dead_code)]
     IoError(std::io::Error),
+    #[allow(dead_code)]
     TurtleError(TurtleError),
+    #[allow(dead_code)]
     XmlError(RdfXmlError),
+    #[allow(dead_code)]
     DatabaseError(String),
 }
 

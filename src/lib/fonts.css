@@ -1,5 +1,6 @@
-/* Material Symbols Outlined */
+/* All @import statements must come first */
 @import '@material-symbols/font-400/outlined.css';
+@import '@fontsource/monaspace-krypton/400.css';
 
 /* Poppins - System Font */
 @font-face {
@@ -17,9 +18,6 @@
   font-style: normal;
   font-display: swap;
 }
-
-/* Monaspace - Code Only */
-@import '@fontsource/monaspace-krypton/400.css';
 
 /* Apply fonts globally */
 :root {

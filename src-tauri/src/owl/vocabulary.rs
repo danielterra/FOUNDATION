@@ -8,10 +8,15 @@
 pub mod rdf {
     pub const TYPE: &str = "rdf:type";
     pub const PROPERTY: &str = "rdf:Property";
+    #[allow(dead_code)]
     pub const STATEMENT: &str = "rdf:Statement";
+    #[allow(dead_code)]
     pub const SUBJECT: &str = "rdf:subject";
+    #[allow(dead_code)]
     pub const PREDICATE: &str = "rdf:predicate";
+    #[allow(dead_code)]
     pub const OBJECT: &str = "rdf:object";
+    #[allow(dead_code)]
     pub const LANG_STRING: &str = "rdf:langString";
 }
 
@@ -24,8 +29,11 @@ pub mod rdfs {
     pub const RANGE: &str = "rdfs:range";
     pub const LABEL: &str = "rdfs:label";
     pub const COMMENT: &str = "rdfs:comment";
+    #[allow(dead_code)]
     pub const RESOURCE: &str = "rdfs:Resource";
+    #[allow(dead_code)]
     pub const LITERAL: &str = "rdfs:Literal";
+    #[allow(dead_code)]
     pub const DATATYPE: &str = "rdfs:Datatype";
 }
 
@@ -33,32 +41,50 @@ pub mod rdfs {
 pub mod owl {
     pub const CLASS: &str = "owl:Class";
     pub const THING: &str = "owl:Thing";
+    #[allow(dead_code)]
     pub const NOTHING: &str = "owl:Nothing";
     pub const OBJECT_PROPERTY: &str = "owl:ObjectProperty";
     pub const DATATYPE_PROPERTY: &str = "owl:DatatypeProperty";
     pub const ANNOTATION_PROPERTY: &str = "owl:AnnotationProperty";
     pub const FUNCTIONAL_PROPERTY: &str = "owl:FunctionalProperty";
+    #[allow(dead_code)]
     pub const INVERSE_FUNCTIONAL_PROPERTY: &str = "owl:InverseFunctionalProperty";
     pub const TRANSITIVE_PROPERTY: &str = "owl:TransitiveProperty";
     pub const SYMMETRIC_PROPERTY: &str = "owl:SymmetricProperty";
+    #[allow(dead_code)]
     pub const ASYMMETRIC_PROPERTY: &str = "owl:AsymmetricProperty";
+    #[allow(dead_code)]
     pub const REFLEXIVE_PROPERTY: &str = "owl:ReflexiveProperty";
+    #[allow(dead_code)]
     pub const IRREFLEXIVE_PROPERTY: &str = "owl:IrreflexiveProperty";
 
+    #[allow(dead_code)]
     pub const EQUIVALENT_CLASS: &str = "owl:equivalentClass";
+    #[allow(dead_code)]
     pub const DISJOINT_WITH: &str = "owl:disjointWith";
+    #[allow(dead_code)]
     pub const EQUIVALENT_PROPERTY: &str = "owl:equivalentProperty";
     pub const INVERSE_OF: &str = "owl:inverseOf";
+    #[allow(dead_code)]
     pub const SAME_AS: &str = "owl:sameAs";
+    #[allow(dead_code)]
     pub const DIFFERENT_FROM: &str = "owl:differentFrom";
 
+    #[allow(dead_code)]
     pub const RESTRICTION: &str = "owl:Restriction";
+    #[allow(dead_code)]
     pub const ON_PROPERTY: &str = "owl:onProperty";
+    #[allow(dead_code)]
     pub const SOME_VALUES_FROM: &str = "owl:someValuesFrom";
+    #[allow(dead_code)]
     pub const ALL_VALUES_FROM: &str = "owl:allValuesFrom";
+    #[allow(dead_code)]
     pub const HAS_VALUE: &str = "owl:hasValue";
+    #[allow(dead_code)]
     pub const MIN_CARDINALITY: &str = "owl:minCardinality";
+    #[allow(dead_code)]
     pub const MAX_CARDINALITY: &str = "owl:maxCardinality";
+    #[allow(dead_code)]
     pub const CARDINALITY: &str = "owl:cardinality";
 }
 

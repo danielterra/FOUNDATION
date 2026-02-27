@@ -12,6 +12,7 @@ pub struct Origin {
 
 impl Origin {
     /// Create a new Origin
+    #[allow(dead_code)]
     pub fn new(id: i64, name: impl Into<String>) -> Self {
         Self {
             id,

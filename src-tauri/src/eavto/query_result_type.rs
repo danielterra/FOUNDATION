@@ -8,6 +8,7 @@ use super::triple_type::Triple;
 #[derive(Debug)]
 pub struct QueryResult {
     pub triples: Vec<Triple>,
+    #[allow(dead_code)]
     pub count: usize,
 }
 
@@ -19,6 +20,7 @@ impl QueryResult {
     }
 
     /// Create an empty QueryResult
+    #[allow(dead_code)]
     pub fn empty() -> Self {
         Self {
             triples: Vec::new(),
@@ -27,16 +29,19 @@ impl QueryResult {
     }
 
     /// Check if result is empty
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
 
     /// Get first triple if exists
+    #[allow(dead_code)]
     pub fn first(&self) -> Option<&Triple> {
         self.triples.first()
     }
 
     /// Filter triples by predicate
+    #[allow(dead_code)]
     pub fn filter_by_predicate(&self, predicate: &str) -> Vec<&Triple> {
         self.triples
             .iter()

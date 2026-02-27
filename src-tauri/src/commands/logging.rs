@@ -3,6 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use chrono::Local;
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 pub struct LogEntry {
     level: String,

@@ -13,13 +13,17 @@ pub struct Triple {
     pub object: Object,
 
     // Time dimension
+    #[allow(dead_code)]
     pub tx: i64,
+    #[allow(dead_code)]
     pub created_at: i64,
 
     // Origin dimension
+    #[allow(dead_code)]
     pub origin_id: i64,
 
     // Retraction (immutable timeline)
+    #[allow(dead_code)]
     pub retracted: bool,
 }
 
@@ -42,6 +46,7 @@ impl Triple {
     }
 
     /// Check if this triple is currently active (not retracted)
+    #[allow(dead_code)]
     pub fn is_active(&self) -> bool {
         !self.retracted
     }

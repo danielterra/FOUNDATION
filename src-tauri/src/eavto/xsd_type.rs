@@ -99,6 +99,7 @@ impl XsdType {
     }
 
     /// Parse from IRI string (with or without xsd: prefix)
+    #[allow(dead_code)]
     pub fn from_iri(iri: &str) -> Option<Self> {
         let local_name = iri.strip_prefix("xsd:").unwrap_or(iri);
 
@@ -150,6 +151,7 @@ impl XsdType {
     }
 
     /// Check if this is a numeric type
+    #[allow(dead_code)]
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
@@ -173,6 +175,7 @@ impl XsdType {
     }
 
     /// Check if this is an integer type (not float/decimal)
+    #[allow(dead_code)]
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
@@ -193,11 +196,13 @@ impl XsdType {
     }
 
     /// Check if this is a floating point type
+    #[allow(dead_code)]
     pub fn is_float(&self) -> bool {
         matches!(self, XsdType::Decimal | XsdType::Float | XsdType::Double)
     }
 
     /// Check if this is a date/time type
+    #[allow(dead_code)]
     pub fn is_temporal(&self) -> bool {
         matches!(
             self,

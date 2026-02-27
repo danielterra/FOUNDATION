@@ -9,6 +9,7 @@ pub struct KeyboardShortcut {
 
 /// Get all registered keyboard shortcuts
 #[tauri::command]
+#[allow(non_snake_case)]
 pub fn shortcuts__get_all() -> String {
     let shortcuts = vec![
         KeyboardShortcut {

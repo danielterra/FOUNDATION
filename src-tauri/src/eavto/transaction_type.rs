@@ -13,6 +13,7 @@ pub struct Transaction {
 
 impl Transaction {
     /// Create a new Transaction
+    #[allow(dead_code)]
     pub fn new(tx: i64, origin: impl Into<String>, created_at: i64) -> Self {
         Self {
             tx,

@@ -51,6 +51,7 @@ impl FunctionDefinition {
         }
     }
 
+    #[allow(dead_code)]
     pub fn to_openai_function(&self) -> Value {
         let mut properties = serde_json::Map::new();
         let mut required = Vec::new();

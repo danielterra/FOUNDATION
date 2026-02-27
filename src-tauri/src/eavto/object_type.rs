@@ -74,6 +74,7 @@ impl Object {
     }
 
     /// Get the XSD type if this is a typed literal
+    #[allow(dead_code)]
     pub fn xsd_type(&self) -> Option<XsdType> {
         match self {
             Object::Integer(_) => Some(XsdType::Integer),
@@ -91,6 +92,7 @@ impl Object {
     }
 
     /// Check if this is a literal object
+    #[allow(dead_code)]
     pub fn is_literal(&self) -> bool {
         matches!(
             self,
