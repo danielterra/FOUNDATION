@@ -6,7 +6,7 @@
 
 use rusqlite::Connection;
 use crate::eavto::{store, query, Triple, Object};
-use crate::owl::{Result, OwlError, vocabulary::{rdf, rdfs, owl}};
+use crate::owl::{Result, vocabulary::{rdf, rdfs, owl}};
 
 /// Base Property type with complete data
 #[derive(Debug, Clone)]
@@ -215,6 +215,7 @@ impl Property {
     }
 
     /// Check if this property exists
+    #[allow(dead_code)]
     pub fn exists(&self, conn: &Connection) -> Result<bool> {
         let result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
         Ok(!result.triples.is_empty())
@@ -248,9 +249,11 @@ impl Property {
 }
 
 /// ObjectProperty is just an alias - use Property with PropertyType::ObjectProperty
+#[allow(dead_code)]
 pub type ObjectProperty = Property;
 
 /// DatatypeProperty is just an alias - use Property with PropertyType::DatatypeProperty
+#[allow(dead_code)]
 pub type DatatypeProperty = Property;
 
 /// Property type classification

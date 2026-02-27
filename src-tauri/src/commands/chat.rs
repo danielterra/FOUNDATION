@@ -54,7 +54,7 @@ pub struct ConversationInfo {
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn chat__send_message(
-    app: AppHandle,
+    _app: AppHandle,
     content: String,
     latitude: Option<f64>,
     longitude: Option<f64>,
@@ -489,7 +489,7 @@ pub async fn chat__send_and_reply(
 
     // First, send the user message with location
     super::log_backend("info", "Starting to save user message...");
-    let user_message_iri = chat__send_message(app.clone(), content.clone(), latitude, longitude, executor.clone()).await?;
+    let _user_message_iri = chat__send_message(app.clone(), content.clone(), latitude, longitude, executor.clone()).await?;
     super::log_backend("info", &format!("User message saved in {:?}", start_time.elapsed()));
 
     // Get user and AI information from database
@@ -1141,7 +1141,7 @@ fn count_tool_tokens(bpe: &tiktoken_rs::CoreBPE, tools: &[crate::ai::providers::
 /// Load message history respecting maxInputTokens limit
 /// Returns messages in chronological order (oldest first) ready to send to API
 async fn load_history_with_limit(
-    app: &AppHandle,
+    _app: &AppHandle,
     executor: &DbExecutor,
     max_input_tokens: usize,
     system_prompt: &str,

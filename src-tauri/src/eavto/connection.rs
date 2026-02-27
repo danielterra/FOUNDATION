@@ -95,7 +95,7 @@ fn create_schema(conn: &Connection) -> Result<(), DbError> {
 
 /// Import RDF/RDFS/OWL core ontology
 fn import_rdf_core(conn: &mut Connection, app: Option<&tauri::AppHandle>) -> Result<u64, DbError> {
-    use tauri::{Manager, Emitter};
+    use tauri::Emitter;
 
     println!("\n📚 Importing RDF/RDFS/OWL core ontology...");
 
@@ -129,7 +129,7 @@ fn import_rdf_core(conn: &mut Connection, app: Option<&tauri::AppHandle>) -> Res
 
 /// Import DTYPE ontology
 fn import_dtype(conn: &mut Connection, app: Option<&tauri::AppHandle>, total_triples: u64) -> Result<u64, DbError> {
-    use tauri::{Manager, Emitter};
+    use tauri::Emitter;
 
     println!("\n📚 Importing DTYPE ontology...");
 
@@ -162,13 +162,14 @@ fn import_dtype(conn: &mut Connection, app: Option<&tauri::AppHandle>, total_tri
 }
 
 /// Initialize database with schema and ontologies
+#[allow(dead_code)]
 pub fn initialize_db(db_path: &Path) -> Result<Connection, DbError> {
     initialize_db_with_progress(db_path, None)
 }
 
 /// Initialize database with progress events
 fn initialize_db_with_progress(db_path: &Path, app: Option<&tauri::AppHandle>) -> Result<Connection, DbError> {
-    use tauri::{Manager, Emitter};
+    use tauri::Emitter;
 
     let needs_initialization = !db_path.exists();
 
@@ -228,6 +229,7 @@ pub fn initialize_with_progress(app: tauri::AppHandle) -> Result<Connection, DbE
 }
 
 /// Get or create database connection
+#[allow(dead_code)]
 pub fn get_connection() -> Result<Connection, DbError> {
     let db_path = get_db_path()?;
     initialize_db(&db_path)

@@ -42,38 +42,14 @@ pub mod test_helpers;
 // Re-export commonly used types
 pub use triple_type::Triple;
 pub use object_type::Object;
-pub use query_result_type::QueryResult;
-pub use transaction_type::Transaction;
-pub use origin_type::Origin;
-pub use xsd_type::XsdType;
 
-// Re-export main functions
-pub use query::{
-    get_by_entity,
-    get_by_predicate,
-    get_by_entity_predicate,
-    get_at_time,
-    get_by_origin,
-    get_history,
-};
-
-pub use store::{
-    assert_triples,
-    retract_triples,
-};
+// Re-export main functions (empty - all functions used via module path)
 
 // Re-export connection and stats functions
-pub use connection::{
-    get_connection,
-    get_db_path,
-    initialize_db,
-    initialize_with_progress,
-    DbError,
-};
+pub use connection::initialize_with_progress;
 
 pub use stats::{
     get_stats,
-    DbStats,
 };
 
 pub use executor::DbExecutor;

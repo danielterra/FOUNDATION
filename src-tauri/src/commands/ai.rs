@@ -3,12 +3,13 @@ use crate::ai::{ChatMessage, GenerateRequest};
 use crate::ai::functions::{self, FunctionCall, FunctionResult};
 use crate::eavto::{DbExecutor, query};
 use crate::owl::{Individual, Object};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 use serde_json::Value;
 
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn ai__save_api_key(
-    app: AppHandle,
+    _app: AppHandle,
     api_key: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
@@ -113,6 +114,7 @@ pub async fn ai__save_api_key(
 }
 
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn ai__get_api_key(
     executor: State<'_, DbExecutor>,
 ) -> Result<Option<String>, String> {
@@ -154,8 +156,9 @@ pub async fn ai__get_api_key(
 }
 
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn ai__initialize(
-    app: AppHandle,
+    _app: AppHandle,
     api_key: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
@@ -204,8 +207,9 @@ pub async fn ai__initialize(
 }
 
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn ai__generate(
-    app: AppHandle,
+    _app: AppHandle,
     messages: Vec<ChatMessage>,
     max_tokens: Option<u32>,
     temperature: Option<f32>,
@@ -229,8 +233,9 @@ pub async fn ai__generate(
 }
 
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn ai__list_available_models(
-    app: AppHandle,
+    _app: AppHandle,
     executor: State<'_, DbExecutor>,
 ) -> Result<Value, String> {
     super::log_backend("info", "Listing available models from Claude API");
@@ -283,6 +288,7 @@ pub async fn ai__list_available_models(
 }
 
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn ai__get_available_functions() -> Result<Value, String> {
     let functions = functions::get_available_functions();
     serde_json::to_value(functions)
@@ -290,6 +296,7 @@ pub async fn ai__get_available_functions() -> Result<Value, String> {
 }
 
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn ai__execute_function(
     app: AppHandle,
     name: String,

@@ -6,7 +6,7 @@
 
 use rusqlite::Connection;
 use crate::eavto::{store, query, Triple, Object};
-use crate::owl::{Result, OwlError, Thing, vocabulary::{rdf, rdfs, owl}};
+use crate::owl::{Result, Thing, vocabulary::{rdf, rdfs, owl}};
 
 /// Represents an OWL/RDFS Class with all its data
 #[derive(Debug, Clone)]
@@ -217,6 +217,7 @@ impl Class {
 /// Type of class (RDFS or OWL)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClassType {
+    #[allow(dead_code)]
     RdfsClass,
     OwlClass,
 }

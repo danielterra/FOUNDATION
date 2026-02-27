@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 mod turtle;
 mod namespaces;
 mod commands;
@@ -107,7 +109,6 @@ pub struct ImportProgress {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    use tauri::{Manager, Emitter};
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

@@ -74,6 +74,7 @@ lazy_static::lazy_static! {
     pub static ref AI_INSTANCE: Arc<Mutex<Option<AIAssistant>>> = Arc::new(Mutex::new(None));
 }
 
+#[allow(dead_code)]
 pub async fn initialize_ai(api_key: String) -> Result<(), String> {
     let provider = ClaudeProvider::new(api_key);
     let assistant = AIAssistant::new(Box::new(provider));

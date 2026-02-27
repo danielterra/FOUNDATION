@@ -93,7 +93,7 @@ pub fn retract_triples(
     )?;
 
     let tx_id = tx.last_insert_rowid();
-    let origin_id = get_or_create_origin(&tx, origin)?;
+    let _origin_id = get_or_create_origin(&tx, origin)?;
 
     // Mark matching triples as retracted
     for triple in triples {

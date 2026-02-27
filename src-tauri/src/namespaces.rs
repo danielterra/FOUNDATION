@@ -21,6 +21,7 @@ lazy_static::lazy_static! {
 /// - "rdfs:label" -> "http://www.w3.org/2000/01/rdf-schema#label"
 /// - "owl:Thing" -> "http://www.w3.org/2002/07/owl#Thing"
 /// - "http://example.org/full" -> "http://example.org/full" (unchanged)
+#[allow(dead_code)]
 pub fn expand_iri(iri: &str) -> String {
     for (prefix, namespace) in NAMESPACES.iter() {
         if iri.starts_with(prefix) {

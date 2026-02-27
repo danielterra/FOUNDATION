@@ -17,7 +17,7 @@ mod thing;
 pub mod vocabulary;
 
 pub use class::{Class, ClassType};
-pub use property::{Property, ObjectProperty, DatatypeProperty, PropertyType};
+pub use property::{Property, PropertyType};
 pub use individual::Individual;
 pub use thing::Thing;
 pub use crate::eavto::Object;
@@ -66,12 +66,13 @@ pub struct SearchResult {
     pub id: String,
     pub label: String,
     pub icon: Option<String>,
+    #[allow(dead_code)]
     pub is_class: bool,
 }
 
 /// Search for classes by label (case-insensitive, ranked by relevance)
 pub fn search_classes(conn: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-    use vocabulary::{rdf, rdfs, owl};
+    use vocabulary::{rdf, owl};
     use crate::eavto::query;
 
     // Get all classes
@@ -145,7 +146,7 @@ pub fn search_individuals(conn: &Connection, query: &str, limit: usize) -> Resul
             continue;
         }
 
-        let individual = Individual::new(individual_iri);
+        let _individual = Individual::new(individual_iri);
 
         // Get label
         let label_result = query::get_by_entity_predicate(conn, individual_iri, rdfs::LABEL)?;

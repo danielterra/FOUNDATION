@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use crate::ai::{GenerateRequest, ChatMessage, GenerateResponse, ToolCall};
+use crate::ai::{GenerateRequest, GenerateResponse, ToolCall};
 
 #[async_trait]
 pub trait AIProvider: Send + Sync {
@@ -197,12 +197,14 @@ impl AIProvider for ClaudeProvider {
 }
 
 // Placeholder for future providers
+#[allow(dead_code)]
 pub struct OpenAIProvider {
     api_key: String,
     client: reqwest::Client,
 }
 
 impl OpenAIProvider {
+    #[allow(dead_code)]
     pub fn new(api_key: String) -> Self {
         Self {
             api_key,
@@ -219,12 +221,14 @@ impl AIProvider for OpenAIProvider {
 }
 
 // Placeholder for Gemini
+#[allow(dead_code)]
 pub struct GeminiProvider {
     api_key: String,
     client: reqwest::Client,
 }
 
 impl GeminiProvider {
+    #[allow(dead_code)]
     pub fn new(api_key: String) -> Self {
         Self {
             api_key,

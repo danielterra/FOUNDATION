@@ -302,6 +302,7 @@ pub fn find_by_class_and_properties(
 }
 
 /// Find entities by attribute value (works for any property)
+#[allow(dead_code)]
 pub fn find_entities_by_attribute_value(
     conn: &Connection,
     attribute: &str,
@@ -321,6 +322,7 @@ pub fn find_entities_by_attribute_value(
 }
 
 /// Query entity state at specific time (ET - temporal query)
+#[allow(dead_code)]
 pub fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
@@ -346,6 +348,7 @@ pub fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResu
 }
 
 /// Query triples by origin (O)
+#[allow(dead_code)]
 pub fn get_by_origin(conn: &Connection, origin_id: i64) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
@@ -364,6 +367,7 @@ pub fn get_by_origin(conn: &Connection, origin_id: i64) -> Result<QueryResult> {
 }
 
 /// Query complete history of an entity (all transactions)
+#[allow(dead_code)]
 pub fn get_history(conn: &Connection, entity: &str) -> Result<Vec<(i64, Vec<Triple>)>> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
