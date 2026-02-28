@@ -123,6 +123,8 @@ pub fn run() {
             commands::initialize_app,
             commands::setup__check,
             commands::setup__init,
+            commands::setup__list_ai_services,
+            commands::setup__list_ai_models,
             commands::entity__get,
             commands::entity__search,
             commands::shortcuts__get_all,

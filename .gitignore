@@ -2,10 +2,24 @@ node_modules
 .svelte-kit
 build
 
+# Environment variables
+.env
+.env.local
+
 # Database files (created at runtime)
 FOUNDATION.db
 FOUNDATION.db-shm
 FOUNDATION.db-wal
+
+# Rust build artifacts
+target/
+**/target/
+Cargo.lock
+**/Cargo.lock
+*.rs.bk
+
+# Backup files
+*.backup
 
 # Coverage files
 lcov.info

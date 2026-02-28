@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::{State, AppHandle, Emitter, Manager};
 
-use crate::eavto::{self, DbExecutor};
+use crate::eavto::{self, DbExecutor, query};
 use crate::owl::{Individual, Object};
 
 /// Initialize the application database
@@ -164,6 +164,8 @@ pub async fn setup__check(
 pub async fn setup__init(
     user_name: String,
     email: Option<String>,
+    ai_service_iri: Option<String>,
+    ai_model_iri: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<SetupResult, String> {
     // Setup involves writes, so we use the write executor
@@ -332,13 +334,35 @@ pub async fn setup__init(
     ai_assistant.assert(conn, "foundation:SoftwareAgent", "FOUNDATION AI Assistant", "ai", "setup")
         .map_err(|e| format!("Failed to create AI assistant: {}", e))?;
 
+    // Use provided AI service or default to Claude
+    let service_iri = ai_service_iri.unwrap_or_else(|| "foundation:ClaudeAIService".to_string());
+
+    // Use provided AI model or default to Claude Sonnet 4.5
+    let model_iri = ai_model_iri.unwrap_or_else(|| "foundation:ClaudeSonnet45".to_string());
+
     let ai_description = Object::Literal {
-        value: "Local AI assistant powered by Phi-4-mini, running completely offline for full privacy".to_string(),
+        value: format!("AI assistant powered by {}", service_iri),
         datatype: Some("xsd:string".to_string()),
         language: Some("en".to_string()),
     };
     ai_assistant.add_property(conn, "rdfs:comment", ai_description, "setup")
         .map_err(|e| format!("Failed to add AI description: {}", e))?;
+
+    // Connect AI Assistant to AI Service
+    ai_assistant.add_property(
+        conn,
+        "foundation:usesService",
+        Object::Iri(service_iri),
+        "setup"
+    ).map_err(|e| format!("Failed to link AI to service: {}", e))?;
+
+    // Connect AI Assistant to AI Model
+    ai_assistant.add_property(
+        conn,
+        "foundation:usesModel",
+        Object::Iri(model_iri),
+        "setup"
+    ).map_err(|e| format!("Failed to link AI to model: {}", e))?;
 
     // Establish relationships
     computer.add_property(conn, "foundation:hasUser", Object::Iri("foundation:ThisUser".to_string()), "setup")
@@ -393,6 +417,113 @@ pub async fn setup__init(
 
 // REMOVED: get_existing_setup function was only used in tests and doesn't match
 // the actual production code structure. Real code uses setup__init directly.
+
+/// List available AI services from the ontology
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn setup__list_ai_services(
+    executor: State<'_, DbExecutor>,
+) -> Result<Vec<serde_json::Value>, String> {
+    executor.read(|conn| {
+        // Query all instances of foundation:Service that have AI-related properties
+        let services = query::get_by_predicate_object(conn, "rdf:type", "foundation:Service")
+            .map_err(|e| format!("Failed to query services: {}", e))?;
+
+        let mut result = Vec::new();
+        for triple in services.triples {
+            let service_iri = &triple.subject;
+
+            // Get service details
+            if let Ok(service_ind) = Individual::get(conn, service_iri) {
+                let label = service_ind.label;
+                let comment = service_ind.properties.iter()
+                    .find(|(k, _)| k == "rdfs:comment")
+                    .and_then(|(_, v)| v.as_literal())
+                    .unwrap_or_default();
+
+                result.push(serde_json::json!({
+                    "iri": service_iri,
+                    "label": label,
+                    "description": comment,
+                }));
+            }
+        }
+
+        Ok(result)
+    }).await
+}
+
+/// List available AI models for a specific service
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn setup__list_ai_models(
+    service_iri: Option<String>,
+    executor: State<'_, DbExecutor>,
+) -> Result<Vec<serde_json::Value>, String> {
+    executor.read(move |conn| {
+        // Query models, optionally filtered by service
+        let models = if let Some(ref service) = service_iri {
+            query::get_by_predicate_object(conn, "foundation:offeredBy", service)
+                .map_err(|e| format!("Failed to query models for service: {}", e))?
+        } else {
+            query::get_by_predicate_object(conn, "rdf:type", "foundation:AIModel")
+                .map_err(|e| format!("Failed to query models: {}", e))?
+        };
+
+        let mut result = Vec::new();
+        for triple in models.triples {
+            let model_iri = &triple.subject;
+
+            // Get model details
+            if let Ok(model_ind) = Individual::get(conn, model_iri) {
+                let label = model_ind.label;
+                let comment = model_ind.properties.iter()
+                    .find(|(k, _)| k == "rdfs:comment")
+                    .and_then(|(_, v)| v.as_literal())
+                    .unwrap_or_default();
+
+                let model_identifier = model_ind.properties.iter()
+                    .find(|(k, _)| k == "foundation:modelIdentifier")
+                    .and_then(|(_, v)| v.as_literal())
+                    .unwrap_or_default();
+
+                let is_default = model_ind.properties.iter()
+                    .find(|(k, _)| k == "foundation:isDefaultModel")
+                    .and_then(|(_, v)| v.as_literal())
+                    .map(|v| v == "true")
+                    .unwrap_or(false);
+
+                let model_version = model_ind.properties.iter()
+                    .find(|(k, _)| k == "foundation:modelVersion")
+                    .and_then(|(_, v)| v.as_literal())
+                    .unwrap_or_default();
+
+                result.push(serde_json::json!({
+                    "iri": model_iri,
+                    "label": label,
+                    "description": comment,
+                    "modelIdentifier": model_identifier,
+                    "modelVersion": model_version,
+                    "isDefault": is_default,
+                }));
+            }
+        }
+
+        // Sort by isDefault (default first) then by label
+        result.sort_by(|a, b| {
+            let a_default = a["isDefault"].as_bool().unwrap_or(false);
+            let b_default = b["isDefault"].as_bool().unwrap_or(false);
+
+            match (b_default, a_default) {
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                _ => a["label"].as_str().cmp(&b["label"].as_str()),
+            }
+        });
+
+        Ok(result)
+    }).await
+}
 
 /// Internal hardware information structures (without IRI)
 #[derive(Debug)]

@@ -1095,6 +1095,7 @@ pub async fn chat__send_and_reply(
         let ai_content = response.content.clone();
         let ai_content_for_save = ai_content.clone();
         let conversation_iri_clone = conversation_iri.to_string();
+        let usage_info = response.usage.clone();
 
         let ai_message_iri = executor.write(move |conn| {
             let timestamp = chrono::Utc::now().timestamp_millis();
@@ -1159,6 +1160,41 @@ pub async fn chat__send_and_reply(
                 },
                 "ai"
             ).map_err(|e| format!("Failed to set AI messageType: {}", e))?;
+
+            // Save usage information if present
+            if let Some(usage) = usage_info {
+                ai_message.add_property(
+                    conn,
+                    "foundation:inputTokens",
+                    Object::Integer(usage.input_tokens as i64),
+                    "ai"
+                ).map_err(|e| format!("Failed to set inputTokens: {}", e))?;
+
+                ai_message.add_property(
+                    conn,
+                    "foundation:outputTokens",
+                    Object::Integer(usage.output_tokens as i64),
+                    "ai"
+                ).map_err(|e| format!("Failed to set outputTokens: {}", e))?;
+
+                if usage.cache_creation_input_tokens > 0 {
+                    ai_message.add_property(
+                        conn,
+                        "foundation:cacheCreationInputTokens",
+                        Object::Integer(usage.cache_creation_input_tokens as i64),
+                        "ai"
+                    ).map_err(|e| format!("Failed to set cacheCreationInputTokens: {}", e))?;
+                }
+
+                if usage.cache_read_input_tokens > 0 {
+                    ai_message.add_property(
+                        conn,
+                        "foundation:cacheReadInputTokens",
+                        Object::Integer(usage.cache_read_input_tokens as i64),
+                        "ai"
+                    ).map_err(|e| format!("Failed to set cacheReadInputTokens: {}", e))?;
+                }
+            }
 
             Ok(ai_message_iri)
         }).await?;
@@ -1932,12 +1968,19 @@ async fn load_history_with_limit(
             // Check if this message has tool_results
             let has_tool_results = role == "user" && !tool_results.is_empty();
 
+            super::log_backend(
+                "info",
+                &format!("[TOKEN CHECK] Message {}: role={}, has_tool_results={}, msg_tokens={}, tokens_used={}, available={}, would_exceed={}",
+                    msg.iri, role, has_tool_results, msg_tokens, tokens_used, available_for_history,
+                    tokens_used + msg_tokens > available_for_history)
+            );
+
             // If this is a user message with tool_results but we don't have budget and weren't required to include it,
             // we need to skip it (can't have orphaned tool_results)
             if has_tool_results && !must_include_next && tokens_used + msg_tokens > available_for_history {
                 super::log_backend(
                     "info",
-                    "Skipping user message with tool_results: previous assistant message was truncated"
+                    &format!("Skipping user message with tool_results: msg_tokens={}, available={}", msg_tokens, available_for_history)
                 );
                 break;
             }
@@ -1977,7 +2020,7 @@ async fn load_history_with_limit(
 
             if !must_include_next && tokens_used + msg_tokens > available_for_history {
                 super::log_backend(
-                    
+
                     "info",
                     &format!("Truncating history: would exceed budget by {} tokens",
                         (tokens_used + msg_tokens) - available_for_history)

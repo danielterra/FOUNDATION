@@ -34,12 +34,13 @@ chrono = "0.4"  # For timestamps
 sysinfo = "0.32"  # For system information
 hostname = "0.4"  # For hostname detection
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }  # For async executor and tests
-reqwest = { version = "0.12", features = ["json"] }  # For HTTP API calls
+reqwest = { version = "0.12", features = ["blocking", "json"] }  # For HTTP API calls
 async-trait = "0.1"  # For async trait definitions
 tiktoken-rs = "0.6"  # For accurate token counting (Claude/GPT compatible)
 base64 = "0.22.1"
 pdf-extract = "0.10.0"
 image = "0.25.9"
+html2md = "0.2.15"
 
 [dev-dependencies]
 tempfile = "3.8"  # Temporary files for tests

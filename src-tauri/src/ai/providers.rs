@@ -95,6 +95,17 @@ struct ClaudeMessage {
 struct ClaudeResponse {
     content: Vec<ResponseContentBlock>,
     stop_reason: Option<String>,
+    usage: Option<UsageInfo>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct UsageInfo {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u32,
+    #[serde(default)]
+    pub cache_read_input_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -210,12 +221,22 @@ impl AIProvider for ClaudeProvider {
         }
 
         let content = text_parts.join("\n");
+
+        // Log usage if present
+        if let Some(ref usage) = claude_response.usage {
+            crate::commands::log_backend("info", &format!(
+                "[CLAUDE API] Usage - Input: {} tokens, Output: {} tokens, Cache Creation: {}, Cache Read: {}",
+                usage.input_tokens, usage.output_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens
+            ));
+        }
+
         crate::commands::log_backend("info", &format!("[CLAUDE API] Response content length: {} chars, {} tool calls", content.len(), tool_calls.len()));
 
         Ok(GenerateResponse {
             content,
             tool_calls,
             stop_reason: claude_response.stop_reason,
+            usage: claude_response.usage,
         })
     }
 }

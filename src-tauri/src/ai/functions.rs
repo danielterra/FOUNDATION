@@ -558,6 +558,18 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
             description: "Clear all widgets from the blackboard. Use this to start fresh.".to_string(),
             parameters: vec![],
         },
+        FunctionDefinition {
+            name: "web_fetch".to_string(),
+            description: "Fetch and read content from a web page URL. Returns the page content in markdown format for analysis.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "url".to_string(),
+                    param_type: "string".to_string(),
+                    description: "The URL to fetch (must be a valid http:// or https:// URL)".to_string(),
+                    required: true,
+                },
+            ],
+        },
     ]
 }
 
@@ -586,6 +598,7 @@ pub fn execute_function(conn: &mut Connection, call: &FunctionCall, app: Option<
         "blackboard_add_widget" => blackboard_add_widget(conn, &call.arguments, app),
         "blackboard_remove" => blackboard_remove(conn, &call.arguments, app),
         "blackboard_clear" => blackboard_clear(conn, app),
+        "web_fetch" => web_fetch(&call.arguments),
         _ => FunctionResult {
             success: false,
             result: None,
@@ -1926,6 +1939,79 @@ fn blackboard_clear(conn: &Connection, app: Option<&tauri::AppHandle>) -> Functi
             success: false,
             result: None,
             error: Some(e),
+        },
+    }
+}
+
+fn web_fetch(args: &Value) -> FunctionResult {
+    let url = match args.get("url").and_then(|v| v.as_str()) {
+        Some(u) => u,
+        None => {
+            return FunctionResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: url".to_string()),
+            };
+        }
+    };
+
+    // Validate URL
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return FunctionResult {
+            success: false,
+            result: None,
+            error: Some("URL must start with http:// or https://".to_string()),
+        };
+    }
+
+    // Fetch the URL using reqwest
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            return FunctionResult {
+                success: false,
+                result: None,
+                error: Some(format!("Failed to create runtime: {}", e)),
+            };
+        }
+    };
+
+    let result = runtime.block_on(async {
+        let client = reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| e.to_string())?;
+
+        let response = client.get(url).send().await
+            .map_err(|e| e.to_string())?;
+
+        if !response.status().is_success() {
+            return Err(format!("HTTP error: {}", response.status()));
+        }
+
+        let html = response.text().await
+            .map_err(|e| e.to_string())?;
+
+        // Convert HTML to markdown using html2md
+        let markdown = html2md::parse_html(&html);
+
+        Ok::<String, String>(markdown)
+    });
+
+    match result {
+        Ok(content) => FunctionResult {
+            success: true,
+            result: Some(json!({
+                "url": url,
+                "content": content,
+            })),
+            error: None,
+        },
+        Err(e) => FunctionResult {
+            success: false,
+            result: None,
+            error: Some(format!("Failed to fetch URL: {}", e)),
         },
     }
 }

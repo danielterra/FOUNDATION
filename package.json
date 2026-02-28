@@ -14,6 +14,11 @@
     "tauri:build:mac": "tauri build --target universal-apple-darwin",
     "tauri:build:windows": "tauri build --target x86_64-pc-windows-msvc",
     "tauri:build:linux": "tauri build --target x86_64-unknown-linux-gnu",
+    "update:models": "cd scripts/update-models && cargo run --release",
+    "release:major": "cd scripts/release && cargo run --release major",
+    "release:minor": "cd scripts/release && cargo run --release minor",
+    "release:patch": "cd scripts/release && cargo run --release patch",
+    "build:local": "cd scripts/release-local && cargo run --release",
     "build:release": "npm run build && npm run tauri:build",
     "logs": "./scripts/show-logs.sh \"$@\"",
     "clear:chat": "./scripts/clear-chat-history.sh"

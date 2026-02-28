@@ -7,6 +7,9 @@ pub mod providers;
 
 use providers::{AIProvider, ClaudeProvider, MessageContent, ContentBlock};
 
+#[allow(unused_imports)]
+pub use providers::UsageInfo;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
@@ -46,6 +49,7 @@ pub struct GenerateResponse {
     pub content: String,
     pub tool_calls: Vec<ToolCall>,
     pub stop_reason: Option<String>,
+    pub usage: Option<providers::UsageInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

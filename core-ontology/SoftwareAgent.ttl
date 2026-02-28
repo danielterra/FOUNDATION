@@ -26,3 +26,29 @@ Examples:
 - An automation script
 - A CI/CD pipeline agent
 """ .
+
+# -----------------------------------------------------------------------------
+# SoftwareAgent Properties
+# -----------------------------------------------------------------------------
+
+foundation:usesService a owl:ObjectProperty ;
+    rdfs:label "uses service" ;
+    rdfs:comment "The AI service that this agent uses to provide its functionality" ;
+    rdfs:domain foundation:SoftwareAgent ;
+    rdfs:range foundation:Service ;
+    rdfs:seeAlso """
+Example:
+  foundation:LocalAIAssistant foundation:usesService foundation:ClaudeAIService .
+  :MyChatbot foundation:usesService :OpenAIService .
+""" .
+
+foundation:usesModel a owl:ObjectProperty ;
+    rdfs:label "uses model" ;
+    rdfs:comment "The specific AI model that this agent currently uses" ;
+    rdfs:domain foundation:SoftwareAgent ;
+    rdfs:range foundation:AIModel ;
+    rdfs:seeAlso """
+Example:
+  foundation:LocalAIAssistant foundation:usesModel foundation:ClaudeSonnet45 .
+  :MyChatbot foundation:usesModel :GPT4Turbo .
+""" .

@@ -134,3 +134,21 @@ foundation:FoundationRelease_0_1_0 a foundation:SoftwareRelease , owl:NamedIndiv
     foundation:licenseType "MIT" ;
     foundation:releaseDate "2025-12-16"^^xsd:date ;
     foundation:changelog "Initial release with core ontology support, semantic graph visualization, and EAV-TO database" .
+
+foundation:FoundationRelease_0_2_0 a foundation:SoftwareRelease , owl:NamedIndividual ;
+    rdfs:label "FOUNDATION v0.2.0" ;
+    rdfs:comment "File attachment support release" ;
+    foundation:releaseOf foundation:FoundationProduct ;
+    foundation:versionNumber "0.2.0" ;
+    foundation:licenseType "MIT" ;
+    foundation:releaseDate "2026-02-28"^^xsd:date ;
+    foundation:changelog "Add file attachment support with images and PDFs" .
+
+foundation:FoundationRelease_0_3_0 a foundation:SoftwareRelease , owl:NamedIndividual ;
+    rdfs:label "FOUNDATION v0.3.0" ;
+    rdfs:comment "Enhanced Inspector UI and tool execution recovery" ;
+    foundation:releaseOf foundation:FoundationProduct ;
+    foundation:versionNumber "0.3.0" ;
+    foundation:licenseType "MIT" ;
+    foundation:releaseDate "2026-02-28"^^xsd:date ;
+    foundation:changelog "Enhanced Inspector UI and tool execution recovery system" .
