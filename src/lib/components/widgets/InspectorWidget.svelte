@@ -8,7 +8,6 @@
   let entityData = $state(null);
   let loading = $state(true);
   let error = $state(null);
-  let activeTab = $state('overview');
   let unlistenEntityUpdated = $state(null);
 
   async function loadEntity() {
@@ -32,6 +31,17 @@
       await invoke('widget__remove', { widgetId });
     } catch (err) {
       console.error('Failed to remove widget:', err);
+    }
+  }
+
+  async function copyEntityIri() {
+    if (!entityData?.id) return;
+
+    try {
+      await navigator.clipboard.writeText(entityData.id);
+      console.log('Copied entity IRI:', entityData.id);
+    } catch (err) {
+      console.error('Failed to copy IRI:', err);
     }
   }
 
@@ -152,60 +162,37 @@
 
 <div class="inspector-widget">
   <div class="widget-header">
-    <div class="widget-title">
-      {#if entityData?.icon}
-        <span class="material-symbols-outlined">{entityData.icon}</span>
-      {:else}
-        <span class="material-symbols-outlined">info</span>
-      {/if}
-      <span>{entityData?.label || 'Inspector'}</span>
-    </div>
-    <button class="close-btn" onclick={closeWidget}>
-      <span class="material-symbols-outlined">close</span>
-    </button>
-  </div>
-
-  {#if !loading && !error && entityData}
-    <div class="tabs">
-      <button
-        class="tab"
-        class:active={activeTab === 'overview'}
-        onclick={() => activeTab = 'overview'}
-      >
-        Overview
-      </button>
-      <button
-        class="tab"
-        class:active={activeTab === 'properties'}
-        onclick={() => activeTab = 'properties'}
-      >
-        Properties
-        {#if entityData.properties?.length > 0}
-          <span class="badge">{entityData.properties.length}</span>
+    <div class="header-top">
+      <div class="widget-title-wrapper">
+        <div class="widget-title">
+          {#if entityData?.icon}
+            <span class="material-symbols-outlined">{entityData.icon}</span>
+          {:else}
+            <span class="material-symbols-outlined">info</span>
+          {/if}
+          <span>{entityData?.label || 'Inspector'}</span>
+        </div>
+        {#if entityData?.types?.length > 0}
+          <div class="header-types">
+            {#each entityData.types as type, idx}
+              {#if idx > 0}<span class="type-separator">·</span>{/if}
+              <button class="type-link" onclick={() => openEntityInspector(type.iri)}>
+                {type.label}
+              </button>
+            {/each}
+          </div>
         {/if}
-      </button>
-      {#if entityData.backlinks?.length > 0}
-        <button
-          class="tab"
-          class:active={activeTab === 'backlinks'}
-          onclick={() => activeTab = 'backlinks'}
-        >
-          Backlinks
-          <span class="badge">{entityData.backlinks.length}</span>
+      </div>
+      <div class="header-actions">
+        <button class="action-btn" onclick={copyEntityIri} title="Copy IRI">
+          <span class="material-symbols-outlined">content_copy</span>
         </button>
-      {/if}
-      {#if entityData.instances?.length > 0}
-        <button
-          class="tab"
-          class:active={activeTab === 'instances'}
-          onclick={() => activeTab = 'instances'}
-        >
-          Instances
-          <span class="badge">{entityData.instances.length}</span>
+        <button class="close-btn" onclick={closeWidget}>
+          <span class="material-symbols-outlined">close</span>
         </button>
-      {/if}
+      </div>
     </div>
-  {/if}
+  </div>
 
   <div class="widget-content">
     {#if loading}
@@ -219,162 +206,125 @@
         <p>{error}</p>
       </div>
     {:else if entityData}
-      {#if activeTab === 'overview'}
-        <div class="tab-content">
-          <div class="entity-iri">{entityData.id}</div>
+      <div class="content-scroll">
+        {#if entityData.comment}
+          <p class="description">{entityData.comment}</p>
+        {/if}
 
-          {#if entityData.comment}
-            <div class="section">
-              <h4>Description</h4>
-              <p class="description">{entityData.comment}</p>
-            </div>
-          {/if}
-
-          {#if entityData.types?.length > 0}
-            <div class="section">
-              <h4>Types</h4>
-              <div class="thing-list">
-                {#each entityData.types as type}
-                  <div class="thing-item clickable" onclick={() => openEntityInspector(type.iri)}>
-                    {#if type.icon}
-                      <span class="material-symbols-outlined">{type.icon}</span>
-                    {/if}
-                    <span class="thing-label">{type.label}</span>
-                  </div>
-                {/each}
+        {#if entityData.superClasses?.length > 0}
+          <div class="thing-list">
+            {#each entityData.superClasses as superClass}
+              <div class="thing-item clickable" onclick={() => openEntityInspector(superClass.iri)}>
+                {#if superClass.icon}
+                  <span class="material-symbols-outlined">{superClass.icon}</span>
+                {/if}
+                <span class="thing-label">{superClass.label}</span>
               </div>
-            </div>
-          {/if}
+            {/each}
+          </div>
+        {/if}
 
-          {#if entityData.superClasses?.length > 0}
-            <div class="section">
-              <h4>Superclasses</h4>
-              <div class="thing-list">
-                {#each entityData.superClasses as superClass}
-                  <div class="thing-item clickable" onclick={() => openEntityInspector(superClass.iri)}>
-                    {#if superClass.icon}
-                      <span class="material-symbols-outlined">{superClass.icon}</span>
-                    {/if}
-                    <span class="thing-label">{superClass.label}</span>
-                  </div>
-                {/each}
+        {#if entityData.subClasses?.length > 0}
+          <div class="thing-list">
+            {#each entityData.subClasses as subClass}
+              <div class="thing-item clickable" onclick={() => openEntityInspector(subClass.iri)}>
+                {#if subClass.icon}
+                  <span class="material-symbols-outlined">{subClass.icon}</span>
+                {/if}
+                <span class="thing-label">{subClass.label}</span>
               </div>
-            </div>
-          {/if}
+            {/each}
+          </div>
+        {/if}
 
-          {#if entityData.subClasses?.length > 0}
-            <div class="section">
-              <h4>Subclasses</h4>
-              <div class="thing-list">
-                {#each entityData.subClasses as subClass}
-                  <div class="thing-item clickable" onclick={() => openEntityInspector(subClass.iri)}>
-                    {#if subClass.icon}
-                      <span class="material-symbols-outlined">{subClass.icon}</span>
-                    {/if}
-                    <span class="thing-label">{subClass.label}</span>
-                  </div>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        </div>
-      {:else if activeTab === 'properties'}
-        <div class="tab-content">
-          {#if entityData.properties?.length > 0}
+        {#if entityData.properties?.length > 0}
             {@const groupedProperties = entityData.properties.reduce((acc, prop) => {
-              if (!acc[prop.property]) {
-                acc[prop.property] = {
-                  property: prop.property,
-                  propertyLabel: prop.propertyLabel,
-                  propertyComment: prop.propertyComment,
-                  isObjectProperty: prop.isObjectProperty,
-                  sourceClassLabel: prop.sourceClassLabel,
-                  values: []
-                };
-              }
-              acc[prop.property].values.push({
-                value: prop.value,
-                valueLabel: prop.valueLabel,
-                valueIcon: prop.valueIcon,
-                unitLabel: prop.unitLabel
-              });
-              return acc;
-            }, {})}
+                if (!acc[prop.property]) {
+                  acc[prop.property] = {
+                    property: prop.property,
+                    propertyLabel: prop.propertyLabel,
+                    propertyComment: prop.propertyComment,
+                    isObjectProperty: prop.isObjectProperty,
+                    sourceClassLabel: prop.sourceClassLabel,
+                    values: []
+                  };
+                }
+                acc[prop.property].values.push({
+                  value: prop.value,
+                  valueLabel: prop.valueLabel,
+                  valueIcon: prop.valueIcon,
+                  unitLabel: prop.unitLabel
+                });
+                return acc;
+              }, {})}
 
             <div class="properties-list">
-              {#each Object.values(groupedProperties) as propGroup (propGroup.property)}
-                <div class="property-item">
-                  <div class="property-header">
-                    <div class="property-name">
-                      {propGroup.propertyLabel}
-                      {#if propGroup.isObjectProperty}
-                        <span class="property-type">Object</span>
-                      {:else}
-                        <span class="property-type">Data</span>
-                      {/if}
-                      {#if propGroup.values.length > 1}
-                        <span class="property-count">{propGroup.values.length}</span>
-                      {/if}
-                    </div>
-                    {#if propGroup.sourceClassLabel}
-                      <div class="property-source">from {propGroup.sourceClassLabel}</div>
+            {#each Object.values(groupedProperties) as propGroup (propGroup.property)}
+              <div class="property-item">
+                <div class="property-header">
+                  <div class="property-name">
+                    {propGroup.propertyLabel}
+                    {#if propGroup.isObjectProperty}
+                      <span class="property-type">Object</span>
+                    {:else}
+                      <span class="property-type">Data</span>
+                    {/if}
+                    {#if propGroup.values.length > 1}
+                      <span class="property-count">{propGroup.values.length}</span>
                     {/if}
                   </div>
-
-                  {#if propGroup.propertyComment}
-                    <div class="property-comment">{propGroup.propertyComment}</div>
+                  {#if propGroup.sourceClassLabel}
+                    <div class="property-source">from {propGroup.sourceClassLabel}</div>
                   {/if}
-
-                  <div class="property-values-group">
-                    {#each propGroup.values as val, idx (propGroup.property + '_' + val.value + '_' + idx)}
-                      <div
-                        class="property-value"
-                        class:clickable={propGroup.isObjectProperty}
-                        onclick={() => propGroup.isObjectProperty && openEntityInspector(val.value)}
-                      >
-                        {#if propGroup.isObjectProperty && val.valueIcon}
-                          <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
-                        {/if}
-                        {#if !propGroup.isObjectProperty && isTimestamp(val.value)}
-                          {@const date = new Date(parseInt(val.value))}
-                          <div class="timestamp-display">
-                            <span class="value-text">
-                              {date.toLocaleString('en-US', {
-                                year: 'numeric',
-                                month: 'short',
-                                day: 'numeric',
-                                hour: 'numeric',
-                                minute: '2-digit',
-                                second: '2-digit',
-                                hour12: true
-                              })}
-                            </span>
-                            <span class="timestamp-relative">
-                              {formatDate(val.value)}
-                            </span>
-                          </div>
-                        {:else}
-                          <span class="value-text">{val.valueLabel || val.value}</span>
-                        {/if}
-                        {#if val.unitLabel}
-                          <span class="unit">{val.unitLabel}</span>
-                        {/if}
-                      </div>
-                    {/each}
-                  </div>
                 </div>
-              {/each}
-            </div>
-          {:else}
-            <div class="empty-state">
-              <span class="material-symbols-outlined">category</span>
-              <p>No properties defined</p>
+
+                {#if propGroup.propertyComment}
+                  <div class="property-comment">{propGroup.propertyComment}</div>
+                {/if}
+
+                <div class="property-values-group">
+                  {#each propGroup.values as val, idx (propGroup.property + '_' + val.value + '_' + idx)}
+                    <div
+                      class="property-value"
+                      class:clickable={propGroup.isObjectProperty}
+                      onclick={() => propGroup.isObjectProperty && openEntityInspector(val.value)}
+                    >
+                      {#if propGroup.isObjectProperty && val.valueIcon}
+                        <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
+                      {/if}
+                      {#if !propGroup.isObjectProperty && isTimestamp(val.value)}
+                        {@const date = new Date(parseInt(val.value))}
+                        <div class="timestamp-display">
+                          <span class="value-text">
+                            {date.toLocaleString('en-US', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                              hour: 'numeric',
+                              minute: '2-digit',
+                              second: '2-digit',
+                              hour12: true
+                            })}
+                          </span>
+                          <span class="timestamp-relative">
+                            {formatDate(val.value)}
+                          </span>
+                        </div>
+                      {:else}
+                        <span class="value-text">{val.valueLabel || val.value}</span>
+                      {/if}
+                      {#if val.unitLabel}
+                        <span class="unit">{val.unitLabel}</span>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/each}
             </div>
           {/if}
-        </div>
-      {:else if activeTab === 'backlinks'}
-        <div class="tab-content">
-          {#if entityData.backlinks?.length > 0}
+
+        {#if entityData.backlinks?.length > 0}
             {@const groupedByClass = entityData.backlinks.reduce((acc, backlink) => {
               const className = backlink.sourceClassLabel || 'Unknown';
               const classIri = backlink.sourceClass || 'unknown';
@@ -450,24 +400,21 @@
                 </div>
               {/each}
             </div>
-          {/if}
-        </div>
-      {:else if activeTab === 'instances'}
-        <div class="tab-content">
-          {#if entityData.instances?.length > 0}
-            <div class="thing-list">
-              {#each entityData.instances as instance}
-                <div class="thing-item instance clickable" onclick={() => openEntityInspector(instance.iri)}>
-                  {#if instance.icon}
-                    <span class="material-symbols-outlined">{instance.icon}</span>
-                  {/if}
-                  <span class="thing-label">{instance.label}</span>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/if}
+        {/if}
+
+        {#if entityData.instances?.length > 0}
+          <div class="thing-list">
+            {#each entityData.instances as instance}
+              <div class="thing-item instance clickable" onclick={() => openEntityInspector(instance.iri)}>
+                {#if instance.icon}
+                  <span class="material-symbols-outlined">{instance.icon}</span>
+                {/if}
+                <span class="thing-label">{instance.label}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
     {/if}
   </div>
 </div>
@@ -488,11 +435,22 @@
 
   .widget-header {
     display: flex;
+    flex-direction: column;
+    background: color-mix(in srgb, var(--color-white) 5%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+  }
+
+  .header-top {
+    display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+  }
+
+  .widget-title-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .widget-title {
@@ -530,6 +488,65 @@
 
   .close-btn .material-symbols-outlined {
     font-size: 20px;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .action-btn {
+    background: none;
+    border: none;
+    padding: 4px;
+    cursor: pointer;
+    color: var(--color-neutral);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .action-btn:hover {
+    background: color-mix(in srgb, var(--color-white) 10%, transparent);
+    color: var(--color-neutral-active);
+  }
+
+  .action-btn .material-symbols-outlined {
+    font-size: 18px;
+  }
+
+  .header-types {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 28px;
+    flex-wrap: wrap;
+  }
+
+  .type-link {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--color-interactive);
+    transition: all 0.2s;
+    text-decoration: none;
+  }
+
+  .type-link:hover {
+    color: var(--color-neutral-active);
+    text-decoration: underline;
+  }
+
+  .type-separator {
+    color: var(--color-neutral);
+    opacity: 0.5;
+    font-size: 12px;
   }
 
   .tabs {
@@ -580,7 +597,7 @@
     overflow-y: auto;
   }
 
-  .tab-content {
+  .content-scroll {
     padding: 16px;
   }
 
@@ -610,33 +627,8 @@
     to { transform: rotate(360deg); }
   }
 
-  .entity-iri {
-    font-family: var(--font-code);
-    font-size: 11px;
-    color: var(--color-neutral);
-    padding: 8px 12px;
-    background: color-mix(in srgb, var(--color-black) 40%, transparent);
-    border-radius: 6px;
-    margin-bottom: 16px;
-    word-break: break-all;
-  }
-
-  .section {
-    margin-bottom: 20px;
-  }
-
-  .section h4 {
-    margin: 0 0 12px 0;
-    font-family: var(--font-title);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--color-neutral-active);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
   .description {
-    margin: 0;
+    margin: 0 0 16px 0;
     font-size: 14px;
     line-height: 1.6;
     color: var(--color-neutral);
@@ -646,6 +638,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+    margin-bottom: 16px;
   }
 
   .thing-item {
@@ -695,6 +688,7 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    margin-bottom: 16px;
   }
 
   .property-item {
@@ -827,6 +821,7 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
+    margin-bottom: 16px;
   }
 
   .class-group {

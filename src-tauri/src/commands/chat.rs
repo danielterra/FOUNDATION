@@ -1,11 +1,26 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 use tiktoken_rs::cl100k_base;
+use std::sync::OnceLock;
+use std::fs;
 
 use crate::eavto::{DbExecutor, query};
 use crate::owl::{Individual, Object, Thing};
 use crate::ai::functions::{self, FunctionCall, FunctionResult};
 use crate::commands::log_backend;
+
+// Global tokenizer cache - initialized once and reused
+static TOKENIZER: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
+
+fn get_tokenizer() -> &'static tiktoken_rs::CoreBPE {
+    TOKENIZER.get_or_init(|| {
+        let start = std::time::Instant::now();
+        let bpe = cl100k_base().expect("Failed to load tokenizer");
+        let elapsed = start.elapsed();
+        log_backend("info", &format!("[TOKENIZER] Loaded and cached tokenizer in {:?}", elapsed));
+        bpe
+    })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +42,18 @@ pub struct ToolResultInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AttachmentInfo {
+    pub iri: String,
+    pub file_name: String,
+    pub mime_type: String,
+    pub file_size: i64,
+    pub base64_data: Option<String>,
+    pub file_path: Option<String>,
+    pub attached_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MessageInfo {
     pub iri: String,
     pub content: String,
@@ -38,6 +65,7 @@ pub struct MessageInfo {
     pub conversation_iri: Option<String>,
     pub tool_uses: Vec<ToolUseInfo>,
     pub tool_results: Vec<ToolResultInfo>,
+    pub attachments: Vec<AttachmentInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,14 +78,147 @@ pub struct ConversationInfo {
     pub participant_count: usize,
 }
 
+/// Attach a file to be sent with a message
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn chat__attach_file(
+    file_path: String,
+    file_name: String,
+    mime_type: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    log_backend("info", &format!("[ATTACH] Attaching file: {} ({})", file_name, mime_type));
+
+    executor.write(move |conn| {
+        // Get user's Documents directory
+        let home_dir = dirs::home_dir()
+            .ok_or_else(|| "Failed to get home directory".to_string())?;
+
+        let attachments_dir = home_dir.join("Documents").join("Foundation").join("attachments");
+
+        // Create attachments directory if it doesn't exist
+        fs::create_dir_all(&attachments_dir)
+            .map_err(|e| format!("Failed to create attachments directory: {}", e))?;
+
+        // Read file content
+        let file_content = fs::read(&file_path)
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+
+        let file_size = file_content.len() as i64;
+
+        // Check file size limit (30 MB for Claude)
+        if file_size > 30 * 1024 * 1024 {
+            return Err("File size exceeds 30 MB limit".to_string());
+        }
+
+        // Generate unique filename using timestamp
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        let extension = std::path::Path::new(&file_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("bin");
+        let stored_filename = format!("{}_{}.{}", timestamp, sanitize_filename(&file_name), extension);
+        let stored_path = attachments_dir.join(&stored_filename);
+
+        // Copy file to attachments directory
+        fs::copy(&file_path, &stored_path)
+            .map_err(|e| format!("Failed to copy file: {}", e))?;
+
+        log_backend("info", &format!("[ATTACH] File saved to: {:?}", stored_path));
+
+        // Create attachment IRI
+        let attachment_iri = format!("foundation:Attachment_{}", timestamp);
+        let attachment = Individual::new(&attachment_iri);
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Create attachment entity
+        attachment.assert(
+            conn,
+            "foundation:Attachment",
+            &file_name,
+            "chat",
+            "chat"
+        ).map_err(|e| format!("Failed to create attachment: {}", e))?;
+
+        // Add file name
+        attachment.add_property(
+            conn,
+            "foundation:fileName",
+            Object::Literal {
+                value: file_name.clone(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            },
+            "chat"
+        ).map_err(|e| format!("Failed to set fileName: {}", e))?;
+
+        // Add MIME type
+        attachment.add_property(
+            conn,
+            "foundation:mimeType",
+            Object::Literal {
+                value: mime_type,
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            },
+            "chat"
+        ).map_err(|e| format!("Failed to set mimeType: {}", e))?;
+
+        // Add file size
+        attachment.add_property(
+            conn,
+            "foundation:fileSize",
+            Object::Integer(file_size),
+            "chat"
+        ).map_err(|e| format!("Failed to set fileSize: {}", e))?;
+
+        // Add file path (stored path in attachments directory)
+        attachment.add_property(
+            conn,
+            "foundation:filePath",
+            Object::Literal {
+                value: stored_path.to_string_lossy().to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            },
+            "chat"
+        ).map_err(|e| format!("Failed to set filePath: {}", e))?;
+
+        // Add attached timestamp
+        attachment.add_property(
+            conn,
+            "foundation:attachedAt",
+            Object::Literal {
+                value: now,
+                datatype: Some("xsd:dateTime".to_string()),
+                language: None,
+            },
+            "chat"
+        ).map_err(|e| format!("Failed to set attachedAt: {}", e))?;
+
+        log_backend("info", &format!("[ATTACH] Attachment created: {}", attachment_iri));
+
+        Ok(attachment_iri)
+    }).await
+}
+
+/// Sanitize filename to avoid filesystem issues
+fn sanitize_filename(filename: &str) -> String {
+    filename
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .collect()
+}
+
 /// Send a message from user to AI assistant
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn chat__send_message(
-    _app: AppHandle,
+    app: AppHandle,
     content: String,
     latitude: Option<f64>,
     longitude: Option<f64>,
+    attachment_iris: Option<Vec<String>>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     executor.write(move |conn| {
@@ -137,7 +298,7 @@ pub async fn chat__send_message(
             conn,
             "foundation:content",
             Object::Literal {
-                value: content,
+                value: content.clone(),
                 datatype: Some("xsd:string".to_string()),
                 language: Some("en".to_string()),
             },
@@ -177,16 +338,39 @@ pub async fn chat__send_message(
         ).map_err(|e| format!("Failed to link to conversation: {}", e))?;
 
         // Set message type
+        let msg_type = if attachment_iris.is_some() && !attachment_iris.as_ref().unwrap().is_empty() {
+            if content.is_empty() {
+                "image" // or "file" depending on mime type
+            } else {
+                "mixed" // text + attachments
+            }
+        } else {
+            "text"
+        };
+
         message.add_property(
             conn,
             "foundation:messageType",
             Object::Literal {
-                value: "text".to_string(),
+                value: msg_type.to_string(),
                 datatype: Some("xsd:string".to_string()),
                 language: None,
             },
             "chat"
         ).map_err(|e| format!("Failed to set messageType: {}", e))?;
+
+        // Link attachments to message
+        if let Some(attachment_list) = attachment_iris {
+            for attachment_iri in attachment_list {
+                log_backend("info", &format!("[CHAT] Linking attachment {} to message {}", attachment_iri, message_iri));
+                message.add_property(
+                    conn,
+                    "foundation:hasAttachment",
+                    Object::Iri(attachment_iri),
+                    "chat"
+                ).map_err(|e| format!("Failed to link attachment: {}", e))?;
+            }
+        }
 
         // Update user location if provided
         if let (Some(lat), Some(lon)) = (latitude, longitude) {
@@ -247,7 +431,12 @@ pub async fn chat__send_message(
         }
 
         Ok(message_iri)
-    }).await
+    }).await.map(|iri| {
+        // Emit event to notify frontend
+        use tauri::Emitter;
+        let _ = app.emit("chat-message-added", ());
+        iri
+    })
 }
 
 /// Get recent messages from the main conversation
@@ -399,6 +588,61 @@ pub async fn chat__get_recent_messages(
                 log_backend("info", &format!("[CHAT] No ToolResult query results for {}", message_iri));
             }
 
+            // Load Attachment entities linked to this message
+            let mut attachments = Vec::new();
+            if let Ok(attachment_result) = query::get_by_entity_predicate(
+                conn,
+                message_iri,
+                "foundation:hasAttachment"
+            ) {
+                log_backend("info", &format!("[CHAT] Found {} attachments for {}", attachment_result.triples.len(), message_iri));
+                for attachment_triple in attachment_result.triples {
+                    if let Some(attachment_iri) = attachment_triple.object.as_iri() {
+                        log_backend("info", &format!("[CHAT] Loading Attachment: {}", attachment_iri));
+                        if let Ok(attachment_ind) = Individual::get(conn, attachment_iri) {
+                            let file_name = attachment_ind.properties.iter()
+                                .find(|(k, _)| k == "foundation:fileName")
+                                .and_then(|(_, v)| v.as_literal())
+                                .unwrap_or_default();
+
+                            let mime_type = attachment_ind.properties.iter()
+                                .find(|(k, _)| k == "foundation:mimeType")
+                                .and_then(|(_, v)| v.as_literal())
+                                .unwrap_or_default();
+
+                            let file_size = attachment_ind.properties.iter()
+                                .find(|(k, _)| k == "foundation:fileSize")
+                                .and_then(|(_, v)| if let Object::Integer(i) = v { Some(*i) } else { None })
+                                .unwrap_or(0);
+
+                            let file_path = attachment_ind.properties.iter()
+                                .find(|(k, _)| k == "foundation:filePath")
+                                .and_then(|(_, v)| v.as_literal());
+
+                            let attached_at = attachment_ind.properties.iter()
+                                .find(|(k, _)| k == "foundation:attachedAt")
+                                .and_then(|(_, v)| v.as_literal())
+                                .unwrap_or_default();
+
+                            attachments.push(AttachmentInfo {
+                                iri: attachment_iri.to_string(),
+                                file_name: file_name.clone(),
+                                mime_type: mime_type.clone(),
+                                file_size,
+                                base64_data: None, // Don't load base64 data here for performance
+                                file_path,
+                                attached_at: attached_at.clone(),
+                            });
+                            log_backend("info", &format!("[CHAT] Added Attachment: {} ({})", attachment_iri, file_name));
+                        } else {
+                            log_backend("warn", &format!("[CHAT] Failed to load Individual for Attachment: {}", attachment_iri));
+                        }
+                    }
+                }
+            } else {
+                log_backend("info", &format!("[CHAT] No Attachments for {}", message_iri));
+            }
+
             messages_with_time.push((
                 MessageInfo {
                     iri: message_iri.clone(),
@@ -411,6 +655,7 @@ pub async fn chat__get_recent_messages(
                     conversation_iri: Some(conversation_iri.to_string()),
                     tool_uses,
                     tool_results,
+                    attachments,
                 },
                 sent_at,
             ));
@@ -483,14 +728,15 @@ pub async fn chat__send_and_reply(
     content: String,
     latitude: Option<f64>,
     longitude: Option<f64>,
+    attachment_iris: Option<Vec<String>>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<MessageInfo>, String> {
     let start_time = std::time::Instant::now();
 
     // First, send the user message with location
     super::log_backend("info", "Starting to save user message...");
-    let _user_message_iri = chat__send_message(app.clone(), content.clone(), latitude, longitude, executor.clone()).await?;
-    super::log_backend("info", &format!("User message saved in {:?}", start_time.elapsed()));
+    let user_message_iri = chat__send_message(app.clone(), content.clone(), latitude, longitude, attachment_iris.clone(), executor.clone()).await?;
+    super::log_backend("info", &format!("User message saved in {:?} with IRI: {}", start_time.elapsed(), user_message_iri));
 
     // Get user and AI information from database
     let step_time = std::time::Instant::now();
@@ -596,9 +842,90 @@ pub async fn chat__send_and_reply(
 
         // Add current message at the end (only on first iteration)
         if is_first_iteration {
-            messages.push(crate::ai::ChatMessage::text("user", content.clone()));
+            super::log_backend("info", &format!("[CHAT] Loading current user message with attachments: {}", user_message_iri));
+
+            // Load the just-created message WITH attachments from database
+            let current_msg = get_recent_messages_internal(1, &executor).await?;
+
+            if let Some(msg_info) = current_msg.first() {
+                super::log_backend("info", &format!("[CHAT] Current message has {} attachments", msg_info.attachments.len()));
+
+                // Build content blocks for the message
+                let mut blocks = Vec::new();
+
+                // Add text content
+                if !msg_info.content.is_empty() {
+                    blocks.push(crate::ai::providers::ContentBlock::Text {
+                        text: msg_info.content.clone(),
+                    });
+                }
+
+                // Add attachments (images and documents)
+                for attachment in &msg_info.attachments {
+                    if let Some(ref file_path) = attachment.file_path {
+                        if attachment.mime_type.starts_with("image/") {
+                            super::log_backend("info", &format!("[CHAT] Adding image from: {}", file_path));
+                            if let Ok(file_data) = std::fs::read(file_path) {
+                                use base64::Engine;
+                                let base64_data = base64::engine::general_purpose::STANDARD.encode(&file_data);
+                                blocks.push(crate::ai::providers::ContentBlock::Image {
+                                    source: crate::ai::providers::ImageSource {
+                                        source_type: "base64".to_string(),
+                                        media_type: attachment.mime_type.clone(),
+                                        data: base64_data,
+                                    },
+                                });
+                                super::log_backend("info", &format!("[CHAT] ✅ Added image to current message: {}", attachment.file_name));
+                            } else {
+                                super::log_backend("warn", &format!("[CHAT] ❌ Failed to read image file: {}", file_path));
+                            }
+                        } else if attachment.mime_type == "application/pdf" {
+                            super::log_backend("info", &format!("[CHAT] Adding PDF document from: {}", file_path));
+                            if let Ok(file_data) = std::fs::read(file_path) {
+                                use base64::Engine;
+                                let base64_data = base64::engine::general_purpose::STANDARD.encode(&file_data);
+                                blocks.push(crate::ai::providers::ContentBlock::Document {
+                                    source: crate::ai::providers::DocumentSource {
+                                        source_type: "base64".to_string(),
+                                        media_type: "application/pdf".to_string(),
+                                        data: base64_data,
+                                    },
+                                });
+                                super::log_backend("info", &format!("[CHAT] ✅ Added PDF document to current message: {}", attachment.file_name));
+                            } else {
+                                super::log_backend("warn", &format!("[CHAT] ❌ Failed to read PDF file: {}", file_path));
+                            }
+                        }
+                    }
+                }
+
+                if blocks.is_empty() {
+                    // Fallback to text-only if no blocks
+                    messages.push(crate::ai::ChatMessage::text("user", content.clone()));
+                } else {
+                    messages.push(crate::ai::ChatMessage::with_blocks("user", blocks));
+                }
+            } else {
+                // Fallback if message not found
+                super::log_backend("warn", "[CHAT] Could not load current message, using text-only fallback");
+                messages.push(crate::ai::ChatMessage::text("user", content.clone()));
+            }
+
             is_first_iteration = false;
         }
+
+        // Calculate total tokens being sent to API
+        let bpe = get_tokenizer();
+        let system_tokens = count_tokens_with_bpe(bpe, &context);
+        let tools_tokens = count_tool_tokens(bpe, &tools);
+        let messages_json = serde_json::to_string(&messages).unwrap_or_default();
+        let messages_tokens = count_tokens_with_bpe(bpe, &messages_json);
+        let total_tokens = system_tokens + tools_tokens + messages_tokens;
+
+        super::log_backend("info", &format!(
+            "[API REQUEST] Sending to Claude API: {} total tokens (system={}, tools={}, messages={})",
+            total_tokens, system_tokens, tools_tokens, messages_tokens
+        ));
 
         // Make request to Claude
         let request = crate::ai::GenerateRequest {
@@ -686,6 +1013,12 @@ pub async fn chat__send_and_reply(
 
             Ok(ai_message_iri)
         }).await?;
+
+        // Emit event to notify frontend
+        {
+            use tauri::Emitter;
+            let _ = app.emit("chat-message-added", ());
+        }
 
         // If no tool calls, we're done - return the AI response
         if response.tool_calls.is_empty() {
@@ -930,6 +1263,12 @@ pub async fn chat__send_and_reply(
                 Ok(msg_iri)
             }).await?;
 
+            // Emit event to notify frontend
+            {
+                use tauri::Emitter;
+                let _ = app.emit("chat-message-added", ());
+            }
+
             super::log_backend("info", &format!("Created tool results message: {}", tool_results_message_iri));
         }
 
@@ -1091,6 +1430,61 @@ async fn get_recent_messages_internal(
                     log_backend("info", &format!("[CHAT] No ToolResult query results for {}", message_iri));
                 }
 
+                // Load Attachment entities linked to this message
+                let mut attachments = Vec::new();
+                if let Ok(attachment_result) = query::get_by_entity_predicate(
+                    conn,
+                    message_iri,
+                    "foundation:hasAttachment"
+                ) {
+                    log_backend("info", &format!("[CHAT] Found {} attachments for {}", attachment_result.triples.len(), message_iri));
+                    for attachment_triple in attachment_result.triples {
+                        if let Some(attachment_iri) = attachment_triple.object.as_iri() {
+                            log_backend("info", &format!("[CHAT] Loading Attachment: {}", attachment_iri));
+                            if let Ok(attachment_ind) = Individual::get(conn, attachment_iri) {
+                                let file_name = attachment_ind.properties.iter()
+                                    .find(|(k, _)| k == "foundation:fileName")
+                                    .and_then(|(_, v)| v.as_literal())
+                                    .unwrap_or_default();
+
+                                let mime_type = attachment_ind.properties.iter()
+                                    .find(|(k, _)| k == "foundation:mimeType")
+                                    .and_then(|(_, v)| v.as_literal())
+                                    .unwrap_or_default();
+
+                                let file_size = attachment_ind.properties.iter()
+                                    .find(|(k, _)| k == "foundation:fileSize")
+                                    .and_then(|(_, v)| if let Object::Integer(i) = v { Some(*i) } else { None })
+                                    .unwrap_or(0);
+
+                                let file_path = attachment_ind.properties.iter()
+                                    .find(|(k, _)| k == "foundation:filePath")
+                                    .and_then(|(_, v)| v.as_literal());
+
+                                let attached_at = attachment_ind.properties.iter()
+                                    .find(|(k, _)| k == "foundation:attachedAt")
+                                    .and_then(|(_, v)| v.as_literal())
+                                    .unwrap_or_default();
+
+                                attachments.push(AttachmentInfo {
+                                    iri: attachment_iri.to_string(),
+                                    file_name: file_name.clone(),
+                                    mime_type: mime_type.clone(),
+                                    file_size,
+                                    base64_data: None,
+                                    file_path,
+                                    attached_at: attached_at.clone(),
+                                });
+                                log_backend("info", &format!("[CHAT] Added Attachment: {} ({})", attachment_iri, file_name));
+                            } else {
+                                log_backend("warn", &format!("[CHAT] Failed to load Individual for Attachment: {}", attachment_iri));
+                            }
+                        }
+                    }
+                } else {
+                    log_backend("info", &format!("[CHAT] No Attachments for {}", message_iri));
+                }
+
                 messages.push(MessageInfo {
                     iri: message_iri.to_string(),
                     content,
@@ -1102,6 +1496,7 @@ async fn get_recent_messages_internal(
                     conversation_iri: Some(conversation_iri.to_string()),
                     tool_uses,
                     tool_results,
+                    attachments,
                 });
             }
         }
@@ -1148,16 +1543,13 @@ async fn load_history_with_limit(
     tools: &[crate::ai::providers::ClaudeTool],
     current_message: &str,
 ) -> Result<Vec<crate::ai::ChatMessage>, String> {
-    // Load tokenizer once at the start
-    let tokenizer_start = std::time::Instant::now();
-    let bpe = cl100k_base().map_err(|e| format!("Failed to load tokenizer: {}", e))?;
-    let tokenizer_elapsed = tokenizer_start.elapsed();
-    super::log_backend("info", &format!("[TOKENIZER] Loaded tokenizer in {:?}", tokenizer_elapsed));
+    // Use cached tokenizer (loaded once globally)
+    let bpe = get_tokenizer();
 
     // Calculate fixed overhead
-    let system_tokens = count_tokens_with_bpe(&bpe, system_prompt);
-    let tools_tokens = count_tool_tokens(&bpe, tools);
-    let current_tokens = count_tokens_with_bpe(&bpe, current_message);
+    let system_tokens = count_tokens_with_bpe(bpe, system_prompt);
+    let tools_tokens = count_tool_tokens(bpe, tools);
+    let current_tokens = count_tokens_with_bpe(bpe, current_message);
 
     let overhead = system_tokens + tools_tokens + current_tokens;
 
@@ -1174,11 +1566,12 @@ async fn load_history_with_limit(
         )
     );
 
-    // Load all recent messages
+    // Load recent messages (50 is a good balance between performance and context)
+    // The token budget system below will filter to what actually fits
     let load_all_start = std::time::Instant::now();
-    let all_messages = get_recent_messages_internal(100, executor).await?;
+    let all_messages = get_recent_messages_internal(50, executor).await?;
     let load_all_elapsed = load_all_start.elapsed();
-    super::log_backend("info", &format!("[PERF] get_recent_messages_internal took {:?}", load_all_elapsed));
+    super::log_backend("info", &format!("[PERF] get_recent_messages_internal(50) took {:?}", load_all_elapsed));
 
     // Build message list from newest to oldest, stopping when we hit the limit
     let mut selected_messages = Vec::new();
@@ -1189,15 +1582,17 @@ async fn load_history_with_limit(
     // On second request (after tool execution), current_message is empty, so include all messages
     let mut must_include_next = false;
 
-    let messages_to_process: Vec<_> = if current_message.is_empty() {
+    // Determine which messages to process
+    let messages_to_iter: Vec<_> = if current_message.is_empty() {
         // Second request: include all messages (including tool_results message)
-        all_messages.iter().collect()
+        all_messages.iter().rev().collect()
     } else {
         // First request: skip last message (current user message)
-        all_messages.iter().rev().skip(1).rev().collect()
+        // all_messages is oldest->newest, so skip(1).rev() gives us newest->oldest without last
+        all_messages.iter().rev().skip(1).collect()
     };
 
-    for msg in messages_to_process {
+    for msg in messages_to_iter {
         let message_iri = msg.iri.clone();
 
         let load_start = std::time::Instant::now();
@@ -1283,8 +1678,9 @@ async fn load_history_with_limit(
             "assistant"
         };
 
-        // Build content blocks if there are tool uses/results
-        let chat_message = if !tool_uses.is_empty() || !tool_results.is_empty() {
+        // Build content blocks if there are tool uses/results/attachments
+        let has_attachments = !msg.attachments.is_empty();
+        let chat_message = if !tool_uses.is_empty() || !tool_results.is_empty() || has_attachments {
             let mut blocks = Vec::new();
 
             // Add text content if present
@@ -1292,6 +1688,44 @@ async fn load_history_with_limit(
                 blocks.push(crate::ai::providers::ContentBlock::Text {
                     text: msg.content.clone(),
                 });
+            }
+
+            // Add attachment blocks (images)
+            super::log_backend("info", &format!("[CHAT] Checking attachments: role={}, has_attachments={}, attachments.len={}", role, has_attachments, msg.attachments.len()));
+            if role == "user" && has_attachments {
+                super::log_backend("info", &format!("[CHAT] Processing {} attachments for user message", msg.attachments.len()));
+                for attachment in &msg.attachments {
+                    super::log_backend("info", &format!("[CHAT] Processing attachment: {} ({})", attachment.file_name, attachment.mime_type));
+                    // Only process image attachments
+                    if attachment.mime_type.starts_with("image/") {
+                        super::log_backend("info", &format!("[CHAT] Attachment is an image, file_path={:?}", attachment.file_path));
+                        // Read file and convert to base64
+                        if let Some(ref file_path) = attachment.file_path {
+                            super::log_backend("info", &format!("[CHAT] Reading image file: {}", file_path));
+                            if let Ok(file_data) = std::fs::read(file_path) {
+                                use base64::Engine;
+                                let base64_data = base64::engine::general_purpose::STANDARD.encode(&file_data);
+                                let data_len = base64_data.len();
+                                blocks.push(crate::ai::providers::ContentBlock::Image {
+                                    source: crate::ai::providers::ImageSource {
+                                        source_type: "base64".to_string(),
+                                        media_type: attachment.mime_type.clone(),
+                                        data: base64_data,
+                                    },
+                                });
+                                super::log_backend("info", &format!("[CHAT] ✅ Added image block: {} ({} bytes base64)", attachment.file_name, data_len));
+                            } else {
+                                super::log_backend("warn", &format!("[CHAT] ❌ Failed to read attachment file: {}", file_path));
+                            }
+                        } else {
+                            super::log_backend("warn", &format!("[CHAT] ❌ Attachment has no file_path"));
+                        }
+                    } else {
+                        super::log_backend("info", &format!("[CHAT] Skipping non-image attachment: {}", attachment.mime_type));
+                    }
+                }
+            } else {
+                super::log_backend("info", &format!("[CHAT] Skipping attachments: role={}, has_attachments={}", role, has_attachments));
             }
 
             // Add tool use blocks (for assistant messages)
@@ -1370,13 +1804,23 @@ async fn load_history_with_limit(
             }
 
             tokens_used += msg_tokens;
-            must_include_next = false; // Reset flag
 
-            // If this is an assistant message with tool_use, set flag to force include next user message
-            if role == "assistant" && !tool_uses.is_empty() {
+            // Since we iterate newest->oldest, if we see user message with tool_results,
+            // we must include the next message (assistant with tool_use that came before it)
+            if has_tool_results {
                 must_include_next = true;
+            } else {
+                must_include_next = false;
             }
 
+            let block_types: Vec<String> = blocks.iter().map(|b| match b {
+                crate::ai::providers::ContentBlock::Text { .. } => "text".to_string(),
+                crate::ai::providers::ContentBlock::Image { .. } => "image".to_string(),
+                crate::ai::providers::ContentBlock::Document { .. } => "document".to_string(),
+                crate::ai::providers::ContentBlock::ToolUse { .. } => "tool_use".to_string(),
+                crate::ai::providers::ContentBlock::ToolResult { .. } => "tool_result".to_string(),
+            }).collect();
+            super::log_backend("info", &format!("[CHAT] Creating message with {} blocks (role: {}, has_attachments: {}, types: {:?})", blocks.len(), role, has_attachments, block_types));
             crate::ai::ChatMessage::with_blocks(role, blocks)
         } else {
             // Simple text message
@@ -1410,10 +1854,12 @@ async fn load_history_with_limit(
     }
 
     super::log_backend(
-
         "info",
         &format!("Loaded {} messages using ~{} tokens", selected_messages.len(), tokens_used)
     );
+
+    // Reverse to chronological order (oldest first) as expected by API
+    selected_messages.reverse();
 
     Ok(selected_messages)
 }

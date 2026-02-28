@@ -1,5 +1,7 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
+	import { convertFileSrc } from '@tauri-apps/api/core';
+	import { openPath } from '@tauri-apps/plugin-opener';
 	import { onMount } from 'svelte';
 	import { marked } from 'marked';
 	import Card from './Card.svelte';
@@ -22,6 +24,12 @@
 	let apiKey = $state('');
 	let isInitialized = $state(false);
 	let showApiKeyInput = $state(false);
+	let messageLimit = $state(50);
+	let isLoadingMore = $state(false);
+	let hasMoreMessages = $state(true);
+	let textareaElement = $state(null);
+	let pendingAttachments = $state([]);  // {iri, fileName, mimeType, fileSize, localPath}
+	let fileInputElement = $state(null);
 
 	// Load recent messages on mount and request location
 	onMount(async () => {
@@ -46,22 +54,91 @@
 		// Load messages immediately
 		await loadMessages();
 
-		// Also listen for import-complete in case database is still initializing
+		// Listen for database events and message updates
 		const { listen } = await import('@tauri-apps/api/event');
-		const unlisten = await listen('import-complete', async () => {
+
+		// Listen for import-complete in case database is still initializing
+		const unlistenImport = await listen('import-complete', async () => {
 			console.log('[ChatWindow] Database re-initialized, reloading...');
 			await loadMessages();
 		});
 
-		// Cleanup listener on unmount
+		// Listen for new messages
+		const unlistenMessages = await listen('chat-message-added', async () => {
+			console.log('[ChatWindow] New message detected, reloading...');
+			await loadMessages();
+		});
+
+		// Cleanup listeners on unmount
 		return () => {
-			unlisten();
+			unlistenImport();
+			unlistenMessages();
 		};
 	});
 
 	function renderMarkdown(text) {
 		if (!text) return '';
 		return marked.parse(text);
+	}
+
+	async function openFile(filePath) {
+		if (!filePath) return;
+		try {
+			await openPath(filePath);
+		} catch (err) {
+			console.error('Failed to open file:', err);
+		}
+	}
+
+	// Auto-resize textarea
+	function autoResizeTextarea() {
+		if (!textareaElement) return;
+
+		// Reset height to auto to get the correct scrollHeight
+		textareaElement.style.height = 'auto';
+
+		// Set new height based on scrollHeight, with max of 15 lines (~300px)
+		const newHeight = Math.min(textareaElement.scrollHeight, 300);
+		textareaElement.style.height = newHeight + 'px';
+	}
+
+	// Watch for input text changes to auto-resize
+	$effect(() => {
+		inputText; // Track inputText changes
+		autoResizeTextarea();
+	});
+
+	// Group ToolUse with their corresponding ToolResults across all messages
+	function groupToolsWithResults(message, allMessages) {
+		const grouped = [];
+
+		// Safety check
+		if (!allMessages || !Array.isArray(allMessages)) {
+			console.warn('[ChatWindow] groupToolsWithResults: allMessages is not an array', allMessages);
+			return grouped;
+		}
+
+		// First, create a map of all tool results from ALL messages
+		const resultsMap = new Map();
+		for (const msg of allMessages) {
+			if (msg && msg.toolResults) {
+				for (const result of msg.toolResults) {
+					resultsMap.set(result.resultOfIri, result);
+				}
+			}
+		}
+
+		// Now match each toolUse with its result
+		if (message && message.toolUses) {
+			for (const toolUse of message.toolUses) {
+				grouped.push({
+					toolUse,
+					toolResult: resultsMap.get(toolUse.iri) || null
+				});
+			}
+		}
+
+		return grouped;
 	}
 
 	async function initializeAI(key) {
@@ -109,9 +186,13 @@
 	async function loadMessages() {
 		try {
 			const msgs = await invoke('chat__get_recent_messages', {
-				limit: 100
+				limit: messageLimit
 			});
-			console.log('Loaded messages:', msgs);
+			console.log('Loaded messages:', msgs.length, 'of', messageLimit);
+
+			// Check if we got fewer messages than requested (means we've loaded all)
+			hasMoreMessages = msgs.length === messageLimit;
+
 			messages = msgs;
 			scrollToBottom();
 		} catch (err) {
@@ -119,59 +200,75 @@
 		}
 	}
 
-	async function sendMessage() {
-		if (!inputText.trim() || isLoading || !isInitialized) return;
+	async function loadMoreMessages() {
+		if (isLoadingMore || !hasMoreMessages) return;
 
-		const content = inputText.trim();
-		inputText = '';
-		isLoading = true;
-
-		// Add user message immediately with optimistic update
-		const optimisticUserMessage = {
-			iri: `temp:user_${Date.now()}`,
-			senderLabel: 'You',
-			senderIri: 'foundation:ThisUser',
-			receiverLabel: 'AI',
-			receiverIri: 'foundation:AI',
-			content: content,
-			sentAt: Date.now(),
-			toolUses: [],
-			toolResults: [],
-			isOptimistic: true
-		};
-
-		// Add AI thinking indicator
-		const thinkingMessage = {
-			iri: `temp:thinking_${Date.now()}`,
-			senderLabel: 'AI',
-			senderIri: 'foundation:AI',
-			receiverLabel: 'You',
-			receiverIri: 'foundation:ThisUser',
-			content: null,
-			sentAt: Date.now(),
-			toolUses: [],
-			toolResults: [],
-			isThinking: true
-		};
-
-		messages = [...messages, optimisticUserMessage, thinkingMessage];
-		scrollToBottom();
+		isLoadingMore = true;
+		const previousScrollHeight = chatContainer?.scrollHeight || 0;
 
 		try {
-			// Send user message and get AI reply with location if available
-			const newMessages = await invoke('chat__send_and_reply', {
+			// Increase limit to load 50 more messages
+			messageLimit += 50;
+
+			const msgs = await invoke('chat__get_recent_messages', {
+				limit: messageLimit
+			});
+			console.log('Loaded more messages:', msgs.length, 'of', messageLimit);
+
+			// Check if we got fewer messages than requested (means we've loaded all)
+			hasMoreMessages = msgs.length === messageLimit;
+
+			messages = msgs;
+
+			// Maintain scroll position
+			setTimeout(() => {
+				if (chatContainer) {
+					const newScrollHeight = chatContainer.scrollHeight;
+					chatContainer.scrollTop = newScrollHeight - previousScrollHeight;
+				}
+			}, 0);
+		} catch (err) {
+			console.error('Failed to load more messages:', err);
+		} finally {
+			isLoadingMore = false;
+		}
+	}
+
+	function handleScroll() {
+		if (!chatContainer || isLoadingMore) return;
+
+		// If scrolled to top (with small threshold), load more
+		if (chatContainer.scrollTop < 100) {
+			loadMoreMessages();
+		}
+	}
+
+	async function sendMessage() {
+		if ((!inputText.trim() && pendingAttachments.length === 0) || isLoading || !isInitialized) return;
+
+		const content = inputText.trim();
+		const attachmentIris = pendingAttachments.map(a => a.iri);
+
+		inputText = '';
+		pendingAttachments = [];
+		isLoading = true;
+
+		// Reset textarea height after clearing input
+		if (textareaElement) {
+			textareaElement.style.height = 'auto';
+		}
+
+		try {
+			// Send user message and get AI reply with location and attachments
+			// Messages will be updated automatically via the event listener
+			await invoke('chat__send_and_reply', {
 				content,
 				latitude: userLocation?.latitude ?? null,
-				longitude: userLocation?.longitude ?? null
+				longitude: userLocation?.longitude ?? null,
+				attachmentIris: attachmentIris.length > 0 ? attachmentIris : null
 			});
-
-			// Update messages with the actual response
-			messages = newMessages;
-			scrollToBottom();
 		} catch (err) {
 			console.error('Failed to send message:', err);
-			// Remove optimistic messages on error
-			messages = messages.filter(m => !m.isOptimistic && !m.isThinking);
 			alert('Failed to send message: ' + err);
 		} finally {
 			isLoading = false;
@@ -258,6 +355,110 @@
 			alert('Failed to download: ' + err.message);
 		}
 	}
+
+	async function handleFileSelect() {
+		console.log('[ChatWindow] handleFileSelect called');
+		if (!fileInputElement) {
+			console.log('[ChatWindow] fileInputElement is null');
+			return;
+		}
+
+		const files = fileInputElement.files;
+		console.log('[ChatWindow] Selected files:', files?.length || 0);
+		if (!files || files.length === 0) return;
+
+		for (const file of files) {
+			console.log('[ChatWindow] Processing file:', file.name);
+			await attachFile(file);
+		}
+
+		// Clear the input
+		fileInputElement.value = '';
+	}
+
+	async function attachFile(file) {
+		try {
+			console.log('[ChatWindow] Attaching file:', file.name, file.type, file.size);
+
+			// Check file size (30 MB limit)
+			if (file.size > 30 * 1024 * 1024) {
+				alert(`File ${file.name} is too large. Maximum size is 30 MB.`);
+				return;
+			}
+
+			// Only allow images and PDFs
+			const isImage = file.type.startsWith('image/');
+			const isPDF = file.type === 'application/pdf';
+
+			if (!isImage && !isPDF) {
+				alert(`File ${file.name} is not supported. Only images (PNG, JPEG, WebP, GIF) and PDFs are supported.`);
+				return;
+			}
+
+			// Import Tauri modules
+			let tempDir, join, writeFile;
+			try {
+				const pathModule = await import('@tauri-apps/api/path');
+				const fsModule = await import('@tauri-apps/plugin-fs');
+				tempDir = pathModule.tempDir;
+				join = pathModule.join;
+				writeFile = fsModule.writeFile;
+			} catch (importErr) {
+				console.error('[ChatWindow] Failed to import Tauri modules:', importErr);
+				alert('Failed to load required modules. Make sure you are running in Tauri.');
+				return;
+			}
+
+			// Save file to temporary directory
+			const tempPath = await tempDir();
+			const timestamp = Date.now();
+			const filePath = await join(tempPath, `${timestamp}_${file.name}`);
+
+			// Read file as ArrayBuffer and write using Tauri FS
+			const arrayBuffer = await file.arrayBuffer();
+			await writeFile(filePath, new Uint8Array(arrayBuffer));
+
+			console.log('[ChatWindow] File saved to temp:', filePath);
+
+			// Call backend to save and register attachment
+			const attachmentIri = await invoke('chat__attach_file', {
+				filePath,
+				fileName: file.name,
+				mimeType: file.type
+			});
+
+			// Add to pending attachments
+			pendingAttachments = [...pendingAttachments, {
+				iri: attachmentIri,
+				fileName: file.name,
+				mimeType: file.type,
+				fileSize: file.size,
+				localPath: filePath
+			}];
+
+			console.log('[ChatWindow] Attachment added:', attachmentIri);
+		} catch (err) {
+			console.error('[ChatWindow] Failed to attach file:', err);
+			alert('Failed to attach file: ' + err);
+		}
+	}
+
+	function removeAttachment(iri) {
+		pendingAttachments = pendingAttachments.filter(a => a.iri !== iri);
+	}
+
+	function openFilePicker() {
+		console.log('[ChatWindow] openFilePicker called, fileInputElement:', fileInputElement);
+		fileInputElement?.click();
+	}
+
+	function formatFileSize(bytes) {
+		if (bytes === 0) return '0 Bytes';
+		const k = 1024;
+		const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+		const i = Math.floor(Math.log(bytes) / Math.log(k));
+		return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+	}
 </script>
 
 <!-- Chat panel (always visible when isOpen is true) -->
@@ -285,7 +486,13 @@
 					</div>
 				{:else}
 					<!-- Messages -->
-				<div class="chat-messages" bind:this={chatContainer}>
+				<div class="chat-messages" bind:this={chatContainer} onscroll={handleScroll}>
+					{#if isLoadingMore}
+						<div class="loading-more">
+							<span class="material-symbols-outlined spinning">refresh</span>
+							<span>Loading more messages...</span>
+						</div>
+					{/if}
 					{#if messages.length === 0}
 						<div class="empty-state">
 							<span class="material-symbols-outlined">chat_bubble</span>
@@ -310,69 +517,134 @@
 										</div>
 									{/if}
 
+									{#if message.attachments && message.attachments.length > 0}
+										<div class="message-attachments">
+											{#each message.attachments as attachment}
+												{#if attachment.mimeType.startsWith('image/')}
+													<button
+														class="attachment-thumbnail attachment-image"
+														onclick={() => openFile(attachment.filePath)}
+														title="Click to open in default app"
+													>
+														{#if attachment.filePath}
+															<img
+																src={convertFileSrc(attachment.filePath)}
+																alt={attachment.fileName}
+															/>
+														{/if}
+														<div class="attachment-info">
+															<span class="material-symbols-outlined">image</span>
+															<span class="attachment-name">{attachment.fileName}</span>
+															<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
+														</div>
+													</button>
+												{:else if attachment.mimeType === 'application/pdf'}
+													<button
+														class="attachment-thumbnail attachment-pdf"
+														onclick={() => openFile(attachment.filePath)}
+														title="Click to open in default app"
+													>
+														<div class="pdf-preview">
+															<span class="material-symbols-outlined">picture_as_pdf</span>
+															<span class="pdf-label">PDF</span>
+														</div>
+														<div class="attachment-info">
+															<span class="attachment-name">{attachment.fileName}</span>
+															<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
+														</div>
+													</button>
+												{:else}
+													<button
+														class="attachment-thumbnail attachment-file"
+														onclick={() => openFile(attachment.filePath)}
+														title="Click to open in default app"
+													>
+														<div class="file-preview">
+															<span class="material-symbols-outlined">attach_file</span>
+														</div>
+														<div class="attachment-info">
+															<span class="attachment-name">{attachment.fileName}</span>
+															<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
+														</div>
+													</button>
+												{/if}
+											{/each}
+										</div>
+									{/if}
+
 									{#if message.toolUses && message.toolUses.length > 0}
-										<div class="tool-uses">
+										{@const toolGroups = groupToolsWithResults(message, messages)}
+										{#if toolGroups.length > 0}
+										<div class="tool-execution-groups">
 											<div class="tool-header">
 												<span class="material-symbols-outlined">construction</span>
-												<span>Tools Called ({message.toolUses.length})</span>
+												<span>Tool Executions ({toolGroups.length})</span>
 											</div>
-											{#each message.toolUses as toolUse}
-												<details class="tool-item" open>
-													<summary class="tool-name">
-														<span class="material-symbols-outlined">build</span>
-														{toolUse.toolName}
+											{#each toolGroups as group}
+												<details class="tool-group">
+													<summary class="tool-group-summary {group.toolResult ? (group.toolResult.isSuccess ? 'success' : 'error') : 'pending'}">
+														<span class="material-symbols-outlined">
+															{group.toolResult
+																? (group.toolResult.isSuccess ? 'check_circle' : 'error')
+																: 'pending'}
+														</span>
+														<span class="tool-group-title">
+															{group.toolUse ? group.toolUse.toolName : 'Unknown Tool'}
+														</span>
+														{#if group.toolResult}
+															<span class="tool-status-badge {group.toolResult.isSuccess ? 'success' : 'error'}">
+																{group.toolResult.isSuccess ? '✓ Success' : '✗ Failed'}
+															</span>
+														{/if}
 													</summary>
-													<div class="tool-details">
-														<div class="tool-meta">
-															<strong>Tool Use ID:</strong> <code>{toolUse.toolUseId}</code>
-														</div>
-														<div class="tool-meta">
-															<strong>IRI:</strong> <code>{toolUse.iri}</code>
-														</div>
-														{#if toolUse.input}
-															<div class="tool-input">
-																<strong>Input Parameters:</strong>
-																<pre class="tool-input-json">{JSON.stringify(JSON.parse(toolUse.input), null, 2)}</pre>
+													<div class="tool-group-content">
+														{#if group.toolUse}
+															<div class="tool-section">
+																<div class="tool-section-header">
+																	<span class="material-symbols-outlined">call_made</span>
+																	<strong>Request</strong>
+																</div>
+																<div class="tool-meta">
+																	<strong>Tool Use ID:</strong> <code>{group.toolUse.toolUseId}</code>
+																</div>
+																<div class="tool-meta">
+																	<strong>IRI:</strong> <code>{group.toolUse.iri}</code>
+																</div>
+																{#if group.toolUse.input}
+																	<div class="tool-input">
+																		<strong>Input Parameters:</strong>
+																		<pre class="tool-input-json">{JSON.stringify(JSON.parse(group.toolUse.input), null, 2)}</pre>
+																	</div>
+																{/if}
+															</div>
+														{/if}
+
+														{#if group.toolResult}
+															<div class="tool-section">
+																<div class="tool-section-header">
+																	<span class="material-symbols-outlined">call_received</span>
+																	<strong>Response</strong>
+																</div>
+																<div class="tool-meta">
+																	<strong>Result IRI:</strong> <code>{group.toolResult.iri}</code>
+																</div>
+																<div class="tool-result-content-wrapper">
+																	<strong>Result:</strong>
+																	<pre class="tool-result-content">{(() => {
+																		try {
+																			return JSON.stringify(JSON.parse(group.toolResult.resultContent), null, 2);
+																		} catch {
+																			return group.toolResult.resultContent;
+																		}
+																	})()}</pre>
+																</div>
 															</div>
 														{/if}
 													</div>
 												</details>
 											{/each}
 										</div>
-									{/if}
-
-									{#if message.toolResults && message.toolResults.length > 0}
-										<div class="tool-results">
-											<div class="tool-header">
-												<span class="material-symbols-outlined">{message.toolResults.every(r => r.isSuccess) ? 'check_circle' : 'error'}</span>
-												<span>Tool Results ({message.toolResults.length})</span>
-											</div>
-											{#each message.toolResults as result}
-												<details class="tool-result-item" open>
-													<summary class="tool-result-summary {result.isSuccess ? 'success' : 'error'}">
-														{result.isSuccess ? '✓' : '✗'} Result for {result.resultOfIri}
-													</summary>
-													<div class="tool-result-details">
-														<div class="tool-meta">
-															<strong>IRI:</strong> <code>{result.iri}</code>
-														</div>
-														<div class="tool-meta">
-															<strong>Status:</strong> <span class="{result.isSuccess ? 'status-success' : 'status-error'}">{result.isSuccess ? 'Success' : 'Failed'}</span>
-														</div>
-														<div class="tool-result-content-wrapper">
-															<strong>Result:</strong>
-															<pre class="tool-result-content">{(() => {
-																try {
-																	return JSON.stringify(JSON.parse(result.resultContent), null, 2);
-																} catch {
-																	return result.resultContent;
-																}
-															})()}</pre>
-														</div>
-													</div>
-												</details>
-											{/each}
-										</div>
+										{/if}
 									{/if}
 
 									<div class="message-time">
@@ -397,16 +669,60 @@
 					</button>
 				</div>
 
+				<!-- Hidden file input -->
+				<input
+					type="file"
+					bind:this={fileInputElement}
+					onchange={handleFileSelect}
+					accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+					multiple
+					style="display: none;"
+				/>
+
+				<!-- Pending attachments preview -->
+				{#if pendingAttachments.length > 0}
+					<div class="attachments-preview">
+						{#each pendingAttachments as attachment}
+							<div class="attachment-item">
+								<span class="material-symbols-outlined">
+									{attachment.mimeType.startsWith('image/') ? 'image' : 'picture_as_pdf'}
+								</span>
+								<span class="attachment-name">{attachment.fileName}</span>
+								<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
+								<button
+									class="remove-attachment"
+									onclick={() => removeAttachment(attachment.iri)}
+									aria-label="Remove attachment"
+								>
+									<span class="material-symbols-outlined">close</span>
+								</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+
 				<!-- Input -->
 				<div class="chat-input">
+					<button
+						class="attach-btn"
+						onclick={(e) => {
+							console.log('[ChatWindow] Attach button clicked!', e);
+							openFilePicker();
+						}}
+						disabled={isLoading}
+						aria-label="Attach file"
+					>
+						<span class="material-symbols-outlined">attach_file</span>
+					</button>
 					<textarea
+						bind:this={textareaElement}
 						bind:value={inputText}
 						onkeydown={handleKeydown}
 						placeholder="Ask me anything..."
 						rows="1"
 						disabled={isLoading}
 					></textarea>
-					<button onclick={sendMessage} disabled={!inputText.trim() || isLoading} aria-label="Send" class:loading={isLoading}>
+					<button onclick={sendMessage} disabled={(!inputText.trim() && pendingAttachments.length === 0) || isLoading} aria-label="Send" class:loading={isLoading}>
 						<span class="material-symbols-outlined">
 							{isLoading ? 'hourglass_empty' : 'send'}
 						</span>
@@ -528,6 +844,98 @@
 	.message.ai .message-text {
 		background: color-mix(in srgb, var(--color-white) 10%, transparent);
 		border-color: color-mix(in srgb, var(--color-white) 20%, transparent);
+	}
+
+	/* Attachment Styles */
+	.message-attachments {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: 8px;
+	}
+
+	.attachment-thumbnail {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+		border-radius: 8px;
+		padding: 8px;
+		cursor: pointer;
+		transition: all 0.2s;
+		min-width: 150px;
+		max-width: 200px;
+		text-align: left;
+	}
+
+	.attachment-thumbnail:hover {
+		background: color-mix(in srgb, var(--color-white) 12%, transparent);
+		border-color: color-mix(in srgb, var(--color-white) 25%, transparent);
+		transform: translateY(-1px);
+	}
+
+	.attachment-thumbnail:active {
+		transform: translateY(0);
+	}
+
+	.attachment-image img {
+		width: 100%;
+		height: 120px;
+		border-radius: 6px;
+		object-fit: cover;
+		background: color-mix(in srgb, var(--color-black) 5%, transparent);
+	}
+
+	.pdf-preview,
+	.file-preview {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		height: 120px;
+		background: color-mix(in srgb, var(--color-white) 5%, transparent);
+		border-radius: 6px;
+	}
+
+	.pdf-preview .material-symbols-outlined,
+	.file-preview .material-symbols-outlined {
+		font-size: 48px;
+		opacity: 0.4;
+	}
+
+	.pdf-label {
+		font-size: 14px;
+		font-weight: 600;
+		opacity: 0.6;
+		margin-top: 4px;
+	}
+
+	.attachment-info {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 11px;
+		color: var(--color-neutral-secondary);
+	}
+
+	.attachment-info .material-symbols-outlined {
+		font-size: 14px;
+		opacity: 0.6;
+	}
+
+	.attachment-name {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 11px;
+	}
+
+	.attachment-size {
+		opacity: 0.7;
+		font-size: 10px;
+		white-space: nowrap;
 	}
 
 	/* Markdown Content Styles */
@@ -769,11 +1177,105 @@
 		font-size: 18px;
 	}
 
+	/* Attachments preview */
+	.attachments-preview {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		margin-bottom: 12px;
+		padding: 12px;
+		background: color-mix(in srgb, var(--color-white) 5%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+		border-radius: 8px;
+	}
+
+	.attachment-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px;
+		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+		border-radius: 6px;
+		font-size: 13px;
+	}
+
+	.attachment-item .material-symbols-outlined {
+		font-size: 20px;
+		color: var(--color-interactive);
+	}
+
+	.attachment-name {
+		flex: 1;
+		color: var(--color-neutral-active);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.attachment-size {
+		color: var(--color-neutral);
+		font-size: 11px;
+	}
+
+	.remove-attachment {
+		width: 24px;
+		height: 24px;
+		border-radius: 4px;
+		background: transparent;
+		border: none;
+		color: var(--color-neutral);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: all 0.2s;
+	}
+
+	.remove-attachment:hover {
+		background: color-mix(in srgb, var(--color-white) 10%, transparent);
+		color: #f44336;
+	}
+
+	.remove-attachment .material-symbols-outlined {
+		font-size: 16px;
+	}
+
 	/* Input */
 	.chat-input {
 		display: flex;
 		gap: 8px;
 		flex-shrink: 0;
+		align-items: flex-end;
+	}
+
+	.attach-btn {
+		width: 40px;
+		height: 40px;
+		border-radius: 50%;
+		background: transparent;
+		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+		color: var(--color-neutral);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: all 0.2s;
+		flex-shrink: 0;
+	}
+
+	.attach-btn:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--color-white) 10%, transparent);
+		border-color: var(--color-interactive);
+		color: var(--color-interactive);
+	}
+
+	.attach-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.attach-btn .material-symbols-outlined {
+		font-size: 20px;
 	}
 
 	.chat-input textarea {
@@ -783,10 +1285,11 @@
 		padding: 10px 16px;
 		font-family: inherit;
 		font-size: 14px;
+		line-height: 1.5;
 		resize: none;
 		min-height: 40px;
-		max-height: 80px;
-		transition: border-color 0.2s;
+		max-height: 300px;
+		transition: border-color 0.2s, height 0.1s;
 		background: color-mix(in srgb, var(--color-white) 5%, transparent);
 		color: var(--color-neutral-active);
 		overflow-y: auto;
@@ -938,9 +1441,8 @@
 		font-size: 12px;
 	}
 
-	/* Tool Uses/Results */
-	.tool-uses,
-	.tool-results {
+	/* Tool Execution Groups */
+	.tool-execution-groups {
 		margin-top: 12px;
 		padding: 12px;
 		background: color-mix(in srgb, var(--color-white) 5%, transparent);
@@ -962,44 +1464,104 @@
 		font-size: 18px;
 	}
 
-	.tool-item,
-	.tool-result-item {
+	.tool-group {
 		margin-bottom: 8px;
 		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-		border-radius: 6px;
+		border-radius: 8px;
 		background: color-mix(in srgb, var(--color-white) 3%, transparent);
+		overflow: hidden;
 	}
 
-	.tool-item summary,
-	.tool-result-item summary {
-		padding: 10px 12px;
+	.tool-group-summary {
+		padding: 12px 14px;
 		cursor: pointer;
 		user-select: none;
-		border-radius: 6px;
+		display: flex;
+		align-items: center;
+		gap: 10px;
 		transition: background 0.2s;
+		font-weight: 600;
 	}
 
-	.tool-item summary:hover,
-	.tool-result-item summary:hover {
+	.tool-group-summary:hover {
 		background: color-mix(in srgb, var(--color-white) 8%, transparent);
 	}
 
-	.tool-name {
-		font-weight: 600;
+	.tool-group-summary.success {
+		border-left: 3px solid #4caf50;
+	}
+
+	.tool-group-summary.error {
+		border-left: 3px solid #f44336;
+	}
+
+	.tool-group-summary.pending {
+		border-left: 3px solid var(--color-neutral);
+	}
+
+	.tool-group-summary .material-symbols-outlined {
+		font-size: 20px;
+	}
+
+	.tool-group-summary.success .material-symbols-outlined {
+		color: #4caf50;
+	}
+
+	.tool-group-summary.error .material-symbols-outlined {
+		color: #f44336;
+	}
+
+	.tool-group-summary.pending .material-symbols-outlined {
+		color: var(--color-neutral);
+	}
+
+	.tool-group-title {
+		flex: 1;
 		color: var(--color-interactive);
+	}
+
+	.tool-status-badge {
+		font-size: 11px;
+		padding: 4px 8px;
+		border-radius: 4px;
+		font-weight: 600;
+	}
+
+	.tool-status-badge.success {
+		background: color-mix(in srgb, #4caf50 20%, transparent);
+		color: #4caf50;
+	}
+
+	.tool-status-badge.error {
+		background: color-mix(in srgb, #f44336 20%, transparent);
+		color: #f44336;
+	}
+
+	.tool-group-content {
+		padding: 0;
+	}
+
+	.tool-section {
+		padding: 14px;
+		border-top: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+	}
+
+	.tool-section:first-child {
+		border-top: none;
+	}
+
+	.tool-section-header {
 		display: flex;
 		align-items: center;
 		gap: 6px;
+		margin-bottom: 10px;
+		color: var(--color-neutral-active);
+		font-size: 13px;
 	}
 
-	.tool-name .material-symbols-outlined {
+	.tool-section-header .material-symbols-outlined {
 		font-size: 16px;
-	}
-
-	.tool-details,
-	.tool-result-details {
-		padding: 12px;
-		border-top: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+		color: var(--color-interactive);
 	}
 
 	.tool-meta {
@@ -1052,51 +1614,35 @@
 		line-height: 1.6;
 	}
 
-	.status-success {
-		color: #4caf50;
-		font-weight: 600;
+
+	/* Loading more indicator */
+	.loading-more {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		padding: 12px;
+		color: var(--color-neutral);
+		font-size: 13px;
+		background: color-mix(in srgb, var(--color-white) 5%, transparent);
+		border-radius: 8px;
+		margin-bottom: 12px;
 	}
 
-	.status-error {
-		color: #f44336;
-		font-weight: 600;
+	.loading-more .material-symbols-outlined {
+		font-size: 18px;
 	}
 
-	.tool-result-item {
-		margin-bottom: 4px;
+	.spinning {
+		animation: spin 1s linear infinite;
 	}
 
-	.tool-result-summary {
-		padding: 6px 8px;
-		background: color-mix(in srgb, var(--color-white) 3%, transparent);
-		border-radius: 4px;
-		cursor: pointer;
-		font-size: 11px;
-	}
-
-	.tool-result-summary:hover {
-		background: color-mix(in srgb, var(--color-white) 8%, transparent);
-	}
-
-	.tool-result-summary.success {
-		color: #4CAF50;
-	}
-
-	.tool-result-summary.error {
-		color: #f44336;
-	}
-
-	.tool-result-content {
-		margin: 4px 0 0 0;
-		padding: 8px;
-		background: color-mix(in srgb, var(--color-black) 30%, transparent);
-		border-radius: 4px;
-		font-size: 10px;
-		font-family: monospace;
-		overflow-x: auto;
-		white-space: pre-wrap;
-		word-break: break-all;
-		max-height: 200px;
-		overflow-y: auto;
+	@keyframes spin {
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
 	}
 </style>

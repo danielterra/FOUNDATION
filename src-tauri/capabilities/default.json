@@ -5,6 +5,22 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default"
+    "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "$HOME/Documents/Foundation/attachments/**"
+        }
+      ]
+    },
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "fs:allow-write-file",
+    "fs:allow-read-file",
+    "fs:allow-temp-write",
+    "fs:allow-temp-write-recursive",
+    "fs:allow-home-write",
+    "fs:allow-home-write-recursive"
   ]
 }

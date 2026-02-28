@@ -112,6 +112,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|_app| {
             // Setup is intentionally minimal - initialization happens via initialize_app command
             // This allows the app to start quickly and not block during build/CI
@@ -135,6 +136,7 @@ pub fn run() {
             commands::ai__list_available_models,
             commands::ai__get_available_functions,
             commands::ai__execute_function,
+            commands::chat__attach_file,
             commands::chat__send_message,
             commands::chat__get_recent_messages,
             commands::chat__get_conversation_info,

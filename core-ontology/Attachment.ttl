@@ -1,0 +1,119 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Attachment - File attached to messages
+# =============================================================================
+# Represents files, images, documents attached to messages sent to AI
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Attachment a owl:Class ;
+    rdfs:subClassOf foundation:DigitalThing ;
+    rdfs:label "Attachment" ;
+    rdfs:comment "A file, image, or document attached to a message for AI processing" ;
+    foundation:icon "attach_file" ;
+    rdfs:seeAlso """
+Examples:
+- Image sent to Claude for vision analysis (PNG, JPEG, WebP, GIF)
+- PDF document for text extraction and analysis
+- Screenshot for debugging assistance
+- Diagram for architecture review
+
+Supported formats:
+- Images: PNG, JPEG, WebP, GIF (for Claude Vision)
+- Documents: PDF (for Claude PDF support via Files API)
+- Text: TXT, MD, CSV (converted to text in prompt)
+""" .
+
+# -----------------------------------------------------------------------------
+# Attachment Properties
+# -----------------------------------------------------------------------------
+
+foundation:mimeType a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "MIME type" ;
+    rdfs:comment "The MIME type of the attached file" ;
+    rdfs:domain foundation:Attachment ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :attachment1 foundation:mimeType "image/png" .
+  :attachment2 foundation:mimeType "image/jpeg" .
+  :attachment3 foundation:mimeType "application/pdf" .
+  :attachment4 foundation:mimeType "text/plain" .
+
+Common values:
+- image/png
+- image/jpeg
+- image/webp
+- image/gif
+- application/pdf
+- text/plain
+- text/csv
+- text/markdown
+""" .
+
+foundation:fileSize a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "file size" ;
+    rdfs:comment "Size of the file in bytes" ;
+    rdfs:domain foundation:Attachment ;
+    rdfs:range xsd:integer ;
+    rdfs:seeAlso """
+Example:
+  :attachment1 foundation:fileSize "102400"^^xsd:integer .  # 100 KB
+  :attachment2 foundation:fileSize "5242880"^^xsd:integer . # 5 MB
+
+Maximum size for Claude: 30 MB per file
+""" .
+
+foundation:base64Data a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "base64 data" ;
+    rdfs:comment "Base64-encoded content of the file for sending to Claude API" ;
+    rdfs:domain foundation:Attachment ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :attachment1 foundation:base64Data "iVBORw0KGgoAAAANSUhEUgAA..." .
+
+Note: Used for images in Claude Vision API. PDFs may use Files API instead.
+Large files should be stored on disk with only metadata in the database.
+""" .
+
+foundation:fileName a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "file name" ;
+    rdfs:comment "Original name of the attached file" ;
+    rdfs:domain foundation:Attachment ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :attachment1 foundation:fileName "screenshot.png" .
+  :attachment2 foundation:fileName "document.pdf" .
+""" .
+
+foundation:attachedAt a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "attached at" ;
+    rdfs:comment "Timestamp when the file was attached to the message" ;
+    rdfs:domain foundation:Attachment ;
+    rdfs:range xsd:dateTime ;
+    rdfs:seeAlso """
+Example:
+  :attachment1 foundation:attachedAt "2025-02-27T15:30:00Z"^^xsd:dateTime .
+""" .
+
+foundation:fileId a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "file ID" ;
+    rdfs:comment "Claude Files API file ID for uploaded PDFs (optional)" ;
+    rdfs:domain foundation:Attachment ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :attachment1 foundation:fileId "file-abc123xyz" .
+
+Used when files are uploaded via Claude Files API (Beta) for reuse across messages.
+Only applicable for PDF files using the Files API.
+""" .

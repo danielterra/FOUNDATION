@@ -46,6 +46,14 @@ pub enum MessageContent {
 pub enum ContentBlock {
     #[serde(rename = "text")]
     Text { text: String },
+    #[serde(rename = "image")]
+    Image {
+        source: ImageSource,
+    },
+    #[serde(rename = "document")]
+    Document {
+        source: DocumentSource,
+    },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
@@ -59,6 +67,22 @@ pub enum ContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ImageSource {
+    #[serde(rename = "type")]
+    pub source_type: String, // "base64"
+    pub media_type: String,   // "image/png", "image/jpeg", "image/webp", "image/gif"
+    pub data: String,         // base64-encoded image data
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DocumentSource {
+    #[serde(rename = "type")]
+    pub source_type: String, // "base64"
+    pub media_type: String,   // "application/pdf"
+    pub data: String,         // base64-encoded document data
 }
 
 #[derive(Debug, Serialize, Deserialize)]
