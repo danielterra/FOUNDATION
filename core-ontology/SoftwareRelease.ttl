@@ -152,3 +152,12 @@ foundation:FoundationRelease_0_3_0 a foundation:SoftwareRelease , owl:NamedIndiv
     foundation:licenseType "MIT" ;
     foundation:releaseDate "2026-02-28"^^xsd:date ;
     foundation:changelog "Enhanced Inspector UI and tool execution recovery system" .
+
+foundation:FoundationRelease_0_4_0 a foundation:SoftwareRelease , owl:NamedIndividual ;
+    rdfs:label "FOUNDATION v0.4.0" ;
+    rdfs:comment "Release version 0.4.0" ;
+    foundation:releaseOf foundation:FoundationProduct ;
+    foundation:versionNumber "0.4.0" ;
+    foundation:licenseType "MIT" ;
+    foundation:releaseDate "2026-02-28"^^xsd:date ;
+    foundation:changelog "fix: Use git add -A in release script; fix: Preserve package.json formatting in release script; fix: Release script compilation errors; feat: Add pricing integration and automated release system" .
