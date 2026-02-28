@@ -165,11 +165,13 @@ fn update_package_json(project_root: &PathBuf, version: &Version) -> Result<()> 
     let package_json_path = project_root.join("package.json");
     let content = fs::read_to_string(&package_json_path)?;
 
-    let mut json: serde_json::Value = serde_json::from_str(&content)?;
-    json["version"] = serde_json::Value::String(version.to_string());
+    // Use regex to replace version without reordering JSON
+    let re = Regex::new(r#"("version"\s*:\s*")([^"]+)(")"#)?;
+    let updated_content = re.replace(&content, |caps: &regex::Captures| {
+        format!("{}{}{}", &caps[1], version.to_string(), &caps[3])
+    });
 
-    let updated_content = serde_json::to_string_pretty(&json)?;
-    fs::write(&package_json_path, updated_content + "\n")?;
+    fs::write(&package_json_path, updated_content.as_ref())?;
 
     Ok(())
 }
