@@ -23,7 +23,7 @@ impl BumpType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Version {
     major: u32,
     minor: u32,
@@ -236,10 +236,11 @@ fn get_changelog_from_git() -> Result<String> {
     };
 
     // Get commits since last tag
+    let range = format!("{}..HEAD", last_tag);
     let log_args = if last_tag.is_empty() {
         vec!["log", "--pretty=format:%s", "--no-merges"]
     } else {
-        vec!["log", &format!("{}..HEAD", last_tag), "--pretty=format:%s", "--no-merges"]
+        vec!["log", &range, "--pretty=format:%s", "--no-merges"]
     };
 
     let output = Command::new("git")
