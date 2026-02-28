@@ -312,7 +312,7 @@ fn check_clean_working_tree() -> Result<()> {
 
 fn git_add_all() -> Result<()> {
     let output = Command::new("git")
-        .args(&["add", "package.json", "src-tauri/Cargo.toml", "core-ontology/"])
+        .args(&["add", "-A"])
         .output()
         .context("Failed to stage changes")?;
 
