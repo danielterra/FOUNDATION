@@ -58,6 +58,21 @@ pub async fn initialize_app(
     let _ = app.emit("import-complete", ());
     super::log_backend("info", "Database initialization complete");
 
+    // Check for pending tool executions (from interrupted sessions)
+    super::log_backend("info", "[RECOVERY] Checking for pending tool executions on startup...");
+    let executor_state = app.state::<DbExecutor>();
+    match super::chat::check_and_execute_pending_tools(app.clone(), &executor_state).await {
+        Ok(count) if count > 0 => {
+            super::log_backend("info", &format!("[RECOVERY] Executed {} pending tools from interrupted session", count));
+        }
+        Ok(_) => {
+            super::log_backend("info", "[RECOVERY] No pending tools found");
+        }
+        Err(e) => {
+            super::log_backend("error", &format!("[RECOVERY] Failed to check pending tools: {}", e));
+        }
+    }
+
     Ok(())
 }
 

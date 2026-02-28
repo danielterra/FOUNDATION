@@ -258,21 +258,20 @@
 			textareaElement.style.height = 'auto';
 		}
 
-		try {
-			// Send user message and get AI reply with location and attachments
-			// Messages will be updated automatically via the event listener
-			await invoke('chat__send_and_reply', {
-				content,
-				latitude: userLocation?.latitude ?? null,
-				longitude: userLocation?.longitude ?? null,
-				attachmentIris: attachmentIris.length > 0 ? attachmentIris : null
-			});
-		} catch (err) {
+		// Send user message and get AI reply with location and attachments
+		// Don't await - let it run in background so UI updates immediately via events
+		invoke('chat__send_and_reply', {
+			content,
+			latitude: userLocation?.latitude ?? null,
+			longitude: userLocation?.longitude ?? null,
+			attachmentIris: attachmentIris.length > 0 ? attachmentIris : null
+		}).then(() => {
+			isLoading = false;
+		}).catch(err => {
 			console.error('Failed to send message:', err);
 			alert('Failed to send message: ' + err);
-		} finally {
 			isLoading = false;
-		}
+		});
 	}
 
 	function scrollToBottom() {

@@ -1,6 +1,6 @@
 [package]
 name = "FOUNDATION-tauri-app"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -38,6 +38,8 @@ reqwest = { version = "0.12", features = ["json"] }  # For HTTP API calls
 async-trait = "0.1"  # For async trait definitions
 tiktoken-rs = "0.6"  # For accurate token counting (Claude/GPT compatible)
 base64 = "0.22.1"
+pdf-extract = "0.10.0"
+image = "0.25.9"
 
 [dev-dependencies]
 tempfile = "3.8"  # Temporary files for tests

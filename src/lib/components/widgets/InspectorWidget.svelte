@@ -2,6 +2,8 @@
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import { convertFileSrc } from '@tauri-apps/api/core';
+  import { openPath } from '@tauri-apps/plugin-opener';
 
   let { entityId, widgetId } = $props();
 
@@ -9,6 +11,7 @@
   let loading = $state(true);
   let error = $state(null);
   let unlistenEntityUpdated = $state(null);
+  let collapsedGroups = $state(new Set());
 
   async function loadEntity() {
     loading = true;
@@ -58,6 +61,80 @@
       console.error('Failed to open inspector:', err);
     }
   }
+
+  async function openFile(filePath) {
+    if (!filePath) return;
+    try {
+      await openPath(filePath);
+    } catch (err) {
+      console.error('Failed to open file:', err);
+    }
+  }
+
+  function formatFileSize(bytes) {
+    if (!bytes) return '0 B';
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${sizes[i]}`;
+  }
+
+  function isAttachment() {
+    return entityData?.types?.some(t => t.iri === 'foundation:Attachment');
+  }
+
+  function getAttachmentFilePath() {
+    const prop = entityData?.properties?.find(p => p.property === 'foundation:filePath');
+    return prop?.value;
+  }
+
+  function getAttachmentMimeType() {
+    const prop = entityData?.properties?.find(p => p.property === 'foundation:mimeType');
+    return prop?.value;
+  }
+
+  function getAttachmentFileName() {
+    const prop = entityData?.properties?.find(p => p.property === 'foundation:fileName');
+    return prop?.value || entityData?.label;
+  }
+
+  function getAttachmentFileSize() {
+    const prop = entityData?.properties?.find(p => p.property === 'foundation:fileSize');
+    return prop?.value ? parseInt(prop.value) : null;
+  }
+
+  function toggleClassGroup(classIri) {
+    if (collapsedGroups.has(classIri)) {
+      collapsedGroups.delete(classIri);
+    } else {
+      collapsedGroups.add(classIri);
+    }
+    collapsedGroups = new Set(collapsedGroups);
+  }
+
+  function isIconUrl(icon) {
+    if (!icon) return false;
+    return icon.startsWith('http://') ||
+           icon.startsWith('https://') ||
+           icon.startsWith('data:') ||
+           icon.startsWith('/');
+  }
+
+  function getIconUrl(icon) {
+    if (!icon) return '';
+
+    // If it's a URL or data URI, return as-is
+    if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:')) {
+      return icon;
+    }
+
+    // If it's an absolute local path, convert using Tauri's asset protocol
+    if (icon.startsWith('/')) {
+      return convertFileSrc(icon);
+    }
+
+    return icon;
+  }
+
 
   function formatDate(timestamp) {
     // Handle both milliseconds and seconds timestamps
@@ -164,24 +241,32 @@
   <div class="widget-header">
     <div class="header-top">
       <div class="widget-title-wrapper">
-        <div class="widget-title">
+        <div class="widget-icon-container">
           {#if entityData?.icon}
-            <span class="material-symbols-outlined">{entityData.icon}</span>
+            {#if isIconUrl(entityData.icon)}
+              <img src={getIconUrl(entityData.icon)} alt="" class="entity-icon-image" />
+            {:else}
+              <span class="material-symbols-outlined entity-icon-symbol">{entityData.icon}</span>
+            {/if}
           {:else}
-            <span class="material-symbols-outlined">info</span>
+            <span class="material-symbols-outlined entity-icon-symbol">info</span>
           {/if}
-          <span>{entityData?.label || 'Inspector'}</span>
         </div>
-        {#if entityData?.types?.length > 0}
-          <div class="header-types">
-            {#each entityData.types as type, idx}
-              {#if idx > 0}<span class="type-separator">·</span>{/if}
-              <button class="type-link" onclick={() => openEntityInspector(type.iri)}>
-                {type.label}
-              </button>
-            {/each}
+        <div class="widget-title-info">
+          <div class="widget-title">
+            <span>{entityData?.label || 'Inspector'}</span>
           </div>
-        {/if}
+          {#if entityData?.types?.length > 0}
+            <div class="header-types">
+              {#each entityData.types as type, idx}
+                {#if idx > 0}<span class="type-separator">·</span>{/if}
+                <button class="type-link" onclick={() => openEntityInspector(type.iri)}>
+                  {type.label}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </div>
       <div class="header-actions">
         <button class="action-btn" onclick={copyEntityIri} title="Copy IRI">
@@ -211,12 +296,64 @@
           <p class="description">{entityData.comment}</p>
         {/if}
 
+        {#if isAttachment()}
+          {@const filePath = getAttachmentFilePath()}
+          {@const mimeType = getAttachmentMimeType()}
+          {@const fileName = getAttachmentFileName()}
+          {@const fileSize = getAttachmentFileSize()}
+          {console.log('[INSPECTOR] Attachment detected:', { filePath, mimeType, fileName, fileSize, types: entityData?.types })}
+
+          <div class="attachment-preview-section">
+            <button
+              class="attachment-preview-card"
+              onclick={() => openFile(filePath)}
+              title="Click to open in default app"
+            >
+              {#if mimeType?.startsWith('image/')}
+                <div class="attachment-image-preview">
+                  <img
+                    src={convertFileSrc(filePath)}
+                    alt={fileName}
+                  />
+                </div>
+              {:else if mimeType === 'application/pdf'}
+                <div class="attachment-pdf-preview">
+                  <embed
+                    src={convertFileSrc(filePath)}
+                    type="application/pdf"
+                  />
+                </div>
+              {:else}
+                <div class="attachment-file-preview">
+                  <span class="material-symbols-outlined">description</span>
+                  <span class="file-label">File</span>
+                </div>
+              {/if}
+
+              <div class="attachment-preview-info">
+                <div class="attachment-preview-name">{fileName}</div>
+                {#if fileSize}
+                  <div class="attachment-preview-size">{formatFileSize(fileSize)}</div>
+                {/if}
+                <div class="attachment-preview-action">
+                  <span class="material-symbols-outlined">open_in_new</span>
+                  <span>Open file</span>
+                </div>
+              </div>
+            </button>
+          </div>
+        {/if}
+
         {#if entityData.superClasses?.length > 0}
           <div class="thing-list">
             {#each entityData.superClasses as superClass}
               <div class="thing-item clickable" onclick={() => openEntityInspector(superClass.iri)}>
                 {#if superClass.icon}
-                  <span class="material-symbols-outlined">{superClass.icon}</span>
+                  {#if isIconUrl(superClass.icon)}
+                    <img src={getIconUrl(superClass.icon)} alt="" class="thing-icon-image" />
+                  {:else}
+                    <span class="material-symbols-outlined">{superClass.icon}</span>
+                  {/if}
                 {/if}
                 <span class="thing-label">{superClass.label}</span>
               </div>
@@ -229,7 +366,11 @@
             {#each entityData.subClasses as subClass}
               <div class="thing-item clickable" onclick={() => openEntityInspector(subClass.iri)}>
                 {#if subClass.icon}
-                  <span class="material-symbols-outlined">{subClass.icon}</span>
+                  {#if isIconUrl(subClass.icon)}
+                    <img src={getIconUrl(subClass.icon)} alt="" class="thing-icon-image" />
+                  {:else}
+                    <span class="material-symbols-outlined">{subClass.icon}</span>
+                  {/if}
                 {/if}
                 <span class="thing-label">{subClass.label}</span>
               </div>
@@ -357,13 +498,26 @@
 
             <div class="backlinks-list">
               {#each Object.values(groupedByClass) as classGroup}
+                {@const entityCount = Object.keys(classGroup.entities).length}
+                {@const isCollapsed = collapsedGroups.has(classGroup.classIri)}
+                {#if entityCount > 5 && !collapsedGroups.has(classGroup.classIri) && !collapsedGroups.has(`expanded_${classGroup.classIri}`)}
+                  {collapsedGroups.add(classGroup.classIri)}
+                  {collapsedGroups = new Set(collapsedGroups)}
+                {/if}
                 <div class="class-group">
-                  <div class="class-header">
+                  <button
+                    class="class-header"
+                    onclick={() => toggleClassGroup(classGroup.classIri)}
+                  >
+                    <span class="material-symbols-outlined chevron" class:expanded={!isCollapsed}>
+                      chevron_right
+                    </span>
                     <span class="material-symbols-outlined class-icon">category</span>
                     <span class="class-name">{classGroup.className}</span>
-                    <span class="class-count">{Object.keys(classGroup.entities).length} {Object.keys(classGroup.entities).length === 1 ? 'entity' : 'entities'}</span>
-                  </div>
+                    <span class="class-count">{entityCount} {entityCount === 1 ? 'entity' : 'entities'}</span>
+                  </button>
 
+                  {#if !isCollapsed}
                   {#each Object.values(classGroup.entities) as group}
                 <div class="backlink-group">
                   <div
@@ -397,6 +551,7 @@
                   </div>
                 </div>
               {/each}
+              {/if}
                 </div>
               {/each}
             </div>
@@ -407,7 +562,11 @@
             {#each entityData.instances as instance}
               <div class="thing-item instance clickable" onclick={() => openEntityInspector(instance.iri)}>
                 {#if instance.icon}
-                  <span class="material-symbols-outlined">{instance.icon}</span>
+                  {#if isIconUrl(instance.icon)}
+                    <img src={getIconUrl(instance.icon)} alt="" class="thing-icon-image" />
+                  {:else}
+                    <span class="material-symbols-outlined">{instance.icon}</span>
+                  {/if}
                 {/if}
                 <span class="thing-label">{instance.label}</span>
               </div>
@@ -449,23 +608,47 @@
 
   .widget-title-wrapper {
     display: flex;
+    flex-direction: row;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .widget-icon-container {
+    flex-shrink: 0;
+  }
+
+  .entity-icon-symbol {
+    font-size: 30px;
+    color: var(--color-interactive);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 60px;
+    height: 60px;
+  }
+
+  .entity-icon-image {
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    object-fit: cover;
+  }
+
+  .widget-title-info {
+    display: flex;
     flex-direction: column;
     gap: 4px;
+    flex: 1;
+    min-width: 0;
   }
 
   .widget-title {
     display: flex;
     align-items: center;
-    gap: 8px;
     font-family: var(--font-title);
     font-size: 14px;
     font-weight: 600;
     color: var(--color-neutral-active);
-  }
-
-  .widget-title .material-symbols-outlined {
-    font-size: 20px;
-    color: var(--color-interactive);
   }
 
   .close-btn {
@@ -522,7 +705,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding-left: 28px;
     flex-wrap: wrap;
   }
 
@@ -676,6 +858,13 @@
   .thing-item .material-symbols-outlined {
     font-size: 18px;
     color: var(--color-interactive);
+  }
+
+  .thing-icon-image {
+    width: 28px;
+    height: 28px;
+    border-radius: 5px;
+    object-fit: cover;
   }
 
   .thing-label {
@@ -838,6 +1027,25 @@
     background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
     border-radius: 8px;
     border-left: 3px solid var(--color-interactive);
+    border: none;
+    width: 100%;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: left;
+  }
+
+  .class-header:hover {
+    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
+  }
+
+  .chevron {
+    font-size: 20px;
+    color: var(--color-neutral);
+    transition: transform 0.2s;
+  }
+
+  .chevron.expanded {
+    transform: rotate(90deg);
   }
 
   .class-icon {
@@ -957,5 +1165,110 @@
     font-size: 11px;
     color: var(--color-neutral);
     line-height: 1.3;
+  }
+
+  /* Attachment Preview Styles */
+  .attachment-preview-section {
+    margin-bottom: 16px;
+  }
+
+  .attachment-preview-card {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: color-mix(in srgb, var(--color-white) 5%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+    border-radius: 8px;
+    padding: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .attachment-preview-card:hover {
+    background: color-mix(in srgb, var(--color-white) 8%, transparent);
+    border-color: color-mix(in srgb, var(--color-white) 25%, transparent);
+    transform: translateY(-1px);
+  }
+
+  .attachment-image-preview {
+    width: 100%;
+    height: 200px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--color-white) 3%, transparent);
+  }
+
+  .attachment-image-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .attachment-pdf-preview,
+  .attachment-file-preview {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 400px;
+    background: color-mix(in srgb, var(--color-white) 3%, transparent);
+    border-radius: 6px;
+    gap: 8px;
+    overflow: hidden;
+  }
+
+  .attachment-pdf-preview embed {
+    width: 100%;
+    height: 400px;
+    border: none;
+    border-radius: 6px;
+  }
+
+  .attachment-pdf-preview .material-symbols-outlined,
+  .attachment-file-preview .material-symbols-outlined {
+    font-size: 64px;
+    color: var(--color-interactive);
+  }
+
+  .pdf-label,
+  .file-label {
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--color-neutral);
+  }
+
+  .attachment-preview-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .attachment-preview-name {
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-neutral-active);
+    word-break: break-word;
+  }
+
+  .attachment-preview-size {
+    font-size: 12px;
+    color: var(--color-neutral);
+  }
+
+  .attachment-preview-action {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-interactive);
+  }
+
+  .attachment-preview-action .material-symbols-outlined {
+    font-size: 16px;
   }
 </style>

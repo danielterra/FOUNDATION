@@ -721,6 +721,148 @@ pub async fn chat__get_conversation_info(
 }
 
 /// Send a message and generate AI response
+/// Check for tool_use blocks without corresponding tool_result and execute them
+/// This handles interrupted sessions where the app was closed during tool execution
+pub async fn check_and_execute_pending_tools(
+    app: AppHandle,
+    executor: &DbExecutor,
+) -> Result<usize, String> {
+    // Get recent messages to check for pending tools
+    let messages = get_recent_messages_internal(10, executor).await?;
+
+    let mut pending_count = 0;
+
+    // Collect all tool_result IRIs from all messages to check what's already been executed
+    let mut all_results: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for msg in &messages {
+        for result in &msg.tool_results {
+            all_results.insert(result.result_of_iri.clone());
+        }
+    }
+
+    // Find the most recent assistant message with tool_use
+    for msg in messages.iter().rev() {
+        if msg.sender_iri == "foundation:LocalAIAssistant" && !msg.tool_uses.is_empty() {
+            super::log_backend("info", &format!("[RECOVERY] Found assistant message with {} tool uses: {}", msg.tool_uses.len(), msg.iri));
+
+            // Check each tool_use for missing tool_result
+            for (idx, tool_use) in msg.tool_uses.iter().enumerate() {
+                // Check if this tool_use already has a result (in any message)
+                if all_results.contains(&tool_use.iri) {
+                    super::log_backend("info", &format!("[RECOVERY] Tool {} already has result, skipping", tool_use.tool_name));
+                    continue;
+                }
+
+                // This tool_use has no result - it needs to be executed
+                super::log_backend("warn", &format!("[RECOVERY] Found pending tool execution: {} ({})", tool_use.tool_name, tool_use.iri));
+
+                // Parse the tool input
+                let input_json: serde_json::Value = serde_json::from_str(&tool_use.input)
+                    .unwrap_or(serde_json::json!({}));
+
+                // Execute the tool
+                let call = FunctionCall {
+                    name: tool_use.tool_name.clone(),
+                    arguments: input_json,
+                };
+
+                let app_clone = app.clone();
+                let result_json = executor.write(move |conn| {
+                    let result = functions::execute_function(conn, &call, Some(&app_clone));
+                    serde_json::to_string(&result).map_err(|e| e.to_string())
+                }).await.map_err(|e| format!("Failed to execute function: {}", e))?;
+
+                let func_result: FunctionResult = serde_json::from_str(&result_json)
+                    .map_err(|e| format!("Failed to parse result: {}", e))?;
+
+                super::log_backend("info", &format!("[RECOVERY] Successfully executed pending tool: {} (success: {})", tool_use.tool_name, func_result.success));
+
+                // Save ToolResult entity
+                let tool_use_ref = tool_use.iri.clone();
+                let result_content = result_json.clone();
+                let is_success = func_result.success;
+                let error_msg = func_result.error.clone();
+                let msg_iri = msg.iri.clone();
+
+                executor.write(move |conn| {
+                    let timestamp = chrono::Utc::now().timestamp_millis();
+                    let tool_result_iri = format!("foundation:ToolResult_{}_{}_recovery", timestamp, idx);
+                    let tool_result = Individual::new(&tool_result_iri);
+
+                    tool_result.assert(
+                        conn,
+                        "foundation:ToolResult",
+                        &format!("Tool result for {} (recovered)", tool_use_ref),
+                        "ai",
+                        "ai"
+                    ).map_err(|e| format!("Failed to create ToolResult: {}", e))?;
+
+                    tool_result.add_property(
+                        conn,
+                        "foundation:resultOf",
+                        Object::Iri(tool_use_ref.clone()),
+                        "ai"
+                    ).map_err(|e| format!("Failed to set resultOf: {}", e))?;
+
+                    tool_result.add_property(
+                        conn,
+                        "foundation:resultContent",
+                        Object::Literal {
+                            value: result_content,
+                            datatype: Some("xsd:string".to_string()),
+                            language: None,
+                        },
+                        "ai"
+                    ).map_err(|e| format!("Failed to set resultContent: {}", e))?;
+
+                    tool_result.add_property(
+                        conn,
+                        "foundation:isSuccess",
+                        Object::Literal {
+                            value: is_success.to_string(),
+                            datatype: Some("xsd:boolean".to_string()),
+                            language: None,
+                        },
+                        "ai"
+                    ).map_err(|e| format!("Failed to set isSuccess: {}", e))?;
+
+                    if let Some(err) = error_msg {
+                        tool_result.add_property(
+                            conn,
+                            "foundation:errorMessage",
+                            Object::Literal {
+                                value: err,
+                                datatype: Some("xsd:string".to_string()),
+                                language: None,
+                            },
+                            "ai"
+                        ).map_err(|e| format!("Failed to set errorMessage: {}", e))?;
+                    }
+
+                    // Link tool_result to the assistant message
+                    let msg_individual = Individual::new(&msg_iri);
+                    msg_individual.add_property(
+                        conn,
+                        "foundation:partOfMessage",
+                        Object::Iri(tool_result_iri.clone()),
+                        "ai"
+                    ).map_err(|e| format!("Failed to link result to message: {}", e))?;
+
+                    Ok(tool_result_iri)
+                }).await?;
+
+                super::log_backend("info", &format!("[RECOVERY] Saved tool result for {}", tool_use.tool_name));
+                pending_count += 1;
+            }
+
+            // Only check the most recent assistant message
+            break;
+        }
+    }
+
+    Ok(pending_count)
+}
+
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn chat__send_and_reply(
@@ -825,6 +967,13 @@ pub async fn chat__send_and_reply(
 
     let conversation_iri = "foundation:MainChatConversation";
     let mut is_first_iteration = true;
+
+    // Check for pending tool executions (from interrupted sessions)
+    super::log_backend("info", "[RECOVERY] Checking for pending tool executions...");
+    let pending_tools = check_and_execute_pending_tools(app.clone(), &executor).await?;
+    if pending_tools > 0 {
+        super::log_backend("info", &format!("[RECOVERY] Executed {} pending tools from interrupted session", pending_tools));
+    }
 
     // Main iteration loop - continues until AI stops making tool calls
     loop {
