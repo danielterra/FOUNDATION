@@ -14,15 +14,22 @@
 # =============================================================================
 
 foundation:InformationObject a owl:Class ;
-    rdfs:subClassOf foundation:AbstractThing ;
+    rdfs:subClassOf foundation:DigitalThing ;
     rdfs:label "Information Object" ;
-    rdfs:comment "Data, documents, or encoded knowledge" ;
+    rdfs:comment "Digital data, documents, or encoded knowledge" ;
     foundation:icon "description" ;
     rdfs:seeAlso """
+Information objects are digital representations of knowledge or data.
+
 Examples:
 - A PDF document (this ontology specification)
 - A database record (user profile data)
 - Source code (FOUNDATION codebase)
 - A scientific paper
 - A user manual
+- An invoice (digital or scanned)
+- A contract document
+
+Note: InformationObject is a subclass of DigitalThing, meaning all information
+objects inherit the ability to have file attachments via foundation:hasFile.
 """ .

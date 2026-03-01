@@ -159,34 +159,8 @@ Example:
   :myCNH foundation:documentPhoto "data:image/jpeg;base64,/9j/4AAQ..." .
 """ .
 
-foundation:hasFile a owl:ObjectProperty ;
-    rdfs:label "has file"@en ;
-    rdfs:label "tem arquivo"@pt ;
-    rdfs:comment "Links an entity to its digital file representation (can have multiple files: PDF, images, etc.)" ;
-    rdfs:range foundation:File ;
-    rdfs:seeAlso """
-Generic property to link any concept to File entities.
-
-Commonly used by:
-- IdentificationDocument (CNH, RG, Passport)
-- Invoice/BrazilianNFSe (PDF invoices)
-- Contract (signed PDFs)
-- Any entity with file attachments
-
-Examples:
-  :myCNH foundation:hasFile :cnhPDFFile .
-  :myPassport foundation:hasFile :passportPDFFile .
-  :myRG foundation:hasFile :rgFrontPhoto .
-  :myRG foundation:hasFile :rgBackPhoto .
-  :myNFSe foundation:hasFile :nfsePDF .
-
-  :cnhPDFFile a foundation:File ;
-      foundation:fileName "cnh-digital.pdf" ;
-      foundation:filePath "file:///documents/cnh-digital.pdf"^^xsd:anyURI ;
-      foundation:hasFileType foundation:FileType_PDF ;
-      foundation:fileSize 1048576 ;
-      foundation:uploadDate "2024-01-15T14:30:00Z"^^xsd:dateTime .
-""" .
+# Note: foundation:hasFile is inherited from foundation:DigitalThing via foundation:InformationObject
+# No need to redefine it here.
 
 foundation:digitalSignature a owl:DatatypeProperty ;
     rdfs:label "digital signature" ;

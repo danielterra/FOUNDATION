@@ -106,3 +106,29 @@ Example:
 
 Values are dimensionless counts (qudt:hasUnit unit:NUM).
 """ .
+
+foundation:hasFile a owl:ObjectProperty ;
+    rdfs:label "has file"@en ;
+    rdfs:label "tem arquivo"@pt ;
+    rdfs:comment "Links a digital thing to its file representation (PDF, image, document, etc.)" ;
+    rdfs:domain foundation:DigitalThing ;
+    rdfs:range foundation:File ;
+    rdfs:seeAlso """
+Generic property to link any digital thing to its file attachments.
+
+This property is defined at the DigitalThing level, making it available to all subclasses:
+- IdentificationDocument (CNH, RG, Passport) - PDF scans, photos
+- Invoice (including BrazilianNFSe) - PDF invoices
+- Contract - signed PDFs
+- File - file representations
+- Any other digitally represented entity
+
+Examples:
+  :myCNH foundation:hasFile :cnhPDFFile .
+  :myNFSe foundation:hasFile :nfsePDF .
+  :myContract foundation:hasFile :signedContractPDF .
+
+  :cnhPDFFile a foundation:File ;
+      foundation:fileName "cnh-digital.pdf" ;
+      foundation:hasFileType foundation:FileType_PDF .
+""" .
