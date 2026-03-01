@@ -26,6 +26,19 @@
     try {
       await invoke('initialize_app');
       console.log('[App] Database initialized successfully');
+
+      // Check for and recover pending tool executions
+      try {
+        const result = await invoke('chat__recover_pending_tools');
+        if (result) {
+          console.log('[App] Recovered pending tool executions:', result);
+        } else {
+          console.log('[App] No pending tool executions found');
+        }
+      } catch (err) {
+        console.error('[App] Failed to recover pending tools:', err);
+        // Non-fatal error - app can continue
+      }
     } catch (err) {
       console.error('[App] Failed to initialize database:', err);
       // TODO: Show error UI with "Retry" button

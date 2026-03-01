@@ -895,9 +895,9 @@ fn create_class(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHand
             store::assert_triples(conn, &[comment_triple], "ai")?;
         }
 
-        // Emit entity-updated event
+        // Emit entity-created event (which will auto-open an inspector)
         if let Some(app_handle) = app {
-            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
+            app_handle.emit("entity-created", serde_json::json!({"entityId": iri})).ok();
         }
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
@@ -969,9 +969,9 @@ fn create_instance(conn: &mut Connection, args: &Value, app: Option<&tauri::AppH
             store::assert_triples(conn, &[comment_triple], "ai")?;
         }
 
-        // Emit entity-updated event
+        // Emit entity-created event (which will auto-open an inspector)
         if let Some(app_handle) = app {
-            app_handle.emit("entity-updated", serde_json::json!({"entityId": generated_iri.clone()})).ok();
+            app_handle.emit("entity-created", serde_json::json!({"entityId": generated_iri.clone()})).ok();
         }
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({

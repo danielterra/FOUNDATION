@@ -13,7 +13,6 @@ pub async fn ai__save_api_key(
     api_key: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
-    super::log_backend("info", "Saving API key to ontology");
 
     executor.write(move |conn| {
         // Find existing Claude API key credential owned by ThisUser
@@ -162,7 +161,6 @@ pub async fn ai__initialize(
     api_key: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
-    super::log_backend("info", "Initializing AI with Claude API");
 
     // Get default model from ontology
     let model_identifier = executor.read(|conn| {
@@ -193,15 +191,12 @@ pub async fn ai__initialize(
         Ok(None)
     }).await.map_err(|e: String| format!("Failed to query default model: {}", e))?;
 
-    if let Some(model) = &model_identifier {
-        super::log_backend("info", &format!("Using model from ontology: {}", model));
-    } else {
+    if model_identifier.is_none() {
         super::log_backend("warn", "No default model found in ontology, using hardcoded fallback");
     }
 
     ai::initialize_ai_with_model(api_key, model_identifier).await?;
 
-    super::log_backend("info", "AI initialized successfully");
 
     Ok(())
 }
@@ -215,7 +210,6 @@ pub async fn ai__generate(
     temperature: Option<f32>,
     system: Option<String>,
 ) -> Result<String, String> {
-    super::log_backend("info", &format!("Generating AI response with {} messages", messages.len()));
 
     let request = GenerateRequest {
         messages,
@@ -227,7 +221,6 @@ pub async fn ai__generate(
 
     let response = ai::generate_response(request).await?;
 
-    super::log_backend("info", &format!("AI response generated: {} chars", response.content.len()));
 
     Ok(response.content)
 }
@@ -238,7 +231,6 @@ pub async fn ai__list_available_models(
     _app: AppHandle,
     executor: State<'_, DbExecutor>,
 ) -> Result<Value, String> {
-    super::log_backend("info", "Listing available models from Claude API");
 
     // Get API endpoint from ontology
     let api_info = executor.read(|conn| {
@@ -282,7 +274,6 @@ pub async fn ai__list_available_models(
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    super::log_backend("info", &format!("Retrieved models: {}", models_json));
 
     Ok(models_json)
 }
@@ -303,7 +294,6 @@ pub async fn ai__execute_function(
     arguments: Value,
     executor: State<'_, DbExecutor>,
 ) -> Result<FunctionResult, String> {
-    super::log_backend("info", &format!("Executing function: {} with args: {}", name, arguments));
 
     let call = FunctionCall { name, arguments };
     let app_clone = app.clone();
@@ -316,7 +306,6 @@ pub async fn ai__execute_function(
     let result: FunctionResult = serde_json::from_str(&result_json)
         .map_err(|e| format!("Failed to parse result: {}", e))?;
 
-    super::log_backend("info", &format!("Function result: success={}", result.success));
 
     Ok(result)
 }

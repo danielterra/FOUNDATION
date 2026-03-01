@@ -4,53 +4,53 @@ This document contains specific instructions for AI assistants working on the FO
 
 ## 📋 Meta Rule - Document Maintenance
 
-**⚠️ REGRA CRÍTICA: Sempre que o usuário corrigir você ou indicar uma preferência, ATUALIZE IMEDIATAMENTE este documento CLAUDE.md para registrar a correção/preferência.**
+**⚠️ CRITICAL RULE: Whenever the user corrects you or indicates a preference, IMMEDIATELY UPDATE this CLAUDE.md document to record the correction/preference.**
 
-- Quando receber feedback negativo sobre uma ação tomada → adicione uma regra explícita
-- Quando o usuário indicar "sempre faça X" ou "nunca faça Y" → documente aqui
-- Quando houver uma correção de comportamento → crie uma seção apropriada se necessário
-- Este documento deve evoluir continuamente com as preferências do usuário
-- Sempre confirme ao usuário quando atualizar este documento
+- When you receive negative feedback about an action taken → add an explicit rule
+- When the user indicates "always do X" or "never do Y" → document it here
+- When there is a behavior correction → create an appropriate section if necessary
+- This document should evolve continuously with the user's preferences
+- Always confirm to the user when you update this document
 
 ## Logs & Debugging
 
-- **SEMPRE consulte os logs centralizados ao investigar problemas**
-- Todos os erros de frontend e backend são logados de forma centralizada
-- Use `npm run logs` para ver os últimos logs (mostra últimas 100 linhas)
-- Ao investigar problemas, SEMPRE verifique os logs antes de fazer suposições
-- **Não faça perguntas que você mesmo consegue encontrar a resposta** - investigue diretamente logs, banco de dados, e código antes de perguntar
+- **ALWAYS consult the centralized logs when investigating problems**
+- All frontend and backend errors are logged centrally
+- Use `npm run logs` to view the latest logs (shows last 100 lines)
+- When investigating problems, ALWAYS check the logs before making assumptions
+- **Don't ask questions you can find the answer to yourself** - directly investigate logs, database, and code before asking
 
 ## Database & Storage
 
-- **Banco de dados do usuário**: `~/Documents/Foundation/FOUNDATION.db`
-- **Logs da aplicação**: `~/Library/Application Support/org.w3id.foundation/application.log` (macOS)
-- Para queries SQL diretas: `sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT ..."`
-- **⚠️ REGRA INVIOLÁVEL: NUNCA, EM NENHUMA HIPÓTESE, DELETE O BANCO DE DADOS (`rm ~/Documents/Foundation/FOUNDATION.db`)**
-- **⚠️ NUNCA execute comandos que alteram o banco de dados (UPDATE, DELETE, DROP, TRUNCATE, INSERT) sem confirmação explícita do usuário**
-- Apenas consultas SELECT são permitidas sem confirmação prévia
-- SEMPRE pergunte ao usuário antes de modificar qualquer dado no banco
+- **User database**: `~/Documents/Foundation/FOUNDATION.db`
+- **Application logs**: `~/Library/Application Support/org.w3id.foundation/application.log` (macOS)
+- For direct SQL queries: `sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT ..."`
+- **⚠️ INVIOLABLE RULE: NEVER, UNDER ANY CIRCUMSTANCES, DELETE THE DATABASE (`rm ~/Documents/Foundation/FOUNDATION.db`)**
+- **⚠️ NEVER execute commands that modify the database (UPDATE, DELETE, DROP, TRUNCATE, INSERT) without explicit user confirmation**
+- Only SELECT queries are allowed without prior confirmation
+- ALWAYS ask the user before modifying any data in the database
 
-### Estrutura da Tabela `triples`
+### `triples` Table Structure
 
-**⚠️ IMPORTANTE:** A tabela `triples` tem uma estrutura específica que você DEVE entender para não cometer erros:
+**⚠️ IMPORTANT:** The `triples` table has a specific structure that you MUST understand to avoid mistakes:
 
-- **`object`**: Contém IRIs ou blank nodes quando `object_type = 'iri'` ou `'blank'`
-- **`object_value`**: Contém o valor lexical de literais quando `object_type = 'literal'`
-- **`object_datatype`**: Tipo do literal (ex: `xsd:string`, `xsd:integer`, `xsd:dateTime`)
+- **`object`**: Contains IRIs or blank nodes when `object_type = 'iri'` or `'blank'`
+- **`object_value`**: Contains the lexical value of literals when `object_type = 'literal'`
+- **`object_datatype`**: Type of the literal (e.g., `xsd:string`, `xsd:integer`, `xsd:dateTime`)
 
-**Ao fazer queries SQL:**
+**When writing SQL queries:**
 ```sql
--- ❌ ERRADO - Vai retornar vazio para literais
+-- ❌ WRONG - Will return empty for literals
 SELECT predicate, object FROM triples WHERE subject = 'foundation:File_123'
 
--- ✅ CORRETO - Retorna tanto IRIs quanto valores literais
+-- ✅ CORRECT - Returns both IRIs and literal values
 SELECT predicate, object, object_value, object_type FROM triples WHERE subject = 'foundation:File_123'
 ```
 
-**Exemplos práticos:**
-- `foundation:fileName` é um literal → valor está em `object_value`, `object` é NULL
-- `foundation:hasFileType` é um IRI → valor está em `object`, `object_value` é NULL
-- Se você quer o valor independente do tipo, use `COALESCE(object, object_value)`
+**Practical examples:**
+- `foundation:fileName` is a literal → value is in `object_value`, `object` is NULL
+- `foundation:hasFileType` is an IRI → value is in `object`, `object_value` is NULL
+- If you want the value regardless of type, use `COALESCE(object, object_value)`
 
 ## Project Structure
 
@@ -67,44 +67,49 @@ SELECT predicate, object, object_value, object_type FROM triples WHERE subject =
 - `cargo check --manifest-path src-tauri/Cargo.toml` - Check Rust code
 - `cargo build --manifest-path src-tauri/Cargo.toml` - Build Rust code
 
-**⚠️ REGRAS DE EXECUÇÃO:**
-- **NUNCA execute `npm run tauri dev` ou `npm run build`** - o usuário sempre roda isso no terminal dele
-- **NUNCA mate processos do Tauri** (pkill, killall, etc.) - o usuário gerencia isso
-- Apenas execute `cargo check` para validar código Rust
-- O usuário é responsável por iniciar e parar o servidor de desenvolvimento
+**⚠️ EXECUTION RULES:**
+- **NEVER run `npm run tauri dev` or `npm run build`** - the user always runs this in their terminal
+- **NEVER kill Tauri processes** (pkill, killall, etc.) - the user manages this
+- Only run `cargo check` to validate Rust code
+- The user is responsible for starting and stopping the development server
 
 ## Version Management & Releases
 
-- **⚠️ Ao gerar uma nova release/versão do projeto:**
-  1. Atualizar a versão em `src-tauri/Cargo.toml`
-  2. Atualizar a versão em `package.json`
-  3. **SEMPRE adicionar a nova versão em `core-ontology/SoftwareRelease.ttl`**
-     - Criar uma nova entrada `foundation:FoundationRelease_X_Y_Z`
-     - Incluir: label, comment, releaseOf, versionNumber, licenseType, releaseDate, changelog
-  4. Verificar se há outros arquivos de ontologia que precisam ser atualizados
+- **⚠️ When generating a new release/version of the project:**
+  1. Update the version in `src-tauri/Cargo.toml`
+  2. Update the version in `package.json`
+  3. **ALWAYS add the new version in `core-ontology/SoftwareRelease.ttl`**
+     - Create a new entry `foundation:FoundationRelease_X_Y_Z`
+     - Include: label, comment, releaseOf, versionNumber, licenseType, releaseDate, changelog
+  4. Check if there are other ontology files that need to be updated
 
 ## TODO Documentation
 
-Ao criar documentos de instrução na pasta `todo/`:
+When creating instruction documents in the `todo/` folder:
 
-- **Padrão de nomenclatura:** `YYYYMMDD-HHMMSS-nome-do-arquivo.md`
-  - Exemplo: `20260228-192519-layer-violations-fix.md`
-  - Use hífen (-) para separar todas as partes
-  - Timestamp primeiro, nome descritivo por último
-  - Formato de timestamp: `YYYYMMDD-HHMMSS`
+- **Naming pattern:** `YYYYMMDD-HHMMSS-file-name.md`
+  - Example: `20260228-192519-layer-violations-fix.md`
+  - Use hyphen (-) to separate all parts
+  - Timestamp first, descriptive name last
+  - Timestamp format: `YYYYMMDD-HHMMSS`
 
 ## AI Function Design
 
-### Princípio de Simplicidade
-- **Evite funções redundantes**: Se uma função pode ser substituída por chamadas simples de outras funções, ela não é necessária
-- **Funções removidas** (mantidas como dead_code para referência):
-  - `remember_connection_types`: Conceitos já retornam connections via `remember_concept`
-  - `remember_concept_tree`: Para hierarquias profundas, chame `remember_concept` recursivamente
+### Simplicity Principle
+- **Avoid redundant functions**: If a function can be replaced by simple calls to other functions, it is not necessary
+- **Removed functions** (kept as dead_code for reference):
+  - `remember_connection_types`: Concepts already return connections via `remember_concept`
+  - `remember_concept_tree`: For deep hierarchies, call `remember_concept` recursively
+
+## Communication
+
+- **ALWAYS communicate in English** - All responses, documentation, comments, and messages must be in English
+- Never use Portuguese or other languages unless explicitly requested by the user
 
 ## Best Practices
 
-- NUNCA suprimir warnings ou erros
-- Ao terminar uma tarefa, sempre revise o que foi feito para identificar e resolver redundâncias e ambiguidades
-- Sempre verifique os logs antes de fazer suposições sobre problemas
-- Use consultas SELECT para investigar o banco antes de propor mudanças
-- **SEMPRE use RUST para criar scripts** - Não use Node.js, Python ou outras linguagens para scripts de automação
+- NEVER suppress warnings or errors
+- When finishing a task, always review what was done to identify and resolve redundancies and ambiguities
+- Always check the logs before making assumptions about problems
+- Use SELECT queries to investigate the database before proposing changes
+- **ALWAYS use RUST to create scripts** - Don't use Node.js, Python, or other languages for automation scripts

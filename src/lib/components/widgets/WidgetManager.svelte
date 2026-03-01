@@ -99,7 +99,22 @@
       widgets = [];
     });
 
-    unlisteners = [unlistenAdded, unlistenRemoved, unlistenCleared];
+    // Listen for entity-created events to auto-open inspector
+    const unlistenEntityCreated = await listen('entity-created', async (event) => {
+      console.log('Entity created, opening inspector:', event.payload.entityId);
+      try {
+        await invoke('widget__add', {
+          widgetType: 'inspector',
+          entityId: event.payload.entityId,
+          position: null,
+          size: null
+        });
+      } catch (error) {
+        console.error('Failed to open inspector for new entity:', error);
+      }
+    });
+
+    unlisteners = [unlistenAdded, unlistenRemoved, unlistenCleared, unlistenEntityCreated];
 
     // Add global mouse event listeners for dragging
     document.addEventListener('mousemove', onDrag);

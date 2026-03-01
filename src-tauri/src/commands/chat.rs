@@ -16,8 +16,7 @@ fn get_tokenizer() -> &'static tiktoken_rs::CoreBPE {
     TOKENIZER.get_or_init(|| {
         let start = std::time::Instant::now();
         let bpe = cl100k_base().expect("Failed to load tokenizer");
-        let elapsed = start.elapsed();
-        log_backend("info", &format!("[TOKENIZER] Loaded and cached tokenizer in {:?}", elapsed));
+        let _elapsed = start.elapsed();
         bpe
     })
 }
@@ -89,8 +88,6 @@ pub async fn chat__attach_file(
     mime_type: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    log_backend("info", &format!("[ATTACH] Attaching file: {} ({})", file_name, mime_type));
-
     executor.write(move |conn| {
         // Get user's Documents directory
         let home_dir = dirs::home_dir()
@@ -115,18 +112,22 @@ pub async fn chat__attach_file(
 
         // Generate unique filename using timestamp
         let timestamp = chrono::Utc::now().timestamp_millis();
-        let extension = std::path::Path::new(&file_name)
+        let path = std::path::Path::new(&file_name);
+        let extension = path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("bin");
-        let stored_filename = format!("{}_{}.{}", timestamp, sanitize_filename(&file_name), extension);
+        let file_stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("file");
+        let stored_filename = format!("{}_{}.{}", timestamp, sanitize_filename(file_stem), extension);
         let stored_path = attachments_dir.join(&stored_filename);
 
         // Copy file to attachments directory
         fs::copy(&file_path, &stored_path)
             .map_err(|e| format!("Failed to copy file: {}", e))?;
 
-        log_backend("info", &format!("[ATTACH] File saved to: {:?}", stored_path));
 
         let now = chrono::Utc::now().to_rfc3339();
 
@@ -216,7 +217,6 @@ pub async fn chat__attach_file(
             "chat"
         ).map_err(|e| format!("Failed to set uploadDate: {}", e))?;
 
-        log_backend("info", &format!("[ATTACH] File entity created: {}", file_iri));
 
         // Step 2: Create Attachment entity (wrapper)
         let attachment_iri = format!("foundation:Attachment_{}", timestamp);
@@ -250,7 +250,6 @@ pub async fn chat__attach_file(
             "chat"
         ).map_err(|e| format!("Failed to set attachedAt: {}", e))?;
 
-        log_backend("info", &format!("[ATTACH] Attachment created: {} -> {}", attachment_iri, file_iri));
 
         Ok(attachment_iri)
     }).await
@@ -269,7 +268,6 @@ fn load_attachment_info(
     conn: &rusqlite::Connection,
     attachment_iri: &str,
 ) -> Result<AttachmentInfo, String> {
-    super::log_backend("info", &format!("[ATTACH] Loading attachment info for: {}", attachment_iri));
 
     let attachment_ind = Individual::get(conn, attachment_iri)
         .map_err(|e| format!("Failed to load Attachment: {}", e))?;
@@ -285,10 +283,8 @@ fn load_attachment_info(
         .find(|(k, _)| k == "foundation:attachesFile")
         .and_then(|(_, v)| v.as_iri());
 
-    super::log_backend("info", &format!("[ATTACH] File IRI from attachesFile: {:?}", file_iri));
 
     if let Some(file_iri_str) = file_iri {
-        super::log_backend("info", &format!("[ATTACH] Loading File entity: {}", file_iri_str));
         // Load File entity
         if let Ok(file_ind) = Individual::get(conn, file_iri_str) {
             let file_name = file_ind.properties.iter()
@@ -315,7 +311,6 @@ fn load_attachment_info(
                 .find(|(k, _)| k == "foundation:hasFileType")
                 .and_then(|(_, v)| v.as_iri());
 
-            super::log_backend("info", &format!("[ATTACH] FileType IRI: {:?}", file_type_iri));
 
             let mime_type = if let Some(ft_iri) = file_type_iri {
                 if let Ok(file_type_ind) = Individual::get(conn, ft_iri) {
@@ -323,7 +318,6 @@ fn load_attachment_info(
                         .find(|(k, _)| k == "foundation:mimeType")
                         .and_then(|(_, v)| v.as_literal())
                         .unwrap_or_else(|| "application/octet-stream".to_string());
-                    super::log_backend("info", &format!("[ATTACH] MIME type from FileType: {}", mt));
                     mt
                 } else {
                     super::log_backend("warn", &format!("[ATTACH] Failed to load FileType: {}", ft_iri));
@@ -333,8 +327,6 @@ fn load_attachment_info(
                 super::log_backend("warn", "[ATTACH] No FileType IRI found");
                 "application/octet-stream".to_string()
             };
-
-            super::log_backend("info", &format!("[ATTACH] ✅ Loaded file: name={}, size={}, mime={}, path={:?}", file_name, file_size, mime_type, file_path));
 
             return Ok(AttachmentInfo {
                 iri: attachment_iri.to_string(),
@@ -349,8 +341,6 @@ fn load_attachment_info(
         } else {
             super::log_backend("warn", &format!("[ATTACH] Failed to load File entity: {}", file_iri_str));
         }
-    } else {
-        super::log_backend("info", "[ATTACH] No attachesFile property found, trying fallback to old schema");
     }
 
     // Fallback: Try old schema (backward compatibility)
@@ -537,7 +527,6 @@ pub async fn chat__send_message(
         // Link attachments to message
         if let Some(attachment_list) = attachment_iris {
             for attachment_iri in attachment_list {
-                log_backend("info", &format!("[CHAT] Linking attachment {} to message {}", attachment_iri, message_iri));
                 message.add_property(
                     conn,
                     "foundation:hasAttachment",
@@ -616,7 +605,6 @@ pub async fn chat__send_message(
             "chat"
         ).map_err(|e| format!("Failed to set tokenCount: {}", e))?;
 
-        log_backend("info", &format!("[TOKENS] User message {} has {} tokens", message_iri, token_count));
 
         Ok(message_iri)
     }).await.map(|iri| {
@@ -702,12 +690,6 @@ pub async fn get_recent_messages(
             // Convert tool_use_data to ToolUseInfo
             let tool_uses: Vec<ToolUseInfo> = tool_use_data.into_iter()
                 .map(|(iri, tool_name, tool_use_id, input, _order)| {
-                    let input_preview = if input.len() > 100 {
-                        format!("{}...", &input[..100])
-                    } else {
-                        input.clone()
-                    };
-                    log_backend("info", &format!("[CHAT] Added ToolUse: {} ({}) with input: {}", iri, tool_name, input_preview));
                     ToolUseInfo {
                         iri,
                         tool_name,
@@ -720,7 +702,10 @@ pub async fn get_recent_messages(
             // Convert tool_result_data to ToolResultInfo
             let tool_results: Vec<ToolResultInfo> = tool_result_data.into_iter()
                 .map(|(result_of_iri, result_content, is_success)| {
-                    log_backend("info", &format!("[CHAT] Added ToolResult for {} (success: {})", result_of_iri, is_success));
+                    // Only log failures
+                    if !is_success {
+                        log_backend("warn", &format!("[CHAT] Tool failed: {} - {}", result_of_iri, result_content));
+                    }
                     ToolResultInfo {
                         iri: format!("foundation:ToolResult_{}", result_of_iri), // Reconstruct IRI (not ideal but works)
                         result_content,
@@ -745,13 +730,14 @@ pub async fn get_recent_messages(
                 .collect();
 
             let mut attachments = Vec::new();
-            log_backend("info", &format!("[CHAT] Found {} attachments for {}", attachment_iris.len(), message_iri));
+            // Only log if there are attachments
+            if !attachment_iris.is_empty() {
+                log_backend("info", &format!("[CHAT] Found {} attachments for {}", attachment_iris.len(), message_iri));
+            }
 
             for attachment_iri in attachment_iris {
-                log_backend("info", &format!("[CHAT] Loading Attachment: {}", attachment_iri));
                 match load_attachment_info(conn, &attachment_iri) {
                     Ok(attachment_info) => {
-                        log_backend("info", &format!("[CHAT] Added Attachment: {} ({})", attachment_iri, attachment_info.file_name));
                         attachments.push(attachment_info);
                     }
                     Err(e) => {
@@ -866,13 +852,11 @@ pub async fn check_and_execute_pending_tools(
     // Find the most recent assistant message with tool_use
     for msg in messages.iter().rev() {
         if msg.sender_iri == "foundation:LocalAIAssistant" && !msg.tool_uses.is_empty() {
-            super::log_backend("info", &format!("[RECOVERY] Found assistant message with {} tool uses: {}", msg.tool_uses.len(), msg.iri));
 
             // Check each tool_use for missing tool_result
             for (idx, tool_use) in msg.tool_uses.iter().enumerate() {
                 // Check if this tool_use already has a result (in any message)
                 if all_results.contains(&tool_use.iri) {
-                    super::log_backend("info", &format!("[RECOVERY] Tool {} already has result, skipping", tool_use.tool_name));
                     continue;
                 }
 
@@ -898,7 +882,6 @@ pub async fn check_and_execute_pending_tools(
                 let func_result: FunctionResult = serde_json::from_str(&result_json)
                     .map_err(|e| format!("Failed to parse result: {}", e))?;
 
-                super::log_backend("info", &format!("[RECOVERY] Successfully executed pending tool: {} (success: {})", tool_use.tool_name, func_result.success));
 
                 // Save ToolResult entity
                 let tool_use_ref = tool_use.iri.clone();
@@ -974,7 +957,6 @@ pub async fn check_and_execute_pending_tools(
                     Ok(tool_result_iri)
                 }).await?;
 
-                super::log_backend("info", &format!("[RECOVERY] Saved tool result for {}", tool_use.tool_name));
                 pending_count += 1;
             }
 
@@ -984,6 +966,30 @@ pub async fn check_and_execute_pending_tools(
     }
 
     Ok(pending_count)
+}
+
+/// Tauri command to check for pending tool executions on startup and continue AI processing
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn chat__recover_pending_tools(
+    app: AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<Option<Vec<MessageInfo>>, String> {
+    super::log_backend("info", "[STARTUP] Checking for pending tool executions...");
+
+    // Check and execute pending tools
+    let pending_count = check_and_execute_pending_tools(app.clone(), &executor).await?;
+
+    if pending_count > 0 {
+        super::log_backend("info", &format!("[STARTUP] Executed {} pending tool(s), returning updated messages", pending_count));
+
+        // Return recent messages so UI can update
+        let messages = get_recent_messages(10, &executor).await?;
+        Ok(Some(messages))
+    } else {
+        super::log_backend("info", "[STARTUP] No pending tools found, conversation is up to date");
+        Ok(None)
+    }
 }
 
 #[tauri::command]
@@ -996,21 +1002,18 @@ pub async fn chat__send_and_reply(
     attachment_iris: Option<Vec<String>>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<MessageInfo>, String> {
-    let start_time = std::time::Instant::now();
+    let _start_time = std::time::Instant::now();
 
     // First, send the user message with location
-    super::log_backend("info", "Starting to save user message...");
-    let user_message_iri = chat__send_message(app.clone(), content.clone(), latitude, longitude, attachment_iris.clone(), executor.clone()).await?;
-    super::log_backend("info", &format!("User message saved in {:?} with IRI: {}", start_time.elapsed(), user_message_iri));
+    let _user_message_iri = chat__send_message(app.clone(), content.clone(), latitude, longitude, attachment_iris.clone(), executor.clone()).await?;
 
     // Get user and AI information from database
-    let step_time = std::time::Instant::now();
+    let _step_time = std::time::Instant::now();
     let (user_name, ai_name) = executor.read(|conn| {
         let user_thing = Thing::get(conn, "foundation:ThisUser");
         let ai_thing = Thing::get(conn, "foundation:LocalAIAssistant");
         Ok((user_thing.label, ai_thing.label))
     }).await.map_err(|e| format!("Failed to get user/AI info: {}", e))?;
-    super::log_backend("info", &format!("Got user/AI info in {:?}", step_time.elapsed()));
 
     // Get current date/time and locale information
     let now = chrono::Local::now();
@@ -1126,7 +1129,7 @@ pub async fn chat__send_and_reply(
     // Main iteration loop - continues until AI stops making tool calls
     loop {
         // Load history respecting token limit
-        let load_start = std::time::Instant::now();
+        let _load_start = std::time::Instant::now();
         let mut messages = load_history_with_limit(
             &app,
             &executor,
@@ -1135,17 +1138,14 @@ pub async fn chat__send_and_reply(
             &tools,
             if is_first_iteration { &content } else { "" },
         ).await?;
-        super::log_backend("info", &format!("History loaded in {:?}", load_start.elapsed()));
 
         // Add current message at the end (only on first iteration)
         if is_first_iteration {
-            super::log_backend("info", &format!("[CHAT] Loading current user message with attachments: {}", user_message_iri));
 
             // Load the just-created message WITH attachments from database
             let current_msg = get_recent_messages(1, &executor).await?;
 
             if let Some(msg_info) = current_msg.first() {
-                super::log_backend("info", &format!("[CHAT] Current message has {} attachments", msg_info.attachments.len()));
 
                 // Build content blocks for the message
                 let mut blocks = Vec::new();
@@ -1161,7 +1161,6 @@ pub async fn chat__send_and_reply(
                 for attachment in &msg_info.attachments {
                     if let Some(ref file_path) = attachment.file_path {
                         if attachment.mime_type.starts_with("image/") {
-                            super::log_backend("info", &format!("[CHAT] Adding image from: {}", file_path));
                             if let Ok(file_data) = std::fs::read(file_path) {
                                 use base64::Engine;
                                 let base64_data = base64::engine::general_purpose::STANDARD.encode(&file_data);
@@ -1177,7 +1176,6 @@ pub async fn chat__send_and_reply(
                                 super::log_backend("warn", &format!("[CHAT] ❌ Failed to read image file: {}", file_path));
                             }
                         } else if attachment.mime_type == "application/pdf" {
-                            super::log_backend("info", &format!("[CHAT] Adding PDF document from: {}", file_path));
                             if let Ok(file_data) = std::fs::read(file_path) {
                                 use base64::Engine;
                                 let base64_data = base64::engine::general_purpose::STANDARD.encode(&file_data);
@@ -1236,10 +1234,8 @@ pub async fn chat__send_and_reply(
         let response = crate::ai::generate_response(request).await
             .map_err(|e| format!("Failed to generate AI response: {}", e))?;
 
-        super::log_backend("info", &format!("AI response: {} tool calls", response.tool_calls.len()));
 
         // Save AI message to database
-        super::log_backend("info", "Saving AI message to database...");
         let ai_content = response.content.clone();
         let ai_content_for_save = ai_content.clone();
         let conversation_iri_clone = conversation_iri.to_string();
@@ -1370,9 +1366,6 @@ pub async fn chat__send_and_reply(
                 ).map_err(|e| format!("Failed to set tokenCount: {}", e))?;
                 Ok(msg_iri_for_tokens)
             }).await?;
-
-            super::log_backend("info", &format!("[TOKENS] Assistant message {} has {} tokens (content + {} tool_uses)",
-                ai_message_iri, total_tokens, response.tool_calls.len()));
         }
 
         // Emit event to notify frontend
@@ -1383,16 +1376,13 @@ pub async fn chat__send_and_reply(
 
         // If no tool calls, we're done - return the AI response
         if response.tool_calls.is_empty() {
-            super::log_backend("info", "No tool calls, finishing iteration loop");
             break;
         }
 
         // Execute tools and save results
-        super::log_backend("info", &format!("Executing {} tools...", response.tool_calls.len()));
         let mut tool_result_iris = Vec::new();
 
         for (idx, tool_call) in response.tool_calls.iter().enumerate() {
-            super::log_backend("info", &format!("Executing tool: {}", tool_call.name));
 
             // Save ToolUse entity
             let tool_use_iri = {
@@ -1558,7 +1548,7 @@ pub async fn chat__send_and_reply(
 
         // Create a new user message to hold the tool results
         if !tool_result_iris.is_empty() {
-            let tool_results_message_iri = executor.write(move |conn| {
+            let _tool_results_message_iri = executor.write(move |conn| {
                 let timestamp = chrono::Utc::now().timestamp_millis();
                 let msg_iri = format!("foundation:Message_{}", timestamp);
                 let msg = Individual::new(&msg_iri);
@@ -1644,9 +1634,6 @@ pub async fn chat__send_and_reply(
                     "ai"
                 ).map_err(|e| format!("Failed to set tokenCount: {}", e))?;
 
-                log_backend("info", &format!("[TOKENS] Tool results message {} has {} tokens ({} tool_results)",
-                    msg_iri, total_tokens, tool_result_iris.len()));
-
                 Ok(msg_iri)
             }).await?;
 
@@ -1656,10 +1643,8 @@ pub async fn chat__send_and_reply(
                 let _ = app.emit("chat-message-added", ());
             }
 
-            super::log_backend("info", &format!("Created tool results message: {}", tool_results_message_iri));
         }
 
-        super::log_backend("info", "Tool execution completed, continuing loop for next iteration...");
         // Loop continues - will reload history including tool_results message
     }
 
@@ -2259,8 +2244,7 @@ async fn load_history_with_limit(
     // Load recent messages (50 is a good balance between performance and context)
     let load_all_start = std::time::Instant::now();
     let all_messages = get_recent_messages(50, executor).await?;
-    let load_all_elapsed = load_all_start.elapsed();
-    super::log_backend("info", &format!("[PERF] get_recent_messages(50) took {:?}", load_all_elapsed));
+    let _load_all_elapsed = load_all_start.elapsed();
 
     // Determine which messages to process
     let messages_to_process: Vec<_> = if current_message.is_empty() {
@@ -2271,19 +2255,16 @@ async fn load_history_with_limit(
         all_messages.into_iter().rev().skip(1).rev().collect()
     };
 
-    super::log_backend("info", &format!("[PROCESS] Processing {} messages", messages_to_process.len()));
 
     // PHASE 1: Build message units (atomic groups)
     let build_start = std::time::Instant::now();
     let units = build_message_units(&messages_to_process, executor).await?;
-    let build_elapsed = build_start.elapsed();
-    super::log_backend("info", &format!("[PHASE1] Built {} units in {:?}", units.len(), build_elapsed));
+    let _build_elapsed = build_start.elapsed();
 
     // PHASE 2: Select units within budget
     let select_start = std::time::Instant::now();
     let selected_units = select_by_budget(units, available_for_history);
-    let select_elapsed = select_start.elapsed();
-    super::log_backend("info", &format!("[PHASE2] Selected {} units in {:?}", selected_units.len(), select_elapsed));
+    let _select_elapsed = select_start.elapsed();
 
     // Extract messages from units
     let mut messages = Vec::new();
@@ -2291,7 +2272,6 @@ async fn load_history_with_limit(
         messages.extend(unit.messages());
     }
 
-    super::log_backend("info", &format!("[BUILD] Extracted {} messages from units", messages.len()));
 
     // PHASE 3: Validate invariants
     validate_invariants(&messages)?;

@@ -1,0 +1,423 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# EmploymentDocument
+# =============================================================================
+# CTPS (Carteira de Trabalho e Previdência Social) and employment-related
+# concepts for Brazilian work documentation
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# CTPS - Brazilian Digital Work Card
+# -----------------------------------------------------------------------------
+
+foundation:CTPS a owl:Class ;
+    rdfs:subClassOf foundation:IdentificationDocument ;
+    rdfs:label "CTPS" ;
+    rdfs:comment "Carteira de Trabalho e Previdência Social - Brazilian Digital Work Card" ;
+    foundation:icon "work" ;
+    rdfs:seeAlso """
+The CTPS is the official employment record document in Brazil, which registers
+all employment contracts, salary history, and labor information.
+
+Since 2019, Brazil has adopted the digital CTPS (Carteira de Trabalho Digital),
+which is managed through the Carteira de Trabalho Digital app and gov.br portal.
+
+Example:
+  :johnCTPS a foundation:CTPS ;
+      foundation:documentNumber "12345678900" ;
+      foundation:issueDate "2015-03-10"^^xsd:date ;
+      foundation:pisNumber "123.45678.90-1" ;
+      foundation:seriesNumber "0001" .
+""" .
+
+# -----------------------------------------------------------------------------
+# Company - Employer Organization
+# -----------------------------------------------------------------------------
+
+foundation:Company a owl:Class ;
+    rdfs:subClassOf foundation:Organization ;
+    rdfs:label "Company" ;
+    rdfs:comment "An employer organization with legal registration (CNPJ in Brazil)" ;
+    foundation:icon "business" ;
+    rdfs:seeAlso """
+Represents a company or employer organization that can hire employees.
+
+Example:
+  :acmeCompany a foundation:Company ;
+      foundation:organizationName "ACME Corporation Ltda" ;
+      foundation:cnpj "12.345.678/0001-90" ;
+      foundation:hasAddress :acmeAddress .
+""" .
+
+# -----------------------------------------------------------------------------
+# EmploymentContract - Employment Record
+# -----------------------------------------------------------------------------
+
+foundation:EmploymentContract a owl:Class ;
+    rdfs:subClassOf foundation:Contract ;
+    rdfs:label "Employment Contract" ;
+    rdfs:comment "An employment record linking a person to a company, with admission date, termination date, contract type, and work relationship" ;
+    foundation:icon "badge" ;
+    rdfs:seeAlso """
+Represents a formal employment relationship between a person and a company.
+This is the central concept that links together:
+- The employee (Person)
+- The employer (Company)
+- The job occupation
+- Salary history
+- Contract details
+
+Example:
+  :johnEmployment a foundation:EmploymentContract ;
+      foundation:hasEmploymentContract :john ;
+      foundation:employer :acmeCompany ;
+      foundation:occupation :softwareEngineerJob ;
+      foundation:admissionDate "2020-01-15"^^xsd:date ;
+      foundation:terminationDate "2023-06-30"^^xsd:date ;
+      foundation:contractType "CLT" ;
+      foundation:workRelationship "Full-time" ;
+      foundation:initialSalary "5000.00"^^xsd:decimal ;
+      foundation:lastSalary "7500.00"^^xsd:decimal ;
+      foundation:contractualSalary "7500.00"^^xsd:decimal ;
+      foundation:observations "Registro na CTPS nº 123" .
+""" .
+
+# -----------------------------------------------------------------------------
+# SalaryHistory - Salary Change Record
+# -----------------------------------------------------------------------------
+
+foundation:SalaryHistory a owl:Class ;
+    rdfs:subClassOf foundation:Concept ;
+    rdfs:label "Salary History" ;
+    rdfs:comment "A salary change record within an employment contract, with date and value" ;
+    foundation:icon "payments" ;
+    rdfs:seeAlso """
+Tracks salary changes over the course of an employment contract.
+
+Example:
+  :johnSalaryChange1 a foundation:SalaryHistory ;
+      foundation:hasSalaryHistory :johnEmployment ;
+      foundation:effectiveDate "2021-01-15"^^xsd:date ;
+      foundation:salaryAmount "6000.00"^^xsd:decimal ;
+      foundation:changeReason "Annual adjustment" .
+
+  :johnSalaryChange2 a foundation:SalaryHistory ;
+      foundation:hasSalaryHistory :johnEmployment ;
+      foundation:effectiveDate "2022-06-01"^^xsd:date ;
+      foundation:salaryAmount "7500.00"^^xsd:decimal ;
+      foundation:changeReason "Promotion to Senior Engineer" .
+""" .
+
+# -----------------------------------------------------------------------------
+# JobOccupation - Job Role with CBO Code
+# -----------------------------------------------------------------------------
+
+foundation:JobOccupation a owl:Class ;
+    rdfs:subClassOf foundation:Concept ;
+    rdfs:label "Job Occupation" ;
+    rdfs:comment "A job role with CBO (Classificação Brasileira de Ocupações) code and description" ;
+    foundation:icon "work_outline" ;
+    rdfs:seeAlso """
+Represents a standardized job occupation according to the Brazilian CBO
+(Classificação Brasileira de Ocupações) classification system.
+
+CBO is maintained by the Brazilian Ministry of Labor and is used for
+official employment records, labor statistics, and tax purposes.
+
+Example:
+  :softwareEngineerJob a foundation:JobOccupation ;
+      foundation:cboCode "2124-05" ;
+      foundation:occupationTitle "Engenheiro de Software" ;
+      foundation:occupationDescription "Desenvolve sistemas e aplicações de software" .
+
+  :dataScientistJob a foundation:JobOccupation ;
+      foundation:cboCode "2031-05" ;
+      foundation:occupationTitle "Cientista de Dados" ;
+      foundation:occupationDescription "Analisa e interpreta dados complexos" .
+""" .
+
+# -----------------------------------------------------------------------------
+# CTPS-Specific Properties
+# -----------------------------------------------------------------------------
+
+foundation:pisNumber a owl:DatatypeProperty ;
+    rdfs:label "PIS number" ;
+    rdfs:comment "PIS/PASEP/NIT number (Programa de Integração Social)" ;
+    rdfs:domain foundation:CTPS ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+PIS (Programa de Integração Social) is a Brazilian social security number
+that is required for formal employment.
+
+Format: XXX.XXXXX.XX-X (11 digits)
+
+Example:
+  :myCTPS foundation:pisNumber "123.45678.90-1" .
+""" .
+
+foundation:seriesNumber a owl:DatatypeProperty ;
+    rdfs:label "series number" ;
+    rdfs:comment "CTPS series number (for physical cards issued before 2019)" ;
+    rdfs:domain foundation:CTPS ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+The series number was used in physical CTPS cards. Digital CTPS does not use series.
+
+Example:
+  :myCTPS foundation:seriesNumber "0001" .
+""" .
+
+# -----------------------------------------------------------------------------
+# Company Properties
+# -----------------------------------------------------------------------------
+
+foundation:cnpj a owl:DatatypeProperty ;
+    rdfs:label "CNPJ" ;
+    rdfs:comment "Cadastro Nacional da Pessoa Jurídica - Brazilian company tax ID" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+CNPJ is the Brazilian tax identification number for companies.
+
+Format: XX.XXX.XXX/XXXX-XX (14 digits)
+
+Example:
+  :myCompany foundation:cnpj "12.345.678/0001-90" .
+""" .
+
+foundation:organizationName a owl:DatatypeProperty ;
+    rdfs:label "organization name" ;
+    rdfs:comment "Legal name of the organization" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myCompany foundation:organizationName "ACME Corporation Ltda" .
+""" .
+
+foundation:tradeName a owl:DatatypeProperty ;
+    rdfs:label "trade name" ;
+    rdfs:comment "Trade name or brand name of the company (nome fantasia)" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myCompany foundation:organizationName "ACME Tecnologia LTDA" ;
+      foundation:tradeName "ACME Tech" .
+""" .
+
+# -----------------------------------------------------------------------------
+# EmploymentContract Properties
+# -----------------------------------------------------------------------------
+
+foundation:admissionDate a owl:DatatypeProperty ;
+    rdfs:label "admission date" ;
+    rdfs:comment "Date when the employee was admitted/hired" ;
+    rdfs:domain foundation:EmploymentContract ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :myContract foundation:admissionDate "2020-01-15"^^xsd:date .
+""" .
+
+foundation:terminationDate a owl:DatatypeProperty ;
+    rdfs:label "termination date" ;
+    rdfs:comment "Date when the employment was terminated (if applicable)" ;
+    rdfs:domain foundation:EmploymentContract ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :myContract foundation:terminationDate "2023-06-30"^^xsd:date .
+""" .
+
+foundation:contractType a owl:DatatypeProperty ;
+    rdfs:label "contract type" ;
+    rdfs:comment "Type of employment contract (CLT, PJ, Temporary, Internship, etc.)" ;
+    rdfs:domain foundation:EmploymentContract ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common types in Brazil:
+- CLT (Consolidação das Leis do Trabalho) - Standard employment
+- PJ (Pessoa Jurídica) - Contractor/Freelancer
+- Temporário - Temporary contract
+- Estágio - Internship
+- Aprendiz - Apprenticeship
+
+Example:
+  :myContract foundation:contractType "CLT" .
+""" .
+
+foundation:workRelationship a owl:DatatypeProperty ;
+    rdfs:label "work relationship" ;
+    rdfs:comment "Type of work relationship (Full-time, Part-time, Remote, etc.)" ;
+    rdfs:domain foundation:EmploymentContract ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Examples:
+  :myContract foundation:workRelationship "Full-time" .
+  :myContract foundation:workRelationship "Part-time (20h/week)" .
+  :myContract foundation:workRelationship "Remote" .
+""" .
+
+foundation:initialSalary a owl:DatatypeProperty ;
+    rdfs:label "initial salary" ;
+    rdfs:comment "Initial salary when the contract started" ;
+    rdfs:domain foundation:EmploymentContract ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :myContract foundation:initialSalary "5000.00"^^xsd:decimal .
+""" .
+
+foundation:lastSalary a owl:DatatypeProperty ;
+    rdfs:label "last salary" ;
+    rdfs:comment "Last salary received before contract termination" ;
+    rdfs:domain foundation:EmploymentContract ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :myContract foundation:lastSalary "7500.00"^^xsd:decimal .
+""" .
+
+foundation:contractualSalary a owl:DatatypeProperty ;
+    rdfs:label "contractual salary" ;
+    rdfs:comment "Current contractual salary (for active contracts)" ;
+    rdfs:domain foundation:EmploymentContract ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :myContract foundation:contractualSalary "7500.00"^^xsd:decimal .
+""" .
+
+# -----------------------------------------------------------------------------
+# SalaryHistory Properties
+# -----------------------------------------------------------------------------
+
+foundation:effectiveDate a owl:DatatypeProperty ;
+    rdfs:label "effective date" ;
+    rdfs:comment "Date when the salary change became effective" ;
+    rdfs:domain foundation:SalaryHistory ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :salaryChange1 foundation:effectiveDate "2021-01-15"^^xsd:date .
+""" .
+
+foundation:salaryAmount a owl:DatatypeProperty ;
+    rdfs:label "salary amount" ;
+    rdfs:comment "The new salary amount after the change" ;
+    rdfs:domain foundation:SalaryHistory ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :salaryChange1 foundation:salaryAmount "6000.00"^^xsd:decimal .
+""" .
+
+foundation:changeReason a owl:DatatypeProperty ;
+    rdfs:label "change reason" ;
+    rdfs:comment "Reason for the salary change (promotion, annual adjustment, etc.)" ;
+    rdfs:domain foundation:SalaryHistory ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Examples:
+  :salaryChange1 foundation:changeReason "Annual adjustment" .
+  :salaryChange2 foundation:changeReason "Promotion to Senior Engineer" .
+""" .
+
+# -----------------------------------------------------------------------------
+# JobOccupation Properties
+# -----------------------------------------------------------------------------
+
+foundation:cboCode a owl:DatatypeProperty ;
+    rdfs:label "CBO code" ;
+    rdfs:comment "Brazilian Occupational Classification code (Classificação Brasileira de Ocupações)" ;
+    rdfs:domain foundation:JobOccupation ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+CBO codes are 6-digit codes (format: XXXX-XX) used in Brazil to standardize
+job classifications.
+
+Examples:
+  :softwareEngineer foundation:cboCode "2124-05" .
+  :dataScientist foundation:cboCode "2031-05" .
+  :projectManager foundation:cboCode "1425-10" .
+
+See: https://www.ocupacoes.com.br/
+""" .
+
+foundation:occupationTitle a owl:DatatypeProperty ;
+    rdfs:label "occupation title" ;
+    rdfs:comment "Official title of the occupation" ;
+    rdfs:domain foundation:JobOccupation ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :softwareEngineer foundation:occupationTitle "Engenheiro de Software" .
+""" .
+
+foundation:occupationDescription a owl:DatatypeProperty ;
+    rdfs:label "occupation description" ;
+    rdfs:comment "Description of the occupation and its responsibilities" ;
+    rdfs:domain foundation:JobOccupation ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :softwareEngineer foundation:occupationDescription "Desenvolve, implementa e mantém sistemas e aplicações de software" .
+""" .
+
+# -----------------------------------------------------------------------------
+# Connection Types (Object Properties)
+# -----------------------------------------------------------------------------
+
+foundation:hasEmploymentContract a owl:ObjectProperty ;
+    rdfs:label "has employment contract" ;
+    rdfs:comment "Links a person to their employment contract" ;
+    rdfs:domain foundation:Person ;
+    rdfs:range foundation:EmploymentContract ;
+    rdfs:seeAlso """
+Example:
+  :john foundation:hasEmploymentContract :johnEmployment .
+""" .
+
+foundation:employer a owl:ObjectProperty ;
+    rdfs:label "employer" ;
+    rdfs:comment "Links an employment contract to the employing company" ;
+    rdfs:domain foundation:EmploymentContract ;
+    rdfs:range foundation:Company ;
+    rdfs:seeAlso """
+Example:
+  :johnEmployment foundation:employer :acmeCompany .
+""" .
+
+foundation:occupation a owl:ObjectProperty ;
+    rdfs:label "occupation" ;
+    rdfs:comment "Links an employment contract to the job occupation" ;
+    rdfs:domain foundation:EmploymentContract ;
+    rdfs:range foundation:JobOccupation ;
+    rdfs:seeAlso """
+Example:
+  :johnEmployment foundation:occupation :softwareEngineerJob .
+""" .
+
+foundation:hasSalaryHistory a owl:ObjectProperty ;
+    rdfs:label "has salary history" ;
+    rdfs:comment "Links an employment contract to its salary change records" ;
+    rdfs:domain foundation:EmploymentContract ;
+    rdfs:range foundation:SalaryHistory ;
+    rdfs:seeAlso """
+Example:
+  :johnEmployment foundation:hasSalaryHistory :salaryChange1 .
+  :johnEmployment foundation:hasSalaryHistory :salaryChange2 .
+""" .
+
+# Note: foundation:hasAddress is already defined in Person.ttl with domain foundation:Person
+# It also works for Company (multiple domains are valid in OWL)
+# Example: :acmeCompany foundation:hasAddress :acmeAddress .

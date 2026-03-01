@@ -1,0 +1,743 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix currency: <http://qudt.org/vocab/currency/> .
+
+# =============================================================================
+# Financial Concepts
+# =============================================================================
+# Banking, transactions, and financial management concepts
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+<http://foundation.local/ontology/FinancialConcepts>
+  a owl:Ontology ;
+  rdfs:label "FOUNDATION Financial Concepts Ontology" ;
+  rdfs:comment "Banking, transactions, and financial management concepts" ;
+  owl:imports <http://qudt.org/2.1/vocab/currency> ;
+.
+
+# -----------------------------------------------------------------------------
+# Bank Account
+# -----------------------------------------------------------------------------
+
+foundation:BankAccount a owl:Class ;
+    rdfs:subClassOf foundation:Concept ;
+    rdfs:label "Bank Account" ;
+    rdfs:comment "A financial account held at a banking institution" ;
+    foundation:icon "account_balance" ;
+    rdfs:seeAlso """
+Represents a bank account that can send and receive money.
+
+Examples:
+- Checking account
+- Savings account
+- Business account
+- Investment account
+
+Key information:
+- Account holder
+- Bank/financial institution
+- Account number and routing information
+- Account type and currency
+""" .
+
+foundation:accountNumber a owl:DatatypeProperty ;
+    rdfs:label "account number" ;
+    rdfs:comment "The account number" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myAccount foundation:accountNumber "1234567890" .
+""" .
+
+foundation:accountType a owl:DatatypeProperty ;
+    rdfs:label "account type" ;
+    rdfs:comment "Type of bank account (checking, savings, business, etc.)" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common types:
+- Checking
+- Savings
+- Business Checking
+- Business Savings
+- Money Market
+- Certificate of Deposit (CD)
+
+Example:
+  :myAccount foundation:accountType "Checking" .
+""" .
+
+foundation:accountCurrency a owl:ObjectProperty ;
+    rdfs:label "account currency" ;
+    rdfs:comment "Currency of the account (QUDT CurrencyUnit)" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range qudt:CurrencyUnit ;
+    rdfs:seeAlso """
+Example:
+  :myAccount foundation:accountCurrency currency:USD .
+  :myBrazilAccount foundation:accountCurrency currency:BRL .
+  :myEuroAccount foundation:accountCurrency currency:EUR .
+""" .
+
+foundation:routingNumber a owl:DatatypeProperty ;
+    rdfs:label "routing number" ;
+    rdfs:comment "Bank routing number (ABA routing number in US, or equivalent)" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myAccount foundation:routingNumber "021000021" .
+""" .
+
+foundation:swiftCode a owl:DatatypeProperty ;
+    rdfs:label "SWIFT code" ;
+    rdfs:comment "SWIFT/BIC code for international transfers" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+SWIFT (Society for Worldwide Interbank Financial Telecommunication) codes
+are used for international wire transfers.
+
+Example:
+  :myAccount foundation:swiftCode "BOFAUS3N" .
+""" .
+
+foundation:iban a owl:DatatypeProperty ;
+    rdfs:label "IBAN" ;
+    rdfs:comment "International Bank Account Number" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+IBAN is used in many countries for international transactions.
+
+Example:
+  :myEuropeAccount foundation:iban "DE89370400440532013000" .
+""" .
+
+foundation:bankBranch a owl:DatatypeProperty ;
+    rdfs:label "bank branch" ;
+    rdfs:comment "Bank branch identifier or code" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example (Brazil):
+  :myBrazilAccount foundation:bankBranch "0001" .
+""" .
+
+foundation:accountBalance a owl:DatatypeProperty ;
+    rdfs:label "account balance" ;
+    rdfs:comment "Current balance in the account" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :myAccount foundation:accountBalance "5432.10"^^xsd:decimal ;
+      foundation:accountCurrency currency:USD .
+""" .
+
+foundation:accountHolder a owl:ObjectProperty ;
+    rdfs:label "account holder" ;
+    rdfs:comment "The person or organization that owns this account" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :myAccount foundation:accountHolder :johnDoe .
+  :businessAccount foundation:accountHolder :acmeCorp .
+""" .
+
+foundation:heldAtBank a owl:ObjectProperty ;
+    rdfs:label "held at bank" ;
+    rdfs:comment "The financial institution where this account is held" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range foundation:FinancialInstitution ;
+    rdfs:seeAlso """
+Example:
+  :myAccount foundation:heldAtBank :bankOfAmerica .
+""" .
+
+# -----------------------------------------------------------------------------
+# Financial Institution
+# -----------------------------------------------------------------------------
+
+foundation:FinancialInstitution a owl:Class ;
+    rdfs:subClassOf foundation:Organization ;
+    rdfs:label "Financial Institution" ;
+    rdfs:comment "A bank or financial services organization" ;
+    foundation:icon "account_balance" ;
+    rdfs:seeAlso """
+Represents a bank, credit union, or other financial institution.
+
+Examples:
+- Bank of America
+- Chase
+- Wells Fargo
+- Itaú (Brazil)
+- Banco do Brasil
+- Credit unions
+""" .
+
+foundation:bankCode a owl:DatatypeProperty ;
+    rdfs:label "bank code" ;
+    rdfs:comment "Official code identifying the bank (e.g., 3-digit code in Brazil)" ;
+    rdfs:domain foundation:FinancialInstitution ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example (Brazil):
+  :itau foundation:bankCode "341" .
+  :bancoDoBrasil foundation:bankCode "001" .
+""" .
+
+foundation:bankName a owl:DatatypeProperty ;
+    rdfs:label "bank name" ;
+    rdfs:comment "Official name of the financial institution" ;
+    rdfs:domain foundation:FinancialInstitution ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :itau foundation:bankName "Itaú Unibanco S.A." .
+""" .
+
+# -----------------------------------------------------------------------------
+# Financial Transaction
+# -----------------------------------------------------------------------------
+
+foundation:FinancialTransaction a owl:Class ;
+    rdfs:subClassOf foundation:Concept ;
+    rdfs:label "Financial Transaction" ;
+    rdfs:comment "A movement of money between accounts or parties" ;
+    foundation:icon "swap_horiz" ;
+    rdfs:seeAlso """
+Base class for all types of financial transactions.
+
+Subtypes:
+- BankTransfer (between bank accounts)
+- Payment (for goods/services)
+- Invoice (bill for payment)
+- Expense (expenditure record)
+- Income (revenue record)
+""" .
+
+foundation:transactionId a owl:DatatypeProperty ;
+    rdfs:label "transaction ID" ;
+    rdfs:comment "Unique identifier for this transaction" ;
+    rdfs:domain foundation:FinancialTransaction ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :transaction1 foundation:transactionId "TXN-2024-001234" .
+""" .
+
+foundation:transactionDate a owl:DatatypeProperty ;
+    rdfs:label "transaction date" ;
+    rdfs:comment "Date when the transaction occurred or was initiated" ;
+    rdfs:domain foundation:FinancialTransaction ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :transaction1 foundation:transactionDate "2024-01-15"^^xsd:date .
+""" .
+
+foundation:transactionAmount a owl:DatatypeProperty ;
+    rdfs:label "transaction amount" ;
+    rdfs:comment "The monetary amount of the transaction" ;
+    rdfs:domain foundation:FinancialTransaction ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :transaction1 foundation:transactionAmount "1500.00"^^xsd:decimal ;
+      foundation:transactionCurrency currency:USD .
+""" .
+
+foundation:transactionCurrency a owl:ObjectProperty ;
+    rdfs:label "transaction currency" ;
+    rdfs:comment "Currency of the transaction (QUDT CurrencyUnit)" ;
+    rdfs:domain foundation:FinancialTransaction ;
+    rdfs:range qudt:CurrencyUnit ;
+    rdfs:seeAlso """
+Example:
+  :transaction1 foundation:transactionCurrency currency:USD .
+  :transaction2 foundation:transactionCurrency currency:EUR .
+  :transaction3 foundation:transactionCurrency currency:BRL .
+""" .
+
+foundation:transactionStatus a owl:DatatypeProperty ;
+    rdfs:label "transaction status" ;
+    rdfs:comment "Current status of the transaction" ;
+    rdfs:domain foundation:FinancialTransaction ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common statuses:
+- Pending
+- Processing
+- Completed
+- Failed
+- Cancelled
+- Reversed
+
+Example:
+  :transaction1 foundation:transactionStatus "Completed" .
+""" .
+
+foundation:transactionDescription a owl:DatatypeProperty ;
+    rdfs:label "transaction description" ;
+    rdfs:comment "Description or memo for the transaction" ;
+    rdfs:domain foundation:FinancialTransaction ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :transaction1 foundation:transactionDescription "Payment for consulting services - January 2024" .
+""" .
+
+foundation:transactionFee a owl:DatatypeProperty ;
+    rdfs:label "transaction fee" ;
+    rdfs:comment "Fee charged for processing this transaction" ;
+    rdfs:domain foundation:FinancialTransaction ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :transaction1 foundation:transactionFee "2.50"^^xsd:decimal .
+""" .
+
+# -----------------------------------------------------------------------------
+# Bank Transfer
+# -----------------------------------------------------------------------------
+
+foundation:BankTransfer a owl:Class ;
+    rdfs:subClassOf foundation:FinancialTransaction ;
+    rdfs:label "Bank Transfer" ;
+    rdfs:comment "A transfer of funds from one bank account to another" ;
+    foundation:icon "sync_alt" ;
+    rdfs:seeAlso """
+Represents money being moved between bank accounts.
+
+Types:
+- Domestic transfer (within same country)
+- International/wire transfer (between countries)
+- ACH transfer (US)
+- TED/PIX transfer (Brazil)
+- SEPA transfer (Europe)
+
+Example:
+  :transfer1 a foundation:BankTransfer ;
+      foundation:fromAccount :myCheckingAccount ;
+      foundation:toAccount :myBusinessAccount ;
+      foundation:transactionAmount "5000.00"^^xsd:decimal ;
+      foundation:transactionCurrency currency:USD ;
+      foundation:transactionDate "2024-01-15"^^xsd:date ;
+      foundation:transferType "ACH" ;
+      foundation:transactionStatus "Completed" .
+""" .
+
+foundation:fromAccount a owl:ObjectProperty ;
+    rdfs:label "from account" ;
+    rdfs:comment "The source bank account for this transfer" ;
+    rdfs:domain foundation:BankTransfer ;
+    rdfs:range foundation:BankAccount ;
+    rdfs:seeAlso """
+Example:
+  :transfer1 foundation:fromAccount :myAccount .
+""" .
+
+foundation:toAccount a owl:ObjectProperty ;
+    rdfs:label "to account" ;
+    rdfs:comment "The destination bank account for this transfer" ;
+    rdfs:domain foundation:BankTransfer ;
+    rdfs:range foundation:BankAccount ;
+    rdfs:seeAlso """
+Example:
+  :transfer1 foundation:toAccount :recipientAccount .
+""" .
+
+foundation:transferType a owl:DatatypeProperty ;
+    rdfs:label "transfer type" ;
+    rdfs:comment "Type of bank transfer (ACH, Wire, SEPA, TED, PIX, etc.)" ;
+    rdfs:domain foundation:BankTransfer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common types:
+- ACH (Automated Clearing House - US)
+- Wire Transfer (domestic or international)
+- SEPA (Single Euro Payments Area - Europe)
+- TED (Transferência Eletrônica Disponível - Brazil, same-day)
+- DOC (Documento de Ordem de Crédito - Brazil, next-day)
+- PIX (Instant payment - Brazil)
+
+Example:
+  :transfer1 foundation:transferType "PIX" .
+  :transfer2 foundation:transferType "Wire Transfer" .
+""" .
+
+foundation:referenceNumber a owl:DatatypeProperty ;
+    rdfs:label "reference number" ;
+    rdfs:comment "Bank-provided reference or confirmation number for the transfer" ;
+    rdfs:domain foundation:BankTransfer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :transfer1 foundation:referenceNumber "CONF-2024-ABC123XYZ" .
+""" .
+
+# -----------------------------------------------------------------------------
+# Payment
+# -----------------------------------------------------------------------------
+
+foundation:Payment a owl:Class ;
+    rdfs:subClassOf foundation:FinancialTransaction ;
+    rdfs:label "Payment" ;
+    rdfs:comment "A payment made for goods, services, or obligations" ;
+    foundation:icon "payment" ;
+    rdfs:seeAlso """
+Represents a payment transaction.
+
+Types:
+- Invoice payment
+- Contract payment
+- Purchase payment
+- Subscription payment
+
+Example:
+  :payment1 a foundation:Payment ;
+      foundation:paidBy :johnDoe ;
+      foundation:paidTo :consultingFirm ;
+      foundation:transactionAmount "2500.00"^^xsd:decimal ;
+      foundation:transactionCurrency currency:USD ;
+      foundation:transactionDate "2024-01-20"^^xsd:date ;
+      foundation:paymentMethod "Bank Transfer" ;
+      foundation:forInvoice :invoice123 .
+""" .
+
+foundation:paidBy a owl:ObjectProperty ;
+    rdfs:label "paid by" ;
+    rdfs:comment "The party making the payment" ;
+    rdfs:domain foundation:Payment ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :payment1 foundation:paidBy :johnDoe .
+""" .
+
+foundation:paidTo a owl:ObjectProperty ;
+    rdfs:label "paid to" ;
+    rdfs:comment "The party receiving the payment" ;
+    rdfs:domain foundation:Payment ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :payment1 foundation:paidTo :serviceProvider .
+""" .
+
+foundation:paymentMethod a owl:DatatypeProperty ;
+    rdfs:label "payment method" ;
+    rdfs:comment "Method used to make the payment" ;
+    rdfs:domain foundation:Payment ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common methods:
+- Bank Transfer
+- Credit Card
+- Debit Card
+- Check
+- Cash
+- PayPal
+- Cryptocurrency
+- Wire Transfer
+
+Example:
+  :payment1 foundation:paymentMethod "Credit Card" .
+""" .
+
+foundation:forInvoice a owl:ObjectProperty ;
+    rdfs:label "for invoice" ;
+    rdfs:comment "Links a payment to the invoice it satisfies" ;
+    rdfs:domain foundation:Payment ;
+    rdfs:range foundation:Invoice ;
+    rdfs:seeAlso """
+Example:
+  :payment1 foundation:forInvoice :invoice123 .
+""" .
+
+foundation:forContract a owl:ObjectProperty ;
+    rdfs:label "for contract" ;
+    rdfs:comment "Links a payment to the contract it relates to" ;
+    rdfs:domain foundation:Payment ;
+    rdfs:range foundation:Contract ;
+    rdfs:seeAlso """
+Example:
+  :payment1 foundation:forContract :serviceContract2024 .
+""" .
+
+# -----------------------------------------------------------------------------
+# Invoice
+# -----------------------------------------------------------------------------
+
+foundation:Invoice a owl:Class ;
+    rdfs:subClassOf foundation:InformationObject ;
+    rdfs:label "Invoice" ;
+    rdfs:comment "A bill or request for payment for goods or services provided" ;
+    foundation:icon "receipt_long" ;
+    rdfs:seeAlso """
+An invoice is a document requesting payment.
+
+Key information:
+- Invoice number
+- Issue date and due date
+- Seller (who issued the invoice)
+- Buyer (who should pay)
+- Line items with descriptions and amounts
+- Total amount due
+- Payment terms
+
+Example:
+  :invoice123 a foundation:Invoice ;
+      foundation:invoiceNumber "INV-2024-0123" ;
+      foundation:issueDate "2024-01-15"^^xsd:date ;
+      foundation:dueDate "2024-02-14"^^xsd:date ;
+      foundation:invoicedBy :consultingFirm ;
+      foundation:invoicedTo :clientCompany ;
+      foundation:invoiceAmount "5000.00"^^xsd:decimal ;
+      foundation:invoiceCurrency currency:USD ;
+      foundation:invoiceStatus "Paid" ;
+      foundation:relatedContract :serviceContract2024 .
+""" .
+
+foundation:invoiceNumber a owl:DatatypeProperty ;
+    rdfs:label "invoice number" ;
+    rdfs:comment "Unique identifier for the invoice" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:invoiceNumber "INV-2024-0123" .
+""" .
+
+foundation:issueDate a owl:DatatypeProperty ;
+    rdfs:label "issue date" ;
+    rdfs:comment "Date when the invoice was issued" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:issueDate "2024-01-15"^^xsd:date .
+""" .
+
+foundation:dueDate a owl:DatatypeProperty ;
+    rdfs:label "due date" ;
+    rdfs:comment "Date by which payment is due" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:dueDate "2024-02-14"^^xsd:date .
+""" .
+
+foundation:invoiceAmount a owl:DatatypeProperty ;
+    rdfs:label "invoice amount" ;
+    rdfs:comment "Total amount due on the invoice" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:invoiceAmount "5000.00"^^xsd:decimal ;
+      foundation:invoiceCurrency currency:USD .
+""" .
+
+foundation:invoiceCurrency a owl:ObjectProperty ;
+    rdfs:label "invoice currency" ;
+    rdfs:comment "Currency of the invoice (QUDT CurrencyUnit)" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range qudt:CurrencyUnit ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:invoiceCurrency currency:USD .
+  :invoice456 foundation:invoiceCurrency currency:EUR .
+  :invoice789 foundation:invoiceCurrency currency:BRL .
+""" .
+
+foundation:invoiceStatus a owl:DatatypeProperty ;
+    rdfs:label "invoice status" ;
+    rdfs:comment "Current status of the invoice" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common statuses:
+- Draft
+- Issued
+- Sent
+- Partially Paid
+- Paid
+- Overdue
+- Cancelled
+- Void
+
+Example:
+  :invoice123 foundation:invoiceStatus "Paid" .
+""" .
+
+foundation:invoicedBy a owl:ObjectProperty ;
+    rdfs:label "invoiced by" ;
+    rdfs:comment "The party issuing the invoice (seller/service provider)" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:invoicedBy :consultingFirm .
+""" .
+
+foundation:invoicedTo a owl:ObjectProperty ;
+    rdfs:label "invoiced to" ;
+    rdfs:comment "The party responsible for payment (buyer/client)" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:invoicedTo :clientCompany .
+""" .
+
+foundation:relatedContract a owl:ObjectProperty ;
+    rdfs:label "related contract" ;
+    rdfs:comment "Links an invoice to the contract it relates to" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range foundation:Contract ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:relatedContract :serviceContract2024 .
+""" .
+
+foundation:taxAmount a owl:DatatypeProperty ;
+    rdfs:label "tax amount" ;
+    rdfs:comment "Total tax amount on the invoice" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:taxAmount "500.00"^^xsd:decimal .
+""" .
+
+foundation:subtotalAmount a owl:DatatypeProperty ;
+    rdfs:label "subtotal amount" ;
+    rdfs:comment "Subtotal before taxes and fees" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:subtotalAmount "4500.00"^^xsd:decimal .
+""" .
+
+# -----------------------------------------------------------------------------
+# Expense & Income
+# -----------------------------------------------------------------------------
+
+foundation:Expense a owl:Class ;
+    rdfs:subClassOf foundation:FinancialTransaction ;
+    rdfs:label "Expense" ;
+    rdfs:comment "A record of money spent or cost incurred" ;
+    foundation:icon "money_off" ;
+    rdfs:seeAlso """
+Tracks expenses and costs.
+
+Categories:
+- Operating expenses
+- Capital expenses
+- Travel expenses
+- Office expenses
+- etc.
+
+Example:
+  :expense1 a foundation:Expense ;
+      foundation:expenseCategory "Office Supplies" ;
+      foundation:transactionAmount "125.50"^^xsd:decimal ;
+      foundation:transactionCurrency currency:USD ;
+      foundation:transactionDate "2024-01-10"^^xsd:date ;
+      foundation:incurredBy :companyName .
+""" .
+
+foundation:expenseCategory a owl:DatatypeProperty ;
+    rdfs:label "expense category" ;
+    rdfs:comment "Category or type of expense" ;
+    rdfs:domain foundation:Expense ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common categories:
+- Office Supplies
+- Travel
+- Meals & Entertainment
+- Software & Subscriptions
+- Marketing & Advertising
+- Professional Services
+- Rent
+- Utilities
+
+Example:
+  :expense1 foundation:expenseCategory "Software & Subscriptions" .
+""" .
+
+foundation:incurredBy a owl:ObjectProperty ;
+    rdfs:label "incurred by" ;
+    rdfs:comment "The party that incurred this expense" ;
+    rdfs:domain foundation:Expense ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :expense1 foundation:incurredBy :employeeName .
+""" .
+
+foundation:Income a owl:Class ;
+    rdfs:subClassOf foundation:FinancialTransaction ;
+    rdfs:label "Income" ;
+    rdfs:comment "A record of money received or revenue earned" ;
+    foundation:icon "attach_money" ;
+    rdfs:seeAlso """
+Tracks income and revenue.
+
+Types:
+- Service revenue
+- Product sales
+- Interest income
+- Investment income
+- etc.
+
+Example:
+  :income1 a foundation:Income ;
+      foundation:incomeCategory "Service Revenue" ;
+      foundation:transactionAmount "5000.00"^^xsd:decimal ;
+      foundation:transactionCurrency currency:USD ;
+      foundation:transactionDate "2024-01-20"^^xsd:date ;
+      foundation:receivedBy :myCompany .
+""" .
+
+foundation:incomeCategory a owl:DatatypeProperty ;
+    rdfs:label "income category" ;
+    rdfs:comment "Category or type of income" ;
+    rdfs:domain foundation:Income ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common categories:
+- Service Revenue
+- Product Sales
+- Consulting Fees
+- Subscription Revenue
+- Interest Income
+- Licensing Fees
+
+Example:
+  :income1 foundation:incomeCategory "Consulting Fees" .
+""" .
+
+foundation:receivedBy a owl:ObjectProperty ;
+    rdfs:label "received by" ;
+    rdfs:comment "The party that received this income" ;
+    rdfs:domain foundation:Income ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :income1 foundation:receivedBy :myCompany .
+""" .

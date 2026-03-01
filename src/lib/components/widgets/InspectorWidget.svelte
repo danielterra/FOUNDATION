@@ -321,7 +321,6 @@
       </div>
     {:else if entityData}
       <div class="content-scroll">
-        {console.log('[INSPECTOR] Entity types:', entityData?.types, 'isFile:', isFile())}
         {#if entityData.comment}
           <p class="description">{entityData.comment}</p>
         {/if}

@@ -28,8 +28,6 @@ pub async fn initialize_app(
         return Ok(());
     }
 
-    super::log_backend("info", "Initializing database...");
-
     // Initialize database (blocking - runs in async context so won't block UI)
     let conn = eavto::initialize_with_progress(app.clone())
         .map_err(|e| {
@@ -39,12 +37,10 @@ pub async fn initialize_app(
             error_msg
         })?;
 
-    super::log_backend("info", "Database initialized successfully");
-
     // Print stats
     if let Ok(stats) = eavto::get_stats(&conn) {
         let stats_msg = format!(
-            "Database stats - Triples: {}, Active: {}, Transactions: {}, Entities: {}",
+            "Database initialized - Triples: {}, Active: {}, Transactions: {}, Entities: {}",
             stats.total_facts, stats.active_facts, stats.total_transactions, stats.entities_count
         );
         super::log_backend("info", &stats_msg);
@@ -56,21 +52,17 @@ pub async fn initialize_app(
 
     // Emit completion event
     let _ = app.emit("import-complete", ());
-    super::log_backend("info", "Database initialization complete");
 
     // Check for pending tool executions (from interrupted sessions)
-    super::log_backend("info", "[RECOVERY] Checking for pending tool executions on startup...");
     let executor_state = app.state::<DbExecutor>();
     match super::chat::check_and_execute_pending_tools(app.clone(), &executor_state).await {
         Ok(count) if count > 0 => {
-            super::log_backend("info", &format!("[RECOVERY] Executed {} pending tools from interrupted session", count));
-        }
-        Ok(_) => {
-            super::log_backend("info", "[RECOVERY] No pending tools found");
+            super::log_backend("warn", &format!("[RECOVERY] Executed {} pending tools from interrupted session", count));
         }
         Err(e) => {
             super::log_backend("error", &format!("[RECOVERY] Failed to check pending tools: {}", e));
         }
+        _ => {}
     }
 
     Ok(())
@@ -552,7 +544,7 @@ fn get_cpu_info() -> InternalProcessorInfo {
     {
         use std::process::Command;
 
-        let model = if let Ok(output) = Command::new("sysctl")
+        let _model = if let Ok(output) = Command::new("sysctl")
             .args(&["-n", "machdep.cpu.brand_string"])
             .output()
         {
@@ -578,7 +570,7 @@ fn get_cpu_info() -> InternalProcessorInfo {
         let architecture = std::env::consts::ARCH.to_string();
 
         return InternalProcessorInfo {
-            model,
+            model: _model,
             cores,
             architecture,
         };
@@ -588,14 +580,14 @@ fn get_cpu_info() -> InternalProcessorInfo {
     {
         use std::fs;
 
-        let mut model = "Unknown CPU".to_string();
+        let mut _model = "Unknown CPU".to_string();
         let mut cores = None;
 
         if let Ok(content) = fs::read_to_string("/proc/cpuinfo") {
             for line in content.lines() {
                 if line.starts_with("model name") {
                     if let Some(cpu) = line.split(':').nth(1) {
-                        model = cpu.trim().to_string();
+                        _model = cpu.trim().to_string();
                     }
                 }
                 if line.starts_with("cpu cores") {
@@ -609,7 +601,7 @@ fn get_cpu_info() -> InternalProcessorInfo {
         let architecture = std::env::consts::ARCH.to_string();
 
         return InternalProcessorInfo {
-            model,
+            model: _model,
             cores,
             architecture,
         };
@@ -619,7 +611,7 @@ fn get_cpu_info() -> InternalProcessorInfo {
     {
         use std::process::Command;
 
-        let model = if let Ok(output) = Command::new("wmic")
+        let _model = if let Ok(output) = Command::new("wmic")
             .args(&["cpu", "get", "name"])
             .output()
         {
@@ -658,7 +650,7 @@ fn get_cpu_info() -> InternalProcessorInfo {
         let architecture = std::env::consts::ARCH.to_string();
 
         return InternalProcessorInfo {
-            model,
+            model: _model,
             cores,
             architecture,
         };

@@ -143,6 +143,7 @@ pub fn run() {
             commands::chat__get_recent_messages,
             commands::chat__get_conversation_info,
             commands::chat__send_and_reply,
+            commands::chat__recover_pending_tools,
             commands::widget__list_types,
             commands::widget__get_all,
             commands::widget__add,
