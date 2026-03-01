@@ -106,12 +106,12 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
     vec![
         FunctionDefinition {
             name: "remember_concepts".to_string(),
-            description: "Search your memory for concepts you know about. Find what types of things you've learned.".to_string(),
+            description: "Search your memory for concepts you know about. Find what types of things you've learned. IMPORTANT: Always use English for concept searches and keep all concept labels in English.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "query".to_string(),
                     param_type: "string".to_string(),
-                    description: "Search keywords separated by spaces. ALL words must match (AND search). Use 1-3 most important words for best results. Example: 'CNH' or 'driver license' instead of 'CNH habilitação carteira motorista'.".to_string(),
+                    description: "Search keywords separated by spaces in ENGLISH. ALL words must match (AND search). Use 1-3 most important words for best results. Example: 'driver license' instead of 'CNH habilitação carteira motorista'.".to_string(),
                     required: false,
                 },
                 Parameter {
@@ -184,7 +184,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
         },
         FunctionDefinition {
             name: "learn_concept".to_string(),
-            description: "Learn a new concept (e.g., when users mention a new type of thing you should remember).".to_string(),
+            description: "Learn a new concept (e.g., when users mention a new type of thing you should remember). IMPORTANT: Always create concepts with English labels and descriptions, regardless of the user's language.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -195,7 +195,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 Parameter {
                     name: "label".to_string(),
                     param_type: "string".to_string(),
-                    description: "Name for this concept".to_string(),
+                    description: "Name for this concept in ENGLISH (e.g., 'Driver License' not 'CNH')".to_string(),
                     required: true,
                 },
                 Parameter {

@@ -30,6 +30,28 @@ This document contains specific instructions for AI assistants working on the FO
 - Apenas consultas SELECT são permitidas sem confirmação prévia
 - SEMPRE pergunte ao usuário antes de modificar qualquer dado no banco
 
+### Estrutura da Tabela `triples`
+
+**⚠️ IMPORTANTE:** A tabela `triples` tem uma estrutura específica que você DEVE entender para não cometer erros:
+
+- **`object`**: Contém IRIs ou blank nodes quando `object_type = 'iri'` ou `'blank'`
+- **`object_value`**: Contém o valor lexical de literais quando `object_type = 'literal'`
+- **`object_datatype`**: Tipo do literal (ex: `xsd:string`, `xsd:integer`, `xsd:dateTime`)
+
+**Ao fazer queries SQL:**
+```sql
+-- ❌ ERRADO - Vai retornar vazio para literais
+SELECT predicate, object FROM triples WHERE subject = 'foundation:File_123'
+
+-- ✅ CORRETO - Retorna tanto IRIs quanto valores literais
+SELECT predicate, object, object_value, object_type FROM triples WHERE subject = 'foundation:File_123'
+```
+
+**Exemplos práticos:**
+- `foundation:fileName` é um literal → valor está em `object_value`, `object` é NULL
+- `foundation:hasFileType` é um IRI → valor está em `object`, `object_value` é NULL
+- Se você quer o valor independente do tipo, use `COALESCE(object, object_value)`
+
 ## Project Structure
 
 - **Frontend**: Svelte + TypeScript (src/)

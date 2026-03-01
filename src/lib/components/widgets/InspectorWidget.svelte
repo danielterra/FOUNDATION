@@ -65,7 +65,9 @@
   async function openFile(filePath) {
     if (!filePath) return;
     try {
-      await openPath(filePath);
+      // Remove file:// prefix if present
+      const cleanPath = filePath.startsWith('file://') ? filePath.replace('file://', '') : filePath;
+      await openPath(cleanPath);
     } catch (err) {
       console.error('Failed to open file:', err);
     }
@@ -78,26 +80,44 @@
     return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${sizes[i]}`;
   }
 
-  function isAttachment() {
-    return entityData?.types?.some(t => t.iri === 'foundation:Attachment');
+  function isFile() {
+    return entityData?.types?.some(t => t.iri === 'foundation:File');
   }
 
-  function getAttachmentFilePath() {
+  function getFileFilePath() {
     const prop = entityData?.properties?.find(p => p.property === 'foundation:filePath');
     return prop?.value;
   }
 
-  function getAttachmentMimeType() {
-    const prop = entityData?.properties?.find(p => p.property === 'foundation:mimeType');
-    return prop?.value;
+  function getFileMimeType() {
+    // First try direct mimeType property
+    let prop = entityData?.properties?.find(p => p.property === 'foundation:mimeType');
+    if (prop?.value) return prop.value;
+
+    // Try to get from hasFileType relationship
+    const hasFileType = entityData?.properties?.find(p => p.property === 'foundation:hasFileType');
+    if (hasFileType?.value) {
+      // Map FileType to mimeType
+      const fileTypeToMime = {
+        'foundation:FileType_PDF': 'application/pdf',
+        'foundation:FileType_PNG': 'image/png',
+        'foundation:FileType_JPEG': 'image/jpeg',
+        'foundation:FileType_JPG': 'image/jpeg',
+        'foundation:FileType_GIF': 'image/gif',
+        'foundation:FileType_WEBP': 'image/webp',
+      };
+      return fileTypeToMime[hasFileType.value];
+    }
+
+    return null;
   }
 
-  function getAttachmentFileName() {
+  function getFileFileName() {
     const prop = entityData?.properties?.find(p => p.property === 'foundation:fileName');
     return prop?.value || entityData?.label;
   }
 
-  function getAttachmentFileSize() {
+  function getFileFileSize() {
     const prop = entityData?.properties?.find(p => p.property === 'foundation:fileSize');
     return prop?.value ? parseInt(prop.value) : null;
   }
@@ -301,50 +321,52 @@
       </div>
     {:else if entityData}
       <div class="content-scroll">
+        {console.log('[INSPECTOR] Entity types:', entityData?.types, 'isFile:', isFile())}
         {#if entityData.comment}
           <p class="description">{entityData.comment}</p>
         {/if}
 
-        {#if isAttachment()}
-          {@const filePath = getAttachmentFilePath()}
-          {@const mimeType = getAttachmentMimeType()}
-          {@const fileName = getAttachmentFileName()}
-          {@const fileSize = getAttachmentFileSize()}
-          {console.log('[INSPECTOR] Attachment detected:', { filePath, mimeType, fileName, fileSize, types: entityData?.types })}
+        {#if isFile()}
+          {@const rawFilePath = getFileFilePath()}
+          {@const filePath = rawFilePath?.startsWith('file://') ? rawFilePath.replace('file://', '') : rawFilePath}
+          {@const mimeType = getFileMimeType()}
+          {@const fileName = getFileFileName()}
+          {@const fileSize = getFileFileSize()}
+          {console.log('[INSPECTOR] File detected:', { rawFilePath, filePath, mimeType, fileName, fileSize, types: entityData?.types })}
 
-          <div class="attachment-preview-section">
+          <div class="file-preview-section">
             <button
-              class="attachment-preview-card"
-              onclick={() => openFile(filePath)}
+              class="file-preview-card"
+              onclick={() => openFile(rawFilePath)}
               title="Click to open in default app"
             >
               {#if mimeType?.startsWith('image/')}
-                <div class="attachment-image-preview">
+                <div class="file-image-preview">
                   <img
                     src={convertFileSrc(filePath)}
                     alt={fileName}
                   />
                 </div>
               {:else if mimeType === 'application/pdf'}
-                <div class="attachment-pdf-preview">
+                <div class="file-pdf-preview">
                   <embed
                     src={convertFileSrc(filePath)}
                     type="application/pdf"
                   />
                 </div>
               {:else}
-                <div class="attachment-file-preview">
+                <div class="file-generic-preview">
                   <span class="material-symbols-outlined">description</span>
                   <span class="file-label">File</span>
                 </div>
               {/if}
 
-              <div class="attachment-preview-info">
-                <div class="attachment-preview-name">{fileName}</div>
+              <div class="file-preview-info">
+                <div class="file-preview-name">{fileName}</div>
                 {#if fileSize}
-                  <div class="attachment-preview-size">{formatFileSize(fileSize)}</div>
+                  <div class="file-preview-size">{formatFileSize(fileSize)}</div>
                 {/if}
-                <div class="attachment-preview-action">
+                <div class="file-preview-action">
                   <span class="material-symbols-outlined">open_in_new</span>
                   <span>Open file</span>
                 </div>
@@ -536,7 +558,11 @@
                     onclick={() => openEntityInspector(group.entity)}
                   >
                     {#if group.entityIcon}
-                      <span class="material-symbols-outlined entity-icon">{group.entityIcon}</span>
+                      {#if isIconUrl(group.entityIcon)}
+                        <img src={getIconUrl(group.entityIcon)} alt="" class="entity-icon-image" />
+                      {:else}
+                        <span class="material-symbols-outlined entity-icon">{group.entityIcon}</span>
+                      {/if}
                     {:else}
                       <span class="material-symbols-outlined entity-icon">link</span>
                     {/if}
@@ -1105,6 +1131,13 @@
     color: var(--color-interactive);
   }
 
+  .backlink-entity .entity-icon-image {
+    width: 40px;
+    height: 40px;
+    border-radius: 6px;
+    object-fit: cover;
+  }
+
   .entity-info {
     flex: 1;
     display: flex;
@@ -1178,12 +1211,12 @@
     line-height: 1.3;
   }
 
-  /* Attachment Preview Styles */
-  .attachment-preview-section {
+  /* File Preview Styles */
+  .file-preview-section {
     margin-bottom: 16px;
   }
 
-  .attachment-preview-card {
+  .file-preview-card {
     width: 100%;
     display: flex;
     flex-direction: column;
@@ -1196,13 +1229,13 @@
     transition: all 0.2s;
   }
 
-  .attachment-preview-card:hover {
+  .file-preview-card:hover {
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
     border-color: color-mix(in srgb, var(--color-white) 25%, transparent);
     transform: translateY(-1px);
   }
 
-  .attachment-image-preview {
+  .file-image-preview {
     width: 100%;
     height: 200px;
     border-radius: 6px;
@@ -1210,14 +1243,14 @@
     background: color-mix(in srgb, var(--color-white) 3%, transparent);
   }
 
-  .attachment-image-preview img {
+  .file-image-preview img {
     width: 100%;
     height: 100%;
     object-fit: contain;
   }
 
-  .attachment-pdf-preview,
-  .attachment-file-preview {
+  .file-pdf-preview,
+  .file-generic-preview {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1229,15 +1262,15 @@
     overflow: hidden;
   }
 
-  .attachment-pdf-preview embed {
+  .file-pdf-preview embed {
     width: 100%;
     height: 400px;
     border: none;
     border-radius: 6px;
   }
 
-  .attachment-pdf-preview .material-symbols-outlined,
-  .attachment-file-preview .material-symbols-outlined {
+  .file-pdf-preview .material-symbols-outlined,
+  .file-generic-preview .material-symbols-outlined {
     font-size: 64px;
     color: var(--color-interactive);
   }
@@ -1250,13 +1283,13 @@
     color: var(--color-neutral);
   }
 
-  .attachment-preview-info {
+  .file-preview-info {
     display: flex;
     flex-direction: column;
     gap: 4px;
   }
 
-  .attachment-preview-name {
+  .file-preview-name {
     font-family: var(--font-body);
     font-size: 13px;
     font-weight: 500;
@@ -1264,12 +1297,12 @@
     word-break: break-word;
   }
 
-  .attachment-preview-size {
+  .file-preview-size {
     font-size: 12px;
     color: var(--color-neutral);
   }
 
-  .attachment-preview-action {
+  .file-preview-action {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -1279,7 +1312,7 @@
     color: var(--color-interactive);
   }
 
-  .attachment-preview-action .material-symbols-outlined {
+  .file-preview-action .material-symbols-outlined {
     font-size: 16px;
   }
 </style>

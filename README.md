@@ -180,10 +180,25 @@ The **application layer** that exposes functionality to the frontend:
 
 ### Debugging
 
-Use `npm run logs` to check recent application logs. All frontend and backend errors are logged centrally. To query the database directly:
+Use `npm run logs` to check recent application logs. All frontend and backend errors are logged centrally.
+
+#### Querying the Database
+
+**Important:** The `triples` table has a specific structure for storing RDF data:
+- **`object`** column: Contains IRIs/blank nodes (when `object_type = 'iri'` or `'blank'`)
+- **`object_value`** column: Contains literal values (when `object_type = 'literal'`)
+
+Always query **both columns** to get all data:
 
 ```bash
-sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT COUNT(*) FROM triples WHERE retracted = 0;"
+# ❌ WRONG - Will return empty for literal values
+sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT predicate, object FROM triples WHERE subject = 'foundation:File_123';"
+
+# ✅ CORRECT - Returns both IRIs and literal values
+sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT predicate, object, object_value, object_type FROM triples WHERE subject = 'foundation:File_123' AND retracted = 0;"
+
+# Get value regardless of type
+sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT predicate, COALESCE(object, object_value) as value FROM triples WHERE subject = 'foundation:File_123' AND retracted = 0;"
 ```
 
 ## Work Methodology
