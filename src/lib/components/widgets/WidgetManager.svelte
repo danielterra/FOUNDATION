@@ -2,6 +2,8 @@
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import { fly } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
   import InspectorWidget from './InspectorWidget.svelte';
 
   let widgets = $state([]);
@@ -9,6 +11,34 @@
   let draggedWidget = $state(null);
   let dragOffset = $state({ x: 0, y: 0 });
   let topZIndex = $state(100);
+  let viewportWidth = $state(0);
+  let viewportHeight = $state(0);
+  let widgetOffset = $state(0);
+
+  function constrainToBounds(position, size) {
+    const minX = 0;
+    const minY = 0;
+    // Chat area takes 30% of viewport with min 500px, so exclude that from the right side
+    const chatWidth = Math.max(viewportWidth * 0.3, 500);
+    const maxX = viewportWidth - chatWidth - size.width;
+    const maxY = viewportHeight - size.height;
+
+    return {
+      x: Math.max(minX, Math.min(maxX, position.x)),
+      y: Math.max(minY, Math.min(maxY, position.y))
+    };
+  }
+
+  function updateViewportSize() {
+    viewportWidth = window.innerWidth;
+    viewportHeight = window.innerHeight;
+
+    // Reposition all widgets to ensure they're within bounds
+    widgets = widgets.map(w => ({
+      ...w,
+      position: constrainToBounds(w.position, w.size)
+    }));
+  }
 
   async function loadWidgets() {
     try {
@@ -18,6 +48,9 @@
         zIndex: 100 + index
       }));
       topZIndex = Math.max(100, ...widgets.map(w => w.zIndex));
+
+      // Constrain widgets to viewport after loading
+      updateViewportSize();
     } catch (error) {
       console.error('Failed to load widgets:', error);
     }
@@ -52,10 +85,10 @@
     const newX = event.clientX - dragOffset.x;
     const newY = event.clientY - dragOffset.y;
 
-    // Update position locally for smooth dragging
+    // Update position locally for smooth dragging with bounds constraint
     widgets = widgets.map(w =>
       w.id === draggedWidget.id
-        ? { ...w, position: { x: newX, y: newY } }
+        ? { ...w, position: constrainToBounds({ x: newX, y: newY }, w.size) }
         : w
     );
   }
@@ -79,6 +112,9 @@
   }
 
   onMount(async () => {
+    // Initialize viewport size
+    updateViewportSize();
+
     // Load widgets initially
     await loadWidgets();
 
@@ -86,7 +122,19 @@
     const unlistenAdded = await listen('widget-added', (event) => {
       console.log('Widget added:', event.payload);
       topZIndex++;
-      widgets = [...widgets, { ...event.payload, zIndex: topZIndex }];
+      const newWidget = { ...event.payload, zIndex: topZIndex };
+
+      // Add cascade offset (30px each direction)
+      const cascadeOffset = 30;
+      widgetOffset = (widgetOffset + 1) % 10; // Reset after 10 widgets
+      newWidget.position = {
+        x: newWidget.position.x + (widgetOffset * cascadeOffset),
+        y: newWidget.position.y + (widgetOffset * cascadeOffset)
+      };
+
+      // Ensure new widget is within bounds
+      newWidget.position = constrainToBounds(newWidget.position, newWidget.size);
+      widgets = [...widgets, newWidget];
     });
 
     const unlistenRemoved = await listen('widget-removed', (event) => {
@@ -119,12 +167,16 @@
     // Add global mouse event listeners for dragging
     document.addEventListener('mousemove', onDrag);
     document.addEventListener('mouseup', stopDrag);
+
+    // Add window resize listener to keep widgets in bounds
+    window.addEventListener('resize', updateViewportSize);
   });
 
   onDestroy(() => {
     unlisteners.forEach(unlisten => unlisten());
     document.removeEventListener('mousemove', onDrag);
     document.removeEventListener('mouseup', stopDrag);
+    window.removeEventListener('resize', updateViewportSize);
   });
 </script>
 
@@ -143,6 +195,8 @@
     onclick={() => bringToFront(widget.id)}
     role="dialog"
     aria-label="Widget"
+    in:fly={{ x: -viewportWidth, duration: 1500, opacity: 1, easing: cubicOut }}
+    out:fly={{ x: -viewportWidth, duration: 1500, opacity: 1, easing: cubicOut }}
   >
     {#if widget.widget_type === 'inspector'}
       <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} />

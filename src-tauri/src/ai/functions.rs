@@ -147,8 +147,8 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 Parameter {
                     name: "concept_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "Which concept to search in".to_string(),
-                    required: true,
+                    description: "Which concept to search in (optional - if not provided, searches across all concepts)".to_string(),
+                    required: false,
                 },
                 Parameter {
                     name: "query".to_string(),
@@ -220,7 +220,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
         },
         FunctionDefinition {
             name: "learn_thing".to_string(),
-            description: "Learn about a new specific thing (person, place, organization, etc.). You'll get back an ID to reference it later.".to_string(),
+            description: "Learn about a new specific thing (person, place, organization, etc.). You'll get back an ID to reference it later. IMPORTANT: Before creating a new thing, ALWAYS search first using remember_things (WITHOUT specifying concept_iri) to check if it already exists and avoid duplicates.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "concept_iri".to_string(),
@@ -279,7 +279,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 Parameter {
                     name: "datatype".to_string(),
                     param_type: "string".to_string(),
-                    description: "Data type: 'xsd:string', 'xsd:integer', 'xsd:dateTime', etc. Default: 'xsd:string'".to_string(),
+                    description: "Data type: 'xsd:string', 'xsd:integer', 'xsd:decimal', 'xsd:boolean', 'xsd:date' (YYYY-MM-DD), 'xsd:dateTime' (ISO 8601), etc. Default: 'xsd:string'. Use xsd:date for dates without time, xsd:dateTime for timestamps.".to_string(),
                     required: false,
                 },
             ],
@@ -716,14 +716,9 @@ fn get_class(conn: &Connection, args: &Value) -> FunctionResult {
 }
 
 fn search_instances(conn: &Connection, args: &Value) -> FunctionResult {
-    let class_iri = match args.get("concept_iri").or_else(|| args.get("class_iri")).and_then(|v| v.as_str()) {
-        Some(iri) => iri,
-        None => return FunctionResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: concept_iri".to_string()),
-        },
-    };
+    let class_iri_opt = args.get("concept_iri")
+        .or_else(|| args.get("class_iri"))
+        .and_then(|v| v.as_str());
 
     let query_str = args.get("query")
         .and_then(|v| v.as_str())
@@ -738,7 +733,31 @@ fn search_instances(conn: &Connection, args: &Value) -> FunctionResult {
         .unwrap_or(0) as usize;
 
     match (|| {
-        let instance_iris = Class::get_instances(conn, class_iri)?;
+        // Get instances: either from specific class or all instances
+        let instance_iris = if let Some(class_iri) = class_iri_opt {
+            Class::get_instances(conn, class_iri)?
+        } else {
+            // Get all instances across all classes
+            use crate::eavto::query;
+            let result = query::get_by_predicate(conn, "rdf:type")?;
+            result.triples.iter()
+                .filter_map(|t| {
+                    // Only include instances (not classes themselves)
+                    if let Some(class_iri) = t.object.as_iri() {
+                        if !class_iri.starts_with("owl:") &&
+                           !class_iri.starts_with("rdfs:") &&
+                           !class_iri.starts_with("rdf:") &&
+                           class_iri != "owl:Class" {
+                            Some(t.subject.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
 
         // Parse query into search tokens (words)
         let search_tokens: Vec<String> = if query_str.is_empty() {
@@ -1639,8 +1658,19 @@ pub fn remove_property_value(conn: &mut Connection, args: &Value, app: Option<&t
         for triple in triples_result.triples {
             let matches = match &triple.object {
                 Object::Iri(iri) => iri == value,
+                Object::Blank(blank) => blank == value,
                 Object::Literal { value: v, .. } => v == value,
-                _ => false,
+                Object::Integer(i) => i.to_string() == value,
+                Object::Number(n) => {
+                    // Try to parse the input value as f64 for numeric comparison
+                    if let Ok(input_num) = value.parse::<f64>() {
+                        (n - input_num).abs() < f64::EPSILON
+                    } else {
+                        n.to_string() == value
+                    }
+                },
+                Object::Boolean(b) => b.to_string() == value,
+                Object::DateTime(dt) => dt.to_string() == value,
             };
 
             if matches {

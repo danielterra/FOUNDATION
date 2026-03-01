@@ -1,0 +1,87 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# CTPS
+# =============================================================================
+# CTPS (Carteira de Trabalho e Previdência Social) - Brazilian Digital Work Card
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# CTPS - Brazilian Digital Work Card
+# -----------------------------------------------------------------------------
+
+foundation:CTPS a owl:Class ;
+    rdfs:subClassOf foundation:IdentificationDocument ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:documentNumber ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:pisNumber ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:issueDate ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:seriesNumber ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "CTPS" ;
+    rdfs:comment "Carteira de Trabalho e Previdência Social - Brazilian Digital Work Card" ;
+    foundation:icon "work" ;
+    rdfs:seeAlso """
+The CTPS is the official employment record document in Brazil, which registers
+all employment contracts, salary history, and labor information.
+
+Since 2019, Brazil has adopted the digital CTPS (Carteira de Trabalho Digital),
+which is managed through the Carteira de Trabalho Digital app and gov.br portal.
+
+Cardinality constraints:
+- documentNumber: exactly 1 (required - CTPS number)
+- pisNumber: exactly 1 (required - PIS/PASEP/NIT number)
+- issueDate: exactly 1 (required - issue date)
+- seriesNumber: 0-1 (optional series number for physical cards)
+
+Example:
+  :johnCTPS a foundation:CTPS ;
+      foundation:documentNumber "12345678900" ;
+      foundation:issueDate "2015-03-10"^^xsd:date ;
+      foundation:pisNumber "123.45678.90-1" ;
+      foundation:seriesNumber "0001" .
+""" .
+
+# -----------------------------------------------------------------------------
+# CTPS-Specific Properties
+# -----------------------------------------------------------------------------
+
+foundation:pisNumber a owl:DatatypeProperty ;
+    rdfs:label "PIS number" ;
+    rdfs:comment "PIS/PASEP/NIT number (Programa de Integração Social)" ;
+    rdfs:domain foundation:CTPS ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+PIS (Programa de Integração Social) is a Brazilian social security number
+that is required for formal employment.
+
+Format: XXX.XXXXX.XX-X (11 digits)
+
+Example:
+  :myCTPS foundation:pisNumber "123.45678.90-1" .
+""" .
+
+foundation:seriesNumber a owl:DatatypeProperty ;
+    rdfs:label "series number" ;
+    rdfs:comment "CTPS series number (for physical cards issued before 2019)" ;
+    rdfs:domain foundation:CTPS ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+The series number was used in physical CTPS cards. Digital CTPS does not use series.
+
+Example:
+  :myCTPS foundation:seriesNumber "0001" .
+""" .

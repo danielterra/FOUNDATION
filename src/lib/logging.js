@@ -26,8 +26,8 @@ async function sendLogToBackend(level, args) {
       return String(arg);
     }).join(' ');
 
-    const result = await invoke('log_frontend', { level, message });
-    originalConsole.log('✅ Log sent to backend successfully:', level, message.substring(0, 50));
+    await invoke('log_frontend', { level, message });
+    // Don't log success - creates infinite loop
   } catch (err) {
     // Show error prominently - this is important for debugging
     originalConsole.error('❌ FAILED TO SEND LOG TO BACKEND:', err);

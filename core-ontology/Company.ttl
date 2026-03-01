@@ -1,0 +1,241 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Company
+# =============================================================================
+# An employer organization with legal registration (CNPJ in Brazil)
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Company Class
+# -----------------------------------------------------------------------------
+
+foundation:Company a owl:Class ;
+    rdfs:subClassOf foundation:Organization ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:organizationName ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:cnpj ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:tradeName ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:foundingDate ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:mainActivity ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:companySize ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:legalNature ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:shareCapital ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:registrationNumber ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Company" ;
+    rdfs:comment "An employer organization with legal registration (CNPJ in Brazil)" ;
+    foundation:icon "business" ;
+    rdfs:seeAlso """
+Represents a company or employer organization that can hire employees.
+
+Cardinality constraints:
+- organizationName: exactly 1 (required - legal name is mandatory)
+- cnpj: 0-1 (CNPJ tax ID)
+- tradeName: 0-1 (trade/brand name)
+- foundingDate: 0-1 (founding date)
+- mainActivity: 0-1 (main CNAE activity)
+- companySize: 0-1 (ME, EPP, etc.)
+- legalNature: 0-1 (legal nature classification)
+- shareCapital: 0-1 (capital social)
+- registrationNumber: 0-1 (NIRE registration)
+
+Example:
+  :acmeCompany a foundation:Company ;
+      foundation:organizationName "ACME Corporation Ltda" ;
+      foundation:cnpj "12.345.678/0001-90" ;
+      foundation:hasAddress :acmeAddress .
+""" .
+
+# -----------------------------------------------------------------------------
+# Company Properties
+# -----------------------------------------------------------------------------
+
+foundation:cnpj a owl:DatatypeProperty ;
+    rdfs:label "CNPJ" ;
+    rdfs:comment "Cadastro Nacional da Pessoa Jurídica - Brazilian company/organization tax ID" ;
+    rdfs:domain foundation:Organization ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+CNPJ is the Brazilian tax identification number for legal entities (companies, banks, etc.).
+
+Format: XX.XXX.XXX/XXXX-XX (14 digits)
+
+Examples:
+  :myCompany foundation:cnpj "12.345.678/0001-90" .
+  :itauBank foundation:cnpj "60.701.190/0001-04" .
+""" .
+
+foundation:organizationName a owl:DatatypeProperty ;
+    rdfs:label "organization name" ;
+    rdfs:comment "Legal name of the organization" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myCompany foundation:organizationName "ACME Corporation Ltda" .
+""" .
+
+foundation:tradeName a owl:DatatypeProperty ;
+    rdfs:label "trade name" ;
+    rdfs:comment "Trade name or brand name of the company (nome fantasia)" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myCompany foundation:organizationName "ACME Tecnologia LTDA" ;
+      foundation:tradeName "ACME Tech" .
+""" .
+
+foundation:foundingDate a owl:DatatypeProperty ;
+    rdfs:label "founding date" ;
+    rdfs:comment "Date when the company was founded" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :myCompany foundation:foundingDate "2010-05-15"^^xsd:date .
+""" .
+
+foundation:hasBankAccount a owl:ObjectProperty ;
+    rdfs:label "has bank account" ;
+    rdfs:comment "Bank account associated with the company" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range foundation:BankAccount ;
+    rdfs:seeAlso """
+Example:
+  :myCompany foundation:hasBankAccount :myCompanyBankAccount .
+
+  :myCompanyBankAccount a foundation:BankAccount ;
+      foundation:bankName "Banco do Brasil" ;
+      foundation:agencyNumber "1234-5" ;
+      foundation:accountNumber "12345-6" .
+""" .
+
+foundation:mainActivity a owl:DatatypeProperty ;
+    rdfs:label "main activity" ;
+    rdfs:comment "Main CNAE (Classificação Nacional de Atividades Econômicas) activity code and description" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+CNAE is the Brazilian economic activity classification system.
+
+Example:
+  :myCompany foundation:mainActivity "62.01-5-01 - Desenvolvimento de programas de computador sob encomenda" .
+""" .
+
+foundation:companySize a owl:DatatypeProperty ;
+    rdfs:label "company size" ;
+    rdfs:comment "Company size classification (Microempresa - ME, Empresa de Pequeno Porte - EPP, etc.)" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common classifications in Brazil:
+- ME (Microempresa) - Microenterprise
+- EPP (Empresa de Pequeno Porte) - Small Business
+- Médio Porte - Medium-sized Business
+- Grande Porte - Large Business
+
+Example:
+  :myCompany foundation:companySize "ME" .
+""" .
+
+foundation:legalNature a owl:DatatypeProperty ;
+    rdfs:label "legal nature" ;
+    rdfs:comment "Legal nature code and description of the company according to Brazilian classification" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Legal nature codes are defined by IBGE (Instituto Brasileiro de Geografia e Estatística).
+
+Examples:
+  :myCompany foundation:legalNature "206-2 - Sociedade Empresária Limitada" .
+  :anotherCompany foundation:legalNature "230-5 - Empresa Individual de Responsabilidade Limitada (EIRELI)" .
+""" .
+
+foundation:secondaryActivity a owl:DatatypeProperty ;
+    rdfs:label "secondary activity" ;
+    rdfs:comment "Secondary CNAE activity codes (can have multiple values)" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Companies can have multiple secondary activities in addition to the main activity.
+
+Example:
+  :myCompany foundation:secondaryActivity "62.02-3-00 - Desenvolvimento e licenciamento de programas de computador customizáveis" ;
+      foundation:secondaryActivity "62.03-1-00 - Desenvolvimento e licenciamento de programas de computador não customizáveis" .
+""" .
+
+foundation:shareCapital a owl:DatatypeProperty ;
+    rdfs:label "share capital" ;
+    rdfs:comment "Share capital (capital social) of the company" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+The share capital represents the total value of capital invested by the partners/shareholders.
+
+Example:
+  :myCompany foundation:shareCapital "1000.00"^^xsd:decimal .
+""" .
+
+foundation:registrationNumber a owl:DatatypeProperty ;
+    rdfs:label "registration number" ;
+    rdfs:comment "NIRE (Número de Identificação do Registro de Empresas) registration number" ;
+    rdfs:domain foundation:Company ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+NIRE is the registration number assigned by the commercial registry (Junta Comercial).
+
+Format: 11 digits (2 digits for state + 9 digits for registration)
+
+Example:
+  :myCompany foundation:registrationNumber "41214176464" .
+""" .
+
+# -----------------------------------------------------------------------------
+# Shared Properties (defined in other ontology files)
+# -----------------------------------------------------------------------------
+
+# Note: The following properties are already defined in other ontology files
+# and can be used with Company:
+
+# foundation:hasAddress - defined in Person.ttl (ObjectProperty → Address)
+# Example:
+#   :acmeCompany foundation:hasAddress :acmeAddress .
+
+# foundation:hasPhoneNumber - defined in PhoneNumber.ttl (ObjectProperty → PhoneNumber)
+# Example:
+#   :acmeCompany foundation:hasPhoneNumber :acmeMainPhone .
+#   :acmeMainPhone a foundation:PhoneNumber ;
+#       foundation:phoneNumber "+55 41 3333-4444" ;
+#       foundation:phoneType "Business Landline" .
+
+# foundation:hasEmailAddress - defined in EmailAddress.ttl (ObjectProperty → EmailAddress)
+# Example:
+#   :acmeCompany foundation:hasEmailAddress :acmeContactEmail .
+#   :acmeContactEmail a foundation:EmailAddress ;
+#       foundation:emailAddress "contact@acme.com" ;
+#       foundation:emailType "Business" .

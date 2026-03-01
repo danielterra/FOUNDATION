@@ -147,26 +147,8 @@ Example:
 """ .
 
 # -----------------------------------------------------------------------------
-# ServiceContract Milestones
+# ServiceContract - Milestone Relationship
 # -----------------------------------------------------------------------------
-
-foundation:Milestone a owl:Class ;
-    rdfs:subClassOf foundation:Concept ;
-    rdfs:label "Milestone" ;
-    rdfs:comment "A significant checkpoint or deliverable within a service contract" ;
-    foundation:icon "flag" ;
-    rdfs:seeAlso """
-Milestones help track progress and often trigger payments.
-
-Example:
-  :milestone1 a foundation:Milestone ;
-      foundation:milestoneName "Database Design Complete" ;
-      foundation:milestoneDescription "Complete database schema design and approval" ;
-      foundation:targetDate "2024-02-15"^^xsd:date ;
-      foundation:milestoneValue "20000.00"^^xsd:decimal ;
-      foundation:milestoneStatus "Completed" ;
-      foundation:completionDate "2024-02-10"^^xsd:date .
-""" .
 
 foundation:hasMilestone a owl:ObjectProperty ;
     rdfs:label "has milestone" ;
@@ -177,72 +159,4 @@ foundation:hasMilestone a owl:ObjectProperty ;
 Example:
   :devContract foundation:hasMilestone :milestone1 .
   :devContract foundation:hasMilestone :milestone2 .
-""" .
-
-foundation:milestoneName a owl:DatatypeProperty ;
-    rdfs:label "milestone name" ;
-    rdfs:comment "Name or title of the milestone" ;
-    rdfs:domain foundation:Milestone ;
-    rdfs:range xsd:string ;
-    rdfs:seeAlso """
-Example:
-  :milestone1 foundation:milestoneName "Phase 1 Complete" .
-""" .
-
-foundation:milestoneDescription a owl:DatatypeProperty ;
-    rdfs:label "milestone description" ;
-    rdfs:comment "Detailed description of what constitutes completion of this milestone" ;
-    rdfs:domain foundation:Milestone ;
-    rdfs:range xsd:string ;
-    rdfs:seeAlso """
-Example:
-  :milestone1 foundation:milestoneDescription "All frontend components implemented and tested" .
-""" .
-
-foundation:targetDate a owl:DatatypeProperty ;
-    rdfs:label "target date" ;
-    rdfs:comment "Target date for milestone completion" ;
-    rdfs:domain foundation:Milestone ;
-    rdfs:range xsd:date ;
-    rdfs:seeAlso """
-Example:
-  :milestone1 foundation:targetDate "2024-03-01"^^xsd:date .
-""" .
-
-foundation:completionDate a owl:DatatypeProperty ;
-    rdfs:label "completion date" ;
-    rdfs:comment "Actual date when the milestone was completed" ;
-    rdfs:domain foundation:Milestone ;
-    rdfs:range xsd:date ;
-    rdfs:seeAlso """
-Example:
-  :milestone1 foundation:completionDate "2024-02-28"^^xsd:date .
-""" .
-
-foundation:milestoneValue a owl:DatatypeProperty ;
-    rdfs:label "milestone value" ;
-    rdfs:comment "Payment amount associated with this milestone" ;
-    rdfs:domain foundation:Milestone ;
-    rdfs:range xsd:decimal ;
-    rdfs:seeAlso """
-Example:
-  :milestone1 foundation:milestoneValue "15000.00"^^xsd:decimal .
-""" .
-
-foundation:milestoneStatus a owl:DatatypeProperty ;
-    rdfs:label "milestone status" ;
-    rdfs:comment "Current status of the milestone (pending, in progress, completed, delayed, etc.)" ;
-    rdfs:domain foundation:Milestone ;
-    rdfs:range xsd:string ;
-    rdfs:seeAlso """
-Common statuses:
-- Pending
-- In Progress
-- Under Review
-- Completed
-- Delayed
-- Cancelled
-
-Example:
-  :milestone1 foundation:milestoneStatus "Completed" .
 """ .

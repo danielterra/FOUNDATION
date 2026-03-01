@@ -24,6 +24,63 @@
 
 foundation:Contract a owl:Class ;
     rdfs:subClassOf foundation:InformationObject ;
+    # Cardinality constraints - Required fields
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty foundation:contractStartDate ;
+        owl:cardinality 1
+    ] ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty foundation:contractor ;
+        owl:minCardinality 1
+    ] ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty foundation:contractee ;
+        owl:minCardinality 1
+    ] ;
+    # Cardinality constraints - Optional single-value fields (max 1)
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty foundation:contractNumber ;
+        owl:maxCardinality 1
+    ] ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty foundation:contractTitle ;
+        owl:maxCardinality 1
+    ] ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty foundation:contractEndDate ;
+        owl:maxCardinality 1
+    ] ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty foundation:contractValue ;
+        owl:maxCardinality 1
+    ] ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty foundation:contractCurrency ;
+        owl:maxCardinality 1
+    ] ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty foundation:contractStatus ;
+        owl:maxCardinality 1
+    ] ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty foundation:signatureDate ;
+        owl:maxCardinality 1
+    ] ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty foundation:governingLaw ;
+        owl:maxCardinality 1
+    ] ;
     rdfs:label "Contract" ;
     rdfs:comment "A legally binding agreement between two or more parties, establishing rights and obligations" ;
     foundation:icon "description" ;
@@ -43,6 +100,19 @@ Key characteristics:
 - Has start and potentially end dates
 - May have financial terms
 - May include specific obligations and deliverables
+
+Cardinality Constraints:
+- contractStartDate: exactly 1 (required)
+- contractor: min 1 (required, can have multiple contractors)
+- contractee: min 1 (required, can have multiple contractees)
+- contractNumber: max 1 (optional, single value)
+- contractTitle: max 1 (optional, single value)
+- contractEndDate: max 1 (optional, single value)
+- contractValue: max 1 (optional, single value)
+- contractCurrency: max 1 (optional, single value)
+- contractStatus: max 1 (optional, single value)
+- signatureDate: max 1 (optional, single value)
+- governingLaw: max 1 (optional, single value)
 """ .
 
 # -----------------------------------------------------------------------------
@@ -219,12 +289,4 @@ Example:
   :contract2 foundation:governingLaw "Brazilian Civil Code" .
 """ .
 
-foundation:hasAttachment a owl:ObjectProperty ;
-    rdfs:label "has attachment" ;
-    rdfs:comment "Links a contract to attached documents (PDF, signed copies, etc.)" ;
-    rdfs:domain foundation:Contract ;
-    rdfs:range foundation:Attachment ;
-    rdfs:seeAlso """
-Example:
-  :contract1 foundation:hasAttachment :signedPdfFile .
-""" .
+# Note: foundation:hasAttachment is defined in Message.ttl and can be used for both Messages and Contracts

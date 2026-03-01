@@ -139,7 +139,9 @@ impl Individual {
     }
 
     /// Add a property to this individual
-    /// Validates that the property is defined in the individual's class or inherited from parent classes
+    /// Validates that:
+    /// 1. The property is defined in the individual's class or inherited from parent classes
+    /// 2. Adding this value won't violate cardinality constraints
     pub fn add_property(&self, conn: &mut Connection, property: &str, value: Object, origin: &str) -> Result<()> {
         // Get individual's types (classes)
         let types_result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
@@ -170,7 +172,19 @@ impl Individual {
             ));
         }
 
-        // Property is valid, assert the triple
+        // Count current values for this property
+        let current_values = query::get_by_entity_predicate(conn, &self.iri, property)?;
+        let new_count = current_values.triples.len() + 1; // +1 for the value we're about to add
+
+        // Validate cardinality constraints
+        crate::owl::cardinality::validate_property_cardinality(
+            conn,
+            &self.iri,
+            property,
+            new_count
+        )?;
+
+        // Property is valid and cardinality is satisfied, assert the triple
         let triple = Triple::new(&self.iri, property, value);
         store::assert_triples(conn, &[triple], origin)?;
         Ok(())

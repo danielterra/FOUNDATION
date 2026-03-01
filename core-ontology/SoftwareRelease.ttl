@@ -20,7 +20,16 @@ foundation:SoftwareRelease a owl:Class ;
           owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
         [ a owl:Restriction ;
           owl:onProperty foundation:versionNumber ;
-          owl:cardinality "1"^^xsd:nonNegativeInteger ] ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:releaseDate ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:licenseType ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:changelog ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
     rdfs:label "Software Release" ;
     rdfs:comment "A specific version/release of a software product that can be distributed, installed, or purchased" ;
     foundation:icon "new_releases" ;
@@ -46,8 +55,9 @@ Hierarchy:
 Cardinality constraints:
 - releaseOf: exactly 1 (must be release of a specific product)
 - versionNumber: exactly 1 (required version identifier)
+- releaseDate: exactly 1 (required release date)
 - licenseType: 0-1 (optional, may differ per version)
-- releaseDate: 0-1 (optional release date)
+- changelog: 0-1 (optional description of changes)
 """ .
 
 # -----------------------------------------------------------------------------

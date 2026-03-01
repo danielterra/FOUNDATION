@@ -1,0 +1,176 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# PhoneNumber
+# =============================================================================
+# A telephone number for voice calls, SMS, or other telecommunications
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# PhoneNumber Class
+# -----------------------------------------------------------------------------
+
+foundation:PhoneNumber a owl:Class ;
+    rdfs:subClassOf foundation:Concept ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:localPhoneNumber ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:phoneType ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:countryCode ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:areaCode ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:extension ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Phone Number" ;
+    rdfs:comment "A telephone number for voice calls, SMS, or other telecommunications services" ;
+    foundation:icon "phone" ;
+    rdfs:seeAlso """
+Represents a phone number that can be associated with people, companies, or devices.
+
+Phone numbers can be:
+- Mobile/Cell phone numbers
+- Landline numbers
+- Business phone numbers
+- Virtual numbers
+
+Cardinality constraints:
+- localPhoneNumber: exactly 1 (required - the actual phone number)
+- phoneType: 0-1 (optional classification)
+- countryCode: 0-1 (optional country code)
+- areaCode: 0-1 (optional area code)
+- extension: 0-1 (optional extension)
+
+Example:
+  :companyMainPhone a foundation:PhoneNumber ;
+      foundation:localPhoneNumber "3333-4444" ;
+      foundation:phoneType "Business Landline" ;
+      foundation:countryCode "+55" ;
+      foundation:areaCode "41" .
+
+  :personalMobile a foundation:PhoneNumber ;
+      foundation:localPhoneNumber "99999-8888" ;
+      foundation:phoneType "Mobile" ;
+      foundation:countryCode "+55" ;
+      foundation:areaCode "11" .
+""" .
+
+# -----------------------------------------------------------------------------
+# PhoneNumber Properties
+# -----------------------------------------------------------------------------
+
+foundation:localPhoneNumber a owl:DatatypeProperty ;
+    rdfs:label "local phone number" ;
+    rdfs:comment "The local phone number (without country/area codes)" ;
+    rdfs:domain foundation:PhoneNumber ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Store only the local number. Use countryCode and areaCode properties for the prefix.
+
+Examples:
+  :phone1 foundation:localPhoneNumber "3333-4444" ;
+      foundation:countryCode "+55" ;
+      foundation:areaCode "41" .
+
+  :phone2 foundation:localPhoneNumber "99999-8888" ;
+      foundation:countryCode "+55" ;
+      foundation:areaCode "11" .
+""" .
+
+foundation:phoneType a owl:DatatypeProperty ;
+    rdfs:label "phone type" ;
+    rdfs:comment "Type or category of the phone number" ;
+    rdfs:domain foundation:PhoneNumber ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common types:
+- Mobile / Cell
+- Landline / Fixed
+- Business
+- Home
+- Fax
+- VoIP
+- Toll-free
+
+Example:
+  :phone1 foundation:phoneType "Mobile" .
+  :phone2 foundation:phoneType "Business Landline" .
+""" .
+
+foundation:countryCode a owl:DatatypeProperty ;
+    rdfs:label "country code" ;
+    rdfs:comment "International country calling code" ;
+    rdfs:domain foundation:PhoneNumber ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Examples:
+  :phone1 foundation:countryCode "+55" .  # Brazil
+  :phone2 foundation:countryCode "+1" .   # USA/Canada
+  :phone3 foundation:countryCode "+44" .  # UK
+""" .
+
+foundation:areaCode a owl:DatatypeProperty ;
+    rdfs:label "area code" ;
+    rdfs:comment "Area or region code within the country" ;
+    rdfs:domain foundation:PhoneNumber ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Examples (Brazil):
+  :phone1 foundation:areaCode "11" .  # São Paulo
+  :phone2 foundation:areaCode "41" .  # Curitiba
+  :phone3 foundation:areaCode "21" .  # Rio de Janeiro
+""" .
+
+foundation:extension a owl:DatatypeProperty ;
+    rdfs:label "extension" ;
+    rdfs:comment "Phone extension number (for business phone systems)" ;
+    rdfs:domain foundation:PhoneNumber ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :officePhone foundation:localPhoneNumber "3333-4444" ;
+      foundation:countryCode "+55" ;
+      foundation:areaCode "41" ;
+      foundation:extension "1234" .
+""" .
+
+# -----------------------------------------------------------------------------
+# PhoneNumber Object Properties
+# -----------------------------------------------------------------------------
+
+foundation:hasPhoneNumber a owl:ObjectProperty ;
+    rdfs:label "has phone number" ;
+    rdfs:comment "Links a person, company, or device to a phone number (can have multiple)" ;
+    rdfs:domain foundation:AgentCapacity ;
+    rdfs:range foundation:PhoneNumber ;
+    rdfs:seeAlso """
+An entity can have multiple phone numbers (personal, work, mobile, landline, etc.).
+
+Can be used with:
+- foundation:Person (personal or work phone)
+- foundation:Company or foundation:Organization (business phone)
+- foundation:Smartphone (SIM card phone numbers)
+
+Examples:
+  :john foundation:hasPhoneNumber :johnMobile ;
+        foundation:hasPhoneNumber :johnHome ;
+        foundation:hasPhoneNumber :johnWork .
+
+  :acmeCompany foundation:hasPhoneNumber :acmeMainPhone ;
+               foundation:hasPhoneNumber :acmeSupport .
+
+  :iphone foundation:hasPhoneNumber :iphoneSIM1 ;
+          foundation:hasPhoneNumber :iphoneSIM2 .
+""" .

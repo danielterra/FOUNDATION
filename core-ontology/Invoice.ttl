@@ -1,0 +1,226 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix currency: <http://qudt.org/vocab/currency/> .
+
+# =============================================================================
+# Invoice
+# =============================================================================
+# Bills and requests for payment
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+<http://foundation.local/ontology/Invoice>
+  a owl:Ontology ;
+  rdfs:label "FOUNDATION Invoice Ontology" ;
+  rdfs:comment "Bills and requests for payment" ;
+  owl:imports <http://qudt.org/2.1/vocab/currency> ;
+.
+
+# -----------------------------------------------------------------------------
+# Invoice
+# -----------------------------------------------------------------------------
+
+foundation:Invoice a owl:Class ;
+    rdfs:subClassOf foundation:InformationObject ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:invoiceNumber ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:issueDate ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:dueDate ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:invoiceAmount ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:invoiceCurrency ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:invoicedBy ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:invoicedTo ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:invoiceStatus ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:relatedContract ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:taxAmount ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:subtotalAmount ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Invoice" ;
+    rdfs:comment "A bill or request for payment for goods or services provided" ;
+    foundation:icon "receipt_long" ;
+    rdfs:seeAlso """
+An invoice is a document requesting payment.
+
+Key information:
+- Invoice number
+- Issue date and due date
+- Seller (who issued the invoice)
+- Buyer (who should pay)
+- Line items with descriptions and amounts
+- Total amount due
+- Payment terms
+
+Example:
+  :invoice123 a foundation:Invoice ;
+      foundation:invoiceNumber "INV-2024-0123" ;
+      foundation:issueDate "2024-01-15"^^xsd:date ;
+      foundation:dueDate "2024-02-14"^^xsd:date ;
+      foundation:invoicedBy :consultingFirm ;
+      foundation:invoicedTo :clientCompany ;
+      foundation:invoiceAmount "5000.00"^^xsd:decimal ;
+      foundation:invoiceCurrency currency:USD ;
+      foundation:invoiceStatus "Paid" ;
+      foundation:relatedContract :serviceContract2024 .
+
+Cardinality constraints:
+- invoiceNumber: exactly 1 (required)
+- issueDate: exactly 1 (required)
+- dueDate: exactly 1 (required)
+- invoiceAmount: exactly 1 (required)
+- invoiceCurrency: exactly 1 (required)
+- invoicedBy: exactly 1 (required)
+- invoicedTo: exactly 1 (required)
+- invoiceStatus: max 1 (optional)
+- relatedContract: max 1 (optional)
+- taxAmount: max 1 (optional)
+- subtotalAmount: max 1 (optional)
+""" .
+
+foundation:invoiceNumber a owl:DatatypeProperty ;
+    rdfs:label "invoice number" ;
+    rdfs:comment "Unique identifier for the invoice" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:invoiceNumber "INV-2024-0123" .
+""" .
+
+foundation:issueDate a owl:DatatypeProperty ;
+    rdfs:label "issue date" ;
+    rdfs:comment "Date when the invoice was issued" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:issueDate "2024-01-15"^^xsd:date .
+""" .
+
+foundation:dueDate a owl:DatatypeProperty ;
+    rdfs:label "due date" ;
+    rdfs:comment "Date by which payment is due" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:dueDate "2024-02-14"^^xsd:date .
+""" .
+
+foundation:invoiceAmount a owl:DatatypeProperty ;
+    rdfs:label "invoice amount" ;
+    rdfs:comment "Total amount due on the invoice" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:invoiceAmount "5000.00"^^xsd:decimal ;
+      foundation:invoiceCurrency currency:USD .
+""" .
+
+foundation:invoiceCurrency a owl:ObjectProperty ;
+    rdfs:label "invoice currency" ;
+    rdfs:comment "Currency of the invoice (QUDT CurrencyUnit)" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range qudt:CurrencyUnit ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:invoiceCurrency currency:USD .
+  :invoice456 foundation:invoiceCurrency currency:EUR .
+  :invoice789 foundation:invoiceCurrency currency:BRL .
+""" .
+
+foundation:invoiceStatus a owl:DatatypeProperty ;
+    rdfs:label "invoice status" ;
+    rdfs:comment "Current status of the invoice" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common statuses:
+- Draft
+- Issued
+- Sent
+- Partially Paid
+- Paid
+- Overdue
+- Cancelled
+- Void
+
+Example:
+  :invoice123 foundation:invoiceStatus "Paid" .
+""" .
+
+foundation:invoicedBy a owl:ObjectProperty ;
+    rdfs:label "invoiced by" ;
+    rdfs:comment "The party issuing the invoice (seller/service provider)" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:invoicedBy :consultingFirm .
+""" .
+
+foundation:invoicedTo a owl:ObjectProperty ;
+    rdfs:label "invoiced to" ;
+    rdfs:comment "The party responsible for payment (buyer/client)" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:invoicedTo :clientCompany .
+""" .
+
+foundation:relatedContract a owl:ObjectProperty ;
+    rdfs:label "related contract" ;
+    rdfs:comment "Links an invoice to the contract it relates to" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range foundation:Contract ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:relatedContract :serviceContract2024 .
+""" .
+
+foundation:taxAmount a owl:DatatypeProperty ;
+    rdfs:label "tax amount" ;
+    rdfs:comment "Total tax amount on the invoice" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:taxAmount "500.00"^^xsd:decimal .
+""" .
+
+foundation:subtotalAmount a owl:DatatypeProperty ;
+    rdfs:label "subtotal amount" ;
+    rdfs:comment "Subtotal before taxes and fees" ;
+    rdfs:domain foundation:Invoice ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :invoice123 foundation:subtotalAmount "4500.00"^^xsd:decimal .
+""" .

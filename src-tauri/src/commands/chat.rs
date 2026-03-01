@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, Emitter};
 use tiktoken_rs::cl100k_base;
 use std::sync::OnceLock;
 use std::fs;
@@ -283,10 +283,12 @@ fn load_attachment_info(
         .find(|(k, _)| k == "foundation:attachesFile")
         .and_then(|(_, v)| v.as_iri());
 
+    super::log_backend("debug", &format!("[ATTACH] Loading attachment {}, file_iri: {:?}", attachment_iri, file_iri));
 
     if let Some(file_iri_str) = file_iri {
         // Load File entity
         if let Ok(file_ind) = Individual::get(conn, file_iri_str) {
+            super::log_backend("debug", &format!("[ATTACH] Loaded File entity with {} properties", file_ind.properties.len()));
             let file_name = file_ind.properties.iter()
                 .find(|(k, _)| k == "foundation:fileName")
                 .and_then(|(_, v)| v.as_literal())
@@ -386,6 +388,11 @@ pub async fn chat__send_message(
     attachment_iris: Option<Vec<String>>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
+    // Prevent creating empty messages
+    if content.trim().is_empty() && attachment_iris.as_ref().map_or(true, |a| a.is_empty()) {
+        return Err("Cannot create empty message - content and attachments are both empty".to_string());
+    }
+
     executor.write(move |conn| {
         // Get or create the main conversation
         let conversation_iri = "foundation:MainChatConversation";
@@ -829,15 +836,36 @@ pub async fn chat__get_conversation_info(
     }).await
 }
 
+/// Recovery state enumeration
+#[derive(Debug, Clone)]
+pub enum RecoveryState {
+    /// No recovery needed
+    None,
+    /// Executed N pending tools and created ToolResult message
+    ExecutedTools(usize),
+    /// Found ToolResults waiting for AI response - need to trigger AI
+    AwaitingAIResponse,
+}
+
 /// Send a message and generate AI response
 /// Check for tool_use blocks without corresponding tool_result and execute them
 /// This handles interrupted sessions where the app was closed during tool execution
+/// Returns the recovery state indicating what action was taken
 pub async fn check_and_execute_pending_tools(
     app: AppHandle,
     executor: &DbExecutor,
-) -> Result<usize, String> {
+) -> Result<RecoveryState, String> {
     // Get recent messages to check for pending tools
     let messages = get_recent_messages(10, executor).await?;
+
+    super::log_backend("info", &format!("[RECOVERY] Loaded {} messages for recovery check", messages.len()));
+
+    // Messages are in chronological order (oldest first), so last() gives us the most recent
+    if let Some(last_msg) = messages.last() {
+        super::log_backend("info", &format!("[RECOVERY] Last message: {} from {}", last_msg.iri, last_msg.sender_iri));
+    } else {
+        super::log_backend("warn", "[RECOVERY] No messages found in conversation");
+    }
 
     let mut pending_count = 0;
 
@@ -849,9 +877,22 @@ pub async fn check_and_execute_pending_tools(
         }
     }
 
+    // Simple rule: The last message should ALWAYS be from the AI
+    // If the last message is from the user, we need to trigger AI to respond
+    // Messages are in chronological order, so .last() is the most recent
+    if let Some(last_msg) = messages.last() {
+        if last_msg.sender_iri == "foundation:ThisUser" {
+            super::log_backend("warn", "[RECOVERY] Last message is from user - AI needs to respond");
+            return Ok(RecoveryState::AwaitingAIResponse);
+        }
+    }
+
     // Find the most recent assistant message with tool_use
     for msg in messages.iter().rev() {
         if msg.sender_iri == "foundation:LocalAIAssistant" && !msg.tool_uses.is_empty() {
+
+            // Collect pending tool executions
+            let mut pending_tools: Vec<(usize, ToolUseInfo, String, FunctionResult)> = Vec::new();
 
             // Check each tool_use for missing tool_result
             for (idx, tool_use) in msg.tool_uses.iter().enumerate() {
@@ -882,82 +923,149 @@ pub async fn check_and_execute_pending_tools(
                 let func_result: FunctionResult = serde_json::from_str(&result_json)
                     .map_err(|e| format!("Failed to parse result: {}", e))?;
 
+                pending_tools.push((idx, tool_use.clone(), result_json, func_result));
+                pending_count += 1;
+            }
 
-                // Save ToolResult entity
-                let tool_use_ref = tool_use.iri.clone();
-                let result_content = result_json.clone();
-                let is_success = func_result.success;
-                let error_msg = func_result.error.clone();
-                let msg_iri = msg.iri.clone();
+            // If we recovered any tool results, create message AND ToolResults in ONE transaction
+            if !pending_tools.is_empty() {
+                let result_count = pending_tools.len();
 
+                // Create message and ALL ToolResults in a single transaction
                 executor.write(move |conn| {
                     let timestamp = chrono::Utc::now().timestamp_millis();
-                    let tool_result_iri = format!("foundation:ToolResult_{}_{}_recovery", timestamp, idx);
-                    let tool_result = Individual::new(&tool_result_iri);
+                    let msg_iri = format!("foundation:Message_{}_recovery", timestamp);
+                    let msg = Individual::new(&msg_iri);
 
-                    tool_result.assert(
+                    // Create the message first
+                    msg.assert(
                         conn,
-                        "foundation:ToolResult",
-                        &format!("Tool result for {} (recovered)", tool_use_ref),
+                        "foundation:Message",
+                        "Tool results message (recovered)",
                         "ai",
                         "ai"
-                    ).map_err(|e| format!("Failed to create ToolResult: {}", e))?;
+                    ).map_err(|e| format!("Failed to create tool results message: {}", e))?;
 
-                    tool_result.add_property(
+                    msg.add_property(
                         conn,
-                        "foundation:resultOf",
-                        Object::Iri(tool_use_ref.clone()),
+                        "foundation:sender",
+                        Object::Iri("foundation:ThisUser".to_string()),
                         "ai"
-                    ).map_err(|e| format!("Failed to set resultOf: {}", e))?;
+                    ).map_err(|e| format!("Failed to set sender: {}", e))?;
 
-                    tool_result.add_property(
+                    msg.add_property(
                         conn,
-                        "foundation:resultContent",
+                        "foundation:receiver",
+                        Object::Iri("foundation:LocalAIAssistant".to_string()),
+                        "ai"
+                    ).map_err(|e| format!("Failed to set receiver: {}", e))?;
+
+                    msg.add_property(
+                        conn,
+                        "foundation:sentAt",
+                        Object::DateTime(timestamp),
+                        "ai"
+                    ).map_err(|e| format!("Failed to set sentAt: {}", e))?;
+
+                    msg.add_property(
+                        conn,
+                        "foundation:content",
                         Object::Literal {
-                            value: result_content,
+                            value: "".to_string(), // Empty content, only tool_results
                             datatype: Some("xsd:string".to_string()),
                             language: None,
                         },
                         "ai"
-                    ).map_err(|e| format!("Failed to set resultContent: {}", e))?;
+                    ).map_err(|e| format!("Failed to set content: {}", e))?;
 
-                    tool_result.add_property(
+                    msg.add_property(
                         conn,
-                        "foundation:isSuccess",
-                        Object::Literal {
-                            value: is_success.to_string(),
-                            datatype: Some("xsd:boolean".to_string()),
-                            language: None,
-                        },
+                        "foundation:partOfConversation",
+                        Object::Iri("foundation:MainChatConversation".to_string()),
                         "ai"
-                    ).map_err(|e| format!("Failed to set isSuccess: {}", e))?;
+                    ).map_err(|e| format!("Failed to link message to conversation: {}", e))?;
 
-                    if let Some(err) = error_msg {
+                    // Now create all ToolResults WITH partOfMessage link
+                    for (idx, tool_use, result_content, func_result) in pending_tools {
+                        let tool_result_iri = format!("foundation:ToolResult_{}_{}_recovery", timestamp, idx);
+                        let tool_result = Individual::new(&tool_result_iri);
+
+                        tool_result.assert(
+                            conn,
+                            "foundation:ToolResult",
+                            &format!("Tool result for {} (recovered)", tool_use.iri),
+                            "ai",
+                            "ai"
+                        ).map_err(|e| format!("Failed to create ToolResult: {}", e))?;
+
                         tool_result.add_property(
                             conn,
-                            "foundation:errorMessage",
+                            "foundation:resultOf",
+                            Object::Iri(tool_use.iri.clone()),
+                            "ai"
+                        ).map_err(|e| format!("Failed to set resultOf: {}", e))?;
+
+                        tool_result.add_property(
+                            conn,
+                            "foundation:resultContent",
                             Object::Literal {
-                                value: err,
+                                value: result_content,
                                 datatype: Some("xsd:string".to_string()),
                                 language: None,
                             },
                             "ai"
-                        ).map_err(|e| format!("Failed to set errorMessage: {}", e))?;
+                        ).map_err(|e| format!("Failed to set resultContent: {}", e))?;
+
+                        tool_result.add_property(
+                            conn,
+                            "foundation:isSuccess",
+                            Object::Literal {
+                                value: func_result.success.to_string(),
+                                datatype: Some("xsd:boolean".to_string()),
+                                language: None,
+                            },
+                            "ai"
+                        ).map_err(|e| format!("Failed to set isSuccess: {}", e))?;
+
+                        if let Some(err) = func_result.error {
+                            tool_result.add_property(
+                                conn,
+                                "foundation:errorMessage",
+                                Object::Literal {
+                                    value: err,
+                                    datatype: Some("xsd:string".to_string()),
+                                    language: None,
+                                },
+                                "ai"
+                            ).map_err(|e| format!("Failed to set errorMessage: {}", e))?;
+                        }
+
+                        // THIS IS THE KEY: Add partOfMessage immediately when creating the ToolResult
+                        tool_result.add_property(
+                            conn,
+                            "foundation:partOfMessage",
+                            Object::Iri(msg_iri.clone()),
+                            "ai"
+                        ).map_err(|e| format!("Failed to link ToolResult to message: {}", e))?;
                     }
 
-                    // Link tool_result to the assistant message
-                    let msg_individual = Individual::new(&msg_iri);
-                    msg_individual.add_property(
+                    // Set token count
+                    let token_count = result_count as i64 * 100; // Rough estimate
+                    msg.add_property(
                         conn,
-                        "foundation:partOfMessage",
-                        Object::Iri(tool_result_iri.clone()),
+                        "foundation:tokenCount",
+                        Object::Integer(token_count),
                         "ai"
-                    ).map_err(|e| format!("Failed to link result to message: {}", e))?;
+                    ).map_err(|e| format!("Failed to set tokenCount: {}", e))?;
 
-                    Ok(tool_result_iri)
+                    Ok(msg_iri)
                 }).await?;
 
-                pending_count += 1;
+                // Emit event to notify frontend
+                use tauri::Emitter;
+                let _ = app.emit("chat-message-added", ());
+
+                super::log_backend("info", &format!("[RECOVERY] Created tool results message with {} results", result_count));
             }
 
             // Only check the most recent assistant message
@@ -965,7 +1073,11 @@ pub async fn check_and_execute_pending_tools(
         }
     }
 
-    Ok(pending_count)
+    if pending_count > 0 {
+        Ok(RecoveryState::ExecutedTools(pending_count))
+    } else {
+        Ok(RecoveryState::None)
+    }
 }
 
 /// Tauri command to check for pending tool executions on startup and continue AI processing
@@ -978,17 +1090,36 @@ pub async fn chat__recover_pending_tools(
     super::log_backend("info", "[STARTUP] Checking for pending tool executions...");
 
     // Check and execute pending tools
-    let pending_count = check_and_execute_pending_tools(app.clone(), &executor).await?;
+    let recovery_state = check_and_execute_pending_tools(app.clone(), &executor).await?;
 
-    if pending_count > 0 {
-        super::log_backend("info", &format!("[STARTUP] Executed {} pending tool(s), returning updated messages", pending_count));
+    match recovery_state {
+        RecoveryState::ExecutedTools(count) => {
+            super::log_backend("info", &format!("[STARTUP] Executed {} pending tool(s), returning updated messages", count));
+            // Return recent messages so UI can update
+            let messages = get_recent_messages(10, &executor).await?;
+            Ok(Some(messages))
+        }
+        RecoveryState::AwaitingAIResponse => {
+            super::log_backend("warn", "[STARTUP] Found ToolResults awaiting AI response - triggering AI to continue");
+            // Trigger AI to continue the conversation by calling send_and_reply with empty content
+            // This will load the existing history (including ToolResults) and generate AI response
+            chat__send_and_reply(
+                app.clone(),
+                "".to_string(), // Empty content - we're continuing existing conversation
+                None, // No location
+                None,
+                None, // No attachments
+                executor.clone()
+            ).await?;
 
-        // Return recent messages so UI can update
-        let messages = get_recent_messages(10, &executor).await?;
-        Ok(Some(messages))
-    } else {
-        super::log_backend("info", "[STARTUP] No pending tools found, conversation is up to date");
-        Ok(None)
+            // Return updated messages
+            let messages = get_recent_messages(10, &executor).await?;
+            Ok(Some(messages))
+        }
+        RecoveryState::None => {
+            super::log_backend("info", "[STARTUP] No pending tools found, conversation is up to date");
+            Ok(None)
+        }
     }
 }
 
@@ -1004,8 +1135,20 @@ pub async fn chat__send_and_reply(
 ) -> Result<Vec<MessageInfo>, String> {
     let _start_time = std::time::Instant::now();
 
-    // First, send the user message with location
-    let _user_message_iri = chat__send_message(app.clone(), content.clone(), latitude, longitude, attachment_iris.clone(), executor.clone()).await?;
+    // Check if this is a recovery call (empty content) - if so, don't create a new user message
+    let is_recovery_mode = content.is_empty() && attachment_iris.as_ref().map_or(true, |a| a.is_empty());
+
+    // Emit event to frontend if this is recovery mode (so frontend can show loading indicator)
+    if is_recovery_mode {
+        app.emit("ai-processing-started", ()).ok();
+    }
+
+    // First, send the user message with location (skip if recovery mode)
+    let _user_message_iri = if !is_recovery_mode {
+        chat__send_message(app.clone(), content.clone(), latitude, longitude, attachment_iris.clone(), executor.clone()).await?
+    } else {
+        String::new() // Empty IRI for recovery mode
+    };
 
     // Get user and AI information from database
     let _step_time = std::time::Instant::now();
@@ -1118,12 +1261,25 @@ pub async fn chat__send_and_reply(
 
     let conversation_iri = "foundation:MainChatConversation";
     let mut is_first_iteration = true;
+    let mut skip_user_message = is_recovery_mode; // Flag for recovery mode - set if called with empty content
 
     // Check for pending tool executions (from interrupted sessions)
     super::log_backend("info", "[RECOVERY] Checking for pending tool executions...");
-    let pending_tools = check_and_execute_pending_tools(app.clone(), &executor).await?;
-    if pending_tools > 0 {
-        super::log_backend("info", &format!("[RECOVERY] Executed {} pending tools from interrupted session", pending_tools));
+    let recovery_state = check_and_execute_pending_tools(app.clone(), &executor).await?;
+    match recovery_state {
+        RecoveryState::ExecutedTools(count) => {
+            super::log_backend("info", &format!("[RECOVERY] Executed {} pending tools from interrupted session", count));
+            // Tools were executed and user message was created - skip adding another one
+            skip_user_message = true;
+        }
+        RecoveryState::AwaitingAIResponse => {
+            super::log_backend("warn", "[RECOVERY] Found ToolResults awaiting AI response - triggering AI to continue");
+            // ToolResults are already in the database as a user message
+            skip_user_message = true;
+        }
+        RecoveryState::None => {
+            // No recovery needed - proceed normally (unless already in recovery mode from empty content)
+        }
     }
 
     // Main iteration loop - continues until AI stops making tool calls
@@ -1136,11 +1292,11 @@ pub async fn chat__send_and_reply(
             max_input_tokens,
             &context,
             &tools,
-            if is_first_iteration { &content } else { "" },
+            if is_first_iteration && !skip_user_message { &content } else { "" },
         ).await?;
 
-        // Add current message at the end (only on first iteration)
-        if is_first_iteration {
+        // Add current message at the end (only on first iteration if not in recovery mode)
+        if is_first_iteration && !skip_user_message {
 
             // Load the just-created message WITH attachments from database
             let current_msg = get_recent_messages(1, &executor).await?;
@@ -1194,8 +1350,12 @@ pub async fn chat__send_and_reply(
                     }
                 }
 
+                super::log_backend("debug", &format!("[CHAT] Built {} content blocks for user message (content_len={}, attachments={})",
+                    blocks.len(), msg_info.content.len(), msg_info.attachments.len()));
+
                 if blocks.is_empty() {
                     // Fallback to text-only if no blocks
+                    super::log_backend("warn", "[CHAT] No blocks created, using text-only fallback");
                     messages.push(crate::ai::ChatMessage::text("user", content.clone()));
                 } else {
                     messages.push(crate::ai::ChatMessage::with_blocks("user", blocks));
@@ -2135,6 +2295,7 @@ fn validate_invariants(messages: &[crate::ai::ChatMessage]) -> Result<(), String
 
         // Invariant: Messages must not be empty
         if blocks.is_empty() {
+            super::log_backend("error", &format!("[VALIDATE] Message {} ({}) has empty blocks", i, msg.role));
             return Err(format!("Message {} has empty content", i));
         }
 
@@ -2274,6 +2435,14 @@ async fn load_history_with_limit(
 
 
     // PHASE 3: Validate invariants
+    super::log_backend("debug", &format!("[VALIDATE] Validating {} messages before sending to API", messages.len()));
+    for (i, msg) in messages.iter().enumerate() {
+        let content_summary = match &msg.content {
+            crate::ai::providers::MessageContent::Text(t) => format!("Text({})", t.len()),
+            crate::ai::providers::MessageContent::ContentBlocks(blocks) => format!("Blocks({})", blocks.len()),
+        };
+        super::log_backend("debug", &format!("[VALIDATE] Message {}: role={}, content={}", i, msg.role, content_summary));
+    }
     validate_invariants(&messages)?;
 
     Ok(messages)

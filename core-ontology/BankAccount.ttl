@@ -1,0 +1,207 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix currency: <http://qudt.org/vocab/currency/> .
+
+# =============================================================================
+# Bank Account
+# =============================================================================
+# Banking account concepts and properties
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+<http://foundation.local/ontology/BankAccount>
+  a owl:Ontology ;
+  rdfs:label "FOUNDATION Bank Account Ontology" ;
+  rdfs:comment "Banking account concepts and properties" ;
+  owl:imports <http://qudt.org/2.1/vocab/currency> ;
+.
+
+# -----------------------------------------------------------------------------
+# Bank Account
+# -----------------------------------------------------------------------------
+
+foundation:BankAccount a owl:Class ;
+    rdfs:subClassOf foundation:Concept ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:accountNumber ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:accountHolder ;
+          owl:minCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:heldAtBank ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:accountCurrency ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:accountType ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:routingNumber ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:swiftCode ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:iban ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:bankBranch ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:accountBalance ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Bank Account" ;
+    rdfs:comment "A financial account held at a banking institution" ;
+    foundation:icon "account_balance" ;
+    rdfs:seeAlso """
+Represents a bank account that can send and receive money.
+
+Examples:
+- Checking account
+- Savings account
+- Business account
+- Investment account
+
+Key information:
+- Account holder
+- Bank/financial institution
+- Account number and routing information
+- Account type and currency
+
+Cardinality constraints:
+- accountNumber: exactly 1 (required)
+- accountHolder: min 1 (required, can have multiple for joint accounts)
+- heldAtBank: exactly 1 (required)
+- accountCurrency: exactly 1 (required)
+- accountType: max 1 (optional)
+- routingNumber: max 1 (optional)
+- swiftCode: max 1 (optional)
+- iban: max 1 (optional)
+- bankBranch: max 1 (optional)
+- accountBalance: max 1 (optional)
+""" .
+
+foundation:accountNumber a owl:DatatypeProperty ;
+    rdfs:label "account number" ;
+    rdfs:comment "The account number" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myAccount foundation:accountNumber "1234567890" .
+""" .
+
+foundation:accountType a owl:DatatypeProperty ;
+    rdfs:label "account type" ;
+    rdfs:comment "Type of bank account (checking, savings, business, etc.)" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common types:
+- Checking
+- Savings
+- Business Checking
+- Business Savings
+- Money Market
+- Certificate of Deposit (CD)
+
+Example:
+  :myAccount foundation:accountType "Checking" .
+""" .
+
+foundation:accountCurrency a owl:ObjectProperty ;
+    rdfs:label "account currency" ;
+    rdfs:comment "Currency of the account (QUDT CurrencyUnit)" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range qudt:CurrencyUnit ;
+    rdfs:seeAlso """
+Example:
+  :myAccount foundation:accountCurrency currency:USD .
+  :myBrazilAccount foundation:accountCurrency currency:BRL .
+  :myEuroAccount foundation:accountCurrency currency:EUR .
+""" .
+
+foundation:routingNumber a owl:DatatypeProperty ;
+    rdfs:label "routing number" ;
+    rdfs:comment "Bank routing number (ABA routing number in US, or equivalent)" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myAccount foundation:routingNumber "021000021" .
+""" .
+
+foundation:swiftCode a owl:DatatypeProperty ;
+    rdfs:label "SWIFT code" ;
+    rdfs:comment "SWIFT/BIC code for international transfers" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+SWIFT (Society for Worldwide Interbank Financial Telecommunication) codes
+are used for international wire transfers.
+
+Example:
+  :myAccount foundation:swiftCode "BOFAUS3N" .
+""" .
+
+foundation:iban a owl:DatatypeProperty ;
+    rdfs:label "IBAN" ;
+    rdfs:comment "International Bank Account Number" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+IBAN is used in many countries for international transactions.
+
+Example:
+  :myEuropeAccount foundation:iban "DE89370400440532013000" .
+""" .
+
+foundation:bankBranch a owl:DatatypeProperty ;
+    rdfs:label "bank branch" ;
+    rdfs:comment "Bank branch identifier or code" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example (Brazil):
+  :myBrazilAccount foundation:bankBranch "0001" .
+""" .
+
+foundation:accountBalance a owl:DatatypeProperty ;
+    rdfs:label "account balance" ;
+    rdfs:comment "Current balance in the account" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :myAccount foundation:accountBalance "5432.10"^^xsd:decimal ;
+      foundation:accountCurrency currency:USD .
+""" .
+
+foundation:accountHolder a owl:ObjectProperty ;
+    rdfs:label "account holder" ;
+    rdfs:comment "The person or organization that owns this account" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :myAccount foundation:accountHolder :johnDoe .
+  :businessAccount foundation:accountHolder :acmeCorp .
+""" .
+
+foundation:heldAtBank a owl:ObjectProperty ;
+    rdfs:label "held at bank" ;
+    rdfs:comment "The financial institution where this account is held" ;
+    rdfs:domain foundation:BankAccount ;
+    rdfs:range foundation:FinancialInstitution ;
+    rdfs:seeAlso """
+Example:
+  :myAccount foundation:heldAtBank :bankOfAmerica .
+""" .

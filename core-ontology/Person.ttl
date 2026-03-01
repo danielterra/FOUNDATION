@@ -19,7 +19,46 @@ foundation:Person a owl:Class ;
     rdfs:subClassOf foundation:AgentCapacity , foundation:PhysicalThing ,
         [ a owl:Restriction ;
           owl:onProperty foundation:name ;
-          owl:cardinality "1"^^xsd:nonNegativeInteger ] ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:birthDate ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:birthPlace ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:father ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:mother ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:spouse ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:gender ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:sexualOrientation ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:maritalStatus ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:bloodType ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:height ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:weight ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:skinColor ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:residesAt ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
     rdfs:label "Person" ;
     rdfs:comment "A human being (physical nature with agent capacity)" ;
     foundation:icon "person" ;
@@ -32,7 +71,23 @@ Examples:
 
 Cardinality constraints:
 - name: exactly 1 (required unique identifier)
+- birthDate: max 1 (optional, single date of birth)
+- birthPlace: max 1 (optional, single birth location)
+- father: max 1 (optional, single biological father)
+- mother: max 1 (optional, single biological mother)
+- spouse: max 1 (optional, single spouse)
+- gender: max 1 (optional, single gender identity)
+- sexualOrientation: max 1 (optional, single orientation)
+- maritalStatus: max 1 (optional, single status)
+- bloodType: max 1 (optional, single blood type)
+- height: max 1 (optional, single height measurement)
+- weight: max 1 (optional, single weight measurement)
+- skinColor: max 1 (optional, single classification)
+- residesAt: max 1 (optional, single primary residence)
 - email: 0+ (optional, may have multiple email addresses)
+- hasAddress: 0+ (optional, may have multiple addresses)
+- nationality: 0+ (optional, may have multiple citizenships)
+- hasDocument: 0+ (optional, may have multiple documents)
 """ .
 
 # -----------------------------------------------------------------------------
@@ -248,13 +303,14 @@ Example:
 
 foundation:hasAddress a owl:ObjectProperty ;
     rdfs:label "has address" ;
-    rdfs:comment "Address associated with the person" ;
-    rdfs:domain foundation:Person ;
+    rdfs:comment "Address associated with a person or organization" ;
     rdfs:range foundation:Address ;
     rdfs:seeAlso """
 Example:
   :john foundation:hasAddress :homeAddress ;
         foundation:hasAddress :workAddress .
+
+  :acmeCompany foundation:hasAddress :companyAddress .
 """ .
 
 foundation:residesAt a owl:ObjectProperty ;

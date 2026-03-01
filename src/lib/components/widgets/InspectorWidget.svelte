@@ -4,6 +4,8 @@
   import { listen } from '@tauri-apps/api/event';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { openPath } from '@tauri-apps/plugin-opener';
+  import { slide } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
 
   let { entityId, widgetId } = $props();
 
@@ -433,7 +435,7 @@
 
             <div class="properties-list">
             {#each Object.values(groupedProperties) as propGroup (propGroup.property)}
-              <div class="property-item">
+              <div class="property-item" transition:slide={{ duration: 400, easing: cubicOut }}>
                 <div class="property-header">
                   <div class="property-name">
                     {propGroup.propertyLabel}
@@ -463,7 +465,11 @@
                       onclick={() => propGroup.isObjectProperty && openEntityInspector(val.value)}
                     >
                       {#if propGroup.isObjectProperty && val.valueIcon}
-                        <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
+                        {#if isIconUrl(val.valueIcon)}
+                          <img src={getIconUrl(val.valueIcon)} alt="" class="value-icon-image" />
+                        {:else}
+                          <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
+                        {/if}
                       {/if}
                       {#if !propGroup.isObjectProperty && val.datatype === 'xsd:dateTime'}
                         {@const date = new Date(val.value)}
@@ -536,7 +542,7 @@
                   {collapsedGroups.add(classGroup.classIri)}
                   {collapsedGroups = new Set(collapsedGroups)}
                 {/if}
-                <div class="class-group">
+                <div class="class-group" transition:slide={{ duration: 400, easing: cubicOut }}>
                   <button
                     class="class-header"
                     onclick={() => toggleClassGroup(classGroup.classIri)}
@@ -551,7 +557,7 @@
 
                   {#if !isCollapsed}
                   {#each Object.values(classGroup.entities) as group}
-                <div class="backlink-group">
+                <div class="backlink-group" transition:slide={{ duration: 400, easing: cubicOut }}>
                   <div
                     class="backlink-entity clickable"
                     onclick={() => openEntityInspector(group.entity)}
@@ -993,6 +999,13 @@
   .value-icon {
     font-size: 18px;
     color: var(--color-interactive);
+  }
+
+  .value-icon-image {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    object-fit: cover;
   }
 
   .value-text {

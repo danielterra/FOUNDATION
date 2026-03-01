@@ -1,0 +1,67 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# BloodType
+# =============================================================================
+# ABO and Rh blood type classification
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Blood Type (Tipo Sanguíneo)
+# -----------------------------------------------------------------------------
+
+foundation:BloodType a owl:Class ;
+    rdfs:subClassOf foundation:Quality ;
+    rdfs:label "Blood Type" ;
+    rdfs:comment "ABO and Rh blood type classification" ;
+    foundation:icon "bloodtype" ;
+    rdfs:seeAlso """
+Standard blood types:
+- A+ (A positive)
+- A- (A negative)
+- B+ (B positive)
+- B- (B negative)
+- AB+ (AB positive)
+- AB- (AB negative)
+- O+ (O positive)
+- O- (O negative)
+""" .
+
+foundation:BloodTypeAPositive a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "A+" ;
+    rdfs:comment "Blood type A positive" .
+
+foundation:BloodTypeANegative a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "A-" ;
+    rdfs:comment "Blood type A negative" .
+
+foundation:BloodTypeBPositive a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "B+" ;
+    rdfs:comment "Blood type B positive" .
+
+foundation:BloodTypeBNegative a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "B-" ;
+    rdfs:comment "Blood type B negative" .
+
+foundation:BloodTypeABPositive a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "AB+" ;
+    rdfs:comment "Blood type AB positive" .
+
+foundation:BloodTypeABNegative a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "AB-" ;
+    rdfs:comment "Blood type AB negative" .
+
+foundation:BloodTypeOPositive a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "O+" ;
+    rdfs:comment "Blood type O positive" .
+
+foundation:BloodTypeONegative a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "O-" ;
+    rdfs:comment "Blood type O negative" .

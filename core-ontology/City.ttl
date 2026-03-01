@@ -1,0 +1,50 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# City
+# =============================================================================
+# City or municipality
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+foundation:City a owl:Class ;
+    rdfs:subClassOf foundation:GeographicLocation ;
+    rdfs:label "City" ;
+    rdfs:comment "A city or municipality" ;
+    foundation:icon "location_city" ;
+    rdfs:seeAlso """
+Examples:
+- Campinas (SP, Brazil)
+- San Francisco (CA, USA)
+- Toronto (ON, Canada)
+""" .
+
+# -----------------------------------------------------------------------------
+# City Properties
+# -----------------------------------------------------------------------------
+
+foundation:cityName a owl:DatatypeProperty ;
+    rdfs:label "city name" ;
+    rdfs:comment "Official name of the city or municipality" ;
+    rdfs:domain foundation:City ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :campinas foundation:cityName "Campinas" .
+""" .
+
+foundation:population a owl:DatatypeProperty ;
+    rdfs:label "population" ;
+    rdfs:comment "Population count of the city" ;
+    rdfs:domain foundation:City ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:seeAlso """
+Example:
+  :campinas foundation:population 1213792 .
+""" .

@@ -31,7 +31,8 @@ pub fn assert_triples(
     // Get or create origin_id
     let origin_id = get_or_create_origin(&tx, origin)?;
 
-    // Insert each triple
+    // Insert each triple without retracting existing values
+    // Note: Cardinality constraints are validated in Individual::add_property before calling this function
     for triple in triples {
         insert_triple(&tx, triple, tx_id, origin_id, now)?;
     }
@@ -96,13 +97,61 @@ pub fn retract_triples(
     let _origin_id = get_or_create_origin(&tx, origin)?;
 
     // Mark matching triples as retracted
+    // We need to match the exact triple (subject, predicate, AND object/object_value)
     for triple in triples {
-        tx.execute(
-            "UPDATE triples
-             SET retracted = 1
-             WHERE subject = ? AND predicate = ? AND retracted = 0",
-            (&triple.subject, &triple.predicate),
-        )?;
+        match &triple.object {
+            Object::Iri(iri) | Object::Blank(iri) => {
+                tx.execute(
+                    "UPDATE triples
+                     SET retracted = 1
+                     WHERE subject = ? AND predicate = ? AND object = ? AND retracted = 0",
+                    (&triple.subject, &triple.predicate, iri),
+                )?;
+            }
+            Object::Literal { value, datatype, language } => {
+                tx.execute(
+                    "UPDATE triples
+                     SET retracted = 1
+                     WHERE subject = ? AND predicate = ? AND object_value = ?
+                       AND COALESCE(object_datatype, 'xsd:string') = COALESCE(?, 'xsd:string')
+                       AND COALESCE(object_language, '') = COALESCE(?, '')
+                       AND retracted = 0",
+                    (&triple.subject, &triple.predicate, value, datatype.as_ref().unwrap_or(&"xsd:string".to_string()), language.as_ref().unwrap_or(&"".to_string())),
+                )?;
+            }
+            Object::Integer(i) => {
+                tx.execute(
+                    "UPDATE triples
+                     SET retracted = 1
+                     WHERE subject = ? AND predicate = ? AND object_integer = ? AND retracted = 0",
+                    (&triple.subject, &triple.predicate, i),
+                )?;
+            }
+            Object::Number(n) => {
+                tx.execute(
+                    "UPDATE triples
+                     SET retracted = 1
+                     WHERE subject = ? AND predicate = ? AND object_number = ? AND retracted = 0",
+                    (&triple.subject, &triple.predicate, n),
+                )?;
+            }
+            Object::Boolean(b) => {
+                tx.execute(
+                    "UPDATE triples
+                     SET retracted = 1
+                     WHERE subject = ? AND predicate = ? AND object_boolean = ? AND retracted = 0",
+                    (&triple.subject, &triple.predicate, if *b { 1 } else { 0 }),
+                )?;
+            }
+            Object::DateTime(dt) => {
+                tx.execute(
+                    "UPDATE triples
+                     SET retracted = 1
+                     WHERE subject = ? AND predicate = ? AND object_datetime = ? AND retracted = 0",
+                    (&triple.subject, &triple.predicate, dt),
+                )?;
+            }
+        }
     }
 
     tx.commit()?;
@@ -147,59 +196,59 @@ fn insert_triple(
 
         Object::Literal { value, datatype, language } => {
             // Parse typed literals and populate typed columns
-            // If parse fails, it's a BUG - we should NOT have invalid data
+            // If parse fails, return an error (user provided invalid data)
             match datatype.as_deref() {
                 Some("xsd:decimal") | Some("xsd:double") | Some("xsd:float") => {
                     let n = value.parse::<f64>()
-                        .unwrap_or_else(|e| panic!(
-                            "PARSE ERROR: Failed to parse float literal\n\
-                             Value: '{}'\n\
-                             Datatype: {:?}\n\
-                             Triple: {} {} {}\n\
-                             Error: {:?}",
-                            value, datatype, triple.subject, triple.predicate, value, e
-                        ));
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                            std::io::Error::new(std::io::ErrorKind::InvalidData,
+                                format!("Failed to parse float literal '{}' for triple: {} {} {} - Error: {}",
+                                    value, triple.subject, triple.predicate, value, e))
+                        )))?;
                     (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), Some(n), None, None, None)
                 }
                 Some("xsd:integer") | Some("xsd:int") | Some("xsd:long") => {
                     let i = value.parse::<i64>()
-                        .unwrap_or_else(|e| panic!(
-                            "PARSE ERROR: Failed to parse integer literal\n\
-                             Value: '{}'\n\
-                             Datatype: {:?}\n\
-                             Triple: {} {} {}\n\
-                             Error: {:?}",
-                            value, datatype, triple.subject, triple.predicate, value, e
-                        ));
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                            std::io::Error::new(std::io::ErrorKind::InvalidData,
+                                format!("Failed to parse integer literal '{}' for triple: {} {} {} - Error: {}",
+                                    value, triple.subject, triple.predicate, value, e))
+                        )))?;
                     (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, Some(i), None, None)
                 }
                 Some("xsd:boolean") => {
                     let b = match value.as_str() {
                         "true" | "1" => 1,
                         "false" | "0" => 0,
-                        _ => panic!(
-                            "PARSE ERROR: Invalid boolean literal\n\
-                             Value: '{}'\n\
-                             Datatype: {:?}\n\
-                             Triple: {} {} {}\n\
-                             Expected: 'true', 'false', '1', or '0'",
-                            value, datatype, triple.subject, triple.predicate, value
-                        ),
+                        _ => {
+                            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                                std::io::Error::new(std::io::ErrorKind::InvalidData,
+                                    format!("Invalid boolean literal '{}' for triple: {} {} {} - Expected: 'true', 'false', '1', or '0'",
+                                        value, triple.subject, triple.predicate, value))
+                            )));
+                        }
                     };
                     (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, None, None, Some(b))
                 }
                 Some("xsd:dateTime") => {
                     let timestamp = chrono::DateTime::parse_from_rfc3339(value)
                         .map(|dt| dt.timestamp())
-                        .unwrap_or_else(|e| panic!(
-                            "PARSE ERROR: Failed to parse dateTime literal\n\
-                             Value: '{}'\n\
-                             Datatype: {:?}\n\
-                             Triple: {} {} {}\n\
-                             Error: {:?}\n\
-                             Expected ISO 8601 format (e.g., '2025-01-28T18:38:46Z')",
-                            value, datatype, triple.subject, triple.predicate, value, e
-                        ));
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                            std::io::Error::new(std::io::ErrorKind::InvalidData,
+                                format!("Failed to parse dateTime literal '{}' for triple: {} {} {} - Error: {} - Expected ISO 8601 format (e.g., '2025-01-28T18:38:46Z')",
+                                    value, triple.subject, triple.predicate, value, e))
+                        )))?;
+                    (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, None, Some(timestamp), None)
+                }
+                Some("xsd:date") => {
+                    // Parse date as midnight UTC timestamp for storage
+                    let timestamp = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                        .map(|date| date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                            std::io::Error::new(std::io::ErrorKind::InvalidData,
+                                format!("Failed to parse date literal '{}' for triple: {} {} {} - Error: {} - Expected format: YYYY-MM-DD (e.g., '2020-11-17')",
+                                    value, triple.subject, triple.predicate, value, e))
+                        )))?;
                     (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, None, Some(timestamp), None)
                 }
                 _ => {
@@ -455,5 +504,66 @@ mod tests {
 
         // Should be a reasonable timestamp (after 2020)
         assert!(ts > 1577836800000); // Jan 1, 2020 in milliseconds
+    }
+
+    #[test]
+    fn test_assert_replaces_old_values() {
+        let mut conn = setup_test_db();
+
+        // Add first email
+        let email1 = vec![Triple {
+            subject: "test:Person1".to_string(),
+            predicate: "test:email".to_string(),
+            object: Object::Literal {
+                value: "john@example.com".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            },
+            tx: 0,
+            created_at: 1000,
+            origin_id: 1,
+            retracted: false,
+        }];
+        assert_triples(&mut conn, &email1, "test").unwrap();
+
+        // Add second email
+        let email2 = vec![Triple {
+            subject: "test:Person1".to_string(),
+            predicate: "test:email".to_string(),
+            object: Object::Literal {
+                value: "john@work.com".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            },
+            tx: 0,
+            created_at: 2000,
+            origin_id: 1,
+            retracted: false,
+        }];
+        assert_triples(&mut conn, &email2, "test").unwrap();
+
+        // Should have only 1 active email (the latest one)
+        let active: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = 'test:Person1' AND predicate = 'test:email' AND retracted = 0",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(active, 1);
+
+        // Should have 2 total emails in history (1 retracted + 1 active)
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = 'test:Person1' AND predicate = 'test:email'",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(total, 2);
+
+        // Verify the active one is the latest
+        let active_value: String = conn.query_row(
+            "SELECT object_value FROM triples WHERE subject = 'test:Person1' AND predicate = 'test:email' AND retracted = 0",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(active_value, "john@work.com");
     }
 }

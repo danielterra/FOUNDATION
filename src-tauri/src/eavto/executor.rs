@@ -37,8 +37,11 @@ impl DbExecutor {
         std::thread::spawn(move || {
             while let Some(task) = write_rx.blocking_recv() {
                 let result = {
-                    let mut conn = writer_conn.lock().unwrap();
-                    (task.operation)(&mut conn)
+                    let conn_result = writer_conn.lock();
+                    match conn_result {
+                        Ok(mut conn) => (task.operation)(&mut conn),
+                        Err(e) => Err(format!("Database lock poisoned: {}. Please restart the application.", e))
+                    }
                 };
                 let _ = task.result_tx.send(result);
             }

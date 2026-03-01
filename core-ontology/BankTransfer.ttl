@@ -1,0 +1,117 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Bank Transfer
+# =============================================================================
+# Transfers of funds between bank accounts
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+<http://foundation.local/ontology/BankTransfer>
+  a owl:Ontology ;
+  rdfs:label "FOUNDATION Bank Transfer Ontology" ;
+  rdfs:comment "Transfers of funds between bank accounts" ;
+.
+
+# -----------------------------------------------------------------------------
+# Bank Transfer
+# -----------------------------------------------------------------------------
+
+foundation:BankTransfer a owl:Class ;
+    rdfs:subClassOf foundation:FinancialTransaction ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:fromAccount ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:toAccount ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:transferType ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:referenceNumber ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Bank Transfer" ;
+    rdfs:comment "A transfer of funds from one bank account to another" ;
+    foundation:icon "sync_alt" ;
+    rdfs:seeAlso """
+Represents money being moved between bank accounts.
+
+Types:
+- Domestic transfer (within same country)
+- International/wire transfer (between countries)
+- ACH transfer (US)
+- TED/PIX transfer (Brazil)
+- SEPA transfer (Europe)
+
+Example:
+  :transfer1 a foundation:BankTransfer ;
+      foundation:fromAccount :myCheckingAccount ;
+      foundation:toAccount :myBusinessAccount ;
+      foundation:transactionAmount "5000.00"^^xsd:decimal ;
+      foundation:transactionCurrency currency:USD ;
+      foundation:transactionDate "2024-01-15"^^xsd:date ;
+      foundation:transferType "ACH" ;
+      foundation:transactionStatus "Completed" .
+
+Cardinality constraints:
+- fromAccount: exactly 1 (required)
+- toAccount: exactly 1 (required)
+- transferType: max 1 (optional)
+- referenceNumber: max 1 (optional)
+""" .
+
+foundation:fromAccount a owl:ObjectProperty ;
+    rdfs:label "from account" ;
+    rdfs:comment "The source bank account for this transfer" ;
+    rdfs:domain foundation:BankTransfer ;
+    rdfs:range foundation:BankAccount ;
+    rdfs:seeAlso """
+Example:
+  :transfer1 foundation:fromAccount :myAccount .
+""" .
+
+foundation:toAccount a owl:ObjectProperty ;
+    rdfs:label "to account" ;
+    rdfs:comment "The destination bank account for this transfer" ;
+    rdfs:domain foundation:BankTransfer ;
+    rdfs:range foundation:BankAccount ;
+    rdfs:seeAlso """
+Example:
+  :transfer1 foundation:toAccount :recipientAccount .
+""" .
+
+foundation:transferType a owl:DatatypeProperty ;
+    rdfs:label "transfer type" ;
+    rdfs:comment "Type of bank transfer (ACH, Wire, SEPA, TED, PIX, etc.)" ;
+    rdfs:domain foundation:BankTransfer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common types:
+- ACH (Automated Clearing House - US)
+- Wire Transfer (domestic or international)
+- SEPA (Single Euro Payments Area - Europe)
+- TED (Transferência Eletrônica Disponível - Brazil, same-day)
+- DOC (Documento de Ordem de Crédito - Brazil, next-day)
+- PIX (Instant payment - Brazil)
+
+Example:
+  :transfer1 foundation:transferType "PIX" .
+  :transfer2 foundation:transferType "Wire Transfer" .
+""" .
+
+foundation:referenceNumber a owl:DatatypeProperty ;
+    rdfs:label "reference number" ;
+    rdfs:comment "Bank-provided reference or confirmation number for the transfer" ;
+    rdfs:domain foundation:BankTransfer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :transfer1 foundation:referenceNumber "CONF-2024-ABC123XYZ" .
+""" .

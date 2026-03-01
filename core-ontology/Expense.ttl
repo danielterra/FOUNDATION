@@ -1,0 +1,88 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Expense
+# =============================================================================
+# Records of money spent or costs incurred
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+<http://foundation.local/ontology/Expense>
+  a owl:Ontology ;
+  rdfs:label "FOUNDATION Expense Ontology" ;
+  rdfs:comment "Records of money spent or costs incurred" ;
+.
+
+# -----------------------------------------------------------------------------
+# Expense
+# -----------------------------------------------------------------------------
+
+foundation:Expense a owl:Class ;
+    rdfs:subClassOf foundation:FinancialTransaction ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:incurredBy ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:expenseCategory ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Expense" ;
+    rdfs:comment "A record of money spent or cost incurred" ;
+    foundation:icon "money_off" ;
+    rdfs:seeAlso """
+Tracks expenses and costs.
+
+Categories:
+- Operating expenses
+- Capital expenses
+- Travel expenses
+- Office expenses
+- etc.
+
+Example:
+  :expense1 a foundation:Expense ;
+      foundation:expenseCategory "Office Supplies" ;
+      foundation:transactionAmount "125.50"^^xsd:decimal ;
+      foundation:transactionCurrency currency:USD ;
+      foundation:transactionDate "2024-01-10"^^xsd:date ;
+      foundation:incurredBy :companyName .
+
+Cardinality constraints:
+- incurredBy: exactly 1 (required)
+- expenseCategory: max 1 (optional)
+""" .
+
+foundation:expenseCategory a owl:DatatypeProperty ;
+    rdfs:label "expense category" ;
+    rdfs:comment "Category or type of expense" ;
+    rdfs:domain foundation:Expense ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common categories:
+- Office Supplies
+- Travel
+- Meals & Entertainment
+- Software & Subscriptions
+- Marketing & Advertising
+- Professional Services
+- Rent
+- Utilities
+
+Example:
+  :expense1 foundation:expenseCategory "Software & Subscriptions" .
+""" .
+
+foundation:incurredBy a owl:ObjectProperty ;
+    rdfs:label "incurred by" ;
+    rdfs:comment "The party that incurred this expense" ;
+    rdfs:domain foundation:Expense ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :expense1 foundation:incurredBy :employeeName .
+""" .

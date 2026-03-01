@@ -15,6 +15,7 @@ mod property;
 mod individual;
 mod thing;
 pub mod vocabulary;
+pub mod cardinality;
 
 pub use class::{Class, ClassType};
 pub use property::{Property, PropertyType};
@@ -31,6 +32,7 @@ pub enum OwlError {
     ValidationError(String),
     NotFound(String),
     InvalidOperation(String),
+    CardinalityViolation(String),
 }
 
 impl std::fmt::Display for OwlError {
@@ -40,6 +42,7 @@ impl std::fmt::Display for OwlError {
             OwlError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
             OwlError::NotFound(msg) => write!(f, "Not found: {}", msg),
             OwlError::InvalidOperation(msg) => write!(f, "Invalid operation: {}", msg),
+            OwlError::CardinalityViolation(msg) => write!(f, "Cardinality violation: {}", msg),
         }
     }
 }

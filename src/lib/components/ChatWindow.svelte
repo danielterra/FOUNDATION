@@ -33,8 +33,6 @@
 
 	// Load recent messages on mount and request location
 	onMount(async () => {
-		console.log('[ChatWindow] Component mounted - NEW VERSION WITH DOWNLOAD BUTTON');
-
 		requestLocation();
 
 		// Listen for database events and message updates
@@ -42,7 +40,6 @@
 
 		// Listen for import-complete in case database is still initializing
 		const unlistenImport = await listen('import-complete', async () => {
-			console.log('[ChatWindow] Database re-initialized, reloading...');
 			await initializeApp();
 		});
 
@@ -68,14 +65,19 @@
 
 		// Listen for new messages
 		const unlistenMessages = await listen('chat-message-added', async () => {
-			console.log('[ChatWindow] New message detected, reloading...');
 			await loadMessages();
+		});
+
+		// Listen for AI processing started (from recovery)
+		const unlistenAIProcessing = await listen('ai-processing-started', () => {
+			isLoading = true;
 		});
 
 		// Cleanup listeners on unmount
 		return () => {
 			unlistenImport();
 			unlistenMessages();
+			unlistenAIProcessing();
 		};
 	});
 
@@ -149,7 +151,6 @@
 			await invoke('ai__initialize', { apiKey: key });
 			isInitialized = true;
 			showApiKeyInput = false;
-			console.log('AI initialized successfully');
 		} catch (err) {
 			console.error('Failed to initialize AI:', err);
 			alert('Failed to initialize AI. Please check your API key.');
@@ -191,7 +192,6 @@
 			const msgs = await invoke('chat__get_recent_messages', {
 				limit: messageLimit
 			});
-			console.log('Loaded messages:', msgs.length, 'of', messageLimit);
 
 			// Check if we got fewer messages than requested (means we've loaded all)
 			hasMoreMessages = msgs.length === messageLimit;

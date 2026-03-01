@@ -26,7 +26,10 @@ foundation:Smartphone a owl:Class ;
           owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
         [ a owl:Restriction ;
           owl:onProperty foundation:screenSize ;
-          owl:cardinality "1"^^xsd:nonNegativeInteger ] ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hasMobileCarrier ;
+          owl:maxCardinality "2"^^xsd:nonNegativeInteger ] ;
     rdfs:label "Smartphone" ;
     rdfs:comment "A mobile computer with touchscreen interface, cellular connectivity, and mobile operating system" ;
     foundation:icon "smartphone" ;
@@ -41,6 +44,7 @@ Cardinality constraints:
 - hasPhoneNumber: 0-2 (supports no SIM, single SIM, or dual SIM)
 - hasIMEI: exactly 1 (required unique identifier)
 - screenSize: exactly 1 (required specification)
+- hasMobileCarrier: 0-2 (dual SIM devices may have up to 2 carriers)
 """ .
 
 # -----------------------------------------------------------------------------
@@ -57,16 +61,13 @@ Example:
   :iphone foundation:hasIMEI "123456789012345" .
 """ .
 
-foundation:hasPhoneNumber a owl:DatatypeProperty ;
-    rdfs:label "has phone number" ;
-    rdfs:comment "Phone number associated with the device (can have multiple numbers for dual-SIM or eSIM)" ;
-    rdfs:domain foundation:Smartphone ;
-    rdfs:range xsd:string ;
-    rdfs:seeAlso """
-Example:
-  :iphone foundation:hasPhoneNumber "+5511999999999" .
-  :iphone foundation:hasPhoneNumber "+5511888888888" .
-""" .
+# Note: foundation:hasPhoneNumber is defined in PhoneNumber.ttl as an ObjectProperty
+# Example:
+#   :iphone foundation:hasPhoneNumber :iphoneSIM1 .
+#
+#   :iphoneSIM1 a foundation:PhoneNumber ;
+#       foundation:phoneNumber "+5511999999999" ;
+#       foundation:phoneType "Mobile" .
 
 foundation:screenSize a owl:DatatypeProperty ;
     rdfs:label "screen size" ;

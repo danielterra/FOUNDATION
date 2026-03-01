@@ -1,0 +1,89 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# SalaryHistory
+# =============================================================================
+# Salary History - Salary change records within employment contracts
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# SalaryHistory - Salary Change Record
+# -----------------------------------------------------------------------------
+
+foundation:SalaryHistory a owl:Class ;
+    rdfs:subClassOf foundation:Concept ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:effectiveDate ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:salaryAmount ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:changeReason ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Salary History" ;
+    rdfs:comment "A salary change record within an employment contract, with date and value" ;
+    foundation:icon "payments" ;
+    rdfs:seeAlso """
+Tracks salary changes over the course of an employment contract.
+
+Cardinality constraints:
+- effectiveDate: exactly 1 (required - must have an effective date)
+- salaryAmount: exactly 1 (required - must have a salary amount)
+- changeReason: 0-1 (one reason per salary change)
+
+Example:
+  :johnSalaryChange1 a foundation:SalaryHistory ;
+      foundation:hasSalaryHistory :johnEmployment ;
+      foundation:effectiveDate "2021-01-15"^^xsd:date ;
+      foundation:salaryAmount "6000.00"^^xsd:decimal ;
+      foundation:changeReason "Annual adjustment" .
+
+  :johnSalaryChange2 a foundation:SalaryHistory ;
+      foundation:hasSalaryHistory :johnEmployment ;
+      foundation:effectiveDate "2022-06-01"^^xsd:date ;
+      foundation:salaryAmount "7500.00"^^xsd:decimal ;
+      foundation:changeReason "Promotion to Senior Engineer" .
+""" .
+
+# -----------------------------------------------------------------------------
+# SalaryHistory Properties
+# -----------------------------------------------------------------------------
+
+foundation:effectiveDate a owl:DatatypeProperty ;
+    rdfs:label "effective date" ;
+    rdfs:comment "Date when the salary change became effective" ;
+    rdfs:domain foundation:SalaryHistory ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :salaryChange1 foundation:effectiveDate "2021-01-15"^^xsd:date .
+""" .
+
+foundation:salaryAmount a owl:DatatypeProperty ;
+    rdfs:label "salary amount" ;
+    rdfs:comment "The new salary amount after the change" ;
+    rdfs:domain foundation:SalaryHistory ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :salaryChange1 foundation:salaryAmount "6000.00"^^xsd:decimal .
+""" .
+
+foundation:changeReason a owl:DatatypeProperty ;
+    rdfs:label "change reason" ;
+    rdfs:comment "Reason for the salary change (promotion, annual adjustment, etc.)" ;
+    rdfs:domain foundation:SalaryHistory ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Examples:
+  :salaryChange1 foundation:changeReason "Annual adjustment" .
+  :salaryChange2 foundation:changeReason "Promotion to Senior Engineer" .
+""" .

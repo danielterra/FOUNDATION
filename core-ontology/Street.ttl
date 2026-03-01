@@ -1,0 +1,50 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Street
+# =============================================================================
+# Street, avenue, or public thoroughfare
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+foundation:Street a owl:Class ;
+    rdfs:subClassOf foundation:GeographicLocation ;
+    rdfs:label "Street" ;
+    rdfs:comment "A street, avenue, or public thoroughfare" ;
+    foundation:icon "route" ;
+    rdfs:seeAlso """
+Examples:
+- Avenida Paulista (São Paulo, SP)
+- Fifth Avenue (New York, NY)
+- Champs-Élysées (Paris, France)
+""" .
+
+# -----------------------------------------------------------------------------
+# Street Properties
+# -----------------------------------------------------------------------------
+
+foundation:streetName a owl:DatatypeProperty ;
+    rdfs:label "street name" ;
+    rdfs:comment "Name of the street or thoroughfare" ;
+    rdfs:domain foundation:Street ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :avPaulista foundation:streetName "Avenida Paulista" .
+""" .
+
+foundation:streetType a owl:DatatypeProperty ;
+    rdfs:label "street type" ;
+    rdfs:comment "Type of street (rua, avenida, alameda, travessa, etc.)" ;
+    rdfs:domain foundation:Street ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :avPaulista foundation:streetType "Avenida" .
+""" .

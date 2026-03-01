@@ -1,0 +1,86 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Income
+# =============================================================================
+# Records of money received or revenue earned
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+<http://foundation.local/ontology/Income>
+  a owl:Ontology ;
+  rdfs:label "FOUNDATION Income Ontology" ;
+  rdfs:comment "Records of money received or revenue earned" ;
+.
+
+# -----------------------------------------------------------------------------
+# Income
+# -----------------------------------------------------------------------------
+
+foundation:Income a owl:Class ;
+    rdfs:subClassOf foundation:FinancialTransaction ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:receivedBy ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:incomeCategory ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
+    rdfs:label "Income" ;
+    rdfs:comment "A record of money received or revenue earned" ;
+    foundation:icon "attach_money" ;
+    rdfs:seeAlso """
+Tracks income and revenue.
+
+Types:
+- Service revenue
+- Product sales
+- Interest income
+- Investment income
+- etc.
+
+Example:
+  :income1 a foundation:Income ;
+      foundation:incomeCategory "Service Revenue" ;
+      foundation:transactionAmount "5000.00"^^xsd:decimal ;
+      foundation:transactionCurrency currency:USD ;
+      foundation:transactionDate "2024-01-20"^^xsd:date ;
+      foundation:receivedBy :myCompany .
+
+Cardinality constraints:
+- receivedBy: exactly 1 (required)
+- incomeCategory: max 1 (optional)
+""" .
+
+foundation:incomeCategory a owl:DatatypeProperty ;
+    rdfs:label "income category" ;
+    rdfs:comment "Category or type of income" ;
+    rdfs:domain foundation:Income ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Common categories:
+- Service Revenue
+- Product Sales
+- Consulting Fees
+- Subscription Revenue
+- Interest Income
+- Licensing Fees
+
+Example:
+  :income1 foundation:incomeCategory "Consulting Fees" .
+""" .
+
+foundation:receivedBy a owl:ObjectProperty ;
+    rdfs:label "received by" ;
+    rdfs:comment "The party that received this income" ;
+    rdfs:domain foundation:Income ;
+    rdfs:range foundation:AgentCapacity ;
+    rdfs:seeAlso """
+Example:
+  :income1 foundation:receivedBy :myCompany .
+""" .

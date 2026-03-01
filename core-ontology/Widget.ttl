@@ -5,7 +5,7 @@
 @prefix foundation: <http://foundation.local/ontology/> .
 
 # =============================================================================
-# Widget & Blackboard
+# Widget
 # =============================================================================
 # Represents visual widgets displayed on the FOUNDATION blackboard/canvas
 # to support conversation and information visualization
@@ -13,17 +13,6 @@
 # Version: 0.1.0
 # License: GNU GPL
 # =============================================================================
-
-foundation:Blackboard a owl:Class ;
-    rdfs:subClassOf foundation:DigitalThing ;
-    rdfs:label "Blackboard" ;
-    rdfs:comment "Visual workspace where widgets are displayed to support conversation and show information in a better way than plain text" ;
-    foundation:icon "dashboard" ;
-    rdfs:seeAlso """
-Examples:
-- The main blackboard canvas in FOUNDATION
-- A visual workspace showing Inspector widgets for entities
-""" .
 
 foundation:Widget a owl:Class ;
     rdfs:subClassOf foundation:DigitalThing ;
@@ -35,24 +24,6 @@ Examples:
 - An Inspector widget showing details of a Person class
 - A widget displaying a knowledge graph
 - Any visual component that helps explain information
-""" .
-
-foundation:InspectorWidget a owl:Class ;
-    rdfs:subClassOf foundation:Widget ;
-    rdfs:label "Inspector Widget" ;
-    rdfs:comment "Widget that displays detailed information about a class or instance, including hierarchy, properties, relationships, and values" ;
-    foundation:icon "info" ;
-    foundation:canDisplay owl:Thing ;
-    rdfs:seeAlso """
-Examples:
-- Inspector showing foundation:ThisUser with all properties
-- Inspector displaying foundation:Person class hierarchy
-- Inspector revealing all relationships of an Organization instance
-
-Parameters:
-- entity_id (required): The IRI of the class or instance to inspect
-
-Can display: ANY concept or instance (owl:Thing)
 """ .
 
 # -----------------------------------------------------------------------------
@@ -153,15 +124,4 @@ foundation:onBlackboard a owl:ObjectProperty ;
     rdfs:seeAlso """
 Example:
   :widget_123 foundation:onBlackboard :mainBlackboard .
-""" .
-
-foundation:hasWidget a owl:ObjectProperty ;
-    rdfs:label "has widget" ;
-    rdfs:comment "Links a blackboard to widgets displayed on it" ;
-    rdfs:domain foundation:Blackboard ;
-    rdfs:range foundation:Widget ;
-    owl:inverseOf foundation:onBlackboard ;
-    rdfs:seeAlso """
-Example:
-  :mainBlackboard foundation:hasWidget :widget_123 .
 """ .

@@ -1,0 +1,57 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# SkinColor
+# =============================================================================
+# Skin color classification with standardized enumerated values
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Skin Color (Cor da Pele - Padrão IBGE)
+# -----------------------------------------------------------------------------
+
+foundation:SkinColor a owl:Class ;
+    rdfs:subClassOf foundation:Quality ;
+    rdfs:label "Skin Color" ;
+    rdfs:comment "Skin color classification (Brazilian IBGE standard)" ;
+    foundation:icon "palette" ;
+    rdfs:seeAlso """
+Standard categories from Brazilian Institute of Geography and Statistics (IBGE):
+- Branca (White)
+- Preta (Black)
+- Parda (Brown/Mixed)
+- Amarela (Asian)
+- Indígena (Indigenous)
+""" .
+
+foundation:SkinColorWhite a foundation:SkinColor , owl:NamedIndividual ;
+    rdfs:label "White"@en ;
+    rdfs:label "Branca"@pt ;
+    rdfs:comment "White skin color" .
+
+foundation:SkinColorBlack a foundation:SkinColor , owl:NamedIndividual ;
+    rdfs:label "Black"@en ;
+    rdfs:label "Preta"@pt ;
+    rdfs:comment "Black skin color" .
+
+foundation:SkinColorBrown a foundation:SkinColor , owl:NamedIndividual ;
+    rdfs:label "Brown"@en ;
+    rdfs:label "Parda"@pt ;
+    rdfs:comment "Brown or mixed skin color" .
+
+foundation:SkinColorAsian a foundation:SkinColor , owl:NamedIndividual ;
+    rdfs:label "Asian"@en ;
+    rdfs:label "Amarela"@pt ;
+    rdfs:comment "Asian skin color" .
+
+foundation:SkinColorIndigenous a foundation:SkinColor , owl:NamedIndividual ;
+    rdfs:label "Indigenous"@en ;
+    rdfs:label "Indígena"@pt ;
+    rdfs:comment "Indigenous skin color" .

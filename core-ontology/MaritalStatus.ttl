@@ -1,0 +1,63 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# MaritalStatus
+# =============================================================================
+# Civil and marital status classification
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Marital Status (Estado Civil)
+# -----------------------------------------------------------------------------
+
+foundation:MaritalStatus a owl:Class ;
+    rdfs:subClassOf foundation:Quality ;
+    rdfs:label "Marital Status" ;
+    rdfs:comment "Civil/marital status classification" ;
+    foundation:icon "favorite" ;
+    rdfs:seeAlso """
+Standard marital status categories:
+- Single (Solteiro)
+- Married (Casado)
+- Divorced (Divorciado)
+- Widowed (Viúvo)
+- Domestic Partnership (União Estável)
+- Separated (Separado)
+""" .
+
+foundation:MaritalStatusSingle a foundation:MaritalStatus , owl:NamedIndividual ;
+    rdfs:label "Single"@en ;
+    rdfs:label "Solteiro"@pt ;
+    rdfs:comment "Never married" .
+
+foundation:MaritalStatusMarried a foundation:MaritalStatus , owl:NamedIndividual ;
+    rdfs:label "Married"@en ;
+    rdfs:label "Casado"@pt ;
+    rdfs:comment "Legally married" .
+
+foundation:MaritalStatusDivorced a foundation:MaritalStatus , owl:NamedIndividual ;
+    rdfs:label "Divorced"@en ;
+    rdfs:label "Divorciado"@pt ;
+    rdfs:comment "Legally divorced" .
+
+foundation:MaritalStatusWidowed a foundation:MaritalStatus , owl:NamedIndividual ;
+    rdfs:label "Widowed"@en ;
+    rdfs:label "Viúvo"@pt ;
+    rdfs:comment "Spouse deceased" .
+
+foundation:MaritalStatusDomesticPartnership a foundation:MaritalStatus , owl:NamedIndividual ;
+    rdfs:label "Domestic Partnership"@en ;
+    rdfs:label "União Estável"@pt ;
+    rdfs:comment "Living together in a committed relationship" .
+
+foundation:MaritalStatusSeparated a foundation:MaritalStatus , owl:NamedIndividual ;
+    rdfs:label "Separated"@en ;
+    rdfs:label "Separado"@pt ;
+    rdfs:comment "Legally separated but not divorced" .

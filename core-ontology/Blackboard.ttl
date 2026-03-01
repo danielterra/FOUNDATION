@@ -1,0 +1,41 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Blackboard
+# =============================================================================
+# Represents a visual workspace where widgets are displayed to support
+# conversation and information visualization
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:Blackboard a owl:Class ;
+    rdfs:subClassOf foundation:DigitalThing ;
+    rdfs:label "Blackboard" ;
+    rdfs:comment "Visual workspace where widgets are displayed to support conversation and show information in a better way than plain text" ;
+    foundation:icon "dashboard" ;
+    rdfs:seeAlso """
+Examples:
+- The main blackboard canvas in FOUNDATION
+- A visual workspace showing Inspector widgets for entities
+""" .
+
+# -----------------------------------------------------------------------------
+# Blackboard Properties
+# -----------------------------------------------------------------------------
+
+foundation:hasWidget a owl:ObjectProperty ;
+    rdfs:label "has widget" ;
+    rdfs:comment "Links a blackboard to widgets displayed on it" ;
+    rdfs:domain foundation:Blackboard ;
+    rdfs:range foundation:Widget ;
+    owl:inverseOf foundation:onBlackboard ;
+    rdfs:seeAlso """
+Example:
+  :mainBlackboard foundation:hasWidget :widget_123 .
+""" .

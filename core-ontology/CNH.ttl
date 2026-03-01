@@ -1,0 +1,91 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# CNH (Carteira Nacional de Habilitação)
+# =============================================================================
+# Brazilian driver's license
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+foundation:CNH a owl:Class ;
+    rdfs:subClassOf foundation:IdentificationDocument ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty foundation:driverCategory ;
+        owl:cardinality 1
+    ] ;
+    rdfs:label "CNH" ;
+    rdfs:comment "Carteira Nacional de Habilitação - Brazilian driver's license" ;
+    foundation:icon "directions_car" ;
+    rdfs:seeAlso """
+The CNH is the official driver's license in Brazil, issued by DETRAN.
+
+Cardinality Constraints:
+- driverCategory: exactly 1 (required) - every CNH must have exactly one driver category
+
+Example:
+  :johnCNH a foundation:CNH ;
+      foundation:documentNumber "12345678900" ;
+      foundation:issuingAuthority "DETRAN-SP" ;
+      foundation:issueDate "2018-03-20"^^xsd:date ;
+      foundation:expirationDate "2028-03-20"^^xsd:date ;
+      foundation:driverCategory "B" .
+""" .
+
+# -----------------------------------------------------------------------------
+# CNH-Specific Properties
+# -----------------------------------------------------------------------------
+
+foundation:driverCategory a owl:DatatypeProperty ;
+    rdfs:label "driver category" ;
+    rdfs:comment "Driver's license category (A, B, C, D, E, AB, etc.)" ;
+    rdfs:domain foundation:CNH ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Categories in Brazil:
+- A: Motorcycles
+- B: Cars (up to 8 passengers)
+- C: Light trucks
+- D: Buses
+- E: Trucks with trailers
+- AB: Motorcycles and cars
+
+Example:
+  :myCNH foundation:driverCategory "AB" .
+""" .
+
+foundation:firstLicenseDate a owl:DatatypeProperty ;
+    rdfs:label "first license date" ;
+    rdfs:comment "Date when the person first obtained a driver's license" ;
+    rdfs:domain foundation:CNH ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :myCNH foundation:firstLicenseDate "2010-05-20"^^xsd:date .
+""" .
+
+foundation:renachNumber a owl:DatatypeProperty ;
+    rdfs:label "RENACH number" ;
+    rdfs:comment "Registro Nacional de Carteiras de Habilitação - National driver's license registry number" ;
+    rdfs:domain foundation:CNH ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myCNH foundation:renachNumber "62048143023" .
+""" .
+
+foundation:registryNumber a owl:DatatypeProperty ;
+    rdfs:label "registry number" ;
+    rdfs:comment "Registry or mirror number of the physical document" ;
+    rdfs:domain foundation:CNH ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myCNH foundation:registryNumber "08100390067" .
+""" .

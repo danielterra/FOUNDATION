@@ -1,0 +1,31 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Passport
+# =============================================================================
+# International travel document issued by a national government
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+foundation:Passport a owl:Class ;
+    rdfs:subClassOf foundation:IdentificationDocument ;
+    rdfs:label "Passport" ;
+    rdfs:comment "International travel document issued by a national government" ;
+    foundation:icon "flight_takeoff" ;
+    rdfs:seeAlso """
+A passport certifies the identity and nationality of its holder
+for international travel.
+
+Example:
+  :johnPassport a foundation:Passport ;
+      foundation:documentNumber "AB1234567" ;
+      foundation:issuingCountry :brazil ;
+      foundation:issueDate "2020-01-15"^^xsd:date ;
+      foundation:expirationDate "2030-01-15"^^xsd:date .
+""" .

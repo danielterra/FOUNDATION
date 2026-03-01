@@ -31,7 +31,25 @@ foundation:Computer a owl:Class ;
           owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
         [ a owl:Restriction ;
           owl:onProperty foundation:hostname ;
-          owl:cardinality "1"^^xsd:nonNegativeInteger ] ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:manufacturer ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:model ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:serialNumber ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:cpuArchitecture ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:macAddress ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:ipAddress ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
     rdfs:label "Computer" ;
     rdfs:comment "A programmable electronic device for processing and storing data" ;
     foundation:icon "computer" ;
@@ -48,7 +66,13 @@ Cardinality constraints:
 - hasMemory: at least 1 (may have multiple RAM modules)
 - hasStorage: at least 1 (may have multiple drives)
 - hasOperatingSystem: exactly 1 (only one OS running)
-- hostname: exactly 1 (unique network identifier)
+- hostname: max 1 (unique network identifier, optional)
+- manufacturer: max 1 (single manufacturer)
+- model: max 1 (single model designation)
+- serialNumber: max 1 (unique serial number)
+- cpuArchitecture: max 1 (e.g., x86_64, ARM64)
+- macAddress: max 1 (primary MAC address)
+- ipAddress: max 1 (primary IP address)
 - hasGraphicsProcessor: 0+ (optional, may have multiple GPUs)
 - hasNetworkInterface: 0+ (optional, may have multiple adapters)
 """ .
@@ -140,4 +164,68 @@ foundation:hasUser a owl:ObjectProperty ;
     rdfs:seeAlso """
 Example:
   :macbook foundation:hasUser :daniel .
+""" .
+
+foundation:manufacturer a owl:DatatypeProperty ;
+    rdfs:label "manufacturer" ;
+    rdfs:comment "The manufacturer/brand of the computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:manufacturer "Apple" .
+  :server foundation:manufacturer "Dell" .
+""" .
+
+foundation:model a owl:DatatypeProperty ;
+    rdfs:label "model" ;
+    rdfs:comment "The model designation of the computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:model "MacBook Pro 16-inch M3 Max" .
+  :server foundation:model "PowerEdge R750" .
+""" .
+
+foundation:serialNumber a owl:DatatypeProperty ;
+    rdfs:label "serial number" ;
+    rdfs:comment "The unique serial number of this computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:serialNumber "C02XJ1234567" .
+""" .
+
+foundation:cpuArchitecture a owl:DatatypeProperty ;
+    rdfs:label "CPU architecture" ;
+    rdfs:comment "The processor architecture of the computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:cpuArchitecture "ARM64" .
+  :server foundation:cpuArchitecture "x86_64" .
+""" .
+
+foundation:macAddress a owl:DatatypeProperty ;
+    rdfs:label "MAC address" ;
+    rdfs:comment "The primary MAC address of the computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:macAddress "00:1A:2B:3C:4D:5E" .
+""" .
+
+foundation:ipAddress a owl:DatatypeProperty ;
+    rdfs:label "IP address" ;
+    rdfs:comment "The primary IP address of the computer" ;
+    rdfs:domain foundation:Computer ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :macbook foundation:ipAddress "192.168.1.100" .
+  :server foundation:ipAddress "10.0.0.50" .
 """ .

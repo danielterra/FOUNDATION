@@ -44,42 +44,6 @@ Cardinality constraints:
 - partOfMessage: exactly 1 (required, which message contains this tool use)
 """ .
 
-# =============================================================================
-# ToolResult - Represents the result of executing a tool/function
-# =============================================================================
-# A ToolResult captures the output from executing a tool, whether successful
-# or failed, and links back to the ToolUse that triggered it.
-#
-# Version: 0.1.0
-# License: GNU GPL
-# =============================================================================
-
-foundation:ToolResult a owl:Class ;
-    rdfs:subClassOf foundation:InformationObject ,
-        [ a owl:Restriction ;
-          owl:onProperty foundation:resultOf ;
-          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
-        [ a owl:Restriction ;
-          owl:onProperty foundation:resultContent ;
-          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
-        [ a owl:Restriction ;
-          owl:onProperty foundation:partOfMessage ;
-          owl:cardinality "1"^^xsd:nonNegativeInteger ] ;
-    rdfs:label "Tool Result" ;
-    rdfs:comment "Represents the result of executing a tool/function call" ;
-    foundation:icon "check_circle" ;
-    rdfs:seeAlso """
-Examples:
-- Result from search_classes returning list of classes
-- Result from get_instance returning instance details
-- Error result from failed tool execution
-
-Cardinality constraints:
-- resultOf: exactly 1 (required, which ToolUse this is the result of)
-- resultContent: exactly 1 (required, JSON result content)
-- partOfMessage: exactly 1 (required, which message contains this result)
-""" .
-
 # -----------------------------------------------------------------------------
 # ToolUse Properties
 # -----------------------------------------------------------------------------
@@ -107,34 +71,6 @@ foundation:executionOrder a owl:DatatypeProperty ;
     rdfs:comment "Sequence number indicating the order of tool execution within a message (0-indexed)" ;
     rdfs:domain foundation:ToolUse ;
     rdfs:range xsd:integer .
-
-# -----------------------------------------------------------------------------
-# ToolResult Properties
-# -----------------------------------------------------------------------------
-
-foundation:resultOf a owl:ObjectProperty ;
-    rdfs:label "result of" ;
-    rdfs:comment "Links a ToolResult to the ToolUse that it is the result of" ;
-    rdfs:domain foundation:ToolResult ;
-    rdfs:range foundation:ToolUse .
-
-foundation:resultContent a owl:DatatypeProperty ;
-    rdfs:label "result content" ;
-    rdfs:comment "JSON string containing the result data from executing the tool" ;
-    rdfs:domain foundation:ToolResult ;
-    rdfs:range xsd:string .
-
-foundation:isSuccess a owl:DatatypeProperty ;
-    rdfs:label "is success" ;
-    rdfs:comment "Whether the tool execution was successful (true) or failed (false)" ;
-    rdfs:domain foundation:ToolResult ;
-    rdfs:range xsd:boolean .
-
-foundation:errorMessage a owl:DatatypeProperty ;
-    rdfs:label "error message" ;
-    rdfs:comment "Error message if the tool execution failed (null if successful)" ;
-    rdfs:domain foundation:ToolResult ;
-    rdfs:range xsd:string .
 
 # -----------------------------------------------------------------------------
 # Shared Properties (for both ToolUse and ToolResult)

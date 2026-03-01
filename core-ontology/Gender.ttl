@@ -1,0 +1,63 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Gender
+# =============================================================================
+# Gender identity classification
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Gender (Gênero)
+# -----------------------------------------------------------------------------
+
+foundation:Gender a owl:Class ;
+    rdfs:subClassOf foundation:Quality ;
+    rdfs:label "Gender" ;
+    rdfs:comment "Gender identity classification" ;
+    foundation:icon "wc" ;
+    rdfs:seeAlso """
+Gender identity categories (non-exhaustive, customizable):
+- Male (Masculino)
+- Female (Feminino)
+- Non-Binary (Não-binário)
+- Genderfluid (Gênero fluido)
+- Agender (Sem gênero)
+- Other (Outro)
+""" .
+
+foundation:GenderMale a foundation:Gender , owl:NamedIndividual ;
+    rdfs:label "Male"@en ;
+    rdfs:label "Masculino"@pt ;
+    rdfs:comment "Male gender identity" .
+
+foundation:GenderFemale a foundation:Gender , owl:NamedIndividual ;
+    rdfs:label "Female"@en ;
+    rdfs:label "Feminino"@pt ;
+    rdfs:comment "Female gender identity" .
+
+foundation:GenderNonBinary a foundation:Gender , owl:NamedIndividual ;
+    rdfs:label "Non-Binary"@en ;
+    rdfs:label "Não-binário"@pt ;
+    rdfs:comment "Non-binary gender identity" .
+
+foundation:GenderGenderfluid a foundation:Gender , owl:NamedIndividual ;
+    rdfs:label "Genderfluid"@en ;
+    rdfs:label "Gênero fluido"@pt ;
+    rdfs:comment "Fluid gender identity" .
+
+foundation:GenderAgender a foundation:Gender , owl:NamedIndividual ;
+    rdfs:label "Agender"@en ;
+    rdfs:label "Sem gênero"@pt ;
+    rdfs:comment "Without gender identity" .
+
+foundation:GenderOther a foundation:Gender , owl:NamedIndividual ;
+    rdfs:label "Other"@en ;
+    rdfs:label "Outro"@pt ;
+    rdfs:comment "Other gender identity" .

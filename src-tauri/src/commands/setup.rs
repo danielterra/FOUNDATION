@@ -56,8 +56,11 @@ pub async fn initialize_app(
     // Check for pending tool executions (from interrupted sessions)
     let executor_state = app.state::<DbExecutor>();
     match super::chat::check_and_execute_pending_tools(app.clone(), &executor_state).await {
-        Ok(count) if count > 0 => {
+        Ok(super::chat::RecoveryState::ExecutedTools(count)) => {
             super::log_backend("warn", &format!("[RECOVERY] Executed {} pending tools from interrupted session", count));
+        }
+        Ok(super::chat::RecoveryState::AwaitingAIResponse) => {
+            super::log_backend("warn", "[RECOVERY] Found ToolResults awaiting AI response - user can continue conversation");
         }
         Err(e) => {
             super::log_backend("error", &format!("[RECOVERY] Failed to check pending tools: {}", e));

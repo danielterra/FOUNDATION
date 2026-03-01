@@ -1,0 +1,30 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# NationalID
+# =============================================================================
+# Generic national identity document (used in various countries)
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+foundation:NationalID a owl:Class ;
+    rdfs:subClassOf foundation:IdentificationDocument ;
+    rdfs:label "National ID" ;
+    rdfs:comment "Generic national identity document (used in various countries)" ;
+    foundation:icon "badge" ;
+    rdfs:seeAlso """
+A national identity document issued by a government to prove
+a person's identity and citizenship.
+
+Example:
+  :johnID a foundation:NationalID ;
+      foundation:documentNumber "AB123456" ;
+      foundation:issuingCountry :portugal ;
+      foundation:issueDate "2019-06-10"^^xsd:date .
+""" .
