@@ -9,9 +9,20 @@
 # =============================================================================
 # Physical address using geographic location references
 #
-# Version: 0.1.0
+# Version: 0.2.0
 # License: MIT
 # =============================================================================
+
+<http://foundation.local/ontology/Address>
+  a owl:Ontology ;
+  rdfs:label "FOUNDATION Address Ontology" ;
+  rdfs:comment "Physical address with references to geographic locations" ;
+  owl:imports <http://foundation.local/ontology/Street> ,
+              <http://foundation.local/ontology/Neighborhood> ,
+              <http://foundation.local/ontology/City> ,
+              <http://foundation.local/ontology/State> ,
+              <http://foundation.local/ontology/Country> ;
+.
 
 foundation:Address a owl:Class ;
     rdfs:subClassOf foundation:Concept ,
@@ -22,7 +33,13 @@ foundation:Address a owl:Class ;
           owl:onProperty foundation:route ;
           owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
         [ a owl:Restriction ;
+          owl:onProperty foundation:hasStreet ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
           owl:onProperty foundation:neighborhood ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hasNeighborhood ;
           owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
         [ a owl:Restriction ;
           owl:onProperty foundation:sublocality ;
@@ -34,7 +51,13 @@ foundation:Address a owl:Class ;
           owl:onProperty foundation:postalTown ;
           owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
         [ a owl:Restriction ;
+          owl:onProperty foundation:hasCity ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
           owl:onProperty foundation:administrativeAreaLevel1 ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hasState ;
           owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
         [ a owl:Restriction ;
           owl:onProperty foundation:administrativeAreaLevel2 ;
@@ -50,6 +73,9 @@ foundation:Address a owl:Class ;
           owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
         [ a owl:Restriction ;
           owl:onProperty foundation:country ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hasCountry ;
           owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
         [ a owl:Restriction ;
           owl:onProperty foundation:countryCode ;
@@ -325,4 +351,137 @@ foundation:instructions a owl:DatatypeProperty ;
     rdfs:seeAlso """
 Example:
   :myAddress foundation:instructions "Portão azul, tocar interfone apto 42" .
+""" .
+
+# -----------------------------------------------------------------------------
+# Geographic Entity Object Properties (Preferred - Use These for New Code)
+# -----------------------------------------------------------------------------
+# These properties link addresses to structured geographic entities instead of
+# using string literals. They enable proper geographic hierarchy navigation and
+# querying. Use these in preference to the legacy string properties above.
+# -----------------------------------------------------------------------------
+
+foundation:hasStreet a owl:ObjectProperty ;
+    rdfs:label "has street" ;
+    rdfs:comment "Links address to a street entity (preferred over route string)" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range foundation:Street ;
+    rdfs:seeAlso """
+This property should be used instead of foundation:route for new implementations.
+It provides a reference to a structured Street entity rather than a string literal.
+
+Example:
+  :myAddress foundation:hasStreet :street_avenida_paulista .
+
+  :street_avenida_paulista a foundation:Street ;
+      foundation:streetName "Avenida Paulista" .
+
+Benefits over string property:
+- Enables street-level queries and navigation
+- Supports street hierarchy (part of neighborhood/city)
+- Allows street metadata (type, historical names, etc.)
+""" .
+
+foundation:hasNeighborhood a owl:ObjectProperty ;
+    rdfs:label "has neighborhood" ;
+    rdfs:comment "Links address to a neighborhood entity (preferred over neighborhood string)" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range foundation:Neighborhood ;
+    rdfs:seeAlso """
+This property should be used instead of foundation:neighborhood for new implementations.
+It provides a reference to a structured Neighborhood entity.
+
+Example:
+  :myAddress foundation:hasNeighborhood :neighborhood_cambui .
+
+  :neighborhood_cambui a foundation:Neighborhood ;
+      foundation:neighborhoodName "Cambuí" ;
+      foundation:isPartOf :city_campinas .
+
+Benefits over string property:
+- Enables neighborhood hierarchy navigation
+- Supports demographic and geographic data
+- Facilitates location-based queries
+""" .
+
+foundation:hasCity a owl:ObjectProperty ;
+    rdfs:label "has city" ;
+    rdfs:comment "Links address to a city entity (preferred over locality/postalTown strings)" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range foundation:City ;
+    rdfs:seeAlso """
+This property should be used instead of foundation:locality or foundation:postalTown
+for new implementations. It provides a reference to a structured City entity.
+
+Example:
+  :myAddress foundation:hasCity :city_campinas .
+
+  :city_campinas a foundation:City ;
+      foundation:cityName "Campinas" ;
+      foundation:isPartOf :state_sao_paulo .
+
+Benefits over string property:
+- Enables city-level hierarchy navigation
+- Supports population, area, and other city data
+- Facilitates geographic queries and aggregations
+- Links to state/province and country entities
+""" .
+
+foundation:hasState a owl:ObjectProperty ;
+    rdfs:label "has state" ;
+    rdfs:comment "Links address to a state/province entity (preferred over administrativeAreaLevel1 string)" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range foundation:State ;
+    rdfs:seeAlso """
+This property should be used instead of foundation:administrativeAreaLevel1
+for new implementations. It provides a reference to a structured State entity.
+
+Example:
+  :myAddress foundation:hasState :state_sao_paulo .
+
+  :state_sao_paulo a foundation:State ;
+      foundation:stateName "São Paulo" ;
+      foundation:stateCode "SP" ;
+      foundation:isPartOf :country_brazil .
+
+Benefits over string property:
+- Enables state-level hierarchy navigation
+- Supports state codes and metadata
+- Facilitates regional queries and analysis
+- Links to country entities
+""" .
+
+foundation:hasCountry a owl:ObjectProperty ;
+    rdfs:label "has country" ;
+    rdfs:comment "Links address to a country entity (preferred over country string)" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range foundation:Country ;
+    rdfs:seeAlso """
+This property should be used instead of foundation:country for new implementations.
+It provides a reference to a structured Country entity.
+
+Example:
+  :myAddress foundation:hasCountry :country_brazil .
+
+  :country_brazil a foundation:Country ;
+      foundation:countryName "Brazil" ;
+      foundation:countryCode "BR" .
+
+Note: Keep foundation:countryCode as a string identifier for ISO codes.
+
+Benefits over string property:
+- Enables country-level hierarchy navigation
+- Supports country codes, currencies, languages
+- Facilitates international queries and analysis
+- Provides structured country metadata
+
+Combined example with full hierarchy:
+  :myAddress a foundation:Address ;
+      foundation:streetNumber "2775" ;
+      foundation:hasStreet :street_sete_setembro ;
+      foundation:hasNeighborhood :neighborhood_reboucas ;
+      foundation:hasCity :city_curitiba ;
+      foundation:hasState :state_parana ;
+      foundation:hasCountry :country_brazil ;
+      foundation:postalCode "80230-010" .
 """ .

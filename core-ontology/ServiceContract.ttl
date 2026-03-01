@@ -19,7 +19,8 @@
   a owl:Ontology ;
   rdfs:label "FOUNDATION Service Contract Ontology" ;
   rdfs:comment "Service contract and milestone concepts" ;
-  owl:imports <http://foundation.local/ontology/Contract> ;
+  owl:imports <http://foundation.local/ontology/Contract> ,
+              <http://foundation.local/ontology/Address> ;
 .
 
 foundation:ServiceContract a owl:Class ;
@@ -159,4 +160,52 @@ foundation:hasMilestone a owl:ObjectProperty ;
 Example:
   :devContract foundation:hasMilestone :milestone1 .
   :devContract foundation:hasMilestone :milestone2 .
+""" .
+
+foundation:hasWorkLocationAddress a owl:ObjectProperty ;
+    rdfs:label "has work location address" ;
+    rdfs:comment "Links a service contract to a specific physical address where work is performed (use alongside workLocation string for classifications)" ;
+    rdfs:domain foundation:ServiceContract ;
+    rdfs:range foundation:Address ;
+    rdfs:seeAlso """
+This property provides a structured reference to a physical address where services
+will be performed. It should be used in combination with foundation:workLocation
+string property for work arrangement classifications.
+
+Usage patterns:
+- For remote work: Only use foundation:workLocation "Remote"
+- For on-site work: Use both properties:
+  * foundation:workLocation "On-site"
+  * foundation:hasWorkLocationAddress :clientOfficeAddress
+
+- For hybrid work: Use both properties:
+  * foundation:workLocation "Hybrid (2 days on-site, 3 days remote)"
+  * foundation:hasWorkLocationAddress :clientOfficeAddress
+
+Example 1 - Pure remote (no address needed):
+  :remoteDevContract a foundation:ServiceContract ;
+      foundation:workLocation "Remote" .
+
+Example 2 - On-site with address:
+  :consultingContract a foundation:ServiceContract ;
+      foundation:workLocation "On-site" ;
+      foundation:hasWorkLocationAddress :clientSFOffice .
+
+  :clientSFOffice a foundation:Address ;
+      foundation:streetNumber "123" ;
+      foundation:hasStreet :street_market ;
+      foundation:hasCity :city_san_francisco ;
+      foundation:hasState :state_california ;
+      foundation:hasCountry :country_usa .
+
+Example 3 - Hybrid with address:
+  :maintenanceContract a foundation:ServiceContract ;
+      foundation:workLocation "Hybrid (2 days on-site, 3 days remote)" ;
+      foundation:hasWorkLocationAddress :companyHeadquarters .
+
+Benefits:
+- Enables location-based contract queries
+- Supports travel and expense tracking
+- Facilitates compliance with local regulations
+- Links to structured geographic data
 """ .

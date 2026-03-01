@@ -106,6 +106,67 @@ When creating instruction documents in the `todo/` folder:
 - **ALWAYS communicate in English** - All responses, documentation, comments, and messages must be in English
 - Never use Portuguese or other languages unless explicitly requested by the user
 
+## Ontology Design Principles
+
+### Use References Over Primitives
+
+**⚠️ CRITICAL RULE: When creating or modifying ontologies, ALWAYS use references to existing ontology classes instead of primitive types (xsd:string, xsd:decimal, etc.) whenever a corresponding ontology exists.**
+
+- **Always review if an ontology already exists** before using primitive types
+- Use `owl:ObjectProperty` with `rdfs:range` pointing to the ontology class
+- Add appropriate `owl:imports` declarations for referenced ontologies
+
+**Common cases:**
+
+- ✅ **Cities/Municipalities**: Use `foundation:City` instead of `xsd:string`
+  ```turtle
+  foundation:municipality a owl:ObjectProperty ;
+      rdfs:range foundation:City .
+  # NOT: foundation:municipality a owl:DatatypeProperty ; rdfs:range xsd:string .
+  ```
+
+- ✅ **Companies/Organizations**: Use `foundation:Company` or `foundation:Organization`
+  ```turtle
+  foundation:employer a owl:ObjectProperty ;
+      rdfs:range foundation:Company .
+  ```
+
+- ✅ **Email addresses**: Use `foundation:EmailAddress`
+  ```turtle
+  foundation:contactEmail a owl:ObjectProperty ;
+      rdfs:range foundation:EmailAddress .
+  ```
+
+- ✅ **Phone numbers**: Use `foundation:PhoneNumber`
+  ```turtle
+  foundation:contactPhone a owl:ObjectProperty ;
+      rdfs:range foundation:PhoneNumber .
+  ```
+
+- ✅ **Addresses**: Use `foundation:Address`
+- ✅ **Financial institutions**: Use `foundation:FinancialInstitution`
+- ✅ **Geographic locations**: Use `foundation:Country`, `foundation:State`, `foundation:City`, etc.
+- ✅ **People**: Use `foundation:Person`
+- ✅ **Currencies**: Use QUDT `currency:*` (e.g., `currency:BRL`, `currency:USD`)
+
+**When to use primitive types:**
+
+- Simple scalar values (numbers, booleans, dates)
+- Identifiers and codes (CNPJ, CPF, tax codes)
+- Free-text descriptions and notes
+- Amounts and quantities (combined with currency/unit references)
+
+**Import example:**
+```turtle
+<http://foundation.local/ontology/MyOntology>
+  a owl:Ontology ;
+  owl:imports <http://foundation.local/ontology/City> ,
+              <http://foundation.local/ontology/Company> ,
+              <http://foundation.local/ontology/EmailAddress> ,
+              <http://foundation.local/ontology/PhoneNumber> ;
+.
+```
+
 ## Best Practices
 
 - NEVER suppress warnings or errors

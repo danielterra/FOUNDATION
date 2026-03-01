@@ -1194,8 +1194,11 @@ pub async fn chat__send_and_reply(
         - Examples: 'I work at X' → remember me + X + connection | 'birthday May 15' → remember my birthday\n\
         - Ask questions when you need clarity to remember correctly\n\n\
         VALIDATE BEFORE CREATING:\n\
-        - NEVER create new concepts/things without checking if they already exist\n\
-        - ALWAYS search first, then REUSE if found, or create if not found\n\n\
+        - NEVER create concepts/things/properties without checking if they exist\n\
+        - ALWAYS search first, then REUSE if found, or create if not found\n\
+        - CRITICAL: Before creating connection_type, use remember_concept on domain/range to see existing properties\n\
+        - Check remember_connection_types with domain/range filters for similar connections\n\
+        - REUSE existing properties over creating duplicates (e.g., use hasAddress not hasLocation)\n\n\
         ATTACHMENTS & FILES:\n\
         - Attachments show as: [Attached Image/PDF: filename - File ID: foundation:File_XXX]\n\
         - NEVER create File entities - they already exist from attachments\n\
