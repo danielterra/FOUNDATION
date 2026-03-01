@@ -1,4 +1,4 @@
-# Claude AI Assistant Guidelines for FOUNDATION Project
+# AI Assistant Guidelines for FOUNDATION Project
 
 This document contains specific instructions for AI assistants working on the FOUNDATION project.
 
@@ -18,6 +18,7 @@ This document contains specific instructions for AI assistants working on the FO
 - Todos os erros de frontend e backend são logados de forma centralizada
 - Use `npm run logs` para ver os últimos logs (mostra últimas 100 linhas)
 - Ao investigar problemas, SEMPRE verifique os logs antes de fazer suposições
+- **Não faça perguntas que você mesmo consegue encontrar a resposta** - investigue diretamente logs, banco de dados, e código antes de perguntar
 
 ## Database & Storage
 
@@ -59,6 +60,24 @@ This document contains specific instructions for AI assistants working on the FO
      - Criar uma nova entrada `foundation:FoundationRelease_X_Y_Z`
      - Incluir: label, comment, releaseOf, versionNumber, licenseType, releaseDate, changelog
   4. Verificar se há outros arquivos de ontologia que precisam ser atualizados
+
+## TODO Documentation
+
+Ao criar documentos de instrução na pasta `todo/`:
+
+- **Padrão de nomenclatura:** `YYYYMMDD-HHMMSS-nome-do-arquivo.md`
+  - Exemplo: `20260228-192519-layer-violations-fix.md`
+  - Use hífen (-) para separar todas as partes
+  - Timestamp primeiro, nome descritivo por último
+  - Formato de timestamp: `YYYYMMDD-HHMMSS`
+
+## AI Function Design
+
+### Princípio de Simplicidade
+- **Evite funções redundantes**: Se uma função pode ser substituída por chamadas simples de outras funções, ela não é necessária
+- **Funções removidas** (mantidas como dead_code para referência):
+  - `remember_connection_types`: Conceitos já retornam connections via `remember_concept`
+  - `remember_concept_tree`: Para hierarquias profundas, chame `remember_concept` recursivamente
 
 ## Best Practices
 

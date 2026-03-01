@@ -111,7 +111,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 Parameter {
                     name: "query".to_string(),
                     param_type: "string".to_string(),
-                    description: "What to search for (partial match, case-insensitive)".to_string(),
+                    description: "Search keywords separated by spaces. ALL words must match (AND search). Use 1-3 most important words for best results. Example: 'CNH' or 'driver license' instead of 'CNH habilitação carteira motorista'.".to_string(),
                     required: false,
                 },
                 Parameter {
@@ -145,7 +145,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
             description: "Search your memory for specific things in a concept (e.g., which people, places, or organizations you remember).".to_string(),
             parameters: vec![
                 Parameter {
-                    name: "class_iri".to_string(),
+                    name: "concept_iri".to_string(),
                     param_type: "string".to_string(),
                     description: "Which concept to search in".to_string(),
                     required: true,
@@ -153,7 +153,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 Parameter {
                     name: "query".to_string(),
                     param_type: "string".to_string(),
-                    description: "What to search for (partial match, case-insensitive)".to_string(),
+                    description: "Search keywords separated by spaces. ALL words must match (AND search). Use 1-3 most important words for best results.".to_string(),
                     required: false,
                 },
                 Parameter {
@@ -201,7 +201,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 Parameter {
                     name: "icon".to_string(),
                     param_type: "string".to_string(),
-                    description: "Material icon name".to_string(),
+                    description: "Material icon name (e.g., 'category', 'label') OR image URL. For attachment images, get foundation:filePath from the File entity and use that URL (e.g., 'file:///path/to/image.jpg').".to_string(),
                     required: true,
                 },
                 Parameter {
@@ -223,7 +223,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
             description: "Learn about a new specific thing (person, place, organization, etc.). You'll get back an ID to reference it later.".to_string(),
             parameters: vec![
                 Parameter {
-                    name: "class_iri".to_string(),
+                    name: "concept_iri".to_string(),
                     param_type: "string".to_string(),
                     description: "What concept this thing belongs to".to_string(),
                     required: true,
@@ -237,7 +237,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 Parameter {
                     name: "icon".to_string(),
                     param_type: "string".to_string(),
-                    description: "Material icon name".to_string(),
+                    description: "Material icon name (e.g., 'person', 'business') OR image URL. For attachment images, get foundation:filePath from the File entity and use that URL (e.g., 'file:///path/to/image.jpg').".to_string(),
                     required: true,
                 },
                 Parameter {
@@ -327,24 +327,6 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
             ],
         },
         FunctionDefinition {
-            name: "remember_connection_types".to_string(),
-            description: "Search your memory for types of connections or details you can remember (e.g., find all relationship types you know).".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "query".to_string(),
-                    param_type: "string".to_string(),
-                    description: "What to search for (partial match, case-insensitive)".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "limit".to_string(),
-                    param_type: "number".to_string(),
-                    description: "Maximum number of results to return (default: 100)".to_string(),
-                    required: false,
-                },
-            ],
-        },
-        FunctionDefinition {
             name: "remember_connection_type".to_string(),
             description: "Remember everything you know about a specific type of connection.".to_string(),
             parameters: vec![
@@ -411,7 +393,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 Parameter {
                     name: "icon".to_string(),
                     param_type: "string".to_string(),
-                    description: "New icon".to_string(),
+                    description: "Material icon name OR image URL (e.g., 'file:///path/to/image.jpg')".to_string(),
                     required: false,
                 },
                 Parameter {
@@ -447,7 +429,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 Parameter {
                     name: "icon".to_string(),
                     param_type: "string".to_string(),
-                    description: "New icon".to_string(),
+                    description: "Material icon name OR image URL (e.g., 'file:///path/to/image.jpg')".to_string(),
                     required: false,
                 },
                 Parameter {
@@ -483,29 +465,11 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
             ],
         },
         FunctionDefinition {
-            name: "remember_concept_tree".to_string(),
-            description: "Remember the hierarchy of a concept and all its related concepts (parent and children concepts).".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "ID of the root concept".to_string(),
-                    required: true,
-                },
-                Parameter {
-                    name: "max_depth".to_string(),
-                    param_type: "number".to_string(),
-                    description: "How deep to go (default: 10)".to_string(),
-                    required: false,
-                },
-            ],
-        },
-        FunctionDefinition {
             name: "remember_things_by_details".to_string(),
             description: "Remember things that have specific details or connections (e.g., remember all people who work at X).".to_string(),
             parameters: vec![
                 Parameter {
-                    name: "class_iri".to_string(),
+                    name: "concept_iri".to_string(),
                     param_type: "string".to_string(),
                     description: "Which concept to search in".to_string(),
                     required: true,
@@ -585,8 +549,6 @@ pub fn execute_function(conn: &mut Connection, call: &FunctionCall, app: Option<
         "remember_concepts" => search_classes(conn, &call.arguments),
         "remember_things" => search_instances(conn, &call.arguments),
         "remember_connection_type" => get_property(conn, &call.arguments),
-        "remember_concept_tree" => get_class_hierarchy(conn, &call.arguments),
-        "remember_connection_types" => search_properties(conn, &call.arguments),
         "remember_things_by_details" => find_instances_by_property(conn, &call.arguments),
         "forget_concept" => delete_class(conn, &call.arguments, app),
         "forget_thing" => delete_instance(conn, &call.arguments, app),
@@ -633,14 +595,34 @@ fn search_classes(conn: &Connection, args: &Value) -> FunctionResult {
         all_class_iris.sort();
         all_class_iris.dedup();
 
+        // Parse query into search tokens (words)
+        let search_tokens: Vec<String> = if query_str.is_empty() {
+            Vec::new()
+        } else {
+            query_str
+                .to_lowercase()
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .collect()
+        };
+
         // Get full class info for each
         let mut classes = Vec::new();
         for iri in all_class_iris {
             if let Ok(class) = Class::get(conn, &iri) {
                 // Filter by query if provided
-                if !query_str.is_empty() {
+                if !search_tokens.is_empty() {
                     if let Some(label) = &class.label {
-                        if !label.to_lowercase().contains(&query_str.to_lowercase()) {
+                        let label_lower = label.to_lowercase();
+                        let comment_lower = class.comment.as_ref().map(|c| c.to_lowercase());
+
+                        // Check if ALL search tokens appear in label or comment
+                        let matches = search_tokens.iter().all(|token| {
+                            label_lower.contains(token) ||
+                            comment_lower.as_ref().map(|c| c.contains(token)).unwrap_or(false)
+                        });
+
+                        if !matches {
                             continue;
                         }
                     } else {
@@ -734,12 +716,12 @@ fn get_class(conn: &Connection, args: &Value) -> FunctionResult {
 }
 
 fn search_instances(conn: &Connection, args: &Value) -> FunctionResult {
-    let class_iri = match args.get("class_iri").and_then(|v| v.as_str()) {
+    let class_iri = match args.get("concept_iri").or_else(|| args.get("class_iri")).and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
             success: false,
             result: None,
-            error: Some("Missing required parameter: class_iri".to_string()),
+            error: Some("Missing required parameter: concept_iri".to_string()),
         },
     };
 
@@ -758,13 +740,33 @@ fn search_instances(conn: &Connection, args: &Value) -> FunctionResult {
     match (|| {
         let instance_iris = Class::get_instances(conn, class_iri)?;
 
+        // Parse query into search tokens (words)
+        let search_tokens: Vec<String> = if query_str.is_empty() {
+            Vec::new()
+        } else {
+            query_str
+                .to_lowercase()
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .collect()
+        };
+
         let mut instances = Vec::new();
         for iri in instance_iris {
             if let Ok(individual) = Individual::get(conn, &iri) {
                 // Filter by query if provided
-                if !query_str.is_empty() {
+                if !search_tokens.is_empty() {
                     if let Some(label) = &individual.label {
-                        if !label.to_lowercase().contains(&query_str.to_lowercase()) {
+                        let label_lower = label.to_lowercase();
+                        let comment_lower = individual.comment.as_ref().map(|c| c.to_lowercase());
+
+                        // Check if ALL search tokens appear in label or comment
+                        let matches = search_tokens.iter().all(|token| {
+                            label_lower.contains(token) ||
+                            comment_lower.as_ref().map(|c| c.contains(token)).unwrap_or(false)
+                        });
+
+                        if !matches {
                             continue;
                         }
                     } else {
@@ -918,12 +920,12 @@ fn create_class(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHand
 }
 
 fn create_instance(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
-    let class_iri = match args.get("class_iri").and_then(|v| v.as_str()) {
+    let class_iri = match args.get("concept_iri").or_else(|| args.get("class_iri")).and_then(|v| v.as_str()) {
         Some(class_iri) => class_iri,
         None => return FunctionResult {
             success: false,
             result: None,
-            error: Some("Missing required parameter: class_iri".to_string()),
+            error: Some("Missing required parameter: concept_iri".to_string()),
         },
     };
 
@@ -1128,6 +1130,7 @@ pub fn create_property(conn: &mut Connection, args: &Value) -> FunctionResult {
     }
 }
 
+#[allow(dead_code)]
 pub fn search_properties(conn: &Connection, args: &Value) -> FunctionResult {
     let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
@@ -1148,13 +1151,33 @@ pub fn search_properties(conn: &Connection, args: &Value) -> FunctionResult {
         all_property_iris.sort();
         all_property_iris.dedup();
 
+        // Parse query into search tokens (words)
+        let search_tokens: Vec<String> = if query_str.is_empty() {
+            Vec::new()
+        } else {
+            query_str
+                .to_lowercase()
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .collect()
+        };
+
         let mut properties = Vec::new();
         for iri in all_property_iris {
             if let Ok(property) = Property::get(conn, &iri) {
                 // Filter by query if provided
-                if !query_str.is_empty() {
+                if !search_tokens.is_empty() {
                     if let Some(label) = &property.label {
-                        if !label.to_lowercase().contains(&query_str.to_lowercase()) {
+                        let label_lower = label.to_lowercase();
+                        let comment_lower = property.comment.as_ref().map(|c| c.to_lowercase());
+
+                        // Check if ALL search tokens appear in label or comment
+                        let matches = search_tokens.iter().all(|token| {
+                            label_lower.contains(token) ||
+                            comment_lower.as_ref().map(|c| c.contains(token)).unwrap_or(false)
+                        });
+
+                        if !matches {
                             continue;
                         }
                     } else {
@@ -1653,6 +1676,7 @@ pub fn remove_property_value(conn: &mut Connection, args: &Value, app: Option<&t
     }
 }
 
+#[allow(dead_code)]
 pub fn get_class_hierarchy(conn: &Connection, args: &Value) -> FunctionResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
@@ -1724,12 +1748,12 @@ pub fn get_class_hierarchy(conn: &Connection, args: &Value) -> FunctionResult {
 }
 
 pub fn find_instances_by_property(conn: &Connection, args: &Value) -> FunctionResult {
-    let class_iri = match args.get("class_iri").and_then(|v| v.as_str()) {
+    let class_iri = match args.get("concept_iri").or_else(|| args.get("class_iri")).and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
             success: false,
             result: None,
-            error: Some("Missing required parameter: class_iri".to_string()),
+            error: Some("Missing required parameter: concept_iri".to_string()),
         },
     };
 

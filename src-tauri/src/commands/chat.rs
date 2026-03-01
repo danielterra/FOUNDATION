@@ -4,7 +4,7 @@ use tiktoken_rs::cl100k_base;
 use std::sync::OnceLock;
 use std::fs;
 
-use crate::eavto::{DbExecutor, query};
+use crate::eavto::DbExecutor;
 use crate::owl::{Individual, Object, Thing};
 use crate::ai::functions::{self, FunctionCall, FunctionResult};
 use crate::commands::log_backend;
@@ -44,6 +44,7 @@ pub struct ToolResultInfo {
 #[serde(rename_all = "camelCase")]
 pub struct AttachmentInfo {
     pub iri: String,
+    pub file_iri: Option<String>,
     pub file_name: String,
     pub mime_type: String,
     pub file_size: i64,
@@ -66,6 +67,7 @@ pub struct MessageInfo {
     pub tool_uses: Vec<ToolUseInfo>,
     pub tool_results: Vec<ToolResultInfo>,
     pub attachments: Vec<AttachmentInfo>,
+    pub token_count: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -126,22 +128,48 @@ pub async fn chat__attach_file(
 
         log_backend("info", &format!("[ATTACH] File saved to: {:?}", stored_path));
 
-        // Create attachment IRI
-        let attachment_iri = format!("foundation:Attachment_{}", timestamp);
-        let attachment = Individual::new(&attachment_iri);
         let now = chrono::Utc::now().to_rfc3339();
 
-        // Create attachment entity
-        attachment.assert(
+        // Step 1: Create File entity
+        let file_iri = format!("foundation:File_{}", timestamp);
+        let file = Individual::new(&file_iri);
+
+        // Determine FileType based on MIME type
+        let file_type_iri = match mime_type.as_str() {
+            "application/pdf" => "foundation:FileType_PDF",
+            "image/jpeg" | "image/jpg" => "foundation:FileType_JPEG",
+            "image/png" => "foundation:FileType_PNG",
+            "image/gif" => "foundation:FileType_GIF",
+            "image/webp" => "foundation:FileType_WEBP",
+            "image/svg+xml" => "foundation:FileType_SVG",
+            "image/bmp" => "foundation:FileType_BMP",
+            "image/tiff" => "foundation:FileType_TIFF",
+            "video/mp4" => "foundation:FileType_MP4",
+            "video/x-msvideo" => "foundation:FileType_AVI",
+            "video/quicktime" => "foundation:FileType_MOV",
+            "video/webm" => "foundation:FileType_WEBM",
+            "audio/mpeg" => "foundation:FileType_MP3",
+            "audio/wav" => "foundation:FileType_WAV",
+            "audio/ogg" => "foundation:FileType_OGG",
+            "text/plain" => "foundation:FileType_TXT",
+            "application/msword" => "foundation:FileType_DOC",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => "foundation:FileType_DOCX",
+            "application/zip" => "foundation:FileType_ZIP",
+            "application/vnd.rar" => "foundation:FileType_RAR",
+            "application/x-7z-compressed" => "foundation:FileType_7Z",
+            _ => "foundation:FileType_PDF", // Default fallback
+        };
+
+        file.assert(
             conn,
-            "foundation:Attachment",
+            "foundation:File",
             &file_name,
             "chat",
             "chat"
-        ).map_err(|e| format!("Failed to create attachment: {}", e))?;
+        ).map_err(|e| format!("Failed to create File: {}", e))?;
 
-        // Add file name
-        attachment.add_property(
+        // Add file properties
+        file.add_property(
             conn,
             "foundation:fileName",
             Object::Literal {
@@ -152,39 +180,65 @@ pub async fn chat__attach_file(
             "chat"
         ).map_err(|e| format!("Failed to set fileName: {}", e))?;
 
-        // Add MIME type
-        attachment.add_property(
+        file.add_property(
             conn,
-            "foundation:mimeType",
+            "foundation:filePath",
             Object::Literal {
-                value: mime_type,
-                datatype: Some("xsd:string".to_string()),
+                value: format!("file://{}", stored_path.to_string_lossy()),
+                datatype: Some("xsd:anyURI".to_string()),
                 language: None,
             },
             "chat"
-        ).map_err(|e| format!("Failed to set mimeType: {}", e))?;
+        ).map_err(|e| format!("Failed to set filePath: {}", e))?;
 
-        // Add file size
-        attachment.add_property(
+        file.add_property(
             conn,
             "foundation:fileSize",
             Object::Integer(file_size),
             "chat"
         ).map_err(|e| format!("Failed to set fileSize: {}", e))?;
 
-        // Add file path (stored path in attachments directory)
-        attachment.add_property(
+        file.add_property(
             conn,
-            "foundation:filePath",
+            "foundation:hasFileType",
+            Object::Iri(file_type_iri.to_string()),
+            "chat"
+        ).map_err(|e| format!("Failed to set hasFileType: {}", e))?;
+
+        file.add_property(
+            conn,
+            "foundation:uploadDate",
             Object::Literal {
-                value: stored_path.to_string_lossy().to_string(),
-                datatype: Some("xsd:string".to_string()),
+                value: now.clone(),
+                datatype: Some("xsd:dateTime".to_string()),
                 language: None,
             },
             "chat"
-        ).map_err(|e| format!("Failed to set filePath: {}", e))?;
+        ).map_err(|e| format!("Failed to set uploadDate: {}", e))?;
 
-        // Add attached timestamp
+        log_backend("info", &format!("[ATTACH] File entity created: {}", file_iri));
+
+        // Step 2: Create Attachment entity (wrapper)
+        let attachment_iri = format!("foundation:Attachment_{}", timestamp);
+        let attachment = Individual::new(&attachment_iri);
+
+        attachment.assert(
+            conn,
+            "foundation:Attachment",
+            &format!("Attachment: {}", file_name),
+            "chat",
+            "chat"
+        ).map_err(|e| format!("Failed to create Attachment: {}", e))?;
+
+        // Link Attachment to File
+        attachment.add_property(
+            conn,
+            "foundation:attachesFile",
+            Object::Iri(file_iri.clone()),
+            "chat"
+        ).map_err(|e| format!("Failed to set attachesFile: {}", e))?;
+
+        // Add attachment timestamp
         attachment.add_property(
             conn,
             "foundation:attachedAt",
@@ -196,7 +250,7 @@ pub async fn chat__attach_file(
             "chat"
         ).map_err(|e| format!("Failed to set attachedAt: {}", e))?;
 
-        log_backend("info", &format!("[ATTACH] Attachment created: {}", attachment_iri));
+        log_backend("info", &format!("[ATTACH] Attachment created: {} -> {}", attachment_iri, file_iri));
 
         Ok(attachment_iri)
     }).await
@@ -208,6 +262,127 @@ fn sanitize_filename(filename: &str) -> String {
         .chars()
         .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
         .collect()
+}
+
+/// Helper function to load attachment info with File details
+fn load_attachment_info(
+    conn: &rusqlite::Connection,
+    attachment_iri: &str,
+) -> Result<AttachmentInfo, String> {
+    super::log_backend("info", &format!("[ATTACH] Loading attachment info for: {}", attachment_iri));
+
+    let attachment_ind = Individual::get(conn, attachment_iri)
+        .map_err(|e| format!("Failed to load Attachment: {}", e))?;
+
+    // Get attachedAt from Attachment
+    let attached_at = attachment_ind.properties.iter()
+        .find(|(k, _)| k == "foundation:attachedAt")
+        .and_then(|(_, v)| v.as_literal())
+        .unwrap_or_default();
+
+    // Get File IRI via attachesFile
+    let file_iri = attachment_ind.properties.iter()
+        .find(|(k, _)| k == "foundation:attachesFile")
+        .and_then(|(_, v)| v.as_iri());
+
+    super::log_backend("info", &format!("[ATTACH] File IRI from attachesFile: {:?}", file_iri));
+
+    if let Some(file_iri_str) = file_iri {
+        super::log_backend("info", &format!("[ATTACH] Loading File entity: {}", file_iri_str));
+        // Load File entity
+        if let Ok(file_ind) = Individual::get(conn, file_iri_str) {
+            let file_name = file_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:fileName")
+                .and_then(|(_, v)| v.as_literal())
+                .unwrap_or_default();
+
+            let file_size = file_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:fileSize")
+                .and_then(|(_, v)| if let Object::Integer(i) = v { Some(*i) } else { None })
+                .unwrap_or(0);
+
+            let file_path_uri = file_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:filePath")
+                .and_then(|(_, v)| v.as_literal());
+
+            // Extract file path from URI (remove "file://" prefix if present)
+            let file_path = file_path_uri.map(|uri| {
+                uri.strip_prefix("file://").unwrap_or(&uri).to_string()
+            });
+
+            // Get FileType to determine MIME type
+            let file_type_iri = file_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:hasFileType")
+                .and_then(|(_, v)| v.as_iri());
+
+            super::log_backend("info", &format!("[ATTACH] FileType IRI: {:?}", file_type_iri));
+
+            let mime_type = if let Some(ft_iri) = file_type_iri {
+                if let Ok(file_type_ind) = Individual::get(conn, ft_iri) {
+                    let mt = file_type_ind.properties.iter()
+                        .find(|(k, _)| k == "foundation:mimeType")
+                        .and_then(|(_, v)| v.as_literal())
+                        .unwrap_or_else(|| "application/octet-stream".to_string());
+                    super::log_backend("info", &format!("[ATTACH] MIME type from FileType: {}", mt));
+                    mt
+                } else {
+                    super::log_backend("warn", &format!("[ATTACH] Failed to load FileType: {}", ft_iri));
+                    "application/octet-stream".to_string()
+                }
+            } else {
+                super::log_backend("warn", "[ATTACH] No FileType IRI found");
+                "application/octet-stream".to_string()
+            };
+
+            super::log_backend("info", &format!("[ATTACH] ✅ Loaded file: name={}, size={}, mime={}, path={:?}", file_name, file_size, mime_type, file_path));
+
+            return Ok(AttachmentInfo {
+                iri: attachment_iri.to_string(),
+                file_iri: Some(file_iri_str.to_string()),
+                file_name,
+                mime_type,
+                file_size,
+                base64_data: None,
+                file_path,
+                attached_at,
+            });
+        } else {
+            super::log_backend("warn", &format!("[ATTACH] Failed to load File entity: {}", file_iri_str));
+        }
+    } else {
+        super::log_backend("info", "[ATTACH] No attachesFile property found, trying fallback to old schema");
+    }
+
+    // Fallback: Try old schema (backward compatibility)
+    let file_name = attachment_ind.properties.iter()
+        .find(|(k, _)| k == "foundation:fileName")
+        .and_then(|(_, v)| v.as_literal())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let mime_type = attachment_ind.properties.iter()
+        .find(|(k, _)| k == "foundation:mimeType")
+        .and_then(|(_, v)| v.as_literal())
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+    let file_size = attachment_ind.properties.iter()
+        .find(|(k, _)| k == "foundation:fileSize")
+        .and_then(|(_, v)| if let Object::Integer(i) = v { Some(*i) } else { None })
+        .unwrap_or(0);
+
+    let file_path = attachment_ind.properties.iter()
+        .find(|(k, _)| k == "foundation:filePath")
+        .and_then(|(_, v)| v.as_literal());
+
+    Ok(AttachmentInfo {
+        iri: attachment_iri.to_string(),
+        file_iri: None,
+        file_name,
+        mime_type,
+        file_size,
+        base64_data: None,
+        file_path,
+        attached_at,
+    })
 }
 
 /// Send a message from user to AI assistant
@@ -430,6 +605,19 @@ pub async fn chat__send_message(
             ).map_err(|e| format!("Failed to link location to user: {}", e))?;
         }
 
+        // Calculate and store token count for this message
+        let bpe = get_tokenizer();
+        let token_count = count_tokens_with_bpe(bpe, &content);
+
+        message.add_property(
+            conn,
+            "foundation:tokenCount",
+            Object::Integer(token_count as i64),
+            "chat"
+        ).map_err(|e| format!("Failed to set tokenCount: {}", e))?;
+
+        log_backend("info", &format!("[TOKENS] User message {} has {} tokens", message_iri, token_count));
+
         Ok(message_iri)
     }).await.map(|iri| {
         // Emit event to notify frontend
@@ -439,208 +627,137 @@ pub async fn chat__send_message(
     })
 }
 
-/// Get recent messages from the main conversation
+/// Get recent messages from the main conversation - Tauri command wrapper
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn chat__get_recent_messages(
     limit: Option<usize>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<MessageInfo>, String> {
-    let limit_val = limit.unwrap_or(10);
+    get_recent_messages(limit.unwrap_or(10), executor.inner()).await
+}
+
+/// Get recent messages - core implementation
+pub async fn get_recent_messages(
+    limit: usize,
+    executor: &DbExecutor,
+) -> Result<Vec<MessageInfo>, String> {
+    let limit_val = limit;
 
     executor.read(move |conn| {
         let conversation_iri = "foundation:MainChatConversation";
 
         // Find all messages that are part of this conversation
-        let result = query::get_by_predicate_object(
+        let message_iris = Individual::find_by_class_and_properties(
             conn,
-            "foundation:partOfConversation",
-            conversation_iri
+            "foundation:Message",
+            &[("foundation:partOfConversation", conversation_iri)]
         ).map_err(|e| format!("Failed to find messages: {}", e))?;
 
         // Fetch full details for each message
         let mut messages_with_time: Vec<(MessageInfo, String)> = Vec::new();
 
-        for triple in result.triples {
-            let message_iri = &triple.subject;
+        for message_iri in message_iris {
+            // Load complete message individual
+            let message = Individual::get(conn, &message_iri)
+                .map_err(|e| format!("Failed to load message {}: {}", message_iri, e))?;
 
             // Get content
-            let content = query::get_by_entity_predicate(conn, message_iri, "foundation:content")
-                .ok()
-                .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()))
+            let content = message.properties.iter()
+                .find(|(k, _)| k == "foundation:content")
+                .and_then(|(_, v)| v.as_literal())
                 .unwrap_or_default();
 
             // Get sender
-            let sender_iri = query::get_by_entity_predicate(conn, message_iri, "foundation:sender")
-                .ok()
-                .and_then(|r| r.triples.first().and_then(|t| t.object.as_iri().map(|s| s.to_string())))
-                .unwrap_or_else(|| "unknown".to_string());
+            let sender_iri = message.properties.iter()
+                .find(|(k, _)| k == "foundation:sender")
+                .and_then(|(_, v)| v.as_iri())
+                .unwrap_or("unknown")
+                .to_string();
 
             let sender_thing = Thing::get(conn, &sender_iri);
 
             // Get receiver
-            let receiver_iri = query::get_by_entity_predicate(conn, message_iri, "foundation:receiver")
-                .ok()
-                .and_then(|r| r.triples.first().and_then(|t| t.object.as_iri().map(|s| s.to_string())))
-                .unwrap_or_else(|| "unknown".to_string());
+            let receiver_iri = message.properties.iter()
+                .find(|(k, _)| k == "foundation:receiver")
+                .and_then(|(_, v)| v.as_iri())
+                .unwrap_or("unknown")
+                .to_string();
 
             let receiver_thing = Thing::get(conn, &receiver_iri);
 
             // Get timestamp
-            let sent_at = query::get_by_entity_predicate(conn, message_iri, "foundation:sentAt")
-                .ok()
-                .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()))
+            let sent_at = message.properties.iter()
+                .find(|(k, _)| k == "foundation:sentAt")
+                .and_then(|(_, v)| v.as_literal())
                 .unwrap_or_default();
 
-            // Load ToolUse entities linked to this message
-            let mut tool_uses = Vec::new();
-            if let Ok(tool_use_result) = query::get_by_predicate_object(
-                conn,
-                "foundation:partOfMessage",
-                message_iri
-            ) {
-                log_backend("info", &format!("[CHAT] Found {} triples with partOfMessage for {}", tool_use_result.triples.len(), message_iri));
-                for tool_use_triple in tool_use_result.triples {
-                    let tool_use_iri = &tool_use_triple.subject;
-                    log_backend("info", &format!("[CHAT] Checking subject: {}", tool_use_iri));
-                    if tool_use_iri.starts_with("foundation:ToolUse_") {
-                        log_backend("info", &format!("[CHAT] Loading ToolUse: {}", tool_use_iri));
-                        if let Ok(tool_use_ind) = Individual::get(conn, tool_use_iri) {
-                            let tool_name = tool_use_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:toolName")
-                                .and_then(|(_, v)| v.as_literal())
-                                .unwrap_or_default();
+            // Load ToolUse and ToolResult entities linked to this message
+            let (tool_use_data, tool_result_data) = load_tool_data_for_message(conn, &message_iri)
+                .unwrap_or_else(|e| {
+                    log_backend("warn", &format!("[CHAT] Failed to load tool data for {}: {}", message_iri, e));
+                    (Vec::new(), Vec::new())
+                });
 
-                            let input = tool_use_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:toolInput")
-                                .and_then(|(_, v)| v.as_literal())
-                                .unwrap_or_default();
-
-                            let tool_use_id = tool_use_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:toolUseId")
-                                .and_then(|(_, v)| v.as_literal())
-                                .unwrap_or_default();
-
-                            tool_uses.push(ToolUseInfo {
-                                iri: tool_use_iri.to_string(),
-                                tool_name: tool_name.clone(),
-                                input: input.clone(),
-                                tool_use_id: tool_use_id.clone(),
-                            });
-                            let input_preview = if input.len() > 100 {
-                                format!("{}...", &input[..100])
-                            } else {
-                                input.clone()
-                            };
-                            log_backend("info", &format!("[CHAT] Added ToolUse: {} ({}) with input: {}", tool_use_iri, tool_name, input_preview));
-                        } else {
-                            log_backend("warn", &format!("[CHAT] Failed to load Individual for ToolUse: {}", tool_use_iri));
-                        }
+            // Convert tool_use_data to ToolUseInfo
+            let tool_uses: Vec<ToolUseInfo> = tool_use_data.into_iter()
+                .map(|(iri, tool_name, tool_use_id, input, _order)| {
+                    let input_preview = if input.len() > 100 {
+                        format!("{}...", &input[..100])
+                    } else {
+                        input.clone()
+                    };
+                    log_backend("info", &format!("[CHAT] Added ToolUse: {} ({}) with input: {}", iri, tool_name, input_preview));
+                    ToolUseInfo {
+                        iri,
+                        tool_name,
+                        input,
+                        tool_use_id,
                     }
-                }
-            } else {
-                log_backend("info", &format!("[CHAT] No ToolUse query results for {}", message_iri));
-            }
+                })
+                .collect();
 
-            // Load ToolResult entities linked to this message
-            let mut tool_results = Vec::new();
-            if let Ok(tool_result_result) = query::get_by_predicate_object(
-                conn,
-                "foundation:partOfMessage",
-                message_iri
-            ) {
-                log_backend("info", &format!("[CHAT] Found {} triples with partOfMessage for {}", tool_result_result.triples.len(), message_iri));
-                for tool_result_triple in tool_result_result.triples {
-                    let tool_result_iri = &tool_result_triple.subject;
-                    log_backend("info", &format!("[CHAT] Checking subject: {}", tool_result_iri));
-                    if tool_result_iri.starts_with("foundation:ToolResult_") {
-                        log_backend("info", &format!("[CHAT] Loading ToolResult: {}", tool_result_iri));
-                        if let Ok(tool_result_ind) = Individual::get(conn, tool_result_iri) {
-                            let result_content = tool_result_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:resultContent")
-                                .and_then(|(_, v)| v.as_literal())
-                                .unwrap_or_default();
-
-                            let is_success = tool_result_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:isSuccess")
-                                .and_then(|(_, v)| v.as_literal())
-                                .map(|s| s == "true")
-                                .unwrap_or(false);
-
-                            let result_of_iri = tool_result_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:resultOf")
-                                .and_then(|(_, v)| v.as_iri())
-                                .unwrap_or_default();
-
-                            tool_results.push(ToolResultInfo {
-                                iri: tool_result_iri.to_string(),
-                                result_content: result_content.clone(),
-                                is_success,
-                                result_of_iri: result_of_iri.to_string(),
-                            });
-                            log_backend("info", &format!("[CHAT] Added ToolResult: {} (success: {})", tool_result_iri, is_success));
-                        } else {
-                            log_backend("warn", &format!("[CHAT] Failed to load Individual for ToolResult: {}", tool_result_iri));
-                        }
+            // Convert tool_result_data to ToolResultInfo
+            let tool_results: Vec<ToolResultInfo> = tool_result_data.into_iter()
+                .map(|(result_of_iri, result_content, is_success)| {
+                    log_backend("info", &format!("[CHAT] Added ToolResult for {} (success: {})", result_of_iri, is_success));
+                    ToolResultInfo {
+                        iri: format!("foundation:ToolResult_{}", result_of_iri), // Reconstruct IRI (not ideal but works)
+                        result_content,
+                        is_success,
+                        result_of_iri,
                     }
-                }
-            } else {
-                log_backend("info", &format!("[CHAT] No ToolResult query results for {}", message_iri));
-            }
+                })
+                .collect();
+
+            // Get token count
+            let token_count = message.properties.iter()
+                .find(|(k, _)| k == "foundation:tokenCount")
+                .and_then(|(_, v)| match v {
+                    Object::Integer(count) => Some(*count),
+                    _ => None,
+                });
 
             // Load Attachment entities linked to this message
+            let attachment_iris: Vec<String> = message.properties.iter()
+                .filter(|(k, _)| k == "foundation:hasAttachment")
+                .filter_map(|(_, v)| v.as_iri().map(|s| s.to_string()))
+                .collect();
+
             let mut attachments = Vec::new();
-            if let Ok(attachment_result) = query::get_by_entity_predicate(
-                conn,
-                message_iri,
-                "foundation:hasAttachment"
-            ) {
-                log_backend("info", &format!("[CHAT] Found {} attachments for {}", attachment_result.triples.len(), message_iri));
-                for attachment_triple in attachment_result.triples {
-                    if let Some(attachment_iri) = attachment_triple.object.as_iri() {
-                        log_backend("info", &format!("[CHAT] Loading Attachment: {}", attachment_iri));
-                        if let Ok(attachment_ind) = Individual::get(conn, attachment_iri) {
-                            let file_name = attachment_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:fileName")
-                                .and_then(|(_, v)| v.as_literal())
-                                .unwrap_or_default();
+            log_backend("info", &format!("[CHAT] Found {} attachments for {}", attachment_iris.len(), message_iri));
 
-                            let mime_type = attachment_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:mimeType")
-                                .and_then(|(_, v)| v.as_literal())
-                                .unwrap_or_default();
-
-                            let file_size = attachment_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:fileSize")
-                                .and_then(|(_, v)| if let Object::Integer(i) = v { Some(*i) } else { None })
-                                .unwrap_or(0);
-
-                            let file_path = attachment_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:filePath")
-                                .and_then(|(_, v)| v.as_literal());
-
-                            let attached_at = attachment_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:attachedAt")
-                                .and_then(|(_, v)| v.as_literal())
-                                .unwrap_or_default();
-
-                            attachments.push(AttachmentInfo {
-                                iri: attachment_iri.to_string(),
-                                file_name: file_name.clone(),
-                                mime_type: mime_type.clone(),
-                                file_size,
-                                base64_data: None, // Don't load base64 data here for performance
-                                file_path,
-                                attached_at: attached_at.clone(),
-                            });
-                            log_backend("info", &format!("[CHAT] Added Attachment: {} ({})", attachment_iri, file_name));
-                        } else {
-                            log_backend("warn", &format!("[CHAT] Failed to load Individual for Attachment: {}", attachment_iri));
-                        }
+            for attachment_iri in attachment_iris {
+                log_backend("info", &format!("[CHAT] Loading Attachment: {}", attachment_iri));
+                match load_attachment_info(conn, &attachment_iri) {
+                    Ok(attachment_info) => {
+                        log_backend("info", &format!("[CHAT] Added Attachment: {} ({})", attachment_iri, attachment_info.file_name));
+                        attachments.push(attachment_info);
+                    }
+                    Err(e) => {
+                        log_backend("warn", &format!("[CHAT] Failed to load Attachment: {}", e));
                     }
                 }
-            } else {
-                log_backend("info", &format!("[CHAT] No Attachments for {}", message_iri));
             }
 
             messages_with_time.push((
@@ -656,6 +773,7 @@ pub async fn chat__get_recent_messages(
                     tool_uses,
                     tool_results,
                     attachments,
+                    token_count,
                 },
                 sent_at,
             ));
@@ -690,32 +808,37 @@ pub async fn chat__get_conversation_info(
             return Ok(None);
         }
 
+        // Load complete conversation individual
+        let conv_ind = Individual::get(conn, conversation_iri)
+            .map_err(|e| format!("Failed to load conversation: {}", e))?;
+
         // Get started_at
-        let started_at = query::get_by_entity_predicate(conn, conversation_iri, "foundation:startedAt")
-            .ok()
-            .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()))
+        let started_at = conv_ind.properties.iter()
+            .find(|(k, _)| k == "foundation:startedAt")
+            .and_then(|(_, v)| v.as_literal())
             .unwrap_or_default();
 
         // Get topic
-        let topic = query::get_by_entity_predicate(conn, conversation_iri, "foundation:topic")
-            .ok()
-            .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()));
+        let topic = conv_ind.properties.iter()
+            .find(|(k, _)| k == "foundation:topic")
+            .and_then(|(_, v)| v.as_literal());
 
         // Get status
-        let status = query::get_by_entity_predicate(conn, conversation_iri, "foundation:conversationStatus")
-            .ok()
-            .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()));
+        let status = conv_ind.properties.iter()
+            .find(|(k, _)| k == "foundation:conversationStatus")
+            .and_then(|(_, v)| v.as_literal());
 
         // Count participants
-        let participants = query::get_by_entity_predicate(conn, conversation_iri, "foundation:hasParticipant")
-            .map_err(|e| format!("Failed to get participants: {}", e))?;
+        let participant_count = conv_ind.properties.iter()
+            .filter(|(k, _)| k == "foundation:hasParticipant")
+            .count();
 
         Ok(Some(ConversationInfo {
             iri: conversation_iri.to_string(),
             started_at,
             topic,
             status,
-            participant_count: participants.triples.len(),
+            participant_count,
         }))
     }).await
 }
@@ -728,7 +851,7 @@ pub async fn check_and_execute_pending_tools(
     executor: &DbExecutor,
 ) -> Result<usize, String> {
     // Get recent messages to check for pending tools
-    let messages = get_recent_messages_internal(10, executor).await?;
+    let messages = get_recent_messages(10, executor).await?;
 
     let mut pending_count = 0;
 
@@ -924,13 +1047,17 @@ pub async fn chat__send_and_reply(
         - Connect information: who works where, who lives where, when things happen\n\
         - Examples: 'I work at X' → remember me + X + connection | 'birthday May 15' → remember my birthday\n\
         - Ask questions when you need clarity to remember correctly\n\n\
+        VALIDATE BEFORE CREATING:\n\
+        - NEVER create new concepts/things without checking if they already exist\n\
+        - ALWAYS search first, then REUSE if found, or create if not found\n\n\
+        ATTACHMENTS & FILES:\n\
+        - Attachments show as: [Attached Image/PDF: filename - File ID: foundation:File_XXX]\n\
+        - NEVER create File entities - they already exist from attachments\n\
+        - Icons can be: material name ('person'), file:// URL, http:// URL, or /absolute/path\n\n\
         BLACKBOARD:\n\
-        - Add widgets to show information visually (better than text)\n\
-        - Use proactively to support conversation\n\
-        - When you look at a concept: check foundation:canBeDisplayedBy to see which widgets can render it\n\
-        - When you look at a widget: check foundation:canDisplay to see which concepts it can render\n\
-        - Tools: blackboard_show, blackboard_add_widget, blackboard_remove, blackboard_clear\n\
-        - Example: blackboard_add_widget(widget_type='Inspector', params={{entity_id:'foundation:ThisUser'}})\n\
+        - Show information visually (better than text) - use proactively\n\
+        - Concepts have foundation:canBeDisplayedBy listing compatible widgets\n\
+        - Widgets have foundation:canDisplay listing compatible concepts\n\
         ",
         user_name,
         ai_name,
@@ -945,25 +1072,46 @@ pub async fn chat__send_and_reply(
 
     // Get maxInputTokens from the default model (fallback to 40000 if not found)
     let max_input_tokens = executor.read(|conn| {
-        let models = query::get_by_predicate_object(conn, "foundation:isDefaultModel", "true").ok();
+        super::log_backend("info", &format!("[TOKEN CONFIG] Querying default model..."));
 
-        if let Some(result) = models {
-            for triple in result.triples {
-                let model_iri = &triple.subject;
-                if let Ok(max_tokens_result) = query::get_by_entity_predicate(conn, model_iri, "foundation:maxInputTokens") {
-                    if let Some(token_triple) = max_tokens_result.triples.first() {
-                        if let Object::Integer(token_value) = &token_triple.object {
-                            return Ok(*token_value as usize);
-                        }
+        // Find default model using OWL abstractions
+        let model_iris = Individual::find_by_class_and_properties(
+            conn,
+            "foundation:AIModel",
+            &[("foundation:isDefaultModel", "true")]
+        ).map_err(|e| format!("Failed to find default model: {}", e))?;
+
+        super::log_backend("info", &format!("[TOKEN CONFIG] Found {} models with isDefaultModel=true", model_iris.len()));
+
+        for model_iri in model_iris {
+            super::log_backend("info", &format!("[TOKEN CONFIG] Checking model: {}", model_iri));
+
+            // Load complete model individual
+            if let Ok(model_ind) = Individual::get(conn, &model_iri) {
+                // Get maxInputTokens property
+                if let Some((_, token_value)) = model_ind.properties.iter()
+                    .find(|(k, _)| k == "foundation:maxInputTokens")
+                {
+                    super::log_backend("info", &format!("[TOKEN CONFIG] Found maxInputTokens property: {:?}", token_value));
+                    if let Object::Integer(token_val) = token_value {
+                        super::log_backend("info", &format!("[TOKEN CONFIG] ✅ Using maxInputTokens from {}: {}", model_iri, token_val));
+                        return Ok(*token_val as usize);
+                    } else {
+                        super::log_backend("warn", &format!("[TOKEN CONFIG] Object is not Integer: {:?}", token_value));
                     }
+                } else {
+                    super::log_backend("warn", &format!("[TOKEN CONFIG] No maxInputTokens property found for {}", model_iri));
                 }
+            } else {
+                super::log_backend("warn", &format!("[TOKEN CONFIG] Failed to load model individual: {}", model_iri));
             }
         }
 
-        Ok(40000usize) // Fallback to 20% of 200K
-    }).await.unwrap_or(40000);
+        super::log_backend("error", "[TOKEN CONFIG] ❌ FATAL: No valid default model found");
+        Err("FATAL: Failed to load maxInputTokens configuration from database".to_string())
+    }).await.expect("FATAL: Application cannot start without maxInputTokens configuration");
 
-    super::log_backend("info", &format!("Using maxInputTokens: {}", max_input_tokens));
+    super::log_backend("info", &format!("✅ Using maxInputTokens: {}", max_input_tokens));
 
     let conversation_iri = "foundation:MainChatConversation";
     let mut is_first_iteration = true;
@@ -994,7 +1142,7 @@ pub async fn chat__send_and_reply(
             super::log_backend("info", &format!("[CHAT] Loading current user message with attachments: {}", user_message_iri));
 
             // Load the just-created message WITH attachments from database
-            let current_msg = get_recent_messages_internal(1, &executor).await?;
+            let current_msg = get_recent_messages(1, &executor).await?;
 
             if let Some(msg_info) = current_msg.first() {
                 super::log_backend("info", &format!("[CHAT] Current message has {} attachments", msg_info.attachments.len()));
@@ -1199,6 +1347,34 @@ pub async fn chat__send_and_reply(
             Ok(ai_message_iri)
         }).await?;
 
+        // Calculate and store token count for assistant message
+        // This includes text content + tool_use blocks that will be added
+        {
+            let bpe = get_tokenizer();
+            let mut total_tokens = count_tokens_with_bpe(bpe, &ai_content) + 4; // base overhead
+
+            // Add token count for each tool_use block
+            for tool_call in &response.tool_calls {
+                let tool_json = serde_json::to_string(tool_call).unwrap_or_default();
+                total_tokens += count_tokens_with_bpe(bpe, &tool_json);
+            }
+
+            let msg_iri_for_tokens = ai_message_iri.clone();
+            executor.write(move |conn| {
+                let msg = Individual::new(&msg_iri_for_tokens);
+                msg.add_property(
+                    conn,
+                    "foundation:tokenCount",
+                    Object::Integer(total_tokens as i64),
+                    "ai"
+                ).map_err(|e| format!("Failed to set tokenCount: {}", e))?;
+                Ok(msg_iri_for_tokens)
+            }).await?;
+
+            super::log_backend("info", &format!("[TOKENS] Assistant message {} has {} tokens (content + {} tool_uses)",
+                ai_message_iri, total_tokens, response.tool_calls.len()));
+        }
+
         // Emit event to notify frontend
         {
             use tauri::Emitter;
@@ -1279,13 +1455,13 @@ pub async fn chat__send_and_reply(
                         "ai"
                     ).map_err(|e| format!("Failed to set executionOrder: {}", e))?;
 
-                    let part_of_msg_triple = crate::eavto::Triple::new(
-                        tool_use_iri.clone(),
+                    let tool_use_ind = Individual::new(tool_use_iri.clone());
+                    tool_use_ind.add_property(
+                        conn,
                         "foundation:partOfMessage",
                         Object::Iri(msg_iri),
-                    );
-                    crate::eavto::store::assert_triples(conn, &[part_of_msg_triple], "ai")
-                        .map_err(|e| format!("Failed to link ToolUse to message: {}", e))?;
+                        "ai"
+                    ).map_err(|e| format!("Failed to link ToolUse to message: {}", e))?;
 
                     Ok(tool_use_iri)
                 }).await?
@@ -1435,15 +1611,41 @@ pub async fn chat__send_and_reply(
                 ).map_err(|e| format!("Failed to link message to conversation: {}", e))?;
 
                 // Link all tool_result entities to this message
-                for tool_result_iri in tool_result_iris {
-                    let part_of_msg_triple = crate::eavto::Triple::new(
-                        tool_result_iri,
+                for tool_result_iri in &tool_result_iris {
+                    let tool_result_ind = Individual::new(tool_result_iri.clone());
+                    tool_result_ind.add_property(
+                        conn,
                         "foundation:partOfMessage",
                         Object::Iri(msg_iri.clone()),
-                    );
-                    crate::eavto::store::assert_triples(conn, &[part_of_msg_triple], "ai")
-                        .map_err(|e| format!("Failed to link ToolResult to message: {}", e))?;
+                        "ai"
+                    ).map_err(|e| format!("Failed to link ToolResult to message: {}", e))?;
                 }
+
+                // Calculate token count for tool_results message
+                let bpe = get_tokenizer();
+                let mut total_tokens = 4; // base overhead
+
+                // Add token count for each tool_result block
+                for tool_result_iri in &tool_result_iris {
+                    // Load the result content to count tokens
+                    if let Ok(result_ind) = Individual::get(conn, tool_result_iri) {
+                        let result_content = result_ind.properties.iter()
+                            .find(|(k, _)| k == "foundation:resultContent")
+                            .and_then(|(_, v)| v.as_literal())
+                            .unwrap_or_default();
+                        total_tokens += count_tokens_with_bpe(bpe, &result_content);
+                    }
+                }
+
+                msg.add_property(
+                    conn,
+                    "foundation:tokenCount",
+                    Object::Integer(total_tokens as i64),
+                    "ai"
+                ).map_err(|e| format!("Failed to set tokenCount: {}", e))?;
+
+                log_backend("info", &format!("[TOKENS] Tool results message {} has {} tokens ({} tool_results)",
+                    msg_iri, total_tokens, tool_result_iris.len()));
 
                 Ok(msg_iri)
             }).await?;
@@ -1469,235 +1671,6 @@ pub async fn chat__send_and_reply(
 // Helper Functions for Token Management
 // =============================================================================
 
-/// Internal helper to get recent messages without State wrapper
-async fn get_recent_messages_internal(
-    limit: usize,
-    executor: &DbExecutor,
-) -> Result<Vec<MessageInfo>, String> {
-    log_backend("info", &format!("[CHAT] get_recent_messages_internal called with limit={}", limit));
-
-    executor.read(move |conn| {
-        let conversation_iri = "foundation:MainChatConversation";
-
-        // Find all messages that are part of this conversation
-        let result = query::get_by_predicate_object(
-            conn,
-            "foundation:partOfConversation",
-            conversation_iri
-        ).map_err(|e| format!("Failed to find messages: {}", e))?;
-
-        log_backend("info", &format!("[CHAT] Found {} messages in conversation", result.triples.len()));
-
-        let mut messages = Vec::new();
-
-        for triple in result.triples {
-            let message_iri = &triple.subject;
-            log_backend("info", &format!("[CHAT] Processing message: {}", message_iri));
-
-            if let Ok(msg_individual) = Individual::get(conn, message_iri) {
-                let content = msg_individual.properties.iter()
-                    .find(|(k, _)| k == "foundation:content")
-                    .and_then(|(_, v)| v.as_literal())
-                    .unwrap_or_default();
-
-                let sender_iri = msg_individual.properties.iter()
-                    .find(|(k, _)| k == "foundation:sender")
-                    .and_then(|(_, v)| v.as_iri())
-                    .unwrap_or("unknown");
-
-                let sender_thing = Thing::get(conn, sender_iri);
-                let sender_label = sender_thing.label.clone();
-
-                let receiver_iri = msg_individual.properties.iter()
-                    .find(|(k, _)| k == "foundation:receiver")
-                    .and_then(|(_, v)| v.as_iri())
-                    .unwrap_or("unknown");
-
-                let receiver_thing = Thing::get(conn, receiver_iri);
-                let receiver_label = receiver_thing.label.clone();
-
-                let sent_at = msg_individual.properties.iter()
-                    .find(|(k, _)| k == "foundation:sentAt")
-                    .and_then(|(_, v)| match v {
-                        crate::eavto::Object::DateTime(ts) => Some(ts.to_string()),
-                        _ => v.as_literal(),
-                    })
-                    .unwrap_or_default();
-
-                // Load ToolUse entities linked to this message
-                let mut tool_uses = Vec::new();
-                if let Ok(tool_use_result) = query::get_by_predicate_object(
-                    conn,
-                    "foundation:partOfMessage",
-                    message_iri
-                ) {
-                    log_backend("info", &format!("[CHAT] Found {} triples with partOfMessage for {}", tool_use_result.triples.len(), message_iri));
-                    for tool_use_triple in tool_use_result.triples {
-                        let tool_use_iri = &tool_use_triple.subject;
-                        log_backend("info", &format!("[CHAT] Checking subject: {}", tool_use_iri));
-                        if tool_use_iri.starts_with("foundation:ToolUse_") {
-                            log_backend("info", &format!("[CHAT] Loading ToolUse: {}", tool_use_iri));
-                            if let Ok(tool_use_ind) = Individual::get(conn, tool_use_iri) {
-                                let tool_name = tool_use_ind.properties.iter()
-                                    .find(|(k, _)| k == "foundation:toolName")
-                                    .and_then(|(_, v)| v.as_literal())
-                                    .unwrap_or_default();
-
-                                let input = tool_use_ind.properties.iter()
-                                    .find(|(k, _)| k == "foundation:toolInput")
-                                    .and_then(|(_, v)| v.as_literal())
-                                    .unwrap_or_default();
-
-                                let tool_use_id = tool_use_ind.properties.iter()
-                                    .find(|(k, _)| k == "foundation:toolUseId")
-                                    .and_then(|(_, v)| v.as_literal())
-                                    .unwrap_or_default();
-
-                                tool_uses.push(ToolUseInfo {
-                                    iri: tool_use_iri.to_string(),
-                                    tool_name: tool_name.clone(),
-                                    input: input.clone(),
-                                    tool_use_id: tool_use_id.clone(),
-                                });
-                                log_backend("info", &format!("[CHAT] Added ToolUse: {} ({})", tool_use_iri, tool_name));
-                            } else {
-                                log_backend("warn", &format!("[CHAT] Failed to load Individual for ToolUse: {}", tool_use_iri));
-                            }
-                        }
-                    }
-                } else {
-                    log_backend("info", &format!("[CHAT] No ToolUse query results for {}", message_iri));
-                }
-
-                // Load ToolResult entities linked to this message
-                let mut tool_results = Vec::new();
-                if let Ok(tool_result_result) = query::get_by_predicate_object(
-                    conn,
-                    "foundation:partOfMessage",
-                    message_iri
-                ) {
-                    log_backend("info", &format!("[CHAT] Found {} triples with partOfMessage for {}", tool_result_result.triples.len(), message_iri));
-                    for tool_result_triple in tool_result_result.triples {
-                        let tool_result_iri = &tool_result_triple.subject;
-                        log_backend("info", &format!("[CHAT] Checking subject: {}", tool_result_iri));
-                        if tool_result_iri.starts_with("foundation:ToolResult_") {
-                            log_backend("info", &format!("[CHAT] Loading ToolResult: {}", tool_result_iri));
-                            if let Ok(tool_result_ind) = Individual::get(conn, tool_result_iri) {
-                                let result_content = tool_result_ind.properties.iter()
-                                    .find(|(k, _)| k == "foundation:resultContent")
-                                    .and_then(|(_, v)| v.as_literal())
-                                    .unwrap_or_default();
-
-                                let is_success = tool_result_ind.properties.iter()
-                                    .find(|(k, _)| k == "foundation:isSuccess")
-                                    .and_then(|(_, v)| v.as_literal())
-                                    .map(|s| s == "true")
-                                    .unwrap_or(false);
-
-                                let result_of_iri = tool_result_ind.properties.iter()
-                                    .find(|(k, _)| k == "foundation:resultOf")
-                                    .and_then(|(_, v)| v.as_iri())
-                                    .unwrap_or_default();
-
-                                tool_results.push(ToolResultInfo {
-                                    iri: tool_result_iri.to_string(),
-                                    result_content: result_content.clone(),
-                                    is_success,
-                                    result_of_iri: result_of_iri.to_string(),
-                                });
-                                log_backend("info", &format!("[CHAT] Added ToolResult: {} (success: {})", tool_result_iri, is_success));
-                            } else {
-                                log_backend("warn", &format!("[CHAT] Failed to load Individual for ToolResult: {}", tool_result_iri));
-                            }
-                        }
-                    }
-                } else {
-                    log_backend("info", &format!("[CHAT] No ToolResult query results for {}", message_iri));
-                }
-
-                // Load Attachment entities linked to this message
-                let mut attachments = Vec::new();
-                if let Ok(attachment_result) = query::get_by_entity_predicate(
-                    conn,
-                    message_iri,
-                    "foundation:hasAttachment"
-                ) {
-                    log_backend("info", &format!("[CHAT] Found {} attachments for {}", attachment_result.triples.len(), message_iri));
-                    for attachment_triple in attachment_result.triples {
-                        if let Some(attachment_iri) = attachment_triple.object.as_iri() {
-                            log_backend("info", &format!("[CHAT] Loading Attachment: {}", attachment_iri));
-                            if let Ok(attachment_ind) = Individual::get(conn, attachment_iri) {
-                                let file_name = attachment_ind.properties.iter()
-                                    .find(|(k, _)| k == "foundation:fileName")
-                                    .and_then(|(_, v)| v.as_literal())
-                                    .unwrap_or_default();
-
-                                let mime_type = attachment_ind.properties.iter()
-                                    .find(|(k, _)| k == "foundation:mimeType")
-                                    .and_then(|(_, v)| v.as_literal())
-                                    .unwrap_or_default();
-
-                                let file_size = attachment_ind.properties.iter()
-                                    .find(|(k, _)| k == "foundation:fileSize")
-                                    .and_then(|(_, v)| if let Object::Integer(i) = v { Some(*i) } else { None })
-                                    .unwrap_or(0);
-
-                                let file_path = attachment_ind.properties.iter()
-                                    .find(|(k, _)| k == "foundation:filePath")
-                                    .and_then(|(_, v)| v.as_literal());
-
-                                let attached_at = attachment_ind.properties.iter()
-                                    .find(|(k, _)| k == "foundation:attachedAt")
-                                    .and_then(|(_, v)| v.as_literal())
-                                    .unwrap_or_default();
-
-                                attachments.push(AttachmentInfo {
-                                    iri: attachment_iri.to_string(),
-                                    file_name: file_name.clone(),
-                                    mime_type: mime_type.clone(),
-                                    file_size,
-                                    base64_data: None,
-                                    file_path,
-                                    attached_at: attached_at.clone(),
-                                });
-                                log_backend("info", &format!("[CHAT] Added Attachment: {} ({})", attachment_iri, file_name));
-                            } else {
-                                log_backend("warn", &format!("[CHAT] Failed to load Individual for Attachment: {}", attachment_iri));
-                            }
-                        }
-                    }
-                } else {
-                    log_backend("info", &format!("[CHAT] No Attachments for {}", message_iri));
-                }
-
-                messages.push(MessageInfo {
-                    iri: message_iri.to_string(),
-                    content,
-                    sender_iri: sender_iri.to_string(),
-                    sender_label,
-                    receiver_iri: receiver_iri.to_string(),
-                    receiver_label,
-                    sent_at,
-                    conversation_iri: Some(conversation_iri.to_string()),
-                    tool_uses,
-                    tool_results,
-                    attachments,
-                });
-            }
-        }
-
-        // Sort by sentAt timestamp
-        messages.sort_by(|a, b| a.sent_at.cmp(&b.sent_at));
-
-        // Return last N messages
-        let start_idx = messages.len().saturating_sub(limit);
-        log_backend("info", &format!("[CHAT] Returning {} messages (from {} total)", messages[start_idx..].len(), messages.len()));
-        Ok(messages[start_idx..].to_vec())
-    }).await.map(|result| {
-        log_backend("info", &format!("[CHAT] get_recent_messages_internal completed successfully with {} messages", result.len()));
-        result
-    })
-}
 
 /// Count tokens accurately using tiktoken (cl100k_base encoding used by Claude/GPT-4)
 fn count_tokens_with_bpe(bpe: &tiktoken_rs::CoreBPE, text: &str) -> usize {
@@ -1716,6 +1689,539 @@ fn count_tool_tokens(bpe: &tiktoken_rs::CoreBPE, tools: &[crate::ai::providers::
         }
     }
     total
+}
+
+// =============================================================================
+// History Builder - Robust Message Selection with Invariant Guarantees
+// =============================================================================
+
+/// Represents a unit of conversation that must be included/excluded atomically
+#[derive(Debug, Clone)]
+enum MessageUnit {
+    /// Simple text message without tool interactions
+    Simple {
+        message: crate::ai::ChatMessage,
+        tokens: usize,
+        iri: String,
+    },
+    /// Atomic pair: assistant with tool_use + user with tool_result
+    ToolPair {
+        assistant_msg: crate::ai::ChatMessage,
+        user_msg: crate::ai::ChatMessage,
+        tokens: usize,
+        assistant_iri: String,
+        user_iri: String,
+    },
+    /// Assistant message with tool_use but NO corresponding tool_result (orphaned)
+    /// These should NEVER be included as they violate API invariants
+    OrphanedToolUse {
+        tokens: usize,
+    },
+}
+
+impl MessageUnit {
+    fn tokens(&self) -> usize {
+        match self {
+            MessageUnit::Simple { tokens, .. } => *tokens,
+            MessageUnit::ToolPair { tokens, .. } => *tokens,
+            MessageUnit::OrphanedToolUse { tokens, .. } => *tokens,
+        }
+    }
+
+    fn is_includable(&self) -> bool {
+        !matches!(self, MessageUnit::OrphanedToolUse { .. })
+    }
+
+    fn messages(&self) -> Vec<crate::ai::ChatMessage> {
+        match self {
+            MessageUnit::Simple { message, .. } => vec![message.clone()],
+            MessageUnit::ToolPair { assistant_msg, user_msg, .. } => {
+                vec![assistant_msg.clone(), user_msg.clone()]
+            }
+            MessageUnit::OrphanedToolUse { .. } => vec![],
+        }
+    }
+}
+
+/// Helper: Load tool_use and tool_result data for a message
+fn load_tool_data_for_message(
+    conn: &rusqlite::Connection,
+    message_iri: &str,
+) -> Result<(Vec<(String, String, String, String, i64)>, Vec<(String, String, bool)>), String> {
+    // Query ToolUse entities using OWL abstractions
+    let mut tool_uses = Vec::new();
+    let tool_use_iris = Individual::find_by_class_and_properties(
+        conn,
+        "foundation:ToolUse",
+        &[("foundation:partOfMessage", message_iri)]
+    ).map_err(|e| format!("Failed to query ToolUse: {}", e))?;
+
+    for tool_use_iri in tool_use_iris {
+        if let Ok(tool_use_ind) = Individual::get(conn, &tool_use_iri) {
+            let tool_name = tool_use_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:toolName")
+                .and_then(|(_, v)| v.as_literal())
+                .unwrap_or_default();
+
+            let tool_use_id = tool_use_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:toolUseId")
+                .and_then(|(_, v)| v.as_literal())
+                .unwrap_or_default();
+
+            let tool_input = tool_use_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:toolInput")
+                .and_then(|(_, v)| v.as_literal())
+                .unwrap_or_else(|| "{}".to_string());
+
+            let order = tool_use_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:executionOrder")
+                .and_then(|(_, v)| if let Object::Integer(i) = v { Some(*i) } else { None })
+                .unwrap_or(0);
+
+            tool_uses.push((tool_use_iri.clone(), tool_name, tool_use_id, tool_input, order));
+        }
+    }
+    tool_uses.sort_by_key(|(_, _, _, _, order)| *order);
+
+    // Query ToolResult entities using OWL abstractions
+    let mut tool_results = Vec::new();
+    let tool_result_iris = Individual::find_by_class_and_properties(
+        conn,
+        "foundation:ToolResult",
+        &[("foundation:partOfMessage", message_iri)]
+    ).map_err(|e| format!("Failed to query ToolResult: {}", e))?;
+
+    for tool_result_iri in tool_result_iris {
+        if let Ok(tool_result_ind) = Individual::get(conn, &tool_result_iri) {
+            let result_of = tool_result_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:resultOf")
+                .and_then(|(_, v)| v.as_iri())
+                .unwrap_or("");
+
+            let result_content = tool_result_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:resultContent")
+                .and_then(|(_, v)| v.as_literal())
+                .unwrap_or_default();
+
+            let is_success = tool_result_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:isSuccess")
+                .and_then(|(_, v)| v.as_literal())
+                .map(|s| s == "true")
+                .unwrap_or(false);
+
+            tool_results.push((result_of.to_string(), result_content, is_success));
+        }
+    }
+
+    Ok((tool_uses, tool_results))
+}
+
+/// Helper: Load only tool_results for a message
+fn load_tool_results_for_message(
+    conn: &rusqlite::Connection,
+    message_iri: &str,
+) -> Result<Vec<(String, String, bool)>, String> {
+    let (_, tool_results) = load_tool_data_for_message(conn, message_iri)?;
+    Ok(tool_results)
+}
+
+/// Helper: Get tool_use_id from a ToolUse IRI
+async fn get_tool_use_id(executor: &DbExecutor, tool_use_iri: &str) -> Result<String, String> {
+    let iri = tool_use_iri.to_string();
+    executor.read(move |conn| {
+        if let Ok(tool_use_ind) = Individual::get(conn, &iri) {
+            Ok(tool_use_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:toolUseId")
+                .and_then(|(_, v)| v.as_literal())
+                .unwrap_or_default())
+        } else {
+            Ok(String::new())
+        }
+    }).await
+}
+
+/// Helper: Build ChatMessage with tool blocks
+async fn build_chat_message_with_tools(
+    msg: &MessageInfo,
+    tool_uses: &[(String, String, String, String, i64)],
+    tool_results: &[(String, String, bool)],
+    role: &str,
+    executor: &DbExecutor,
+) -> Result<crate::ai::ChatMessage, String> {
+    let mut blocks = Vec::new();
+
+    // Add text content
+    if !msg.content.is_empty() {
+        blocks.push(crate::ai::providers::ContentBlock::Text {
+            text: msg.content.clone(),
+        });
+    }
+
+    // Add attachments (images and PDFs) for user messages
+    if role == "user" && !msg.attachments.is_empty() {
+        for attachment in &msg.attachments {
+            if let Some(ref file_path) = attachment.file_path {
+                if attachment.mime_type.starts_with("image/") {
+                    if let Ok(file_data) = std::fs::read(file_path) {
+                        use base64::Engine;
+                        let base64_data = base64::engine::general_purpose::STANDARD.encode(&file_data);
+
+                        // Add File IRI reference before the image so AI knows which File entity to use
+                        if let Some(ref file_iri) = attachment.file_iri {
+                            blocks.push(crate::ai::providers::ContentBlock::Text {
+                                text: format!("[Attached Image: {} - File ID: {}]", attachment.file_name, file_iri),
+                            });
+                        }
+
+                        blocks.push(crate::ai::providers::ContentBlock::Image {
+                            source: crate::ai::providers::ImageSource {
+                                source_type: "base64".to_string(),
+                                media_type: attachment.mime_type.clone(),
+                                data: base64_data,
+                            },
+                        });
+                    }
+                } else if attachment.mime_type == "application/pdf" {
+                    if let Ok(file_data) = std::fs::read(file_path) {
+                        use base64::Engine;
+                        let base64_data = base64::engine::general_purpose::STANDARD.encode(&file_data);
+
+                        // Add File IRI reference before the document so AI knows which File entity to use
+                        if let Some(ref file_iri) = attachment.file_iri {
+                            blocks.push(crate::ai::providers::ContentBlock::Text {
+                                text: format!("[Attached PDF: {} - File ID: {}]", attachment.file_name, file_iri),
+                            });
+                        }
+
+                        blocks.push(crate::ai::providers::ContentBlock::Document {
+                            source: crate::ai::providers::DocumentSource {
+                                source_type: "base64".to_string(),
+                                media_type: "application/pdf".to_string(),
+                                data: base64_data,
+                            },
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Add tool_use blocks (assistant only)
+    if role == "assistant" {
+        for (_, tool_name, tool_use_id, tool_input, _) in tool_uses {
+            let input: serde_json::Value = serde_json::from_str(tool_input)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+            blocks.push(crate::ai::providers::ContentBlock::ToolUse {
+                id: tool_use_id.clone(),
+                name: tool_name.clone(),
+                input,
+            });
+        }
+    }
+
+    // Add tool_result blocks (user only)
+    if role == "user" {
+        for (tool_use_iri, result_content, is_success) in tool_results {
+            if let Ok(tool_use_id) = get_tool_use_id(executor, tool_use_iri).await {
+                if !tool_use_id.is_empty() {
+                    blocks.push(crate::ai::providers::ContentBlock::ToolResult {
+                        tool_use_id,
+                        content: result_content.clone(),
+                        is_error: if *is_success { None } else { Some(true) },
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(crate::ai::ChatMessage::with_blocks(role, blocks))
+}
+
+/// Phase 1: Build message units from raw messages
+/// Groups messages into atomic units (simple, tool pairs, or orphaned tool uses)
+async fn build_message_units(
+    messages: &[MessageInfo],
+    executor: &DbExecutor,
+) -> Result<Vec<MessageUnit>, String> {
+    let mut units = Vec::new();
+    let mut i = 0;
+
+    while i < messages.len() {
+        let msg = &messages[i];
+        let message_iri = msg.iri.clone();
+
+        // Load ToolUse and ToolResult for this message
+        let (tool_uses, tool_results) = executor.read(move |conn| {
+            load_tool_data_for_message(conn, &message_iri)
+        }).await?;
+
+        let role = if msg.sender_iri == "foundation:ThisUser" { "user" } else { "assistant" };
+
+        // Case 1: Assistant message with tool_use
+        if role == "assistant" && !tool_uses.is_empty() {
+            // Build assistant message with tool_use blocks
+            let assistant_chat_msg = build_chat_message_with_tools(
+                msg, &tool_uses, &[], role, executor
+            ).await?;
+
+            let tool_use_ids: Vec<String> = tool_uses.iter()
+                .map(|(_, _, id, _, _)| id.clone())
+                .collect();
+
+            // Look ahead to find corresponding user message with tool_results
+            if i + 1 < messages.len() {
+                let next_msg = &messages[i + 1];
+                let next_iri = next_msg.iri.clone();
+
+                let next_results = executor.read(move |conn| {
+                    load_tool_results_for_message(conn, &next_iri)
+                }).await?;
+
+                let next_role = if next_msg.sender_iri == "foundation:ThisUser" { "user" } else { "assistant" };
+
+                // Check if next message is user with matching tool_results
+                if next_role == "user" && !next_results.is_empty() {
+                    // Extract tool_use_ids from results
+                    let mut result_tool_use_ids = Vec::new();
+                    for (tool_use_iri, _, _) in &next_results {
+                        if let Ok(id) = get_tool_use_id(executor, tool_use_iri).await {
+                            if !id.is_empty() {
+                                result_tool_use_ids.push(id);
+                            }
+                        }
+                    }
+
+                    // Check if the results match our tool_uses
+                    let all_match = tool_use_ids.iter().all(|id| result_tool_use_ids.contains(id));
+
+                    if all_match && tool_use_ids.len() == result_tool_use_ids.len() {
+                        // Build user message with tool_result blocks
+                        let user_chat_msg = build_chat_message_with_tools(
+                            next_msg, &[], &next_results, "user", executor
+                        ).await?;
+
+                        // Use stored token counts (required)
+                        let assistant_tokens = msg.token_count
+                            .ok_or_else(|| format!("FATAL: Message {} missing tokenCount", msg.iri))?;
+
+                        let user_tokens = next_msg.token_count
+                            .ok_or_else(|| format!("FATAL: Message {} missing tokenCount", next_msg.iri))?;
+
+                        let tokens = (assistant_tokens + user_tokens) as usize;
+
+                        units.push(MessageUnit::ToolPair {
+                            assistant_msg: assistant_chat_msg,
+                            user_msg: user_chat_msg,
+                            tokens,
+                            assistant_iri: msg.iri.clone(),
+                            user_iri: next_msg.iri.clone(),
+                        });
+
+                        super::log_backend("info", &format!(
+                            "[UNIT] Created ToolPair: {} + {} ({} tokens)",
+                            msg.iri, next_msg.iri, tokens
+                        ));
+
+                        i += 2; // Skip both messages
+                        continue;
+                    }
+                }
+            }
+
+            // No matching tool_result found - this is an orphaned tool_use
+            let tokens = msg.token_count
+                .ok_or_else(|| format!("FATAL: Message {} missing tokenCount", msg.iri))? as usize;
+
+            units.push(MessageUnit::OrphanedToolUse {
+                tokens,
+            });
+
+            super::log_backend("warn", &format!(
+                "[UNIT] Created OrphanedToolUse: {} ({} tool_uses, {} tokens) - WILL BE SKIPPED",
+                msg.iri, tool_uses.len(), tokens
+            ));
+
+            i += 1;
+            continue;
+        }
+
+        // Case 2: Simple message (no tool interactions or user with tool_results without prior tool_use)
+        let chat_msg = build_chat_message_with_tools(
+            msg, &tool_uses, &tool_results, role, executor
+        ).await?;
+
+        let tokens = msg.token_count
+            .ok_or_else(|| format!("FATAL: Message {} missing tokenCount", msg.iri))? as usize;
+
+        units.push(MessageUnit::Simple {
+            message: chat_msg,
+            tokens,
+            iri: msg.iri.clone(),
+        });
+
+        super::log_backend("info", &format!(
+            "[UNIT] Created Simple: {} ({} tokens)",
+            msg.iri, tokens
+        ));
+
+        i += 1;
+    }
+
+    Ok(units)
+}
+
+/// Phase 2: Select message units within budget
+/// Iterates newest->oldest, selecting only includable units that fit in budget
+fn select_by_budget(
+    units: Vec<MessageUnit>,
+    available_tokens: usize,
+) -> Vec<MessageUnit> {
+    let mut selected = Vec::new();
+    let mut tokens_used = 0;
+
+    // Iterate newest to oldest
+    for unit in units.into_iter().rev() {
+        // Skip orphaned tool_use (never includable)
+        if !unit.is_includable() {
+            super::log_backend("warn", &format!(
+                "[SELECT] Skipping OrphanedToolUse (violates API invariants)"
+            ));
+            continue;
+        }
+
+        let unit_tokens = unit.tokens();
+
+        // Check if this unit fits in budget
+        if tokens_used + unit_tokens > available_tokens {
+            super::log_backend("info", &format!(
+                "[SELECT] Budget exhausted: used={}, unit={}, available={}",
+                tokens_used, unit_tokens, available_tokens
+            ));
+            break;
+        }
+
+        tokens_used += unit_tokens;
+
+        match &unit {
+            MessageUnit::Simple { iri, .. } => {
+                super::log_backend("info", &format!(
+                    "[SELECT] Including Simple: {} ({} tokens, total: {})",
+                    iri, unit_tokens, tokens_used
+                ));
+            }
+            MessageUnit::ToolPair { assistant_iri, user_iri, .. } => {
+                super::log_backend("info", &format!(
+                    "[SELECT] Including ToolPair: {} + {} ({} tokens, total: {})",
+                    assistant_iri, user_iri, unit_tokens, tokens_used
+                ));
+            }
+            _ => {}
+        }
+
+        selected.push(unit);
+    }
+
+    // Reverse to get chronological order (oldest first)
+    selected.reverse();
+
+    super::log_backend("info", &format!(
+        "[SELECT] Selected {} units using {} tokens (budget: {})",
+        selected.len(), tokens_used, available_tokens
+    ));
+
+    selected
+}
+
+/// Phase 3: Validate API invariants
+/// Ensures the selected messages satisfy all Claude API requirements
+fn validate_invariants(messages: &[crate::ai::ChatMessage]) -> Result<(), String> {
+    use crate::ai::providers::{ContentBlock, MessageContent};
+
+    for (i, msg) in messages.iter().enumerate() {
+        // Extract content blocks
+        let blocks = match &msg.content {
+            MessageContent::ContentBlocks(blocks) => blocks.as_slice(),
+            MessageContent::Text(_) => {
+                // Text messages are always valid (non-empty)
+                continue;
+            }
+        };
+
+        // Invariant: Messages must not be empty
+        if blocks.is_empty() {
+            return Err(format!("Message {} has empty content", i));
+        }
+
+        // Collect tool_use_ids from this message
+        let mut tool_use_ids = Vec::new();
+        for block in blocks {
+            if let ContentBlock::ToolUse { id, .. } = block {
+                tool_use_ids.push(id.clone());
+            }
+        }
+
+        // Invariant: If assistant has tool_use, next message must be user with matching tool_results
+        if !tool_use_ids.is_empty() {
+            if i + 1 >= messages.len() {
+                return Err(format!(
+                    "Message {} has tool_use {:?} but no following message",
+                    i, tool_use_ids
+                ));
+            }
+
+            let next_msg = &messages[i + 1];
+
+            // Verify next message is user role
+            if next_msg.role != "user" {
+                return Err(format!(
+                    "Message {} has tool_use but next message is not user (role={})",
+                    i, next_msg.role
+                ));
+            }
+
+            let next_blocks = match &next_msg.content {
+                MessageContent::ContentBlocks(blocks) => blocks.as_slice(),
+                _ => {
+                    return Err(format!(
+                        "Message {} has tool_use but next message {} has no content blocks",
+                        i, i + 1
+                    ));
+                }
+            };
+
+            // Collect tool_use_ids from tool_results in next message
+            let mut result_ids = Vec::new();
+            for block in next_blocks {
+                if let ContentBlock::ToolResult { tool_use_id, .. } = block {
+                    result_ids.push(tool_use_id.clone());
+                }
+            }
+
+            // Verify all tool_uses have corresponding tool_results
+            for id in &tool_use_ids {
+                if !result_ids.contains(id) {
+                    return Err(format!(
+                        "Message {} has tool_use {} without corresponding tool_result in message {}",
+                        i, id, i + 1
+                    ));
+                }
+            }
+
+            // Verify all tool_results have corresponding tool_uses
+            for id in &result_ids {
+                if !tool_use_ids.contains(id) {
+                    return Err(format!(
+                        "Message {} has tool_result {} without corresponding tool_use in message {}",
+                        i + 1, id, i
+                    ));
+                }
+            }
+        }
+    }
+
+    super::log_backend("info", "[VALIDATE] ✅ All API invariants satisfied");
+    Ok(())
 }
 
 /// Load message history respecting maxInputTokens limit
@@ -1743,315 +2249,54 @@ async fn load_history_with_limit(
     let available_for_history = max_input_tokens.saturating_sub(overhead + safety_margin);
 
     super::log_backend(
-        
         "info",
         &format!(
-            "Token budget: total={}, system={}, tools={}, current={}, available_for_history={}",
+            "[BUDGET] total={}, system={}, tools={}, current={}, available_for_history={}",
             max_input_tokens, system_tokens, tools_tokens, current_tokens, available_for_history
         )
     );
 
     // Load recent messages (50 is a good balance between performance and context)
-    // The token budget system below will filter to what actually fits
     let load_all_start = std::time::Instant::now();
-    let all_messages = get_recent_messages_internal(50, executor).await?;
+    let all_messages = get_recent_messages(50, executor).await?;
     let load_all_elapsed = load_all_start.elapsed();
-    super::log_backend("info", &format!("[PERF] get_recent_messages_internal(50) took {:?}", load_all_elapsed));
-
-    // Build message list from newest to oldest, stopping when we hit the limit
-    let mut selected_messages = Vec::new();
-    let mut tokens_used = 0;
-
-    // Iterate from newest to oldest
-    // Skip the last message only if current_message is not empty (first request)
-    // On second request (after tool execution), current_message is empty, so include all messages
-    let mut must_include_next = false;
+    super::log_backend("info", &format!("[PERF] get_recent_messages(50) took {:?}", load_all_elapsed));
 
     // Determine which messages to process
-    let messages_to_iter: Vec<_> = if current_message.is_empty() {
+    let messages_to_process: Vec<_> = if current_message.is_empty() {
         // Second request: include all messages (including tool_results message)
-        all_messages.iter().rev().collect()
+        all_messages
     } else {
         // First request: skip last message (current user message)
-        // all_messages is oldest->newest, so skip(1).rev() gives us newest->oldest without last
-        all_messages.iter().rev().skip(1).collect()
+        all_messages.into_iter().rev().skip(1).rev().collect()
     };
 
-    for msg in messages_to_iter {
-        let message_iri = msg.iri.clone();
+    super::log_backend("info", &format!("[PROCESS] Processing {} messages", messages_to_process.len()));
 
-        let load_start = std::time::Instant::now();
-        // Load ToolUse and ToolResult for this specific message
-        let (tool_uses, tool_results) = executor.read(move |conn| {
-            // Query ToolUse entities for this message
-            let mut tool_uses = Vec::new();
-            let tool_use_query = query::get_by_predicate_object(conn, "foundation:partOfMessage", &message_iri)
-                .map_err(|e| format!("Failed to query ToolUse: {}", e))?;
+    // PHASE 1: Build message units (atomic groups)
+    let build_start = std::time::Instant::now();
+    let units = build_message_units(&messages_to_process, executor).await?;
+    let build_elapsed = build_start.elapsed();
+    super::log_backend("info", &format!("[PHASE1] Built {} units in {:?}", units.len(), build_elapsed));
 
-            for triple in tool_use_query.triples {
-                let tool_use_iri = &triple.subject;
-                if tool_use_iri.starts_with("foundation:ToolUse_") {
-                    if let Ok(tool_use_ind) = Individual::get(conn, tool_use_iri) {
-                            let tool_name = tool_use_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:toolName")
-                                .and_then(|(_, v)| v.as_literal())
-                                .unwrap_or_default();
+    // PHASE 2: Select units within budget
+    let select_start = std::time::Instant::now();
+    let selected_units = select_by_budget(units, available_for_history);
+    let select_elapsed = select_start.elapsed();
+    super::log_backend("info", &format!("[PHASE2] Selected {} units in {:?}", selected_units.len(), select_elapsed));
 
-                            let tool_use_id = tool_use_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:toolUseId")
-                                .and_then(|(_, v)| v.as_literal())
-                                .unwrap_or_default();
-
-                            let tool_input = tool_use_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:toolInput")
-                                .and_then(|(_, v)| v.as_literal())
-                                .unwrap_or_else(|| "{}".to_string());
-
-                            let order = tool_use_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:executionOrder")
-                                .and_then(|(_, v)| if let Object::Integer(i) = v { Some(*i) } else { None })
-                                .unwrap_or(0);
-
-                            tool_uses.push((tool_use_iri.clone(), tool_name, tool_use_id, tool_input, order));
-                        }
-                    }
-            }
-
-            // Sort by execution order
-            tool_uses.sort_by_key(|(_, _, _, _, order)| *order);
-
-            // Query ToolResult entities for this message
-            let mut tool_results = Vec::new();
-            let tool_result_query = query::get_by_predicate_object(conn, "foundation:partOfMessage", &message_iri)
-                .map_err(|e| format!("Failed to query ToolResult: {}", e))?;
-
-            for triple in tool_result_query.triples {
-                let tool_result_iri = &triple.subject;
-                if tool_result_iri.starts_with("foundation:ToolResult_") {
-                    if let Ok(tool_result_ind) = Individual::get(conn, tool_result_iri) {
-                        let result_of = tool_result_ind.properties.iter()
-                            .find(|(k, _)| k == "foundation:resultOf")
-                            .and_then(|(_, v)| v.as_iri())
-                            .unwrap_or("");
-
-                        let result_content = tool_result_ind.properties.iter()
-                            .find(|(k, _)| k == "foundation:resultContent")
-                            .and_then(|(_, v)| v.as_literal())
-                            .unwrap_or_default();
-
-                        let is_success = tool_result_ind.properties.iter()
-                            .find(|(k, _)| k == "foundation:isSuccess")
-                            .and_then(|(_, v)| v.as_literal())
-                            .map(|s| s == "true")
-                            .unwrap_or(false);
-
-                        tool_results.push((result_of.to_string(), result_content, is_success));
-                    }
-                }
-            }
-
-            Ok((tool_uses, tool_results))
-        }).await?;
-
-        let load_elapsed = load_start.elapsed();
-        super::log_backend("info", &format!("[PERF] Loading ToolUse/ToolResult for message took {:?}", load_elapsed));
-
-        // Determine role based on sender
-        let role = if msg.sender_iri == "foundation:ThisUser" {
-            "user"
-        } else {
-            "assistant"
-        };
-
-        // Build content blocks if there are tool uses/results/attachments
-        let has_attachments = !msg.attachments.is_empty();
-        let chat_message = if !tool_uses.is_empty() || !tool_results.is_empty() || has_attachments {
-            let mut blocks = Vec::new();
-
-            // Add text content if present
-            if !msg.content.is_empty() {
-                blocks.push(crate::ai::providers::ContentBlock::Text {
-                    text: msg.content.clone(),
-                });
-            }
-
-            // Add attachment blocks (images)
-            super::log_backend("info", &format!("[CHAT] Checking attachments: role={}, has_attachments={}, attachments.len={}", role, has_attachments, msg.attachments.len()));
-            if role == "user" && has_attachments {
-                super::log_backend("info", &format!("[CHAT] Processing {} attachments for user message", msg.attachments.len()));
-                for attachment in &msg.attachments {
-                    super::log_backend("info", &format!("[CHAT] Processing attachment: {} ({})", attachment.file_name, attachment.mime_type));
-                    // Only process image attachments
-                    if attachment.mime_type.starts_with("image/") {
-                        super::log_backend("info", &format!("[CHAT] Attachment is an image, file_path={:?}", attachment.file_path));
-                        // Read file and convert to base64
-                        if let Some(ref file_path) = attachment.file_path {
-                            super::log_backend("info", &format!("[CHAT] Reading image file: {}", file_path));
-                            if let Ok(file_data) = std::fs::read(file_path) {
-                                use base64::Engine;
-                                let base64_data = base64::engine::general_purpose::STANDARD.encode(&file_data);
-                                let data_len = base64_data.len();
-                                blocks.push(crate::ai::providers::ContentBlock::Image {
-                                    source: crate::ai::providers::ImageSource {
-                                        source_type: "base64".to_string(),
-                                        media_type: attachment.mime_type.clone(),
-                                        data: base64_data,
-                                    },
-                                });
-                                super::log_backend("info", &format!("[CHAT] ✅ Added image block: {} ({} bytes base64)", attachment.file_name, data_len));
-                            } else {
-                                super::log_backend("warn", &format!("[CHAT] ❌ Failed to read attachment file: {}", file_path));
-                            }
-                        } else {
-                            super::log_backend("warn", &format!("[CHAT] ❌ Attachment has no file_path"));
-                        }
-                    } else {
-                        super::log_backend("info", &format!("[CHAT] Skipping non-image attachment: {}", attachment.mime_type));
-                    }
-                }
-            } else {
-                super::log_backend("info", &format!("[CHAT] Skipping attachments: role={}, has_attachments={}", role, has_attachments));
-            }
-
-            // Add tool use blocks (for assistant messages)
-            if role == "assistant" {
-                for (_, tool_name, tool_use_id, tool_input, _) in &tool_uses {
-                    let input: serde_json::Value = serde_json::from_str(tool_input)
-                        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-                    blocks.push(crate::ai::providers::ContentBlock::ToolUse {
-                        id: tool_use_id.clone(),
-                        name: tool_name.clone(),
-                        input,
-                    });
-                }
-            }
-
-            // Add tool result blocks (for user messages)
-            if role == "user" {
-                // Need to look up toolUseId from each ToolUse IRI referenced in results
-                let executor_clone = executor.clone();
-                for (tool_use_iri, result_content, is_success) in &tool_results {
-                    let tool_use_iri_clone = tool_use_iri.clone();
-                    let result_content_clone = result_content.clone();
-                    let is_success_clone = *is_success;
-
-                    let lookup_start = std::time::Instant::now();
-                    if let Ok(tool_use_id) = executor_clone.read(move |conn| {
-                        if let Ok(tool_use_ind) = Individual::get(conn, &tool_use_iri_clone) {
-                            Ok(tool_use_ind.properties.iter()
-                                .find(|(k, _)| k == "foundation:toolUseId")
-                                .and_then(|(_, v)| v.as_literal())
-                                .unwrap_or_default())
-                        } else {
-                            Ok(String::new())
-                        }
-                    }).await {
-                        let lookup_elapsed = lookup_start.elapsed();
-                        super::log_backend("info", &format!("[PERF] ToolUseId lookup took {:?}", lookup_elapsed));
-
-                        if !tool_use_id.is_empty() {
-                            blocks.push(crate::ai::providers::ContentBlock::ToolResult {
-                                tool_use_id,
-                                content: result_content_clone,
-                                is_error: if is_success_clone { None } else { Some(true) },
-                            });
-                        }
-                    }
-                }
-            }
-
-            // Count tokens for all blocks
-            let blocks_json = serde_json::to_string(&blocks).unwrap_or_default();
-            let msg_tokens = count_tokens_with_bpe(&bpe, &blocks_json) + 4;
-
-            // Check if this message has tool_results
-            let has_tool_results = role == "user" && !tool_results.is_empty();
-
-            super::log_backend(
-                "info",
-                &format!("[TOKEN CHECK] Message {}: role={}, has_tool_results={}, msg_tokens={}, tokens_used={}, available={}, would_exceed={}",
-                    msg.iri, role, has_tool_results, msg_tokens, tokens_used, available_for_history,
-                    tokens_used + msg_tokens > available_for_history)
-            );
-
-            // If this is a user message with tool_results but we don't have budget and weren't required to include it,
-            // we need to skip it (can't have orphaned tool_results)
-            if has_tool_results && !must_include_next && tokens_used + msg_tokens > available_for_history {
-                super::log_backend(
-                    "info",
-                    &format!("Skipping user message with tool_results: msg_tokens={}, available={}", msg_tokens, available_for_history)
-                );
-                break;
-            }
-
-            if !must_include_next && tokens_used + msg_tokens > available_for_history {
-                super::log_backend(
-
-                    "info",
-                    &format!("Truncating history: would exceed budget by {} tokens",
-                        (tokens_used + msg_tokens) - available_for_history)
-                );
-                break;
-            }
-
-            tokens_used += msg_tokens;
-
-            // Since we iterate newest->oldest, if we see user message with tool_results,
-            // we must include the next message (assistant with tool_use that came before it)
-            if has_tool_results {
-                must_include_next = true;
-            } else {
-                must_include_next = false;
-            }
-
-            let block_types: Vec<String> = blocks.iter().map(|b| match b {
-                crate::ai::providers::ContentBlock::Text { .. } => "text".to_string(),
-                crate::ai::providers::ContentBlock::Image { .. } => "image".to_string(),
-                crate::ai::providers::ContentBlock::Document { .. } => "document".to_string(),
-                crate::ai::providers::ContentBlock::ToolUse { .. } => "tool_use".to_string(),
-                crate::ai::providers::ContentBlock::ToolResult { .. } => "tool_result".to_string(),
-            }).collect();
-            super::log_backend("info", &format!("[CHAT] Creating message with {} blocks (role: {}, has_attachments: {}, types: {:?})", blocks.len(), role, has_attachments, block_types));
-            crate::ai::ChatMessage::with_blocks(role, blocks)
-        } else {
-            // Simple text message
-            let msg_tokens = count_tokens_with_bpe(&bpe, &msg.content) + 4;
-
-            if !must_include_next && tokens_used + msg_tokens > available_for_history {
-                super::log_backend(
-
-                    "info",
-                    &format!("Truncating history: would exceed budget by {} tokens",
-                        (tokens_used + msg_tokens) - available_for_history)
-                );
-                break;
-            }
-
-            tokens_used += msg_tokens;
-            must_include_next = false; // Reset flag
-
-            crate::ai::ChatMessage::text(role, msg.content.clone())
-        };
-
-        // Debug log to track message inclusion
-        let msg_summary = match (&role[..], !tool_uses.is_empty(), !tool_results.is_empty()) {
-            ("assistant", true, _) => format!("assistant with {} tool_uses", tool_uses.len()),
-            ("user", _, true) => format!("user with {} tool_results", tool_results.len()),
-            (r, _, _) => format!("{} (text)", r),
-        };
-        super::log_backend("info", &format!("[HISTORY] Including message: {}", msg_summary));
-
-        selected_messages.push(chat_message);
+    // Extract messages from units
+    let mut messages = Vec::new();
+    for unit in selected_units {
+        messages.extend(unit.messages());
     }
 
-    super::log_backend(
-        "info",
-        &format!("Loaded {} messages using ~{} tokens", selected_messages.len(), tokens_used)
-    );
+    super::log_backend("info", &format!("[BUILD] Extracted {} messages from units", messages.len()));
 
-    // Reverse to chronological order (oldest first) as expected by API
-    selected_messages.reverse();
+    // PHASE 3: Validate invariants
+    validate_invariants(&messages)?;
 
-    Ok(selected_messages)
+    Ok(messages)
 }
+
+// End of history loading implementation

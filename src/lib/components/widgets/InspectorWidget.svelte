@@ -116,6 +116,7 @@
     return icon.startsWith('http://') ||
            icon.startsWith('https://') ||
            icon.startsWith('data:') ||
+           icon.startsWith('file://') ||
            icon.startsWith('/');
   }
 
@@ -125,6 +126,12 @@
     // If it's a URL or data URI, return as-is
     if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:')) {
       return icon;
+    }
+
+    // If it's a file:// URI, convert to Tauri asset protocol
+    if (icon.startsWith('file://')) {
+      const path = icon.replace(/^file:\/\//, '');
+      return convertFileSrc(path);
     }
 
     // If it's an absolute local path, convert using Tauri's asset protocol
@@ -211,10 +218,12 @@
     });
   }
 
-  function isTimestamp(value) {
-    // Check if value looks like a timestamp (numeric string with 10 or 13 digits)
-    if (typeof value !== 'string') return false;
-    return /^\d{10,13}$/.test(value);
+  function formatDatatype(datatype) {
+    if (!datatype) return 'Data';
+    // Extract short name from XSD datatype (e.g., "xsd:string" -> "String")
+    const parts = datatype.split(':');
+    const typeName = parts.length > 1 ? parts[1] : datatype;
+    return typeName.charAt(0).toUpperCase() + typeName.slice(1);
   }
 
   onMount(async () => {
@@ -387,6 +396,7 @@
                     propertyComment: prop.propertyComment,
                     isObjectProperty: prop.isObjectProperty,
                     sourceClassLabel: prop.sourceClassLabel,
+                    datatype: prop.datatype,
                     values: []
                   };
                 }
@@ -394,7 +404,8 @@
                   value: prop.value,
                   valueLabel: prop.valueLabel,
                   valueIcon: prop.valueIcon,
-                  unitLabel: prop.unitLabel
+                  unitLabel: prop.unitLabel,
+                  datatype: prop.datatype
                 });
                 return acc;
               }, {})}
@@ -408,7 +419,7 @@
                     {#if propGroup.isObjectProperty}
                       <span class="property-type">Object</span>
                     {:else}
-                      <span class="property-type">Data</span>
+                      <span class="property-type">{formatDatatype(propGroup.datatype)}</span>
                     {/if}
                     {#if propGroup.values.length > 1}
                       <span class="property-count">{propGroup.values.length}</span>
@@ -433,8 +444,8 @@
                       {#if propGroup.isObjectProperty && val.valueIcon}
                         <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
                       {/if}
-                      {#if !propGroup.isObjectProperty && isTimestamp(val.value)}
-                        {@const date = new Date(parseInt(val.value))}
+                      {#if !propGroup.isObjectProperty && val.datatype === 'xsd:dateTime'}
+                        {@const date = new Date(val.value)}
                         <div class="timestamp-display">
                           <span class="value-text">
                             {date.toLocaleString('en-US', {
@@ -448,7 +459,7 @@
                             })}
                           </span>
                           <span class="timestamp-relative">
-                            {formatDate(val.value)}
+                            {formatDate(date.getTime())}
                           </span>
                         </div>
                       {:else}
