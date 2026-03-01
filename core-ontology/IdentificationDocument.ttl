@@ -162,15 +162,23 @@ Example:
 foundation:hasFile a owl:ObjectProperty ;
     rdfs:label "has file"@en ;
     rdfs:label "tem arquivo"@pt ;
-    rdfs:comment "Links the document to its digital file representation (can have multiple files: front, back, PDF, etc.)" ;
-    rdfs:domain foundation:IdentificationDocument ;
+    rdfs:comment "Links an entity to its digital file representation (can have multiple files: PDF, images, etc.)" ;
     rdfs:range foundation:File ;
     rdfs:seeAlso """
+Generic property to link any concept to File entities.
+
+Commonly used by:
+- IdentificationDocument (CNH, RG, Passport)
+- Invoice/BrazilianNFSe (PDF invoices)
+- Contract (signed PDFs)
+- Any entity with file attachments
+
 Examples:
   :myCNH foundation:hasFile :cnhPDFFile .
   :myPassport foundation:hasFile :passportPDFFile .
   :myRG foundation:hasFile :rgFrontPhoto .
   :myRG foundation:hasFile :rgBackPhoto .
+  :myNFSe foundation:hasFile :nfsePDF .
 
   :cnhPDFFile a foundation:File ;
       foundation:fileName "cnh-digital.pdf" ;

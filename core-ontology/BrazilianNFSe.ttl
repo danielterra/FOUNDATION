@@ -24,6 +24,7 @@
               <http://foundation.local/ontology/City> ,
               <http://foundation.local/ontology/EmailAddress> ,
               <http://foundation.local/ontology/PhoneNumber> ,
+              <http://foundation.local/ontology/File> ,
               <http://qudt.org/2.1/vocab/currency> ;
 .
 
@@ -149,6 +150,9 @@ foundation:BrazilianNFSe a owl:Class ;
           owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
         [ a owl:Restriction ;
           owl:onProperty foundation:nfseServiceIntermediary ;
+          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ;
+          owl:onProperty foundation:hasFile ;
           owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
     rdfs:label "Brazilian NFS-e" ;
     rdfs:comment "Brazilian electronic service invoice (Nota Fiscal de Serviço Eletrônica)" ;
@@ -181,7 +185,8 @@ Example:
       foundation:nfseServiceValue "19140.85"^^xsd:decimal ;
       foundation:nfseNetValue "19140.85"^^xsd:decimal ;
       foundation:invoiceCurrency currency:BRL ;
-      foundation:nfseSimplesNacionalOptant true .
+      foundation:nfseSimplesNacionalOptant true ;
+      foundation:hasFile :nfse4_pdf .
 
 Cardinality constraints:
 - nfseAccessKey: exactly 1 (required)
@@ -194,6 +199,7 @@ Cardinality constraints:
 - nfseServiceDescription: exactly 1 (required)
 - nfseServiceValue: exactly 1 (required)
 - nfseNetValue: exactly 1 (required)
+- hasFile: max 1 (optional - PDF attachment)
 - All other properties: max 1 (optional)
 """ .
 
