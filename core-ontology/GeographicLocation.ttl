@@ -1,0 +1,663 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# GeographicLocation
+# =============================================================================
+# Hierarchical geographic locations (Country → State → City → Neighborhood → Street)
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+foundation:GeographicLocation a owl:Class ;
+    rdfs:subClassOf foundation:Concept ;
+    rdfs:label "Geographic Location" ;
+    rdfs:comment "A geographic location in a hierarchical structure" ;
+    foundation:icon "location_on" ;
+    rdfs:seeAlso """
+Examples:
+- Brazil (country)
+- São Paulo (state)
+- Campinas (city)
+- Cambuí (neighborhood)
+- Avenida Paulista (street)
+""" .
+
+# -----------------------------------------------------------------------------
+# Country (País)
+# -----------------------------------------------------------------------------
+
+foundation:Country a owl:Class ;
+    rdfs:subClassOf foundation:GeographicLocation ;
+    rdfs:label "Country" ;
+    rdfs:comment "A sovereign nation or country" ;
+    foundation:icon "flag" ;
+    rdfs:seeAlso """
+Examples:
+- Brazil (BR)
+- United States (US)
+- Portugal (PT)
+- Japan (JP)
+""" .
+
+foundation:countryCode a owl:DatatypeProperty ;
+    rdfs:label "country code" ;
+    rdfs:comment "ISO 3166-1 alpha-2 country code (e.g., BR, US, PT)" ;
+    rdfs:domain foundation:Country ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :brazil foundation:countryCode "BR" .
+""" .
+
+foundation:countryName a owl:DatatypeProperty ;
+    rdfs:label "country name" ;
+    rdfs:comment "Official name of the country" ;
+    rdfs:domain foundation:Country ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :brazil foundation:countryName "Brasil" .
+  :brazil foundation:countryName "Brazil"@en .
+""" .
+
+foundation:continent a owl:DatatypeProperty ;
+    rdfs:label "continent" ;
+    rdfs:comment "Continent where the country is located" ;
+    rdfs:domain foundation:Country ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :brazil foundation:continent "South America" .
+""" .
+
+# -----------------------------------------------------------------------------
+# State (Estado/Província)
+# -----------------------------------------------------------------------------
+
+foundation:State a owl:Class ;
+    rdfs:subClassOf foundation:GeographicLocation ;
+    rdfs:label "State" ;
+    rdfs:comment "A state, province, or first-level administrative division" ;
+    foundation:icon "map" ;
+    rdfs:seeAlso """
+Examples:
+- São Paulo (SP, Brazil)
+- California (CA, USA)
+- Ontario (ON, Canada)
+""" .
+
+foundation:stateCode a owl:DatatypeProperty ;
+    rdfs:label "state code" ;
+    rdfs:comment "Official state/province code (e.g., SP, CA, ON)" ;
+    rdfs:domain foundation:State ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :saoPaulo foundation:stateCode "SP" .
+""" .
+
+foundation:stateName a owl:DatatypeProperty ;
+    rdfs:label "state name" ;
+    rdfs:comment "Official name of the state or province" ;
+    rdfs:domain foundation:State ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :saoPaulo foundation:stateName "São Paulo" .
+""" .
+
+# -----------------------------------------------------------------------------
+# City (Cidade/Município)
+# -----------------------------------------------------------------------------
+
+foundation:City a owl:Class ;
+    rdfs:subClassOf foundation:GeographicLocation ;
+    rdfs:label "City" ;
+    rdfs:comment "A city or municipality" ;
+    foundation:icon "location_city" ;
+    rdfs:seeAlso """
+Examples:
+- Campinas (SP, Brazil)
+- San Francisco (CA, USA)
+- Toronto (ON, Canada)
+""" .
+
+foundation:cityName a owl:DatatypeProperty ;
+    rdfs:label "city name" ;
+    rdfs:comment "Official name of the city or municipality" ;
+    rdfs:domain foundation:City ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :campinas foundation:cityName "Campinas" .
+""" .
+
+foundation:population a owl:DatatypeProperty ;
+    rdfs:label "population" ;
+    rdfs:comment "Population count of the city" ;
+    rdfs:domain foundation:City ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:seeAlso """
+Example:
+  :campinas foundation:population 1213792 .
+""" .
+
+# -----------------------------------------------------------------------------
+# Neighborhood (Bairro)
+# -----------------------------------------------------------------------------
+
+foundation:Neighborhood a owl:Class ;
+    rdfs:subClassOf foundation:GeographicLocation ;
+    rdfs:label "Neighborhood" ;
+    rdfs:comment "A neighborhood or district within a city" ;
+    foundation:icon "home_work" ;
+    rdfs:seeAlso """
+Examples:
+- Cambuí (Campinas, SP)
+- SoHo (New York, NY)
+- Shibuya (Tokyo, JP)
+""" .
+
+foundation:neighborhoodName a owl:DatatypeProperty ;
+    rdfs:label "neighborhood name" ;
+    rdfs:comment "Name of the neighborhood or district" ;
+    rdfs:domain foundation:Neighborhood ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :cambui foundation:neighborhoodName "Cambuí" .
+""" .
+
+# -----------------------------------------------------------------------------
+# Street (Rua/Logradouro)
+# -----------------------------------------------------------------------------
+
+foundation:Street a owl:Class ;
+    rdfs:subClassOf foundation:GeographicLocation ;
+    rdfs:label "Street" ;
+    rdfs:comment "A street, avenue, or public thoroughfare" ;
+    foundation:icon "route" ;
+    rdfs:seeAlso """
+Examples:
+- Avenida Paulista (São Paulo, SP)
+- Fifth Avenue (New York, NY)
+- Champs-Élysées (Paris, France)
+""" .
+
+foundation:streetName a owl:DatatypeProperty ;
+    rdfs:label "street name" ;
+    rdfs:comment "Name of the street or thoroughfare" ;
+    rdfs:domain foundation:Street ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :avPaulista foundation:streetName "Avenida Paulista" .
+""" .
+
+foundation:streetType a owl:DatatypeProperty ;
+    rdfs:label "street type" ;
+    rdfs:comment "Type of street (rua, avenida, alameda, travessa, etc.)" ;
+    rdfs:domain foundation:Street ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :avPaulista foundation:streetType "Avenida" .
+""" .
+
+# -----------------------------------------------------------------------------
+# Hierarchical Relationships
+# -----------------------------------------------------------------------------
+
+foundation:isPartOf a owl:ObjectProperty ;
+    rdfs:label "is part of" ;
+    rdfs:comment "Indicates that a geographic location is part of a larger location" ;
+    rdfs:domain foundation:GeographicLocation ;
+    rdfs:range foundation:GeographicLocation ;
+    rdfs:seeAlso """
+Examples:
+  :saoPaulo foundation:isPartOf :brazil .
+  :campinas foundation:isPartOf :saoPaulo .
+  :cambui foundation:isPartOf :campinas .
+  :avPaulista foundation:isPartOf :cambui .
+""" .
+
+foundation:contains a owl:ObjectProperty ;
+    rdfs:label "contains" ;
+    rdfs:comment "Inverse of isPartOf - indicates that a location contains another" ;
+    owl:inverseOf foundation:isPartOf ;
+    rdfs:domain foundation:GeographicLocation ;
+    rdfs:range foundation:GeographicLocation ;
+    rdfs:seeAlso """
+Examples:
+  :brazil foundation:contains :saoPaulo .
+  :saoPaulo foundation:contains :campinas .
+""" .
+
+# -----------------------------------------------------------------------------
+# Additional Country Properties
+# -----------------------------------------------------------------------------
+
+foundation:flagEmoji a owl:DatatypeProperty ;
+    rdfs:label "flag emoji" ;
+    rdfs:comment "Unicode emoji representation of the country flag" ;
+    rdfs:domain foundation:Country ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :brazil foundation:flagEmoji "🇧🇷" .
+""" .
+
+foundation:capital a owl:ObjectProperty ;
+    rdfs:label "capital" ;
+    rdfs:comment "Capital city of the country" ;
+    rdfs:domain foundation:Country ;
+    rdfs:range foundation:City ;
+    rdfs:seeAlso """
+Example:
+  :brazil foundation:capital :brasilia .
+""" .
+
+foundation:officialLanguage a owl:DatatypeProperty ;
+    rdfs:label "official language" ;
+    rdfs:comment "Official language(s) of the country" ;
+    rdfs:domain foundation:Country ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :brazil foundation:officialLanguage "Portuguese" .
+""" .
+
+foundation:currency a owl:DatatypeProperty ;
+    rdfs:label "currency" ;
+    rdfs:comment "Official currency of the country" ;
+    rdfs:domain foundation:Country ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :brazil foundation:currency "Real (BRL)" .
+""" .
+
+foundation:phonePrefix a owl:DatatypeProperty ;
+    rdfs:label "phone prefix" ;
+    rdfs:comment "International phone dialing prefix" ;
+    rdfs:domain foundation:Country ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :brazil foundation:phonePrefix "+55" .
+""" .
+
+foundation:centerLatitude a owl:DatatypeProperty ;
+    rdfs:label "center latitude" ;
+    rdfs:comment "Latitude coordinate of the country's geographic center" ;
+    rdfs:domain foundation:Country ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :brazil foundation:centerLatitude -14.235 .
+""" .
+
+foundation:centerLongitude a owl:DatatypeProperty ;
+    rdfs:label "center longitude" ;
+    rdfs:comment "Longitude coordinate of the country's geographic center" ;
+    rdfs:domain foundation:Country ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :brazil foundation:centerLongitude -51.925 .
+""" .
+
+foundation:timezone a owl:DatatypeProperty ;
+    rdfs:label "timezone" ;
+    rdfs:comment "IANA timezone identifier(s) for the country (e.g., America/Sao_Paulo, America/New_York). Countries may have multiple timezones." ;
+    rdfs:domain foundation:Country ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Examples:
+  :brazil foundation:timezone "America/Sao_Paulo" .
+  :brazil foundation:timezone "America/Manaus" .
+  :unitedStates foundation:timezone "America/New_York" .
+  :unitedStates foundation:timezone "America/Los_Angeles" .
+""" .
+
+# =============================================================================
+# Country Instances
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Americas
+# -----------------------------------------------------------------------------
+
+foundation:Brazil a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "Brazil"@en ;
+    rdfs:label "Brasil"@pt ;
+    foundation:countryCode "BR" ;
+    foundation:countryName "Federative Republic of Brazil"@en ;
+    foundation:countryName "República Federativa do Brasil"@pt ;
+    foundation:continent "South America" ;
+    foundation:flagEmoji "🇧🇷" ;
+    foundation:officialLanguage "Portuguese" ;
+    foundation:currency "Real (BRL)" ;
+    foundation:phonePrefix "+55" ;
+    foundation:centerLatitude -14.235 ;
+    foundation:centerLongitude -51.925 ;
+    foundation:timezone "America/Sao_Paulo" ;
+    foundation:timezone "America/Manaus" ;
+    foundation:timezone "America/Fortaleza" ;
+    foundation:timezone "America/Noronha" ;
+    foundation:icon "flag" .
+
+foundation:UnitedStates a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "United States"@en ;
+    rdfs:label "Estados Unidos"@pt ;
+    foundation:countryCode "US" ;
+    foundation:countryName "United States of America" ;
+    foundation:continent "North America" ;
+    foundation:flagEmoji "🇺🇸" ;
+    foundation:officialLanguage "English" ;
+    foundation:currency "Dollar (USD)" ;
+    foundation:phonePrefix "+1" ;
+    foundation:centerLatitude 37.0902 ;
+    foundation:centerLongitude -95.7129 ;
+    foundation:timezone "America/New_York" ;
+    foundation:timezone "America/Chicago" ;
+    foundation:timezone "America/Denver" ;
+    foundation:timezone "America/Los_Angeles" ;
+    foundation:timezone "America/Anchorage" ;
+    foundation:timezone "Pacific/Honolulu" ;
+    foundation:icon "flag" .
+
+foundation:Canada a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "Canada"@en ;
+    rdfs:label "Canadá"@pt ;
+    foundation:countryCode "CA" ;
+    foundation:countryName "Canada" ;
+    foundation:continent "North America" ;
+    foundation:flagEmoji "🇨🇦" ;
+    foundation:officialLanguage "English" ;
+    foundation:officialLanguage "French" ;
+    foundation:currency "Dollar (CAD)" ;
+    foundation:phonePrefix "+1" ;
+    foundation:centerLatitude 56.1304 ;
+    foundation:centerLongitude -106.3468 ;
+    foundation:timezone "America/St_Johns" ;
+    foundation:timezone "America/Halifax" ;
+    foundation:timezone "America/Toronto" ;
+    foundation:timezone "America/Winnipeg" ;
+    foundation:timezone "America/Edmonton" ;
+    foundation:timezone "America/Vancouver" ;
+    foundation:icon "flag" .
+
+foundation:Argentina a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "Argentina"@en ;
+    rdfs:label "Argentina"@pt ;
+    foundation:countryCode "AR" ;
+    foundation:countryName "Argentine Republic" ;
+    foundation:continent "South America" ;
+    foundation:flagEmoji "🇦🇷" ;
+    foundation:officialLanguage "Spanish" ;
+    foundation:currency "Peso (ARS)" ;
+    foundation:phonePrefix "+54" ;
+    foundation:centerLatitude -38.4161 ;
+    foundation:centerLongitude -63.6167 ;
+    foundation:timezone "America/Argentina/Buenos_Aires" ;
+    foundation:timezone "America/Argentina/Cordoba" ;
+    foundation:timezone "America/Argentina/Ushuaia" ;
+    foundation:icon "flag" .
+
+foundation:Mexico a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "Mexico"@en ;
+    rdfs:label "México"@pt ;
+    foundation:countryCode "MX" ;
+    foundation:countryName "United Mexican States" ;
+    foundation:continent "North America" ;
+    foundation:flagEmoji "🇲🇽" ;
+    foundation:officialLanguage "Spanish" ;
+    foundation:currency "Peso (MXN)" ;
+    foundation:phonePrefix "+52" ;
+    foundation:centerLatitude 23.6345 ;
+    foundation:centerLongitude -102.5528 ;
+    foundation:timezone "America/Mexico_City" ;
+    foundation:timezone "America/Tijuana" ;
+    foundation:timezone "America/Cancun" ;
+    foundation:icon "flag" .
+
+# -----------------------------------------------------------------------------
+# Europe
+# -----------------------------------------------------------------------------
+
+foundation:Portugal a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "Portugal"@en ;
+    rdfs:label "Portugal"@pt ;
+    foundation:countryCode "PT" ;
+    foundation:countryName "Portuguese Republic"@en ;
+    foundation:countryName "República Portuguesa"@pt ;
+    foundation:continent "Europe" ;
+    foundation:flagEmoji "🇵🇹" ;
+    foundation:officialLanguage "Portuguese" ;
+    foundation:currency "Euro (EUR)" ;
+    foundation:phonePrefix "+351" ;
+    foundation:centerLatitude 39.3999 ;
+    foundation:centerLongitude -8.2245 ;
+    foundation:timezone "Europe/Lisbon" ;
+    foundation:timezone "Atlantic/Azores" ;
+    foundation:timezone "Atlantic/Madeira" ;
+    foundation:icon "flag" .
+
+foundation:Spain a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "Spain"@en ;
+    rdfs:label "Espanha"@pt ;
+    foundation:countryCode "ES" ;
+    foundation:countryName "Kingdom of Spain" ;
+    foundation:continent "Europe" ;
+    foundation:flagEmoji "🇪🇸" ;
+    foundation:officialLanguage "Spanish" ;
+    foundation:currency "Euro (EUR)" ;
+    foundation:phonePrefix "+34" ;
+    foundation:centerLatitude 40.4637 ;
+    foundation:centerLongitude -3.7492 ;
+    foundation:timezone "Europe/Madrid" ;
+    foundation:timezone "Atlantic/Canary" ;
+    foundation:icon "flag" .
+
+foundation:France a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "France"@en ;
+    rdfs:label "França"@pt ;
+    foundation:countryCode "FR" ;
+    foundation:countryName "French Republic" ;
+    foundation:continent "Europe" ;
+    foundation:flagEmoji "🇫🇷" ;
+    foundation:officialLanguage "French" ;
+    foundation:currency "Euro (EUR)" ;
+    foundation:phonePrefix "+33" ;
+    foundation:centerLatitude 46.2276 ;
+    foundation:centerLongitude 2.2137 ;
+    foundation:timezone "Europe/Paris" ;
+    foundation:icon "flag" .
+
+foundation:Germany a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "Germany"@en ;
+    rdfs:label "Alemanha"@pt ;
+    foundation:countryCode "DE" ;
+    foundation:countryName "Federal Republic of Germany" ;
+    foundation:continent "Europe" ;
+    foundation:flagEmoji "🇩🇪" ;
+    foundation:officialLanguage "German" ;
+    foundation:currency "Euro (EUR)" ;
+    foundation:phonePrefix "+49" ;
+    foundation:centerLatitude 51.1657 ;
+    foundation:centerLongitude 10.4515 ;
+    foundation:timezone "Europe/Berlin" ;
+    foundation:icon "flag" .
+
+foundation:UnitedKingdom a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "United Kingdom"@en ;
+    rdfs:label "Reino Unido"@pt ;
+    foundation:countryCode "GB" ;
+    foundation:countryName "United Kingdom of Great Britain and Northern Ireland" ;
+    foundation:continent "Europe" ;
+    foundation:flagEmoji "🇬🇧" ;
+    foundation:officialLanguage "English" ;
+    foundation:currency "Pound Sterling (GBP)" ;
+    foundation:phonePrefix "+44" ;
+    foundation:centerLatitude 55.3781 ;
+    foundation:centerLongitude -3.4360 ;
+    foundation:timezone "Europe/London" ;
+    foundation:icon "flag" .
+
+foundation:Italy a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "Italy"@en ;
+    rdfs:label "Itália"@pt ;
+    foundation:countryCode "IT" ;
+    foundation:countryName "Italian Republic" ;
+    foundation:continent "Europe" ;
+    foundation:flagEmoji "🇮🇹" ;
+    foundation:officialLanguage "Italian" ;
+    foundation:currency "Euro (EUR)" ;
+    foundation:phonePrefix "+39" ;
+    foundation:centerLatitude 41.8719 ;
+    foundation:centerLongitude 12.5674 ;
+    foundation:timezone "Europe/Rome" ;
+    foundation:icon "flag" .
+
+# -----------------------------------------------------------------------------
+# Asia
+# -----------------------------------------------------------------------------
+
+foundation:Japan a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "Japan"@en ;
+    rdfs:label "Japão"@pt ;
+    foundation:countryCode "JP" ;
+    foundation:countryName "Japan" ;
+    foundation:continent "Asia" ;
+    foundation:flagEmoji "🇯🇵" ;
+    foundation:officialLanguage "Japanese" ;
+    foundation:currency "Yen (JPY)" ;
+    foundation:phonePrefix "+81" ;
+    foundation:centerLatitude 36.2048 ;
+    foundation:centerLongitude 138.2529 ;
+    foundation:timezone "Asia/Tokyo" ;
+    foundation:icon "flag" .
+
+foundation:China a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "China"@en ;
+    rdfs:label "China"@pt ;
+    foundation:countryCode "CN" ;
+    foundation:countryName "People's Republic of China" ;
+    foundation:continent "Asia" ;
+    foundation:flagEmoji "🇨🇳" ;
+    foundation:officialLanguage "Chinese (Mandarin)" ;
+    foundation:currency "Yuan (CNY)" ;
+    foundation:phonePrefix "+86" ;
+    foundation:centerLatitude 35.8617 ;
+    foundation:centerLongitude 104.1954 ;
+    foundation:timezone "Asia/Shanghai" ;
+    foundation:icon "flag" .
+
+foundation:India a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "India"@en ;
+    rdfs:label "Índia"@pt ;
+    foundation:countryCode "IN" ;
+    foundation:countryName "Republic of India" ;
+    foundation:continent "Asia" ;
+    foundation:flagEmoji "🇮🇳" ;
+    foundation:officialLanguage "Hindi" ;
+    foundation:officialLanguage "English" ;
+    foundation:currency "Rupee (INR)" ;
+    foundation:phonePrefix "+91" ;
+    foundation:centerLatitude 20.5937 ;
+    foundation:centerLongitude 78.9629 ;
+    foundation:timezone "Asia/Kolkata" ;
+    foundation:icon "flag" .
+
+foundation:SouthKorea a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "South Korea"@en ;
+    rdfs:label "Coreia do Sul"@pt ;
+    foundation:countryCode "KR" ;
+    foundation:countryName "Republic of Korea" ;
+    foundation:continent "Asia" ;
+    foundation:flagEmoji "🇰🇷" ;
+    foundation:officialLanguage "Korean" ;
+    foundation:currency "Won (KRW)" ;
+    foundation:phonePrefix "+82" ;
+    foundation:centerLatitude 35.9078 ;
+    foundation:centerLongitude 127.7669 ;
+    foundation:timezone "Asia/Seoul" ;
+    foundation:icon "flag" .
+
+# -----------------------------------------------------------------------------
+# Oceania
+# -----------------------------------------------------------------------------
+
+foundation:Australia a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "Australia"@en ;
+    rdfs:label "Austrália"@pt ;
+    foundation:countryCode "AU" ;
+    foundation:countryName "Commonwealth of Australia" ;
+    foundation:continent "Oceania" ;
+    foundation:flagEmoji "🇦🇺" ;
+    foundation:officialLanguage "English" ;
+    foundation:currency "Dollar (AUD)" ;
+    foundation:phonePrefix "+61" ;
+    foundation:centerLatitude -25.2744 ;
+    foundation:centerLongitude 133.7751 ;
+    foundation:timezone "Australia/Sydney" ;
+    foundation:timezone "Australia/Melbourne" ;
+    foundation:timezone "Australia/Perth" ;
+    foundation:icon "flag" .
+
+foundation:NewZealand a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "New Zealand"@en ;
+    rdfs:label "Nova Zelândia"@pt ;
+    foundation:countryCode "NZ" ;
+    foundation:countryName "New Zealand" ;
+    foundation:continent "Oceania" ;
+    foundation:flagEmoji "🇳🇿" ;
+    foundation:officialLanguage "English" ;
+    foundation:officialLanguage "Māori" ;
+    foundation:currency "Dollar (NZD)" ;
+    foundation:phonePrefix "+64" ;
+    foundation:centerLatitude -40.9006 ;
+    foundation:centerLongitude 174.8860 ;
+    foundation:timezone "Pacific/Auckland" ;
+    foundation:icon "flag" .
+
+# -----------------------------------------------------------------------------
+# Africa
+# -----------------------------------------------------------------------------
+
+foundation:SouthAfrica a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "South Africa"@en ;
+    rdfs:label "África do Sul"@pt ;
+    foundation:countryCode "ZA" ;
+    foundation:countryName "Republic of South Africa" ;
+    foundation:continent "Africa" ;
+    foundation:flagEmoji "🇿🇦" ;
+    foundation:officialLanguage "English" ;
+    foundation:officialLanguage "Afrikaans" ;
+    foundation:currency "Rand (ZAR)" ;
+    foundation:phonePrefix "+27" ;
+    foundation:centerLatitude -30.5595 ;
+    foundation:centerLongitude 22.9375 ;
+    foundation:timezone "Africa/Johannesburg" ;
+    foundation:icon "flag" .
+
+foundation:Nigeria a foundation:Country , owl:NamedIndividual ;
+    rdfs:label "Nigeria"@en ;
+    rdfs:label "Nigéria"@pt ;
+    foundation:countryCode "NG" ;
+    foundation:countryName "Federal Republic of Nigeria" ;
+    foundation:continent "Africa" ;
+    foundation:flagEmoji "🇳🇬" ;
+    foundation:officialLanguage "English" ;
+    foundation:currency "Naira (NGN)" ;
+    foundation:phonePrefix "+234" ;
+    foundation:centerLatitude 9.0820 ;
+    foundation:centerLongitude 8.6753 ;
+    foundation:timezone "Africa/Lagos" ;
+    foundation:icon "flag" .

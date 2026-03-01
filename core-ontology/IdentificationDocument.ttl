@@ -1,0 +1,312 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# IdentificationDocument
+# =============================================================================
+# Official identification documents (RG, CPF, CNH, Passport, etc.)
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+foundation:IdentificationDocument a owl:Class ;
+    rdfs:subClassOf foundation:InformationObject ;
+    rdfs:label "Identification Document" ;
+    rdfs:comment "An official document used to verify a person's identity" ;
+    foundation:icon "badge" ;
+    rdfs:seeAlso """
+Examples:
+- RG (Registro Geral - Brazil)
+- CPF (Cadastro de Pessoa Física - Brazil)
+- CNH (Driver's License - Brazil)
+- Passport
+- National ID Card
+- Social Security Card
+""" .
+
+# -----------------------------------------------------------------------------
+# Brazilian Documents
+# -----------------------------------------------------------------------------
+
+foundation:RG a owl:Class ;
+    rdfs:subClassOf foundation:IdentificationDocument ;
+    rdfs:label "RG" ;
+    rdfs:comment "Registro Geral - Brazilian national identity card" ;
+    foundation:icon "badge" ;
+    rdfs:seeAlso """
+The RG (Registro Geral) is the primary identification document in Brazil,
+issued by state governments (SSP).
+
+Example:
+  :johnRG a foundation:RG ;
+      foundation:documentNumber "12.345.678-9" ;
+      foundation:issuingAuthority "SSP-SP" ;
+      foundation:issueDate "2010-05-15"^^xsd:date .
+""" .
+
+foundation:CPF a owl:Class ;
+    rdfs:subClassOf foundation:IdentificationDocument ;
+    rdfs:label "CPF" ;
+    rdfs:comment "Cadastro de Pessoa Física - Brazilian taxpayer identification" ;
+    foundation:icon "credit_card" ;
+    rdfs:seeAlso """
+The CPF is a unique taxpayer identification number in Brazil,
+issued by the Federal Revenue Service (Receita Federal).
+
+Format: XXX.XXX.XXX-XX (11 digits)
+
+Example:
+  :johnCPF a foundation:CPF ;
+      foundation:documentNumber "123.456.789-00" ;
+      foundation:issueDate "2005-01-10"^^xsd:date .
+""" .
+
+foundation:CNH a owl:Class ;
+    rdfs:subClassOf foundation:IdentificationDocument ;
+    rdfs:label "CNH" ;
+    rdfs:comment "Carteira Nacional de Habilitação - Brazilian driver's license" ;
+    foundation:icon "directions_car" ;
+    rdfs:seeAlso """
+The CNH is the official driver's license in Brazil, issued by DETRAN.
+
+Example:
+  :johnCNH a foundation:CNH ;
+      foundation:documentNumber "12345678900" ;
+      foundation:issuingAuthority "DETRAN-SP" ;
+      foundation:issueDate "2018-03-20"^^xsd:date ;
+      foundation:expirationDate "2028-03-20"^^xsd:date ;
+      foundation:driverCategory "B" .
+""" .
+
+# -----------------------------------------------------------------------------
+# International Documents
+# -----------------------------------------------------------------------------
+
+foundation:Passport a owl:Class ;
+    rdfs:subClassOf foundation:IdentificationDocument ;
+    rdfs:label "Passport" ;
+    rdfs:comment "International travel document issued by a national government" ;
+    foundation:icon "flight_takeoff" ;
+    rdfs:seeAlso """
+A passport certifies the identity and nationality of its holder
+for international travel.
+
+Example:
+  :johnPassport a foundation:Passport ;
+      foundation:documentNumber "AB1234567" ;
+      foundation:issuingCountry :brazil ;
+      foundation:issueDate "2020-01-15"^^xsd:date ;
+      foundation:expirationDate "2030-01-15"^^xsd:date .
+""" .
+
+foundation:NationalID a owl:Class ;
+    rdfs:subClassOf foundation:IdentificationDocument ;
+    rdfs:label "National ID" ;
+    rdfs:comment "Generic national identity document (used in various countries)" ;
+    foundation:icon "badge" ;
+    rdfs:seeAlso """
+A national identity document issued by a government to prove
+a person's identity and citizenship.
+
+Example:
+  :johnID a foundation:NationalID ;
+      foundation:documentNumber "AB123456" ;
+      foundation:issuingCountry :portugal ;
+      foundation:issueDate "2019-06-10"^^xsd:date .
+""" .
+
+# -----------------------------------------------------------------------------
+# Document Properties
+# -----------------------------------------------------------------------------
+
+foundation:documentNumber a owl:DatatypeProperty ;
+    rdfs:label "document number" ;
+    rdfs:comment "The unique identification number of the document" ;
+    rdfs:domain foundation:IdentificationDocument ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Examples:
+  :myRG foundation:documentNumber "12.345.678-9" .
+  :myCPF foundation:documentNumber "123.456.789-00" .
+  :myPassport foundation:documentNumber "AB1234567" .
+""" .
+
+foundation:issuingAuthority a owl:DatatypeProperty ;
+    rdfs:label "issuing authority" ;
+    rdfs:comment "The government agency or organization that issued the document" ;
+    rdfs:domain foundation:IdentificationDocument ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Examples:
+  :myRG foundation:issuingAuthority "SSP-SP" .
+  :myCNH foundation:issuingAuthority "DETRAN-RJ" .
+  :myPassport foundation:issuingAuthority "Polícia Federal" .
+""" .
+
+foundation:issueDate a owl:DatatypeProperty ;
+    rdfs:label "issue date" ;
+    rdfs:comment "The date when the document was issued" ;
+    rdfs:domain foundation:IdentificationDocument ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :myPassport foundation:issueDate "2020-01-15"^^xsd:date .
+""" .
+
+foundation:expirationDate a owl:DatatypeProperty ;
+    rdfs:label "expiration date" ;
+    rdfs:comment "The date when the document expires (if applicable)" ;
+    rdfs:domain foundation:IdentificationDocument ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :myPassport foundation:expirationDate "2030-01-15"^^xsd:date .
+  :myCNH foundation:expirationDate "2028-03-20"^^xsd:date .
+""" .
+
+foundation:issuingCountry a owl:ObjectProperty ;
+    rdfs:label "issuing country" ;
+    rdfs:comment "The country that issued the document" ;
+    rdfs:domain foundation:IdentificationDocument ;
+    rdfs:range foundation:Country ;
+    rdfs:seeAlso """
+Example:
+  :myPassport foundation:issuingCountry :brazil .
+  :myID foundation:issuingCountry :portugal .
+""" .
+
+# -----------------------------------------------------------------------------
+# CNH-Specific Properties
+# -----------------------------------------------------------------------------
+
+foundation:driverCategory a owl:DatatypeProperty ;
+    rdfs:label "driver category" ;
+    rdfs:comment "Driver's license category (A, B, C, D, E, AB, etc.)" ;
+    rdfs:domain foundation:CNH ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Categories in Brazil:
+- A: Motorcycles
+- B: Cars (up to 8 passengers)
+- C: Light trucks
+- D: Buses
+- E: Trucks with trailers
+- AB: Motorcycles and cars
+
+Example:
+  :myCNH foundation:driverCategory "AB" .
+""" .
+
+foundation:firstLicenseDate a owl:DatatypeProperty ;
+    rdfs:label "first license date" ;
+    rdfs:comment "Date when the person first obtained a driver's license" ;
+    rdfs:domain foundation:CNH ;
+    rdfs:range xsd:date ;
+    rdfs:seeAlso """
+Example:
+  :myCNH foundation:firstLicenseDate "2010-05-20"^^xsd:date .
+""" .
+
+foundation:renachNumber a owl:DatatypeProperty ;
+    rdfs:label "RENACH number" ;
+    rdfs:comment "Registro Nacional de Carteiras de Habilitação - National driver's license registry number" ;
+    rdfs:domain foundation:CNH ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myCNH foundation:renachNumber "62048143023" .
+""" .
+
+foundation:registryNumber a owl:DatatypeProperty ;
+    rdfs:label "registry number" ;
+    rdfs:comment "Registry or mirror number of the physical document" ;
+    rdfs:domain foundation:CNH ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myCNH foundation:registryNumber "08100390067" .
+""" .
+
+# -----------------------------------------------------------------------------
+# General Document Properties
+# -----------------------------------------------------------------------------
+
+foundation:observations a owl:DatatypeProperty ;
+    rdfs:label "observations" ;
+    rdfs:comment "Special observations, notes, or restrictions on the document (e.g., organ donor, medical restrictions)" ;
+    rdfs:domain foundation:IdentificationDocument ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Examples:
+  :myCNH foundation:observations "A" .  # Category A annotation
+  :myRG foundation:observations "Doador de órgãos" .
+""" .
+
+foundation:documentPhoto a owl:DatatypeProperty ;
+    rdfs:label "document photo" ;
+    rdfs:comment "URI or base64-encoded photo associated with the document" ;
+    rdfs:domain foundation:IdentificationDocument ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myPassport foundation:documentPhoto "file:///photos/passport_photo.jpg" .
+  :myCNH foundation:documentPhoto "data:image/jpeg;base64,/9j/4AAQ..." .
+""" .
+
+foundation:hasFile a owl:ObjectProperty ;
+    rdfs:label "has file"@en ;
+    rdfs:label "tem arquivo"@pt ;
+    rdfs:comment "Links the document to its digital file representation (can have multiple files: front, back, PDF, etc.)" ;
+    rdfs:domain foundation:IdentificationDocument ;
+    rdfs:range foundation:File ;
+    rdfs:seeAlso """
+Examples:
+  :myCNH foundation:hasFile :cnhPDFFile .
+  :myPassport foundation:hasFile :passportPDFFile .
+  :myRG foundation:hasFile :rgFrontPhoto .
+  :myRG foundation:hasFile :rgBackPhoto .
+
+  :cnhPDFFile a foundation:File ;
+      foundation:fileName "cnh-digital.pdf" ;
+      foundation:filePath "file:///documents/cnh-digital.pdf"^^xsd:anyURI ;
+      foundation:hasFileType foundation:FileType_PDF ;
+      foundation:fileSize 1048576 ;
+      foundation:uploadDate "2024-01-15T14:30:00Z"^^xsd:dateTime .
+""" .
+
+foundation:digitalSignature a owl:DatatypeProperty ;
+    rdfs:label "digital signature" ;
+    rdfs:comment "Digital signature or QR code data for document verification" ;
+    rdfs:domain foundation:IdentificationDocument ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myCNH foundation:digitalSignature "QR_CODE_DATA_HERE" .
+  :myPassport foundation:digitalSignature "CERTIFICATE_HASH" .
+""" .
+
+foundation:securityCode a owl:DatatypeProperty ;
+    rdfs:label "security code" ;
+    rdfs:comment "Security code or verification number for the document" ;
+    rdfs:domain foundation:IdentificationDocument ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myCNH foundation:securityCode "62048143023" .
+  :myRG foundation:securityCode "SPD08172338" .
+""" .
+
+foundation:issuingLocation a owl:ObjectProperty ;
+    rdfs:label "issuing location" ;
+    rdfs:comment "The specific city where the document was issued" ;
+    rdfs:domain foundation:IdentificationDocument ;
+    rdfs:range foundation:City ;
+    rdfs:seeAlso """
+Example:
+  :myCNH foundation:issuingLocation :sorocaba .
+  :myRG foundation:issuingLocation :saoPaulo .
+""" .

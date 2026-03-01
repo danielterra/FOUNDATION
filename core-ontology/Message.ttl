@@ -149,29 +149,46 @@ Example:
 """ .
 
 foundation:hasAttachment a owl:ObjectProperty ;
-    rdfs:label "has attachment" ;
-    rdfs:comment "Links to a file, image, audio, or video attached to this message (can have multiple attachments)" ;
+    rdfs:label "has attachment"@en ;
+    rdfs:label "tem anexo"@pt ;
+    rdfs:comment "Links to an Attachment (which wraps a File) attached to this message (can have multiple attachments)" ;
     rdfs:domain foundation:Message ;
-    rdfs:range foundation:DigitalThing ;
+    rdfs:range foundation:Attachment ;
     rdfs:seeAlso """
 Examples:
-  # Text with single image:
-  :msg1 foundation:content "Check out this photo!" .
-  :msg1 foundation:hasAttachment :photo1 .
+  # Text with single image attachment:
+  :msg1 foundation:content "Check out this photo!" ;
+        foundation:hasAttachment :attach1 .
 
-  # Email with multiple attachments (text + files):
-  :msg2 foundation:content "See attached files" .
-  :msg2 foundation:hasAttachment :contract_pdf .
-  :msg2 foundation:hasAttachment :spreadsheet_xlsx .
-  :msg2 foundation:hasAttachment :presentation_pptx .
+  :attach1 a foundation:Attachment ;
+      foundation:attachesFile :photoFile ;
+      foundation:attachedAt "2024-02-28T10:00:00Z"^^xsd:dateTime .
 
-  # Voice message only (no text):
-  :msg3 foundation:hasAttachment :audio1 .
-  :audio1 rdf:type foundation:AudioFile .
+  :photoFile a foundation:File ;
+      foundation:fileName "screenshot.png" ;
+      foundation:hasFileType foundation:FileType_PNG ;
+      foundation:fileSize 524288 .
 
-  # Video message:
-  :msg4 foundation:hasAttachment :video1 .
-  :video1 rdf:type foundation:VideoFile .
+  # Email with multiple file attachments:
+  :msg2 foundation:content "See attached files" ;
+        foundation:hasAttachment :attach2 ;
+        foundation:hasAttachment :attach3 .
+
+  :attach2 foundation:attachesFile :contractPDF .
+  :attach3 foundation:attachesFile :spreadsheet .
+
+  # PDF with Claude Files API:
+  :msg3 foundation:hasAttachment :attach4 .
+
+  :attach4 a foundation:Attachment ;
+      foundation:attachesFile :myPDF ;
+      foundation:claudeFileId "file-abc123xyz" ;
+      foundation:base64Data "JVBERi0xLjQ..." .
+
+Note: Attachment is a wrapper that:
+- Links a File (generic file metadata) to a Message
+- Adds AI-specific data (base64 for Vision API, claudeFileId for Files API)
+- Tracks when the file was attached (attachedAt timestamp)
 """ .
 
 foundation:messageType a owl:DatatypeProperty , owl:FunctionalProperty ;
@@ -194,6 +211,20 @@ Suggested values: text, audio, video, image, file, mixed
 # -----------------------------------------------------------------------------
 # AI Usage Tracking Properties (for AI-generated messages)
 # -----------------------------------------------------------------------------
+
+foundation:tokenCount a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "token count" ;
+    rdfs:comment "Total number of tokens in this message content (calculated once at creation using Claude tokenizer)" ;
+    rdfs:domain foundation:Message ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:seeAlso """
+Example:
+  :msg1 foundation:tokenCount 142 .
+
+This is the token count of the message itself (content + attachments + tool_use/tool_result blocks).
+Calculated once when the message is created to optimize history loading performance.
+Uses the same tokenizer (cl100k_base) that Claude API uses.
+""" .
 
 foundation:inputTokens a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "input tokens" ;

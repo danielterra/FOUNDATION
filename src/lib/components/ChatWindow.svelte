@@ -37,31 +37,34 @@
 
 		requestLocation();
 
-		// Try to load API key and messages immediately (database should already be initialized)
-		try {
-			const storedKey = await invoke('ai__get_api_key');
-			if (storedKey) {
-				apiKey = storedKey;
-				await initializeAI(storedKey);
-			} else {
-				showApiKeyInput = true;
-			}
-		} catch (err) {
-			console.error('Failed to get API key:', err);
-			showApiKeyInput = true;
-		}
-
-		// Load messages immediately
-		await loadMessages();
-
 		// Listen for database events and message updates
 		const { listen } = await import('@tauri-apps/api/event');
 
 		// Listen for import-complete in case database is still initializing
 		const unlistenImport = await listen('import-complete', async () => {
 			console.log('[ChatWindow] Database re-initialized, reloading...');
-			await loadMessages();
+			await initializeApp();
 		});
+
+		// Function to initialize app (API key + messages)
+		const initializeApp = async () => {
+			try {
+				const storedKey = await invoke('ai__get_api_key');
+				if (storedKey) {
+					apiKey = storedKey;
+					await initializeAI(storedKey);
+				} else {
+					showApiKeyInput = true;
+				}
+			} catch (err) {
+				console.error('Failed to get API key:', err);
+				showApiKeyInput = true;
+			}
+			await loadMessages();
+		};
+
+		// Try to initialize immediately (database should already be initialized)
+		await initializeApp();
 
 		// Listen for new messages
 		const unlistenMessages = await listen('chat-message-added', async () => {

@@ -143,4 +143,6 @@ foundation:errorMessage a owl:DatatypeProperty ;
 foundation:partOfMessage a owl:ObjectProperty ;
     rdfs:label "part of message" ;
     rdfs:comment "Links a ToolUse or ToolResult to the Message it belongs to" ;
+    rdfs:domain foundation:ToolUse ;
+    rdfs:domain foundation:ToolResult ;
     rdfs:range foundation:Message .

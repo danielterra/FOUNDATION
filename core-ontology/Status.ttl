@@ -58,8 +58,11 @@ foundation:Paused a foundation:Status ;
 foundation:hasStatus a owl:ObjectProperty ;
     rdfs:label "has status" ;
     rdfs:comment "The current state of work" ;
+    rdfs:domain owl:Thing ;
     rdfs:range foundation:Status .
 
 foundation:dependsOn a owl:ObjectProperty ;
     rdfs:label "depends on" ;
-    rdfs:comment "Indicates a dependency between work items" .
+    rdfs:comment "Indicates a dependency between work items" ;
+    rdfs:domain owl:Thing ;
+    rdfs:range owl:Thing .

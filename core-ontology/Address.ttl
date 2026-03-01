@@ -1,0 +1,191 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Address
+# =============================================================================
+# Physical address using geographic location references
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+foundation:Address a owl:Class ;
+    rdfs:subClassOf foundation:Concept ;
+    rdfs:label "Address" ;
+    rdfs:comment "A physical address with references to geographic locations" ;
+    foundation:icon "home" ;
+    rdfs:seeAlso """
+Examples:
+- Residential address
+- Business address
+- Mailing address
+- Delivery address
+
+An address combines a street, number, and geographic hierarchy
+to uniquely identify a physical location.
+""" .
+
+# -----------------------------------------------------------------------------
+# Address Properties - Geographic References
+# -----------------------------------------------------------------------------
+
+foundation:street a owl:ObjectProperty ;
+    rdfs:label "street" ;
+    rdfs:comment "Reference to the street/thoroughfare" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range foundation:Street ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:street :avPaulista .
+""" .
+
+foundation:neighborhood a owl:ObjectProperty ;
+    rdfs:label "neighborhood" ;
+    rdfs:comment "Reference to the neighborhood/district" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range foundation:Neighborhood ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:neighborhood :cambui .
+""" .
+
+foundation:city a owl:ObjectProperty ;
+    rdfs:label "city" ;
+    rdfs:comment "Reference to the city/municipality" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range foundation:City ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:city :campinas .
+""" .
+
+foundation:state a owl:ObjectProperty ;
+    rdfs:label "state" ;
+    rdfs:comment "Reference to the state/province" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range foundation:State ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:state :saoPaulo .
+""" .
+
+foundation:country a owl:ObjectProperty ;
+    rdfs:label "country" ;
+    rdfs:comment "Reference to the country" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range foundation:Country ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:country :brazil .
+""" .
+
+# -----------------------------------------------------------------------------
+# Address Properties - Specific Details
+# -----------------------------------------------------------------------------
+
+foundation:streetNumber a owl:DatatypeProperty ;
+    rdfs:label "street number" ;
+    rdfs:comment "The building or house number on the street" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:streetNumber "1000" .
+  :myAddress foundation:streetNumber "123-A" .
+""" .
+
+foundation:complement a owl:DatatypeProperty ;
+    rdfs:label "complement" ;
+    rdfs:comment "Additional address details (apartment, suite, floor, etc.)" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:complement "Apto 42" .
+  :myAddress foundation:complement "Sala 1001" .
+  :myAddress foundation:complement "3º andar" .
+""" .
+
+foundation:postalCode a owl:DatatypeProperty ;
+    rdfs:label "postal code" ;
+    rdfs:comment "Postal code or ZIP code" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Examples:
+  :myAddress foundation:postalCode "13024-000" .  # CEP Brasil
+  :myAddress foundation:postalCode "90210" .      # ZIP USA
+""" .
+
+foundation:addressType a owl:DatatypeProperty ;
+    rdfs:label "address type" ;
+    rdfs:comment "Type of address (residential, commercial, mailing, delivery)" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:addressType "residential" .
+  :businessAddress foundation:addressType "commercial" .
+""" .
+
+# -----------------------------------------------------------------------------
+# Geographic Coordinates
+# -----------------------------------------------------------------------------
+
+foundation:latitude a owl:DatatypeProperty ;
+    rdfs:label "latitude" ;
+    rdfs:comment "Latitude coordinate (decimal degrees, -90 to 90)" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:latitude -22.9068 .
+""" .
+
+foundation:longitude a owl:DatatypeProperty ;
+    rdfs:label "longitude" ;
+    rdfs:comment "Longitude coordinate (decimal degrees, -180 to 180)" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range xsd:decimal ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:longitude -47.0653 .
+""" .
+
+# -----------------------------------------------------------------------------
+# Additional Address Properties
+# -----------------------------------------------------------------------------
+
+foundation:fullAddress a owl:DatatypeProperty ;
+    rdfs:label "full address" ;
+    rdfs:comment "Complete address as a single formatted string (for display purposes)" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:fullAddress "Av. Paulista, 1000 - Cambuí, Campinas - SP, 13024-000, Brasil" .
+""" .
+
+foundation:landmark a owl:DatatypeProperty ;
+    rdfs:label "landmark" ;
+    rdfs:comment "Reference point or landmark near the address" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:landmark "Próximo ao shopping Iguatemi" .
+""" .
+
+foundation:instructions a owl:DatatypeProperty ;
+    rdfs:label "instructions" ;
+    rdfs:comment "Special delivery or access instructions" ;
+    rdfs:domain foundation:Address ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :myAddress foundation:instructions "Portão azul, tocar interfone apto 42" .
+""" .

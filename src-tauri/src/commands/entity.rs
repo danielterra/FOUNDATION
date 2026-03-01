@@ -85,6 +85,7 @@ pub struct PropertyValue {
     pub source_class_label: Option<String>,
     pub unit: Option<String>, // QUDT unit IRI (e.g., "unit:GigaBYTE")
     pub unit_label: Option<String>, // QUDT unit label (e.g., "Gigabyte")
+    pub datatype: Option<String>, // XSD datatype for literal values (e.g., "xsd:string", "xsd:dateTime")
 }
 
 /// Search for entities (classes and individuals) by label
@@ -316,6 +317,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             source_class_label: None,
             unit: None,
             unit_label: None,
+            datatype: None,
         });
     }
 
@@ -333,6 +335,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             source_class_label: None,
             unit: None,
             unit_label: None,
+            datatype: None,
         });
     }
 
@@ -396,6 +399,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             source_class_label,
             unit,
             unit_label,
+            datatype: None,
         });
     }
 
@@ -442,6 +446,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             source_class_label,
             unit: None,
             unit_label: None,
+            datatype: None,
         });
     }
 
@@ -475,7 +480,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     for (property_iri, value_obj) in &individual.properties {
         // Get property metadata using OWL abstraction
         let prop_result = Property::get(conn, property_iri);
-        let (property_label, property_comment, unit, unit_label) = if let Ok(prop) = prop_result {
+        let (property_label, property_comment, unit, unit_label, is_object_property) = if let Ok(prop) = prop_result {
             let label = prop.label.clone().unwrap_or_else(|| property_iri.clone());
             let comment = prop.comment.clone();
 
@@ -502,13 +507,15 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                 (None, None)
             };
 
-            (label, comment, unit, unit_label)
+            // Use property type from ontology definition
+            let is_obj_prop = prop.property_type == crate::owl::PropertyType::ObjectProperty;
+            (label, comment, unit, unit_label, is_obj_prop)
         } else {
-            (property_iri.clone(), None, None, None)
+            // Fallback: if property definition not found, infer from value type
+            (property_iri.clone(), None, None, None, value_obj.is_iri())
         };
 
-        // Determine type and extract value
-        let is_object_property = value_obj.is_iri();
+        // Extract value based on type
         let value = if is_object_property {
             value_obj.as_iri().unwrap_or("").to_string()
         } else {
@@ -516,19 +523,13 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         };
 
         // For object properties, get the label and icon of the target entity
-        // For datatype properties, get the icon of the datatype
-        let (value_label, value_icon) = if is_object_property {
+        // For datatype properties, get the datatype (xsd:string, xsd:dateTime, etc.)
+        let (value_label, value_icon, datatype) = if is_object_property {
             let target_thing = crate::owl::Thing::get(conn, &value);
-            (Some(target_thing.label), target_thing.icon)
+            (Some(target_thing.label), target_thing.icon, None)
         } else {
-            // Get datatype icon for literal values
-            let datatype_icon = if let Some(dt_iri) = value_obj.datatype() {
-                let datatype_thing = crate::owl::Thing::get(conn, dt_iri);
-                datatype_thing.icon
-            } else {
-                None
-            };
-            (None, datatype_icon)
+            // For datatype properties, extract the XSD datatype from the stored value
+            (None, None, value_obj.datatype().map(|s| s.to_string()))
         };
 
         properties.push(PropertyValue {
@@ -543,6 +544,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             source_class_label: None,
             unit,
             unit_label,
+            datatype,
         });
     }
 
@@ -729,6 +731,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             source_class_label,
             unit: None,
             unit_label: None,
+            datatype: None,
         });
     }
 

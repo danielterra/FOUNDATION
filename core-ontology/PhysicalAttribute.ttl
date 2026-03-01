@@ -1,0 +1,257 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# PhysicalAttribute
+# =============================================================================
+# Physical and social attributes with standardized enumerated values
+#
+# Version: 0.1.0
+# License: MIT
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Skin Color (Cor da Pele - Padrão IBGE)
+# -----------------------------------------------------------------------------
+
+foundation:SkinColor a owl:Class ;
+    rdfs:subClassOf foundation:Quality ;
+    rdfs:label "Skin Color" ;
+    rdfs:comment "Skin color classification (Brazilian IBGE standard)" ;
+    foundation:icon "palette" ;
+    rdfs:seeAlso """
+Standard categories from Brazilian Institute of Geography and Statistics (IBGE):
+- Branca (White)
+- Preta (Black)
+- Parda (Brown/Mixed)
+- Amarela (Asian)
+- Indígena (Indigenous)
+""" .
+
+foundation:SkinColorWhite a foundation:SkinColor , owl:NamedIndividual ;
+    rdfs:label "White"@en ;
+    rdfs:label "Branca"@pt ;
+    rdfs:comment "White skin color" .
+
+foundation:SkinColorBlack a foundation:SkinColor , owl:NamedIndividual ;
+    rdfs:label "Black"@en ;
+    rdfs:label "Preta"@pt ;
+    rdfs:comment "Black skin color" .
+
+foundation:SkinColorBrown a foundation:SkinColor , owl:NamedIndividual ;
+    rdfs:label "Brown"@en ;
+    rdfs:label "Parda"@pt ;
+    rdfs:comment "Brown or mixed skin color" .
+
+foundation:SkinColorAsian a foundation:SkinColor , owl:NamedIndividual ;
+    rdfs:label "Asian"@en ;
+    rdfs:label "Amarela"@pt ;
+    rdfs:comment "Asian skin color" .
+
+foundation:SkinColorIndigenous a foundation:SkinColor , owl:NamedIndividual ;
+    rdfs:label "Indigenous"@en ;
+    rdfs:label "Indígena"@pt ;
+    rdfs:comment "Indigenous skin color" .
+
+# -----------------------------------------------------------------------------
+# Blood Type (Tipo Sanguíneo)
+# -----------------------------------------------------------------------------
+
+foundation:BloodType a owl:Class ;
+    rdfs:subClassOf foundation:Quality ;
+    rdfs:label "Blood Type" ;
+    rdfs:comment "ABO and Rh blood type classification" ;
+    foundation:icon "bloodtype" ;
+    rdfs:seeAlso """
+Standard blood types:
+- A+ (A positive)
+- A- (A negative)
+- B+ (B positive)
+- B- (B negative)
+- AB+ (AB positive)
+- AB- (AB negative)
+- O+ (O positive)
+- O- (O negative)
+""" .
+
+foundation:BloodTypeAPositive a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "A+" ;
+    rdfs:comment "Blood type A positive" .
+
+foundation:BloodTypeANegative a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "A-" ;
+    rdfs:comment "Blood type A negative" .
+
+foundation:BloodTypeBPositive a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "B+" ;
+    rdfs:comment "Blood type B positive" .
+
+foundation:BloodTypeBNegative a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "B-" ;
+    rdfs:comment "Blood type B negative" .
+
+foundation:BloodTypeABPositive a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "AB+" ;
+    rdfs:comment "Blood type AB positive" .
+
+foundation:BloodTypeABNegative a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "AB-" ;
+    rdfs:comment "Blood type AB negative" .
+
+foundation:BloodTypeOPositive a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "O+" ;
+    rdfs:comment "Blood type O positive" .
+
+foundation:BloodTypeONegative a foundation:BloodType , owl:NamedIndividual ;
+    rdfs:label "O-" ;
+    rdfs:comment "Blood type O negative" .
+
+# -----------------------------------------------------------------------------
+# Marital Status (Estado Civil)
+# -----------------------------------------------------------------------------
+
+foundation:MaritalStatus a owl:Class ;
+    rdfs:subClassOf foundation:Quality ;
+    rdfs:label "Marital Status" ;
+    rdfs:comment "Civil/marital status classification" ;
+    foundation:icon "favorite" ;
+    rdfs:seeAlso """
+Standard marital status categories:
+- Single (Solteiro)
+- Married (Casado)
+- Divorced (Divorciado)
+- Widowed (Viúvo)
+- Domestic Partnership (União Estável)
+- Separated (Separado)
+""" .
+
+foundation:MaritalStatusSingle a foundation:MaritalStatus , owl:NamedIndividual ;
+    rdfs:label "Single"@en ;
+    rdfs:label "Solteiro"@pt ;
+    rdfs:comment "Never married" .
+
+foundation:MaritalStatusMarried a foundation:MaritalStatus , owl:NamedIndividual ;
+    rdfs:label "Married"@en ;
+    rdfs:label "Casado"@pt ;
+    rdfs:comment "Legally married" .
+
+foundation:MaritalStatusDivorced a foundation:MaritalStatus , owl:NamedIndividual ;
+    rdfs:label "Divorced"@en ;
+    rdfs:label "Divorciado"@pt ;
+    rdfs:comment "Legally divorced" .
+
+foundation:MaritalStatusWidowed a foundation:MaritalStatus , owl:NamedIndividual ;
+    rdfs:label "Widowed"@en ;
+    rdfs:label "Viúvo"@pt ;
+    rdfs:comment "Spouse deceased" .
+
+foundation:MaritalStatusDomesticPartnership a foundation:MaritalStatus , owl:NamedIndividual ;
+    rdfs:label "Domestic Partnership"@en ;
+    rdfs:label "União Estável"@pt ;
+    rdfs:comment "Living together in a committed relationship" .
+
+foundation:MaritalStatusSeparated a foundation:MaritalStatus , owl:NamedIndividual ;
+    rdfs:label "Separated"@en ;
+    rdfs:label "Separado"@pt ;
+    rdfs:comment "Legally separated but not divorced" .
+
+# -----------------------------------------------------------------------------
+# Gender (Gênero)
+# -----------------------------------------------------------------------------
+
+foundation:Gender a owl:Class ;
+    rdfs:subClassOf foundation:Quality ;
+    rdfs:label "Gender" ;
+    rdfs:comment "Gender identity classification" ;
+    foundation:icon "wc" ;
+    rdfs:seeAlso """
+Gender identity categories (non-exhaustive, customizable):
+- Male (Masculino)
+- Female (Feminino)
+- Non-Binary (Não-binário)
+- Genderfluid (Gênero fluido)
+- Agender (Sem gênero)
+- Other (Outro)
+""" .
+
+foundation:GenderMale a foundation:Gender , owl:NamedIndividual ;
+    rdfs:label "Male"@en ;
+    rdfs:label "Masculino"@pt ;
+    rdfs:comment "Male gender identity" .
+
+foundation:GenderFemale a foundation:Gender , owl:NamedIndividual ;
+    rdfs:label "Female"@en ;
+    rdfs:label "Feminino"@pt ;
+    rdfs:comment "Female gender identity" .
+
+foundation:GenderNonBinary a foundation:Gender , owl:NamedIndividual ;
+    rdfs:label "Non-Binary"@en ;
+    rdfs:label "Não-binário"@pt ;
+    rdfs:comment "Non-binary gender identity" .
+
+foundation:GenderGenderfluid a foundation:Gender , owl:NamedIndividual ;
+    rdfs:label "Genderfluid"@en ;
+    rdfs:label "Gênero fluido"@pt ;
+    rdfs:comment "Fluid gender identity" .
+
+foundation:GenderAgender a foundation:Gender , owl:NamedIndividual ;
+    rdfs:label "Agender"@en ;
+    rdfs:label "Sem gênero"@pt ;
+    rdfs:comment "Without gender identity" .
+
+foundation:GenderOther a foundation:Gender , owl:NamedIndividual ;
+    rdfs:label "Other"@en ;
+    rdfs:label "Outro"@pt ;
+    rdfs:comment "Other gender identity" .
+
+# -----------------------------------------------------------------------------
+# Sexual Orientation (Orientação Sexual)
+# -----------------------------------------------------------------------------
+
+foundation:SexualOrientation a owl:Class ;
+    rdfs:subClassOf foundation:Quality ;
+    rdfs:label "Sexual Orientation" ;
+    rdfs:comment "Sexual orientation classification" ;
+    foundation:icon "diversity_3" ;
+    rdfs:seeAlso """
+Sexual orientation categories (non-exhaustive):
+- Heterosexual (Heterossexual)
+- Homosexual (Homossexual)
+- Bisexual (Bissexual)
+- Asexual (Assexual)
+- Pansexual (Pansexual)
+- Demisexual (Demissexual)
+""" .
+
+foundation:SexualOrientationHeterosexual a foundation:SexualOrientation , owl:NamedIndividual ;
+    rdfs:label "Heterosexual"@en ;
+    rdfs:label "Heterossexual"@pt ;
+    rdfs:comment "Attracted to opposite gender" .
+
+foundation:SexualOrientationHomosexual a foundation:SexualOrientation , owl:NamedIndividual ;
+    rdfs:label "Homosexual"@en ;
+    rdfs:label "Homossexual"@pt ;
+    rdfs:comment "Attracted to same gender" .
+
+foundation:SexualOrientationBisexual a foundation:SexualOrientation , owl:NamedIndividual ;
+    rdfs:label "Bisexual"@en ;
+    rdfs:label "Bissexual"@pt ;
+    rdfs:comment "Attracted to both genders" .
+
+foundation:SexualOrientationAsexual a foundation:SexualOrientation , owl:NamedIndividual ;
+    rdfs:label "Asexual"@en ;
+    rdfs:label "Assexual"@pt ;
+    rdfs:comment "Little or no sexual attraction" .
+
+foundation:SexualOrientationPansexual a foundation:SexualOrientation , owl:NamedIndividual ;
+    rdfs:label "Pansexual"@en ;
+    rdfs:label "Pansexual"@pt ;
+    rdfs:comment "Attracted to all genders" .
+
+foundation:SexualOrientationDemisexual a foundation:SexualOrientation , owl:NamedIndividual ;
+    rdfs:label "Demisexual"@en ;
+    rdfs:label "Demissexual"@pt ;
+    rdfs:comment "Attracted only after emotional bond" .

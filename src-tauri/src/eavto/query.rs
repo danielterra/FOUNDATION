@@ -170,17 +170,37 @@ pub fn get_by_predicate_object(
     predicate: &str,
     object: &str,
 ) -> Result<QueryResult> {
-    let mut stmt = conn.prepare(
+    // Support boolean values: "true" maps to object_boolean=1, "false" to object_boolean=0
+    let (where_clause, params): (&str, Vec<&dyn rusqlite::ToSql>) = if object == "true" {
+        (
+            "WHERE predicate = ?1 AND object_boolean = 1 AND retracted = 0",
+            vec![&predicate as &dyn rusqlite::ToSql],
+        )
+    } else if object == "false" {
+        (
+            "WHERE predicate = ?1 AND object_boolean = 0 AND retracted = 0",
+            vec![&predicate as &dyn rusqlite::ToSql],
+        )
+    } else {
+        (
+            "WHERE predicate = ?1 AND object = ?2 AND retracted = 0",
+            vec![&predicate as &dyn rusqlite::ToSql, &object as &dyn rusqlite::ToSql],
+        )
+    };
+
+    let query = format!(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_datetime, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
-         WHERE predicate = ? AND object = ? AND retracted = 0
-         ORDER BY tx DESC"
-    )?;
+         {}
+         ORDER BY tx DESC",
+        where_clause
+    );
 
+    let mut stmt = conn.prepare(&query)?;
     let triples = stmt
-        .query_map([predicate, object], row_to_triple)?
+        .query_map(params.as_slice(), row_to_triple)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     Ok(QueryResult::new(triples))
@@ -273,13 +293,22 @@ pub fn find_by_class_and_properties(
         ));
     }
 
-    // Add value matching (supports both literal and IRI)
+    // Add value matching (supports literal, IRI, and boolean)
     for (i, (_, value)) in properties.iter().enumerate() {
         let table_num = i + 1;
-        query.push_str(&format!(
-            "\n           AND (t{}.object_value = '{}' OR t{}.object = '{}')",
-            table_num, value, table_num, value
-        ));
+        // Check if value is a boolean
+        if value == &"true" || value == &"false" {
+            let bool_val = if value == &"true" { 1 } else { 0 };
+            query.push_str(&format!(
+                "\n           AND (t{}.object_value = '{}' OR t{}.object = '{}' OR t{}.object_boolean = {})",
+                table_num, value, table_num, value, table_num, bool_val
+            ));
+        } else {
+            query.push_str(&format!(
+                "\n           AND (t{}.object_value = '{}' OR t{}.object = '{}')",
+                table_num, value, table_num, value
+            ));
+        }
     }
 
     let mut stmt = conn.prepare(&query)?;
