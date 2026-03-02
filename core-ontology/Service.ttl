@@ -73,33 +73,33 @@ foundation:apiBaseUrl a owl:DatatypeProperty ;
     rdfs:label "API base URL" ;
     rdfs:comment "Base URL for the service's API endpoints" ;
     rdfs:domain foundation:Service ;
-    rdfs:range xsd:string ;
+    rdfs:range xsd:anyURI ;
     rdfs:seeAlso """
 Example:
-  :ClaudeAIService foundation:apiBaseUrl "https://api.anthropic.com/v1" .
-  :OpenAIService foundation:apiBaseUrl "https://api.openai.com/v1" .
+  :ClaudeAIService foundation:apiBaseUrl "https://api.anthropic.com/v1"^^xsd:anyURI .
+  :OpenAIService foundation:apiBaseUrl "https://api.openai.com/v1"^^xsd:anyURI .
 """ .
 
 foundation:apiModelsEndpoint a owl:DatatypeProperty ;
     rdfs:label "API models endpoint" ;
     rdfs:comment "API endpoint to list available models for this service" ;
     rdfs:domain foundation:Service ;
-    rdfs:range xsd:string ;
+    rdfs:range xsd:anyURI ;
     rdfs:seeAlso """
 Example:
-  :ClaudeAIService foundation:apiModelsEndpoint "https://api.anthropic.com/v1/models" .
-  :OpenAIService foundation:apiModelsEndpoint "https://api.openai.com/v1/models" .
+  :ClaudeAIService foundation:apiModelsEndpoint "https://api.anthropic.com/v1/models"^^xsd:anyURI .
+  :OpenAIService foundation:apiModelsEndpoint "https://api.openai.com/v1/models"^^xsd:anyURI .
 """ .
 
 foundation:apiMessagesEndpoint a owl:DatatypeProperty ;
     rdfs:label "API messages endpoint" ;
     rdfs:comment "API endpoint to send messages/prompts to the AI service" ;
     rdfs:domain foundation:Service ;
-    rdfs:range xsd:string ;
+    rdfs:range xsd:anyURI ;
     rdfs:seeAlso """
 Example:
-  :ClaudeAIService foundation:apiMessagesEndpoint "https://api.anthropic.com/v1/messages" .
-  :OpenAIService foundation:apiMessagesEndpoint "https://api.openai.com/v1/chat/completions" .
+  :ClaudeAIService foundation:apiMessagesEndpoint "https://api.anthropic.com/v1/messages"^^xsd:anyURI .
+  :OpenAIService foundation:apiMessagesEndpoint "https://api.openai.com/v1/chat/completions"^^xsd:anyURI .
 """ .
 
 foundation:apiVersion a owl:DatatypeProperty ;
@@ -116,18 +116,18 @@ foundation:apiDocumentation a owl:DatatypeProperty ;
     rdfs:label "API documentation" ;
     rdfs:comment "URL to the official API documentation" ;
     rdfs:domain foundation:Service ;
-    rdfs:range xsd:string ;
+    rdfs:range xsd:anyURI ;
     rdfs:seeAlso """
 Example:
-  :ClaudeAIService foundation:apiDocumentation "https://docs.anthropic.com/en/docs/about-claude/models" .
+  :ClaudeAIService foundation:apiDocumentation "https://docs.anthropic.com/en/docs/about-claude/models"^^xsd:anyURI .
 """ .
 
 foundation:website a owl:DatatypeProperty ;
     rdfs:label "website" ;
     rdfs:comment "Official website URL" ;
     rdfs:domain foundation:Organization ;
-    rdfs:range xsd:string ;
+    rdfs:range xsd:anyURI ;
     rdfs:seeAlso """
 Example:
-  :AnthropicOrganization foundation:website "https://www.anthropic.com" .
+  :AnthropicOrganization foundation:website "https://www.anthropic.com"^^xsd:anyURI .
 """ .

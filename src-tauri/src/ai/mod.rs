@@ -77,11 +77,20 @@ impl AIAssistant {
 
 lazy_static::lazy_static! {
     pub static ref AI_INSTANCE: Arc<Mutex<Option<AIAssistant>>> = Arc::new(Mutex::new(None));
+    static ref CURRENT_MODEL: std::sync::RwLock<Option<String>> =
+        std::sync::RwLock::new(None);
+}
+
+pub fn get_current_model() -> Result<String, String> {
+    CURRENT_MODEL.read()
+        .map_err(|_| "CURRENT_MODEL lock poisoned".to_string())?
+        .clone()
+        .ok_or_else(|| "No AI model configured. Please configure a model in Settings.".to_string())
 }
 
 #[allow(dead_code)]
 pub async fn initialize_ai(api_key: String) -> Result<(), String> {
-    let provider = ClaudeProvider::new(api_key);
+    let provider = ClaudeProvider::new(api_key, 180);
     let assistant = AIAssistant::new(Box::new(provider));
 
     let mut instance = AI_INSTANCE.lock().await;
@@ -93,11 +102,16 @@ pub async fn initialize_ai(api_key: String) -> Result<(), String> {
 pub async fn initialize_ai_with_model(
     api_key: String,
     model_identifier: Option<String>,
+    timeout_secs: u64,
 ) -> Result<(), String> {
+    if let Ok(mut current) = CURRENT_MODEL.write() {
+        *current = model_identifier.clone();
+    }
+
     let provider = if let Some(model) = model_identifier {
-        ClaudeProvider::with_model(api_key, model)
+        ClaudeProvider::with_model(api_key, model, timeout_secs)
     } else {
-        ClaudeProvider::new(api_key)
+        ClaudeProvider::new(api_key, timeout_secs)
     };
 
     let assistant = AIAssistant::new(Box::new(provider));

@@ -24,6 +24,51 @@ pub async fn execute_tools_from_message(
     conversation_id: &str,
     assistant_message: &AIConversationMessage,
 ) -> Result<String, String> {
+    let tool_use_ids: Vec<String> = assistant_message.content.iter()
+        .filter_map(|b| {
+            if let ContentBlock::ToolUse { id, .. } = b { Some(id.clone()) } else { None }
+        })
+        .collect();
+
+    if tool_use_ids.is_empty() {
+        return Err("No tool use blocks found in message".to_string());
+    }
+
+    // Guard against storing duplicate tool_results for the same tool_use_id.
+    // This can happen when the recovery path re-executes tools that already ran.
+    let conv_id_check = conversation_id.to_string();
+    let ids_to_check = tool_use_ids;
+    let existing_iri = executor.read(move |conn| {
+        let message_iris = Individual::find_by_class_and_properties(
+            conn,
+            "foundation:AIConversationMessage",
+            &[("foundation:partOfConversation", &conv_id_check)],
+        ).map_err(|e| format!("Failed to query messages: {}", e))?;
+
+        for iri in message_iris {
+            if let Ok(msg) = load_message(conn, &iri) {
+                let is_duplicate = msg.content.iter().any(|b| {
+                    if let ContentBlock::ToolResult { tool_use_id, .. } = b {
+                        ids_to_check.contains(tool_use_id)
+                    } else {
+                        false
+                    }
+                });
+                if is_duplicate {
+                    return Ok(Some(iri));
+                }
+            }
+        }
+        Ok(None)
+    }).await?;
+
+    if let Some(iri) = existing_iri {
+        super::log_backend("warn", &format!(
+            "[CHAT] Skipping duplicate tool_result — results already stored in: {}", iri
+        ));
+        return Ok(iri);
+    }
+
     let mut tool_results = Vec::new();
 
     for block in &assistant_message.content {
@@ -43,10 +88,6 @@ pub async fn execute_tools_from_message(
 
             tool_results.push(result);
         }
-    }
-
-    if tool_results.is_empty() {
-        return Err("No tool use blocks found in message".to_string());
     }
 
     let content_json = serde_json::to_string(&tool_results)
@@ -152,18 +193,125 @@ fn inject_datetime_context(messages: &mut Vec<crate::ai::ChatMessage>) {
         text: format!("Current date/time: {}", date_time),
     };
 
-    if let Some(last_msg) = messages.last_mut() {
-        match &mut last_msg.content {
+    // The Claude API requires tool_result messages to begin with tool_result blocks —
+    // injecting a Text block before them causes a 400 error.
+    let target = messages.iter_mut().rev().find(|msg| {
+        if msg.role != "user" {
+            return false;
+        }
+        match &msg.content {
+            MessageContent::ContentBlocks(blocks) => {
+                !blocks.iter().any(|b| matches!(b, ApiContentBlock::ToolResult { .. }))
+            }
+            MessageContent::Text(_) => true,
+        }
+    });
+
+    if let Some(msg) = target {
+        match &mut msg.content {
             MessageContent::ContentBlocks(ref mut blocks) => {
                 blocks.insert(0, datetime_block);
             }
             MessageContent::Text(text) => {
-                last_msg.content = MessageContent::ContentBlocks(vec![
+                msg.content = MessageContent::ContentBlocks(vec![
                     datetime_block,
                     ApiContentBlock::Text { text: text.clone() },
                 ]);
             }
         }
+    }
+}
+
+/// Sanitize tool pairs: ensure every ToolUse in an assistant message has a matching
+/// ToolResult in the next user message. Injects synthetic error results for any orphaned
+/// tool_use ids (e.g. when the conversation was interrupted before all results were saved).
+fn sanitize_tool_pairs(messages: &mut Vec<crate::ai::ChatMessage>) {
+    use crate::ai::providers::{ContentBlock as ApiContentBlock, MessageContent};
+    use std::collections::HashSet;
+
+    for i in 0..messages.len().saturating_sub(1) {
+        if messages[i].role != "assistant" {
+            continue;
+        }
+
+        let tool_use_ids: Vec<String> =
+            if let MessageContent::ContentBlocks(ref blocks) = messages[i].content {
+            blocks.iter().filter_map(|b| {
+                if let ApiContentBlock::ToolUse { id, .. } = b { Some(id.clone()) } else { None }
+            }).collect()
+        } else {
+            continue;
+        };
+
+        if tool_use_ids.is_empty() {
+            continue;
+        }
+
+        let next = i + 1;
+        if next >= messages.len() || messages[next].role != "user" {
+            continue;
+        }
+
+        let existing_results: HashSet<String> =
+            if let MessageContent::ContentBlocks(ref blocks) = messages[next].content {
+            blocks.iter().filter_map(|b| {
+                if let ApiContentBlock::ToolResult { tool_use_id, .. } = b {
+                    Some(tool_use_id.clone())
+                } else {
+                    None
+                }
+            }).collect()
+        } else {
+            HashSet::new()
+        };
+
+        let missing: Vec<String> = tool_use_ids.into_iter()
+            .filter(|id| !existing_results.contains(id))
+            .collect();
+
+        if missing.is_empty() {
+            continue;
+        }
+
+        super::log_backend(
+            "warn",
+            &format!(
+                "[RECOVERY] Injecting {} synthetic tool_result(s) for orphaned tool_use ids: {:?}",
+                missing.len(), missing
+            ),
+        );
+
+        if let MessageContent::ContentBlocks(ref mut blocks) = messages[next].content {
+            for id in missing {
+                blocks.push(ApiContentBlock::ToolResult {
+                    tool_use_id: id,
+                    content: "Tool result unavailable (conversation was interrupted)".to_string(),
+                    is_error: Some(true),
+                });
+            }
+        }
+    }
+
+    // Strip trailing tool_use blocks from the last assistant message — the Claude API requires
+    // every tool_use to be followed by a tool_result, which is impossible for the last message.
+    if let Some(last) = messages.last_mut() {
+        if last.role == "assistant" {
+            if let MessageContent::ContentBlocks(ref mut blocks) = last.content {
+                let had_tool_use =
+                    blocks.iter().any(|b| matches!(b, ApiContentBlock::ToolUse { .. }));
+                if had_tool_use {
+                    super::log_backend(
+                        "warn", "[CHAT] Stripping trailing tool_use blocks (end of history)",
+                    );
+                    blocks.retain(|b| !matches!(b, ApiContentBlock::ToolUse { .. }));
+                }
+            }
+        }
+    }
+    if messages.last().map_or(false, |m| {
+        matches!(&m.content, MessageContent::ContentBlocks(b) if b.is_empty())
+    }) {
+        messages.pop();
     }
 }
 
@@ -182,9 +330,6 @@ pub async fn chat__send_and_reply(
 
     let max_tokens = get_max_input_tokens(&executor).await?;
 
-    // Location and attachments are received but not yet forwarded to the AI context.
-    // Deferred: pass location as context in the system prompt, and process attachment_iris
-    // into file content blocks in the message payload.
     if latitude.is_some() || longitude.is_some() {
         super::log_backend(
             "info",
@@ -224,6 +369,7 @@ pub async fn chat__send_and_reply(
             .collect();
 
         inject_datetime_context(&mut api_messages);
+        sanitize_tool_pairs(&mut api_messages);
 
         let system_prompt = get_system_prompt(&executor).await?;
         let tools = crate::ai::functions::get_claude_tools();
@@ -255,11 +401,12 @@ pub async fn chat__send_and_reply(
         let content_json = serde_json::to_string(&content_blocks)
             .map_err(|e| format!("Failed to serialize content: {}", e))?;
 
+        let current_model = crate::ai::get_current_model()?;
         let assistant_msg_iri = create_assistant_message(
             &executor,
             CONVERSATION_ID,
             &content_json,
-            "claude-sonnet-4-6", // Model is hardcoded for now
+            &current_model,
             &stop_reason,
             api_response.usage.as_ref().map(|u| u.input_tokens as usize).unwrap_or(0),
             api_response.usage.as_ref().map(|u| u.output_tokens as usize).unwrap_or(0),
@@ -548,7 +695,6 @@ async fn get_max_input_tokens(executor: &DbExecutor) -> Result<usize, String> {
             }
         }
 
-        // Fall back to model's maxInputTokens
         let model_iri = get_ai_model_iri(conn)?;
 
         if let Some(iri) = model_iri {
@@ -608,6 +754,7 @@ async fn continue_conversation_after_recovery(
             .collect();
 
         inject_datetime_context(&mut api_messages);
+        sanitize_tool_pairs(&mut api_messages);
 
         let system_prompt = get_system_prompt(&executor).await?;
         let tools = crate::ai::functions::get_claude_tools();
@@ -642,11 +789,12 @@ async fn continue_conversation_after_recovery(
         let content_json = serde_json::to_string(&content_blocks)
             .map_err(|e| format!("Failed to serialize content: {}", e))?;
 
+        let current_model = crate::ai::get_current_model()?;
         let assistant_msg_iri = create_assistant_message(
             &executor,
             CONVERSATION_ID,
             &content_json,
-            "claude-sonnet-4-6",
+            &current_model,
             &stop_reason,
             api_response.usage.as_ref().map(|u| u.input_tokens as usize).unwrap_or(0),
             api_response.usage.as_ref().map(|u| u.output_tokens as usize).unwrap_or(0),

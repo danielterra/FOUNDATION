@@ -1,26 +1,14 @@
 ---
 name: new-ontology
-description: Creates a new ontology TTL file with no duplication and semantic consistency
-disable-model-invocation: true
+description: Creates a new ontology concept in Foundation with no duplication and semantic consistency
 argument-hint: <name and description of the concept>
 ---
 
 # New Ontology: $ARGUMENTS
 
-## Existing Ontologies
-!`ls core-ontology/*.ttl | sed 's|core-ontology/||;s|\.ttl||' | sort`
-
-## Existing Classes
-!`grep -rh "^foundation:[A-Z][a-zA-Z]* a owl:Class" core-ontology/*.ttl | sed 's/ a owl:Class.*//' | sort`
-
-## Existing Properties
-!`grep -rh "^foundation:[a-z][a-zA-Z]* a owl:" core-ontology/*.ttl | sed 's/ a owl:.*//' | sort`
-
----
-
 ## Step 1 — Duplication Check
 
-Before writing anything, verify no existing class/property covers this concept. Use it instead of creating a duplicate.
+Call `remember_concepts` with keywords from the concept name to check for existing classes. Search multiple times with different keywords. If an existing class already covers the concept, use it instead of creating a new one.
 
 Common base classes:
 
@@ -39,7 +27,7 @@ Common base classes:
 
 ## Step 2 — Property Types
 
-Prefer object properties over primitives. Use existing classes as `rdfs:range`:
+Call `remember_concepts` to check if similar properties already exist before defining new ones. Prefer object properties over primitives:
 
 | Value | Use |
 |---|---|
@@ -55,70 +43,28 @@ Prefer object properties over primitives. Use existing classes as `rdfs:range`:
 
 Use primitives only for: codes/identifiers, free-text, and scalar numeric values.
 
-**Numeric measurements** must use `qudt:hasUnit`:
-```turtle
-foundation:height a owl:DatatypeProperty ; rdfs:range xsd:decimal ; qudt:hasUnit unit:M .
-foundation:price  a owl:DatatypeProperty ; rdfs:range xsd:decimal ; qudt:hasUnit currency:BRL .
-```
+## Step 3 — Consistency Rules
 
-**Cardinality** must be explicit in the class `rdfs:subClassOf` restrictions:
-- `owl:cardinality "1"` — required, exactly one
-- `owl:maxCardinality "1"` — optional, at most one
-- No restriction — 0 or more; document in `rdfs:seeAlso`
-
-## Step 3 — File Structure
-
-```turtle
-@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix foundation: <http://foundation.local/ontology/> .
-
-# =============================================================================
-# ClassName — one-line description
-# Version: 0.1.0 | License: GNU GPL
-# =============================================================================
-
-<http://foundation.local/ontology/ClassName>
-    a owl:Ontology ;
-    owl:imports <http://foundation.local/ontology/ImportedClass> .
-
-foundation:ClassName a owl:Class ;
-    rdfs:subClassOf foundation:ParentClass ,
-        [ a owl:Restriction ; owl:onProperty foundation:requiredProp ;
-          owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
-        [ a owl:Restriction ; owl:onProperty foundation:optionalProp ;
-          owl:maxCardinality "1"^^xsd:nonNegativeInteger ] ;
-    rdfs:label "Class Name" ;
-    rdfs:comment "Concise definition" ;
-    foundation:icon "material_icon_name" ;
-    rdfs:seeAlso """
-Examples: ...
-Cardinality: requiredProp exactly 1, optionalProp max 1, multiProp 0+
-""" .
-
-# -----------------------------------------------------------------------------
-# Properties
-# -----------------------------------------------------------------------------
-
-foundation:propName a owl:ObjectProperty ;
-    rdfs:label "prop name" ;
-    rdfs:comment "What it represents" ;
-    rdfs:domain foundation:ClassName ;
-    rdfs:range foundation:OtherClass ;
-    rdfs:seeAlso "Example: :inst foundation:propName :val ." .
-```
-
-## Step 4 — Consistency Rules
-
-- **One class per file**; filename = class name (`MyClass.ttl` → `foundation:MyClass`)
-- **`rdfs:domain`** on every property; omit only for shared properties (document why)
-- **`owl:imports`** for every ontology used as `rdfs:range`
-- **No orphan classes** — every class needs `rdfs:subClassOf`
+- **No orphan classes** — every class needs a `super_class`
+- **`domain`** on every property; omit only for shared properties (domain: `owl:Thing`)
+- **Property placement** — define each property on its **domain** class, never on the range class
 - **Inverse properties** — add when a directional relationship warrants it
-- **`rdfs:subPropertyOf`** when a property specializes a more general one
 
 ## Output
 
-Write to `core-ontology/ClassName.ttl` then summarize: parent class, properties (type/range/cardinality), imports, and anything reused or ambiguous.
+1. Call `learn_concept` to create the new class:
+   - `iri`: `foundation:ClassName`
+   - `label`: English name
+   - `icon`: Material icon name
+   - `comment`: Concise definition
+   - `super_class`: parent class IRI
+
+2. For each property, call `learn_connection_type`:
+   - `iri`: `foundation:propertyName`
+   - `label`: English name
+   - `property_type`: `object` for links to other classes, `datatype` for scalars
+   - `domain`: class this property belongs to (omit for universal `owl:Thing`)
+   - `range`: target class IRI (for `object`) or xsd type (for `datatype`)
+   - `comment`: what it represents
+
+After creating, summarize: parent class, properties created (type/range), and anything reused or ambiguous.

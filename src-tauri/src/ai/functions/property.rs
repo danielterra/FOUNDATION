@@ -79,10 +79,10 @@ pub fn search_properties(conn: &Connection, args: &Value) -> FunctionResult {
     match (|| {
         use crate::owl::{Property, vocabulary::{rdf, owl}};
 
-        // Get all object properties
-        let obj_props_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::OBJECT_PROPERTY)?;
-        // Get all datatype properties
-        let data_props_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::DATATYPE_PROPERTY)?;
+        let obj_props_result =
+            query::get_by_predicate_object(conn, rdf::TYPE, owl::OBJECT_PROPERTY)?;
+        let data_props_result =
+            query::get_by_predicate_object(conn, rdf::TYPE, owl::DATATYPE_PROPERTY)?;
 
         let mut all_property_iris: Vec<String> = obj_props_result.triples.into_iter()
             .chain(data_props_result.triples)
@@ -92,7 +92,6 @@ pub fn search_properties(conn: &Connection, args: &Value) -> FunctionResult {
         all_property_iris.sort();
         all_property_iris.dedup();
 
-        // Parse query into search tokens (words)
         let search_tokens: Vec<String> = if query_str.is_empty() {
             Vec::new()
         } else {
@@ -106,13 +105,11 @@ pub fn search_properties(conn: &Connection, args: &Value) -> FunctionResult {
         let mut properties = Vec::new();
         for iri in all_property_iris {
             if let Ok(property) = Property::get(conn, &iri) {
-                // Filter by query if provided
                 if !search_tokens.is_empty() {
                     if let Some(label) = &property.label {
                         let label_lower = label.to_lowercase();
                         let comment_lower = property.comment.as_ref().map(|c| c.to_lowercase());
 
-                        // Check if ALL search tokens appear in label or comment
                         let matches = search_tokens.iter().all(|token| {
                             label_lower.contains(token) ||
                             comment_lower.as_ref().map(|c| c.contains(token)).unwrap_or(false)
@@ -173,15 +170,14 @@ pub fn get_property(conn: &Connection, args: &Value) -> FunctionResult {
 
         let property = Property::get(conn, iri)?;
 
-        // Check if any of the ranges has owl:oneOf enumeration
         let mut allowed_values: Vec<serde_json::Value> = Vec::new();
         for range_iri in &property.ranges {
             if let Ok(range_class) = Class::get(conn, range_iri) {
                 if !range_class.one_of_values.is_empty() {
-                    // Get labels for each enumerated value
                     for value_iri in &range_class.one_of_values {
                         use crate::eavto::query;
-                        let label_result = query::get_by_entity_predicate(conn, value_iri, "rdfs:label")?;
+                        let label_result =
+                            query::get_by_entity_predicate(conn, value_iri, "rdfs:label")?;
                         let label = label_result.triples.first()
                             .and_then(|t| t.object.as_literal())
                             .unwrap_or_else(|| value_iri.clone());
@@ -210,7 +206,6 @@ pub fn get_property(conn: &Connection, args: &Value) -> FunctionResult {
             "unit": property.unit,
         });
 
-        // Add allowedValues only if the range has owl:oneOf constraint
         if !allowed_values.is_empty() {
             response["allowedValues"] = serde_json::json!(allowed_values);
         }
@@ -230,7 +225,9 @@ pub fn get_property(conn: &Connection, args: &Value) -> FunctionResult {
     }
 }
 
-pub fn delete_property(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
+pub fn delete_property(
+    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
+) -> FunctionResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
@@ -243,8 +240,8 @@ pub fn delete_property(conn: &mut Connection, args: &Value, app: Option<&tauri::
     match (|| {
         use crate::eavto::{store, query, Triple};
 
-        // IMPORTANT: First, retract all triples that use this property as predicate
-        // This ensures that when a property is removed from a class, all facts using it are also removed
+        // IMPORTANT: First, retract all triples that use this property as predicate —
+        // when a property is removed, all facts using it must also be removed.
         let facts_using_property = query::get_by_predicate(conn, iri)?;
         let mut affected_entities = std::collections::HashSet::new();
 
@@ -259,17 +256,14 @@ pub fn delete_property(conn: &mut Connection, args: &Value, app: Option<&tauri::
             store::retract_triples(conn, &facts_to_retract, "ai")?;
         }
 
-        // Then, get all triples where this property IRI is the subject (property definition)
         let triples_result = query::get_by_entity(conn, iri)?;
 
-        // Retract property definition triples
         let triples_to_retract: Vec<Triple> = triples_result.triples.into_iter()
             .map(|t| Triple::new(t.subject, t.predicate, t.object))
             .collect();
 
         store::retract_triples(conn, &triples_to_retract, "ai")?;
 
-        // Emit entity-updated events for all affected entities
         let affected_count = affected_entities.len();
         if let Some(app_handle) = app {
             for entity_id in affected_entities {
@@ -297,7 +291,9 @@ pub fn delete_property(conn: &mut Connection, args: &Value, app: Option<&tauri::
     }
 }
 
-pub fn add_property_value(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
+pub fn add_property_value(
+    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
+) -> FunctionResult {
     let instance_iri = match args.get("instance_iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
@@ -316,14 +312,22 @@ pub fn add_property_value(conn: &mut Connection, args: &Value, app: Option<&taur
         },
     };
 
-    let value = match args.get("value").and_then(|v| v.as_str()) {
-        Some(v) => v,
+    let raw_values = match args.get("values").and_then(|v| v.as_array()) {
+        Some(arr) => arr.clone(),
         None => return FunctionResult {
             success: false,
             result: None,
-            error: Some("Missing required parameter: value".to_string()),
+            error: Some("Missing required parameter: values (must be an array)".to_string()),
         },
     };
+
+    if raw_values.is_empty() {
+        return FunctionResult {
+            success: false,
+            result: None,
+            error: Some("values array must not be empty".to_string()),
+        };
+    }
 
     let value_type = args.get("value_type").and_then(|v| v.as_str()).unwrap_or("literal");
     let datatype = args.get("datatype").and_then(|v| v.as_str()).unwrap_or("xsd:string");
@@ -332,27 +336,46 @@ pub fn add_property_value(conn: &mut Connection, args: &Value, app: Option<&taur
         use crate::eavto::Object;
         use crate::owl::Individual;
 
-        let object = if value_type == "iri" {
-            Object::Iri(value.to_string())
-        } else {
-            Object::Literal {
-                value: value.to_string(),
-                datatype: Some(datatype.to_string()),
-                language: None,
-            }
-        };
+        let objects: Vec<Object> = raw_values.iter()
+            .filter_map(|v| v.as_str())
+            .map(|value| {
+                if value_type == "iri" {
+                    Object::Iri(value.to_string())
+                } else {
+                    Object::Literal {
+                        value: value.to_string(),
+                        datatype: Some(datatype.to_string()),
+                        language: None,
+                    }
+                }
+            })
+            .collect();
+
+        if objects.is_empty() {
+            return Err(crate::owl::OwlError::InvalidOperation(
+                "values array contains no valid string entries".to_string()
+            ));
+        }
 
         let individual = Individual::new(instance_iri);
-        individual.add_property(conn, property_iri, object, "ai")?;
+        individual.add_property(conn, property_iri, objects, "ai")?;
 
-        // Emit entity-updated event
+        // backlinks update automatically in the Inspector
         if let Some(app_handle) = app {
             app_handle.emit("entity-updated", serde_json::json!({"entityId": instance_iri})).ok();
+            if value_type == "iri" {
+                for v in raw_values.iter().filter_map(|v| v.as_str()) {
+                    app_handle.emit("entity-updated", serde_json::json!({"entityId": v})).ok();
+                }
+            }
         }
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
-            "message": format!("Property {} added to {}", property_iri, instance_iri),
+            "message": format!(
+                "Property {} set on {} ({} value(s))",
+                property_iri, instance_iri, raw_values.len()
+            ),
         }))
     })() {
         Ok(result) => FunctionResult {
@@ -368,7 +391,9 @@ pub fn add_property_value(conn: &mut Connection, args: &Value, app: Option<&taur
     }
 }
 
-pub fn remove_property_value(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> FunctionResult {
+pub fn remove_property_value(
+    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
+) -> FunctionResult {
     let instance_iri = match args.get("instance_iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return FunctionResult {
@@ -399,7 +424,6 @@ pub fn remove_property_value(conn: &mut Connection, args: &Value, app: Option<&t
     match (|| {
         use crate::eavto::{store, query, Triple, Object};
 
-        // Find the triple to retract
         let triples_result = query::get_by_entity_predicate(conn, instance_iri, property_iri)?;
 
         for triple in triples_result.triples {
@@ -409,7 +433,6 @@ pub fn remove_property_value(conn: &mut Connection, args: &Value, app: Option<&t
                 Object::Literal { value: v, .. } => v == value,
                 Object::Integer(i) => i.to_string() == value,
                 Object::Number(n) => {
-                    // Try to parse the input value as f64 for numeric comparison
                     if let Ok(input_num) = value.parse::<f64>() {
                         (n - input_num).abs() < f64::EPSILON
                     } else {
@@ -421,11 +444,25 @@ pub fn remove_property_value(conn: &mut Connection, args: &Value, app: Option<&t
             };
 
             if matches {
-                store::retract_triples(conn, &[Triple::new(instance_iri, property_iri, triple.object)], "ai")?;
+                let ref_iri = if let Object::Iri(ref iri) = triple.object {
+                    Some(iri.clone())
+                } else {
+                    None
+                };
+                store::retract_triples(
+                    conn, &[Triple::new(instance_iri, property_iri, triple.object)], "ai",
+                )?;
 
-                // Emit entity-updated event
+                // backlinks update automatically in the Inspector
                 if let Some(app_handle) = app {
-                    app_handle.emit("entity-updated", serde_json::json!({"entityId": instance_iri})).ok();
+                    app_handle.emit(
+                        "entity-updated", serde_json::json!({"entityId": instance_iri}),
+                    ).ok();
+                    if let Some(iri) = ref_iri {
+                        app_handle.emit(
+                            "entity-updated", serde_json::json!({"entityId": iri}),
+                        ).ok();
+                    }
                 }
 
                 return Ok::<_, Box<dyn std::error::Error>>(serde_json::json!({

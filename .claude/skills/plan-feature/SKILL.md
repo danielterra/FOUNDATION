@@ -1,6 +1,6 @@
 ---
 name: plan-feature
-description: Plans a new feature by analyzing the codebase and generating a structured todo/ file
+description: Plans a new feature by analyzing the codebase and storing it directly in Foundation
 disable-model-invocation: true
 argument-hint: "<description of the feature to plan>"
 ---
@@ -15,76 +15,68 @@ argument-hint: "<description of the feature to plan>"
 
 ---
 
-## Architecture (Non-Negotiable)
-
-```
-Frontend (Svelte) → Commands → OWL → EAVTO → SQLite
-```
-
-- **EAVTO** (`src-tauri/src/eavto/`): only layer with direct SQLite access
-- **OWL** (`src-tauri/src/owl/`): must use `eavto::` — never `sqlx::` or `rusqlite::`
-- **Commands** (`src-tauri/src/commands/`): must use `owl::` — never `eavto::` directly
-- **Frontend**: invokes Tauri commands only
-
-## Code Quality Rules (apply to all planned code)
-
-- **Comments**: only *why* — never *what*, no commented-out blocks
-- **Logging**: `error!`/`warn!` and lifecycle events only — no `debug!`, `trace!`, `println!`, `console.*`
-- **Error handling**: no `.unwrap()`, no `panic!` — use `?` or `Result`
-- **Types**: no `: any` / `: unknown` — use specific types
-- **Formatting**: max 100 columns, max 1000 lines per `.rs`/`.svelte` file
-- **Ontology**: if new TTL files are needed, use the `/new-ontology` skill
-
----
-
 ## Steps
 
 1. **Understand the feature** from `$ARGUMENTS`
-2. **Explore the codebase** — read relevant files in all affected layers before planning anything
-3. **Identify all touchpoints** — which files in EAVTO, OWL, Commands, and Frontend need to change or be created
-4. **Design the implementation order** — always bottom-up: EAVTO → OWL → Commands → Frontend
-5. **Check ontology needs** — does this feature require new or modified TTL files?
-6. **Identify risks** — migrations, breaking changes, new dependencies, test coverage gaps
+2. **Explore the codebase** — read the project structure, identify languages, frameworks, layers, and conventions used
+3. **Decompose into User Stories** — each story: "As a [role], I want [capability], so that [benefit]"
+4. **Identify plan perspectives per story** — only include types that apply:
+   - `BackendArchitecturePlan`: server-side services, APIs, data access, business logic
+   - `FrontendArchitecturePlan`: UI components, state management, routing, API integration
+   - `UIUXDesignPlan`: new screens, user flows, or significant interaction design changes
+   - `DataArchitecturePlan`: schema changes, migrations, new storage structures
+   - `OntologyPlan`: new or modified ontology concepts
+5. **Design tasks bottom-up** — data layer first, then business logic, then API, then UI
+6. **Identify plan dependencies** — e.g., FrontendArchitecturePlan dependsOn BackendArchitecturePlan
+7. **Identify risks** — migrations, breaking changes, new dependencies, test coverage gaps
 
 ---
 
-## Output
+## Output — Store in Foundation via MCP
 
-Generate a single todo file in the `todo/` folder using the Write tool.
+### 1. Feature
 
-**Filename:** `YYYYMMDD-HHMMSS-<feature-slug>.md` — get the timestamp with `date +%Y%m%d-%H%M%S`
+Call `learn_thing` with `concept_iri=foundation:SoftwareFeature`, then set details with `learn_thing_detail`:
+- `rdfs:comment` → overview of what this feature does and why (value_type: literal)
 
-**The feature slug** is a short hyphen-separated name derived from the feature description (e.g., `user-authentication`, `file-export`, `graph-search`).
+### 2. Personas
 
-**The todo file must contain:**
+Before creating, call `remember_things` with `concept_iri=foundation:Persona` — reuse existing ones if they match.
 
-```markdown
-# Feature Plan: <Feature Name>
+Call `learn_thing` with `concept_iri=foundation:Persona`, then set:
+- `foundation:personaGoals` → what this persona wants to achieve
+- `foundation:personaContext` → device, frequency, expertise, environment
 
-## Overview
-One paragraph describing what this feature does and why it is needed.
+### 3. User Stories
 
-## Affected Layers
-List each layer (EAVTO / OWL / Commands / Frontend / Ontology) and what changes are needed there.
+Call `learn_thing` with `concept_iri=foundation:UserStory`, label: `"As a ..., I want ..."`, then set:
+- `foundation:capability` → the capability
+- `foundation:benefit` → the benefit
+- `foundation:acceptanceCriteria` → bullet list of done conditions
+- `foundation:userRole` → Persona IRI (value_type: iri)
+- `foundation:partOfFeature` → Feature IRI (value_type: iri)
+- `foundation:storyStatus` → `foundation:Pending` (value_type: iri)
 
-## Implementation Tasks
+### 4. Plans
 
-Ordered list of concrete tasks, bottom-up. Each task must include:
-- Which file(s) to create or modify
-- What to add/change (function names, structs, Tauri commands, Svelte components, etc.)
-- Any architectural constraints to respect
+Call `learn_thing` with the appropriate plan concept, then set:
+- `foundation:overview` → what work is needed and why
+- `foundation:risks` → risks and mitigations (omit if none)
+- `foundation:plannedAt` → ISO datetime (datatype: xsd:dateTime)
+- `foundation:contributesTo` → UserStory IRI (value_type: iri)
+- `foundation:dependsOn` → other Plan IRI (value_type: iri) — if applicable
 
-## Ontology Changes
-List any new TTL files or modifications to existing ones. If none, write "None".
+Plan icons: `BackendArchitecturePlan`=`dns`, `FrontendArchitecturePlan`=`web`, `UIUXDesignPlan`=`design_services`, `DataArchitecturePlan`=`schema`, `OntologyPlan`=`account_tree`
 
-## Risks & Notes
-- Migration needs (schema changes, data transforms)
-- New dependencies (Cargo crates, npm packages)
-- Test coverage requirements (eavto/ and owl/ changes need >80% coverage)
-- Anything else the implementer must know before starting
+### 5. Tasks
 
-## Validation
-Shell commands or manual steps to confirm the feature is working correctly after implementation.
-```
+Call `learn_thing` with `concept_iri=foundation:Task`, then set:
+- `foundation:description` → what to implement (files, functions, endpoints, etc.)
+- `foundation:notes` → path/to/file — if applicable
+- `foundation:status` → `foundation:Pending` (value_type: iri)
+- `foundation:dependsOn` → previous Task IRI (value_type: iri) — for ordering
+- `foundation:contributesTo` → Plan IRI (value_type: iri)
 
-After writing the file, print a summary: the feature planned, layers affected, number of tasks, and the todo file path.
+---
+
+After storing all entities, print a summary: feature name, plan types created, number of tasks per plan, and the IRIs of created entities.

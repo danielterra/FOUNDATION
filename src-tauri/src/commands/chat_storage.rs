@@ -115,64 +115,68 @@ pub(super) async fn create_message(
             "ai"
         ).map_err(|e| format!("Failed to create message: {}", e))?;
 
-        msg.add_property(conn, "foundation:role", Object::Literal {
+        msg.add_property(conn, "foundation:role", vec![Object::Literal {
             value: role_str.clone(),
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }, "ai").map_err(|e| format!("Failed to set role: {}", e))?;
+        }], "ai").map_err(|e| format!("Failed to set role: {}", e))?;
 
-        msg.add_property(conn, "foundation:content", Object::Literal {
+        msg.add_property(conn, "foundation:content", vec![Object::Literal {
             value: content_str,
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }, "ai").map_err(|e| format!("Failed to set content: {}", e))?;
+        }], "ai").map_err(|e| format!("Failed to set content: {}", e))?;
 
-        msg.add_property(conn, "foundation:sentAt", Object::DateTime(timestamp), "ai")
+        msg.add_property(conn, "foundation:sentAt", vec![Object::DateTime(timestamp)], "ai")
             .map_err(|e| format!("add_property failed: {}", e))?;
 
-        msg.add_property(conn, "foundation:partOfConversation", Object::Iri(conversation_iri), "ai")
-            .map_err(|e| format!("Property error: {}", e))?;
+        msg.add_property(
+            conn, "foundation:partOfConversation", vec![Object::Iri(conversation_iri)], "ai",
+        ).map_err(|e| format!("Property error: {}", e))?;
 
-        msg.add_property(conn, "foundation:tokenCount", Object::Integer(token_count as i64), "ai")
-            .map_err(|e| format!("Property error: {}", e))?;
+        msg.add_property(
+            conn, "foundation:tokenCount", vec![Object::Integer(token_count as i64)], "ai",
+        ).map_err(|e| format!("Property error: {}", e))?;
 
         if role_str == "user" {
             msg.add_property(conn, "foundation:sender",
-                Object::Iri("foundation:ThisUser".to_string()), "ai")
+                vec![Object::Iri("foundation:ThisUser".to_string())], "ai")
                 .map_err(|e| format!("Property error: {}", e))?;
             msg.add_property(conn, "foundation:receiver",
-                Object::Iri("foundation:LocalAIAssistant".to_string()), "ai")
+                vec![Object::Iri("foundation:LocalAIAssistant".to_string())], "ai")
                 .map_err(|e| format!("Property error: {}", e))?;
         } else {
             msg.add_property(conn, "foundation:sender",
-                Object::Iri("foundation:LocalAIAssistant".to_string()), "ai")
+                vec![Object::Iri("foundation:LocalAIAssistant".to_string())], "ai")
                 .map_err(|e| format!("Property error: {}", e))?;
             msg.add_property(conn, "foundation:receiver",
-                Object::Iri("foundation:ThisUser".to_string()), "ai")
+                vec![Object::Iri("foundation:ThisUser".to_string())], "ai")
                 .map_err(|e| format!("Property error: {}", e))?;
         }
 
         if let Some(model_str) = model_opt {
-            msg.add_property(conn, "foundation:model", Object::Literal {
+            msg.add_property(conn, "foundation:model", vec![Object::Literal {
                 value: model_str,
                 datatype: Some("xsd:string".to_string()),
                 language: None,
-            }, "ai").map_err(|e| format!("Failed to set model: {}", e))?;
+            }], "ai").map_err(|e| format!("Failed to set model: {}", e))?;
         }
 
         if let Some(stop_str) = stop_reason_opt {
-            msg.add_property(conn, "foundation:stopReason", Object::Literal {
+            msg.add_property(conn, "foundation:stopReason", vec![Object::Literal {
                 value: stop_str,
                 datatype: Some("xsd:string".to_string()),
                 language: None,
-            }, "ai").map_err(|e| format!("Failed to set stopReason: {}", e))?;
+            }], "ai").map_err(|e| format!("Failed to set stopReason: {}", e))?;
         }
 
         if let Some((input, output)) = tokens {
-            msg.add_property(conn, "foundation:inputTokens", Object::Integer(input as i64), "ai")
-                .map_err(|e| format!("Property error: {}", e))?;
-            msg.add_property(conn, "foundation:outputTokens", Object::Integer(output as i64), "ai")
-                .map_err(|e| format!("Property error: {}", e))?;
+            msg.add_property(
+                conn, "foundation:inputTokens", vec![Object::Integer(input as i64)], "ai",
+            ).map_err(|e| format!("Property error: {}", e))?;
+            msg.add_property(
+                conn, "foundation:outputTokens", vec![Object::Integer(output as i64)], "ai",
+            ).map_err(|e| format!("Property error: {}", e))?;
         }
 
         Ok(msg_iri_clone)
@@ -191,14 +195,12 @@ pub async fn load_conversation_history(
 
     let conversation_id = conversation_id.to_string();
     let messages = executor.read(move |conn| {
-        // Query all messages in conversation using OWL layer
         let message_iris = Individual::find_by_class_and_properties(
             conn,
             "foundation:AIConversationMessage",
             &[("foundation:partOfConversation", &conversation_id)],
         ).map_err(|e| format!("Failed to query messages: {}", e))?;
 
-        // Load each message
         let mut messages = Vec::new();
         let mut failed_count = 0;
         for iri in message_iris {
@@ -221,10 +223,8 @@ pub async fn load_conversation_history(
         "[CHAT] Loaded {} messages, {} failed", messages.len(), failed_count
     ));
 
-    // Sort by timestamp
     messages.sort_by_key(|m| m.timestamp);
 
-    // Apply token budget, ensuring tool_use/tool_result pairs stay together
     let mut selected = Vec::new();
     let mut total_tokens = 0;
     let mut i = messages.len();
@@ -234,17 +234,14 @@ pub async fn load_conversation_history(
         let msg = messages[i].clone();
         let msg_tokens = msg.token_count.unwrap_or(0);
 
-        // Check if this message has tool_result blocks
         let has_tool_results = msg.content.iter()
             .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
 
         if has_tool_results && i > 0 {
-            // Must include the previous message (assistant with tool_use)
             let prev_msg = messages[i - 1].clone();
             let prev_tokens = prev_msg.token_count.unwrap_or(0);
             let pair_tokens = msg_tokens + prev_tokens;
 
-            // Check if pair fits in budget
             if total_tokens + pair_tokens > max_tokens {
                 break; // Can't fit the pair, stop here
             }
@@ -254,9 +251,8 @@ pub async fn load_conversation_history(
             selected.push(msg);
             selected.push(prev_msg);
             total_tokens += pair_tokens;
-            i -= 1; // Skip the previous message in next iteration
+            i -= 1;
         } else {
-            // Single message (no tool results)
             if total_tokens + msg_tokens > max_tokens {
                 break;
             }
@@ -265,106 +261,124 @@ pub async fn load_conversation_history(
         }
     }
 
-    // Reverse to chronological order
     selected.reverse();
 
-    // Claude requires tool_result to have its corresponding tool_use in the previous message
+    // Validate tool_use/tool_result adjacency — Claude API requires that each assistant message
+    // with tool_use blocks is IMMEDIATELY followed by a user message containing tool_result blocks
+    // for ALL those IDs. The two-pass approach (tracking orphans) is insufficient because a
+    // tool_use may have a matching tool_result later in history (not immediately after), which
+    // fools the orphan check while still being invalid for the API.
     let selected_count = selected.len();
-    let mut cleaned = Vec::new();
-    let mut prev_tool_use_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut validated: Vec<AIConversationMessage> = Vec::with_capacity(selected.len());
 
     for msg in selected {
-        let mut clean_content = Vec::new();
+        let pending_tool_ids: Vec<String> = validated.last()
+            .filter(|prev| prev.role == "assistant")
+            .map(|prev| prev.content.iter()
+                .filter_map(|b| if let ContentBlock::ToolUse { id, .. } = b {
+                    Some(id.clone())
+                } else {
+                    None
+                })
+                .collect())
+            .unwrap_or_default();
 
-        for block in &msg.content {
-            match block {
-                ContentBlock::ToolUse { id, .. } => {
-                    prev_tool_use_ids.insert(id.clone());
-                    clean_content.push(block.clone());
-                },
-                ContentBlock::ToolResult { tool_use_id, .. } => {
-                    if prev_tool_use_ids.contains(tool_use_id) {
-                        clean_content.push(block.clone());
-                        prev_tool_use_ids.remove(tool_use_id);
-                    } else {
-                        super::log_backend("warn", &format!(
-                            "[CHAT] Removing orphaned tool_result: {}", tool_use_id
-                        ));
-                    }
-                },
-                _ => {
-                    clean_content.push(block.clone());
-                }
-            }
-        }
-
-        // (This can happen if a user message only had orphaned tool_results)
-        if !clean_content.is_empty() {
-            let mut cleaned_msg = msg;
-            cleaned_msg.content = clean_content;
-            cleaned.push(cleaned_msg);
-        } else {
-            super::log_backend("warn", &format!(
-                "[CHAT] Removing empty message after cleanup: {}", msg.iri
-            ));
-        }
-    }
-
-    // Remove orphaned tool_use blocks — happens when the token budget cut off the user's response
-    let mut final_cleaned = Vec::new();
-    for msg in cleaned {
-        let has_orphaned_tool_use = msg.content.iter().any(|b| {
-            if let ContentBlock::ToolUse { id, .. } = b {
-                prev_tool_use_ids.contains(id)
-            } else {
-                false
-            }
-        });
-
-        if has_orphaned_tool_use {
-            let clean_content: Vec<_> = msg.content.into_iter()
-                .filter_map(|block| {
-                    match &block {
-                        ContentBlock::ToolUse { id, .. } => {
-                            if prev_tool_use_ids.contains(id) {
-                                super::log_backend("warn", &format!(
-                                    "[CHAT] Removing orphaned tool_use: {}", id
-                                ));
-                                None
-                            } else {
-                                Some(block)
-                            }
-                        },
-                        _ => Some(block),
-                    }
+        if !pending_tool_ids.is_empty() {
+            // Previous assistant message has tool_use — this message must satisfy ALL of them
+            let resolved_ids: std::collections::HashSet<&str> = msg.content.iter()
+                .filter_map(|b| if let ContentBlock::ToolResult { tool_use_id, .. } = b {
+                    Some(tool_use_id.as_str())
+                } else {
+                    None
                 })
                 .collect();
 
-            if !clean_content.is_empty() {
-                final_cleaned.push(AIConversationMessage {
-                    iri: msg.iri,
-                    role: msg.role,
-                    content: clean_content,
-                    timestamp: msg.timestamp,
-                    token_count: msg.token_count,
-                    model: msg.model,
-                    stop_reason: msg.stop_reason,
-                    input_tokens: msg.input_tokens,
-                    output_tokens: msg.output_tokens,
-                });
+            let all_satisfied = pending_tool_ids.iter()
+                .all(|id| resolved_ids.contains(id.as_str()));
+
+            if all_satisfied {
+                validated.push(msg);
+            } else {
+                // Strip tool_use blocks from the previous assistant message — the required
+                // tool_results are not in the immediately following message
+                if let Some(prev) = validated.last_mut() {
+                    super::log_backend("warn", &format!(
+                        "[CHAT] Stripping tool_use blocks from {} — tool_results not after",
+                        prev.iri
+                    ));
+                    prev.content.retain(|b| !matches!(b, ContentBlock::ToolUse { .. }));
+                }
+
+                let clean_content: Vec<ContentBlock> = msg.content.iter()
+                    .filter(|b| !matches!(b, ContentBlock::ToolResult { .. }))
+                    .cloned()
+                    .collect();
+
+                if !clean_content.is_empty() {
+                    let mut clean_msg = msg;
+                    clean_msg.content = clean_content;
+                    validated.push(clean_msg);
+                } else {
+                    super::log_backend(
+                        "warn", "[CHAT] Dropped message with only orphaned tool_results",
+                    );
+                }
             }
         } else {
-            final_cleaned.push(msg);
+            if msg.role == "user"
+                && msg.content.iter().any(|b| matches!(b, ContentBlock::ToolResult { .. }))
+            {
+                let clean_content: Vec<ContentBlock> = msg.content.iter()
+                    .filter(|b| !matches!(b, ContentBlock::ToolResult { .. }))
+                    .cloned()
+                    .collect();
+
+                super::log_backend(
+                    "warn", "[CHAT] Stripping orphaned tool_result blocks (no preceding tool_use)",
+                );
+
+                if !clean_content.is_empty() {
+                    let mut clean_msg = msg;
+                    clean_msg.content = clean_content;
+                    validated.push(clean_msg);
+                }
+                // else: message only contained orphaned tool_results — drop it entirely
+            } else {
+                validated.push(msg);
+            }
         }
     }
 
+    let final_cleaned: Vec<AIConversationMessage> = validated
+        .into_iter()
+        .filter(|msg| !msg.content.is_empty())
+        .collect();
+
+    // Merge consecutive same-role messages — Claude API requires strict alternation.
+    // This can happen when a network error leaves an unanswered user message in the DB and the
+    // user sends another message before the conversation is recovered.
+    let mut merged: Vec<AIConversationMessage> = Vec::new();
+    for msg in final_cleaned {
+        if let Some(prev) = merged.last_mut() {
+            if prev.role == msg.role {
+                super::log_backend("warn", &format!(
+                    "[CHAT] Merging consecutive {} messages: {} into {}",
+                    msg.role, msg.iri, prev.iri
+                ));
+                prev.content.extend(msg.content);
+                continue;
+            }
+        }
+        merged.push(msg);
+    }
+
     super::log_backend("info", &format!(
-        "[CHAT] Selected {} messages within token budget ({}/{}), cleaned {} orphaned blocks",
-        final_cleaned.len(), total_tokens, max_tokens,
-        selected_count.saturating_sub(final_cleaned.len())
+        "[CHAT] Selected {} messages within token budget ({}/{}), cleaned {} messages",
+        merged.len(), total_tokens, max_tokens,
+        selected_count.saturating_sub(merged.len())
     ));
 
-    Ok(final_cleaned)
+    Ok(merged)
 }
 
 /// Load a single message from the database
@@ -372,7 +386,6 @@ pub(super) fn load_message(conn: &Connection, iri: &str) -> Result<AIConversatio
     let ind = Individual::get(conn, iri)
         .map_err(|e| format!("Failed to load message: {}", e))?;
 
-    // Extract properties
     let role = ind.properties.iter()
         .find(|(k, _)| k == "foundation:role")
         .and_then(|(_, v)| v.as_literal())
@@ -412,7 +425,6 @@ pub(super) fn load_message(conn: &Connection, iri: &str) -> Result<AIConversatio
         .find(|(k, _)| k == "foundation:outputTokens")
         .and_then(|(_, v)| if let Object::Integer(n) = v { Some(*n as usize) } else { None });
 
-    // Parse content JSON
     let content: Vec<ContentBlock> = serde_json::from_str(&content_json)
         .map_err(|e| format!("Failed to parse content JSON: {}", e))?;
 
@@ -439,7 +451,6 @@ fn get_tokenizer() -> &'static tiktoken_rs::CoreBPE {
 fn calculate_content_tokens(content_json: &str) -> Result<usize, String> {
     let bpe = get_tokenizer();
 
-    // Parse content blocks
     let blocks: Vec<ContentBlock> = serde_json::from_str(content_json)
         .map_err(|e| format!("Failed to parse content: {}", e))?;
 

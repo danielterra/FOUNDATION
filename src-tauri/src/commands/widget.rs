@@ -47,11 +47,11 @@ pub fn ensure_widget_table(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-pub fn db_insert_widget(conn: &Connection, widget: &Widget) -> Result<(), String> {
+pub fn db_insert_widget(conn: &Connection, widget: &Widget) -> Result<bool, String> {
     ensure_widget_table(conn)?;
 
-    conn.execute(
-        "INSERT INTO widgets \
+    let rows = conn.execute(
+        "INSERT OR IGNORE INTO widgets \
          (id, widget_type, entity_id, position_x, position_y, size_width, size_height, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
@@ -66,7 +66,7 @@ pub fn db_insert_widget(conn: &Connection, widget: &Widget) -> Result<(), String
         ],
     ).map_err(|e| format!("Failed to insert widget: {}", e))?;
 
-    Ok(())
+    Ok(rows > 0)
 }
 
 pub fn db_get_all_widgets(conn: &Connection) -> Result<Vec<Widget>, String> {
@@ -190,7 +190,6 @@ pub async fn widget__add(
     size: Option<Size>,
     executor: State<'_, DbExecutor>
 ) -> Result<Widget, String> {
-    // Validate widget type
     let valid_types = widget__list_types();
     if !valid_types.iter().any(|t| t.id == widget_type) {
         return Err(format!("Invalid widget type: {}. Available types: {:?}",
@@ -199,8 +198,9 @@ pub async fn widget__add(
         ));
     }
 
+    let sanitized_entity = entity_id.replace([':', '/', '#', ' '], "_");
     let widget = Widget {
-        id: format!("widget_{}_{}", widget_type, chrono::Utc::now().timestamp_millis()),
+        id: format!("widget_{}_{}", widget_type, sanitized_entity),
         widget_type,
         entity_id,
         position: position.unwrap_or(Position { x: 100.0, y: 100.0 }),
@@ -213,7 +213,6 @@ pub async fn widget__add(
         Ok(widget_clone.id.clone())
     }).await?;
 
-    // Emit event to frontend
     app.emit("widget-added", widget.clone()).ok();
 
     Ok(widget)
@@ -233,7 +232,6 @@ pub async fn widget__remove(
         Ok("deleted".to_string())
     }).await?;
 
-    // Emit event to frontend
     app.emit("widget-removed", widget_id).ok();
 
     Ok(())
@@ -281,7 +279,6 @@ pub async fn widget__clear_all(
         Ok("cleared".to_string())
     }).await?;
 
-    // Emit event to frontend
     app.emit("widgets-cleared", ()).ok();
 
     Ok(())

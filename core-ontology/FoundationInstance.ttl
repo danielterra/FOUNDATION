@@ -59,6 +59,15 @@ foundation:DefaultMaxInputTokensSetting a foundation:SoftwareSetting ;
     foundation:origin foundation:ThisFoundationInstance ;
     foundation:appliedTo foundation:ClaudeAIService .
 
+foundation:DefaultAPIRequestTimeoutSetting a foundation:SoftwareSetting ;
+    rdfs:label "Default API Request Timeout" ;
+    rdfs:comment "Timeout in seconds for Claude API requests" ;
+    foundation:settingKey "apiRequestTimeout" ;
+    foundation:settingValue "180" ;
+    foundation:settingCategory "ai" ;
+    foundation:origin foundation:ThisFoundationInstance ;
+    foundation:appliedTo foundation:ClaudeAIService .
+
 foundation:DefaultSystemPromptSetting a foundation:SoftwareSetting ;
     rdfs:label "Default System Prompt" ;
     rdfs:comment "Default system prompt for AI assistant" ;

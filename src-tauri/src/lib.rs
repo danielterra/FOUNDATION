@@ -6,6 +6,7 @@ mod commands;
 mod eavto;
 mod owl;
 mod ai;
+mod mcp;
 
 #[derive(serde::Serialize)]
 pub struct TripleData {
@@ -107,10 +108,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
-        .setup(|_app| {
+        .setup(|app| {
             // Setup is intentionally minimal - initialization happens via initialize_app command
             // This allows the app to start quickly and not block during build/CI
             // The initialize_app command will register the DbExecutor when called
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(mcp::serve(app_handle));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

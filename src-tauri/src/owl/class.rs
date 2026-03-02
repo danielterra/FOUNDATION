@@ -38,13 +38,11 @@ impl Class {
         let mut values = Vec::new();
         let mut current = list_head.to_string();
 
-        // Traverse the list until we reach rdf:nil
         loop {
             if current == rdf::NIL {
                 break;
             }
 
-            // Get rdf:first (the value)
             let first_result = query::get_by_entity_predicate(conn, &current, rdf::FIRST)?;
             if let Some(triple) = first_result.triples.first() {
                 if let Some(iri) = triple.object.as_iri() {
@@ -52,7 +50,6 @@ impl Class {
                 }
             }
 
-            // Get rdf:rest (next node)
             let rest_result = query::get_by_entity_predicate(conn, &current, rdf::REST)?;
             if let Some(triple) = rest_result.triples.first() {
                 if let Some(iri) = triple.object.as_iri() {
@@ -72,45 +69,37 @@ impl Class {
     pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Self> {
         let iri = iri.into();
 
-        // Get label
         let label_result = query::get_by_entity_predicate(conn, &iri, rdfs::LABEL)?;
         let label = label_result.triples.first()
             .and_then(|t| t.object.as_literal());
 
-        // Get icon
         let icon_result = query::get_by_entity_predicate(conn, &iri, "foundation:icon")?;
         let icon = icon_result.triples.first()
             .and_then(|t| t.object.as_literal());
 
-        // Get comment
         let comment_result = query::get_by_entity_predicate(conn, &iri, rdfs::COMMENT)?;
         let comment = comment_result.triples.first()
             .and_then(|t| t.object.as_literal());
 
-        // Get types (rdf:type)
         let types_result = query::get_by_entity_predicate(conn, &iri, rdf::TYPE)?;
         let types: Vec<Thing> = types_result.triples.iter()
             .filter_map(|t| t.object.as_iri())
             .map(|type_iri| Thing::get(conn, type_iri))
             .collect();
 
-        // Get super classes with their info (shallow - no recursion)
         let super_result = query::get_by_entity_predicate(conn, &iri, rdfs::SUB_CLASS_OF)?;
         let super_classes: Vec<Thing> = super_result.triples.iter()
             .filter_map(|t| t.object.as_iri())
             .map(|super_iri| Thing::get(conn, super_iri))
             .collect();
 
-        // Get sub classes with their info (shallow - no recursion)
         let sub_result = query::get_by_predicate_object(conn, rdfs::SUB_CLASS_OF, &iri)?;
         let sub_classes: Vec<Thing> = sub_result.triples.iter()
             .map(|t| Thing::get(conn, &t.subject))
             .collect();
 
-        // Get properties with source
         let properties = Self::get_properties(conn, &iri)?;
 
-        // Get backlinks - instances of this class (rdf:type references)
         let backlinks_result = query::get_by_predicate_object(conn, rdf::TYPE, &iri)?;
         let backlinks: Vec<(String, String, Object)> = backlinks_result.triples.iter()
             .map(|t| {
@@ -118,7 +107,6 @@ impl Class {
             })
             .collect();
 
-        // Get owl:oneOf enumerated values
         let one_of_result = query::get_by_entity_predicate(conn, &iri, owl::ONE_OF)?;
         let one_of_values = if let Some(triple) = one_of_result.triples.first() {
             if let Some(list_head) = triple.object.as_iri() {
@@ -153,7 +141,6 @@ impl Class {
         let mut all_properties: Vec<(String, String)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
 
-        // Add declared properties (rdfs:domain points to this class)
         let declared_result = query::get_by_predicate_object(conn, rdfs::DOMAIN, class_iri)?;
         for triple in declared_result.triples {
             if seen.insert(triple.subject.clone()) {
@@ -161,16 +148,16 @@ impl Class {
             }
         }
 
-        // Add universal properties from rdfs:Resource (all classes inherit from it)
-        let resource_props_result =
-            query::get_by_predicate_object(conn, rdfs::DOMAIN, "rdfs:Resource")?;
-        for triple in resource_props_result.triples {
-            if seen.insert(triple.subject.clone()) {
-                all_properties.push((triple.subject.clone(), "rdfs:Resource".to_string()));
+        for universal_class in &["owl:Thing", "rdfs:Resource"] {
+            let universal_props_result =
+                query::get_by_predicate_object(conn, rdfs::DOMAIN, universal_class)?;
+            for triple in universal_props_result.triples {
+                if seen.insert(triple.subject.clone()) {
+                    all_properties.push((triple.subject.clone(), universal_class.to_string()));
+                }
             }
         }
 
-        // Add inherited properties from superclasses recursively
         let super_result = query::get_by_entity_predicate(conn, class_iri, rdfs::SUB_CLASS_OF)?;
         let super_classes: Vec<String> = super_result.triples.iter()
             .filter_map(|t| t.object.as_iri())
@@ -179,7 +166,6 @@ impl Class {
 
         for super_class_iri in super_classes {
             if super_class_iri != "owl:Thing" && super_class_iri != "rdfs:Resource" {
-                // Recursively get properties from superclass
                 let inherited_props = Self::get_properties(conn, &super_class_iri)?;
                 for (prop, source) in inherited_props {
                     if seen.insert(prop.clone()) {
@@ -208,11 +194,9 @@ impl Class {
             ClassType::OwlClass => owl::CLASS,
         };
 
-        // Create class type (instance of owl:Class or rdfs:Class)
         let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(type_iri.to_string()));
         store::assert_triples(conn, &[triple], origin)?;
 
-        // Add required label
         let label_obj = Object::Literal {
             value: label.to_string(),
             datatype: Some("xsd:string".to_string()),
@@ -221,7 +205,6 @@ impl Class {
         let label_triple = Triple::new(&self.iri, rdfs::LABEL, label_obj);
         store::assert_triples(conn, &[label_triple], origin)?;
 
-        // Add required icon
         let icon_obj = Object::Literal {
             value: icon.to_string(),
             datatype: Some("xsd:string".to_string()),
@@ -230,7 +213,6 @@ impl Class {
         let icon_triple = Triple::new(&self.iri, "foundation:icon", icon_obj);
         store::assert_triples(conn, &[icon_triple], origin)?;
 
-        // Add subClassOf relationship (defaults to owl:Thing if not specified)
         let parent = super_class.unwrap_or(owl::THING);
         let subclass_triple =
             Triple::new(&self.iri, rdfs::SUB_CLASS_OF, Object::Iri(parent.to_string()));

@@ -67,7 +67,6 @@ pub fn search_classes(conn: &Connection, query: &str, limit: usize) -> Result<Ve
     use vocabulary::{rdf, owl};
     use crate::eavto::query;
 
-    // Get all classes
     let all_classes_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::CLASS)?;
 
     let mut results = Vec::new();
@@ -76,19 +75,16 @@ pub fn search_classes(conn: &Connection, query: &str, limit: usize) -> Result<Ve
     for triple in all_classes_result.triples {
         let class_iri = &triple.subject;
 
-        // Get thing (basic entity info)
         let thing = Thing::get(conn, class_iri);
         let label_lower = thing.label.to_lowercase();
 
-        // Check if matches query (case-insensitive)
         if label_lower.contains(&query_lower) {
-            // Calculate relevance score (lower is better)
             let score = if label_lower == query_lower {
-                0 // Exact match
+                0
             } else if label_lower.starts_with(&query_lower) {
-                1 // Starts with query
+                1
             } else {
-                2 // Contains query
+                2
             };
 
             results.push((score, SearchResult {
@@ -100,14 +96,12 @@ pub fn search_classes(conn: &Connection, query: &str, limit: usize) -> Result<Ve
         }
     }
 
-    // Sort by relevance score, then label length, then alphabetically
     results.sort_by(|a, b| {
         a.0.cmp(&b.0)
             .then_with(|| a.1.label.len().cmp(&b.1.label.len()))
             .then_with(|| a.1.label.cmp(&b.1.label))
     });
 
-    // Take top results and remove scores
     Ok(results.into_iter().take(limit).map(|(_, r)| r).collect())
 }
 
@@ -120,7 +114,6 @@ pub fn search_individuals(
     use vocabulary::{rdf, rdfs, owl};
     use crate::eavto::query;
 
-    // Get all entities with rdf:type that are NOT owl:Class
     let all_types_result = query::get_by_predicate(conn, rdf::TYPE)?;
 
     let mut seen = std::collections::HashSet::new();
@@ -128,7 +121,6 @@ pub fn search_individuals(
     let query_lower = query.to_lowercase();
 
     for triple in all_types_result.triples {
-        // Skip if it's a class
         if let Object::Iri(type_iri) = &triple.object {
             if type_iri == owl::CLASS {
                 continue;
@@ -137,22 +129,18 @@ pub fn search_individuals(
 
         let individual_iri = &triple.subject;
 
-        // Skip if already processed
         if !seen.insert(individual_iri.clone()) {
             continue;
         }
 
         let _individual = Individual::new(individual_iri);
 
-        // Get label
         let label_result = query::get_by_entity_predicate(conn, individual_iri, rdfs::LABEL)?;
         if let Some(label_triple) = label_result.triples.first() {
             if let Object::Literal { value: label, .. } = &label_triple.object {
                 let label_lower = label.to_lowercase();
 
-                // Check if matches query (case-insensitive)
                 if label_lower.contains(&query_lower) {
-                    // Get icon
                     let icon_result = query::get_by_entity_predicate(
                         conn,
                         individual_iri,
@@ -166,13 +154,12 @@ pub fn search_individuals(
                         }
                     });
 
-                    // Calculate relevance score (lower is better)
                     let score = if label_lower == query_lower {
-                        0 // Exact match
+                        0
                     } else if label_lower.starts_with(&query_lower) {
-                        1 // Starts with query
+                        1
                     } else {
-                        2 // Contains query
+                        2
                     };
 
                     results.push((score, SearchResult {
@@ -186,14 +173,12 @@ pub fn search_individuals(
         }
     }
 
-    // Sort by relevance score, then label length, then alphabetically
     results.sort_by(|a, b| {
         a.0.cmp(&b.0)
             .then_with(|| a.1.label.len().cmp(&b.1.label.len()))
             .then_with(|| a.1.label.cmp(&b.1.label))
     });
 
-    // Take top results and remove scores
     Ok(results.into_iter().take(limit).map(|(_, r)| r).collect())
 }
 
@@ -241,6 +226,11 @@ pub fn has_property_literal(conn: &Connection, entity: &str, predicate: &str, va
                 .any(|t| t.object.as_literal().map(|v| v == value).unwrap_or(false))
         })
         .unwrap_or(false)
+}
+
+/// Returns true if the entity has `rdf:type` pointing to the given class IRI
+pub fn is_instance_of(conn: &Connection, entity: &str, class_iri: &str) -> bool {
+    has_property_iri(conn, entity, vocabulary::rdf::TYPE, class_iri)
 }
 
 /// Returns the IRIs of all entities that have the given predicate pointing to the given object IRI

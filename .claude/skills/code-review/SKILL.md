@@ -47,6 +47,14 @@ grep -n "^[[:space:]]*//" src-tauri/src/**/*.rs
 grep -n "//.*TODO\|//.*FIXME\|//.*HACK\|//.*XXX" src-tauri/src/**/*.rs
 ```
 
+## Semantic Colors (Svelte)
+
+All colors must use CSS variables from `src/lib/colors.css`. Flag any hardcoded color value.
+
+```
+grep -n "#[0-9a-fA-F]\{3,6\}\|rgb(\|rgba(" src/**/*.{ts,svelte}
+```
+
 ## Logging
 
 Flag `debug!`, `trace!`, `println!`, `eprintln!`, `console.log/debug` in production code. Acceptable: `error!`, `warn!`, key lifecycle events.
@@ -75,35 +83,19 @@ cargo tarpaulin --manifest-path src-tauri/Cargo.toml \
   --include-files "src/eavto/*" "src/owl/*" --out Stdout 2>&1 | tail -n 20
 ```
 
-## Database Changes
+## Output — Create Issues in Foundation via MCP
 
-If `eavto/` or schema files changed, flag backward compatibility and migration needs.
+For each category that has violations, call `learn_thing` to create a `foundation:Issue` instance:
 
----
+- `concept_iri`: `foundation:Issue`
+- `label`: `"<Category>: <brief description>"` — e.g., `"Layer violation in commands/widget.rs"`
+- `icon`: `bug_report`
+- `comment`: full description with file paths, line numbers, and what to change
 
-## Output
+Then call `learn_thing_detail`:
+- `foundation:issueType` → `"bug"` (value_type: literal)
+- `foundation:issueStatus` → `foundation:Pending` (value_type: iri)
 
-For each topic category that has issues, create a file in the `todo/` folder using the Write tool.
+One Issue per category with violations. Use a clear label that names the category and the most affected file, e.g. `"Layer violation in commands/widget.rs"` or `"Unwrap calls in owl/individual.rs"`. Only create Issues for categories that have actual violations.
 
-**Naming:** `YYYYMMDD-HHMMSS-<topic-slug>.md` — use `date +%Y%m%d-%H%M%S` to get the timestamp prefix.
-
-**Topic slugs:**
-- Architecture violations → `layer-violations`
-- Rust quality (unwrap/panic) → `rust-quality`
-- Frontend quality (console/any) → `frontend-quality`
-- What-comments / commented-out code → `what-comments`
-- Production logging → `production-logging`
-- Line length (>100 cols) → `line-length`
-- File size (>1000 lines) → `file-splitting`
-- Test coverage → `test-coverage`
-- Database compatibility → `db-compatibility`
-
-**Each todo file must contain:**
-1. Title: `# Fix: <short description>`
-2. **Rule:** the violated rule in one sentence
-3. Per-file sections listing exact line numbers and what to change
-4. **Validation** block with shell commands to confirm the fix is complete
-
-Only create a file for a topic if that topic has actual violations. Do not create empty or placeholder files.
-
-After creating the todo files, print a summary: files reviewed, issues found by category, and the todo files created.
+After creating Issues, print a summary: files reviewed, issues found by category, and the IRIs of created Issue instances.

@@ -127,18 +127,6 @@ foundation:assignedTo a owl:ObjectProperty ;
 # Task Relationships
 # -----------------------------------------------------------------------------
 
-foundation:contributesTo a owl:ObjectProperty ;
-    rdfs:label "contributes to" ;
-    rdfs:comment "Links a Task to the Goal, Milestone, or Project it helps achieve" ;
-    rdfs:domain foundation:Task ;
-    rdfs:range owl:Thing .
-
-foundation:dependsOn a owl:ObjectProperty ;
-    rdfs:label "depends on" ;
-    rdfs:comment "This task is blocked by another task that must be completed first" ;
-    rdfs:domain foundation:Task ;
-    rdfs:range foundation:Task .
-
 foundation:relatedTo a owl:ObjectProperty ;
     rdfs:label "related to" ;
     rdfs:comment "Links the task to any related entity" ;

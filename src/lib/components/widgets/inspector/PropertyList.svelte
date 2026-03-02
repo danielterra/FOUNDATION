@@ -1,0 +1,342 @@
+<script>
+  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { convertFileSrc } from '@tauri-apps/api/core';
+  import { slide } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
+
+  let { properties, openEntityInspector } = $props();
+
+  const groupedProperties = $derived(
+    (properties ?? []).reduce((acc, prop) => {
+      if (!acc[prop.property]) {
+        acc[prop.property] = {
+          property: prop.property,
+          propertyLabel: prop.propertyLabel,
+          propertyComment: prop.propertyComment,
+          isObjectProperty: prop.isObjectProperty,
+          sourceClassLabel: prop.sourceClassLabel,
+          datatype: prop.datatype,
+          values: []
+        };
+      }
+      acc[prop.property].values.push({
+        value: prop.value,
+        valueLabel: prop.valueLabel,
+        valueIcon: prop.valueIcon,
+        unitLabel: prop.unitLabel,
+        datatype: prop.datatype
+      });
+      return acc;
+    }, {})
+  );
+
+  function isUrl(datatype) {
+    return datatype === 'xsd:anyURI';
+  }
+
+  async function openUrl_(url) {
+    try {
+      await openUrl(url);
+    } catch (err) {
+      console.error('Failed to open URL:', err);
+    }
+  }
+
+  function formatDate(timestamp) {
+    const ts = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
+    const date = new Date(ts);
+
+    if (isNaN(date.getTime())) return timestamp;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins} ${diffMins === 1 ? 'minute' : 'minutes'} ago`;
+
+    if (dateDay.getTime() === today.getTime()) {
+      if (diffHours < 2) return '1 hour ago';
+      return `${diffHours} hours ago`;
+    }
+
+    if (dateDay.getTime() === yesterday.getTime()) {
+      const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return `Yesterday at ${timeStr}`;
+    }
+
+    if (diffDays < 7) {
+      const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+      const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return `${dayName} at ${timeStr}`;
+    }
+
+    if (date.getFullYear() === now.getFullYear()) {
+      return date.toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
+      });
+    }
+
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
+    });
+  }
+
+  function formatDatatype(datatype) {
+    if (!datatype) return 'Data';
+    const parts = datatype.split(':');
+    const typeName = parts.length > 1 ? parts[1] : datatype;
+    return typeName.charAt(0).toUpperCase() + typeName.slice(1);
+  }
+
+  function isIconUrl(icon) {
+    if (!icon) return false;
+    return icon.startsWith('http://') || icon.startsWith('https://') ||
+           icon.startsWith('data:') || icon.startsWith('file://') || icon.startsWith('/');
+  }
+
+  function getIconUrl(icon) {
+    if (!icon) return '';
+    if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:')) return icon;
+    if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
+    if (icon.startsWith('/')) return convertFileSrc(icon);
+    return icon;
+  }
+</script>
+
+{#if properties?.length > 0}
+  <div class="properties-list">
+    {#each Object.values(groupedProperties) as propGroup (propGroup.property)}
+      <div class="property-item" transition:slide={{ duration: 400, easing: cubicOut }}>
+        <div class="property-header">
+          <div class="property-name">
+            {propGroup.propertyLabel}
+            {#if propGroup.isObjectProperty}
+              <span class="property-type">Object</span>
+            {:else}
+              <span class="property-type">{formatDatatype(propGroup.datatype)}</span>
+            {/if}
+            {#if propGroup.values.length > 1}
+              <span class="property-count">{propGroup.values.length}</span>
+            {/if}
+          </div>
+          {#if propGroup.sourceClassLabel}
+            <div class="property-source">from {propGroup.sourceClassLabel}</div>
+          {/if}
+        </div>
+
+        {#if propGroup.propertyComment}
+          <div class="property-comment">{propGroup.propertyComment}</div>
+        {/if}
+
+        <div class="property-values-group">
+          {#each propGroup.values as val, idx (propGroup.property + '_' + val.value + '_' + idx)}
+            <div
+              class="property-value"
+              class:clickable={propGroup.isObjectProperty}
+              role={propGroup.isObjectProperty ? "button" : undefined}
+              tabindex={propGroup.isObjectProperty ? 0 : undefined}
+              onclick={() => propGroup.isObjectProperty && openEntityInspector(val.value)}
+              onkeydown={(e) => propGroup.isObjectProperty && e.key === 'Enter' && openEntityInspector(val.value)}
+            >
+              {#if propGroup.isObjectProperty && val.valueIcon}
+                {#if isIconUrl(val.valueIcon)}
+                  <img src={getIconUrl(val.valueIcon)} alt="" class="value-icon-image" />
+                {:else}
+                  <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
+                {/if}
+              {/if}
+              {#if !propGroup.isObjectProperty && val.datatype === 'xsd:dateTime'}
+                {@const date = new Date(val.value)}
+                <div class="timestamp-display">
+                  <span class="value-text">
+                    {date.toLocaleString('en-US', {
+                      year: 'numeric', month: 'short', day: 'numeric',
+                      hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true
+                    })}
+                  </span>
+                  <span class="timestamp-relative">{formatDate(date.getTime())}</span>
+                </div>
+              {:else if !propGroup.isObjectProperty && isUrl(val.datatype)}
+                <button class="url-value" onclick={() => openUrl_(val.value)} title={val.value}>
+                  <span class="value-text">{val.valueLabel || val.value}</span>
+                  <span class="material-symbols-outlined url-open-icon">open_in_new</span>
+                </button>
+              {:else}
+                <span class="value-text">{val.valueLabel || val.value}</span>
+              {/if}
+              {#if val.unitLabel}
+                <span class="unit">{val.unitLabel}</span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/each}
+  </div>
+{/if}
+
+<style>
+  .properties-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .property-item {
+    padding: 12px;
+    background: color-mix(in srgb, var(--color-white) 3%, transparent);
+    border-radius: 8px;
+    border-left: 3px solid color-mix(in srgb, var(--color-neutral) 30%, transparent);
+  }
+
+  .property-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+
+  .property-name {
+    font-family: var(--font-title);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-neutral-active);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .property-type {
+    font-size: 10px;
+    padding: 2px 6px;
+    background: color-mix(in srgb, var(--color-neutral) 20%, transparent);
+    color: var(--color-neutral);
+    border-radius: 4px;
+    font-weight: 600;
+  }
+
+  .property-count {
+    font-size: 10px;
+    padding: 2px 6px;
+    background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+    color: var(--color-accent);
+    border-radius: 4px;
+    font-weight: 600;
+  }
+
+  .property-source {
+    font-size: 11px;
+    color: var(--color-neutral);
+    font-family: var(--font-code);
+  }
+
+  .property-comment {
+    font-size: 12px;
+    color: var(--color-neutral);
+    margin-bottom: 8px;
+    line-height: 1.4;
+  }
+
+  .property-values-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .property-value {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    background: color-mix(in srgb, var(--color-black) 30%, transparent);
+    border-radius: 6px;
+  }
+
+  .clickable {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .clickable:hover {
+    background: color-mix(in srgb, var(--color-interactive) 20%, transparent) !important;
+    transform: translateX(2px);
+  }
+
+  .clickable:active {
+    transform: translateX(1px);
+  }
+
+  .value-icon {
+    font-size: 18px;
+    color: var(--color-interactive);
+  }
+
+  .value-icon-image {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    object-fit: cover;
+  }
+
+  .value-text {
+    font-family: var(--font-code);
+    font-size: 13px;
+    color: var(--color-neutral-active);
+    flex: 1;
+  }
+
+  .unit {
+    font-size: 11px;
+    color: var(--color-neutral);
+    padding: 2px 6px;
+    background: color-mix(in srgb, var(--color-white) 5%, transparent);
+    border-radius: 4px;
+  }
+
+  .timestamp-display {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+  }
+
+  .timestamp-relative {
+    font-size: 11px;
+    color: var(--color-neutral);
+    opacity: 0.6;
+    font-family: var(--font-body);
+    font-style: italic;
+  }
+
+  .url-value {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--color-interactive);
+    text-align: left;
+  }
+
+  .url-value:hover .value-text {
+    text-decoration: underline;
+  }
+
+  .url-open-icon {
+    font-size: 14px;
+    opacity: 0.6;
+    flex-shrink: 0;
+  }
+</style>

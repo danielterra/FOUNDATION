@@ -55,9 +55,18 @@ pub struct EntityData {
 
     pub properties: Vec<PropertyValue>,
     pub backlinks: Vec<PropertyValue>, // Properties from other entities pointing to this one
+    pub status: Option<StatusInfo>,
 
     pub nodes: Vec<GraphNode>,
     pub links: Vec<GraphLink>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusInfo {
+    pub iri: String,
+    pub label: String,
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -139,6 +148,25 @@ pub async fn entity__get(
 
         serde_json::to_string(&data).map_err(|e| e.to_string())
     }).await
+}
+
+fn resolve_entity_status(conn: &Connection, properties: &[PropertyValue]) -> Option<StatusInfo> {
+    for prop in properties {
+        if !prop.is_object_property || prop.value.is_empty() {
+            continue;
+        }
+        if owl::is_instance_of(conn, &prop.value, "foundation:Status") {
+            let color = owl::get_literal_property(conn, &prop.value, "foundation:color")
+                .ok()
+                .flatten();
+            return Some(StatusInfo {
+                iri: prop.value.clone(),
+                label: prop.value_label.clone().unwrap_or_else(|| prop.value.clone()),
+                color,
+            });
+        }
+    }
+    None
 }
 
 fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityType, String> {
@@ -331,7 +359,6 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             (None, None)
         };
 
-        // Get unit symbol if property has a unit (e.g., "GB" instead of "GigaByte")
         let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
             let unit_display = owl::get_literal_property(conn, unit_iri, "qudt:symbol")
                 .ok()
@@ -398,6 +425,8 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         });
     }
 
+    let status = resolve_entity_status(conn, &properties);
+
     Ok(EntityData {
         id: class_id.to_string(),
         label,
@@ -409,6 +438,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         instances: vec![],
         properties,
         backlinks,
+        status,
         nodes,
         links,
     })
@@ -430,7 +460,6 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             let label = prop.label.clone().unwrap_or_else(|| property_iri.clone());
             let comment = prop.comment.clone();
 
-            // Get unit symbol if property has a unit (e.g., "GB" instead of "GigaByte")
             let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
                 let unit_display = owl::get_literal_property(conn, unit_iri, "qudt:symbol")
                     .ok()
@@ -569,7 +598,6 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         }
     }
 
-    // Add related individuals via incoming ObjectProperties (backlinks)
     // Still need raw query for reverse lookups
     let backlink_query = "SELECT subject, predicate
                           FROM triples
@@ -607,7 +635,6 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             added_node_ids.insert(subject.clone());
         }
 
-        // Get property label
         let prop_label = Property::get(conn, &predicate_iri)
             .ok()
             .and_then(|p| p.label)
@@ -656,6 +683,8 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         });
     }
 
+    let status = resolve_entity_status(conn, &properties);
+
     Ok(EntityData {
         id: individual_id.to_string(),
         label,
@@ -667,6 +696,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         instances: vec![],
         properties,
         backlinks,
+        status,
         nodes,
         links,
     })

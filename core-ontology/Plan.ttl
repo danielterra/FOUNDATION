@@ -1,0 +1,134 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Plan
+# =============================================================================
+# A design or intention describing how something should be accomplished
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+<http://foundation.local/ontology/Plan>
+    a owl:Ontology ;
+    owl:imports <http://foundation.local/ontology/Status> .
+
+foundation:Plan a owl:Class ;
+    rdfs:subClassOf foundation:Concept ;
+    rdfs:label "Plan" ;
+    rdfs:comment "A design or intention describing how something should be accomplished, composed of ordered tasks" ;
+    foundation:icon "map" ;
+    rdfs:seeAlso """
+A Plan is the design; Tasks are the execution.
+
+Examples:
+- UI/UX Design Plan for a new onboarding flow
+- Backend Architecture Plan for an authentication service
+- Frontend Architecture Plan for a dashboard
+- Data Architecture Plan for a reporting schema
+- Ontology Plan for a new knowledge domain
+
+Plans can depend on each other. For example, a FrontendArchitecturePlan
+typically dependsOn a BackendArchitecturePlan, since frontend components
+need to know the API contract first.
+""" .
+
+# -----------------------------------------------------------------------------
+# Plan Subtypes
+# -----------------------------------------------------------------------------
+
+foundation:UIUXDesignPlan a owl:Class ;
+    rdfs:subClassOf foundation:Plan ;
+    rdfs:label "UI/UX Design Plan" ;
+    rdfs:comment "Describes the intended user interface and user experience: screens, flows, interactions, and visual design decisions" ;
+    foundation:icon "design_services" ;
+    rdfs:seeAlso """
+Examples:
+- Wireframes and mockups for a checkout flow
+- Navigation structure and screen transitions
+- Component library decisions
+- Accessibility requirements
+- User interaction patterns
+""" .
+
+foundation:BackendArchitecturePlan a owl:Class ;
+    rdfs:subClassOf foundation:Plan ;
+    rdfs:label "Backend Architecture Plan" ;
+    rdfs:comment "Describes the intended server-side design: services, APIs, data access, business logic, and storage strategies" ;
+    foundation:icon "dns" ;
+    rdfs:seeAlso """
+Examples:
+- Authentication service API design
+- Database access layer functions
+- Business logic layer responsibilities
+- Command/handler structure
+- Integration points with external services
+""" .
+
+foundation:FrontendArchitecturePlan a owl:Class ;
+    rdfs:subClassOf foundation:Plan ;
+    rdfs:label "Frontend Architecture Plan" ;
+    rdfs:comment "Describes the intended client-side design: component hierarchy, state management, routing, and integration with backend APIs" ;
+    foundation:icon "web" ;
+    rdfs:seeAlso """
+Examples:
+- Component tree for a feature
+- State management strategy (store vs props)
+- API call organization and error handling
+- Route structure
+- Reactive data flow between components
+""" .
+
+foundation:DataArchitecturePlan a owl:Class ;
+    rdfs:subClassOf foundation:Plan ;
+    rdfs:label "Data Architecture Plan" ;
+    rdfs:comment "Describes the intended data model: schemas, migrations, relationships, and storage design" ;
+    foundation:icon "schema" ;
+    rdfs:seeAlso """
+Examples:
+- Database schema for a new feature
+- Migration strategy for existing data
+- Index design for query performance
+- Data retention and archival policy
+- Relationship between entities
+""" .
+
+foundation:OntologyPlan a owl:Class ;
+    rdfs:subClassOf foundation:Plan ;
+    rdfs:label "Ontology Plan" ;
+    rdfs:comment "Describes intended changes to the knowledge model: new classes, properties, individuals, or modifications to existing ontology files" ;
+    foundation:icon "account_tree" ;
+    rdfs:seeAlso """
+Examples:
+- New TTL file for a domain concept
+- New properties to add to an existing class
+- New named individuals for an enumeration
+- Imports to add to an existing ontology
+- Deprecation or refactoring of existing concepts
+""" .
+
+# -----------------------------------------------------------------------------
+# Plan Properties
+# -----------------------------------------------------------------------------
+
+foundation:overview a owl:DatatypeProperty ;
+    rdfs:label "overview" ;
+    rdfs:comment "One-paragraph description of what this plan covers and why it is needed" ;
+    rdfs:domain foundation:Plan ;
+    rdfs:range xsd:string .
+
+foundation:plannedAt a owl:DatatypeProperty ;
+    rdfs:label "planned at" ;
+    rdfs:comment "When this plan was created" ;
+    rdfs:domain foundation:Plan ;
+    rdfs:range xsd:dateTime .
+
+foundation:risks a owl:DatatypeProperty ;
+    rdfs:label "risks" ;
+    rdfs:comment "Known risks, open questions, or constraints to resolve before or during implementation" ;
+    rdfs:domain foundation:Plan ;
+    rdfs:range xsd:string .

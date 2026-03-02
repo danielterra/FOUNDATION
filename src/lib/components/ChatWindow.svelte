@@ -21,12 +21,14 @@
 	let showApiKeyInput = $state(false);
 	let messageLimit = $state(50);
 	let isLoadingMore = $state(false);
+	let isLoadingMessages = $state(true);
 	let hasMoreMessages = $state(true);
 	let textareaElement = $state(null);
 	let pendingAttachments = $state([]);  // {iri, fileName, mimeType, fileSize, localPath}
 	let fileInputElement = $state(null);
 	let elapsedSeconds = $state(0);
 	let elapsedInterval = $state(null);
+	let errorMessage = $state(null);
 
 	// Load recent messages on mount and request location
 	onMount(async () => {
@@ -77,12 +79,21 @@
 			}
 		});
 
+		// Listen for AI errors (e.g. recovery failures)
+		const unlistenAIError = await listen('ai-error', (event) => {
+			stopAIStatus();
+			if (event.payload && event.payload.message) {
+				showError(event.payload.message);
+			}
+		});
+
 		// Cleanup listeners on unmount
 		return () => {
 			unlistenImport();
 			unlistenMessages();
 			unlistenAIProcessing();
 			unlistenAIStatus();
+			unlistenAIError();
 			if (elapsedInterval) {
 				clearInterval(elapsedInterval);
 			}
@@ -172,6 +183,8 @@
 			scrollToBottom();
 		} catch (err) {
 			console.error('Failed to load messages:', err);
+		} finally {
+			isLoadingMessages = false;
 		}
 	}
 
@@ -247,6 +260,14 @@
 		}
 	}
 
+	function showError(msg) {
+		errorMessage = msg;
+	}
+
+	function dismissError() {
+		errorMessage = null;
+	}
+
 	async function sendMessage() {
 		if ((!inputText.trim() && pendingAttachments.length === 0) || isLoading || !isInitialized) return;
 
@@ -275,7 +296,7 @@
 			stopAIStatus();
 		}).catch(err => {
 			console.error('Failed to send message:', err);
-			alert('Failed to send message: ' + err);
+			showError(err);
 			stopAIStatus();
 		});
 	}
@@ -465,6 +486,17 @@
 						<small>Your API key is securely stored in your local ontology database</small>
 					</div>
 				{:else}
+					<!-- Error Banner -->
+					{#if errorMessage}
+						<div class="error-banner">
+							<span class="material-symbols-outlined">error</span>
+							<span class="error-text">{errorMessage}</span>
+							<button class="error-dismiss" onclick={dismissError} aria-label="Dismiss error">
+								<span class="material-symbols-outlined">close</span>
+							</button>
+						</div>
+					{/if}
+
 					<!-- Messages -->
 				<div class="chat-messages" bind:this={chatContainer} onscroll={handleScroll}>
 					{#if isLoadingMore}
@@ -473,7 +505,12 @@
 							<span>Loading more messages...</span>
 						</div>
 					{/if}
-					{#if messages.length === 0}
+					{#if isLoadingMessages}
+						<div class="empty-state">
+							<span class="material-symbols-outlined spinning">progress_activity</span>
+							<p>Loading messages...</p>
+						</div>
+					{:else if messages.length === 0}
 						<div class="empty-state">
 							<span class="material-symbols-outlined">chat_bubble</span>
 							<p>Start a conversation with the AI assistant</p>
@@ -612,6 +649,56 @@
 
 	.action-btn .material-symbols-outlined {
 		font-size: 18px;
+	}
+
+	/* Error Banner */
+	.error-banner {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 12px 14px;
+		background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
+		border-radius: 8px;
+		margin-bottom: 12px;
+		flex-shrink: 0;
+	}
+
+	.error-banner .material-symbols-outlined {
+		font-size: 18px;
+		color: var(--color-danger-hover);
+		flex-shrink: 0;
+		margin-top: 1px;
+	}
+
+	.error-text {
+		flex: 1;
+		font-size: 13px;
+		color: var(--color-danger-active);
+		line-height: 1.4;
+		word-break: break-word;
+	}
+
+	.error-dismiss {
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--color-danger-hover);
+		padding: 0;
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+		opacity: 0.7;
+		transition: opacity 0.15s;
+	}
+
+	.error-dismiss:hover {
+		opacity: 1;
+	}
+
+	.error-dismiss .material-symbols-outlined {
+		font-size: 16px;
+		margin-top: 0;
 	}
 
 	/* Loading more indicator */

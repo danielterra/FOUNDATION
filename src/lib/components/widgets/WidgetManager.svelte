@@ -120,7 +120,13 @@
 
     // Listen for widget events
     const unlistenAdded = await listen('widget-added', (event) => {
-      console.log('Widget added:', event.payload);
+      // If widget already exists (e.g. duplicate entity-created event), bring it to front
+      const existingIdx = widgets.findIndex(w => w.id === event.payload.id);
+      if (existingIdx >= 0) {
+        bringToFront(event.payload.id);
+        return;
+      }
+
       topZIndex++;
       const newWidget = { ...event.payload, zIndex: topZIndex };
 
@@ -138,18 +144,15 @@
     });
 
     const unlistenRemoved = await listen('widget-removed', (event) => {
-      console.log('Widget removed:', event.payload);
       widgets = widgets.filter(w => w.id !== event.payload);
     });
 
     const unlistenCleared = await listen('widgets-cleared', () => {
-      console.log('Widgets cleared');
       widgets = [];
     });
 
     // Listen for entity-created events to auto-open inspector
     const unlistenEntityCreated = await listen('entity-created', async (event) => {
-      console.log('Entity created, opening inspector:', event.payload.entityId);
       try {
         await invoke('widget__add', {
           widgetType: 'inspector',
@@ -194,6 +197,7 @@
     onmousedown={(e) => startDrag(e, widget)}
     onclick={() => bringToFront(widget.id)}
     role="dialog"
+    tabindex="0"
     aria-label="Widget"
     in:fly={{ x: -viewportWidth, duration: 1500, opacity: 1, easing: cubicOut }}
     out:fly={{ x: -viewportWidth, duration: 1500, opacity: 1, easing: cubicOut }}
@@ -212,7 +216,7 @@
 
   .widget-container.dragging {
     cursor: grabbing;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 12px 48px color-mix(in srgb, var(--color-black) 60%, transparent);
   }
 
   .widget-container :global(.widget-header) {

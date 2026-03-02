@@ -3,7 +3,7 @@ use crate::ai::{ChatMessage, GenerateRequest};
 use crate::ai::functions::{self, FunctionCall, FunctionResult};
 use crate::owl::DbExecutor;
 use crate::owl::{self, Individual, Object};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use serde_json::Value;
 
 #[tauri::command]
@@ -47,36 +47,36 @@ pub async fn ai__save_api_key(
         credential.add_property(
             conn,
             "foundation:credentialFor",
-            Object::Iri("foundation:ClaudeAIService".to_string()),
+            vec![Object::Iri("foundation:ClaudeAIService".to_string())],
             "ai"
         ).map_err(|e| format!("Failed to link to service: {}", e))?;
 
         credential.add_property(
             conn,
             "foundation:ownedBy",
-            Object::Iri("foundation:ThisUser".to_string()),
+            vec![Object::Iri("foundation:ThisUser".to_string())],
             "ai"
         ).map_err(|e| format!("Failed to set owner: {}", e))?;
 
         credential.add_property(
             conn,
             "foundation:credentialValue",
-            Object::Literal {
+            vec![Object::Literal {
                 value: api_key,
                 datatype: Some("xsd:string".to_string()),
                 language: None,
-            },
+            }],
             "ai"
         ).map_err(|e| format!("Failed to set credential value: {}", e))?;
 
         credential.add_property(
             conn,
             "foundation:credentialCreatedAt",
-            Object::Literal {
+            vec![Object::Literal {
                 value: now,
                 datatype: Some("xsd:dateTime".to_string()),
                 language: None,
-            },
+            }],
             "ai"
         ).map_err(|e| format!("Failed to set created timestamp: {}", e))?;
 
@@ -119,35 +119,67 @@ pub async fn ai__get_api_key(
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn ai__initialize(
-    _app: AppHandle,
+    app: AppHandle,
     api_key: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
 
-    let model_identifier = executor.read(|conn| {
+    let (model_identifier, timeout_secs) = executor.read(|conn| {
         let models = owl::find_entities_with_property(
             conn, "foundation:offeredBy", "foundation:ClaudeAIService",
         ).map_err(|e| format!("Failed to query models: {}", e))?;
 
+        let mut model = None;
         for model_iri in &models {
             if owl::has_property_literal(conn, model_iri, "foundation:isDefaultModel", "true") {
                 if let Ok(Some(identifier)) = owl::get_literal_property(
                     conn, model_iri, "foundation:modelIdentifier",
                 ) {
-                    return Ok(Some(identifier));
+                    model = Some(identifier);
+                    break;
                 }
             }
         }
 
-        Ok(None)
-    }).await.map_err(|e: String| format!("Failed to query default model: {}", e))?;
+        let timeout = if let Ok(setting) =
+            Individual::get(conn, "foundation:DefaultAPIRequestTimeoutSetting")
+        {
+            setting.properties.iter()
+                .find(|(k, _)| k == "foundation:settingValue")
+                .and_then(|(_, v)| v.as_literal())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(180)
+        } else {
+            180
+        };
+
+        Ok((model, timeout))
+    }).await.map_err(|e: String| format!("Failed to query AI settings: {}", e))?;
 
     if model_identifier.is_none() {
-        super::log_backend("warn", "No default model found in ontology, using hardcoded fallback");
+        super::log_backend(
+            "warn",
+            "No default model found in ontology. AI generation will fail until a model is configured in Settings.",
+        );
     }
 
-    ai::initialize_ai_with_model(api_key, model_identifier).await?;
+    super::log_backend("info", &format!("[AI] Initializing with timeout={}s", timeout_secs));
+    ai::initialize_ai_with_model(api_key, model_identifier, timeout_secs).await?;
 
+    let executor_state = app.state::<DbExecutor>();
+    match super::chat::chat__recover_pending_tools(app.clone(), executor_state).await {
+        Ok(count) if count > 0 => {
+            super::log_backend(
+                "info",
+                &format!("[RECOVERY] Recovered {} pending tool execution(s)", count),
+            );
+        }
+        Ok(_) => {}
+        Err(e) => {
+            super::log_backend("warn", &format!("[RECOVERY] Failed to check pending tools: {}", e));
+            app.emit("ai-error", serde_json::json!({ "message": e })).ok();
+        }
+    }
 
     Ok(())
 }

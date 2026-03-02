@@ -79,8 +79,8 @@
 		justify-content: center;
 		padding: 12px 16px;
 		margin-bottom: 12px;
-		background: color-mix(in srgb, var(--color-interactive) 10%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
+		background: color-mix(in srgb, var(--color-transition) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-transition) 30%, transparent);
 		border-radius: 12px;
 		animation: fadeIn 0.3s;
 	}
@@ -93,7 +93,7 @@
 
 	.ai-status-text {
 		font-size: 14px;
-		color: var(--color-interactive);
+		color: var(--color-transition);
 		font-weight: 500;
 		animation: pulse-opacity 1.5s ease-in-out infinite;
 	}
@@ -122,7 +122,7 @@
 		width: 8px;
 		height: 8px;
 		border-radius: 50%;
-		background: var(--color-interactive);
+		background: var(--color-transition);
 		animation: thinking-bounce 1.4s infinite ease-in-out;
 	}
 

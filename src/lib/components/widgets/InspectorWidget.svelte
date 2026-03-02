@@ -1,11 +1,11 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import { openPath } from '@tauri-apps/plugin-opener';
-  import { slide } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
+  import { listen } from '@tauri-apps/api/event';
+  import FilePreview from './inspector/FilePreview.svelte';
+  import PropertyList from './inspector/PropertyList.svelte';
+  import BacklinkList from './inspector/BacklinkList.svelte';
 
   let { entityId, widgetId } = $props();
 
@@ -13,7 +13,6 @@
   let loading = $state(true);
   let error = $state(null);
   let unlistenEntityUpdated = $state(null);
-  let collapsedGroups = $state(new Set());
 
   async function loadEntity() {
     loading = true;
@@ -22,7 +21,6 @@
     try {
       const resultStr = await invoke('entity__get', { entityId });
       entityData = JSON.parse(resultStr);
-
     } catch (err) {
       error = `Failed to load entity: ${entityId}`;
       console.error('Failed to load entity:', err);
@@ -41,10 +39,8 @@
 
   async function copyEntityIri() {
     if (!entityData?.id) return;
-
     try {
       await navigator.clipboard.writeText(entityData.id);
-      console.log('Copied entity IRI:', entityData.id);
     } catch (err) {
       console.error('Failed to copy IRI:', err);
     }
@@ -58,204 +54,31 @@
         position: null,
         size: null
       });
-      console.log('Opened inspector for:', entityIri);
     } catch (err) {
       console.error('Failed to open inspector:', err);
     }
   }
 
-  async function openFile(filePath) {
-    if (!filePath) return;
-    try {
-      // Remove file:// prefix if present
-      const cleanPath = filePath.startsWith('file://') ? filePath.replace('file://', '') : filePath;
-      await openPath(cleanPath);
-    } catch (err) {
-      console.error('Failed to open file:', err);
-    }
-  }
-
-  function formatFileSize(bytes) {
-    if (!bytes) return '0 B';
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${sizes[i]}`;
-  }
-
-  function isFile() {
-    return entityData?.types?.some(t => t.iri === 'foundation:File');
-  }
-
-  function getFileFilePath() {
-    const prop = entityData?.properties?.find(p => p.property === 'foundation:filePath');
-    return prop?.value;
-  }
-
-  function getFileMimeType() {
-    // First try direct mimeType property
-    let prop = entityData?.properties?.find(p => p.property === 'foundation:mimeType');
-    if (prop?.value) return prop.value;
-
-    // Try to get from hasFileType relationship
-    const hasFileType = entityData?.properties?.find(p => p.property === 'foundation:hasFileType');
-    if (hasFileType?.value) {
-      // Map FileType to mimeType
-      const fileTypeToMime = {
-        'foundation:FileType_PDF': 'application/pdf',
-        'foundation:FileType_PNG': 'image/png',
-        'foundation:FileType_JPEG': 'image/jpeg',
-        'foundation:FileType_JPG': 'image/jpeg',
-        'foundation:FileType_GIF': 'image/gif',
-        'foundation:FileType_WEBP': 'image/webp',
-      };
-      return fileTypeToMime[hasFileType.value];
-    }
-
-    return null;
-  }
-
-  function getFileFileName() {
-    const prop = entityData?.properties?.find(p => p.property === 'foundation:fileName');
-    return prop?.value || entityData?.label;
-  }
-
-  function getFileFileSize() {
-    const prop = entityData?.properties?.find(p => p.property === 'foundation:fileSize');
-    return prop?.value ? parseInt(prop.value) : null;
-  }
-
-  function toggleClassGroup(classIri) {
-    if (collapsedGroups.has(classIri)) {
-      collapsedGroups.delete(classIri);
-    } else {
-      collapsedGroups.add(classIri);
-    }
-    collapsedGroups = new Set(collapsedGroups);
-  }
-
   function isIconUrl(icon) {
     if (!icon) return false;
-    return icon.startsWith('http://') ||
-           icon.startsWith('https://') ||
-           icon.startsWith('data:') ||
-           icon.startsWith('file://') ||
-           icon.startsWith('/');
+    return icon.startsWith('http://') || icon.startsWith('https://') ||
+           icon.startsWith('data:') || icon.startsWith('file://') || icon.startsWith('/');
   }
 
   function getIconUrl(icon) {
     if (!icon) return '';
-
-    // If it's a URL or data URI, return as-is
-    if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:')) {
+    if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:'))
       return icon;
-    }
-
-    // If it's a file:// URI, convert to Tauri asset protocol
-    if (icon.startsWith('file://')) {
-      const path = icon.replace(/^file:\/\//, '');
-      return convertFileSrc(path);
-    }
-
-    // If it's an absolute local path, convert using Tauri's asset protocol
-    if (icon.startsWith('/')) {
-      return convertFileSrc(icon);
-    }
-
+    if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
+    if (icon.startsWith('/')) return convertFileSrc(icon);
     return icon;
-  }
-
-
-  function formatDate(timestamp) {
-    // Handle both milliseconds and seconds timestamps
-    const ts = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
-    const date = new Date(ts);
-
-    // Check if valid date
-    if (isNaN(date.getTime())) {
-      return timestamp; // Return original if invalid
-    }
-
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-
-    const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    // Just now (< 1 minute)
-    if (diffMins < 1) {
-      return 'just now';
-    }
-
-    // Minutes ago (< 1 hour)
-    if (diffMins < 60) {
-      return `${diffMins} ${diffMins === 1 ? 'minute' : 'minutes'} ago`;
-    }
-
-    // Hours ago (same day)
-    if (dateDay.getTime() === today.getTime()) {
-      if (diffHours < 2) {
-        return '1 hour ago';
-      }
-      return `${diffHours} hours ago`;
-    }
-
-    // Yesterday
-    if (dateDay.getTime() === yesterday.getTime()) {
-      const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      return `Yesterday at ${timeStr}`;
-    }
-
-    // Last 7 days - show day name with time
-    if (diffDays < 7) {
-      const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-      const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      return `${dayName} at ${timeStr}`;
-    }
-
-    // This year - show month, day and time
-    if (date.getFullYear() === now.getFullYear()) {
-      return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      });
-    }
-
-    // Other years - show full date with year
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
-  }
-
-  function formatDatatype(datatype) {
-    if (!datatype) return 'Data';
-    // Extract short name from XSD datatype (e.g., "xsd:string" -> "String")
-    const parts = datatype.split(':');
-    const typeName = parts.length > 1 ? parts[1] : datatype;
-    return typeName.charAt(0).toUpperCase() + typeName.slice(1);
   }
 
   onMount(async () => {
     loadEntity();
 
-    // Listen for entity-updated events
     unlistenEntityUpdated = await listen('entity-updated', (event) => {
-      // Check if this is the entity we're inspecting
       if (event.payload.entityId === entityId) {
-        console.log('Entity updated, reloading inspector:', entityId);
         loadEntity();
       }
     });
@@ -300,12 +123,24 @@
         </div>
       </div>
       <div class="header-actions">
-        <button class="action-btn" onclick={copyEntityIri} title="Copy IRI">
-          <span class="material-symbols-outlined">content_copy</span>
-        </button>
-        <button class="close-btn" onclick={closeWidget}>
-          <span class="material-symbols-outlined">close</span>
-        </button>
+        <div class="header-action-buttons">
+          <button class="action-btn" onclick={copyEntityIri} title="Copy IRI">
+            <span class="material-symbols-outlined">content_copy</span>
+          </button>
+          <button class="close-btn" onclick={closeWidget}>
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        {#if entityData?.status}
+          <div
+            class="status-badge"
+            style="--status-color: {entityData.status.color || 'var(--color-neutral)'}"
+            title={entityData.status.iri}
+          >
+            <span class="material-symbols-outlined status-badge-icon">radio_button_checked</span>
+            <span class="status-badge-label">{entityData.status.label}</span>
+          </div>
+        {/if}
       </div>
     </div>
   </div>
@@ -327,59 +162,18 @@
           <p class="description">{entityData.comment}</p>
         {/if}
 
-        {#if isFile()}
-          {@const rawFilePath = getFileFilePath()}
-          {@const filePath = rawFilePath?.startsWith('file://') ? rawFilePath.replace('file://', '') : rawFilePath}
-          {@const mimeType = getFileMimeType()}
-          {@const fileName = getFileFileName()}
-          {@const fileSize = getFileFileSize()}
-          {console.log('[INSPECTOR] File detected:', { rawFilePath, filePath, mimeType, fileName, fileSize, types: entityData?.types })}
-
-          <div class="file-preview-section">
-            <button
-              class="file-preview-card"
-              onclick={() => openFile(rawFilePath)}
-              title="Click to open in default app"
-            >
-              {#if mimeType?.startsWith('image/')}
-                <div class="file-image-preview">
-                  <img
-                    src={convertFileSrc(filePath)}
-                    alt={fileName}
-                  />
-                </div>
-              {:else if mimeType === 'application/pdf'}
-                <div class="file-pdf-preview">
-                  <embed
-                    src={convertFileSrc(filePath)}
-                    type="application/pdf"
-                  />
-                </div>
-              {:else}
-                <div class="file-generic-preview">
-                  <span class="material-symbols-outlined">description</span>
-                  <span class="file-label">File</span>
-                </div>
-              {/if}
-
-              <div class="file-preview-info">
-                <div class="file-preview-name">{fileName}</div>
-                {#if fileSize}
-                  <div class="file-preview-size">{formatFileSize(fileSize)}</div>
-                {/if}
-                <div class="file-preview-action">
-                  <span class="material-symbols-outlined">open_in_new</span>
-                  <span>Open file</span>
-                </div>
-              </div>
-            </button>
-          </div>
-        {/if}
+        <FilePreview {entityData} />
 
         {#if entityData.superClasses?.length > 0}
           <div class="thing-list">
             {#each entityData.superClasses as superClass}
-              <div class="thing-item clickable" onclick={() => openEntityInspector(superClass.iri)}>
+              <div
+                class="thing-item clickable"
+                role="button"
+                tabindex="0"
+                onclick={() => openEntityInspector(superClass.iri)}
+                onkeydown={(e) => e.key === 'Enter' && openEntityInspector(superClass.iri)}
+              >
                 {#if superClass.icon}
                   {#if isIconUrl(superClass.icon)}
                     <img src={getIconUrl(superClass.icon)} alt="" class="thing-icon-image" />
@@ -396,7 +190,13 @@
         {#if entityData.subClasses?.length > 0}
           <div class="thing-list">
             {#each entityData.subClasses as subClass}
-              <div class="thing-item clickable" onclick={() => openEntityInspector(subClass.iri)}>
+              <div
+                class="thing-item clickable"
+                role="button"
+                tabindex="0"
+                onclick={() => openEntityInspector(subClass.iri)}
+                onkeydown={(e) => e.key === 'Enter' && openEntityInspector(subClass.iri)}
+              >
                 {#if subClass.icon}
                   {#if isIconUrl(subClass.icon)}
                     <img src={getIconUrl(subClass.icon)} alt="" class="thing-icon-image" />
@@ -410,199 +210,20 @@
           </div>
         {/if}
 
-        {#if entityData.properties?.length > 0}
-            {@const groupedProperties = entityData.properties.reduce((acc, prop) => {
-                if (!acc[prop.property]) {
-                  acc[prop.property] = {
-                    property: prop.property,
-                    propertyLabel: prop.propertyLabel,
-                    propertyComment: prop.propertyComment,
-                    isObjectProperty: prop.isObjectProperty,
-                    sourceClassLabel: prop.sourceClassLabel,
-                    datatype: prop.datatype,
-                    values: []
-                  };
-                }
-                acc[prop.property].values.push({
-                  value: prop.value,
-                  valueLabel: prop.valueLabel,
-                  valueIcon: prop.valueIcon,
-                  unitLabel: prop.unitLabel,
-                  datatype: prop.datatype
-                });
-                return acc;
-              }, {})}
+        <PropertyList properties={entityData.properties} {openEntityInspector} />
 
-            <div class="properties-list">
-            {#each Object.values(groupedProperties) as propGroup (propGroup.property)}
-              <div class="property-item" transition:slide={{ duration: 400, easing: cubicOut }}>
-                <div class="property-header">
-                  <div class="property-name">
-                    {propGroup.propertyLabel}
-                    {#if propGroup.isObjectProperty}
-                      <span class="property-type">Object</span>
-                    {:else}
-                      <span class="property-type">{formatDatatype(propGroup.datatype)}</span>
-                    {/if}
-                    {#if propGroup.values.length > 1}
-                      <span class="property-count">{propGroup.values.length}</span>
-                    {/if}
-                  </div>
-                  {#if propGroup.sourceClassLabel}
-                    <div class="property-source">from {propGroup.sourceClassLabel}</div>
-                  {/if}
-                </div>
-
-                {#if propGroup.propertyComment}
-                  <div class="property-comment">{propGroup.propertyComment}</div>
-                {/if}
-
-                <div class="property-values-group">
-                  {#each propGroup.values as val, idx (propGroup.property + '_' + val.value + '_' + idx)}
-                    <div
-                      class="property-value"
-                      class:clickable={propGroup.isObjectProperty}
-                      onclick={() => propGroup.isObjectProperty && openEntityInspector(val.value)}
-                    >
-                      {#if propGroup.isObjectProperty && val.valueIcon}
-                        {#if isIconUrl(val.valueIcon)}
-                          <img src={getIconUrl(val.valueIcon)} alt="" class="value-icon-image" />
-                        {:else}
-                          <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
-                        {/if}
-                      {/if}
-                      {#if !propGroup.isObjectProperty && val.datatype === 'xsd:dateTime'}
-                        {@const date = new Date(val.value)}
-                        <div class="timestamp-display">
-                          <span class="value-text">
-                            {date.toLocaleString('en-US', {
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric',
-                              hour: 'numeric',
-                              minute: '2-digit',
-                              second: '2-digit',
-                              hour12: true
-                            })}
-                          </span>
-                          <span class="timestamp-relative">
-                            {formatDate(date.getTime())}
-                          </span>
-                        </div>
-                      {:else}
-                        <span class="value-text">{val.valueLabel || val.value}</span>
-                      {/if}
-                      {#if val.unitLabel}
-                        <span class="unit">{val.unitLabel}</span>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/each}
-            </div>
-          {/if}
-
-        {#if entityData.backlinks?.length > 0}
-            {@const groupedByClass = entityData.backlinks.reduce((acc, backlink) => {
-              const className = backlink.sourceClassLabel || 'Unknown';
-              const classIri = backlink.sourceClass || 'unknown';
-
-              if (!acc[classIri]) {
-                acc[classIri] = {
-                  className,
-                  classIri,
-                  entities: {}
-                };
-              }
-
-              if (!acc[classIri].entities[backlink.value]) {
-                acc[classIri].entities[backlink.value] = {
-                  entity: backlink.value,
-                  entityLabel: backlink.valueLabel || backlink.value,
-                  entityIcon: backlink.valueIcon,
-                  properties: []
-                };
-              }
-
-              acc[classIri].entities[backlink.value].properties.push({
-                property: backlink.property,
-                propertyLabel: backlink.propertyLabel,
-                propertyComment: backlink.propertyComment
-              });
-
-              return acc;
-            }, {})}
-
-            <div class="backlinks-list">
-              {#each Object.values(groupedByClass) as classGroup}
-                {@const entityCount = Object.keys(classGroup.entities).length}
-                {@const isCollapsed = collapsedGroups.has(classGroup.classIri)}
-                {#if entityCount > 5 && !collapsedGroups.has(classGroup.classIri) && !collapsedGroups.has(`expanded_${classGroup.classIri}`)}
-                  {collapsedGroups.add(classGroup.classIri)}
-                  {collapsedGroups = new Set(collapsedGroups)}
-                {/if}
-                <div class="class-group" transition:slide={{ duration: 400, easing: cubicOut }}>
-                  <button
-                    class="class-header"
-                    onclick={() => toggleClassGroup(classGroup.classIri)}
-                  >
-                    <span class="material-symbols-outlined chevron" class:expanded={!isCollapsed}>
-                      chevron_right
-                    </span>
-                    <span class="material-symbols-outlined class-icon">category</span>
-                    <span class="class-name">{classGroup.className}</span>
-                    <span class="class-count">{entityCount} {entityCount === 1 ? 'entity' : 'entities'}</span>
-                  </button>
-
-                  {#if !isCollapsed}
-                  {#each Object.values(classGroup.entities) as group}
-                <div class="backlink-group" transition:slide={{ duration: 400, easing: cubicOut }}>
-                  <div
-                    class="backlink-entity clickable"
-                    onclick={() => openEntityInspector(group.entity)}
-                  >
-                    {#if group.entityIcon}
-                      {#if isIconUrl(group.entityIcon)}
-                        <img src={getIconUrl(group.entityIcon)} alt="" class="entity-icon-image" />
-                      {:else}
-                        <span class="material-symbols-outlined entity-icon">{group.entityIcon}</span>
-                      {/if}
-                    {:else}
-                      <span class="material-symbols-outlined entity-icon">link</span>
-                    {/if}
-                    <div class="entity-info">
-                      <div class="entity-label">{group.entityLabel}</div>
-                      <div class="entity-count">{group.properties.length} {group.properties.length === 1 ? 'relationship' : 'relationships'}</div>
-                    </div>
-                    <span class="material-symbols-outlined arrow">arrow_forward</span>
-                  </div>
-
-                  <div class="backlink-properties">
-                    {#each group.properties as prop}
-                      <div class="backlink-property">
-                        <span class="material-symbols-outlined prop-icon">arrow_back</span>
-                        <div class="prop-info">
-                          <span class="prop-label">{prop.propertyLabel}</span>
-                          {#if prop.propertyComment}
-                            <span class="prop-comment">{prop.propertyComment}</span>
-                          {/if}
-                        </div>
-                      </div>
-                    {/each}
-                  </div>
-                </div>
-              {/each}
-              {/if}
-                </div>
-              {/each}
-            </div>
-        {/if}
+        <BacklinkList backlinks={entityData.backlinks} {openEntityInspector} />
 
         {#if entityData.instances?.length > 0}
           <div class="thing-list">
             {#each entityData.instances as instance}
-              <div class="thing-item instance clickable" onclick={() => openEntityInspector(instance.iri)}>
+              <div
+                class="thing-item instance clickable"
+                role="button"
+                tabindex="0"
+                onclick={() => openEntityInspector(instance.iri)}
+                onkeydown={(e) => e.key === 'Enter' && openEntityInspector(instance.iri)}
+              >
                 {#if instance.icon}
                   {#if isIconUrl(instance.icon)}
                     <img src={getIconUrl(instance.icon)} alt="" class="thing-icon-image" />
@@ -631,7 +252,7 @@
     border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
     border-radius: 12px;
     overflow: hidden;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
   }
 
   .widget-header {
@@ -661,7 +282,7 @@
 
   .entity-icon-symbol {
     font-size: 30px;
-    color: var(--color-interactive);
+    color: var(--color-neutral-active);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -698,7 +319,7 @@
     border: none;
     padding: 4px;
     cursor: pointer;
-    color: var(--color-neutral);
+    color: var(--color-interactive);
     border-radius: 4px;
     display: flex;
     align-items: center;
@@ -707,7 +328,7 @@
   }
 
   .close-btn:hover {
-    background: color-mix(in srgb, var(--color-white) 10%, transparent);
+    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
     color: var(--color-neutral-active);
   }
 
@@ -716,6 +337,14 @@
   }
 
   .header-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .header-action-buttons {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -726,7 +355,7 @@
     border: none;
     padding: 4px;
     cursor: pointer;
-    color: var(--color-neutral);
+    color: var(--color-interactive);
     border-radius: 4px;
     display: flex;
     align-items: center;
@@ -735,7 +364,7 @@
   }
 
   .action-btn:hover {
-    background: color-mix(in srgb, var(--color-white) 10%, transparent);
+    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
     color: var(--color-neutral-active);
   }
 
@@ -771,49 +400,6 @@
     color: var(--color-neutral);
     opacity: 0.5;
     font-size: 12px;
-  }
-
-  .tabs {
-    display: flex;
-    gap: 4px;
-    padding: 8px 12px 0;
-    background: color-mix(in srgb, var(--color-black) 20%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-  }
-
-  .tab {
-    padding: 8px 12px;
-    background: none;
-    border: none;
-    border-radius: 6px 6px 0 0;
-    font-family: var(--font-body);
-    font-size: 13px;
-    color: var(--color-neutral);
-    cursor: pointer;
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .tab:hover {
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    color: var(--color-neutral-active);
-  }
-
-  .tab.active {
-    background: color-mix(in srgb, var(--color-white) 8%, transparent);
-    color: var(--color-neutral-active);
-    font-weight: 600;
-  }
-
-  .badge {
-    background: var(--color-interactive);
-    color: var(--color-black);
-    padding: 2px 6px;
-    border-radius: 10px;
-    font-size: 11px;
-    font-weight: 600;
   }
 
   .widget-content {
@@ -915,416 +501,26 @@
     color: var(--color-neutral-active);
   }
 
-  .properties-list {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .property-item {
-    padding: 12px;
-    background: color-mix(in srgb, var(--color-white) 3%, transparent);
-    border-radius: 8px;
-    border-left: 3px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
-  }
-
-  .property-item.backlink {
-    border-left-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
-  }
-
-  .property-header {
-    display: flex;
-    justify-content: space-between;
+  .status-badge {
+    display: inline-flex;
     align-items: center;
-    margin-bottom: 6px;
-  }
-
-  .property-name {
-    font-family: var(--font-title);
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--color-neutral-active);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .property-type {
-    font-size: 10px;
-    padding: 2px 6px;
-    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
-    color: var(--color-interactive);
-    border-radius: 4px;
-    font-weight: 600;
-  }
-
-  .property-count {
-    font-size: 10px;
-    padding: 2px 6px;
-    background: color-mix(in srgb, var(--color-accent) 20%, transparent);
-    color: var(--color-accent);
-    border-radius: 4px;
-    font-weight: 600;
-  }
-
-  .property-source {
-    font-size: 11px;
-    color: var(--color-neutral);
-    font-family: var(--font-code);
-  }
-
-  .property-comment {
-    font-size: 12px;
-    color: var(--color-neutral);
-    margin-bottom: 8px;
-    line-height: 1.4;
-  }
-
-  .property-values-group {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .property-value {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px;
-    background: color-mix(in srgb, var(--color-black) 30%, transparent);
-    border-radius: 6px;
-  }
-
-  .value-icon {
-    font-size: 18px;
-    color: var(--color-interactive);
-  }
-
-  .value-icon-image {
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    object-fit: cover;
-  }
-
-  .value-text {
-    font-family: var(--font-code);
-    font-size: 13px;
-    color: var(--color-neutral-active);
-    flex: 1;
-  }
-
-  .unit {
-    font-size: 11px;
-    color: var(--color-neutral);
-    padding: 2px 6px;
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border-radius: 4px;
-  }
-
-  .timestamp-display {
-    display: flex;
-    flex-direction: column;
     gap: 4px;
-    flex: 1;
+    padding: 3px 8px 3px 5px;
+    background: color-mix(in srgb, var(--status-color) 18%, transparent);
+    border: 1px solid color-mix(in srgb, var(--status-color) 40%, transparent);
+    border-radius: 20px;
   }
 
-  .timestamp-relative {
-    font-size: 11px;
-    color: var(--color-neutral);
-    opacity: 0.6;
-    font-family: var(--font-body);
-    font-style: italic;
-  }
-
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    padding: 40px;
-    text-align: center;
-    color: var(--color-neutral);
-  }
-
-  .empty-state .material-symbols-outlined {
-    font-size: 48px;
-    opacity: 0.3;
-  }
-
-  /* Backlinks styles */
-  .backlinks-list {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    margin-bottom: 16px;
-  }
-
-  .class-group {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .class-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    border-radius: 8px;
-    border-left: 3px solid var(--color-interactive);
-    border: none;
-    width: 100%;
-    cursor: pointer;
-    transition: all 0.2s;
-    text-align: left;
-  }
-
-  .class-header:hover {
-    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
-  }
-
-  .chevron {
-    font-size: 20px;
-    color: var(--color-neutral);
-    transition: transform 0.2s;
-  }
-
-  .chevron.expanded {
-    transform: rotate(90deg);
-  }
-
-  .class-icon {
-    font-size: 20px;
-    color: var(--color-interactive);
-  }
-
-  .class-name {
-    font-family: var(--font-title);
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--color-neutral-active);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    flex: 1;
-  }
-
-  .class-count {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--color-interactive);
-    padding: 2px 8px;
-    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
-    border-radius: 12px;
-  }
-
-  .backlink-group {
-    background: color-mix(in srgb, var(--color-white) 3%, transparent);
-    border-radius: 8px;
-    overflow: hidden;
-    border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-  }
-
-  .backlink-entity {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px;
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-    transition: all 0.2s;
-  }
-
-  .backlink-entity .entity-icon {
-    font-size: 24px;
-    color: var(--color-interactive);
-  }
-
-  .backlink-entity .entity-icon-image {
-    width: 40px;
-    height: 40px;
-    border-radius: 6px;
-    object-fit: cover;
-  }
-
-  .entity-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .entity-label {
-    font-family: var(--font-title);
+  .status-badge-icon {
     font-size: 14px;
+    color: var(--status-color);
+  }
+
+  .status-badge-label {
+    font-family: var(--font-body);
+    font-size: 11px;
     font-weight: 600;
-    color: var(--color-neutral-active);
-  }
-
-  .entity-count {
-    font-size: 11px;
-    color: var(--color-neutral);
-  }
-
-  .backlink-entity .arrow {
-    font-size: 20px;
-    color: var(--color-neutral);
-    opacity: 0.5;
-    transition: all 0.2s;
-  }
-
-  .backlink-entity:hover .arrow {
-    opacity: 1;
-    transform: translateX(4px);
-  }
-
-  .backlink-properties {
-    padding: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .backlink-property {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px;
-    background: color-mix(in srgb, var(--color-black) 20%, transparent);
-    border-radius: 6px;
-  }
-
-  .backlink-property .prop-icon {
-    font-size: 16px;
-    color: var(--color-interactive);
-    opacity: 0.6;
-  }
-
-  .prop-info {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    flex: 1;
-  }
-
-  .prop-label {
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--color-neutral-active);
-  }
-
-  .prop-comment {
-    font-size: 11px;
-    color: var(--color-neutral);
-    line-height: 1.3;
-  }
-
-  /* File Preview Styles */
-  .file-preview-section {
-    margin-bottom: 16px;
-  }
-
-  .file-preview-card {
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-    border-radius: 8px;
-    padding: 12px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .file-preview-card:hover {
-    background: color-mix(in srgb, var(--color-white) 8%, transparent);
-    border-color: color-mix(in srgb, var(--color-white) 25%, transparent);
-    transform: translateY(-1px);
-  }
-
-  .file-image-preview {
-    width: 100%;
-    height: 200px;
-    border-radius: 6px;
-    overflow: hidden;
-    background: color-mix(in srgb, var(--color-white) 3%, transparent);
-  }
-
-  .file-image-preview img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-  }
-
-  .file-pdf-preview,
-  .file-generic-preview {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 400px;
-    background: color-mix(in srgb, var(--color-white) 3%, transparent);
-    border-radius: 6px;
-    gap: 8px;
-    overflow: hidden;
-  }
-
-  .file-pdf-preview embed {
-    width: 100%;
-    height: 400px;
-    border: none;
-    border-radius: 6px;
-  }
-
-  .file-pdf-preview .material-symbols-outlined,
-  .file-generic-preview .material-symbols-outlined {
-    font-size: 64px;
-    color: var(--color-interactive);
-  }
-
-  .pdf-label,
-  .file-label {
-    font-family: var(--font-body);
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--color-neutral);
-  }
-
-  .file-preview-info {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .file-preview-name {
-    font-family: var(--font-body);
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--color-neutral-active);
-    word-break: break-word;
-  }
-
-  .file-preview-size {
-    font-size: 12px;
-    color: var(--color-neutral);
-  }
-
-  .file-preview-action {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 4px;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--color-interactive);
-  }
-
-  .file-preview-action .material-symbols-outlined {
-    font-size: 16px;
+    color: var(--status-color);
+    white-space: nowrap;
   }
 </style>

@@ -137,6 +137,12 @@ ORDER BY rowid DESC
 LIMIT 20;"
 ```
 
+## Foundation MCP Tools
+
+- **ALWAYS use MCP tools** (`learn_thing`, `learn_thing_detail`, etc.) to interact with Foundation data
+- **NEVER access the database directly** via SQL INSERT/UPDATE/DELETE — always go through MCP tools
+- If MCP tools are not available (app not running), report findings and wait for the user to start the app
+
 ## Database & Storage
 
 - **User database**: `~/Documents/Foundation/FOUNDATION.db`
@@ -223,7 +229,30 @@ When creating instruction documents in the `todo/` folder:
 - **ALWAYS communicate in English** - All responses, documentation, comments, and messages must be in English
 - Never use Portuguese or other languages unless explicitly requested by the user
 
+## Ontology Workflow
+
+**⚠️ CRITICAL RULE: ALWAYS use MCP tools (`learn_concept`, `learn_connection_type`, `learn_thing`, etc.) to create or modify ontology classes and properties. NEVER edit TTL files directly.**
+
+- Classes → `learn_concept`
+- Properties → `learn_connection_type`
+- Instances → `learn_thing` + `learn_thing_detail`
+- Always invoke the `/new-ontology` skill to guide the process
+
 ## Ontology Design Principles
+
+### Property Placement Rule
+
+**⚠️ CRITICAL RULE: ALWAYS set `domain` to the class the property belongs to, never to the range class.**
+
+- A property with `rdfs:domain foundation:Task` is created with `domain: foundation:Task`
+- A property with `rdfs:domain owl:Thing` is universal and omits the domain parameter
+
+**Examples:**
+
+- ✅ `foundation:dependsOn` (domain: owl:Thing) → no domain parameter
+- ✅ `foundation:hasStatus` (domain: owl:Thing, range: foundation:Status) → no domain, NOT domain: foundation:Status
+- ✅ `foundation:userRole` (domain: foundation:UserStory) → domain: foundation:UserStory, NOT foundation:Persona
+- ❌ Never set domain to the range class just because the property references it
 
 ### Use References Over Primitives
 
@@ -273,16 +302,13 @@ When creating instruction documents in the `todo/` folder:
 - Free-text descriptions and notes
 - Amounts and quantities (combined with currency/unit references)
 
-**Import example:**
-```turtle
-<http://foundation.local/ontology/MyOntology>
-  a owl:Ontology ;
-  owl:imports <http://foundation.local/ontology/City> ,
-              <http://foundation.local/ontology/Company> ,
-              <http://foundation.local/ontology/EmailAddress> ,
-              <http://foundation.local/ontology/PhoneNumber> ;
-.
-```
+
+## Code Comments
+
+Only *why* comments are acceptable. Flag and remove:
+- Comments describing *what* the code does
+- Commented-out code blocks
+- TODO/FIXME/HACK/XXX markers
 
 ## Best Practices
 

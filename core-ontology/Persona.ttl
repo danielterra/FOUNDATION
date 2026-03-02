@@ -1,0 +1,57 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# Persona
+# =============================================================================
+# An archetypal user representing a group with shared goals and behaviors
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+<http://foundation.local/ontology/Persona>
+    a owl:Ontology ;
+    owl:imports <http://foundation.local/ontology/AbstractThing> .
+
+foundation:Persona a owl:Class ;
+    rdfs:subClassOf foundation:Concept ;
+    rdfs:label "Persona" ;
+    rdfs:comment "An archetypal user representing a group of real users who share goals, behaviors, and needs" ;
+    foundation:icon "person_search" ;
+    rdfs:seeAlso """
+Personas are used in UX design and product planning to ground decisions
+in real user needs rather than assumptions.
+
+Examples:
+- The First-Time User: low technical confidence, needs clear guidance
+- The Power User: values keyboard shortcuts and batch operations
+- The Administrator: manages other users, needs audit trails
+- The Mobile Commuter: uses the app on a phone with intermittent connectivity
+- The Data Analyst: exports data frequently, values precision and completeness
+""" .
+
+# -----------------------------------------------------------------------------
+# Persona Properties
+# -----------------------------------------------------------------------------
+
+foundation:personaGoals a owl:DatatypeProperty ;
+    rdfs:label "goals" ;
+    rdfs:comment "What this persona is trying to achieve when using the product" ;
+    rdfs:domain foundation:Persona ;
+    rdfs:range xsd:string .
+
+foundation:personaPainPoints a owl:DatatypeProperty ;
+    rdfs:label "pain points" ;
+    rdfs:comment "Frustrations or obstacles this persona commonly encounters" ;
+    rdfs:domain foundation:Persona ;
+    rdfs:range xsd:string .
+
+foundation:personaContext a owl:DatatypeProperty ;
+    rdfs:label "context" ;
+    rdfs:comment "The environment and circumstances in which this persona uses the product (device, frequency, expertise level, etc.)" ;
+    rdfs:domain foundation:Persona ;
+    rdfs:range xsd:string .

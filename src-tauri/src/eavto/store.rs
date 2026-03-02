@@ -20,7 +20,6 @@ pub fn assert_triples(
 ) -> Result<i64> {
     let tx = conn.transaction()?;
 
-    // Create transaction record (AUTOINCREMENT generates tx_id)
     let now = now_millis();
     tx.execute(
         "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
@@ -29,24 +28,29 @@ pub fn assert_triples(
 
     let tx_id = tx.last_insert_rowid();
 
-    // Get or create origin_id
     let origin_id = get_or_create_origin(&tx, origin)?;
 
-    // For each triple, retract existing values with same subject+predicate before inserting new one
+    // Retract all existing values for each unique (subject, predicate) pair in the batch.
+    // This must happen before any inserts so that passing multiple values for the same
+    // predicate (e.g., multiple participants) replaces the full set atomically.
+    let mut retracted_pairs: std::collections::HashSet<(&str, &str)> =
+        std::collections::HashSet::new();
     for triple in triples {
-        // Retract existing active triples with same subject and predicate
-        tx.execute(
-            "UPDATE triples
-             SET retracted = 1
-             WHERE subject = ? AND predicate = ? AND retracted = 0",
-            (&triple.subject, &triple.predicate),
-        )?;
+        let key = (triple.subject.as_str(), triple.predicate.as_str());
+        if retracted_pairs.insert(key) {
+            tx.execute(
+                "UPDATE triples
+                 SET retracted = 1
+                 WHERE subject = ? AND predicate = ? AND retracted = 0",
+                (&triple.subject, &triple.predicate),
+            )?;
+        }
+    }
 
-        // Insert the new triple
+    for triple in triples {
         insert_triple(&tx, triple, tx_id, origin_id, now)?;
     }
 
-    // Before commit, validate numeric literals have typed columns
     {
         let mut stmt = tx.prepare(
             "SELECT subject, predicate, object_datatype, object_number, object_integer
@@ -93,7 +97,7 @@ pub fn assert_triples(
                 log_backend("warn", &format!("  ... and {} more", bad_triples.len() - 5));
             }
         }
-    } // stmt is dropped here
+    }
 
     tx.commit()?;
     Ok(tx_id)
@@ -109,7 +113,6 @@ pub fn retract_triples(
 ) -> Result<i64> {
     let tx = conn.transaction()?;
 
-    // Create transaction record
     let now = now_millis();
     tx.execute(
         "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
@@ -119,7 +122,6 @@ pub fn retract_triples(
     let tx_id = tx.last_insert_rowid();
     let _origin_id = get_or_create_origin(&tx, origin)?;
 
-    // Mark matching triples as retracted
     // We need to match the exact triple (subject, predicate, AND object/object_value)
     for triple in triples {
         match &triple.object {
@@ -195,7 +197,6 @@ fn insert_triple(
     origin_id: i64,
     created_at: i64,
 ) -> rusqlite::Result<()> {
-    // Convert object to SQL columns
     // Need to compute everything together to ensure datatype matches typed columns
     let int_str;
     let num_str;
@@ -242,7 +243,6 @@ fn insert_triple(
         }
 
         Object::Literal { value, datatype, language } => {
-            // Parse typed literals and populate typed columns
             // If parse fails, return an error (user provided invalid data)
             match datatype.as_deref() {
                 Some("xsd:decimal") | Some("xsd:double") | Some("xsd:float") => {
@@ -345,7 +345,6 @@ fn insert_triple(
                     )
                 }
                 Some("xsd:date") => {
-                    // Parse date as midnight UTC timestamp for storage
                     let timestamp = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
                         .map(|date| {
                             date.and_hms_opt(0, 0, 0)
@@ -376,7 +375,6 @@ fn insert_triple(
                     )
                 }
                 _ => {
-                    // Other datatype - no typed column needed
                     (
                         None,
                         Some(value.as_str()),
@@ -444,7 +442,6 @@ fn insert_triple(
 
 /// Get or create origin ID
 fn get_or_create_origin(tx: &rusqlite::Transaction, origin: &str) -> rusqlite::Result<i64> {
-    // Try to get existing origin
     match tx.query_row(
         "SELECT id FROM origins WHERE name = ?",
         [origin],
@@ -452,7 +449,6 @@ fn get_or_create_origin(tx: &rusqlite::Transaction, origin: &str) -> rusqlite::R
     ) {
         Ok(id) => Ok(id),
         Err(rusqlite::Error::QueryReturnedNoRows) => {
-            // Create new origin
             tx.execute("INSERT INTO origins (name) VALUES (?)", [origin])?;
             Ok(tx.last_insert_rowid())
         }

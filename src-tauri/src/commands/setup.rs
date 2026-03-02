@@ -19,7 +19,6 @@ pub async fn initialize_app(
         || std::env::var("TAURI_ENV_DEBUG").is_ok() // Set during tauri build
     {
         super::log_backend("info", "Skipping database initialization (build/CI mode)");
-        // Create dummy executor for build mode
         let dummy_conn = Connection::open_in_memory()
             .map_err(|e| format!("Failed to create in-memory connection: {}", e))?;
         let executor = DbExecutor::new(dummy_conn);
@@ -28,7 +27,6 @@ pub async fn initialize_app(
         return Ok(());
     }
 
-    // Initialize database (blocking - runs in async context so won't block UI)
     let conn = owl::initialize_with_progress(app.clone())
         .map_err(|e| {
             let error_msg = format!("Failed to initialize database: {:?}", e);
@@ -37,7 +35,6 @@ pub async fn initialize_app(
             error_msg
         })?;
 
-    // Print stats
     if let Ok(stats) = owl::get_stats(&conn) {
         let stats_msg = format!(
             "Database initialized - Triples: {}, Active: {}, Transactions: {}, Entities: {}",
@@ -46,30 +43,9 @@ pub async fn initialize_app(
         super::log_backend("info", &stats_msg);
     }
 
-    // Register executor in Tauri state
     let executor = DbExecutor::new(conn);
     app.manage(executor);
-
-    // Emit completion event
     let _ = app.emit("import-complete", ());
-
-    // Check for pending tool executions (from interrupted sessions)
-    let executor_state = app.state::<DbExecutor>();
-    match super::chat::chat__recover_pending_tools(app.clone(), executor_state).await {
-        Ok(count) if count > 0 => {
-            super::log_backend(
-                "info",
-                &format!("[RECOVERY] Recovered {} pending tool execution(s)", count),
-            );
-        }
-        Ok(_) => {
-            // No pending tools, normal startup
-        }
-        Err(e) => {
-            super::log_backend("warn", &format!("[RECOVERY] Failed to check pending tools: {}", e));
-            // Non-fatal - app can continue
-        }
-    }
 
     Ok(())
 }
@@ -171,7 +147,6 @@ pub async fn setup__init(
 
     // Don't check again - assume caller used setup__check first
 
-    // Detect system information
     let hostname = hostname::get()
         .map_err(|e| format!("Failed to get hostname: {}", e))?
         .to_string_lossy()
@@ -181,7 +156,6 @@ pub async fn setup__init(
     let cpu_info = get_cpu_info();
     let memory_info = get_memory_info();
 
-    // Create Person instance with metadata
     let user = Individual::new("foundation:ThisUser");
     user.assert(conn, "foundation:Person", &user_name, "person", "setup")
         .map_err(|e| format!("Failed to create Person: {}", e))?;
@@ -191,7 +165,7 @@ pub async fn setup__init(
         datatype: Some("xsd:string".to_string()),
         language: Some("en".to_string()),
     };
-    user.add_property(conn, "foundation:name", name_obj, "setup")
+    user.add_property(conn, "foundation:name", vec![name_obj], "setup")
         .map_err(|e| format!("Failed to add user name: {}", e))?;
 
     if let Some(ref email_val) = email {
@@ -200,11 +174,10 @@ pub async fn setup__init(
             datatype: Some("xsd:string".to_string()),
             language: None,
         };
-        user.add_property(conn, "foundation:email", email_obj, "setup")
+        user.add_property(conn, "foundation:email", vec![email_obj], "setup")
             .map_err(|e| format!("Failed to add user email: {}", e))?;
     }
 
-    // Create Processor instance
     let processor = Individual::new("foundation:ThisProcessor");
     processor.assert(conn, "foundation:Processor", &cpu_info.model, "computer", "setup")
         .map_err(|e| format!("Failed to create Processor: {}", e))?;
@@ -214,11 +187,11 @@ pub async fn setup__init(
         datatype: Some("xsd:string".to_string()),
         language: None,
     };
-    processor.add_property(conn, "foundation:processorModel", model_obj, "setup")
+    processor.add_property(conn, "foundation:processorModel", vec![model_obj], "setup")
         .map_err(|e| format!("Failed to add processor model: {}", e))?;
 
     if let Some(cores) = cpu_info.cores {
-        processor.add_property(conn, "foundation:coreCount", Object::Integer(cores), "setup")
+        processor.add_property(conn, "foundation:coreCount", vec![Object::Integer(cores)], "setup")
             .map_err(|e| format!("Failed to add core count: {}", e))?;
     }
 
@@ -227,10 +200,9 @@ pub async fn setup__init(
         datatype: Some("xsd:string".to_string()),
         language: None,
     };
-    processor.add_property(conn, "foundation:architecture", arch_obj, "setup")
+    processor.add_property(conn, "foundation:architecture", vec![arch_obj], "setup")
         .map_err(|e| format!("Failed to add architecture: {}", e))?;
 
-    // Create Memory instance
     let memory = Individual::new("foundation:ThisMemory");
     let memory_label = format!("{}GB RAM", memory_info.capacity_gb);
     memory.assert(conn, "foundation:Memory", &memory_label, "computer", "setup")
@@ -239,7 +211,7 @@ pub async fn setup__init(
     memory.add_property(
         conn,
         "foundation:memoryCapacity",
-        Object::Integer(memory_info.capacity_gb),
+        vec![Object::Integer(memory_info.capacity_gb)],
         "setup",
     ).map_err(|e| format!("Failed to add memory capacity: {}", e))?;
 
@@ -248,10 +220,9 @@ pub async fn setup__init(
         datatype: Some("xsd:string".to_string()),
         language: None,
     };
-    memory.add_property(conn, "foundation:memoryType", mem_type_obj, "setup")
+    memory.add_property(conn, "foundation:memoryType", vec![mem_type_obj], "setup")
         .map_err(|e| format!("Failed to add memory type: {}", e))?;
 
-    // Create OperatingSystem instance
     let os = Individual::new("foundation:ThisOperatingSystem");
     let os_label = format!("{} {}", os_info.name, os_info.version);
     os.assert(conn, "foundation:OperatingSystem", &os_label, "computer", "setup")
@@ -262,7 +233,7 @@ pub async fn setup__init(
         datatype: Some("xsd:string".to_string()),
         language: None,
     };
-    os.add_property(conn, "foundation:osName", os_name_obj, "setup")
+    os.add_property(conn, "foundation:osName", vec![os_name_obj], "setup")
         .map_err(|e| format!("Failed to add OS name: {}", e))?;
 
     let os_version_obj = Object::Literal {
@@ -270,7 +241,7 @@ pub async fn setup__init(
         datatype: Some("xsd:string".to_string()),
         language: None,
     };
-    os.add_property(conn, "foundation:osVersion", os_version_obj, "setup")
+    os.add_property(conn, "foundation:osVersion", vec![os_version_obj], "setup")
         .map_err(|e| format!("Failed to add OS version: {}", e))?;
 
     let os_kernel_obj = Object::Literal {
@@ -278,10 +249,9 @@ pub async fn setup__init(
         datatype: Some("xsd:string".to_string()),
         language: None,
     };
-    os.add_property(conn, "foundation:osKernel", os_kernel_obj, "setup")
+    os.add_property(conn, "foundation:osKernel", vec![os_kernel_obj], "setup")
         .map_err(|e| format!("Failed to add OS kernel: {}", e))?;
 
-    // Create Computer instance with metadata
     let computer = Individual::new("foundation:ThisComputer");
     computer.assert(conn, "foundation:Computer", &hostname, "computer", "setup")
         .map_err(|e| format!("Failed to create Computer: {}", e))?;
@@ -291,35 +261,32 @@ pub async fn setup__init(
         datatype: Some("xsd:string".to_string()),
         language: None,
     };
-    computer.add_property(conn, "foundation:hostname", hostname_obj, "setup")
+    computer.add_property(conn, "foundation:hostname", vec![hostname_obj], "setup")
         .map_err(|e| format!("Failed to add hostname: {}", e))?;
 
-    // Link computer to components
     computer.add_property(
         conn,
         "foundation:hasProcessor",
-        Object::Iri("foundation:ThisProcessor".to_string()),
+        vec![Object::Iri("foundation:ThisProcessor".to_string())],
         "setup",
     ).map_err(|e| format!("Failed to link Computer -> Processor: {}", e))?;
 
     computer.add_property(
         conn,
         "foundation:hasMemory",
-        Object::Iri("foundation:ThisMemory".to_string()),
+        vec![Object::Iri("foundation:ThisMemory".to_string())],
         "setup",
     ).map_err(|e| format!("Failed to link Computer -> Memory: {}", e))?;
 
     computer.add_property(
         conn,
         "foundation:hasOperatingSystem",
-        Object::Iri("foundation:ThisOperatingSystem".to_string()),
+        vec![Object::Iri("foundation:ThisOperatingSystem".to_string())],
         "setup",
     ).map_err(|e| format!("Failed to link Computer -> OperatingSystem: {}", e))?;
 
-    // Find the SoftwareRelease for this version using semantic query
     let version = env!("CARGO_PKG_VERSION").to_string();
 
-    // Query: find SoftwareRelease with versionNumber AND releaseOf FoundationProduct
     let releases = Individual::find_by_class_and_properties(
         conn,
         "foundation:SoftwareRelease",
@@ -337,26 +304,22 @@ pub async fn setup__init(
         )
     })?.clone();
 
-    // Create FOUNDATION Application instance
     let foundation_label = format!("FOUNDATION v{}", version);
     let foundation = Individual::new("foundation:ThisFoundationInstance");
     foundation.assert(conn, "foundation:Application", &foundation_label, "apps", "setup")
         .map_err(|e| format!("Failed to create Application instance: {}", e))?;
 
-    // Link Application to SoftwareRelease
     foundation.add_property(
         conn,
         "foundation:installedFrom",
-        Object::Iri(release_iri.clone()),
+        vec![Object::Iri(release_iri.clone())],
         "setup",
     ).map_err(|e| format!("Failed to link to SoftwareRelease: {}", e))?;
 
-    // Create Local AI Assistant instance
     let ai_assistant = Individual::new("foundation:LocalAIAssistant");
     ai_assistant.assert(conn, "foundation:SoftwareAgent", "FOUNDATION AI Assistant", "ai", "setup")
         .map_err(|e| format!("Failed to create AI assistant: {}", e))?;
 
-    // Use provided AI service or default to Claude
     let service_iri = ai_service_iri.unwrap_or_else(|| "foundation:ClaudeAIService".to_string());
 
     let ai_description = Object::Literal {
@@ -364,14 +327,13 @@ pub async fn setup__init(
         datatype: Some("xsd:string".to_string()),
         language: Some("en".to_string()),
     };
-    ai_assistant.add_property(conn, "rdfs:comment", ai_description, "setup")
+    ai_assistant.add_property(conn, "rdfs:comment", vec![ai_description], "setup")
         .map_err(|e| format!("Failed to add AI description: {}", e))?;
 
-    // Connect AI Assistant to AI Service
     ai_assistant.add_property(
         conn,
         "foundation:usesService",
-        Object::Iri(service_iri.clone()),
+        vec![Object::Iri(service_iri.clone())],
         "setup"
     ).map_err(|e| format!("Failed to link AI to service: {}", e))?;
 
@@ -389,35 +351,35 @@ pub async fn setup__init(
             "setup",
         ).map_err(|e| format!("Failed to create model setting: {}", e))?;
 
-        model_setting.add_property(conn, "foundation:settingKey", Object::Literal {
+        model_setting.add_property(conn, "foundation:settingKey", vec![Object::Literal {
             value: "aiModel".to_string(),
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }, "setup").map_err(|e| format!("Failed to set settingKey: {}", e))?;
+        }], "setup").map_err(|e| format!("Failed to set settingKey: {}", e))?;
 
-        model_setting.add_property(conn, "foundation:settingValue", Object::Literal {
+        model_setting.add_property(conn, "foundation:settingValue", vec![Object::Literal {
             value: model_iri,
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }, "setup").map_err(|e| format!("Failed to set settingValue: {}", e))?;
+        }], "setup").map_err(|e| format!("Failed to set settingValue: {}", e))?;
 
-        model_setting.add_property(conn, "foundation:settingCategory", Object::Literal {
+        model_setting.add_property(conn, "foundation:settingCategory", vec![Object::Literal {
             value: "ai".to_string(),
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }, "setup").map_err(|e| format!("Failed to set settingCategory: {}", e))?;
+        }], "setup").map_err(|e| format!("Failed to set settingCategory: {}", e))?;
 
         model_setting.add_property(
             conn,
             "foundation:origin",
-            Object::Iri("foundation:ThisFoundationInstance".to_string()),
+            vec![Object::Iri("foundation:ThisFoundationInstance".to_string())],
             "setup"
         ).map_err(|e| format!("Failed to set origin: {}", e))?;
 
         model_setting.add_property(
             conn,
             "foundation:appliedTo",
-            Object::Iri(service_iri),
+            vec![Object::Iri(service_iri)],
             "setup"
         ).map_err(|e| format!("Failed to set appliedTo: {}", e))?;
     }
@@ -428,39 +390,38 @@ pub async fn setup__init(
 
     let language_setting = Individual::get(conn, "foundation:DefaultLanguageSetting")
         .map_err(|e| format!("Failed to get DefaultLanguageSetting: {}", e))?;
-    language_setting.add_property(conn, "foundation:settingValue", Object::Literal {
+    language_setting.add_property(conn, "foundation:settingValue", vec![Object::Literal {
         value: locale_info.language.clone(),
         datatype: Some("xsd:string".to_string()),
         language: None,
-    }, "setup").map_err(|e| format!("Failed to update language setting: {}", e))?;
+    }], "setup").map_err(|e| format!("Failed to update language setting: {}", e))?;
 
     let locale_setting = Individual::get(conn, "foundation:DefaultLocaleSetting")
         .map_err(|e| format!("Failed to get DefaultLocaleSetting: {}", e))?;
-    locale_setting.add_property(conn, "foundation:settingValue", Object::Literal {
+    locale_setting.add_property(conn, "foundation:settingValue", vec![Object::Literal {
         value: locale_info.locale.clone(),
         datatype: Some("xsd:string".to_string()),
         language: None,
-    }, "setup").map_err(|e| format!("Failed to update locale setting: {}", e))?;
+    }], "setup").map_err(|e| format!("Failed to update locale setting: {}", e))?;
 
     let country_setting = Individual::get(conn, "foundation:DefaultCountrySetting")
         .map_err(|e| format!("Failed to get DefaultCountrySetting: {}", e))?;
-    country_setting.add_property(conn, "foundation:settingValue", Object::Literal {
+    country_setting.add_property(conn, "foundation:settingValue", vec![Object::Literal {
         value: locale_info.country.clone(),
         datatype: Some("xsd:string".to_string()),
         language: None,
-    }, "setup").map_err(|e| format!("Failed to update country setting: {}", e))?;
+    }], "setup").map_err(|e| format!("Failed to update country setting: {}", e))?;
 
-    // Establish relationships
     computer.add_property(
         conn,
         "foundation:hasUser",
-        Object::Iri("foundation:ThisUser".to_string()),
+        vec![Object::Iri("foundation:ThisUser".to_string())],
         "setup",
     ).map_err(|e| format!("Failed to link Computer -> User: {}", e))?;
     foundation.add_property(
         conn,
         "foundation:runsOn",
-        Object::Iri("foundation:ThisComputer".to_string()),
+        vec![Object::Iri("foundation:ThisComputer".to_string())],
         "setup",
     ).map_err(|e| format!("Failed to link FOUNDATION -> Computer: {}", e))?;
 
@@ -505,7 +466,6 @@ pub async fn setup__init(
     serde_json::to_string(&result).map_err(|e| e.to_string())
     }).await?;
 
-    // Deserialize the result
     serde_json::from_str(&result_json).map_err(|e| e.to_string())
 }
 
@@ -516,7 +476,6 @@ pub async fn setup__list_ai_services(
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
     executor.read(|conn| {
-        // Query all instances of foundation:Service that have AI-related properties
         let service_iris = owl::find_entities_with_property(conn, "rdf:type", "foundation:Service")
             .map_err(|e| format!("Failed to query services: {}", e))?;
 
@@ -524,7 +483,6 @@ pub async fn setup__list_ai_services(
         for service_iri in service_iris {
             let service_iri = &service_iri;
 
-            // Get service details
             if let Ok(service_ind) = Individual::get(conn, service_iri) {
                 let label = service_ind.label;
                 let comment = service_ind.properties.iter()
@@ -552,7 +510,6 @@ pub async fn setup__list_ai_models(
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
     executor.read(move |conn| {
-        // Query models, optionally filtered by service
         let model_iris = if let Some(ref service) = service_iri {
             owl::find_entities_with_property(conn, "foundation:offeredBy", service)
                 .map_err(|e| format!("Failed to query models for service: {}", e))?
@@ -565,7 +522,6 @@ pub async fn setup__list_ai_models(
         for model_iri in model_iris {
             let model_iri = &model_iri;
 
-            // Get model details
             if let Ok(model_ind) = Individual::get(conn, model_iri) {
                 let label = model_ind.label;
                 let comment = model_ind.properties.iter()
@@ -600,7 +556,6 @@ pub async fn setup__list_ai_models(
             }
         }
 
-        // Sort by isDefault (default first) then by label
         result.sort_by(|a, b| {
             let a_default = a["isDefault"].as_bool().unwrap_or(false);
             let b_default = b["isDefault"].as_bool().unwrap_or(false);

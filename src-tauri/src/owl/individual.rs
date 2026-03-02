@@ -1,14 +1,3 @@
-// ============================================================================
-// OWL Individual - Individual/Instance Operations
-// ============================================================================
-// High-level operations for managing individuals (instances of classes)
-//
-// IMPORTANT: Individuals are instances, NOT classes
-// - Individuals use rdf:type to declare their class
-// - Individuals NEVER use rdfs:subClassOf (that's for classes)
-// - Example: foundation:John rdf:type foundation:Person (NOT subClassOf)
-// ============================================================================
-
 use crate::eavto::Connection;
 use crate::eavto::{store, query, Triple, Object};
 use crate::owl::{Result, OwlError, Thing, Class, vocabulary::{rdf, rdfs}};
@@ -52,29 +41,24 @@ impl Individual {
     pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Self> {
         let iri = iri.into();
 
-        // Get label
         let label_result = query::get_by_entity_predicate(conn, &iri, rdfs::LABEL)?;
         let label = label_result.triples.first()
             .and_then(|t| t.object.as_literal());
 
-        // Get icon
         let icon_result = query::get_by_entity_predicate(conn, &iri, "foundation:icon")?;
         let icon = icon_result.triples.first()
             .and_then(|t| t.object.as_literal());
 
-        // Get comment
         let comment_result = query::get_by_entity_predicate(conn, &iri, rdfs::COMMENT)?;
         let comment = comment_result.triples.first()
             .and_then(|t| t.object.as_literal());
 
-        // Get types (classes)
         let types_result = query::get_by_entity_predicate(conn, &iri, rdf::TYPE)?;
         let types: Vec<Thing> = types_result.triples.iter()
             .filter_map(|t| t.object.as_iri())
             .map(|type_iri| Thing::get(conn, type_iri))
             .collect();
 
-        // Get all properties (excluding metadata like label, icon, comment)
         let all_triples = query::get_by_entity(conn, &iri)?;
         let properties: Vec<(String, Object)> = all_triples.triples.into_iter()
             .filter(|t| {
@@ -85,7 +69,6 @@ impl Individual {
             .map(|t| (t.predicate, t.object))
             .collect();
 
-        // Get backlinks - entities that reference this individual
         let backlinks_result = query::get_by_object(conn, &iri)?;
         let backlinks: Vec<(String, String, Object)> = backlinks_result.triples.iter()
             .filter(|t| t.subject != iri && t.predicate != rdf::TYPE)
@@ -113,11 +96,9 @@ impl Individual {
         icon: &str,
         origin: &str
     ) -> Result<()> {
-        // Create individual type
         let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(class_iri.to_string()));
         store::assert_triples(conn, &[triple], origin)?;
 
-        // Add required label
         let label_obj = Object::Literal {
             value: label.to_string(),
             datatype: Some("xsd:string".to_string()),
@@ -126,7 +107,6 @@ impl Individual {
         let label_triple = Triple::new(&self.iri, rdfs::LABEL, label_obj);
         store::assert_triples(conn, &[label_triple], origin)?;
 
-        // Add required icon
         let icon_obj = Object::Literal {
             value: icon.to_string(),
             datatype: Some("xsd:string".to_string()),
@@ -138,33 +118,38 @@ impl Individual {
         Ok(())
     }
 
-    /// Add a property to this individual
+    /// Set property values for this individual, replacing all existing values.
     /// Validates that:
     /// 1. The property is defined in the individual's class or inherited from parent classes
-    /// 2. Adding this value won't violate cardinality constraints
-    /// 3. If the property range has owl:oneOf, the value must be one of the enumerated values
+    /// 2. The new value count won't violate cardinality constraints
+    /// 3. If the property range has owl:oneOf, all values must be from the enumerated set
+    ///
+    /// Always retracts all current values and asserts the full new set atomically.
+    /// Pass all desired values — this is always a full replace, never an append.
     pub fn add_property(
         &self,
         conn: &mut Connection,
         property: &str,
-        value: Object,
+        values: Vec<Object>,
         origin: &str,
     ) -> Result<()> {
-        // Get individual's types (classes)
+        if values.is_empty() {
+            return Err(OwlError::InvalidOperation(
+                format!("No values provided for property {}", property)
+            ));
+        }
+
         let types_result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
 
         if types_result.triples.is_empty() {
             return Err(OwlError::NotFound(format!("Individual {} has no rdf:type", self.iri)));
         }
 
-        // Check if property is valid for any of the individual's classes
         let mut property_is_valid = false;
 
         for triple in &types_result.triples {
             if let Some(class_iri) = triple.object.as_iri() {
-                // Get class with all its properties (including inherited)
                 if let Ok(class) = Class::get(conn, class_iri) {
-                    // Check if property exists in this class or its parents
                     if class.properties.iter().any(|(prop_iri, _)| prop_iri == property) {
                         property_is_valid = true;
                         break;
@@ -182,23 +167,21 @@ impl Individual {
             ));
         }
 
-        // Validate owl:oneOf constraint on property range
-        Self::validate_one_of_constraint(conn, property, &value)?;
+        for value in &values {
+            Self::validate_one_of_constraint(conn, property, value)?;
+        }
 
-        // After automatic retraction at EAVTO layer, we'll have exactly 1 value
-        // Validate cardinality constraints for that single new value
-        let new_count = 1;
         crate::owl::cardinality::validate_property_cardinality(
             conn,
             &self.iri,
             property,
-            new_count
+            values.len()
         )?;
 
-        // Property is valid and cardinality is satisfied
-        // EAVTO layer will automatically retract old values and assert the new triple
-        let triple = Triple::new(&self.iri, property, value);
-        store::assert_triples(conn, &[triple], origin)?;
+        let triples: Vec<Triple> = values.into_iter()
+            .map(|v| Triple::new(&self.iri, property, v))
+            .collect();
+        store::assert_triples(conn, &triples, origin)?;
         Ok(())
     }
 
@@ -212,20 +195,16 @@ impl Individual {
             None => return Ok(()), // Literals are not constrained by owl:oneOf
         };
 
-        // Get property's range
         let range_result = query::get_by_entity_predicate(conn, property, rdfs::RANGE)?;
 
         if let Some(range_triple) = range_result.triples.first() {
             if let Some(range_class) = range_triple.object.as_iri() {
-                // Check if the range class has owl:oneOf constraint
                 let one_of_result = query::get_by_entity_predicate(conn, range_class, owl::ONE_OF)?;
 
                 if let Some(one_of_triple) = one_of_result.triples.first() {
                     if let Some(list_head) = one_of_triple.object.as_iri() {
-                        // Parse the owl:oneOf list
                         let allowed_values = Class::parse_rdf_list(conn, list_head)?;
 
-                        // Check if the value is in the allowed list
                         if !allowed_values.contains(&value_iri.to_string()) {
                             let allowed = allowed_values.join(", ");
                             let msg = format!(
@@ -392,7 +371,7 @@ mod tests {
         let result = task.add_property(
             &mut conn,
             "foundation:priority",
-            Object::Iri("foundation:HighPriority".to_string()),
+            vec![Object::Iri("foundation:HighPriority".to_string())],
             "test",
         );
         assert!(result.is_ok(), "Should accept valid enumerated value");
@@ -484,7 +463,7 @@ mod tests {
         let result = task.add_property(
             &mut conn,
             "foundation:priority",
-            Object::Iri("foundation:LowPriority".to_string()),
+            vec![Object::Iri("foundation:LowPriority".to_string())],
             "test",
         );
         assert!(result.is_err(), "Should reject invalid enumerated value");

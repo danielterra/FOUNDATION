@@ -71,17 +71,17 @@ pub enum ContentBlock {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ImageSource {
     #[serde(rename = "type")]
-    pub source_type: String, // "base64"
-    pub media_type: String,   // "image/png", "image/jpeg", "image/webp", "image/gif"
-    pub data: String,         // base64-encoded image data
+    pub source_type: String,
+    pub media_type: String,
+    pub data: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DocumentSource {
     #[serde(rename = "type")]
-    pub source_type: String, // "base64"
-    pub media_type: String,   // "application/pdf"
-    pub data: String,         // base64-encoded document data
+    pub source_type: String,
+    pub media_type: String,
+    pub data: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -142,10 +142,9 @@ enum ResponseContentBlock {
 }
 
 impl ClaudeProvider {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: String, timeout_secs: u64) -> Self {
         let client = reqwest::Client::builder()
-            // 10 minute timeout for long operations like web_fetch
-            .timeout(std::time::Duration::from_secs(600))
+            .timeout(std::time::Duration::from_secs(timeout_secs))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
@@ -156,10 +155,9 @@ impl ClaudeProvider {
         }
     }
 
-    pub fn with_model(api_key: String, model_identifier: String) -> Self {
+    pub fn with_model(api_key: String, model_identifier: String, timeout_secs: u64) -> Self {
         let client = reqwest::Client::builder()
-            // 10 minute timeout for long operations like web_fetch
-            .timeout(std::time::Duration::from_secs(600))
+            .timeout(std::time::Duration::from_secs(timeout_secs))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
@@ -219,7 +217,9 @@ impl AIProvider for ClaudeProvider {
         }
 
         let model = self.model_identifier.clone()
-            .unwrap_or_else(|| "claude-3-5-sonnet-20240620".to_string());
+            .ok_or_else(|| {
+                "No AI model configured. Please configure a model in Settings.".to_string()
+            })?;
 
         let tools = if let Some(custom_tools) = request.tools {
             let mut tools: Vec<serde_json::Value> = custom_tools.into_iter()
@@ -236,7 +236,7 @@ impl AIProvider for ClaudeProvider {
                 "type": "web_fetch_20260209",
                 "name": "web_fetch",
                 "max_uses": 5,
-                "max_content_tokens": 100000,  // Limit content to 100k tokens per fetch
+                "max_content_tokens": 100000,
                 "citations": {
                     "enabled": true
                 }
