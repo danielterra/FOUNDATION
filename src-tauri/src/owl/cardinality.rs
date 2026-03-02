@@ -5,7 +5,7 @@
 // restrictions on properties for OWL classes
 // ============================================================================
 
-use rusqlite::Connection;
+use crate::eavto::Connection;
 use crate::eavto::query;
 use crate::owl::{Result, OwlError, vocabulary::owl};
 
@@ -98,7 +98,8 @@ pub fn get_class_cardinality_restrictions(
 
     // Query for restriction nodes that this class is a subclass of
     // These are blank nodes with rdf:type owl:Restriction
-    let subclass_result = query::get_by_entity_predicate(conn, class_iri, "rdfs:subClassOf")?;
+    let subclass_result =
+        query::get_by_entity_predicate(conn, class_iri, "rdfs:subClassOf")?;
 
     for triple in &subclass_result.triples {
         // Check if the object is a blank node (restriction)
@@ -110,7 +111,8 @@ pub fn get_class_cardinality_restrictions(
             }
 
             // Check if this blank node is an owl:Restriction
-            let type_result = query::get_by_entity_predicate(conn, restriction_node, "rdf:type")?;
+            let type_result =
+                query::get_by_entity_predicate(conn, restriction_node, "rdf:type")?;
             let is_restriction = type_result.triples.iter().any(|t| {
                 if let Some(type_iri) = t.object.as_iri() {
                     type_iri == owl::RESTRICTION
@@ -124,7 +126,8 @@ pub fn get_class_cardinality_restrictions(
             }
 
             // Get the property this restriction applies to
-            let prop_result = query::get_by_entity_predicate(conn, restriction_node, owl::ON_PROPERTY)?;
+            let prop_result =
+                query::get_by_entity_predicate(conn, restriction_node, owl::ON_PROPERTY)?;
             let property_iri = match prop_result.triples.first().and_then(|t| t.object.as_iri()) {
                 Some(iri) => iri.to_string(),
                 None => continue,
@@ -136,7 +139,8 @@ pub fn get_class_cardinality_restrictions(
             let mut exact = None;
 
             // Check for exact cardinality
-            let card_result = query::get_by_entity_predicate(conn, restriction_node, owl::CARDINALITY)?;
+            let card_result =
+                query::get_by_entity_predicate(conn, restriction_node, owl::CARDINALITY)?;
             if let Some(triple) = card_result.triples.first() {
                 // Extract integer value
                 match &triple.object {
@@ -146,7 +150,8 @@ pub fn get_class_cardinality_restrictions(
             }
 
             // Check for min cardinality
-            let min_result = query::get_by_entity_predicate(conn, restriction_node, owl::MIN_CARDINALITY)?;
+            let min_result =
+                query::get_by_entity_predicate(conn, restriction_node, owl::MIN_CARDINALITY)?;
             if let Some(triple) = min_result.triples.first() {
                 match &triple.object {
                     crate::eavto::Object::Integer(value) => min = Some(*value as u32),
@@ -155,7 +160,8 @@ pub fn get_class_cardinality_restrictions(
             }
 
             // Check for max cardinality
-            let max_result = query::get_by_entity_predicate(conn, restriction_node, owl::MAX_CARDINALITY)?;
+            let max_result =
+                query::get_by_entity_predicate(conn, restriction_node, owl::MAX_CARDINALITY)?;
             if let Some(triple) = max_result.triples.first() {
                 match &triple.object {
                     crate::eavto::Object::Integer(value) => max = Some(*value as u32),
@@ -208,12 +214,19 @@ pub fn validate_property_cardinality(
                 if restriction.property_iri == property_iri {
                     if restriction.is_violated(new_value_count) {
                         // Get property label for better error message
-                        let prop_label_result = query::get_by_entity_predicate(conn, property_iri, "rdfs:label")?;
+                        let prop_label_result = query::get_by_entity_predicate(
+                            conn,
+                            property_iri,
+                            "rdfs:label",
+                        )?;
                         let prop_label = prop_label_result.triples.first()
                             .and_then(|t| t.object.as_literal());
 
                         return Err(OwlError::CardinalityViolation(
-                            restriction.violation_message(new_value_count, prop_label.as_deref())
+                            restriction.violation_message(
+                                new_value_count,
+                                prop_label.as_deref(),
+                            )
                         ));
                     }
                 }

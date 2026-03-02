@@ -7,7 +7,6 @@ mod eavto;
 mod owl;
 mod ai;
 
-// Triple structure for serialization (maps to triples table)
 #[derive(serde::Serialize)]
 pub struct TripleData {
     subject: String,
@@ -21,7 +20,6 @@ pub struct TripleData {
     retracted: bool,
 }
 
-// Simplified triple structure for UI display
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct DisplayTriple {
     a: String,            // attribute (predicate)
@@ -35,7 +33,6 @@ pub struct DisplayTriple {
     domain_icon: Option<String>, // optional icon for the domain class
 }
 
-// Graph structures for ontology visualization
 #[derive(serde::Serialize)]
 pub struct GraphNode {
     id: String,
@@ -58,7 +55,6 @@ pub struct GraphData {
     central_node_id: String,
 }
 
-// Search result structure
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct SearchResult {
     id: String,
@@ -77,7 +73,6 @@ pub struct NodeStatistics {
     examples_count: i64,
 }
 
-// Setup wizard data structures
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct SetupData {
     person_name: String,
@@ -97,7 +92,6 @@ pub struct SystemInfo {
     total_memory_gb: f64,
 }
 
-// Import progress tracking
 #[derive(Clone, serde::Serialize)]
 pub struct ImportProgress {
     pub stage: String,       // "core", "dtype", "foundation"

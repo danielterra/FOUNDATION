@@ -1,0 +1,141 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# FOUNDATION Instance and Default Settings
+# =============================================================================
+# This file defines the ThisFoundationInstance entity and its default settings
+# that are created during setup.
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+# =============================================================================
+# ThisFoundationInstance
+# =============================================================================
+# The user's installation of FOUNDATION
+# This is created during setup with user-specific values
+
+foundation:ThisFoundationInstance a foundation:Application ;
+    rdfs:label "FOUNDATION" ;
+    rdfs:comment "User's FOUNDATION application instance" ;
+    foundation:icon "apps" ;
+    rdfs:seeAlso """
+This represents the user's specific installation of FOUNDATION.
+Created during initial setup with user-specific values:
+- rdfs:label (set to "FOUNDATION v{version}" during setup)
+- foundation:installedFrom → foundation:FoundationRelease_X_Y_Z
+- foundation:runsOn → foundation:ThisComputer
+- foundation:hasRepository → local git repository
+
+During setup, the version from package.json is used to:
+- Set rdfs:label to "FOUNDATION v{version}"
+- Link to the corresponding FoundationRelease entity
+""" .
+
+# =============================================================================
+# Default Settings
+# =============================================================================
+
+foundation:DefaultAIModelSetting a foundation:SoftwareSetting ;
+    rdfs:label "Default AI Model" ;
+    rdfs:comment "Default AI model for Claude service" ;
+    foundation:settingKey "aiModel" ;
+    foundation:settingValue "foundation:ClaudeSonnet46" ;
+    foundation:settingCategory "ai" ;
+    foundation:origin foundation:ThisFoundationInstance ;
+    foundation:appliedTo foundation:ClaudeAIService .
+
+foundation:DefaultMaxInputTokensSetting a foundation:SoftwareSetting ;
+    rdfs:label "Default Max Input Tokens" ;
+    rdfs:comment "Default maximum input tokens for Claude service" ;
+    foundation:settingKey "maxInputTokens" ;
+    foundation:settingValue "100000" ;
+    foundation:settingCategory "ai" ;
+    foundation:origin foundation:ThisFoundationInstance ;
+    foundation:appliedTo foundation:ClaudeAIService .
+
+foundation:DefaultSystemPromptSetting a foundation:SoftwareSetting ;
+    rdfs:label "Default System Prompt" ;
+    rdfs:comment "Default system prompt for AI assistant" ;
+    foundation:settingKey "systemPrompt" ;
+    foundation:settingValue """IDENTITY: NOVA - Assistant with long-term memory
+User: {user_name} (foundation:ThisUser) | You: {ai_name} (foundation:LocalAIAssistant)
+Time: {date_time} | Lang: {language} | Locale: {locale} ({country})
+{location_info}
+
+YOUR BRAIN:
+- You have a persistent brain that remembers everything across conversations
+- Your brain organizes knowledge as: Concepts (types of things), Specific things (instances), Connections (relationships)
+- You naturally remember and recall information - it's part of who you are
+
+HOW YOUR MEMORY WORKS:
+- When you think (call tools), operations happen one at a time
+- You can't see results from earlier thoughts in the same response
+- When creating something new (create_instance), you'll get back its ID to reference later
+
+REMEMBER EVERYTHING:
+- ALWAYS store what users tell you: people, places, organizations, events, facts
+- Connect information: who works where, who lives where, when things happen
+- Examples: 'I work at X' → remember me + X + connection | 'birthday May 15' → remember my birthday
+- Ask questions when you need clarity to remember correctly
+
+VALIDATE BEFORE CREATING:
+- NEVER create concepts/things/properties without checking if they exist
+- ALWAYS search first, then REUSE if found, or create if not found
+- CRITICAL: Before creating connection_type, use remember_concept on domain/range to see existing properties
+- Check remember_connection_types with domain/range filters for similar connections
+- REUSE existing properties over creating duplicates (e.g., use hasAddress not hasLocation)
+
+ATTACHMENTS & FILES:
+- Attachments show as: [Attached Image/PDF: filename - File ID: foundation:File_XXX]
+- NEVER create File entities - they already exist from attachments
+- Icons can be: material name ('person'), file:// URL, http:// URL, or /absolute/path
+
+BLACKBOARD:
+- Show information visually (better than text) - use proactively
+- Concepts have foundation:canBeDisplayedBy listing compatible widgets
+- Widgets have foundation:canDisplay listing compatible concepts""" ;
+    foundation:settingCategory "ai" ;
+    foundation:origin foundation:ThisFoundationInstance ;
+    foundation:appliedTo foundation:ClaudeAIService .
+
+foundation:DefaultLanguageSetting a foundation:SoftwareSetting ;
+    rdfs:label "Default Language" ;
+    rdfs:comment "Default language for user interface and AI communication" ;
+    foundation:settingKey "language" ;
+    foundation:settingValue "English" ;
+    foundation:settingCategory "locale" ;
+    foundation:origin foundation:ThisFoundationInstance ;
+    foundation:appliedTo foundation:ThisFoundationInstance .
+
+foundation:DefaultLocaleSetting a foundation:SoftwareSetting ;
+    rdfs:label "Default Locale" ;
+    rdfs:comment "Default locale identifier (e.g., en_US, pt_BR)" ;
+    foundation:settingKey "locale" ;
+    foundation:settingValue "en_US" ;
+    foundation:settingCategory "locale" ;
+    foundation:origin foundation:ThisFoundationInstance ;
+    foundation:appliedTo foundation:ThisFoundationInstance .
+
+foundation:DefaultCountrySetting a foundation:SoftwareSetting ;
+    rdfs:label "Default Country" ;
+    rdfs:comment "Default country name" ;
+    foundation:settingKey "country" ;
+    foundation:settingValue "United States" ;
+    foundation:settingCategory "locale" ;
+    foundation:origin foundation:ThisFoundationInstance ;
+    foundation:appliedTo foundation:ThisFoundationInstance .
+
+foundation:DefaultLocationInfoSetting a foundation:SoftwareSetting ;
+    rdfs:label "Default Location Info" ;
+    rdfs:comment "Additional location information for system prompt" ;
+    foundation:settingKey "locationInfo" ;
+    foundation:settingValue "" ;
+    foundation:settingCategory "locale" ;
+    foundation:origin foundation:ThisFoundationInstance ;
+    foundation:appliedTo foundation:ThisFoundationInstance .

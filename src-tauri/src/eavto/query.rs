@@ -39,7 +39,12 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
             let object_key = match &t.object {
                 Object::Iri(iri) => format!("iri:{}", iri),
                 Object::Literal { value, datatype, language } => {
-                    format!("lit:{}:{}:{}", value, datatype.as_deref().unwrap_or(""), language.as_deref().unwrap_or(""))
+                    format!(
+                        "lit:{}:{}:{}",
+                        value,
+                        datatype.as_deref().unwrap_or(""),
+                        language.as_deref().unwrap_or(""),
+                    )
                 },
                 Object::Blank(id) => format!("blank:{}", id),
                 Object::Integer(n) => format!("int:{}", n),
@@ -81,7 +86,8 @@ pub fn get_by_predicate(conn: &Connection, predicate: &str) -> Result<QueryResul
 ///
 /// Example:
 /// - `Person -> email -> value` (functional): returns 1 triple (latest email)
-/// - `Person -> sentMessage -> [msg1, msg2]` (non-functional): returns 2 triples (latest state of each message)
+/// - `Person -> sentMessage -> [msg1, msg2]` (non-functional): returns 2 triples
+///   (latest state of each message)
 pub fn get_by_entity_predicate(
     conn: &Connection,
     entity: &str,
@@ -229,11 +235,12 @@ pub fn get_by_object(
 
 /// Find entities by class and properties in a single query
 ///
-/// This performs an efficient SQL JOIN to find entities that match a class and property constraints.
+/// This performs an efficient SQL JOIN to find entities that match a class and property
+/// constraints.
 /// Can be used with one or multiple properties.
 ///
 /// Example:
-/// ```
+/// ```ignore
 /// // Single property
 /// let releases = find_by_class_and_properties(
 ///     conn,
@@ -300,7 +307,8 @@ pub fn find_by_class_and_properties(
         if value == &"true" || value == &"false" {
             let bool_val = if value == &"true" { 1 } else { 0 };
             query.push_str(&format!(
-                "\n           AND (t{}.object_value = '{}' OR t{}.object = '{}' OR t{}.object_boolean = {})",
+                "\n           AND (t{}.object_value = '{}' OR t{}.object = '{}'\
+                    OR t{}.object_boolean = {})",
                 table_num, value, table_num, value, table_num, bool_val
             ));
         } else {
@@ -431,8 +439,8 @@ fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
     let created_at: i64 = row.get(14)?;
 
     let object = match object_type.as_str() {
-        "iri" => Object::Iri(object_opt.unwrap()),
-        "blank" => Object::Blank(object_opt.unwrap()),
+        "iri" => Object::Iri(object_opt.ok_or(rusqlite::Error::InvalidQuery)?),
+        "blank" => Object::Blank(object_opt.ok_or(rusqlite::Error::InvalidQuery)?),
         "literal" => {
             // Check for typed literals
             if let Some(int) = object_integer {
@@ -440,10 +448,11 @@ fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
             } else if let Some(num) = object_number {
                 Object::Number(num)
             } else if let Some(_dt) = object_datetime {
-                // For DateTime, return the object_value (ISO8601 string) instead of the timestamp
-                // This ensures as_literal() returns the full ISO date string, not just the Unix timestamp
+                // For DateTime, return the object_value (ISO8601 string) instead of
+                // the timestamp. This ensures as_literal() returns the full ISO date
+                // string, not just the Unix timestamp
                 Object::Literal {
-                    value: object_value.unwrap(),
+                    value: object_value.ok_or(rusqlite::Error::InvalidQuery)?,
                     datatype: object_datatype,
                     language: object_language,
                 }
@@ -452,7 +461,7 @@ fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
             } else {
                 // Generic literal
                 Object::Literal {
-                    value: object_value.unwrap(),
+                    value: object_value.ok_or(rusqlite::Error::InvalidQuery)?,
                     datatype: object_datatype,
                     language: object_language,
                 }
@@ -537,7 +546,7 @@ mod tests {
     #[test]
     fn test_get_at_time_temporal_snapshot() {
         let mut conn = setup_test_db();
-        let tx1 = setup_test_data(&mut conn);
+        let _tx1 = setup_test_data(&mut conn);
 
         // Add new triple with same predicate (update)
         let updated_triple = vec![Triple {

@@ -9,11 +9,13 @@
 // - Each command should have tests using tauri::test::mock_app()
 
 mod setup;
+mod setup_system_info;
 mod entity;
 mod shortcuts;
 mod logging;
 mod ai;
 mod chat;
+mod chat_storage;
 pub mod widget;
 
 pub use setup::*;

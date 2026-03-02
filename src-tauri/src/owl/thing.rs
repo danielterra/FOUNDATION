@@ -5,7 +5,7 @@
 // All entities (classes, individuals) are ultimately Things
 // ============================================================================
 
-use rusqlite::Connection;
+use crate::eavto::Connection;
 use crate::eavto::query;
 use crate::owl::vocabulary::rdfs;
 use serde::Serialize;

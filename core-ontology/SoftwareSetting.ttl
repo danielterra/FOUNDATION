@@ -1,0 +1,130 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foundation: <http://foundation.local/ontology/> .
+
+# =============================================================================
+# SoftwareSetting
+# =============================================================================
+# A configuration setting for software, with origin and application context
+#
+# Version: 0.1.0
+# License: GNU GPL
+# =============================================================================
+
+foundation:SoftwareSetting a owl:Class ;
+    rdfs:subClassOf foundation:InformationObject ;
+    rdfs:label "Software Setting" ;
+    rdfs:comment "A configuration setting with a key-value pair that originates from one software and is applied to another" ;
+    foundation:icon "settings" ;
+    rdfs:seeAlso """
+Examples:
+- Max input tokens preference for AI service
+- Theme preference (dark/light mode)
+- Language preference
+- API endpoint configuration
+
+Pattern:
+  :MaxTokensSetting a foundation:SoftwareSetting ;
+    foundation:settingKey "maxInputTokens" ;
+    foundation:settingValue "50000" ;
+    foundation:origin foundation:ThisFoundationInstance ;
+    foundation:appliedTo foundation:ClaudeAIService .
+
+This allows tracking where settings come from and what they affect.
+""" .
+
+# -----------------------------------------------------------------------------
+# SoftwareSetting Properties
+# -----------------------------------------------------------------------------
+
+foundation:settingKey a owl:DatatypeProperty ;
+    rdfs:label "setting key" ;
+    rdfs:comment "The unique key identifier for this setting (e.g., 'maxInputTokens', 'theme', 'language')" ;
+    rdfs:domain foundation:SoftwareSetting ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :MyThemeSetting foundation:settingKey "theme" .
+  :MaxTokensSetting foundation:settingKey "maxInputTokens" .
+""" .
+
+foundation:settingValue a owl:DatatypeProperty ;
+    rdfs:label "setting value" ;
+    rdfs:comment "The value of this setting as a string (can represent any type)" ;
+    rdfs:domain foundation:SoftwareSetting ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :MyThemeSetting foundation:settingValue "dark" .
+  :MaxTokensSetting foundation:settingValue "50000" .
+  :LanguageSetting foundation:settingValue "en-US" .
+
+Note: Values are stored as strings but can represent any type.
+The consuming software is responsible for parsing the value.
+""" .
+
+foundation:origin a owl:ObjectProperty ;
+    rdfs:label "origin" ;
+    rdfs:comment "The software or application that created or owns this setting" ;
+    rdfs:domain foundation:SoftwareSetting ;
+    rdfs:range foundation:Software ;
+    rdfs:seeAlso """
+Example:
+  :MaxTokensSetting foundation:origin foundation:ThisFoundationInstance .
+
+Indicates this setting was configured by the FOUNDATION application.
+""" .
+
+foundation:appliedTo a owl:ObjectProperty ;
+    rdfs:label "applied to" ;
+    rdfs:comment "The software, service, or component that this setting affects" ;
+    rdfs:domain foundation:SoftwareSetting ;
+    rdfs:seeAlso """
+Example:
+  :MaxTokensSetting foundation:appliedTo foundation:ClaudeAIService .
+  :ThemeSetting foundation:appliedTo foundation:ThisFoundationInstance .
+
+Can be applied to:
+- foundation:Service (AI services, APIs)
+- foundation:Software (applications)
+- foundation:SoftwareAgent (AI agents)
+- Any other Thing that needs configuration
+""" .
+
+foundation:settingCategory a owl:DatatypeProperty ;
+    rdfs:label "setting category" ;
+    rdfs:comment "Optional category for organizing settings (e.g., 'appearance', 'performance', 'ai', 'privacy')" ;
+    rdfs:domain foundation:SoftwareSetting ;
+    rdfs:range xsd:string ;
+    rdfs:seeAlso """
+Example:
+  :MaxTokensSetting foundation:settingCategory "ai" .
+  :ThemeSetting foundation:settingCategory "appearance" .
+  :LanguageSetting foundation:settingCategory "localization" .
+""" .
+
+# =============================================================================
+# Example Instances
+# =============================================================================
+
+# Example 1: Max input tokens setting for Claude AI Service
+# foundation:MaxInputTokensSetting a foundation:SoftwareSetting ;
+#     rdfs:label "Max Input Tokens for Claude" ;
+#     rdfs:comment "User preference for maximum input tokens in conversation history" ;
+#     foundation:settingKey "maxInputTokens" ;
+#     foundation:settingValue "50000" ;
+#     foundation:settingCategory "ai" ;
+#     foundation:origin foundation:ThisFoundationInstance ;
+#     foundation:appliedTo foundation:ClaudeAIService .
+#
+# Example 2: AI Model selection
+# foundation:AIModelSetting_1234567890 a foundation:SoftwareSetting ;
+#     rdfs:label "Selected AI Model" ;
+#     rdfs:comment "User-selected AI model for the assistant" ;
+#     foundation:settingKey "aiModel" ;
+#     foundation:settingValue "foundation:ClaudeSonnet46" ;
+#     foundation:settingCategory "ai" ;
+#     foundation:origin foundation:ThisFoundationInstance ;
+#     foundation:appliedTo foundation:ClaudeAIService .

@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn test_get_stats_with_data() {
-        let mut conn = setup_test_db();
+        let conn = setup_test_db();
 
         // Insert test transaction
         conn.execute(
@@ -91,14 +91,16 @@ mod tests {
 
         // Insert test triples
         conn.execute(
-            "INSERT INTO triples (subject, predicate, object, object_type, tx, origin_id, created_at, retracted)
+            "INSERT INTO triples \
+             (subject, predicate, object, object_type, tx, origin_id, created_at, retracted) \
              VALUES ('foundation:TestClass', 'rdf:type', 'owl:Class', 'iri', ?, 1, 1000, 0)",
             [tx_id],
         )
         .unwrap();
 
         conn.execute(
-            "INSERT INTO triples (subject, predicate, object, object_type, tx, origin_id, created_at, retracted)
+            "INSERT INTO triples \
+             (subject, predicate, object, object_type, tx, origin_id, created_at, retracted) \
              VALUES ('foundation:TestClass', 'rdfs:label', 'owl:Class', 'iri', ?, 1, 1000, 1)",
             [tx_id],
         )

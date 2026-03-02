@@ -19,6 +19,7 @@ pub struct ChatMessage {
 
 impl ChatMessage {
     /// Create a simple text message
+    #[allow(dead_code)]
     pub fn text(role: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
             role: role.into(),
@@ -27,6 +28,7 @@ impl ChatMessage {
     }
 
     /// Create a message with content blocks (text, tool_use, tool_result)
+    #[allow(dead_code)]
     pub fn with_blocks(role: impl Into<String>, blocks: Vec<ContentBlock>) -> Self {
         Self {
             role: role.into(),
@@ -73,7 +75,6 @@ impl AIAssistant {
     }
 }
 
-// Thread-safe global instance
 lazy_static::lazy_static! {
     pub static ref AI_INSTANCE: Arc<Mutex<Option<AIAssistant>>> = Arc::new(Mutex::new(None));
 }
@@ -89,7 +90,10 @@ pub async fn initialize_ai(api_key: String) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn initialize_ai_with_model(api_key: String, model_identifier: Option<String>) -> Result<(), String> {
+pub async fn initialize_ai_with_model(
+    api_key: String,
+    model_identifier: Option<String>,
+) -> Result<(), String> {
     let provider = if let Some(model) = model_identifier {
         ClaudeProvider::with_model(api_key, model)
     } else {

@@ -7,7 +7,6 @@ pub trait AIProvider: Send + Sync {
     async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, String>;
 }
 
-// Claude provider implementation
 pub struct ClaudeProvider {
     api_key: String,
     client: reqwest::Client,
@@ -24,7 +23,7 @@ struct ClaudeRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<ClaudeTool>>,
+    tools: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -119,21 +118,54 @@ enum ResponseContentBlock {
         name: String,
         input: serde_json::Value,
     },
+    #[serde(rename = "server_tool_use")]
+    ServerToolUse {
+        id: String,
+        name: String,
+        #[allow(dead_code)]
+        input: serde_json::Value,
+    },
+    #[serde(rename = "web_search_tool_result")]
+    WebSearchToolResult {
+        tool_use_id: String,
+        #[allow(dead_code)]
+        content: serde_json::Value,
+    },
+    #[serde(rename = "web_fetch_tool_result")]
+    WebFetchToolResult {
+        tool_use_id: String,
+        #[allow(dead_code)]
+        content: serde_json::Value,
+    },
+    #[serde(other)]
+    Other,
 }
 
 impl ClaudeProvider {
     pub fn new(api_key: String) -> Self {
+        let client = reqwest::Client::builder()
+            // 10 minute timeout for long operations like web_fetch
+            .timeout(std::time::Duration::from_secs(600))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             api_key,
-            client: reqwest::Client::new(),
+            client,
             model_identifier: None,
         }
     }
 
     pub fn with_model(api_key: String, model_identifier: String) -> Self {
+        let client = reqwest::Client::builder()
+            // 10 minute timeout for long operations like web_fetch
+            .timeout(std::time::Duration::from_secs(600))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             api_key,
-            client: reqwest::Client::new(),
+            client,
             model_identifier: Some(model_identifier),
         }
     }
@@ -159,9 +191,34 @@ impl AIProvider for ClaudeProvider {
             })
             .collect();
 
-        // Use provided model identifier or fallback to default
         let model = self.model_identifier.clone()
             .unwrap_or_else(|| "claude-3-5-sonnet-20240620".to_string());
+
+        let tools = if let Some(custom_tools) = request.tools {
+            let mut tools: Vec<serde_json::Value> = custom_tools.into_iter()
+                .map(|t| serde_json::to_value(t).map_err(|e| e.to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            tools.push(serde_json::json!({
+                "type": "web_search_20260209",
+                "name": "web_search",
+                "max_uses": 5
+            }));
+
+            tools.push(serde_json::json!({
+                "type": "web_fetch_20260209",
+                "name": "web_fetch",
+                "max_uses": 5,
+                "max_content_tokens": 100000,  // Limit content to 100k tokens per fetch
+                "citations": {
+                    "enabled": true
+                }
+            }));
+
+            Some(tools)
+        } else {
+            None
+        };
 
         let claude_request = ClaudeRequest {
             model,
@@ -169,7 +226,7 @@ impl AIProvider for ClaudeProvider {
             messages,
             system: request.system,
             temperature: request.temperature,
-            tools: request.tools,
+            tools,
         };
 
         let api_start = std::time::Instant::now();
@@ -179,6 +236,7 @@ impl AIProvider for ClaudeProvider {
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
+            .header("anthropic-beta", "code-execution-web-tools-2026-02-09")
             .header("content-type", "application/json")
             .json(&claude_request)
             .send()
@@ -186,7 +244,8 @@ impl AIProvider for ClaudeProvider {
             .map_err(|e| format!("Failed to send request: {}", e))?;
 
         let api_elapsed = api_start.elapsed();
-        crate::commands::log_backend("info", &format!("[CLAUDE API] Request completed in {:?}", api_elapsed));
+        let msg = format!("[CLAUDE API] Request completed in {:?}", api_elapsed);
+        crate::commands::log_backend("info", &msg);
 
         let status = response.status();
         if !status.is_success() {
@@ -195,17 +254,33 @@ impl AIProvider for ClaudeProvider {
             return Err(format!("API request failed with status {}: {}", status, error_text));
         }
 
-        let claude_response: ClaudeResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
+        let response_text = response.text().await
+            .map_err(|e| format!("Failed to read response text: {}", e))?;
 
-        // Log stop reason if present
+        crate::commands::log_backend("debug", &format!(
+            "[CLAUDE API] Response preview: {}...",
+            &response_text.chars().take(500).collect::<String>()
+        ));
+
+        let claude_response: ClaudeResponse = serde_json::from_str(&response_text)
+            .map_err(|e| {
+                crate::commands::log_backend("error", &format!(
+                    "[CLAUDE API] Parse error details: {} at line {} column {}",
+                    e, e.line(), e.column()
+                ));
+                crate::commands::log_backend("error", &format!(
+                    "[CLAUDE API] Full response: {}",
+                    &response_text
+                ));
+                format!("Failed to parse response: {} - Preview: {}...", e,
+                    &response_text.chars().take(500).collect::<String>())
+            })?;
+
         if let Some(ref stop_reason) = claude_response.stop_reason {
-            crate::commands::log_backend("info", &format!("[CLAUDE API] Stop reason: {}", stop_reason));
+            let msg = format!("[CLAUDE API] Stop reason: {}", stop_reason);
+            crate::commands::log_backend("info", &msg);
         }
 
-        // Extract text content and tool calls
         let mut text_parts = Vec::new();
         let mut tool_calls = Vec::new();
 
@@ -217,20 +292,49 @@ impl AIProvider for ClaudeProvider {
                 ResponseContentBlock::ToolUse { id, name, input } => {
                     tool_calls.push(ToolCall { id, name, input });
                 }
+                ResponseContentBlock::ServerToolUse { id, name, .. } => {
+                    crate::commands::log_backend("debug", &format!(
+                        "[CLAUDE API] Ignoring server tool use: {} ({})", name, id
+                    ));
+                }
+                ResponseContentBlock::WebSearchToolResult { tool_use_id, .. } => {
+                    crate::commands::log_backend("debug", &format!(
+                        "[CLAUDE API] Received web_search_tool_result for {}", tool_use_id
+                    ));
+                }
+                ResponseContentBlock::WebFetchToolResult { tool_use_id, .. } => {
+                    crate::commands::log_backend("debug", &format!(
+                        "[CLAUDE API] Received web_fetch_tool_result for {}", tool_use_id
+                    ));
+                }
+                ResponseContentBlock::Other => {
+                    crate::commands::log_backend(
+                        "debug",
+                        "[CLAUDE API] Ignoring unknown content block type",
+                    );
+                }
             }
         }
 
         let content = text_parts.join("\n");
 
-        // Log usage if present
         if let Some(ref usage) = claude_response.usage {
             crate::commands::log_backend("info", &format!(
-                "[CLAUDE API] Usage - Input: {} tokens, Output: {} tokens, Cache Creation: {}, Cache Read: {}",
-                usage.input_tokens, usage.output_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens
+                "[CLAUDE API] Usage - Input: {} tokens, Output: {} tokens, \
+                 Cache Creation: {}, Cache Read: {}",
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_creation_input_tokens,
+                usage.cache_read_input_tokens,
             ));
         }
 
-        crate::commands::log_backend("info", &format!("[CLAUDE API] Response content length: {} chars, {} tool calls", content.len(), tool_calls.len()));
+        let msg = format!(
+            "[CLAUDE API] Response content length: {} chars, {} tool calls",
+            content.len(),
+            tool_calls.len(),
+        );
+        crate::commands::log_backend("info", &msg);
 
         Ok(GenerateResponse {
             content,
@@ -241,7 +345,6 @@ impl AIProvider for ClaudeProvider {
     }
 }
 
-// Placeholder for future providers
 #[allow(dead_code)]
 pub struct OpenAIProvider {
     api_key: String,
@@ -265,7 +368,6 @@ impl AIProvider for OpenAIProvider {
     }
 }
 
-// Placeholder for Gemini
 #[allow(dead_code)]
 pub struct GeminiProvider {
     api_key: String,

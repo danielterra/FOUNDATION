@@ -1,8 +1,8 @@
 use serde::Serialize;
 use tauri::{State, AppHandle, Emitter, Manager};
 
-use crate::eavto::{self, DbExecutor, query};
-use crate::owl::{Individual, Object};
+use crate::owl::{self, Connection, DbExecutor, Individual, Object};
+use super::setup_system_info::{get_cpu_info, get_memory_info, get_os_info, get_locale_info};
 
 /// Initialize the application database
 /// This MUST be called before any other commands that use the database
@@ -20,7 +20,7 @@ pub async fn initialize_app(
     {
         super::log_backend("info", "Skipping database initialization (build/CI mode)");
         // Create dummy executor for build mode
-        let dummy_conn = rusqlite::Connection::open_in_memory()
+        let dummy_conn = Connection::open_in_memory()
             .map_err(|e| format!("Failed to create in-memory connection: {}", e))?;
         let executor = DbExecutor::new(dummy_conn);
         app.manage(executor);
@@ -29,7 +29,7 @@ pub async fn initialize_app(
     }
 
     // Initialize database (blocking - runs in async context so won't block UI)
-    let conn = eavto::initialize_with_progress(app.clone())
+    let conn = owl::initialize_with_progress(app.clone())
         .map_err(|e| {
             let error_msg = format!("Failed to initialize database: {:?}", e);
             super::log_backend("error", &error_msg);
@@ -38,7 +38,7 @@ pub async fn initialize_app(
         })?;
 
     // Print stats
-    if let Ok(stats) = eavto::get_stats(&conn) {
+    if let Ok(stats) = owl::get_stats(&conn) {
         let stats_msg = format!(
             "Database initialized - Triples: {}, Active: {}, Transactions: {}, Entities: {}",
             stats.total_facts, stats.active_facts, stats.total_transactions, stats.entities_count
@@ -55,17 +55,20 @@ pub async fn initialize_app(
 
     // Check for pending tool executions (from interrupted sessions)
     let executor_state = app.state::<DbExecutor>();
-    match super::chat::check_and_execute_pending_tools(app.clone(), &executor_state).await {
-        Ok(super::chat::RecoveryState::ExecutedTools(count)) => {
-            super::log_backend("warn", &format!("[RECOVERY] Executed {} pending tools from interrupted session", count));
+    match super::chat::chat__recover_pending_tools(app.clone(), executor_state).await {
+        Ok(count) if count > 0 => {
+            super::log_backend(
+                "info",
+                &format!("[RECOVERY] Recovered {} pending tool execution(s)", count),
+            );
         }
-        Ok(super::chat::RecoveryState::AwaitingAIResponse) => {
-            super::log_backend("warn", "[RECOVERY] Found ToolResults awaiting AI response - user can continue conversation");
+        Ok(_) => {
+            // No pending tools, normal startup
         }
         Err(e) => {
-            super::log_backend("error", &format!("[RECOVERY] Failed to check pending tools: {}", e));
+            super::log_backend("warn", &format!("[RECOVERY] Failed to check pending tools: {}", e));
+            // Non-fatal - app can continue
         }
-        _ => {}
     }
 
     Ok(())
@@ -233,8 +236,12 @@ pub async fn setup__init(
     memory.assert(conn, "foundation:Memory", &memory_label, "computer", "setup")
         .map_err(|e| format!("Failed to create Memory: {}", e))?;
 
-    memory.add_property(conn, "foundation:memoryCapacity", Object::Integer(memory_info.capacity_gb), "setup")
-        .map_err(|e| format!("Failed to add memory capacity: {}", e))?;
+    memory.add_property(
+        conn,
+        "foundation:memoryCapacity",
+        Object::Integer(memory_info.capacity_gb),
+        "setup",
+    ).map_err(|e| format!("Failed to add memory capacity: {}", e))?;
 
     let mem_type_obj = Object::Literal {
         value: memory_info.memory_type.clone(),
@@ -288,14 +295,26 @@ pub async fn setup__init(
         .map_err(|e| format!("Failed to add hostname: {}", e))?;
 
     // Link computer to components
-    computer.add_property(conn, "foundation:hasProcessor", Object::Iri("foundation:ThisProcessor".to_string()), "setup")
-        .map_err(|e| format!("Failed to link Computer -> Processor: {}", e))?;
+    computer.add_property(
+        conn,
+        "foundation:hasProcessor",
+        Object::Iri("foundation:ThisProcessor".to_string()),
+        "setup",
+    ).map_err(|e| format!("Failed to link Computer -> Processor: {}", e))?;
 
-    computer.add_property(conn, "foundation:hasMemory", Object::Iri("foundation:ThisMemory".to_string()), "setup")
-        .map_err(|e| format!("Failed to link Computer -> Memory: {}", e))?;
+    computer.add_property(
+        conn,
+        "foundation:hasMemory",
+        Object::Iri("foundation:ThisMemory".to_string()),
+        "setup",
+    ).map_err(|e| format!("Failed to link Computer -> Memory: {}", e))?;
 
-    computer.add_property(conn, "foundation:hasOperatingSystem", Object::Iri("foundation:ThisOperatingSystem".to_string()), "setup")
-        .map_err(|e| format!("Failed to link Computer -> OperatingSystem: {}", e))?;
+    computer.add_property(
+        conn,
+        "foundation:hasOperatingSystem",
+        Object::Iri("foundation:ThisOperatingSystem".to_string()),
+        "setup",
+    ).map_err(|e| format!("Failed to link Computer -> OperatingSystem: {}", e))?;
 
     // Find the SoftwareRelease for this version using semantic query
     let version = env!("CARGO_PKG_VERSION").to_string();
@@ -311,7 +330,11 @@ pub async fn setup__init(
     ).map_err(|e| format!("Failed to query for release: {}", e))?;
 
     let release_iri = releases.first().ok_or_else(|| {
-        format!("SoftwareRelease for FOUNDATION version {} not found in ontology. Please add it to SoftwareRelease.ttl", version)
+        format!(
+            "SoftwareRelease for FOUNDATION version {} not found in ontology. \
+             Please add it to SoftwareRelease.ttl",
+            version
+        )
     })?.clone();
 
     // Create FOUNDATION Application instance
@@ -321,8 +344,12 @@ pub async fn setup__init(
         .map_err(|e| format!("Failed to create Application instance: {}", e))?;
 
     // Link Application to SoftwareRelease
-    foundation.add_property(conn, "foundation:installedFrom", Object::Iri(release_iri.clone()), "setup")
-        .map_err(|e| format!("Failed to link to SoftwareRelease: {}", e))?;
+    foundation.add_property(
+        conn,
+        "foundation:installedFrom",
+        Object::Iri(release_iri.clone()),
+        "setup",
+    ).map_err(|e| format!("Failed to link to SoftwareRelease: {}", e))?;
 
     // Create Local AI Assistant instance
     let ai_assistant = Individual::new("foundation:LocalAIAssistant");
@@ -331,9 +358,6 @@ pub async fn setup__init(
 
     // Use provided AI service or default to Claude
     let service_iri = ai_service_iri.unwrap_or_else(|| "foundation:ClaudeAIService".to_string());
-
-    // Use provided AI model or default to Claude Sonnet 4.5
-    let model_iri = ai_model_iri.unwrap_or_else(|| "foundation:ClaudeSonnet45".to_string());
 
     let ai_description = Object::Literal {
         value: format!("AI assistant powered by {}", service_iri),
@@ -347,23 +371,98 @@ pub async fn setup__init(
     ai_assistant.add_property(
         conn,
         "foundation:usesService",
-        Object::Iri(service_iri),
+        Object::Iri(service_iri.clone()),
         "setup"
     ).map_err(|e| format!("Failed to link AI to service: {}", e))?;
 
-    // Connect AI Assistant to AI Model
-    ai_assistant.add_property(
-        conn,
-        "foundation:usesModel",
-        Object::Iri(model_iri),
-        "setup"
-    ).map_err(|e| format!("Failed to link AI to model: {}", e))?;
+    // Only create user-specific settings if values are provided (non-default)
+    if let Some(model_iri) = ai_model_iri {
+        // User selected a specific model - create a setting to override default
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        let model_setting_iri = format!("foundation:AIModelSetting_{}", timestamp);
+        let model_setting = Individual::new(&model_setting_iri);
+        model_setting.assert(
+            conn,
+            "foundation:SoftwareSetting",
+            "Selected AI Model",
+            "settings",
+            "setup",
+        ).map_err(|e| format!("Failed to create model setting: {}", e))?;
+
+        model_setting.add_property(conn, "foundation:settingKey", Object::Literal {
+            value: "aiModel".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "setup").map_err(|e| format!("Failed to set settingKey: {}", e))?;
+
+        model_setting.add_property(conn, "foundation:settingValue", Object::Literal {
+            value: model_iri,
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "setup").map_err(|e| format!("Failed to set settingValue: {}", e))?;
+
+        model_setting.add_property(conn, "foundation:settingCategory", Object::Literal {
+            value: "ai".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }, "setup").map_err(|e| format!("Failed to set settingCategory: {}", e))?;
+
+        model_setting.add_property(
+            conn,
+            "foundation:origin",
+            Object::Iri("foundation:ThisFoundationInstance".to_string()),
+            "setup"
+        ).map_err(|e| format!("Failed to set origin: {}", e))?;
+
+        model_setting.add_property(
+            conn,
+            "foundation:appliedTo",
+            Object::Iri(service_iri),
+            "setup"
+        ).map_err(|e| format!("Failed to set appliedTo: {}", e))?;
+    }
+    // If no model provided, the default from ontology (DefaultAIModelSetting) will be used
+
+    // Detect and update locale settings (retraction is automatic when setting same property)
+    let locale_info = get_locale_info();
+
+    let language_setting = Individual::get(conn, "foundation:DefaultLanguageSetting")
+        .map_err(|e| format!("Failed to get DefaultLanguageSetting: {}", e))?;
+    language_setting.add_property(conn, "foundation:settingValue", Object::Literal {
+        value: locale_info.language.clone(),
+        datatype: Some("xsd:string".to_string()),
+        language: None,
+    }, "setup").map_err(|e| format!("Failed to update language setting: {}", e))?;
+
+    let locale_setting = Individual::get(conn, "foundation:DefaultLocaleSetting")
+        .map_err(|e| format!("Failed to get DefaultLocaleSetting: {}", e))?;
+    locale_setting.add_property(conn, "foundation:settingValue", Object::Literal {
+        value: locale_info.locale.clone(),
+        datatype: Some("xsd:string".to_string()),
+        language: None,
+    }, "setup").map_err(|e| format!("Failed to update locale setting: {}", e))?;
+
+    let country_setting = Individual::get(conn, "foundation:DefaultCountrySetting")
+        .map_err(|e| format!("Failed to get DefaultCountrySetting: {}", e))?;
+    country_setting.add_property(conn, "foundation:settingValue", Object::Literal {
+        value: locale_info.country.clone(),
+        datatype: Some("xsd:string".to_string()),
+        language: None,
+    }, "setup").map_err(|e| format!("Failed to update country setting: {}", e))?;
 
     // Establish relationships
-    computer.add_property(conn, "foundation:hasUser", Object::Iri("foundation:ThisUser".to_string()), "setup")
-        .map_err(|e| format!("Failed to link Computer -> User: {}", e))?;
-    foundation.add_property(conn, "foundation:runsOn", Object::Iri("foundation:ThisComputer".to_string()), "setup")
-        .map_err(|e| format!("Failed to link FOUNDATION -> Computer: {}", e))?;
+    computer.add_property(
+        conn,
+        "foundation:hasUser",
+        Object::Iri("foundation:ThisUser".to_string()),
+        "setup",
+    ).map_err(|e| format!("Failed to link Computer -> User: {}", e))?;
+    foundation.add_property(
+        conn,
+        "foundation:runsOn",
+        Object::Iri("foundation:ThisComputer".to_string()),
+        "setup",
+    ).map_err(|e| format!("Failed to link FOUNDATION -> Computer: {}", e))?;
 
     let result = SetupResult {
         already_setup: false,
@@ -410,9 +509,6 @@ pub async fn setup__init(
     serde_json::from_str(&result_json).map_err(|e| e.to_string())
 }
 
-// REMOVED: get_existing_setup function was only used in tests and doesn't match
-// the actual production code structure. Real code uses setup__init directly.
-
 /// List available AI services from the ontology
 #[tauri::command]
 #[allow(non_snake_case)]
@@ -421,12 +517,12 @@ pub async fn setup__list_ai_services(
 ) -> Result<Vec<serde_json::Value>, String> {
     executor.read(|conn| {
         // Query all instances of foundation:Service that have AI-related properties
-        let services = query::get_by_predicate_object(conn, "rdf:type", "foundation:Service")
+        let service_iris = owl::find_entities_with_property(conn, "rdf:type", "foundation:Service")
             .map_err(|e| format!("Failed to query services: {}", e))?;
 
         let mut result = Vec::new();
-        for triple in services.triples {
-            let service_iri = &triple.subject;
+        for service_iri in service_iris {
+            let service_iri = &service_iri;
 
             // Get service details
             if let Ok(service_ind) = Individual::get(conn, service_iri) {
@@ -457,17 +553,17 @@ pub async fn setup__list_ai_models(
 ) -> Result<Vec<serde_json::Value>, String> {
     executor.read(move |conn| {
         // Query models, optionally filtered by service
-        let models = if let Some(ref service) = service_iri {
-            query::get_by_predicate_object(conn, "foundation:offeredBy", service)
+        let model_iris = if let Some(ref service) = service_iri {
+            owl::find_entities_with_property(conn, "foundation:offeredBy", service)
                 .map_err(|e| format!("Failed to query models for service: {}", e))?
         } else {
-            query::get_by_predicate_object(conn, "rdf:type", "foundation:AIModel")
+            owl::find_entities_with_property(conn, "rdf:type", "foundation:AIModel")
                 .map_err(|e| format!("Failed to query models: {}", e))?
         };
 
         let mut result = Vec::new();
-        for triple in models.triples {
-            let model_iri = &triple.subject;
+        for model_iri in model_iris {
+            let model_iri = &model_iri;
 
             // Get model details
             if let Ok(model_ind) = Individual::get(conn, model_iri) {
@@ -518,413 +614,4 @@ pub async fn setup__list_ai_models(
 
         Ok(result)
     }).await
-}
-
-/// Internal hardware information structures (without IRI)
-#[derive(Debug)]
-struct InternalProcessorInfo {
-    model: String,
-    cores: Option<i64>,
-    architecture: String,
-}
-
-#[derive(Debug)]
-struct InternalMemoryInfo {
-    capacity_gb: i64,
-    memory_type: String,
-}
-
-#[derive(Debug)]
-struct InternalOperatingSystemInfo {
-    name: String,
-    version: String,
-    kernel: String,
-}
-
-/// Get detailed CPU information
-fn get_cpu_info() -> InternalProcessorInfo {
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-
-        let _model = if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "machdep.cpu.brand_string"])
-            .output()
-        {
-            String::from_utf8(output.stdout)
-                .unwrap_or_else(|_| "Unknown CPU".to_string())
-                .trim()
-                .to_string()
-        } else {
-            "Unknown CPU".to_string()
-        };
-
-        let cores = if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.physicalcpu"])
-            .output()
-        {
-            String::from_utf8(output.stdout)
-                .ok()
-                .and_then(|s| s.trim().parse::<i64>().ok())
-        } else {
-            None
-        };
-
-        let architecture = std::env::consts::ARCH.to_string();
-
-        return InternalProcessorInfo {
-            model: _model,
-            cores,
-            architecture,
-        };
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        use std::fs;
-
-        let mut _model = "Unknown CPU".to_string();
-        let mut cores = None;
-
-        if let Ok(content) = fs::read_to_string("/proc/cpuinfo") {
-            for line in content.lines() {
-                if line.starts_with("model name") {
-                    if let Some(cpu) = line.split(':').nth(1) {
-                        _model = cpu.trim().to_string();
-                    }
-                }
-                if line.starts_with("cpu cores") {
-                    if let Some(core_str) = line.split(':').nth(1) {
-                        cores = core_str.trim().parse::<i64>().ok();
-                    }
-                }
-            }
-        }
-
-        let architecture = std::env::consts::ARCH.to_string();
-
-        return InternalProcessorInfo {
-            model: _model,
-            cores,
-            architecture,
-        };
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-
-        let _model = if let Ok(output) = Command::new("wmic")
-            .args(&["cpu", "get", "name"])
-            .output()
-        {
-            if let Ok(cpu) = String::from_utf8(output.stdout) {
-                let lines: Vec<&str> = cpu.lines().collect();
-                if lines.len() > 1 {
-                    lines[1].trim().to_string()
-                } else {
-                    "Unknown CPU".to_string()
-                }
-            } else {
-                "Unknown CPU".to_string()
-            }
-        } else {
-            "Unknown CPU".to_string()
-        };
-
-        let cores = if let Ok(output) = Command::new("wmic")
-            .args(&["cpu", "get", "NumberOfCores"])
-            .output()
-        {
-            if let Ok(core_str) = String::from_utf8(output.stdout) {
-                let lines: Vec<&str> = core_str.lines().collect();
-                if lines.len() > 1 {
-                    lines[1].trim().parse::<i64>().ok()
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let architecture = std::env::consts::ARCH.to_string();
-
-        return InternalProcessorInfo {
-            model: _model,
-            cores,
-            architecture,
-        };
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        InternalProcessorInfo {
-            model: "Unknown CPU".to_string(),
-            cores: None,
-            architecture: std::env::consts::ARCH.to_string(),
-        }
-    }
-}
-
-/// Get detailed RAM information
-fn get_memory_info() -> InternalMemoryInfo {
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-
-        let capacity_gb = if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.memsize"])
-            .output()
-        {
-            if let Ok(ram_str) = String::from_utf8(output.stdout) {
-                if let Ok(ram_bytes) = ram_str.trim().parse::<u64>() {
-                    (ram_bytes / 1_073_741_824) as i64
-                } else {
-                    0
-                }
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        // Try to detect memory type (DDR3, DDR4, DDR5, LPDDR, etc.)
-        let memory_type = "Unknown".to_string(); // macOS doesn't easily expose this
-
-        return InternalMemoryInfo {
-            capacity_gb,
-            memory_type,
-        };
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        use std::fs;
-
-        let capacity_gb = if let Ok(content) = fs::read_to_string("/proc/meminfo") {
-            let mut gb = 0;
-            for line in content.lines() {
-                if line.starts_with("MemTotal:") {
-                    if let Some(ram_kb) = line.split_whitespace().nth(1) {
-                        if let Ok(ram_kb) = ram_kb.parse::<u64>() {
-                            gb = (ram_kb / 1_048_576) as i64;
-                            break;
-                        }
-                    }
-                }
-            }
-            gb
-        } else {
-            0
-        };
-
-        let memory_type = "Unknown".to_string();
-
-        return InternalMemoryInfo {
-            capacity_gb,
-            memory_type,
-        };
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-
-        let capacity_gb = if let Ok(output) = Command::new("wmic")
-            .args(&["computersystem", "get", "totalphysicalmemory"])
-            .output()
-        {
-            if let Ok(ram_str) = String::from_utf8(output.stdout) {
-                let lines: Vec<&str> = ram_str.lines().collect();
-                if lines.len() > 1 {
-                    if let Ok(ram_bytes) = lines[1].trim().parse::<u64>() {
-                        (ram_bytes / 1_073_741_824) as i64
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                }
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        // Try to get memory type from WMIC
-        let memory_type = if let Ok(output) = Command::new("wmic")
-            .args(&["memorychip", "get", "MemoryType"])
-            .output()
-        {
-            if let Ok(type_str) = String::from_utf8(output.stdout) {
-                let lines: Vec<&str> = type_str.lines().collect();
-                if lines.len() > 1 {
-                    // Memory type codes: 20=DDR, 21=DDR2, 24=DDR3, 26=DDR4, 34=DDR5
-                    match lines[1].trim() {
-                        "20" => "DDR".to_string(),
-                        "21" => "DDR2".to_string(),
-                        "24" => "DDR3".to_string(),
-                        "26" => "DDR4".to_string(),
-                        "34" => "DDR5".to_string(),
-                        _ => "Unknown".to_string(),
-                    }
-                } else {
-                    "Unknown".to_string()
-                }
-            } else {
-                "Unknown".to_string()
-            }
-        } else {
-            "Unknown".to_string()
-        };
-
-        return InternalMemoryInfo {
-            capacity_gb,
-            memory_type,
-        };
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        InternalMemoryInfo {
-            capacity_gb: 0,
-            memory_type: "Unknown".to_string(),
-        }
-    }
-}
-
-/// Get detailed operating system information
-fn get_os_info() -> InternalOperatingSystemInfo {
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-
-        let name = "macOS".to_string();
-
-        let version = if let Ok(output) = Command::new("sw_vers")
-            .args(&["-productVersion"])
-            .output()
-        {
-            String::from_utf8(output.stdout)
-                .unwrap_or_else(|_| "Unknown".to_string())
-                .trim()
-                .to_string()
-        } else {
-            "Unknown".to_string()
-        };
-
-        let kernel = if let Ok(output) = Command::new("uname")
-            .args(&["-r"])
-            .output()
-        {
-            let kernel_version = String::from_utf8(output.stdout)
-                .unwrap_or_else(|_| "Unknown".to_string())
-                .trim()
-                .to_string();
-            format!("Darwin {}", kernel_version)
-        } else {
-            "Darwin".to_string()
-        };
-
-        return InternalOperatingSystemInfo {
-            name,
-            version,
-            kernel,
-        };
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        use std::fs;
-
-        let name = if let Ok(content) = fs::read_to_string("/etc/os-release") {
-            let mut distro_name = "Linux".to_string();
-            for line in content.lines() {
-                if line.starts_with("NAME=") {
-                    if let Some(name_val) = line.strip_prefix("NAME=") {
-                        distro_name = name_val.trim_matches('"').to_string();
-                        break;
-                    }
-                }
-            }
-            distro_name
-        } else {
-            "Linux".to_string()
-        };
-
-        let version = if let Ok(content) = fs::read_to_string("/etc/os-release") {
-            let mut version_str = "Unknown".to_string();
-            for line in content.lines() {
-                if line.starts_with("VERSION_ID=") {
-                    if let Some(ver) = line.strip_prefix("VERSION_ID=") {
-                        version_str = ver.trim_matches('"').to_string();
-                        break;
-                    }
-                }
-            }
-            version_str
-        } else {
-            "Unknown".to_string()
-        };
-
-        let kernel = if let Ok(output) = std::process::Command::new("uname")
-            .args(&["-r"])
-            .output()
-        {
-            let kernel_version = String::from_utf8(output.stdout)
-                .unwrap_or_else(|_| "Unknown".to_string())
-                .trim()
-                .to_string();
-            format!("Linux {}", kernel_version)
-        } else {
-            "Linux".to_string()
-        };
-
-        return InternalOperatingSystemInfo {
-            name,
-            version,
-            kernel,
-        };
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-
-        let name = "Windows".to_string();
-
-        let version = if let Ok(output) = Command::new("cmd")
-            .args(&["/C", "ver"])
-            .output()
-        {
-            String::from_utf8(output.stdout)
-                .unwrap_or_else(|_| "Unknown".to_string())
-                .trim()
-                .to_string()
-        } else {
-            "Unknown".to_string()
-        };
-
-        let kernel = "NT".to_string();
-
-        return InternalOperatingSystemInfo {
-            name,
-            version,
-            kernel,
-        };
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        InternalOperatingSystemInfo {
-            name: std::env::consts::OS.to_string(),
-            version: "Unknown".to_string(),
-            kernel: "Unknown".to_string(),
-        }
-    }
 }

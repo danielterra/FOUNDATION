@@ -1,11 +1,7 @@
 use serde::Serialize;
 use tauri::State;
-use rusqlite::Connection;
+use crate::owl::{self, Class, Individual, Property, Connection, DbExecutor};
 
-use crate::eavto::DbExecutor;
-use crate::owl::{Class, Individual, Property};
-
-/// Entity type in OWL ontology
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum EntityType {
@@ -13,7 +9,6 @@ pub enum EntityType {
     Individual,
 }
 
-/// Search result for entities
 #[derive(Debug, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
@@ -24,7 +19,6 @@ pub struct SearchResult {
     pub entity_type: String, // "class" or "individual"
 }
 
-/// Node in the graph (Class or Individual)
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphNode {
@@ -38,7 +32,6 @@ pub struct GraphNode {
     pub is_literal: Option<bool>, // true if this is a literal value node
 }
 
-/// Link between nodes (ObjectProperty)
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphLink {
@@ -47,7 +40,6 @@ pub struct GraphLink {
     pub label: String,
 }
 
-/// Complete entity data with its neighborhood
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityData {
@@ -56,17 +48,14 @@ pub struct EntityData {
     pub icon: Option<String>,
     pub comment: Option<String>,
 
-    // RDF semantic data
     pub types: Vec<crate::owl::Thing>, // rdf:type (for individuals)
     pub super_classes: Vec<crate::owl::Thing>, // rdfs:subClassOf (for classes)
     pub sub_classes: Vec<crate::owl::Thing>, // inverse of rdfs:subClassOf (for classes)
     pub instances: Vec<crate::owl::Thing>, // entities with rdf:type pointing to this class
 
-    // Properties and relationships
     pub properties: Vec<PropertyValue>,
     pub backlinks: Vec<PropertyValue>, // Properties from other entities pointing to this one
 
-    // Graph visualization data
     pub nodes: Vec<GraphNode>,
     pub links: Vec<GraphLink>,
 }
@@ -81,11 +70,11 @@ pub struct PropertyValue {
     pub value_label: Option<String>, // For object properties, the label of the target entity
     pub value_icon: Option<String>, // For object properties, the icon of the target entity
     pub is_object_property: bool,
-    pub source_class: Option<String>, // For classes: which class defines this property (for grouping inherited properties)
+    pub source_class: Option<String>,
     pub source_class_label: Option<String>,
     pub unit: Option<String>, // QUDT unit IRI (e.g., "unit:GigaBYTE")
     pub unit_label: Option<String>, // QUDT unit label (e.g., "Gigabyte")
-    pub datatype: Option<String>, // XSD datatype for literal values (e.g., "xsd:string", "xsd:dateTime")
+    pub datatype: Option<String>,
 }
 
 /// Search for entities (classes and individuals) by label
@@ -96,12 +85,10 @@ pub async fn entity__search(
     limit: Option<usize>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    // Use EAVTO executor for async read (won't block UI)
     executor.read(move |conn| {
         let limit = limit.unwrap_or(100);
         let mut results = Vec::new();
 
-        // Search classes using OWL abstraction
         let class_results = crate::owl::search_classes(conn, &query, limit)
             .map_err(|e| e.to_string())?;
 
@@ -114,7 +101,6 @@ pub async fn entity__search(
             });
         }
 
-        // Search individuals using OWL abstraction
         let remaining_limit = limit.saturating_sub(results.len());
         if remaining_limit > 0 {
             let individual_results = crate::owl::search_individuals(conn, &query, remaining_limit)
@@ -130,7 +116,6 @@ pub async fn entity__search(
             }
         }
 
-        // Limit total results
         results.truncate(limit);
 
         serde_json::to_string(&results).map_err(|e| e.to_string())
@@ -144,9 +129,7 @@ pub async fn entity__get(
     entity_id: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    // Use EAVTO executor for async read (won't block UI)
     executor.read(move |conn| {
-        // Determine entity type by checking what it is
         let entity_type = determine_entity_type(conn, &entity_id)?;
 
         let data = match entity_type {
@@ -159,13 +142,11 @@ pub async fn entity__get(
 }
 
 fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityType, String> {
-    // Check if it's a class (has rdf:type owl:Class)
     let class = Class::new(entity_id);
     if class.exists(conn).map_err(|e| e.to_string())? {
         return Ok(EntityType::Class);
     }
 
-    // Check if it's an individual (has rdf:type pointing to something other than owl:Class)
     let individual = Individual::new(entity_id);
     if individual.exists(conn).map_err(|e| e.to_string())? {
         return Ok(EntityType::Individual);
@@ -175,7 +156,6 @@ fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityTyp
 }
 
 fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, String> {
-    // Get complete class data using OWL abstraction
     let class = Class::get(conn, class_id)
         .map_err(|e| e.to_string())?;
 
@@ -184,12 +164,10 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
     let comment = class.comment;
 
 
-    // Build graph visualization
     let mut nodes = Vec::new();
     let mut links = Vec::new();
     let mut added_node_ids = std::collections::HashSet::new();
 
-    // Add the class itself
     nodes.push(GraphNode {
         id: class_id.to_string(),
         label: label.clone(),
@@ -200,7 +178,6 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
     });
     added_node_ids.insert(class_id.to_string());
 
-    // Add super-classes as nodes
     for super_class in &class.super_classes {
         if !added_node_ids.contains(&super_class.iri) {
             nodes.push(GraphNode {
@@ -221,7 +198,6 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         });
     }
 
-    // Add sub-classes as nodes
     for sub_class in &class.sub_classes {
         if !added_node_ids.contains(&sub_class.iri) {
             nodes.push(GraphNode {
@@ -242,7 +218,6 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         });
     }
 
-    // Add properties' ranges as nodes (showing what types this class can point to)
     for (property_iri, _source_class_iri) in &class.properties {
         let prop = Property::get(conn, property_iri)
             .map_err(|e| e.to_string())?;
@@ -250,7 +225,6 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         let property_label = prop.label.clone().unwrap_or_else(|| property_iri.clone());
 
         if prop.property_type == crate::owl::PropertyType::ObjectProperty {
-            // ObjectProperty: Add range classes as nodes
             for range_iri in &prop.ranges {
                 if !added_node_ids.contains(range_iri) {
                     let range_thing = crate::owl::Thing::get(conn, range_iri);
@@ -272,7 +246,6 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
                 });
             }
         } else {
-            // DataProperty: Add datatype as literal node
             for range_iri in &prop.ranges {
                 let literal_node_id = format!("{}#datatype#{}", class_id, range_iri);
 
@@ -300,10 +273,8 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
     }
 
 
-    // Build properties list from class.properties
     let mut properties = Vec::new();
 
-    // Add rdf:type properties first
     for type_thing in &class.types {
         properties.push(PropertyValue {
             property: "rdf:type".to_string(),
@@ -321,7 +292,6 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         });
     }
 
-    // Add rdfs:subClassOf properties
     for super_class in &class.super_classes {
         properties.push(PropertyValue {
             property: "rdfs:subClassOf".to_string(),
@@ -340,14 +310,12 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
     }
 
     for (property_iri, source_class_iri) in &class.properties {
-        // Get property data using OWL abstraction
         let prop = Property::get(conn, property_iri)
             .map_err(|e| e.to_string())?;
 
         let property_label = prop.label.unwrap_or_else(|| property_iri.clone());
         let property_comment = prop.comment;
 
-        // Determine if it's an object property and get range
         let is_object_property = prop.property_type == crate::owl::PropertyType::ObjectProperty;
         let (value, value_label, value_icon) = prop.ranges.first()
             .map(|range_iri| {
@@ -356,7 +324,6 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             })
             .unwrap_or_else(|| ("owl:Thing".to_string(), "Any".to_string(), None));
 
-        // Get source class label (only if different from current class)
         let (source_class, source_class_label) = if source_class_iri != class_id {
             let source_thing = crate::owl::Thing::get(conn, source_class_iri);
             (Some(source_class_iri.clone()), Some(source_thing.label))
@@ -366,21 +333,13 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
 
         // Get unit symbol if property has a unit (e.g., "GB" instead of "GigaByte")
         let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
-            // Try to get qudt:symbol first, fallback to rdfs:label
-            let symbol_result = crate::eavto::query::get_by_entity_predicate(conn, unit_iri, "qudt:symbol");
-            let unit_display = if let Ok(result) = symbol_result {
-                result.triples.first()
-                    .and_then(|t| t.object.as_literal())
-                    .map(|s| s.to_string())
-            } else {
-                None
-            };
-
-            // Fallback to label if no symbol found
-            let unit_display = unit_display.or_else(|| {
-                let unit_thing = crate::owl::Thing::get(conn, unit_iri);
-                Some(unit_thing.label)
-            });
+            let unit_display = owl::get_literal_property(conn, unit_iri, "qudt:symbol")
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    let unit_thing = crate::owl::Thing::get(conn, unit_iri);
+                    Some(unit_thing.label)
+                });
 
             (Some(unit_iri.clone()), unit_display)
         } else {
@@ -403,10 +362,8 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         });
     }
 
-    // Process backlinks (instances of this class)
     let mut backlinks = Vec::new();
     for (source_entity, property_iri, _value_obj) in &class.backlinks {
-        // Get property metadata
         let prop_result = Property::get(conn, property_iri);
         let (property_label, property_comment) = if let Ok(prop) = prop_result {
             (prop.label.unwrap_or_else(|| property_iri.clone()), prop.comment)
@@ -414,25 +371,16 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             (property_iri.clone(), None)
         };
 
-        // Get source entity info
         let source_thing = crate::owl::Thing::get(conn, source_entity);
 
-        // Get source entity's primary type (class)
-        let source_types_result = crate::eavto::query::get_by_entity_predicate(conn, source_entity, "rdf:type");
-        let (source_class_iri, source_class_label) = if let Ok(types) = source_types_result {
-            if let Some(first_type) = types.triples.first() {
-                if let Some(class_iri) = first_type.object.as_iri() {
-                    let class_thing = crate::owl::Thing::get(conn, class_iri);
-                    (Some(class_iri.to_string()), Some(class_thing.label))
-                } else {
-                    (None, None)
+        let (source_class_iri, source_class_label) =
+            match owl::get_iri_property(conn, source_entity, "rdf:type") {
+                Ok(Some(class_iri)) => {
+                    let class_thing = crate::owl::Thing::get(conn, &class_iri);
+                    (Some(class_iri), Some(class_thing.label))
                 }
-            } else {
-                (None, None)
-            }
-        } else {
-            (None, None)
-        };
+                _ => (None, None),
+            };
 
         backlinks.push(PropertyValue {
             property: property_iri.clone(),
@@ -467,7 +415,6 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
 }
 
 fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityData, String> {
-    // Get complete individual data using OWL abstraction
     let individual = Individual::get(conn, individual_id)
         .map_err(|e| e.to_string())?;
 
@@ -475,60 +422,45 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     let icon = individual.icon;
     let comment = individual.comment;
 
-    // Build properties list
     let mut properties = Vec::new();
     for (property_iri, value_obj) in &individual.properties {
-        // Get property metadata using OWL abstraction
         let prop_result = Property::get(conn, property_iri);
-        let (property_label, property_comment, unit, unit_label, is_object_property) = if let Ok(prop) = prop_result {
+        let (property_label, property_comment, unit, unit_label, is_object_property) =
+            if let Ok(prop) = prop_result {
             let label = prop.label.clone().unwrap_or_else(|| property_iri.clone());
             let comment = prop.comment.clone();
 
             // Get unit symbol if property has a unit (e.g., "GB" instead of "GigaByte")
             let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
-                // Try to get qudt:symbol first, fallback to rdfs:label
-                let symbol_result = crate::eavto::query::get_by_entity_predicate(conn, unit_iri, "qudt:symbol");
-                let unit_display = if let Ok(result) = symbol_result {
-                    result.triples.first()
-                        .and_then(|t| t.object.as_literal())
-                        .map(|s| s.to_string())
-                } else {
-                    None
-                };
-
-                // Fallback to label if no symbol found
-                let unit_display = unit_display.or_else(|| {
-                    let unit_thing = crate::owl::Thing::get(conn, unit_iri);
-                    Some(unit_thing.label)
-                });
+                let unit_display = owl::get_literal_property(conn, unit_iri, "qudt:symbol")
+                    .ok()
+                    .flatten()
+                    .or_else(|| {
+                        let unit_thing = crate::owl::Thing::get(conn, unit_iri);
+                        Some(unit_thing.label)
+                    });
 
                 (Some(unit_iri.clone()), unit_display)
             } else {
                 (None, None)
             };
 
-            // Use property type from ontology definition
             let is_obj_prop = prop.property_type == crate::owl::PropertyType::ObjectProperty;
             (label, comment, unit, unit_label, is_obj_prop)
         } else {
-            // Fallback: if property definition not found, infer from value type
             (property_iri.clone(), None, None, None, value_obj.is_iri())
         };
 
-        // Extract value based on type
         let value = if is_object_property {
             value_obj.as_iri().unwrap_or("").to_string()
         } else {
             value_obj.as_literal().unwrap_or_default()
         };
 
-        // For object properties, get the label and icon of the target entity
-        // For datatype properties, get the datatype (xsd:string, xsd:dateTime, etc.)
         let (value_label, value_icon, datatype) = if is_object_property {
             let target_thing = crate::owl::Thing::get(conn, &value);
             (Some(target_thing.label), target_thing.icon, None)
         } else {
-            // For datatype properties, extract the XSD datatype from the stored value
             (None, None, value_obj.datatype().map(|s| s.to_string()))
         };
 
@@ -548,12 +480,10 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         });
     }
 
-    // Build graph visualization
     let mut nodes = Vec::new();
     let mut links = Vec::new();
     let mut added_node_ids = std::collections::HashSet::new();
 
-    // Add the individual itself
     nodes.push(GraphNode {
         id: individual_id.to_string(),
         label: label.clone(),
@@ -564,7 +494,6 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     });
     added_node_ids.insert(individual_id.to_string());
 
-    // Add its classes as nodes
     for class_thing in &individual.types {
         if !added_node_ids.contains(&class_thing.iri) {
             nodes.push(GraphNode {
@@ -585,10 +514,8 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         });
     }
 
-    // Add related entities via all properties (both ObjectProperties and DataProperties)
     for prop in &properties {
         if prop.is_object_property {
-            // ObjectProperty: add related individual as node
             if !added_node_ids.contains(&prop.value) {
                 let related_thing = crate::owl::Thing::get(conn, &prop.value);
                 let entity_exists_flag = Individual::new(&prop.value).exists(conn).unwrap_or(false);
@@ -596,7 +523,11 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                 nodes.push(GraphNode {
                     id: prop.value.clone(),
                     label: related_thing.label,
-                    icon: if entity_exists_flag { related_thing.icon } else { Some("warning".to_string()) },
+                    icon: if entity_exists_flag {
+                        related_thing.icon
+                    } else {
+                        Some("warning".to_string())
+                    },
                     group: 6,
                     is_broken_ref: if entity_exists_flag { None } else { Some(true) },
                     is_literal: None,
@@ -610,12 +541,9 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                 label: prop.property_label.clone(),
             });
         } else {
-            // DataProperty: add literal value as node
-            // Create unique ID for literal node (property + value)
             let literal_node_id = format!("{}#literal#{}", individual_id, &prop.property);
 
             if !added_node_ids.contains(&literal_node_id) {
-                // Format display value with unit if available
                 let display_value = if let Some(unit_label) = &prop.unit_label {
                     format!("{} {}", prop.value, unit_label)
                 } else {
@@ -667,7 +595,11 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             nodes.push(GraphNode {
                 id: subject.clone(),
                 label: subject_thing.label,
-                icon: if entity_exists_flag { subject_thing.icon } else { Some("warning".to_string()) },
+                icon: if entity_exists_flag {
+                    subject_thing.icon
+                } else {
+                    Some("warning".to_string())
+                },
                 group: 6,
                 is_broken_ref: if entity_exists_flag { None } else { Some(true) },
                 is_literal: None,
@@ -688,10 +620,8 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         });
     }
 
-    // Process backlinks
     let mut backlinks = Vec::new();
     for (source_entity, property_iri, _value_obj) in &individual.backlinks {
-        // Get property metadata
         let prop_result = Property::get(conn, property_iri);
         let (property_label, property_comment) = if let Ok(prop) = prop_result {
             (prop.label.unwrap_or_else(|| property_iri.clone()), prop.comment)
@@ -699,25 +629,16 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             (property_iri.clone(), None)
         };
 
-        // Get source entity info
         let source_thing = crate::owl::Thing::get(conn, source_entity);
 
-        // Get source entity's primary type (class)
-        let source_types_result = crate::eavto::query::get_by_entity_predicate(conn, source_entity, "rdf:type");
-        let (source_class_iri, source_class_label) = if let Ok(types) = source_types_result {
-            if let Some(first_type) = types.triples.first() {
-                if let Some(class_iri) = first_type.object.as_iri() {
-                    let class_thing = crate::owl::Thing::get(conn, class_iri);
-                    (Some(class_iri.to_string()), Some(class_thing.label))
-                } else {
-                    (None, None)
+        let (source_class_iri, source_class_label) =
+            match owl::get_iri_property(conn, source_entity, "rdf:type") {
+                Ok(Some(class_iri)) => {
+                    let class_thing = crate::owl::Thing::get(conn, &class_iri);
+                    (Some(class_iri), Some(class_thing.label))
                 }
-            } else {
-                (None, None)
-            }
-        } else {
-            (None, None)
-        };
+                _ => (None, None),
+            };
 
         backlinks.push(PropertyValue {
             property: property_iri.clone(),

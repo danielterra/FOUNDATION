@@ -18,6 +18,9 @@ pub mod rdf {
     pub const OBJECT: &str = "rdf:object";
     #[allow(dead_code)]
     pub const LANG_STRING: &str = "rdf:langString";
+    pub const FIRST: &str = "rdf:first";
+    pub const REST: &str = "rdf:rest";
+    pub const NIL: &str = "rdf:nil";
 }
 
 /// RDFS vocabulary
@@ -69,6 +72,8 @@ pub mod owl {
     pub const SAME_AS: &str = "owl:sameAs";
     #[allow(dead_code)]
     pub const DIFFERENT_FROM: &str = "owl:differentFrom";
+
+    pub const ONE_OF: &str = "owl:oneOf";
 
     #[allow(dead_code)]
     pub const RESTRICTION: &str = "owl:Restriction";

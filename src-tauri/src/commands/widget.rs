@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
-use rusqlite::Connection;
 use tauri::{AppHandle, Emitter, State};
-use crate::eavto::DbExecutor;
+use crate::owl::{Connection, DbExecutor};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Widget {
@@ -31,7 +30,6 @@ pub struct WidgetType {
     pub description: String,
 }
 
-// Database functions for widgets
 pub fn ensure_widget_table(conn: &Connection) -> Result<(), String> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS widgets (
@@ -53,7 +51,8 @@ pub fn db_insert_widget(conn: &Connection, widget: &Widget) -> Result<(), String
     ensure_widget_table(conn)?;
 
     conn.execute(
-        "INSERT INTO widgets (id, widget_type, entity_id, position_x, position_y, size_width, size_height, created_at)
+        "INSERT INTO widgets \
+         (id, widget_type, entity_id, position_x, position_y, size_width, size_height, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
             widget.id,
@@ -115,7 +114,11 @@ pub fn db_delete_widget(conn: &Connection, widget_id: &str) -> Result<(), String
     Ok(())
 }
 
-fn db_update_widget_position(conn: &Connection, widget_id: &str, position: &Position) -> Result<(), String> {
+fn db_update_widget_position(
+    conn: &Connection,
+    widget_id: &str,
+    position: &Position,
+) -> Result<(), String> {
     ensure_widget_table(conn)?;
 
     let rows_affected = conn.execute(

@@ -68,7 +68,26 @@ export function initializeLogging() {
   console.info = createWrappedMethod('info', originalConsole.info);
   console.debug = createWrappedMethod('debug', originalConsole.debug);
 
-  originalConsole.log('📝 Frontend logging initialized - all console output will be saved to file');
+  // Capture unhandled errors
+  window.onerror = function(message, source, lineno, colno, error) {
+    const errorMsg = `Unhandled Error: ${message}\n` +
+      `  at ${source}:${lineno}:${colno}\n` +
+      `  ${error?.stack || ''}`;
+    originalConsole.error(errorMsg);
+    sendLogToBackend('error', [errorMsg]);
+    return false; // Let default handler run too
+  };
+
+  // Capture unhandled promise rejections
+  window.onunhandledrejection = function(event) {
+    const errorMsg = `Unhandled Promise Rejection: ${event.reason}\n  ${event.reason?.stack || ''}`;
+    originalConsole.error(errorMsg);
+    sendLogToBackend('error', [errorMsg]);
+  };
+
+  originalConsole.log(
+    '📝 Frontend logging initialized - all console output will be saved to file'
+  );
 }
 
 /**

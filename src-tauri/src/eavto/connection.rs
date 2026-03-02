@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use std::fmt;
 use std::error::Error;
+use crate::commands::log_backend;
 
 /// Database initialization error types
 #[derive(Debug)]
@@ -66,12 +67,12 @@ pub fn get_db_path() -> Result<PathBuf, DbError> {
 
     // Create Foundation directory if it doesn't exist
     if !foundation_dir.exists() {
-        println!("Creating Foundation directory at {:?}", foundation_dir);
+        log_backend("info", &format!("Creating Foundation directory: {:?}", foundation_dir));
         fs::create_dir_all(&foundation_dir)?;
     }
 
     let db_path = foundation_dir.join("FOUNDATION.db");
-    println!("Using database at {:?}", db_path);
+    log_backend("info", &format!("Using database: {:?}", db_path));
 
     Ok(db_path)
 }
@@ -87,9 +88,9 @@ const DTYPE_TTL: &str = include_str!("../../../core-ontology/dtype.ttl");
 
 /// Create database schema
 fn create_schema(conn: &Connection) -> Result<(), DbError> {
-    println!("📋 Creating schema...");
+    log_backend("info", "Creating schema");
     conn.execute_batch(SCHEMA_SQL)?;
-    println!("✅ Schema created");
+    log_backend("info", "Schema created");
     Ok(())
 }
 
@@ -97,7 +98,7 @@ fn create_schema(conn: &Connection) -> Result<(), DbError> {
 fn import_rdf_core(conn: &mut Connection, app: Option<&tauri::AppHandle>) -> Result<u64, DbError> {
     use tauri::Emitter;
 
-    println!("\n📚 Importing RDF/RDFS/OWL core ontology...");
+    log_backend("info", "Importing RDF/RDFS/OWL core ontology");
 
     if let Some(handle) = app {
         let _ = handle.emit("import-progress", crate::ImportProgress {
@@ -123,15 +124,19 @@ fn import_rdf_core(conn: &mut Connection, app: Option<&tauri::AppHandle>) -> Res
 
     let _ = std::fs::remove_file(&temp_file);
 
-    println!("✅ Imported {} triples from RDF/RDFS/OWL", stats.triples_processed);
+    log_backend("info", &format!("Imported {} triples from RDF/RDFS/OWL", stats.triples_processed));
     Ok(stats.triples_processed)
 }
 
 /// Import DTYPE ontology
-fn import_dtype(conn: &mut Connection, app: Option<&tauri::AppHandle>, total_triples: u64) -> Result<u64, DbError> {
+fn import_dtype(
+    conn: &mut Connection,
+    app: Option<&tauri::AppHandle>,
+    total_triples: u64,
+) -> Result<u64, DbError> {
     use tauri::Emitter;
 
-    println!("\n📚 Importing DTYPE ontology...");
+    log_backend("info", "Importing DTYPE ontology");
 
     if let Some(handle) = app {
         let _ = handle.emit("import-progress", crate::ImportProgress {
@@ -157,7 +162,7 @@ fn import_dtype(conn: &mut Connection, app: Option<&tauri::AppHandle>, total_tri
 
     let _ = std::fs::remove_file(&temp_file);
 
-    println!("✅ Imported {} triples from DTYPE", stats.triples_processed);
+    log_backend("info", &format!("Imported {} triples from DTYPE", stats.triples_processed));
     Ok(stats.triples_processed)
 }
 
@@ -168,16 +173,19 @@ pub fn initialize_db(db_path: &Path) -> Result<Connection, DbError> {
 }
 
 /// Initialize database with progress events
-fn initialize_db_with_progress(db_path: &Path, app: Option<&tauri::AppHandle>) -> Result<Connection, DbError> {
+fn initialize_db_with_progress(
+    db_path: &Path,
+    app: Option<&tauri::AppHandle>,
+) -> Result<Connection, DbError> {
     use tauri::Emitter;
 
     let needs_initialization = !db_path.exists();
 
-    println!("Using database at: {:?}", db_path);
+    log_backend("info", &format!("Using database: {:?}", db_path));
     let mut conn = Connection::open(db_path)?;
 
     if needs_initialization {
-        println!("\n🚀 Initializing new database...\n");
+        log_backend("info", "Initializing new database");
 
         create_schema(&conn)?;
 
@@ -185,36 +193,40 @@ fn initialize_db_with_progress(db_path: &Path, app: Option<&tauri::AppHandle>) -
         total_triples += import_rdf_core(&mut conn, app)?;
         total_triples += import_dtype(&mut conn, app, total_triples)?;
 
-        total_triples += crate::turtle::import_all_foundation_ontologies(&mut conn, app, total_triples)
-            .map_err(|e| DbError::SchemaError(format!("Ontology import failed: {:?}", e)))?;
+        total_triples += crate::turtle::import_all_foundation_ontologies(
+            &mut conn,
+            app,
+            total_triples,
+        )
+        .map_err(|e| DbError::SchemaError(format!("Ontology import failed: {:?}", e)))?;
 
-        println!("\n⚙️  Setting metadata...");
         conn.execute(
             "UPDATE metadata SET value = 'true', updated_at = ? WHERE key = 'ontology_imported'",
             [std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("system clock is before Unix epoch")
                 .as_millis() as i64],
         )?;
-        println!("✅ Metadata updated");
 
-        println!("\n✅ Database initialization complete! Total triples: {}", total_triples);
+        log_backend(
+            "info",
+            &format!("Database initialization complete. Total triples: {}", total_triples),
+        );
     } else {
-        println!("ℹ️  Database already exists, checking for ontology updates...");
+        log_backend("info", "Database exists, checking for ontology updates");
 
         // Check for modified ontology files and reimport if needed
         let modified_count = crate::turtle::import_all_foundation_ontologies(&mut conn, app, 0)
             .map_err(|e| DbError::SchemaError(format!("Ontology update check failed: {:?}", e)))?;
 
         if modified_count > 0 {
-            println!("✅ Reimported {} modified triples", modified_count);
+            log_backend("info", &format!("Reimported {} modified triples", modified_count));
         } else {
-            println!("✅ All ontology files up to date");
+            log_backend("info", "All ontology files up to date");
         }
 
         // Emit completion
         if let Some(handle) = app {
-            println!("📡 Emitting import-complete");
             let _ = handle.emit("import-complete", ());
         }
     }
@@ -238,7 +250,6 @@ pub fn get_connection() -> Result<Connection, DbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use tempfile::TempDir;
 
     #[test]

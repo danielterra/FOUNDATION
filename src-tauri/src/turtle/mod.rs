@@ -15,6 +15,7 @@ use std::path::Path;
 use std::io::BufReader;
 use std::fs::File;
 use crate::eavto::{Triple, Object};
+use crate::commands::log_backend;
 use chrono;
 use sha2::{Sha256, Digest};
 
@@ -29,6 +30,8 @@ pub enum ImportError {
     XmlError(RdfXmlError),
     #[allow(dead_code)]
     DatabaseError(String),
+    #[allow(dead_code)]
+    ParseError(String),
 }
 
 impl From<std::io::Error> for ImportError {
@@ -94,7 +97,8 @@ fn get_literal_value(lit: &rio_api::model::Literal) -> String {
 fn get_literal_datatype(lit: &rio_api::model::Literal) -> String {
     let full_iri = match lit {
         rio_api::model::Literal::Simple { .. } => "http://www.w3.org/2001/XMLSchema#string",
-        rio_api::model::Literal::LanguageTaggedString { .. } => "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString",
+        rio_api::model::Literal::LanguageTaggedString { .. } =>
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString",
         rio_api::model::Literal::Typed { datatype, .. } => datatype.iri,
     };
     crate::namespaces::compress_iri(full_iri)
@@ -103,13 +107,19 @@ fn get_literal_datatype(lit: &rio_api::model::Literal) -> String {
 /// Extracts language tag from a literal term
 fn get_literal_language(lit: &rio_api::model::Literal) -> Option<String> {
     match lit {
-        rio_api::model::Literal::LanguageTaggedString { language, .. } => Some(language.to_string()),
+        rio_api::model::Literal::LanguageTaggedString { language, .. } =>
+            Some(language.to_string()),
         _ => None,
     }
 }
 
 /// Converts RIO triple to EAVTO Triple
-fn rio_to_eavto_triple(rio_triple: &RioTriple, tx: i64, origin_id: i64, created_at: i64) -> Triple {
+fn rio_to_eavto_triple(
+    rio_triple: &RioTriple,
+    tx: i64,
+    origin_id: i64,
+    created_at: i64,
+) -> Result<Triple, ImportError> {
     let subject_full = subject_to_string(&rio_triple.subject);
     let subject = crate::namespaces::compress_iri(&subject_full);
     let predicate = crate::namespaces::compress_iri(rio_triple.predicate.iri);
@@ -127,61 +137,37 @@ fn rio_to_eavto_triple(rio_triple: &RioTriple, tx: i64, origin_id: i64, created_
             let datatype = get_literal_datatype(lit);
             let language = get_literal_language(lit);
 
-            // Parse typed literals into native types
-            // If parse fails, it's invalid RDF data - we should fail fast
             match datatype.as_str() {
                 "xsd:integer" | "xsd:int" | "xsd:long" => {
                     value.parse::<i64>()
                         .map(Object::Integer)
-                        .unwrap_or_else(|e| panic!(
-                            "TURTLE PARSE ERROR: Invalid integer literal in input file\n\
-                             Value: '{}'\n\
-                             Datatype: {}\n\
-                             Error: {:?}\n\
-                             This indicates malformed RDF data in the source file.",
-                            value, datatype, e
-                        ))
+                        .map_err(|e| ImportError::ParseError(format!(
+                            "Invalid integer literal '{}' ({}): {:?}", value, datatype, e
+                        )))?
                 }
                 "xsd:decimal" | "xsd:double" | "xsd:float" => {
                     value.parse::<f64>()
                         .map(Object::Number)
-                        .unwrap_or_else(|e| panic!(
-                            "TURTLE PARSE ERROR: Invalid float literal in input file\n\
-                             Value: '{}'\n\
-                             Datatype: {}\n\
-                             Error: {:?}\n\
-                             This indicates malformed RDF data in the source file.",
-                            value, datatype, e
-                        ))
+                        .map_err(|e| ImportError::ParseError(format!(
+                            "Invalid float literal '{}' ({}): {:?}", value, datatype, e
+                        )))?
                 }
                 "xsd:boolean" => {
                     match value.as_str() {
                         "true" | "1" => Object::Boolean(true),
                         "false" | "0" => Object::Boolean(false),
-                        _ => panic!(
-                            "TURTLE PARSE ERROR: Invalid boolean literal in input file\n\
-                             Value: '{}'\n\
-                             Datatype: {}\n\
-                             Expected: 'true', 'false', '1', or '0'\n\
-                             This indicates malformed RDF data in the source file.",
-                            value, datatype
-                        )
+                        _ => return Err(ImportError::ParseError(format!(
+                            "Invalid boolean literal '{}': expected 'true', 'false', '1', or '0'",
+                            value
+                        ))),
                     }
                 }
                 "xsd:dateTime" => {
-                    // Parse ISO 8601 datetime to Unix timestamp
-                    // Format: 2025-01-28T18:38:46Z
                     chrono::DateTime::parse_from_rfc3339(&value)
                         .map(|dt| Object::DateTime(dt.timestamp()))
-                        .unwrap_or_else(|e| panic!(
-                            "TURTLE PARSE ERROR: Invalid dateTime literal in input file\n\
-                             Value: '{}'\n\
-                             Datatype: {}\n\
-                             Error: {:?}\n\
-                             Expected ISO 8601 format (e.g., '2025-01-28T18:38:46Z')\n\
-                             This indicates malformed RDF data in the source file.",
-                            value, datatype, e
-                        ))
+                        .map_err(|e| ImportError::ParseError(format!(
+                            "Invalid dateTime literal '{}': {:?}", value, e
+                        )))?
                 }
                 _ => Object::Literal { value, datatype: Some(datatype), language }
             }
@@ -191,7 +177,7 @@ fn rio_to_eavto_triple(rio_triple: &RioTriple, tx: i64, origin_id: i64, created_
         }
     };
 
-    Triple {
+    Ok(Triple {
         subject,
         predicate,
         object,
@@ -199,7 +185,7 @@ fn rio_to_eavto_triple(rio_triple: &RioTriple, tx: i64, origin_id: i64, created_
         created_at,
         origin_id,
         retracted: false,
-    }
+    })
 }
 
 /// Get or create origin ID
@@ -236,8 +222,12 @@ pub fn import_turtle_file(
     file_path: &Path,
     origin: &str,
 ) -> Result<ImportStats, ImportError> {
-    let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
-    println!("Importing Turtle file: {}", filename);
+    let filename = file_path
+        .file_name()
+        .ok_or_else(|| ImportError::ParseError("Invalid file path".to_string()))?
+        .to_string_lossy()
+        .to_string();
+    log_backend("info", &format!("Importing Turtle file: {}", filename));
 
     let file = File::open(file_path)?;
     let reader = BufReader::new(file);
@@ -251,30 +241,29 @@ pub fn import_turtle_file(
     // Get current timestamp
     let created_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .map_err(|e| ImportError::DatabaseError(e.to_string()))?
         .as_millis() as i64;
 
     // Parse Turtle file and collect triples
-    let parse_result = TurtleParser::new(reader, None).parse_all(&mut |rio_triple: RioTriple| {
+    let parse_result = TurtleParser::new(reader, None)
+        .parse_all(&mut |rio_triple: RioTriple| -> Result<(), ImportError> {
         triples_processed += 1;
 
-        // Convert RIO triple to EAVTO triple (tx will be set later)
-        let eavto_triple = rio_to_eavto_triple(&rio_triple, 0, origin_id, created_at);
+        let eavto_triple = rio_to_eavto_triple(&rio_triple, 0, origin_id, created_at)?;
         eavto_triples.push(eavto_triple);
 
         if triples_processed % 1000 == 0 {
-            println!("  Parsed {} triples...", triples_processed);
+            log_backend("info", &format!("Parsed {} triples", triples_processed));
         }
 
-        Ok(()) as Result<(), TurtleError>
+        Ok(())
     });
 
     if let Err(e) = parse_result {
-        return Err(ImportError::TurtleError(e));
+        return Err(e);
     }
 
     // Store triples directly to EAVTO
-    println!("  Asserting {} triples to database...", eavto_triples.len());
     let facts_inserted = crate::eavto::store::assert_triples(conn, &eavto_triples, origin)
         .map_err(|e| ImportError::DatabaseError(format!("Store error: {:?}", e)))?;
     let facts_inserted = facts_inserted as u64;
@@ -286,10 +275,7 @@ pub fn import_turtle_file(
         |row| row.get(0)
     ).unwrap_or(0);
 
-    println!(
-        "✅ Imported {} triples ({} facts) from {}",
-        triples_processed, facts_inserted, filename
-    );
+    log_backend("info", &format!("Imported {} triples from {}", triples_processed, filename));
 
     Ok(ImportStats {
         file: filename,
@@ -311,7 +297,7 @@ pub fn import_all_foundation_ontologies(
 
     let mut total_triples = 0u64;
 
-    println!("\n🏛️  Importing FOUNDATION ontologies...\n");
+    log_backend("info", "Importing FOUNDATION ontologies");
 
     // Get core-ontology directory using Tauri's official API
     let core_ontology_dir = if let Some(app_handle) = app {
@@ -322,11 +308,14 @@ pub fn import_all_foundation_ontologies(
             Ok(resource_dir) => {
                 // Resources with ../ are placed in _up_ subdirectory
                 let ontology_path = resource_dir.join("_up_").join("core-ontology");
-                println!("📂 Resolved resource path: {}", ontology_path.display());
+                log_backend("info", &format!("Resource path: {}", ontology_path.display()));
                 ontology_path
             },
             Err(e) => {
-                println!("⚠️  Failed to get resource dir: {:?}, falling back to dev path", e);
+                log_backend(
+                    "warn",
+                    &format!("Failed to get resource dir: {:?}, falling back to dev path", e),
+                );
                 // Fallback to dev path
                 let project_root = std::env::var("CARGO_MANIFEST_DIR")
                     .ok()
@@ -334,7 +323,10 @@ pub fn import_all_foundation_ontologies(
                         let path = Path::new(&manifest_dir);
                         path.parent().map(|p| p.to_path_buf())
                     })
-                    .unwrap_or_else(|| std::env::current_dir().unwrap());
+                    .unwrap_or_else(|| {
+                        std::env::current_dir()
+                            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    });
                 project_root.join("core-ontology")
             }
         }
@@ -346,13 +338,16 @@ pub fn import_all_foundation_ontologies(
                 let path = Path::new(&manifest_dir);
                 path.parent().map(|p| p.to_path_buf())
             })
-            .unwrap_or_else(|| std::env::current_dir().unwrap());
+            .unwrap_or_else(|| {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            });
         let ontology_path = project_root.join("core-ontology");
-        println!("📂 Using dev path: {}", ontology_path.display());
+        log_backend("info", &format!("Using dev path: {}", ontology_path.display()));
         ontology_path
     };
 
-    println!("📂 Reading from: {}", core_ontology_dir.display());
+    log_backend("info", &format!("Reading ontologies from: {}", core_ontology_dir.display()));
 
     // Read all .ttl files
     let mut ttl_files: Vec<std::path::PathBuf> = Vec::new();
@@ -374,7 +369,7 @@ pub fn import_all_foundation_ontologies(
             }
         }
         Err(e) => {
-            eprintln!("⚠️  Error reading core-ontology directory: {}", e);
+            log_backend("error", &format!("⚠️  Error reading core-ontology directory: {}", e));
             return Err(ImportError::IoError(e));
         }
     }
@@ -382,24 +377,31 @@ pub fn import_all_foundation_ontologies(
     ttl_files.sort();
 
     let total_files = ttl_files.len() as u32;
-    println!("📋 Found {} FOUNDATION ontology files\n", total_files);
+    log_backend("info", &format!("Found {} ontology files", total_files));
 
     // Import each file (with incremental import check)
     for (index, file_path) in ttl_files.iter().enumerate() {
-        let filename = file_path.file_name().unwrap().to_str().unwrap();
+        let filename = file_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| {
+                ImportError::ParseError(format!("Invalid file name: {}", file_path.display()))
+            })?;
         let origin = format!("foundation:ontology:{}", filename);
 
         // Check if file needs reimport
         let should_import = match needs_reimport(conn, &file_path) {
             Ok(needs) => needs,
             Err(e) => {
-                eprintln!("⚠️  Error checking {}: {:?}, importing anyway", filename, e);
+                log_backend(
+                    "warn",
+                    &format!("⚠️  Error checking {}: {:?}, importing anyway", filename, e),
+                );
                 true
             }
         };
 
         if !should_import {
-            println!("⏭️  {} (unchanged, skipping)", filename);
             continue;
         }
 
@@ -414,15 +416,17 @@ pub fn import_all_foundation_ontologies(
             });
         }
 
-        println!("📄 {}", filename);
+        log_backend("info", &format!("Importing: {}", filename));
         match import_turtle_file(conn, &file_path, &origin) {
             Ok(stats) => {
                 total_triples += stats.triples_processed;
-                println!("   ✓ {} triples", stats.triples_processed);
 
                 // Register imported file
                 if let Err(e) = register_imported_file(conn, &file_path, &stats) {
-                    eprintln!("⚠️  Failed to register {}: {:?}", filename, e);
+                    log_backend(
+                        "warn",
+                        &format!("⚠️  Failed to register {}: {:?}", filename, e),
+                    );
                 }
 
                 // Emit progress event AFTER importing with updated triples
@@ -437,13 +441,13 @@ pub fn import_all_foundation_ontologies(
                 }
             }
             Err(e) => {
-                eprintln!("⚠️  Failed to import {}: {:?}", filename, e);
+                log_backend("error", &format!("⚠️  Failed to import {}: {:?}", filename, e));
             }
         }
     }
 
-    println!("\n✅ FOUNDATION ontology import complete!");
-    println!("📊 Total triples from foundation files: {}", total_triples);
+    log_backend("info", "FOUNDATION ontology import complete");
+    log_backend("info", &format!("Total triples from foundation files: {}", total_triples));
 
     Ok(total_triples)
 }
@@ -477,7 +481,7 @@ pub fn needs_reimport(
     let metadata = std::fs::metadata(file_path)?;
     let current_modified = metadata.modified()?
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap()
+        .map_err(|e| ImportError::DatabaseError(e.to_string()))?
         .as_secs() as i64;
 
     // Calculate current checksum
@@ -488,7 +492,10 @@ pub fn needs_reimport(
         let file_name = file_path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        println!("🔄 File {} has changed (checksum mismatch)", file_name);
+        log_backend(
+            "info",
+            &format!("File {} has changed (checksum mismatch), reimporting", file_name),
+        );
         return Ok(true);
     }
 
@@ -497,7 +504,7 @@ pub fn needs_reimport(
         let file_name = file_path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        println!("🔄 File {} has been modified", file_name);
+        log_backend("info", &format!("File {} has been modified, reimporting", file_name));
         return Ok(true);
     }
 
@@ -530,7 +537,7 @@ pub fn register_imported_file(
     let metadata = std::fs::metadata(file_path)?;
     let last_modified = metadata.modified()?
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap()
+        .map_err(|e| ImportError::DatabaseError(e.to_string()))?
         .as_secs() as i64;
 
     // Calculate checksum
@@ -539,13 +546,14 @@ pub fn register_imported_file(
     // Get current timestamp
     let now = std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap()
+        .map_err(|e| ImportError::DatabaseError(e.to_string()))?
         .as_secs() as i64;
 
     // Insert or replace record
     conn.execute(
-        "INSERT OR REPLACE INTO ontology_files (file_path, file_name, last_modified, last_imported, checksum, triple_count)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT OR REPLACE INTO ontology_files \
+             (file_path, file_name, last_modified, last_imported, checksum, triple_count) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         (
             &file_path_str,
             file_name,

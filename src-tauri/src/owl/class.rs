@@ -1,14 +1,7 @@
-// ============================================================================
-// OWL Class - Class Operations
-// ============================================================================
-// High-level operations for managing OWL/RDFS classes
-// ============================================================================
-
-use rusqlite::Connection;
+use crate::eavto::Connection;
 use crate::eavto::{store, query, Triple, Object};
 use crate::owl::{Result, Thing, vocabulary::{rdf, rdfs, owl}};
 
-/// Represents an OWL/RDFS Class with all its data
 #[derive(Debug, Clone)]
 pub struct Class {
     pub iri: String,
@@ -19,7 +12,8 @@ pub struct Class {
     pub super_classes: Vec<Thing>,
     pub sub_classes: Vec<Thing>,
     pub properties: Vec<(String, String)>, // (property_iri, source_class_iri)
-    pub backlinks: Vec<(String, String, Object)>, // (source_entity, property_iri, value) - entities that reference this class
+    pub backlinks: Vec<(String, String, Object)>, // (source_entity, property_iri, value)
+    pub one_of_values: Vec<String>, // owl:oneOf enumerated individuals
 }
 
 impl Class {
@@ -35,7 +29,43 @@ impl Class {
             sub_classes: Vec::new(),
             properties: Vec::new(),
             backlinks: Vec::new(),
+            one_of_values: Vec::new(),
         }
+    }
+
+    /// Parse an RDF list (rdf:first/rdf:rest) into a Vec of IRIs
+    pub(crate) fn parse_rdf_list(conn: &Connection, list_head: &str) -> Result<Vec<String>> {
+        let mut values = Vec::new();
+        let mut current = list_head.to_string();
+
+        // Traverse the list until we reach rdf:nil
+        loop {
+            if current == rdf::NIL {
+                break;
+            }
+
+            // Get rdf:first (the value)
+            let first_result = query::get_by_entity_predicate(conn, &current, rdf::FIRST)?;
+            if let Some(triple) = first_result.triples.first() {
+                if let Some(iri) = triple.object.as_iri() {
+                    values.push(iri.to_string());
+                }
+            }
+
+            // Get rdf:rest (next node)
+            let rest_result = query::get_by_entity_predicate(conn, &current, rdf::REST)?;
+            if let Some(triple) = rest_result.triples.first() {
+                if let Some(iri) = triple.object.as_iri() {
+                    current = iri.to_string();
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        Ok(values)
     }
 
     /// Get complete class data from database
@@ -83,8 +113,22 @@ impl Class {
         // Get backlinks - instances of this class (rdf:type references)
         let backlinks_result = query::get_by_predicate_object(conn, rdf::TYPE, &iri)?;
         let backlinks: Vec<(String, String, Object)> = backlinks_result.triples.iter()
-            .map(|t| (t.subject.clone(), rdf::TYPE.to_string(), Object::Iri(iri.clone())))
+            .map(|t| {
+                (t.subject.clone(), rdf::TYPE.to_string(), Object::Iri(iri.clone()))
+            })
             .collect();
+
+        // Get owl:oneOf enumerated values
+        let one_of_result = query::get_by_entity_predicate(conn, &iri, owl::ONE_OF)?;
+        let one_of_values = if let Some(triple) = one_of_result.triples.first() {
+            if let Some(list_head) = triple.object.as_iri() {
+                Self::parse_rdf_list(conn, list_head)?
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
 
         Ok(Self {
             iri,
@@ -96,6 +140,7 @@ impl Class {
             sub_classes,
             properties,
             backlinks,
+            one_of_values,
         })
     }
 
@@ -117,7 +162,8 @@ impl Class {
         }
 
         // Add universal properties from rdfs:Resource (all classes inherit from it)
-        let resource_props_result = query::get_by_predicate_object(conn, rdfs::DOMAIN, "rdfs:Resource")?;
+        let resource_props_result =
+            query::get_by_predicate_object(conn, rdfs::DOMAIN, "rdfs:Resource")?;
         for triple in resource_props_result.triples {
             if seen.insert(triple.subject.clone()) {
                 all_properties.push((triple.subject.clone(), "rdfs:Resource".to_string()));
@@ -186,7 +232,8 @@ impl Class {
 
         // Add subClassOf relationship (defaults to owl:Thing if not specified)
         let parent = super_class.unwrap_or(owl::THING);
-        let subclass_triple = Triple::new(&self.iri, rdfs::SUB_CLASS_OF, Object::Iri(parent.to_string()));
+        let subclass_triple =
+            Triple::new(&self.iri, rdfs::SUB_CLASS_OF, Object::Iri(parent.to_string()));
         store::assert_triples(conn, &[subclass_triple], origin)?;
 
         Ok(())
@@ -233,7 +280,14 @@ mod tests {
         let class = Class::new("foundation:TestClass");
 
         // Assert class with label and icon (will default to owl:Thing as parent)
-        let result = class.assert(&mut conn, ClassType::OwlClass, "Test Class", "test-icon", None, "test");
+        let result = class.assert(
+            &mut conn,
+            ClassType::OwlClass,
+            "Test Class",
+            "test-icon",
+            None,
+            "test",
+        );
         assert!(result.is_ok());
 
         // Verify it exists
@@ -254,11 +308,26 @@ mod tests {
         let mut conn = setup_test_db();
         let class = Class::new("foundation:Person");
 
-        class.assert(&mut conn, ClassType::OwlClass, "Person", "person-icon", None, "test").unwrap();
+        class.assert(
+            &mut conn,
+            ClassType::OwlClass,
+            "Person",
+            "person-icon",
+            None,
+            "test",
+        ).unwrap();
 
         // Create instances
-        let triple1 = Triple::new("foundation:John", rdf::TYPE, Object::Iri("foundation:Person".to_string()));
-        let triple2 = Triple::new("foundation:Jane", rdf::TYPE, Object::Iri("foundation:Person".to_string()));
+        let triple1 = Triple::new(
+            "foundation:John",
+            rdf::TYPE,
+            Object::Iri("foundation:Person".to_string()),
+        );
+        let triple2 = Triple::new(
+            "foundation:Jane",
+            rdf::TYPE,
+            Object::Iri("foundation:Person".to_string()),
+        );
         store::assert_triples(&mut conn, &[triple1, triple2], "test").unwrap();
 
         // Get instances separately
@@ -274,11 +343,25 @@ mod tests {
 
         // Create super class (with owl:Thing as parent)
         let super_class = Class::new("foundation:Animal");
-        super_class.assert(&mut conn, ClassType::OwlClass, "Animal", "animal-icon", None, "test").unwrap();
+        super_class.assert(
+            &mut conn,
+            ClassType::OwlClass,
+            "Animal",
+            "animal-icon",
+            None,
+            "test",
+        ).unwrap();
 
         // Create sub class (with Animal as parent)
         let sub_class = Class::new("foundation:Dog");
-        sub_class.assert(&mut conn, ClassType::OwlClass, "Dog", "dog-icon", Some("foundation:Animal"), "test").unwrap();
+        sub_class.assert(
+            &mut conn,
+            ClassType::OwlClass,
+            "Dog",
+            "dog-icon",
+            Some("foundation:Animal"),
+            "test",
+        ).unwrap();
 
         // Get super class data and check sub classes
         let animal_data = Class::get(&conn, "foundation:Animal").unwrap();
@@ -297,13 +380,132 @@ mod tests {
 
         // Create class with explicit parent
         let test_class = Class::new("foundation:TestClass");
-        test_class.assert(&mut conn, ClassType::OwlClass, "Test Class", "test-icon", Some("owl:Thing"), "test").unwrap();
+        test_class.assert(
+            &mut conn,
+            ClassType::OwlClass,
+            "Test Class",
+            "test-icon",
+            Some("owl:Thing"),
+            "test",
+        ).unwrap();
 
         // Get class data
         let class_data = Class::get(&conn, "foundation:TestClass").unwrap();
 
         // Should have exactly 1 super class
-        assert_eq!(class_data.super_classes.len(), 1, "Expected exactly 1 super class, found {}", class_data.super_classes.len());
+        assert_eq!(
+            class_data.super_classes.len(),
+            1,
+            "Expected exactly 1 super class, found {}",
+            class_data.super_classes.len()
+        );
         assert_eq!(class_data.super_classes[0].iri, "owl:Thing");
+    }
+
+    #[test]
+    fn test_owl_one_of_enumeration() {
+        let mut conn = setup_test_db();
+
+        // Create enumeration class with owl:oneOf
+        let priority_class = Class::new("foundation:TaskPriority");
+        priority_class.assert(
+            &mut conn,
+            ClassType::OwlClass,
+            "Task Priority",
+            "priority-icon",
+            None,
+            "test",
+        ).unwrap();
+
+        // Create enumerated individuals
+        let high = Triple::new(
+            "foundation:HighPriority",
+            rdf::TYPE,
+            Object::Iri("foundation:TaskPriority".to_string()),
+        );
+        let medium = Triple::new(
+            "foundation:MediumPriority",
+            rdf::TYPE,
+            Object::Iri("foundation:TaskPriority".to_string()),
+        );
+        let low = Triple::new(
+            "foundation:LowPriority",
+            rdf::TYPE,
+            Object::Iri("foundation:TaskPriority".to_string()),
+        );
+        store::assert_triples(&mut conn, &[high, medium, low], "test").unwrap();
+
+        // Create RDF list: (High Medium Low)
+        // List structure: _:list1 -> _:list2 -> _:list3 -> rdf:nil
+        let list3 = Triple::new(
+            "_:list3",
+            rdf::FIRST,
+            Object::Iri("foundation:LowPriority".to_string()),
+        );
+        let list3_rest = Triple::new("_:list3", rdf::REST, Object::Iri(rdf::NIL.to_string()));
+
+        let list2 = Triple::new(
+            "_:list2",
+            rdf::FIRST,
+            Object::Iri("foundation:MediumPriority".to_string()),
+        );
+        let list2_rest = Triple::new("_:list2", rdf::REST, Object::Iri("_:list3".to_string()));
+
+        let list1 = Triple::new(
+            "_:list1",
+            rdf::FIRST,
+            Object::Iri("foundation:HighPriority".to_string()),
+        );
+        let list1_rest = Triple::new("_:list1", rdf::REST, Object::Iri("_:list2".to_string()));
+
+        store::assert_triples(
+            &mut conn,
+            &[list1, list1_rest, list2, list2_rest, list3, list3_rest],
+            "test",
+        ).unwrap();
+
+        // Add owl:oneOf to the class
+        let one_of = Triple::new(
+            "foundation:TaskPriority",
+            owl::ONE_OF,
+            Object::Iri("_:list1".to_string()),
+        );
+        store::assert_triples(&mut conn, &[one_of], "test").unwrap();
+
+        // Get class and verify owl:oneOf values
+        let class_data = Class::get(&conn, "foundation:TaskPriority").unwrap();
+        assert_eq!(class_data.one_of_values.len(), 3);
+        assert!(class_data.one_of_values.contains(&"foundation:HighPriority".to_string()));
+        assert!(class_data.one_of_values.contains(&"foundation:MediumPriority".to_string()));
+        assert!(class_data.one_of_values.contains(&"foundation:LowPriority".to_string()));
+    }
+
+    #[test]
+    fn test_parse_rdf_list() {
+        let mut conn = setup_test_db();
+
+        // Create a simple RDF list: (A B C)
+        let list3 = Triple::new("_:n3", rdf::FIRST, Object::Iri("foundation:C".to_string()));
+        let list3_rest = Triple::new("_:n3", rdf::REST, Object::Iri(rdf::NIL.to_string()));
+
+        let list2 = Triple::new("_:n2", rdf::FIRST, Object::Iri("foundation:B".to_string()));
+        let list2_rest = Triple::new("_:n2", rdf::REST, Object::Iri("_:n3".to_string()));
+
+        let list1 = Triple::new("_:n1", rdf::FIRST, Object::Iri("foundation:A".to_string()));
+        let list1_rest = Triple::new("_:n1", rdf::REST, Object::Iri("_:n2".to_string()));
+
+        store::assert_triples(
+            &mut conn,
+            &[list1, list1_rest, list2, list2_rest, list3, list3_rest],
+            "test",
+        ).unwrap();
+
+        // Parse the list
+        let values = Class::parse_rdf_list(&conn, "_:n1").unwrap();
+
+        assert_eq!(values.len(), 3);
+        assert_eq!(values[0], "foundation:A");
+        assert_eq!(values[1], "foundation:B");
+        assert_eq!(values[2], "foundation:C");
     }
 }

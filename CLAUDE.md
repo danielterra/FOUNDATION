@@ -12,13 +12,118 @@ This document contains specific instructions for AI assistants working on the FO
 - This document should evolve continuously with the user's preferences
 - Always confirm to the user when you update this document
 
-## Logs & Debugging
+## Debugging Guide
+
+### 🔍 Investigation Workflow
+
+When debugging or investigating problems, follow this systematic approach:
+
+1. **Check the centralized logs** (frontend + backend combined)
+2. **Query message history** to understand recent interactions
+3. **Inspect the database** for data-related issues
+4. **Review the code** only after gathering context from logs and data
+
+**⚠️ CRITICAL: Don't ask questions you can find the answer to yourself** - directly investigate logs, database, and code before asking the user.
+
+### 📋 Application Logs
 
 - **ALWAYS consult the centralized logs when investigating problems**
-- All frontend and backend errors are logged centrally
-- Use `npm run logs` to view the latest logs (shows last 100 lines)
-- When investigating problems, ALWAYS check the logs before making assumptions
-- **Don't ask questions you can find the answer to yourself** - directly investigate logs, database, and code before asking
+- All frontend and backend errors are logged centrally in one place
+- Logs include timestamps, log levels, and full stack traces
+
+**Commands:**
+```bash
+npm run logs          # View last 100 lines
+npm run logs 500      # View last 500 lines
+npm run logs 1000     # View last 1000 lines for deeper investigation
+```
+
+**Direct log access:**
+```bash
+tail -f ~/Library/Application\ Support/org.w3id.foundation/application.log
+```
+
+### 💬 Message History
+
+The `message_history` table contains all chat interactions with the AI assistant. This is essential for understanding context and debugging conversation-related issues.
+
+**Table structure:**
+- `id`: Unique message ID
+- `conversation_id`: Groups related messages
+- `role`: 'user' or 'assistant'
+- `content`: The actual message text
+- `timestamp`: When the message was sent
+- `model`: AI model used (e.g., 'claude-3-5-sonnet-20241022')
+
+**Common queries:**
+
+```sql
+-- View recent conversations
+sqlite3 ~/Documents/Foundation/FOUNDATION.db "
+SELECT conversation_id, COUNT(*) as msg_count,
+       datetime(MIN(timestamp), 'unixepoch', 'localtime') as started,
+       datetime(MAX(timestamp), 'unixepoch', 'localtime') as last_msg
+FROM message_history
+GROUP BY conversation_id
+ORDER BY MAX(timestamp) DESC
+LIMIT 10;"
+
+-- View messages from a specific conversation
+sqlite3 ~/Documents/Foundation/FOUNDATION.db "
+SELECT datetime(timestamp, 'unixepoch', 'localtime') as time,
+       role,
+       substr(content, 1, 100) || '...' as preview
+FROM message_history
+WHERE conversation_id = 'CONVERSATION_ID_HERE'
+ORDER BY timestamp;"
+
+-- View latest messages across all conversations
+sqlite3 ~/Documents/Foundation/FOUNDATION.db "
+SELECT datetime(timestamp, 'unixepoch', 'localtime') as time,
+       role,
+       substr(content, 1, 80) || '...' as preview
+FROM message_history
+ORDER BY timestamp DESC
+LIMIT 20;"
+
+-- Find messages containing specific text
+sqlite3 ~/Documents/Foundation/FOUNDATION.db "
+SELECT datetime(timestamp, 'unixepoch', 'localtime') as time,
+       role,
+       content
+FROM message_history
+WHERE content LIKE '%search_term%'
+ORDER BY timestamp DESC
+LIMIT 10;"
+
+-- Count messages by role
+sqlite3 ~/Documents/Foundation/FOUNDATION.db "
+SELECT role, COUNT(*) as count
+FROM message_history
+GROUP BY role;"
+```
+
+### 🗄️ Database Inspection
+
+**Always use SELECT queries** to inspect data before making assumptions:
+
+```sql
+-- List all tables
+sqlite3 ~/Documents/Foundation/FOUNDATION.db ".tables"
+
+-- View table schema
+sqlite3 ~/Documents/Foundation/FOUNDATION.db ".schema table_name"
+
+-- Count triples
+sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT COUNT(*) FROM triples;"
+
+-- View recent triples
+sqlite3 ~/Documents/Foundation/FOUNDATION.db "
+SELECT subject, predicate, COALESCE(object, object_value) as value
+FROM triples
+ORDER BY rowid DESC
+LIMIT 20;"
+```
 
 ## Database & Storage
 

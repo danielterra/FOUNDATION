@@ -1,8 +1,3 @@
-// Formatting utility functions for the side panel
-
-/**
- * Extract the label from a predicate URI
- */
 export function getPredicateLabel(predicate: string): string {
 	return predicate.split(/[/#]/).pop() || predicate;
 }
@@ -33,7 +28,8 @@ export function getDatatypeIcon(rangeLabel: string | null | undefined): string {
 	// Numeric types
 	if (label.includes('integer') || label.includes('int') || label.includes('long') ||
 	    label.includes('short') || label.includes('byte')) return '123';
-	if (label.includes('decimal') || label.includes('float') || label.includes('double')) return 'decimal';
+	if (label.includes('decimal') || label.includes('float') || label.includes('double'))
+		return 'decimal';
 
 	// Boolean
 	if (label.includes('boolean')) return 'toggle_on';

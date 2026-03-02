@@ -25,4 +25,10 @@ if [ ! -f "$LOG_FILE" ]; then
     exit 1
 fi
 
+echo "=== FOUNDATION Application Logs ==="
+echo "Current date/time: $(date '+%Y-%m-%d %H:%M:%S')"
+echo "Showing last $LINES lines"
+echo "==================================="
+echo ""
+
 tail -n "$LINES" "$LOG_FILE"

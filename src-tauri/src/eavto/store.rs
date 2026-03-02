@@ -5,6 +5,7 @@
 use rusqlite::Connection;
 use super::triple_type::Triple;
 use super::object_type::Object;
+use crate::commands::log_backend;
 use chrono;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -31,9 +32,17 @@ pub fn assert_triples(
     // Get or create origin_id
     let origin_id = get_or_create_origin(&tx, origin)?;
 
-    // Insert each triple without retracting existing values
-    // Note: Cardinality constraints are validated in Individual::add_property before calling this function
+    // For each triple, retract existing values with same subject+predicate before inserting new one
     for triple in triples {
+        // Retract existing active triples with same subject and predicate
+        tx.execute(
+            "UPDATE triples
+             SET retracted = 1
+             WHERE subject = ? AND predicate = ? AND retracted = 0",
+            (&triple.subject, &triple.predicate),
+        )?;
+
+        // Insert the new triple
         insert_triple(&tx, triple, tx_id, origin_id, now)?;
     }
 
@@ -44,31 +53,45 @@ pub fn assert_triples(
              FROM triples
              WHERE tx = ?
              AND (
-               (object_datatype IN ('xsd:decimal', 'xsd:double', 'xsd:float') AND object_number IS NULL) OR
-               (object_datatype IN ('xsd:integer', 'xsd:int', 'xsd:long') AND object_integer IS NULL)
+               (object_datatype IN ('xsd:decimal', 'xsd:double', 'xsd:float')
+                AND object_number IS NULL) OR
+               (object_datatype IN ('xsd:integer', 'xsd:int', 'xsd:long')
+                AND object_integer IS NULL)
              )"
         )?;
 
-        let bad_triples: Vec<(String, String, String, Option<f64>, Option<i64>)> = stmt.query_map([tx_id], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
-        })?.collect::<std::result::Result<Vec<_>, _>>()?;
+        let bad_triples: Vec<(String, String, String, Option<f64>, Option<i64>)> =
+            stmt.query_map([tx_id], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         if !bad_triples.is_empty() {
-            eprintln!("\n⚠️  FOUND {} TRIPLES WITH NUMERIC DATATYPE BUT NO TYPED COLUMN:", bad_triples.len());
+            log_backend(
+                "warn",
+                &format!(
+                    "\n⚠️  FOUND {} TRIPLES WITH NUMERIC DATATYPE BUT NO TYPED COLUMN:",
+                    bad_triples.len(),
+                ),
+            );
             for (idx, (subj, pred, dt, num, int)) in bad_triples.iter().enumerate().take(5) {
-                eprintln!("  #{}: {} {} (datatype={}, object_number={:?}, object_integer={:?})",
-                         idx + 1, subj, pred, dt, num, int);
+                log_backend(
+                    "warn",
+                    &format!(
+                        "  #{}: {} {} (datatype={}, object_number={:?}, object_integer={:?})",
+                        idx + 1, subj, pred, dt, num, int,
+                    ),
+                );
             }
             if bad_triples.len() > 5 {
-                eprintln!("  ... and {} more", bad_triples.len() - 5);
+                log_backend("warn", &format!("  ... and {} more", bad_triples.len() - 5));
             }
-            eprintln!();
         }
     } // stmt is dropped here
 
@@ -116,7 +139,13 @@ pub fn retract_triples(
                        AND COALESCE(object_datatype, 'xsd:string') = COALESCE(?, 'xsd:string')
                        AND COALESCE(object_language, '') = COALESCE(?, '')
                        AND retracted = 0",
-                    (&triple.subject, &triple.predicate, value, datatype.as_ref().unwrap_or(&"xsd:string".to_string()), language.as_ref().unwrap_or(&"".to_string())),
+                    (
+                        &triple.subject,
+                        &triple.predicate,
+                        value,
+                        datatype.as_ref().unwrap_or(&"xsd:string".to_string()),
+                        language.as_ref().unwrap_or(&"".to_string()),
+                    ),
                 )?;
             }
             Object::Integer(i) => {
@@ -173,7 +202,16 @@ fn insert_triple(
     let bool_str;
     let dt_str;
 
-    let (object, object_value, object_datatype, object_language, object_number, object_integer, object_datetime, object_boolean) = match &triple.object {
+    let (
+        object,
+        object_value,
+        object_datatype,
+        object_language,
+        object_number,
+        object_integer,
+        object_datetime,
+        object_boolean,
+    ) = match &triple.object {
         Object::Iri(iri) => (Some(iri.as_str()), None, None, None, None, None, None, None),
         Object::Blank(blank) => (Some(blank.as_str()), None, None, None, None, None, None, None),
 
@@ -187,7 +225,16 @@ fn insert_triple(
         }
         Object::Boolean(b) => {
             bool_str = b.to_string();
-            (None, Some(bool_str.as_str()), Some("xsd:boolean"), None, None, None, None, Some(if *b { 1 } else { 0 }))
+            (
+                None,
+                Some(bool_str.as_str()),
+                Some("xsd:boolean"),
+                None,
+                None,
+                None,
+                None,
+                Some(if *b { 1 } else { 0 }),
+            )
         }
         Object::DateTime(dt) => {
             dt_str = dt.to_string();
@@ -201,20 +248,48 @@ fn insert_triple(
                 Some("xsd:decimal") | Some("xsd:double") | Some("xsd:float") => {
                     let n = value.parse::<f64>()
                         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
-                            std::io::Error::new(std::io::ErrorKind::InvalidData,
-                                format!("Failed to parse float literal '{}' for triple: {} {} {} - Error: {}",
-                                    value, triple.subject, triple.predicate, value, e))
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!(
+                                    "Failed to parse float literal '{}' for triple: \
+                                     {} {} {} - Error: {}",
+                                    value, triple.subject, triple.predicate, value, e,
+                                ),
+                            )
                         )))?;
-                    (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), Some(n), None, None, None)
+                    (
+                        None,
+                        Some(value.as_str()),
+                        datatype.as_deref(),
+                        language.as_deref(),
+                        Some(n),
+                        None,
+                        None,
+                        None,
+                    )
                 }
                 Some("xsd:integer") | Some("xsd:int") | Some("xsd:long") => {
                     let i = value.parse::<i64>()
                         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
-                            std::io::Error::new(std::io::ErrorKind::InvalidData,
-                                format!("Failed to parse integer literal '{}' for triple: {} {} {} - Error: {}",
-                                    value, triple.subject, triple.predicate, value, e))
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!(
+                                    "Failed to parse integer literal '{}' for triple: \
+                                     {} {} {} - Error: {}",
+                                    value, triple.subject, triple.predicate, value, e,
+                                ),
+                            )
                         )))?;
-                    (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, Some(i), None, None)
+                    (
+                        None,
+                        Some(value.as_str()),
+                        datatype.as_deref(),
+                        language.as_deref(),
+                        None,
+                        Some(i),
+                        None,
+                        None,
+                    )
                 }
                 Some("xsd:boolean") => {
                     let b = match value.as_str() {
@@ -222,38 +297,96 @@ fn insert_triple(
                         "false" | "0" => 0,
                         _ => {
                             return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                                std::io::Error::new(std::io::ErrorKind::InvalidData,
-                                    format!("Invalid boolean literal '{}' for triple: {} {} {} - Expected: 'true', 'false', '1', or '0'",
-                                        value, triple.subject, triple.predicate, value))
+                                std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    format!(
+                                        "Invalid boolean literal '{}' for triple: {} {} {} \
+                                         - Expected: 'true', 'false', '1', or '0'",
+                                        value, triple.subject, triple.predicate, value,
+                                    ),
+                                )
                             )));
                         }
                     };
-                    (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, None, None, Some(b))
+                    (
+                        None,
+                        Some(value.as_str()),
+                        datatype.as_deref(),
+                        language.as_deref(),
+                        None,
+                        None,
+                        None,
+                        Some(b),
+                    )
                 }
                 Some("xsd:dateTime") => {
                     let timestamp = chrono::DateTime::parse_from_rfc3339(value)
                         .map(|dt| dt.timestamp())
                         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
-                            std::io::Error::new(std::io::ErrorKind::InvalidData,
-                                format!("Failed to parse dateTime literal '{}' for triple: {} {} {} - Error: {} - Expected ISO 8601 format (e.g., '2025-01-28T18:38:46Z')",
-                                    value, triple.subject, triple.predicate, value, e))
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!(
+                                    "Failed to parse dateTime literal '{}' for triple: \
+                                     {} {} {} - Error: {} - Expected ISO 8601 format \
+                                     (e.g., '2025-01-28T18:38:46Z')",
+                                    value, triple.subject, triple.predicate, value, e,
+                                ),
+                            )
                         )))?;
-                    (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, None, Some(timestamp), None)
+                    (
+                        None,
+                        Some(value.as_str()),
+                        datatype.as_deref(),
+                        language.as_deref(),
+                        None,
+                        None,
+                        Some(timestamp),
+                        None,
+                    )
                 }
                 Some("xsd:date") => {
                     // Parse date as midnight UTC timestamp for storage
                     let timestamp = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
-                        .map(|date| date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+                        .map(|date| {
+                            date.and_hms_opt(0, 0, 0)
+                                .expect("midnight is always valid")
+                                .and_utc()
+                                .timestamp()
+                        })
                         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
-                            std::io::Error::new(std::io::ErrorKind::InvalidData,
-                                format!("Failed to parse date literal '{}' for triple: {} {} {} - Error: {} - Expected format: YYYY-MM-DD (e.g., '2020-11-17')",
-                                    value, triple.subject, triple.predicate, value, e))
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!(
+                                    "Failed to parse date literal '{}' for triple: \
+                                     {} {} {} - Error: {} - Expected format: YYYY-MM-DD \
+                                     (e.g., '2020-11-17')",
+                                    value, triple.subject, triple.predicate, value, e,
+                                ),
+                            )
                         )))?;
-                    (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, None, Some(timestamp), None)
+                    (
+                        None,
+                        Some(value.as_str()),
+                        datatype.as_deref(),
+                        language.as_deref(),
+                        None,
+                        None,
+                        Some(timestamp),
+                        None,
+                    )
                 }
                 _ => {
                     // Other datatype - no typed column needed
-                    (None, Some(value.as_str()), datatype.as_deref(), language.as_deref(), None, None, None, None)
+                    (
+                        None,
+                        Some(value.as_str()),
+                        datatype.as_deref(),
+                        language.as_deref(),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
                 }
             }
         }
@@ -286,15 +419,23 @@ fn insert_triple(
     );
 
     if let Err(e) = result {
-        eprintln!("\n❌ INSERT FAILED:");
-        eprintln!("   Subject: {}", triple.subject);
-        eprintln!("   Predicate: {}", triple.predicate);
-        eprintln!("   Object: {:?}", triple.object);
-        eprintln!("   object_datatype: {:?}", object_datatype);
-        eprintln!("   object_number: {:?}", object_number);
-        eprintln!("   object_integer: {:?}", object_integer);
-        eprintln!("   object_boolean: {:?}", object_boolean);
-        eprintln!("   Error: {}\n", e);
+        log_backend("error", &format!("\n❌ INSERT FAILED:
+   Subject: {}
+   Predicate: {}
+   Object: {:?}
+   object_datatype: {:?}
+   object_number: {:?}
+   object_integer: {:?}
+   object_boolean: {:?}
+   Error: {}\n",
+            triple.subject,
+            triple.predicate,
+            triple.object,
+            object_datatype,
+            object_number,
+            object_integer,
+            object_boolean,
+            e));
         return Err(e);
     }
 
@@ -323,14 +464,16 @@ fn get_or_create_origin(tx: &rusqlite::Transaction, origin: &str) -> rusqlite::R
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system clock is before Unix epoch")
         .as_millis() as i64
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eavto::test_helpers::{setup_test_db, create_test_triples, assert_triple_exists, get_active_triple_count};
+    use crate::eavto::test_helpers::{
+        setup_test_db, create_test_triples, assert_triple_exists, get_active_triple_count,
+    };
 
     #[test]
     fn test_assert_triples_basic() {
@@ -544,7 +687,8 @@ mod tests {
 
         // Should have only 1 active email (the latest one)
         let active: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM triples WHERE subject = 'test:Person1' AND predicate = 'test:email' AND retracted = 0",
+            "SELECT COUNT(*) FROM triples \
+             WHERE subject = 'test:Person1' AND predicate = 'test:email' AND retracted = 0",
             [],
             |row| row.get(0)
         ).unwrap();
@@ -552,7 +696,8 @@ mod tests {
 
         // Should have 2 total emails in history (1 retracted + 1 active)
         let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM triples WHERE subject = 'test:Person1' AND predicate = 'test:email'",
+            "SELECT COUNT(*) FROM triples \
+             WHERE subject = 'test:Person1' AND predicate = 'test:email'",
             [],
             |row| row.get(0)
         ).unwrap();
@@ -560,7 +705,8 @@ mod tests {
 
         // Verify the active one is the latest
         let active_value: String = conn.query_row(
-            "SELECT object_value FROM triples WHERE subject = 'test:Person1' AND predicate = 'test:email' AND retracted = 0",
+            "SELECT object_value FROM triples \
+             WHERE subject = 'test:Person1' AND predicate = 'test:email' AND retracted = 0",
             [],
             |row| row.get(0)
         ).unwrap();

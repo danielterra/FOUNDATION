@@ -14,18 +14,14 @@
 	let currentSimulation = null;
 	let focusedNodeId = null;
 
-	// D3 selections - need to be accessible for focus mode
 	let nodes, links, linkLabelGroups, layoutLinks, layoutNodes;
 
-	// OWL node types (matching backend group numbers)
 	const NODE_TYPE = {
-		CLASS: 1,           // owl:Class - represents a class/concept
-		INDIVIDUAL: 6,      // Individual - instance of a class
-		LITERAL: 7          // Literal value or datatype
+		CLASS: 1,
+		INDIVIDUAL: 6,
+		LITERAL: 7
 	};
 
-	// Visual configuration for OWL entities
-	// DESIGN PRINCIPLE: var(--color-interactive) = Elementos interagíveis (clicáveis)
 	const OWL_VISUAL = {
 		CLASS: {
 			nodeRadius: 18,
@@ -439,7 +435,9 @@
 					// For quadratic Bezier at t=1: tangent = 2(P2 - P1)
 					const startTangentX = 2 * (controlX - d.source.x);
 					const startTangentY = 2 * (controlY - d.source.y);
-					const startTangentDist = Math.sqrt(startTangentX * startTangentX + startTangentY * startTangentY);
+					const startTangentDist = Math.sqrt(
+					startTangentX * startTangentX + startTangentY * startTangentY
+				);
 
 					const endTangentX = 2 * (d.target.x - controlX);
 					const endTangentY = 2 * (d.target.y - controlY);
@@ -591,7 +589,10 @@
 							.style('border-radius', '50%')
 							.style('overflow', 'hidden')
 							.style('pointer-events', 'none')
-							.html(`<img src="${d.icon}" style="width: 24px; height: 24px; object-fit: cover; pointer-events: none;" />`);
+							.html(
+							`<img src="${d.icon}" ` +
+							'style="width: 24px; height: 24px; object-fit: cover; pointer-events: none;" />'
+						);
 					} else {
 						// Render Material Symbols icon
 						nodeGroup
@@ -611,7 +612,10 @@
 							.style('border', `2px solid ${iconColor}`)
 							.style('border-radius', '50%')
 							.style('pointer-events', 'none')
-							.html(`<span class="material-symbols-outlined" style="font-size: 20px; color: ${iconColor}; pointer-events: none;">${d.icon}</span>`);
+							.html(
+							`<span class="material-symbols-outlined" ` +
+							`style="font-size: 20px; color: ${iconColor}; pointer-events: none;">${d.icon}</span>`
+						);
 					}
 
 					// Add invisible circle for click events

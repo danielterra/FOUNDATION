@@ -1,15 +1,3 @@
-// ============================================================================
-// OWL Module - RDF/RDFS/OWL Abstraction Layer
-// ============================================================================
-// Provides high-level interfaces for managing RDF, RDFS, and OWL concepts
-// over the EAVTO triple store.
-//
-// Architecture:
-// - Abstracts EAVTO triple operations into semantic operations
-// - Provides type-safe interfaces for Classes, Properties, and Individuals
-// - Implements RDF/RDFS/OWL vocabulary operations
-// ============================================================================
-
 mod class;
 mod property;
 mod individual;
@@ -22,10 +10,11 @@ pub use property::{Property, PropertyType};
 pub use individual::Individual;
 pub use thing::Thing;
 pub use crate::eavto::Object;
+pub use crate::eavto::Connection;
+pub use crate::eavto::DbExecutor;
+pub use crate::eavto::initialize_with_progress;
+pub use crate::eavto::get_stats;
 
-use rusqlite::Connection;
-
-/// OWL operation errors
 #[derive(Debug)]
 pub enum OwlError {
     DatabaseError(String),
@@ -49,8 +38,8 @@ impl std::fmt::Display for OwlError {
 
 impl std::error::Error for OwlError {}
 
-impl From<rusqlite::Error> for OwlError {
-    fn from(err: rusqlite::Error) -> Self {
+impl From<crate::eavto::connection::DbError> for OwlError {
+    fn from(err: crate::eavto::connection::DbError) -> Self {
         OwlError::DatabaseError(err.to_string())
     }
 }
@@ -123,7 +112,11 @@ pub fn search_classes(conn: &Connection, query: &str, limit: usize) -> Result<Ve
 }
 
 /// Search for individuals by label (case-insensitive, ranked by relevance)
-pub fn search_individuals(conn: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+pub fn search_individuals(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<SearchResult>> {
     use vocabulary::{rdf, rdfs, owl};
     use crate::eavto::query;
 
@@ -160,7 +153,11 @@ pub fn search_individuals(conn: &Connection, query: &str, limit: usize) -> Resul
                 // Check if matches query (case-insensitive)
                 if label_lower.contains(&query_lower) {
                     // Get icon
-                    let icon_result = query::get_by_entity_predicate(conn, individual_iri, "foundation:icon")?;
+                    let icon_result = query::get_by_entity_predicate(
+                        conn,
+                        individual_iri,
+                        "foundation:icon",
+                    )?;
                     let icon = icon_result.triples.first().and_then(|t| {
                         if let Object::Literal { value, .. } = &t.object {
                             Some(value.clone())
@@ -198,4 +195,61 @@ pub fn search_individuals(conn: &Connection, query: &str, limit: usize) -> Resul
 
     // Take top results and remove scores
     Ok(results.into_iter().take(limit).map(|(_, r)| r).collect())
+}
+
+/// Returns the first literal value of a property for an entity
+pub fn get_literal_property(
+    conn: &Connection,
+    entity: &str,
+    predicate: &str,
+) -> Result<Option<String>> {
+    use crate::eavto::query;
+    let result = query::get_by_entity_predicate(conn, entity, predicate)?;
+    Ok(result.triples.first().and_then(|t| t.object.as_literal()).map(|s| s.to_string()))
+}
+
+/// Returns the first IRI value of a property for an entity
+pub fn get_iri_property(
+    conn: &Connection,
+    entity: &str,
+    predicate: &str,
+) -> Result<Option<String>> {
+    use crate::eavto::query;
+    let result = query::get_by_entity_predicate(conn, entity, predicate)?;
+    Ok(result.triples.first().and_then(|t| t.object.as_iri()).map(|s| s.to_string()))
+}
+
+/// Returns true if the entity has the given predicate pointing to the given IRI value
+pub fn has_property_iri(conn: &Connection, entity: &str, predicate: &str, value: &str) -> bool {
+    use crate::eavto::query;
+    query::get_by_entity_predicate(conn, entity, predicate)
+        .map(|r| {
+            r.triples
+                .iter()
+                .any(|t| t.object.as_iri().map(|iri| iri == value).unwrap_or(false))
+        })
+        .unwrap_or(false)
+}
+
+/// Returns true if the entity has a literal property equal to the given value
+pub fn has_property_literal(conn: &Connection, entity: &str, predicate: &str, value: &str) -> bool {
+    use crate::eavto::query;
+    query::get_by_entity_predicate(conn, entity, predicate)
+        .map(|r| {
+            r.triples
+                .iter()
+                .any(|t| t.object.as_literal().map(|v| v == value).unwrap_or(false))
+        })
+        .unwrap_or(false)
+}
+
+/// Returns the IRIs of all entities that have the given predicate pointing to the given object IRI
+pub fn find_entities_with_property(
+    conn: &Connection,
+    predicate: &str,
+    object: &str,
+) -> Result<Vec<String>> {
+    use crate::eavto::query;
+    let result = query::get_by_predicate_object(conn, predicate, object)?;
+    Ok(result.triples.into_iter().map(|t| t.subject).collect())
 }

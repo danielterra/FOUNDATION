@@ -21,6 +21,7 @@ foundation:Status a owl:Class ;
     rdfs:seeAlso """
 Examples:
 - foundation:Pending (not started)
+- foundation:Blocked (waiting on dependencies)
 - foundation:InProgress (currently working)
 - foundation:Completed (finished successfully)
 - foundation:Rejected (tried but abandoned)
@@ -34,6 +35,10 @@ Examples:
 foundation:Pending a foundation:Status ;
     rdfs:label "Pending" ;
     rdfs:comment "Not yet started" .
+
+foundation:Blocked a foundation:Status ;
+    rdfs:label "Blocked" ;
+    rdfs:comment "Cannot proceed due to unmet dependencies or external blockers" .
 
 foundation:InProgress a foundation:Status ;
     rdfs:label "In Progress" ;

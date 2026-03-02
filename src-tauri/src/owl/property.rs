@@ -1,14 +1,7 @@
-// ============================================================================
-// OWL Property - Property Operations
-// ============================================================================
-// High-level operations for managing OWL/RDFS properties
-// ============================================================================
-
-use rusqlite::Connection;
+use crate::eavto::Connection;
 use crate::eavto::{store, query, Triple, Object};
 use crate::owl::{Result, vocabulary::{rdf, rdfs, owl}};
 
-/// Base Property type with complete data
 #[derive(Debug, Clone)]
 pub struct Property {
     pub iri: String,
@@ -67,8 +60,12 @@ impl Property {
             if let Some(type_iri) = triple.object.as_iri() {
                 match type_iri {
                     t if t == owl::OBJECT_PROPERTY => property_type = PropertyType::ObjectProperty,
-                    t if t == owl::DATATYPE_PROPERTY => property_type = PropertyType::DatatypeProperty,
-                    t if t == owl::ANNOTATION_PROPERTY => property_type = PropertyType::AnnotationProperty,
+                    t if t == owl::DATATYPE_PROPERTY => {
+                        property_type = PropertyType::DatatypeProperty
+                    }
+                    t if t == owl::ANNOTATION_PROPERTY => {
+                        property_type = PropertyType::AnnotationProperty
+                    }
                     t if t == owl::FUNCTIONAL_PROPERTY => is_functional = true,
                     t if t == owl::TRANSITIVE_PROPERTY => is_transitive = true,
                     t if t == owl::SYMMETRIC_PROPERTY => is_symmetric = true,
@@ -152,7 +149,8 @@ impl Property {
                 return Err(crate::owl::OwlError::ValidationError(
                     format!(
                         "Property '{}' has numeric range '{}' but no qudt:unit specified. \
-                         Numeric properties MUST have a unit (e.g., unit:GigaBYTE, unit:Second, unit:Meter)",
+                         Numeric properties MUST have a unit \
+                         (e.g., unit:GigaBYTE, unit:Second, unit:Meter)",
                         self.iri, range_value
                     )
                 ));
@@ -197,7 +195,11 @@ impl Property {
 
         // Add domain if provided
         if let Some(domain_class) = domain {
-            triples.push(Triple::new(&self.iri, rdfs::DOMAIN, Object::Iri(domain_class.to_string())));
+            triples.push(Triple::new(
+                &self.iri,
+                rdfs::DOMAIN,
+                Object::Iri(domain_class.to_string()),
+            ));
         }
 
         // Add range if provided
