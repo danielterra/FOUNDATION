@@ -141,6 +141,32 @@ fn message_to_api_format(msg: &AIConversationMessage) -> crate::ai::ChatMessage 
     }
 }
 
+/// Prepend current date/time as a text block to the last user message in the list.
+/// This keeps the system prompt fully static (cacheable) while still giving Claude
+/// temporal context on every request. No-op if the list is empty.
+fn inject_datetime_context(messages: &mut Vec<crate::ai::ChatMessage>) {
+    use crate::ai::providers::{ContentBlock as ApiContentBlock, MessageContent};
+
+    let date_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string();
+    let datetime_block = ApiContentBlock::Text {
+        text: format!("Current date/time: {}", date_time),
+    };
+
+    if let Some(last_msg) = messages.last_mut() {
+        match &mut last_msg.content {
+            MessageContent::ContentBlocks(ref mut blocks) => {
+                blocks.insert(0, datetime_block);
+            }
+            MessageContent::Text(text) => {
+                last_msg.content = MessageContent::ContentBlocks(vec![
+                    datetime_block,
+                    ApiContentBlock::Text { text: text.clone() },
+                ]);
+            }
+        }
+    }
+}
+
 /// Send a message and get AI response (with automatic tool execution loop)
 #[tauri::command]
 pub async fn chat__send_and_reply(
@@ -193,9 +219,11 @@ pub async fn chat__send_and_reply(
             &format!("[CHAT] Loaded {} messages from history", history.len()),
         );
 
-        let api_messages: Vec<crate::ai::ChatMessage> = history.iter()
+        let mut api_messages: Vec<crate::ai::ChatMessage> = history.iter()
             .map(message_to_api_format)
             .collect();
+
+        inject_datetime_context(&mut api_messages);
 
         let system_prompt = get_system_prompt(&executor).await?;
         let tools = crate::ai::functions::get_claude_tools();
@@ -354,9 +382,6 @@ async fn get_system_prompt(executor: &DbExecutor) -> Result<String, String> {
                 }))
             .unwrap_or_else(|| "NOVA".to_string());
 
-        let now = chrono::Local::now();
-        let date_time = now.format("%Y-%m-%d %H:%M:%S %Z").to_string();
-
         let language = Individual::get(conn, "foundation:DefaultLanguageSetting")
             .ok()
             .and_then(|s| s.properties.iter()
@@ -400,7 +425,7 @@ async fn get_system_prompt(executor: &DbExecutor) -> Result<String, String> {
         let prompt = template
             .replace("{user_name}", &user_name)
             .replace("{ai_name}", &ai_name)
-            .replace("{date_time}", &date_time)
+            .replace("{date_time}", "")
             .replace("{language}", &language)
             .replace("{locale}", &locale)
             .replace("{country}", &country)
@@ -483,17 +508,14 @@ pub async fn chat__get_recent_messages(
             messages_with_ts.push((timestamp, msg_json));
         }
 
-        // Sort by timestamp descending (most recent first)
         messages_with_ts.sort_by(|a, b| b.0.cmp(&a.0));
 
-        // Take only the requested limit
         let messages: Vec<serde_json::Value> = messages_with_ts
             .into_iter()
             .take(limit)
             .map(|(_, msg)| msg)
             .collect();
 
-        // Reverse to get chronological order (oldest first)
         let mut messages = messages;
         messages.reverse();
 
@@ -581,9 +603,11 @@ async fn continue_conversation_after_recovery(
 
         let history = load_conversation_history(&executor, CONVERSATION_ID, max_tokens).await?;
 
-        let api_messages: Vec<crate::ai::ChatMessage> = history.iter()
+        let mut api_messages: Vec<crate::ai::ChatMessage> = history.iter()
             .map(message_to_api_format)
             .collect();
+
+        inject_datetime_context(&mut api_messages);
 
         let system_prompt = get_system_prompt(&executor).await?;
         let tools = crate::ai::functions::get_claude_tools();
@@ -653,11 +677,9 @@ async fn continue_conversation_after_recovery(
             );
             app.emit("chat-message-added", ()).ok();
 
-            // Continue loop
             continue;
         }
 
-        // Natural completion - we're done
         break;
     }
 
@@ -681,16 +703,13 @@ pub async fn chat__recover_pending_tools(
 
     let last_msg = &history[history.len() - 1];
 
-    // Check if last message has tool_use (assistant interrupted before tool execution)
     let has_tool_use = last_msg.content.iter()
         .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
 
-    // Check if last message has tool_result (tool executed but no Claude response yet)
     let has_tool_result = last_msg.content.iter()
         .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
 
     if last_msg.role == "assistant" && has_tool_use {
-        // Case 1: Assistant message with tool_use - execute tools
         super::log_backend(
             "info",
             "[RECOVERY] Found assistant message with pending tool execution",
@@ -709,19 +728,22 @@ pub async fn chat__recover_pending_tools(
         );
         app.emit("chat-message-added", ()).ok();
 
-        // Now continue to get Claude's response
         continue_conversation_after_recovery(app, executor.inner().clone()).await?;
 
         Ok(1)
     } else if last_msg.role == "user" && has_tool_result {
-        // Case 2: User message with tool_result - send to Claude
         super::log_backend("info", "[RECOVERY] Found user message with pending tool result");
 
         continue_conversation_after_recovery(app, executor.inner().clone()).await?;
 
         Ok(1)
+    } else if last_msg.role == "user" {
+        super::log_backend("info", "[RECOVERY] Found unanswered user message, sending to Claude");
+
+        continue_conversation_after_recovery(app, executor.inner().clone()).await?;
+
+        Ok(1)
     } else {
-        // Conversation is complete
         Ok(0)
     }
 }

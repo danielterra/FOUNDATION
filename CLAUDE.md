@@ -45,62 +45,74 @@ tail -f ~/Library/Application\ Support/org.w3id.foundation/application.log
 
 ### 💬 Message History
 
-The `message_history` table contains all chat interactions with the AI assistant. This is essential for understanding context and debugging conversation-related issues.
+Chat messages are stored as RDF triples in the `triples` table using the `foundation:AIConversationMessage` class.
 
-**Table structure:**
-- `id`: Unique message ID
-- `conversation_id`: Groups related messages
-- `role`: 'user' or 'assistant'
-- `content`: The actual message text
-- `timestamp`: When the message was sent
-- `model`: AI model used (e.g., 'claude-3-5-sonnet-20241022')
+**Triple properties per message:**
+- `rdf:type = foundation:AIConversationMessage`
+- `foundation:role`: `'user'` or `'assistant'`
+- `foundation:content`: message content (JSON array)
+- `foundation:sentAt`: Unix timestamp in milliseconds
+- `foundation:partOfConversation`: conversation IRI (e.g., `foundation:MainChatConversation`)
+- `foundation:sender` / `foundation:receiver`: participant IRIs
 
 **Common queries:**
 
 ```sql
--- View recent conversations
+-- View latest messages across all conversations
 sqlite3 ~/Documents/Foundation/FOUNDATION.db "
-SELECT conversation_id, COUNT(*) as msg_count,
-       datetime(MIN(timestamp), 'unixepoch', 'localtime') as started,
-       datetime(MAX(timestamp), 'unixepoch', 'localtime') as last_msg
-FROM message_history
-GROUP BY conversation_id
-ORDER BY MAX(timestamp) DESC
-LIMIT 10;"
+SELECT datetime(CAST(t_time.object_value AS INTEGER) / 1000, 'unixepoch', 'localtime') as time,
+       t_role.object_value as role,
+       substr(t_content.object_value, 1, 80) || '...' as preview
+FROM triples t_time
+JOIN triples t_role ON t_role.subject = t_time.subject
+  AND t_role.predicate = 'foundation:role' AND t_role.retracted = 0
+JOIN triples t_content ON t_content.subject = t_time.subject
+  AND t_content.predicate = 'foundation:content' AND t_content.retracted = 0
+WHERE t_time.predicate = 'foundation:sentAt' AND t_time.retracted = 0
+ORDER BY t_time.object_value DESC
+LIMIT 20;"
 
 -- View messages from a specific conversation
 sqlite3 ~/Documents/Foundation/FOUNDATION.db "
-SELECT datetime(timestamp, 'unixepoch', 'localtime') as time,
-       role,
-       substr(content, 1, 100) || '...' as preview
-FROM message_history
-WHERE conversation_id = 'CONVERSATION_ID_HERE'
-ORDER BY timestamp;"
-
--- View latest messages across all conversations
-sqlite3 ~/Documents/Foundation/FOUNDATION.db "
-SELECT datetime(timestamp, 'unixepoch', 'localtime') as time,
-       role,
-       substr(content, 1, 80) || '...' as preview
-FROM message_history
-ORDER BY timestamp DESC
-LIMIT 20;"
+SELECT datetime(CAST(t_time.object_value AS INTEGER) / 1000, 'unixepoch', 'localtime') as time,
+       t_role.object_value as role,
+       substr(t_content.object_value, 1, 100) || '...' as preview
+FROM triples t_time
+JOIN triples t_conv ON t_conv.subject = t_time.subject
+  AND t_conv.predicate = 'foundation:partOfConversation' AND t_conv.retracted = 0
+JOIN triples t_role ON t_role.subject = t_time.subject
+  AND t_role.predicate = 'foundation:role' AND t_role.retracted = 0
+JOIN triples t_content ON t_content.subject = t_time.subject
+  AND t_content.predicate = 'foundation:content' AND t_content.retracted = 0
+WHERE t_time.predicate = 'foundation:sentAt' AND t_time.retracted = 0
+  AND t_conv.object = 'foundation:MainChatConversation'
+ORDER BY t_time.object_value;"
 
 -- Find messages containing specific text
 sqlite3 ~/Documents/Foundation/FOUNDATION.db "
-SELECT datetime(timestamp, 'unixepoch', 'localtime') as time,
-       role,
-       content
-FROM message_history
-WHERE content LIKE '%search_term%'
-ORDER BY timestamp DESC
+SELECT datetime(CAST(t_time.object_value AS INTEGER) / 1000, 'unixepoch', 'localtime') as time,
+       t_role.object_value as role,
+       t_content.object_value as content
+FROM triples t_time
+JOIN triples t_role ON t_role.subject = t_time.subject
+  AND t_role.predicate = 'foundation:role' AND t_role.retracted = 0
+JOIN triples t_content ON t_content.subject = t_time.subject
+  AND t_content.predicate = 'foundation:content' AND t_content.retracted = 0
+WHERE t_time.predicate = 'foundation:sentAt' AND t_time.retracted = 0
+  AND t_content.object_value LIKE '%search_term%'
+ORDER BY t_time.object_value DESC
 LIMIT 10;"
 
 -- Count messages by role
 sqlite3 ~/Documents/Foundation/FOUNDATION.db "
-SELECT role, COUNT(*) as count
-FROM message_history
-GROUP BY role;"
+SELECT object_value as role, COUNT(DISTINCT subject) as count
+FROM triples
+WHERE predicate = 'foundation:role' AND retracted = 0
+  AND subject IN (
+    SELECT subject FROM triples
+    WHERE predicate = 'rdf:type' AND object = 'foundation:AIConversationMessage' AND retracted = 0
+  )
+GROUP BY object_value;"
 ```
 
 ### 🗄️ Database Inspection

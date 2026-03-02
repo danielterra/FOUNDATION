@@ -19,7 +19,7 @@ struct ClaudeRequest {
     max_tokens: u32,
     messages: Vec<ClaudeMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<String>,
+    system: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -174,7 +174,7 @@ impl ClaudeProvider {
 #[async_trait]
 impl AIProvider for ClaudeProvider {
     async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, String> {
-        let messages: Vec<ClaudeMessage> = request
+        let mut messages: Vec<ClaudeMessage> = request
             .messages
             .into_iter()
             .map(|msg| {
@@ -190,6 +190,33 @@ impl AIProvider for ClaudeProvider {
                 }
             })
             .collect();
+
+        if messages.len() >= 2 {
+            let stable_idx = messages.len() - 2;
+            if let Some(stable_msg) = messages.get_mut(stable_idx) {
+                match &mut stable_msg.content {
+                    serde_json::Value::Array(ref mut blocks) => {
+                        if let Some(last_block) = blocks.last_mut() {
+                            if let Some(obj) = last_block.as_object_mut() {
+                                obj.insert(
+                                    "cache_control".to_string(),
+                                    serde_json::json!({ "type": "ephemeral" }),
+                                );
+                            }
+                        }
+                    }
+                    serde_json::Value::String(text) => {
+                        let text = text.clone();
+                        stable_msg.content = serde_json::json!([{
+                            "type": "text",
+                            "text": text,
+                            "cache_control": { "type": "ephemeral" }
+                        }]);
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         let model = self.model_identifier.clone()
             .unwrap_or_else(|| "claude-3-5-sonnet-20240620".to_string());
@@ -215,6 +242,15 @@ impl AIProvider for ClaudeProvider {
                 }
             }));
 
+            if let Some(last_tool) = tools.last_mut() {
+                if let Some(obj) = last_tool.as_object_mut() {
+                    obj.insert(
+                        "cache_control".to_string(),
+                        serde_json::json!({ "type": "ephemeral" }),
+                    );
+                }
+            }
+
             Some(tools)
         } else {
             None
@@ -224,7 +260,13 @@ impl AIProvider for ClaudeProvider {
             model,
             max_tokens: request.max_tokens.unwrap_or(4096),
             messages,
-            system: request.system,
+            system: request.system.map(|s| {
+                serde_json::json!([{
+                    "type": "text",
+                    "text": s,
+                    "cache_control": { "type": "ephemeral" }
+                }])
+            }),
             temperature: request.temperature,
             tools,
         };
@@ -236,7 +278,10 @@ impl AIProvider for ClaudeProvider {
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
-            .header("anthropic-beta", "code-execution-web-tools-2026-02-09")
+            .header(
+                "anthropic-beta",
+                "prompt-caching-2024-07-31,code-execution-web-tools-2026-02-09",
+            )
             .header("content-type", "application/json")
             .json(&claude_request)
             .send()
@@ -319,13 +364,22 @@ impl AIProvider for ClaudeProvider {
         let content = text_parts.join("\n");
 
         if let Some(ref usage) = claude_response.usage {
+            let cache_savings = if usage.cache_read_input_tokens > 0 {
+                format!(
+                    " | cache hit: {} tokens (~${:.4} saved)",
+                    usage.cache_read_input_tokens,
+                    (usage.cache_read_input_tokens as f64 / 1_000_000.0) * 2.70
+                )
+            } else {
+                String::new()
+            };
             crate::commands::log_backend("info", &format!(
-                "[CLAUDE API] Usage - Input: {} tokens, Output: {} tokens, \
-                 Cache Creation: {}, Cache Read: {}",
+                "[CLAUDE API] Tokens — input: {}, output: {}, cache_write: {}, cache_read: {}{}",
                 usage.input_tokens,
                 usage.output_tokens,
                 usage.cache_creation_input_tokens,
                 usage.cache_read_input_tokens,
+                cache_savings,
             ));
         }
 

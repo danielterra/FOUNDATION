@@ -11,7 +11,7 @@ argument-hint: "<description of the bug — omit to auto-detect from logs>"
 !`npm run logs 500 2>/dev/null | grep -i "error\|panic\|exception\|failed" | tail -n 20 || echo "No recent errors found"`
 
 ## Recent AI Interactions
-!`sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT datetime(timestamp, 'unixepoch', 'localtime') as time, role, substr(content, 1, 80) || '...' as preview FROM message_history ORDER BY timestamp DESC LIMIT 10;"`
+!`sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT datetime(CAST(t_time.object_value AS INTEGER) / 1000, 'unixepoch', 'localtime') as time, t_role.object_value as role, substr(t_content.object_value, 1, 80) || '...' as preview FROM triples t_time JOIN triples t_role ON t_role.subject = t_time.subject AND t_role.predicate = 'foundation:role' AND t_role.retracted = 0 JOIN triples t_content ON t_content.subject = t_time.subject AND t_content.predicate = 'foundation:content' AND t_content.retracted = 0 WHERE t_time.predicate = 'foundation:sentAt' AND t_time.retracted = 0 ORDER BY t_time.object_value DESC LIMIT 10;"`
 
 ## Database Status
 !`sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT 'Active triples: ' || COUNT(*) FROM triples WHERE retracted = 0 UNION ALL SELECT 'Retracted: ' || COUNT(*) FROM triples WHERE retracted = 1;"`

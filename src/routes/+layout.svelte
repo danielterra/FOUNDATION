@@ -25,17 +25,6 @@
     // Initialize database - this will request folder permissions if needed
     try {
       await invoke('initialize_app');
-
-      // Check for and recover pending tool executions
-      try {
-        const result = await invoke('chat__recover_pending_tools');
-        if (result) {
-          console.log('[App] Recovered pending tool executions:', result);
-        }
-      } catch (err) {
-        console.error('[App] Failed to recover pending tools:', err);
-        // Non-fatal error - app can continue
-      }
     } catch (err) {
       console.error('[App] Failed to initialize database:', err);
       // TODO: Show error UI with "Retry" button

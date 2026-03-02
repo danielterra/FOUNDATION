@@ -9,35 +9,38 @@ pub enum ContentBlock {
     Image { source: ImageSource },
     Document { source: DocumentSource },
     ToolUse { id: String, name: String, input: serde_json::Value },
-    ToolResult { tool_use_id: String, content: String, #[serde(skip_serializing_if = "Option::is_none")] is_error: Option<bool> },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_error: Option<bool>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageSource {
     #[serde(rename = "type")]
-    pub source_type: String, // "base64"
-    pub media_type: String,  // "image/png", "image/jpeg", etc.
-    pub data: String,        // base64 data
+    pub source_type: String,
+    pub media_type: String,
+    pub data: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentSource {
     #[serde(rename = "type")]
-    pub source_type: String, // "base64"
-    pub media_type: String,  // "application/pdf"
-    pub data: String,        // base64 data
+    pub source_type: String,
+    pub media_type: String,
+    pub data: String,
 }
 
 /// A message in an AI conversation
 #[derive(Debug, Clone, Serialize)]
 pub struct AIConversationMessage {
     pub iri: String,
-    pub role: String,             // "user" or "assistant"
-    pub content: Vec<ContentBlock>, // Parsed from JSON
+    pub role: String,
+    pub content: Vec<ContentBlock>,
     pub timestamp: i64,
     pub token_count: Option<usize>,
-
-    // Assistant-only fields
     pub model: Option<String>,
     pub stop_reason: Option<String>,
     pub input_tokens: Option<usize>,
@@ -87,7 +90,7 @@ pub(super) async fn create_message(
     content_json: &str,
     model: Option<&str>,
     stop_reason: Option<&str>,
-    tokens: Option<(usize, usize)>, // (input, output)
+    tokens: Option<(usize, usize)>,
 ) -> Result<String, String> {
     let timestamp = chrono::Utc::now().timestamp_millis();
     let message_iri = format!("foundation:AIConversationMessage_{}", timestamp);
@@ -124,24 +127,29 @@ pub(super) async fn create_message(
             language: None,
         }, "ai").map_err(|e| format!("Failed to set content: {}", e))?;
 
-        msg.add_property(conn, "foundation:sentAt", Object::DateTime(timestamp), "ai").map_err(|e| format!("add_property failed: {}", e))?;
+        msg.add_property(conn, "foundation:sentAt", Object::DateTime(timestamp), "ai")
+            .map_err(|e| format!("add_property failed: {}", e))?;
 
-        msg.add_property(conn, "foundation:partOfConversation",
-            Object::Iri(conversation_iri), "ai").map_err(|e| format!("Property error: {}", e))?;
+        msg.add_property(conn, "foundation:partOfConversation", Object::Iri(conversation_iri), "ai")
+            .map_err(|e| format!("Property error: {}", e))?;
 
-        msg.add_property(conn, "foundation:tokenCount",
-            Object::Integer(token_count as i64), "ai").map_err(|e| format!("Property error: {}", e))?;
+        msg.add_property(conn, "foundation:tokenCount", Object::Integer(token_count as i64), "ai")
+            .map_err(|e| format!("Property error: {}", e))?;
 
         if role_str == "user" {
             msg.add_property(conn, "foundation:sender",
-                Object::Iri("foundation:ThisUser".to_string()), "ai").map_err(|e| format!("Property error: {}", e))?;
+                Object::Iri("foundation:ThisUser".to_string()), "ai")
+                .map_err(|e| format!("Property error: {}", e))?;
             msg.add_property(conn, "foundation:receiver",
-                Object::Iri("foundation:LocalAIAssistant".to_string()), "ai").map_err(|e| format!("Property error: {}", e))?;
+                Object::Iri("foundation:LocalAIAssistant".to_string()), "ai")
+                .map_err(|e| format!("Property error: {}", e))?;
         } else {
             msg.add_property(conn, "foundation:sender",
-                Object::Iri("foundation:LocalAIAssistant".to_string()), "ai").map_err(|e| format!("Property error: {}", e))?;
+                Object::Iri("foundation:LocalAIAssistant".to_string()), "ai")
+                .map_err(|e| format!("Property error: {}", e))?;
             msg.add_property(conn, "foundation:receiver",
-                Object::Iri("foundation:ThisUser".to_string()), "ai").map_err(|e| format!("Property error: {}", e))?;
+                Object::Iri("foundation:ThisUser".to_string()), "ai")
+                .map_err(|e| format!("Property error: {}", e))?;
         }
 
         if let Some(model_str) = model_opt {
@@ -161,10 +169,10 @@ pub(super) async fn create_message(
         }
 
         if let Some((input, output)) = tokens {
-            msg.add_property(conn, "foundation:inputTokens",
-                Object::Integer(input as i64), "ai").map_err(|e| format!("Property error: {}", e))?;
-            msg.add_property(conn, "foundation:outputTokens",
-                Object::Integer(output as i64), "ai").map_err(|e| format!("Property error: {}", e))?;
+            msg.add_property(conn, "foundation:inputTokens", Object::Integer(input as i64), "ai")
+                .map_err(|e| format!("Property error: {}", e))?;
+            msg.add_property(conn, "foundation:outputTokens", Object::Integer(output as i64), "ai")
+                .map_err(|e| format!("Property error: {}", e))?;
         }
 
         Ok(msg_iri_clone)
@@ -177,7 +185,9 @@ pub async fn load_conversation_history(
     conversation_id: &str,
     max_tokens: usize,
 ) -> Result<Vec<AIConversationMessage>, String> {
-    super::log_backend("info", &format!("[CHAT] Loading conversation history for: {}", conversation_id));
+    super::log_backend("info", &format!(
+        "[CHAT] Loading conversation history for: {}", conversation_id
+    ));
 
     let conversation_id = conversation_id.to_string();
     let messages = executor.read(move |conn| {
@@ -207,7 +217,9 @@ pub async fn load_conversation_history(
 
     let (mut messages, failed_count) = messages;
 
-    super::log_backend("info", &format!("[CHAT] Loaded {} messages, {} failed", messages.len(), failed_count));
+    super::log_backend("info", &format!(
+        "[CHAT] Loaded {} messages, {} failed", messages.len(), failed_count
+    ));
 
     // Sort by timestamp
     messages.sort_by_key(|m| m.timestamp);
@@ -237,9 +249,10 @@ pub async fn load_conversation_history(
                 break; // Can't fit the pair, stop here
             }
 
-            // Add both messages (prev first, then current)
-            selected.push(prev_msg);
+            // Add msg first, then prev_msg so that after selected.reverse()
+            // they appear in correct chronological order: prev_msg (older) before msg (newer)
             selected.push(msg);
+            selected.push(prev_msg);
             total_tokens += pair_tokens;
             i -= 1; // Skip the previous message in next iteration
         } else {
@@ -255,8 +268,7 @@ pub async fn load_conversation_history(
     // Reverse to chronological order
     selected.reverse();
 
-    // Clean up orphaned tool blocks to satisfy Claude API requirements
-    // Claude requires: Each tool_result must have its corresponding tool_use in the previous message
+    // Claude requires tool_result to have its corresponding tool_use in the previous message
     let selected_count = selected.len();
     let mut cleaned = Vec::new();
     let mut prev_tool_use_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -267,39 +279,38 @@ pub async fn load_conversation_history(
         for block in &msg.content {
             match block {
                 ContentBlock::ToolUse { id, .. } => {
-                    // Track tool_use IDs from assistant messages
                     prev_tool_use_ids.insert(id.clone());
                     clean_content.push(block.clone());
                 },
                 ContentBlock::ToolResult { tool_use_id, .. } => {
-                    // Only keep if we have the corresponding tool_use
                     if prev_tool_use_ids.contains(tool_use_id) {
                         clean_content.push(block.clone());
-                        prev_tool_use_ids.remove(tool_use_id); // Mark as paired
+                        prev_tool_use_ids.remove(tool_use_id);
                     } else {
-                        super::log_backend("debug", &format!("[CHAT] Removing orphaned tool_result: {}", tool_use_id));
+                        super::log_backend("warn", &format!(
+                            "[CHAT] Removing orphaned tool_result: {}", tool_use_id
+                        ));
                     }
                 },
                 _ => {
-                    // Keep all other content blocks (text, image, document)
                     clean_content.push(block.clone());
                 }
             }
         }
 
-        // If message becomes empty after cleanup, don't include it
         // (This can happen if a user message only had orphaned tool_results)
         if !clean_content.is_empty() {
             let mut cleaned_msg = msg;
             cleaned_msg.content = clean_content;
             cleaned.push(cleaned_msg);
         } else {
-            super::log_backend("debug", &format!("[CHAT] Removing empty message after cleanup: {}", msg.iri));
+            super::log_backend("warn", &format!(
+                "[CHAT] Removing empty message after cleanup: {}", msg.iri
+            ));
         }
     }
 
-    // Remove any remaining orphaned tool_use blocks (assistant messages that have tool_use but no tool_result)
-    // This can happen if the assistant's message was included but the user's response was cut off
+    // Remove orphaned tool_use blocks — happens when the token budget cut off the user's response
     let mut final_cleaned = Vec::new();
     for msg in cleaned {
         let has_orphaned_tool_use = msg.content.iter().any(|b| {
@@ -311,19 +322,20 @@ pub async fn load_conversation_history(
         });
 
         if has_orphaned_tool_use {
-            // Remove tool_use blocks that were never paired
             let clean_content: Vec<_> = msg.content.into_iter()
                 .filter_map(|block| {
                     match &block {
                         ContentBlock::ToolUse { id, .. } => {
                             if prev_tool_use_ids.contains(id) {
-                                super::log_backend("debug", &format!("[CHAT] Removing orphaned tool_use: {}", id));
-                                None // Filter out orphaned tool_use
+                                super::log_backend("warn", &format!(
+                                    "[CHAT] Removing orphaned tool_use: {}", id
+                                ));
+                                None
                             } else {
-                                Some(block) // Keep paired tool_use
+                                Some(block)
                             }
                         },
-                        _ => Some(block), // Keep all other blocks
+                        _ => Some(block),
                     }
                 })
                 .collect();
@@ -346,8 +358,11 @@ pub async fn load_conversation_history(
         }
     }
 
-    super::log_backend("info", &format!("[CHAT] Selected {} messages within token budget ({}/{}), cleaned {} orphaned blocks",
-        final_cleaned.len(), total_tokens, max_tokens, selected_count.saturating_sub(final_cleaned.len())));
+    super::log_backend("info", &format!(
+        "[CHAT] Selected {} messages within token budget ({}/{}), cleaned {} orphaned blocks",
+        final_cleaned.len(), total_tokens, max_tokens,
+        selected_count.saturating_sub(final_cleaned.len())
+    ));
 
     Ok(final_cleaned)
 }
