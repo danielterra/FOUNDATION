@@ -3,6 +3,7 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
+  import { marked } from 'marked';
 
   let { properties, openEntityInspector } = $props();
 
@@ -33,6 +34,10 @@
 
   function isUrl(datatype) {
     return datatype === 'xsd:anyURI';
+  }
+
+  function isStringType(datatype) {
+    return !datatype || datatype === 'xsd:string' || datatype === 'rdf:langString';
   }
 
   async function openUrl_(url) {
@@ -175,6 +180,10 @@
                   <span class="value-text">{val.valueLabel || val.value}</span>
                   <span class="material-symbols-outlined url-open-icon">open_in_new</span>
                 </button>
+              {:else if !propGroup.isObjectProperty && isStringType(val.datatype)}
+                <div class="value-markdown markdown-content">
+                  {@html marked.parse(val.value ?? '')}
+                </div>
               {:else}
                 <span class="value-text">{val.valueLabel || val.value}</span>
               {/if}
@@ -254,7 +263,7 @@
   .property-source {
     font-size: 11px;
     color: var(--color-neutral);
-    font-family: var(--font-code);
+    font-family: var(--font-body);
   }
 
   .property-comment {
@@ -277,6 +286,15 @@
     padding: 8px;
     background: color-mix(in srgb, var(--color-black) 30%, transparent);
     border-radius: 6px;
+  }
+
+  .value-markdown {
+    flex: 1;
+    font-size: 13px;
+    color: var(--color-neutral-active);
+    line-height: 1.5;
+    word-wrap: break-word;
+    min-width: 0;
   }
 
   .clickable {
@@ -306,7 +324,7 @@
   }
 
   .value-text {
-    font-family: var(--font-code);
+    font-family: var(--font-body);
     font-size: 13px;
     color: var(--color-neutral-active);
     flex: 1;

@@ -3,7 +3,6 @@
 	import { openPath } from '@tauri-apps/plugin-opener';
 	import { marked } from 'marked';
 
-	// Configure marked for safe HTML
 	marked.setOptions({
 		breaks: true,
 		gfm: true,
@@ -304,7 +303,6 @@
 		border-color: color-mix(in srgb, var(--color-white) 20%, transparent);
 	}
 
-	/* Attachment Styles */
 	.message-attachments {
 		display: flex;
 		flex-wrap: wrap;
@@ -396,139 +394,11 @@
 		white-space: nowrap;
 	}
 
-	/* Markdown Content Styles */
-	.markdown-content :global(h1),
-	.markdown-content :global(h2),
-	.markdown-content :global(h3),
-	.markdown-content :global(h4),
-	.markdown-content :global(h5),
-	.markdown-content :global(h6) {
-		margin: 1.2em 0 0.6em 0;
-		font-weight: 600;
-		color: var(--color-neutral-active);
-	}
-
-	.markdown-content :global(h1:first-child),
-	.markdown-content :global(h2:first-child),
-	.markdown-content :global(h3:first-child),
-	.markdown-content :global(h4:first-child) {
-		margin-top: 0;
-	}
-
-	.markdown-content :global(h1) { font-size: 1.4em; }
-	.markdown-content :global(h2) { font-size: 1.25em; }
-	.markdown-content :global(h3) { font-size: 1.1em; }
-	.markdown-content :global(h4) { font-size: 1em; }
-
-	.markdown-content :global(p) {
-		margin: 0.3em 0;
-	}
-
-	.markdown-content :global(p:first-child) {
-		margin-top: 0;
-	}
-
-	.markdown-content :global(p:last-child) {
-		margin-bottom: 0;
-	}
-
-	.markdown-content :global(code) {
-		background: color-mix(in srgb, var(--color-black) 30%, transparent);
-		padding: 2px 5px;
-		border-radius: 3px;
-		font-family: var(--font-code);
-		font-size: 0.9em;
-	}
-
-	.markdown-content :global(pre) {
-		background: color-mix(in srgb, var(--color-black) 40%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-		border-radius: 6px;
-		padding: 10px;
-		overflow-x: auto;
-		margin: 0.5em 0;
-	}
-
-	.markdown-content :global(pre code) {
-		background: transparent;
-		padding: 0;
-		border-radius: 0;
-	}
-
-	.markdown-content :global(ul),
-	.markdown-content :global(ol) {
-		margin: 0.2em 0;
-		padding-left: 1.5em;
-	}
-
-	.markdown-content :global(li) {
-		margin: 0.1em 0;
-		line-height: 1.3;
-	}
-
-	/* Remove espaço entre parágrafo e lista */
-	.markdown-content :global(p + ul),
-	.markdown-content :global(p + ol) {
-		margin-top: 0.1em;
-	}
-
-	.markdown-content :global(blockquote) {
-		border-left: 3px solid var(--color-interactive);
-		padding-left: 12px;
-		margin: 0.5em 0;
-		color: var(--color-neutral);
-		font-style: italic;
-	}
-
-	.markdown-content :global(a) {
-		color: var(--color-interactive);
-		text-decoration: none;
-	}
-
-	.markdown-content :global(a:hover) {
-		text-decoration: underline;
-	}
-
-	.markdown-content :global(strong) {
-		font-weight: 400;
-		color: var(--color-neutral-active);
-	}
-
-	.markdown-content :global(em) {
-		font-style: italic;
-	}
-
-	.markdown-content :global(hr) {
-		border: none;
-		border-top: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-		margin: 0.8em 0;
-	}
-
-	.markdown-content :global(table) {
-		border-collapse: collapse;
-		width: 100%;
-		margin: 0.5em 0;
-		font-size: 0.95em;
-	}
-
-	.markdown-content :global(th),
-	.markdown-content :global(td) {
-		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-		padding: 6px 10px;
-		text-align: left;
-	}
-
-	.markdown-content :global(th) {
-		background: color-mix(in srgb, var(--color-white) 8%, transparent);
-		font-weight: 600;
-	}
-
 	.message-time {
 		font-size: 11px;
 		color: var(--color-neutral-disabled);
 	}
 
-	/* Thinking indicator */
 	.thinking-indicator {
 		display: flex;
 		align-items: center;
@@ -600,7 +470,6 @@
 		}
 	}
 
-	/* Tool Execution Groups */
 	.tool-execution-groups {
 		margin-top: 12px;
 		padding: 12px;
@@ -647,11 +516,11 @@
 	}
 
 	.tool-group-summary.success {
-		border-left: 3px solid #4caf50;
+		border-left: 3px solid var(--color-success);
 	}
 
 	.tool-group-summary.error {
-		border-left: 3px solid #f44336;
+		border-left: 3px solid var(--color-error);
 	}
 
 	.tool-group-summary.pending {
@@ -663,11 +532,11 @@
 	}
 
 	.tool-group-summary.success .material-symbols-outlined {
-		color: #4caf50;
+		color: var(--color-success);
 	}
 
 	.tool-group-summary.error .material-symbols-outlined {
-		color: #f44336;
+		color: var(--color-error);
 	}
 
 	.tool-group-summary.pending .material-symbols-outlined {
@@ -687,13 +556,13 @@
 	}
 
 	.tool-status-badge.success {
-		background: color-mix(in srgb, #4caf50 20%, transparent);
-		color: #4caf50;
+		background: color-mix(in srgb, var(--color-success) 20%, transparent);
+		color: var(--color-success);
 	}
 
 	.tool-status-badge.error {
-		background: color-mix(in srgb, #f44336 20%, transparent);
-		color: #f44336;
+		background: color-mix(in srgb, var(--color-error) 20%, transparent);
+		color: var(--color-error);
 	}
 
 	.tool-group-content {
@@ -769,7 +638,7 @@
 		word-break: break-all;
 		max-height: 300px;
 		overflow-y: auto;
-		color: #e0e0e0;
+		color: var(--color-neutral);
 		line-height: 1.6;
 	}
 </style>

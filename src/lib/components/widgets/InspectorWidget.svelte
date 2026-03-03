@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { convertFileSrc } from '@tauri-apps/api/core';
+  import { marked } from 'marked';
   import { listen } from '@tauri-apps/api/event';
   import FilePreview from './inspector/FilePreview.svelte';
   import PropertyList from './inspector/PropertyList.svelte';
@@ -168,7 +169,9 @@
     {:else if entityData}
       <div class="content-scroll">
         {#if entityData.comment}
-          <p class="description">{entityData.comment}</p>
+          <div class="description markdown-content">
+            {@html marked.parse(entityData.comment)}
+          </div>
         {/if}
 
         <FilePreview {entityData} />
@@ -451,6 +454,7 @@
     font-size: 14px;
     line-height: 1.6;
     color: var(--color-neutral);
+    word-wrap: break-word;
   }
 
   .thing-list {

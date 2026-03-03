@@ -1,12 +1,11 @@
 <script>
   import '$lib/fonts.css';
   import '$lib/colors.css';
+  import '$lib/markdown.css';
   import { initializeLogging } from '$lib/logging.js';
-  import ChatWindow from '$lib/components/ChatWindow.svelte';
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
 
-  // Available background videos
   const backgroundVideos = [
     '/background-space.mp4',
     '/background-code.mp4',
@@ -15,10 +14,8 @@
     '/background-particles.mp4'
   ];
 
-  // Select random video
   const selectedVideo = backgroundVideos[Math.floor(Math.random() * backgroundVideos.length)];
 
-  // Initialize logging and database when app mounts
   onMount(async () => {
     initializeLogging();
 
@@ -27,13 +24,11 @@
       await invoke('initialize_app');
     } catch (err) {
       console.error('[App] Failed to initialize database:', err);
-      // TODO: Show error UI with "Retry" button
       alert('Failed to initialize database. Please check permissions and try again.');
     }
   });
 </script>
 
-<!-- Background Video (global) -->
 <video
   autoplay
   loop

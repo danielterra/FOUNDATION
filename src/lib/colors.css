@@ -68,4 +68,18 @@
 	--color-neutral-active: var(--color-white);                               /* Active - 100% branco */
 	--color-neutral-disabled: color-mix(in srgb, var(--color-white) 30%, black); /* Disabled - mais escuro */
 	--color-neutral-on-interactive: var(--color-black);
+
+	/* ========================================
+	 * SUCCESS - Elementos de sucesso e confirmação
+	 * ======================================== */
+
+	--color-success-base: #4caf50;
+	--color-success: var(--color-success-base);
+
+	/* ========================================
+	 * ERROR - Elementos de erro e falha
+	 * ======================================== */
+
+	--color-error-base: #f44336;
+	--color-error: var(--color-error-base);
 }
