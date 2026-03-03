@@ -84,21 +84,6 @@ Example:
 # AI-Specific Properties (Claude API)
 # -----------------------------------------------------------------------------
 
-foundation:base64Data a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "base64 data"@en ;
-    rdfs:label "dados base64"@pt ;
-    rdfs:comment "Base64-encoded content of the file for sending to Claude API (Vision)" ;
-    rdfs:domain foundation:Attachment ;
-    rdfs:range xsd:string ;
-    rdfs:seeAlso """
-Example:
-  :attachment1 foundation:base64Data "iVBORw0KGgoAAAANSUhEUgAA..." .
-
-Note: Used for images in Claude Vision API. PDFs may use Files API instead.
-Large files should be stored on disk with only metadata in the database.
-For file metadata (name, size, type), use the linked File object via attachesFile.
-""" .
-
 foundation:claudeFileId a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "Claude file ID"@en ;
     rdfs:label "ID de arquivo Claude"@pt ;
