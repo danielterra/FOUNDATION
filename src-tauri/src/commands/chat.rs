@@ -507,7 +507,8 @@ pub async fn chat__send_and_reply(
             "stop_reason": stop_reason,
         }));
 
-        if stop_reason == "tool_use" {
+        let has_tool_use = !api_response.tool_calls.is_empty();
+        if stop_reason == "tool_use" || (stop_reason == "max_tokens" && has_tool_use) {
             let assistant_msg = executor.read(move |conn| {
                 load_message(conn, &assistant_msg_iri)
             }).await?;
@@ -985,7 +986,8 @@ async fn continue_conversation_after_recovery(
         );
         app.emit("chat-message-added", ()).ok();
 
-        if stop_reason == "tool_use" {
+        let has_tool_use = !api_response.tool_calls.is_empty();
+        if stop_reason == "tool_use" || (stop_reason == "max_tokens" && has_tool_use) {
             let assistant_msg = executor.read(move |conn| {
                 load_message(conn, &assistant_msg_iri)
             }).await?;
