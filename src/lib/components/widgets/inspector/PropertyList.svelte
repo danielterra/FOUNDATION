@@ -24,7 +24,8 @@
         valueLabel: prop.valueLabel,
         valueIcon: prop.valueIcon,
         unitLabel: prop.unitLabel,
-        datatype: prop.datatype
+        datatype: prop.datatype,
+        valueStatus: prop.valueStatus
       });
       return acc;
     }, {})
@@ -68,13 +69,15 @@
     }
 
     if (dateDay.getTime() === yesterday.getTime()) {
-      const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const timeStr = date.toLocaleTimeString(
+        'en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
       return `Yesterday at ${timeStr}`;
     }
 
     if (diffDays < 7) {
       const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-      const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const timeStr = date.toLocaleTimeString(
+        'en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
       return `${dayName} at ${timeStr}`;
     }
 
@@ -85,7 +88,8 @@
     }
 
     return date.toLocaleDateString('en-US', {
-      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true
     });
   }
 
@@ -104,7 +108,8 @@
 
   function getIconUrl(icon) {
     if (!icon) return '';
-    if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:')) return icon;
+    if (icon.startsWith('http://') || icon.startsWith('https://') ||
+        icon.startsWith('data:')) return icon;
     if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
     if (icon.startsWith('/')) return convertFileSrc(icon);
     return icon;
@@ -144,7 +149,8 @@
               role={propGroup.isObjectProperty ? "button" : undefined}
               tabindex={propGroup.isObjectProperty ? 0 : undefined}
               onclick={() => propGroup.isObjectProperty && openEntityInspector(val.value)}
-              onkeydown={(e) => propGroup.isObjectProperty && e.key === 'Enter' && openEntityInspector(val.value)}
+              onkeydown={(e) =>
+                propGroup.isObjectProperty && e.key === 'Enter' && openEntityInspector(val.value)}
             >
               {#if propGroup.isObjectProperty && val.valueIcon}
                 {#if isIconUrl(val.valueIcon)}
@@ -174,6 +180,18 @@
               {/if}
               {#if val.unitLabel}
                 <span class="unit">{val.unitLabel}</span>
+              {/if}
+              {#if val.valueStatus}
+                <span
+                  class="inline-status"
+                  style="--status-color: {val.valueStatus.color || 'var(--color-neutral)'}"
+                  title={val.valueStatus.iri}
+                >
+                  <span class="material-symbols-outlined inline-status-icon">
+                    radio_button_checked
+                  </span>
+                  <span class="inline-status-label">{val.valueStatus.label}</span>
+                </span>
               {/if}
             </div>
           {/each}
@@ -338,5 +356,30 @@
     font-size: 14px;
     opacity: 0.6;
     flex-shrink: 0;
+  }
+
+  .inline-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 7px 2px 4px;
+    background: color-mix(in srgb, var(--status-color) 18%, transparent);
+    border: 1px solid color-mix(in srgb, var(--status-color) 40%, transparent);
+    border-radius: 20px;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .inline-status-icon {
+    font-size: 12px;
+    color: var(--status-color);
+  }
+
+  .inline-status-label {
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--status-color);
+    white-space: nowrap;
   }
 </style>

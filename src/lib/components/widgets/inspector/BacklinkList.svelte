@@ -22,6 +22,7 @@
           entity: backlink.value,
           entityLabel: backlink.valueLabel || backlink.value,
           entityIcon: backlink.valueIcon,
+          entityStatus: backlink.valueStatus,
           properties: []
         };
       }
@@ -65,7 +66,8 @@
 
   function getIconUrl(icon) {
     if (!icon) return '';
-    if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:')) return icon;
+    if (icon.startsWith('http://') || icon.startsWith('https://') ||
+        icon.startsWith('data:')) return icon;
     if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
     if (icon.startsWith('/')) return convertFileSrc(icon);
     return icon;
@@ -87,11 +89,12 @@
           </span>
           <span class="material-symbols-outlined class-icon">category</span>
           <span class="class-name">{classGroup.className}</span>
-          <span class="class-count">{entityCount} {entityCount === 1 ? 'entity' : 'entities'}</span>
+          <span class="class-count">{entityCount}</span>
         </button>
 
         {#if !isCollapsed}
           {#each Object.values(classGroup.entities) as group}
+            {@const relCount = group.properties.length}
             <div class="backlink-group" transition:slide={{ duration: 400, easing: cubicOut }}>
               <div
                 class="backlink-entity clickable"
@@ -111,8 +114,22 @@
                 {/if}
                 <div class="entity-info">
                   <div class="entity-label">{group.entityLabel}</div>
-                  <div class="entity-count">{group.properties.length} {group.properties.length === 1 ? 'relationship' : 'relationships'}</div>
+                  <div class="entity-count">
+                    {relCount} {relCount === 1 ? 'relationship' : 'relationships'}
+                  </div>
                 </div>
+                {#if group.entityStatus}
+                  <span
+                    class="inline-status"
+                    style="--status-color: {group.entityStatus.color || 'var(--color-neutral)'}"
+                    title={group.entityStatus.iri}
+                  >
+                    <span class="material-symbols-outlined inline-status-icon">
+                      radio_button_checked
+                    </span>
+                    <span class="inline-status-label">{group.entityStatus.label}</span>
+                  </span>
+                {/if}
                 <span class="material-symbols-outlined arrow">arrow_forward</span>
               </div>
 
@@ -197,9 +214,9 @@
   .class-count {
     font-size: 11px;
     font-weight: 600;
-    color: var(--color-accent);
+    color: var(--color-neutral);
     padding: 2px 8px;
-    background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+    background: color-mix(in srgb, var(--color-white) 10%, transparent);
     border-radius: 12px;
   }
 
@@ -317,5 +334,29 @@
     font-size: 11px;
     color: var(--color-neutral);
     line-height: 1.3;
+  }
+
+  .inline-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 7px 2px 4px;
+    background: color-mix(in srgb, var(--status-color) 18%, transparent);
+    border: 1px solid color-mix(in srgb, var(--status-color) 40%, transparent);
+    border-radius: 20px;
+    flex-shrink: 0;
+  }
+
+  .inline-status-icon {
+    font-size: 12px;
+    color: var(--status-color);
+  }
+
+  .inline-status-label {
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--status-color);
+    white-space: nowrap;
   }
 </style>

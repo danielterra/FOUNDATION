@@ -133,8 +133,6 @@ pub fn search_individuals(
             continue;
         }
 
-        let _individual = Individual::new(individual_iri);
-
         let label_result = query::get_by_entity_predicate(conn, individual_iri, rdfs::LABEL)?;
         if let Some(label_triple) = label_result.triples.first() {
             if let Object::Literal { value: label, .. } = &label_triple.object {
@@ -242,4 +240,24 @@ pub fn find_entities_with_property(
     use crate::eavto::query;
     let result = query::get_by_predicate_object(conn, predicate, object)?;
     Ok(result.triples.into_iter().map(|t| t.subject).collect())
+}
+
+/// Finds the first property value of the entity that is an instance of `foundation:Status`.
+/// Returns `(iri, label, color)` if a status is found.
+pub fn get_entity_status_info(
+    conn: &Connection,
+    entity_iri: &str,
+) -> Option<(String, String, Option<String>)> {
+    use crate::eavto::query;
+    let result = query::get_by_entity(conn, entity_iri).ok()?;
+    for triple in &result.triples {
+        if let Some(iri) = triple.object.as_iri() {
+            if is_instance_of(conn, iri, "foundation:Status") {
+                let thing = Thing::get(conn, iri);
+                let color = get_literal_property(conn, iri, "foundation:color").ok().flatten();
+                return Some((iri.to_string(), thing.label, color));
+            }
+        }
+    }
+    None
 }

@@ -2,6 +2,10 @@ use serde::Serialize;
 use tauri::State;
 use crate::owl::{self, Class, Individual, Property, Connection, DbExecutor};
 
+const GROUP_CLASS: u8 = 1;
+const GROUP_INDIVIDUAL: u8 = 6;
+const GROUP_LITERAL: u8 = 7;
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum EntityType {
@@ -16,7 +20,7 @@ pub struct SearchResult {
     pub label: String,
     pub icon: Option<String>,
     #[serde(rename = "type")]
-    pub entity_type: String, // "class" or "individual"
+    pub entity_type: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -25,11 +29,11 @@ pub struct GraphNode {
     pub id: String,
     pub label: String,
     pub icon: Option<String>,
-    pub group: u8, // 1 = Class, 6 = Individual, 7 = Literal Value
+    pub group: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_broken_ref: Option<bool>, // true if entity doesn't exist in database
+    pub is_broken_ref: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_literal: Option<bool>, // true if this is a literal value node
+    pub is_literal: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -48,13 +52,13 @@ pub struct EntityData {
     pub icon: Option<String>,
     pub comment: Option<String>,
 
-    pub types: Vec<crate::owl::Thing>, // rdf:type (for individuals)
-    pub super_classes: Vec<crate::owl::Thing>, // rdfs:subClassOf (for classes)
-    pub sub_classes: Vec<crate::owl::Thing>, // inverse of rdfs:subClassOf (for classes)
-    pub instances: Vec<crate::owl::Thing>, // entities with rdf:type pointing to this class
+    pub types: Vec<crate::owl::Thing>,
+    pub super_classes: Vec<crate::owl::Thing>,
+    pub sub_classes: Vec<crate::owl::Thing>,
+    pub instances: Vec<crate::owl::Thing>,
 
     pub properties: Vec<PropertyValue>,
-    pub backlinks: Vec<PropertyValue>, // Properties from other entities pointing to this one
+    pub backlinks: Vec<PropertyValue>,
     pub status: Option<StatusInfo>,
 
     pub nodes: Vec<GraphNode>,
@@ -76,14 +80,16 @@ pub struct PropertyValue {
     pub property_label: String,
     pub property_comment: Option<String>,
     pub value: String,
-    pub value_label: Option<String>, // For object properties, the label of the target entity
-    pub value_icon: Option<String>, // For object properties, the icon of the target entity
+    pub value_label: Option<String>,
+    pub value_icon: Option<String>,
     pub is_object_property: bool,
     pub source_class: Option<String>,
     pub source_class_label: Option<String>,
-    pub unit: Option<String>, // QUDT unit IRI (e.g., "unit:GigaBYTE")
-    pub unit_label: Option<String>, // QUDT unit label (e.g., "Gigabyte")
+    pub unit: Option<String>,
+    pub unit_label: Option<String>,
     pub datatype: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_status: Option<StatusInfo>,
 }
 
 /// Search for entities (classes and individuals) by label
@@ -169,6 +175,11 @@ fn resolve_entity_status(conn: &Connection, properties: &[PropertyValue]) -> Opt
     None
 }
 
+fn resolve_status_for_entity(conn: &Connection, entity_iri: &str) -> Option<StatusInfo> {
+    owl::get_entity_status_info(conn, entity_iri)
+        .map(|(iri, label, color)| StatusInfo { iri, label, color })
+}
+
 fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityType, String> {
     let class = Class::new(entity_id);
     if class.exists(conn).map_err(|e| e.to_string())? {
@@ -200,7 +211,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         id: class_id.to_string(),
         label: label.clone(),
         icon: icon.clone(),
-        group: 1,
+        group: GROUP_CLASS,
         is_broken_ref: None,
         is_literal: None,
     });
@@ -212,7 +223,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
                 id: super_class.iri.clone(),
                 label: super_class.label.clone(),
                 icon: super_class.icon.clone(),
-                group: 1,
+                group: GROUP_CLASS,
                 is_broken_ref: None,
                 is_literal: None,
             });
@@ -232,7 +243,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
                 id: sub_class.iri.clone(),
                 label: sub_class.label.clone(),
                 icon: sub_class.icon.clone(),
-                group: 1,
+                group: GROUP_CLASS,
                 is_broken_ref: None,
                 is_literal: None,
             });
@@ -260,7 +271,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
                         id: range_iri.clone(),
                         label: range_thing.label,
                         icon: range_thing.icon,
-                        group: 1, // Ranges are usually classes
+                        group: GROUP_CLASS,
                         is_broken_ref: None,
                         is_literal: None,
                     });
@@ -284,7 +295,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
                         id: literal_node_id.clone(),
                         label: range_thing.label,
                         icon: range_thing.icon,
-                        group: 7, // Literal/datatype node
+                        group: GROUP_LITERAL,
                         is_broken_ref: None,
                         is_literal: Some(true),
                     });
@@ -317,6 +328,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             unit: None,
             unit_label: None,
             datatype: None,
+            value_status: None,
         });
     }
 
@@ -334,6 +346,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             unit: None,
             unit_label: None,
             datatype: None,
+            value_status: None,
         });
     }
 
@@ -386,6 +399,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             unit,
             unit_label,
             datatype: None,
+            value_status: None,
         });
     }
 
@@ -422,6 +436,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
             unit: None,
             unit_label: None,
             datatype: None,
+            value_status: resolve_status_for_entity(conn, source_entity),
         });
     }
 
@@ -474,7 +489,8 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                 (None, None)
             };
 
-            let is_obj_prop = prop.property_type == crate::owl::PropertyType::ObjectProperty;
+            let is_obj_prop = prop.property_type == crate::owl::PropertyType::ObjectProperty
+                || value_obj.is_iri();
             (label, comment, unit, unit_label, is_obj_prop)
         } else {
             (property_iri.clone(), None, None, None, value_obj.is_iri())
@@ -486,11 +502,12 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             value_obj.as_literal().unwrap_or_default()
         };
 
-        let (value_label, value_icon, datatype) = if is_object_property {
+        let (value_label, value_icon, datatype, value_status) = if is_object_property {
             let target_thing = crate::owl::Thing::get(conn, &value);
-            (Some(target_thing.label), target_thing.icon, None)
+            let status = resolve_status_for_entity(conn, &value);
+            (Some(target_thing.label), target_thing.icon, None, status)
         } else {
-            (None, None, value_obj.datatype().map(|s| s.to_string()))
+            (None, None, value_obj.datatype().map(|s| s.to_string()), None)
         };
 
         properties.push(PropertyValue {
@@ -506,6 +523,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             unit,
             unit_label,
             datatype,
+            value_status,
         });
     }
 
@@ -517,7 +535,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         id: individual_id.to_string(),
         label: label.clone(),
         icon: icon.clone(),
-        group: 6,
+        group: GROUP_INDIVIDUAL,
         is_broken_ref: None,
         is_literal: None,
     });
@@ -529,7 +547,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                 id: class_thing.iri.clone(),
                 label: class_thing.label.clone(),
                 icon: class_thing.icon.clone(),
-                group: 1,
+                group: GROUP_CLASS,
                 is_broken_ref: None,
                 is_literal: None,
             });
@@ -557,7 +575,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                     } else {
                         Some("warning".to_string())
                     },
-                    group: 6,
+                    group: GROUP_INDIVIDUAL,
                     is_broken_ref: if entity_exists_flag { None } else { Some(true) },
                     is_literal: None,
                 });
@@ -583,7 +601,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                     id: literal_node_id.clone(),
                     label: display_value,
                     icon: prop.value_icon.clone(),
-                    group: 7, // New group for literal values
+                    group: GROUP_LITERAL,
                     is_broken_ref: None,
                     is_literal: Some(true),
                 });
@@ -598,27 +616,10 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         }
     }
 
-    // Still need raw query for reverse lookups
-    let backlink_query = "SELECT subject, predicate
-                          FROM triples
-                          WHERE object = ? AND object_type = 'iri'
-                          AND predicate != 'rdf:type'
-                          AND retracted = 0";
-
-    let mut stmt = conn.prepare(backlink_query).map_err(|e| e.to_string())?;
-    let backlink_rows = stmt.query_map([individual_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-        ))
-    }).map_err(|e| e.to_string())?;
-
-    for row in backlink_rows {
-        let (subject, predicate_iri) = row.map_err(|e| e.to_string())?;
-
-        if !added_node_ids.contains(&subject) {
-            let subject_thing = crate::owl::Thing::get(conn, &subject);
-            let entity_exists_flag = Individual::new(&subject).exists(conn).unwrap_or(false);
+    for (subject, predicate_iri, _) in &individual.backlinks {
+        if !added_node_ids.contains(subject) {
+            let subject_thing = crate::owl::Thing::get(conn, subject);
+            let entity_exists_flag = Individual::new(subject).exists(conn).unwrap_or(false);
 
             nodes.push(GraphNode {
                 id: subject.clone(),
@@ -628,20 +629,20 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                 } else {
                     Some("warning".to_string())
                 },
-                group: 6,
+                group: GROUP_INDIVIDUAL,
                 is_broken_ref: if entity_exists_flag { None } else { Some(true) },
                 is_literal: None,
             });
             added_node_ids.insert(subject.clone());
         }
 
-        let prop_label = Property::get(conn, &predicate_iri)
+        let prop_label = Property::get(conn, predicate_iri)
             .ok()
             .and_then(|p| p.label)
             .unwrap_or_else(|| predicate_iri.clone());
 
         links.push(GraphLink {
-            source: subject,
+            source: subject.clone(),
             target: individual_id.to_string(),
             label: prop_label,
         });
@@ -680,6 +681,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             unit: None,
             unit_label: None,
             datatype: None,
+            value_status: resolve_status_for_entity(conn, source_entity),
         });
     }
 

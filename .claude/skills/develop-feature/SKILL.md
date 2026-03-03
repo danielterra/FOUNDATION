@@ -23,6 +23,7 @@ acceptance criteria, and related plans/tasks. Use this as the primary source of 
 4. Order tasks respecting `foundation:dependsOn` relationships (topological sort)
 5. Set the User Story status to In Progress:
    - `learn_thing_detail` on `$ARGUMENTS`: `foundation:storyStatus` → `foundation:InProgress` (value_type: iri)
+   - `learn_thing_detail` on `$ARGUMENTS`: `foundation:startedAt` → current ISO datetime (datatype: xsd:dateTime)
 
 ---
 
@@ -62,6 +63,7 @@ For each task (in dependency order):
 ### 3a. Mark task In Progress
 Call `learn_thing_detail` on the Task IRI:
 - `foundation:status` → `foundation:InProgress` (value_type: iri)
+- `foundation:startedAt` → current ISO datetime (datatype: xsd:dateTime)
 
 ### 3b. Implement
 - Read all files the task touches before editing
@@ -106,10 +108,11 @@ Run: `cargo check --manifest-path src-tauri/Cargo.toml --message-format=short 2>
 
 Fix any compilation errors before proceeding to the next task.
 
-### 3d. Mark task Completed
+### 3d. Mark task Completed or Failed
 Call `learn_thing_detail` on the Task IRI:
-- `foundation:status` → `foundation:Completed` (value_type: iri)
-- `foundation:resolution` → one-sentence summary of what was implemented (value_type: literal)
+- On success: `foundation:status` → `foundation:Completed` (value_type: iri)
+- On failure (task cannot be completed): `foundation:status` → `foundation:Failed` (value_type: iri)
+- `foundation:resolution` → one-sentence summary of what was implemented or why it failed (value_type: literal)
 
 ---
 
@@ -119,7 +122,8 @@ After all tasks are marked Completed:
 
 1. Verify the acceptance criteria from the User Story are met
 2. Call `learn_thing_detail` on `$ARGUMENTS`:
-   - `foundation:storyStatus` → `foundation:Completed` (value_type: iri)
+   - On success: `foundation:storyStatus` → `foundation:Completed` (value_type: iri)
+   - On failure (story cannot be completed due to blocking tasks): `foundation:storyStatus` → `foundation:Failed` (value_type: iri)
 3. Present a summary to the user:
    - User Story implemented
    - Tasks completed (with brief description of each)

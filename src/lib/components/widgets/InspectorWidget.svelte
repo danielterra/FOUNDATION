@@ -78,8 +78,17 @@
     loadEntity();
 
     unlistenEntityUpdated = await listen('entity-updated', (event) => {
-      if (event.payload.entityId === entityId) {
+      const updatedId = event.payload.entityId;
+      if (updatedId === entityId) {
         loadEntity();
+        return;
+      }
+      if (entityData) {
+        const inBacklinks = entityData.backlinks?.some(b => b.value === updatedId);
+        const inProperties = entityData.properties?.some(p => p.value === updatedId);
+        if (inBacklinks || inProperties) {
+          loadEntity();
+        }
       }
     });
   });
