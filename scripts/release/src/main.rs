@@ -294,7 +294,7 @@ fn check_clean_working_tree() -> Result<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Filter out expected changes (version files and models)
-    let re = Regex::new(r"(?m)^\s*[MAD]\s+(package\.json|src-tauri/Cargo\.toml|core-ontology/.*\.ttl)$")?;
+    let re = Regex::new(r"(?m)^\s*[MAD]\s+(package\.json|src-tauri/Cargo\.toml|src-tauri/Cargo\.lock|core-ontology/.*\.ttl)$")?;
     let unexpected_changes: Vec<&str> = stdout
         .lines()
         .filter(|line| !line.is_empty() && !re.is_match(line))

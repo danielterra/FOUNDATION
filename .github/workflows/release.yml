@@ -75,5 +75,5 @@ jobs:
             - Chat interface with tool visualization
 
             See the [README](https://github.com/danielterra/FOUNDATION/blob/main/README.md) for more information.
-          releaseDraft: true
+          releaseDraft: false
           prerelease: true

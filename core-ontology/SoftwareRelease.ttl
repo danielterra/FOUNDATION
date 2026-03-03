@@ -171,3 +171,12 @@ foundation:FoundationRelease_0_4_0 a foundation:SoftwareRelease , owl:NamedIndiv
     foundation:licenseType "MIT" ;
     foundation:releaseDate "2026-02-28"^^xsd:date ;
     foundation:changelog "fix: Use git add -A in release script; fix: Preserve package.json formatting in release script; fix: Release script compilation errors; feat: Add pricing integration and automated release system" .
+
+foundation:FoundationRelease_0_4_1 a foundation:SoftwareRelease , owl:NamedIndividual ;
+    rdfs:label "FOUNDATION v0.4.1" ;
+    rdfs:comment "Release version 0.4.1" ;
+    foundation:releaseOf foundation:FoundationProduct ;
+    foundation:versionNumber "0.4.1" ;
+    foundation:licenseType "MIT" ;
+    foundation:releaseDate "2026-03-03"^^xsd:date ;
+    foundation:changelog "fix: handle tool_use with max_tokens stop reason to continue conversation; feat: implement file attachment upload and send to Claude API; refactor: semantic colors, remove what-comments, drop unused import; feat: show inline status badges on inspector properties and backlinks; refactor: remove what-comments, fix formatting, load model from settings; feat: enable prompt caching and apply code-review quality fixes; refactor: decompose chat UI, AI functions, and setup into focused modules; refactor: Move hasFile to DigitalThing and fix InformationObject hierarchy; fix: Add hasFile property to BrazilianNFSe and make it generic; feat: Add Brazilian NFS-e ontology and improve property reference usage; refactor: Reorganize ontology structure and enhance cardinality support; feat: Add comprehensive financial and contract ontologies with QUDT integration; feat: Improve address ontology and fix file preview in inspector; feat: Add comprehensive ontology definitions and documentation; feat: Improve AI search and file attachment handling" .

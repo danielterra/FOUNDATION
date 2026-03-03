@@ -290,69 +290,6 @@ AND object = 'foundation:Person'
 AND retracted = 0;"
 ```
 
-## Work Methodology
-
-FOUNDATION follows a problem-driven, outcome-focused development approach:
-
-### Quarterly Planning with OKRs
-
-Every quarter, we define **OKRs (Objectives and Key Results)** that are always aligned with the project's core objective and guiding principles. OKRs are documented in `requirements/YYYY/Q[n]/OKRS.md`.
-
-- **Objectives** are user-centered outcomes that deliver clear value
-- **Key Results** are measurable indicators of success from the user's perspective
-- Technical implementation is a means to achieve user outcomes, not the goal itself
-
-### Problem-Driven Development
-
-For each Key Result, we identify the **problems** that need to be solved to achieve that result. A problem can be:
-- A technical challenge that blocks the outcome
-- A knowledge gap that requires research or experimentation
-- A design question that needs user validation
-
-Problems are documented in: `requirements/YYYY/Q[n]/O[n]/K[n]/problem-name.md`
-
-Examples:
-- `requirements/2026/Q1/O1/K1/database-selection.md`
-- `requirements/2026/Q1/O1/K1/base-ontology-selection.md`
-- `requirements/2026/Q1/O1/K1/semantic-data-structure.md`
-
-Each problem document should clearly state:
-- **What** we don't know or can't do yet
-- **Why** solving it is necessary for the Key Result
-- **How** we might approach solving it (hypotheses)
-- **Success criteria** - how we'll know the problem is solved
-
-### From Problems to Solutions
-
-Once problems are identified and understood, we create solutions through iterative development:
-1. **Research** - Gather information, prototype, experiment
-2. **Implement** - Build the minimal solution that addresses the problem
-3. **Validate** - Test with real users or realistic scenarios
-4. **Iterate** - Refine based on feedback until success criteria are met
-
-This approach keeps us focused on delivering real value rather than building features for their own sake.
-
-### How to Contribute
-
-FOUNDATION is built by people who believe technology should serve humanity, not corporations. If you share this vision, you're already part of the team.
-
-**Working on Problems:**
-
-1. **Create a branch** - Name it `username/problem-name` (e.g., `alice/local-ai-integration`)
-2. **Develop** - Work on your solution, experiment, and iterate
-3. **Document results** - Update the problem document with your findings:
-   - Mark solution as `[✅ CURRENT]`, `[❌ REJECTED]`, or `[⏸️ PAUSED]`
-   - Add what worked, what didn't, and why
-   - Include performance metrics, trade-offs discovered
-4. **Submit PR** - Share your work, even if incomplete
-
-**Important:**
-- **Failed experiments are valuable.** Document what you tried and learned — this helps everyone avoid the same pitfalls and builds collective knowledge.
-- **Keep all communication in English** (code, comments, issues, PRs, documentation) so anyone in the world can contribute.
-- **Be kind.** We're building something bigger than ourselves.
-
----
-
 ## Contributors
 
 **Your name could be here!** 👋
