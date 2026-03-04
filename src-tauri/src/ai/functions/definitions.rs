@@ -1,15 +1,15 @@
-use super::{FunctionDefinition, Parameter};
+use super::{ToolTemplate, Parameter};
 
 pub fn get_claude_tools() -> Vec<crate::ai::providers::ClaudeTool> {
-    get_available_functions()
+    get_available_tools()
         .into_iter()
         .map(|f| f.to_claude_tool())
         .collect()
 }
 
-pub fn get_available_functions() -> Vec<FunctionDefinition> {
+pub fn get_available_tools() -> Vec<ToolTemplate> {
     vec![
-        FunctionDefinition {
+        ToolTemplate {
             name: "remember_concepts".to_string(),
             description: concat!(
                 "Search your memory for concepts you know about. Find what types of things",
@@ -42,7 +42,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "remember_concept".to_string(),
             description: concat!(
                 "Remember everything you know about a specific concept -",
@@ -57,7 +57,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "remember_things".to_string(),
             description: concat!(
                 "Search your memory for specific things in a concept",
@@ -96,7 +96,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "remember_thing".to_string(),
             description: concat!(
                 "Remember everything you know about a specific thing",
@@ -111,7 +111,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "learn_concept".to_string(),
             description: concat!(
                 "Learn a new concept (e.g., when users mention a new type of thing you should",
@@ -152,14 +152,14 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                     required: false,
                 },
                 Parameter {
-                    name: "super_class".to_string(),
+                    name: "super_concept".to_string(),
                     param_type: "string".to_string(),
                     description: "Optional parent concept ID".to_string(),
                     required: false,
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "learn_thing".to_string(),
             description: concat!(
                 "Learn about a new specific thing (person, place, organization, etc.).",
@@ -198,7 +198,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "learn_thing_detail".to_string(),
             description: concat!(
                 "Set the complete list of values for a property on a thing. ALWAYS replaces",
@@ -208,13 +208,13 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
             ).to_string(),
             parameters: vec![
                 Parameter {
-                    name: "instance_iri".to_string(),
+                    name: "thing_iri".to_string(),
                     param_type: "string".to_string(),
                     description: "ID of the thing to update".to_string(),
                     required: true,
                 },
                 Parameter {
-                    name: "property_iri".to_string(),
+                    name: "detail_iri".to_string(),
                     param_type: "string".to_string(),
                     description: concat!(
                         "What kind of connection or detail (e.g., 'foundation:worksAt')",
@@ -255,7 +255,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "learn_connection_type".to_string(),
             description: concat!(
                 "Learn a new type of connection or detail you can remember about things",
@@ -277,7 +277,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                     required: true,
                 },
                 Parameter {
-                    name: "property_type".to_string(),
+                    name: "detail_type".to_string(),
                     param_type: "string".to_string(),
                     description: concat!(
                         "'object' for connections to other things,",
@@ -306,9 +306,19 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                     description: "Optional description".to_string(),
                     required: false,
                 },
+                Parameter {
+                    name: "unit".to_string(),
+                    param_type: "string".to_string(),
+                    description: concat!(
+                        "QUDT unit IRI — REQUIRED when range is xsd:decimal, xsd:integer,",
+                        " xsd:float, or xsd:double (e.g. 'unit:BRL', 'unit:M', 'unit:SEC').",
+                        " MUST NOT be provided for non-numeric ranges; will error if supplied.",
+                    ).to_string(),
+                    required: false,
+                },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "remember_connection_type".to_string(),
             description: concat!(
                 "Remember everything you know about a specific type of connection.",
@@ -322,7 +332,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "forget_concept".to_string(),
             description: concat!(
                 "Forget a concept (but not the specific things that belong to it).",
@@ -331,12 +341,12 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 Parameter {
                     name: "iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "The IRI of the class to delete".to_string(),
+                    description: "The IRI of the concept to forget".to_string(),
                     required: true,
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "forget_thing".to_string(),
             description: concat!(
                 "Forget a specific thing completely (all its details and connections).",
@@ -350,7 +360,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "forget_connection_type".to_string(),
             description: "Forget a type of connection.".to_string(),
             parameters: vec![
@@ -362,7 +372,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "update_concept".to_string(),
             description: "Update details about a concept (name, icon, description).".to_string(),
             parameters: vec![
@@ -393,14 +403,14 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                     required: false,
                 },
                 Parameter {
-                    name: "super_class".to_string(),
+                    name: "super_concept".to_string(),
                     param_type: "string".to_string(),
                     description: "New parent concept ID".to_string(),
                     required: false,
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "update_thing".to_string(),
             description: "Update details about a thing (name, icon, description).".to_string(),
             parameters: vec![
@@ -432,7 +442,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "forget_thing_detail".to_string(),
             description: concat!(
                 "Forget a specific detail or connection about a thing",
@@ -440,13 +450,13 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
             ).to_string(),
             parameters: vec![
                 Parameter {
-                    name: "instance_iri".to_string(),
+                    name: "thing_iri".to_string(),
                     param_type: "string".to_string(),
                     description: "ID of the thing".to_string(),
                     required: true,
                 },
                 Parameter {
-                    name: "property_iri".to_string(),
+                    name: "detail_iri".to_string(),
                     param_type: "string".to_string(),
                     description: "What kind of detail to forget".to_string(),
                     required: true,
@@ -459,7 +469,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "remember_things_by_details".to_string(),
             description: concat!(
                 "Remember things that have specific details or connections",
@@ -476,13 +486,13 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                     name: "properties".to_string(),
                     param_type: "array".to_string(),
                     description: concat!(
-                        "Details to match: array of {property: 'IRI', value: 'VALUE'}",
+                        "Details to match: array of {detail: 'IRI', value: 'VALUE'}",
                     ).to_string(),
                     required: true,
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "blackboard_show".to_string(),
             description: concat!(
                 "See what is currently being displayed on the blackboard/canvas.",
@@ -490,7 +500,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
             ).to_string(),
             parameters: vec![],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "blackboard_add_widget".to_string(),
             description: concat!(
                 "Add a widget to the blackboard to display information visually.",
@@ -519,7 +529,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "blackboard_remove".to_string(),
             description: "Remove a specific widget from the blackboard by its ID.".to_string(),
             parameters: vec![
@@ -531,7 +541,7 @@ pub fn get_available_functions() -> Vec<FunctionDefinition> {
                 },
             ],
         },
-        FunctionDefinition {
+        ToolTemplate {
             name: "blackboard_clear".to_string(),
             description: concat!(
                 "Clear all widgets from the blackboard. Use this to start fresh.",

@@ -66,8 +66,18 @@ impl Class {
     }
 
     /// Get complete class data from database
-    pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Self> {
+    pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
         let iri = iri.into();
+
+        let types_result = query::get_by_entity_predicate(conn, &iri, rdf::TYPE)?;
+        let is_class = types_result.triples.iter().any(|t| {
+            t.object.as_iri()
+                .map(|type_iri| type_iri == rdfs::CLASS || type_iri == owl::CLASS)
+                .unwrap_or(false)
+        });
+        if !is_class {
+            return Ok(None);
+        }
 
         let label_result = query::get_by_entity_predicate(conn, &iri, rdfs::LABEL)?;
         let label = label_result.triples.first()
@@ -81,7 +91,6 @@ impl Class {
         let comment = comment_result.triples.first()
             .and_then(|t| t.object.as_literal());
 
-        let types_result = query::get_by_entity_predicate(conn, &iri, rdf::TYPE)?;
         let types: Vec<Thing> = types_result.triples.iter()
             .filter_map(|t| t.object.as_iri())
             .map(|type_iri| Thing::get(conn, type_iri))
@@ -118,7 +127,7 @@ impl Class {
             Vec::new()
         };
 
-        Ok(Self {
+        Ok(Some(Self {
             iri,
             label,
             icon,
@@ -129,7 +138,7 @@ impl Class {
             properties,
             backlinks,
             one_of_values,
-        })
+        }))
     }
 
     /// Get all properties for this class (declared, used, and inherited)
@@ -221,17 +230,6 @@ impl Class {
         Ok(())
     }
 
-    /// Check if this class exists (has rdf:type rdfs:Class or owl:Class)
-    pub fn exists(&self, conn: &Connection) -> Result<bool> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
-        Ok(result.triples.iter().any(|t| {
-            if let Object::Iri(type_iri) = &t.object {
-                type_iri == rdfs::CLASS || type_iri == owl::CLASS
-            } else {
-                false
-            }
-        }))
-    }
 
     /// Get all instances of this class (returned as IRIs only)
     /// Call separately when needed - can be thousands of instances
@@ -273,10 +271,10 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify it exists
-        assert!(class.exists(&conn).unwrap());
+        assert!(Class::get(&conn, "foundation:TestClass").unwrap().is_some());
 
         // Get complete class data
-        let class_data = Class::get(&conn, "foundation:TestClass").unwrap();
+        let class_data = Class::get(&conn, "foundation:TestClass").unwrap().unwrap();
         assert_eq!(class_data.iri, "foundation:TestClass");
         assert_eq!(class_data.label, Some("Test Class".to_string()));
         assert_eq!(class_data.icon, Some("test-icon".to_string()));
@@ -346,12 +344,12 @@ mod tests {
         ).unwrap();
 
         // Get super class data and check sub classes
-        let animal_data = Class::get(&conn, "foundation:Animal").unwrap();
+        let animal_data = Class::get(&conn, "foundation:Animal").unwrap().unwrap();
         assert_eq!(animal_data.sub_classes.len(), 1);
         assert_eq!(animal_data.sub_classes[0].iri, "foundation:Dog");
 
         // Get sub class data and check super classes
-        let dog_data = Class::get(&conn, "foundation:Dog").unwrap();
+        let dog_data = Class::get(&conn, "foundation:Dog").unwrap().unwrap();
         assert_eq!(dog_data.super_classes.len(), 1);
         assert_eq!(dog_data.super_classes[0].iri, "foundation:Animal");
     }
@@ -372,7 +370,7 @@ mod tests {
         ).unwrap();
 
         // Get class data
-        let class_data = Class::get(&conn, "foundation:TestClass").unwrap();
+        let class_data = Class::get(&conn, "foundation:TestClass").unwrap().unwrap();
 
         // Should have exactly 1 super class
         assert_eq!(
@@ -455,7 +453,7 @@ mod tests {
         store::assert_triples(&mut conn, &[one_of], "test").unwrap();
 
         // Get class and verify owl:oneOf values
-        let class_data = Class::get(&conn, "foundation:TaskPriority").unwrap();
+        let class_data = Class::get(&conn, "foundation:TaskPriority").unwrap().unwrap();
         assert_eq!(class_data.one_of_values.len(), 3);
         assert!(class_data.one_of_values.contains(&"foundation:HighPriority".to_string()));
         assert!(class_data.one_of_values.contains(&"foundation:MediumPriority".to_string()));

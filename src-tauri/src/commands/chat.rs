@@ -7,14 +7,10 @@
 /// - Direct mapping to LLM APIs (Claude, OpenAI, etc.)
 
 use crate::owl::DbExecutor;
-use crate::ai::functions::FunctionCall;
+use crate::ai::functions::ToolCall;
 use crate::owl::{Individual, Object, Connection};
 use tauri::{Emitter, State};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use base64::Engine;
-use sha2::{Sha256, Digest};
+use super::chat_attachments::PENDING_ATTACHMENTS;
 
 pub use super::chat_storage::{
     ContentBlock, AIConversationMessage,
@@ -22,19 +18,8 @@ pub use super::chat_storage::{
 };
 use super::chat_storage::{create_message, load_message, ImageSource, DocumentSource};
 
-struct AttachmentData {
-    mime_type: String,
-    data: String,
-    file_iri: String,
-    file_name: String,
-}
+const MAX_OUTPUT_TOKENS: u32 = 4096;
 
-lazy_static::lazy_static! {
-    static ref PENDING_ATTACHMENTS: Arc<Mutex<HashMap<String, AttachmentData>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-}
-
-/// Execute tools from an assistant message and create user message with results
 pub async fn execute_tools_from_message(
     executor: &DbExecutor,
     app: &tauri::AppHandle,
@@ -113,38 +98,36 @@ pub async fn execute_tools_from_message(
     create_message(executor, conversation_id, "user", &content_json, None, None, None).await
 }
 
-/// Execute a single tool function
 async fn execute_tool(
     executor: &DbExecutor,
     app: &tauri::AppHandle,
     name: &str,
     input: &serde_json::Value,
 ) -> Result<String, String> {
-    let call = FunctionCall {
+    let call = ToolCall {
         name: name.to_string(),
         arguments: input.clone(),
     };
 
     let app_clone = app.clone();
     let result_json = executor.write(move |conn| {
-        let result = crate::ai::functions::execute_function(conn, &call, Some(&app_clone));
+        let result = crate::ai::functions::execute_tool(conn, &call, Some(&app_clone));
         serde_json::to_string(&result).map_err(|e| e.to_string())
-    }).await.map_err(|e| format!("Failed to execute function: {}", e))?;
+    }).await.map_err(|e| format!("Failed to execute tool: {}", e))?;
 
-    let func_result: crate::ai::functions::FunctionResult = serde_json::from_str(&result_json)
+    let tool_result: crate::ai::functions::ToolResult = serde_json::from_str(&result_json)
         .map_err(|e| format!("Failed to parse result: {}", e))?;
 
-    if func_result.success {
-        let content = func_result.result
+    if tool_result.success {
+        let content = tool_result.result
             .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| v.to_string()))
             .unwrap_or_default();
         Ok(content)
     } else {
-        Err(func_result.error.unwrap_or_else(|| "Unknown error".to_string()))
+        Err(tool_result.error.unwrap_or_else(|| "Unknown error".to_string()))
     }
 }
 
-/// Convert AIConversationMessage to Claude API format
 fn message_to_api_format(msg: &AIConversationMessage) -> crate::ai::ChatMessage {
     use crate::ai::providers::{
         ContentBlock as ApiContentBlock,
@@ -174,6 +157,14 @@ fn message_to_api_format(msg: &AIConversationMessage) -> crate::ai::ChatMessage 
                         media_type: source.media_type.clone(),
                         data: source.data.clone(),
                     }
+                }
+            },
+            ContentBlock::FileRef { file_iri, file_name, .. } => {
+                ApiContentBlock::Text {
+                    text: format!(
+                        "[Attached file: {} | Knowledge base IRI: {}]",
+                        file_name, file_iri
+                    ),
                 }
             },
             ContentBlock::ToolUse { id, name, input } => {
@@ -359,7 +350,7 @@ pub async fn chat__send_and_reply(
 
     let mut response_messages = Vec::new();
 
-    let mut attached_files: Vec<(String, String)> = Vec::new(); // (file_iri, file_name)
+    let mut attached_file_iris: Vec<String> = Vec::new();
 
     let user_msg_iri = if let Some(ref iris) = attachment_iris {
         let mut blocks: Vec<ContentBlock> = Vec::new();
@@ -367,7 +358,7 @@ pub async fn chat__send_and_reply(
             let mut store = PENDING_ATTACHMENTS.lock().await;
             for iri in iris {
                 if let Some(att) = store.remove(iri) {
-                    attached_files.push((att.file_iri.clone(), att.file_name.clone()));
+                    attached_file_iris.push(att.file_iri.clone());
                     if att.mime_type.starts_with("image/") {
                         blocks.push(ContentBlock::Image {
                             source: ImageSource {
@@ -375,6 +366,11 @@ pub async fn chat__send_and_reply(
                                 media_type: att.mime_type,
                                 data: att.data,
                             },
+                        });
+                        blocks.push(ContentBlock::FileRef {
+                            file_iri: att.file_iri,
+                            file_name: att.file_name,
+                            token_estimate: att.token_estimate,
                         });
                     } else if att.mime_type == "application/pdf" {
                         blocks.push(ContentBlock::Document {
@@ -384,8 +380,16 @@ pub async fn chat__send_and_reply(
                                 data: att.data,
                             },
                         });
+                        blocks.push(ContentBlock::FileRef {
+                            file_iri: att.file_iri,
+                            file_name: att.file_name,
+                            token_estimate: att.token_estimate,
+                        });
                     } else {
-                        super::log_backend("warn", &format!("[CHAT] Unsupported MIME type: {}", att.mime_type));
+                        super::log_backend(
+                            "warn",
+                            &format!("[CHAT] Unsupported MIME type: {}", att.mime_type),
+                        );
                     }
                 } else {
                     super::log_backend("warn", &format!("[CHAT] Attachment not found: {}", iri));
@@ -403,27 +407,17 @@ pub async fn chat__send_and_reply(
     };
     super::log_backend("info", &format!("[CHAT] Created user message: {}", user_msg_iri));
 
-    for (file_iri, file_name) in attached_files {
-        let ts = chrono::Utc::now().timestamp_millis();
-        let attachment_iri = format!("foundation:Attachment_{}", ts);
+    if !attached_file_iris.is_empty() {
         let msg_iri = user_msg_iri.clone();
-        let att_iri_clone = attachment_iri.clone();
         executor.write(move |conn| {
-            let ind = Individual::new(&att_iri_clone);
-            ind.assert(conn, "foundation:Attachment", &file_name, "attach_file", "chat")
-                .map_err(|e| format!("Failed to create Attachment entity: {}", e))?;
-            ind.add_property(conn, "foundation:attachesFile",
-                vec![Object::Iri(file_iri)], "chat")
-                .map_err(|e| format!("Failed to set attachesFile: {}", e))?;
-            ind.add_property(conn, "foundation:attachedToMessage",
-                vec![Object::Iri(msg_iri)], "chat")
-                .map_err(|e| format!("Failed to set attachedToMessage: {}", e))?;
-            ind.add_property(conn, "foundation:attachedAt",
-                vec![Object::DateTime(ts)], "chat")
-                .map_err(|e| format!("Failed to set attachedAt: {}", e))?;
-            Ok(att_iri_clone)
+            let msg = Individual::new(&msg_iri);
+            for file_iri in attached_file_iris {
+                msg.add_property(conn, "foundation:hasAttachment",
+                    vec![Object::Iri(file_iri)], "chat")
+                    .map_err(|e| format!("Failed to set hasAttachment: {}", e))?;
+            }
+            Ok(String::new())
         }).await?;
-        super::log_backend("info", &format!("[CHAT] Created Attachment entity: {}", attachment_iri));
     }
 
     app.emit("chat-message-added", ()).ok();
@@ -457,7 +451,7 @@ pub async fn chat__send_and_reply(
 
         let request = crate::ai::GenerateRequest {
             messages: api_messages,
-            max_tokens: Some(4096),
+            max_tokens: Some(MAX_OUTPUT_TOKENS),
             temperature: Some(0.3),
             system: Some(system_prompt),
             tools: Some(tools),
@@ -548,7 +542,6 @@ pub async fn chat__send_and_reply(
     Ok(response_messages)
 }
 
-/// Convert API response content and tool calls to our content block format
 fn response_content_to_blocks(
     content: &str,
     tool_calls: &[crate::ai::ToolCall],
@@ -570,10 +563,9 @@ fn response_content_to_blocks(
     Ok(blocks)
 }
 
-/// Get system prompt from database settings with template variables replaced
 async fn get_system_prompt(executor: &DbExecutor) -> Result<String, String> {
     executor.read(|conn| {
-        let template = if let Ok(setting) = Individual::get(
+        let template = if let Ok(Some(setting)) = Individual::get(
             conn,
             "foundation:DefaultSystemPromptSetting",
         ) {
@@ -590,8 +582,8 @@ async fn get_system_prompt(executor: &DbExecutor) -> Result<String, String> {
             );
         };
 
-        let user = Individual::get(conn, "foundation:ThisUser").ok();
-        let ai = Individual::get(conn, "foundation:LocalAIAssistant").ok();
+        let user = Individual::get(conn, "foundation:ThisUser").ok().flatten();
+        let ai = Individual::get(conn, "foundation:LocalAIAssistant").ok().flatten();
 
         let user_name = user.as_ref()
             .and_then(|u| u.properties.iter()
@@ -613,6 +605,7 @@ async fn get_system_prompt(executor: &DbExecutor) -> Result<String, String> {
 
         let language = Individual::get(conn, "foundation:DefaultLanguageSetting")
             .ok()
+            .flatten()
             .and_then(|s| s.properties.iter()
                 .find(|(k, _)| k == "foundation:settingValue")
                 .and_then(|(_, v)| match v {
@@ -623,6 +616,7 @@ async fn get_system_prompt(executor: &DbExecutor) -> Result<String, String> {
 
         let locale = Individual::get(conn, "foundation:DefaultLocaleSetting")
             .ok()
+            .flatten()
             .and_then(|s| s.properties.iter()
                 .find(|(k, _)| k == "foundation:settingValue")
                 .and_then(|(_, v)| match v {
@@ -633,6 +627,7 @@ async fn get_system_prompt(executor: &DbExecutor) -> Result<String, String> {
 
         let country = Individual::get(conn, "foundation:DefaultCountrySetting")
             .ok()
+            .flatten()
             .and_then(|s| s.properties.iter()
                 .find(|(k, _)| k == "foundation:settingValue")
                 .and_then(|(_, v)| match v {
@@ -643,6 +638,7 @@ async fn get_system_prompt(executor: &DbExecutor) -> Result<String, String> {
 
         let location_info = Individual::get(conn, "foundation:DefaultLocationInfoSetting")
             .ok()
+            .flatten()
             .and_then(|s| s.properties.iter()
                 .find(|(k, _)| k == "foundation:settingValue")
                 .and_then(|(_, v)| match v {
@@ -662,112 +658,6 @@ async fn get_system_prompt(executor: &DbExecutor) -> Result<String, String> {
 
         Ok(prompt)
     }).await
-}
-
-#[tauri::command]
-pub async fn chat__attach_file(
-    file_path: String,
-    file_name: String,
-    mime_type: String,
-    executor: State<'_, DbExecutor>,
-) -> Result<String, String> {
-    let raw = tokio::fs::read(&file_path).await
-        .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
-
-    let data = base64::engine::general_purpose::STANDARD.encode(&raw);
-
-    let timestamp = chrono::Utc::now().timestamp_millis();
-    let iri = format!("foundation:File_{}", timestamp);
-
-    let permanent_path = {
-        let attachments_dir = dirs::document_dir()
-            .ok_or("Could not find documents directory")?
-            .join("Foundation")
-            .join("attachments");
-        tokio::fs::create_dir_all(&attachments_dir).await
-            .map_err(|e| format!("Failed to create attachments directory: {}", e))?;
-        let safe_name = file_name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
-        attachments_dir.join(format!("{}_{}", timestamp, safe_name))
-    };
-    tokio::fs::copy(&file_path, &permanent_path).await
-        .map_err(|e| format!("Failed to copy file to attachments folder: {}", e))?;
-    let permanent_path_str = permanent_path.to_string_lossy().into_owned();
-
-    let hash = format!("sha256:{:x}", Sha256::digest(&raw));
-    let size = raw.len() as i64;
-    let file_type_iri = mime_to_file_type_iri(&mime_type).map(|s| s.to_string());
-    let file_name_clone = file_name.clone();
-    let hash_clone = hash.clone();
-    let iri_clone = iri.clone();
-
-    executor.write(move |conn| {
-        use crate::owl::{Individual, Object};
-
-        let ind = Individual::new(&iri_clone);
-
-        ind.assert(conn, "foundation:File", &file_name_clone, "insert_drive_file", "chat")
-            .map_err(|e| format!("Failed to create File entity: {}", e))?;
-
-        ind.add_property(conn, "foundation:fileName", vec![Object::Literal {
-            value: file_name_clone.clone(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        }], "chat").map_err(|e| format!("Failed to set fileName: {}", e))?;
-
-        ind.add_property(conn, "foundation:filePath", vec![Object::Literal {
-            value: format!("file://{}", permanent_path_str),
-            datatype: Some("xsd:anyURI".to_string()),
-            language: None,
-        }], "chat").map_err(|e| format!("Failed to set filePath: {}", e))?;
-
-        ind.add_property(conn, "foundation:fileSize", vec![Object::Integer(size)], "chat")
-            .map_err(|e| format!("Failed to set fileSize: {}", e))?;
-
-        ind.add_property(conn, "foundation:fileHash", vec![Object::Literal {
-            value: hash_clone,
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        }], "chat").map_err(|e| format!("Failed to set fileHash: {}", e))?;
-
-        if let Some(ref ft_iri) = file_type_iri {
-            ind.add_property(conn, "foundation:hasFileType",
-                vec![Object::Iri(ft_iri.clone())], "chat")
-                .map_err(|e| format!("Failed to set hasFileType: {}", e))?;
-        }
-
-        ind.add_property(conn, "foundation:uploadDate", vec![Object::DateTime(timestamp)], "chat")
-            .map_err(|e| format!("Failed to set uploadDate: {}", e))?;
-
-        Ok(iri_clone)
-    }).await?;
-
-    PENDING_ATTACHMENTS.lock().await.insert(iri.clone(), AttachmentData {
-        mime_type,
-        data,
-        file_iri: iri.clone(),
-        file_name: file_name.clone(),
-    });
-
-    super::log_backend("info", &format!(
-        "[CHAT] Persisted File entity and registered attachment: {} ({})", file_name, iri
-    ));
-
-    Ok(iri)
-}
-
-fn mime_to_file_type_iri(mime_type: &str) -> Option<&'static str> {
-    match mime_type {
-        "image/jpeg" => Some("foundation:FileType_JPEG"),
-        "image/png"  => Some("foundation:FileType_PNG"),
-        "image/gif"  => Some("foundation:FileType_GIF"),
-        "image/webp" => Some("foundation:FileType_WEBP"),
-        "image/bmp"  => Some("foundation:FileType_BMP"),
-        "image/tiff" => Some("foundation:FileType_TIFF"),
-        "image/svg+xml" => Some("foundation:FileType_SVG"),
-        "application/pdf" => Some("foundation:FileType_PDF"),
-        "text/plain" => Some("foundation:FileType_TXT"),
-        _ => None,
-    }
 }
 
 #[tauri::command]
@@ -796,7 +686,8 @@ pub async fn chat__get_recent_messages(
 
         for iri in message_iris {
             let msg = Individual::get(conn, &iri)
-                .map_err(|e| format!("Failed to get message {}: {}", iri, e))?;
+                .map_err(|e| format!("Failed to get message {}: {}", iri, e))?
+                .ok_or_else(|| format!("Message {} not found", iri))?;
 
             let role = msg.properties.iter()
                 .find(|(k, _)| k == "foundation:role")
@@ -865,7 +756,9 @@ pub async fn chat__get_conversation_info(
 async fn get_max_input_tokens(executor: &DbExecutor) -> Result<usize, String> {
     executor.read(|conn| {
         // Try setting from ontology (user updates this, not creates new one)
-        if let Ok(setting) = Individual::get(conn, "foundation:DefaultMaxInputTokensSetting") {
+        if let Ok(Some(setting)) =
+            Individual::get(conn, "foundation:DefaultMaxInputTokensSetting")
+        {
             if let Some(Object::Literal { value, .. }) = setting.properties.iter()
                 .find(|(k, _)| k == "foundation:settingValue")
                 .map(|(_, v)| v) {
@@ -879,7 +772,8 @@ async fn get_max_input_tokens(executor: &DbExecutor) -> Result<usize, String> {
 
         if let Some(iri) = model_iri {
             let model = Individual::get(conn, &iri)
-                .map_err(|e| format!("Failed to get AI model: {}", e))?;
+                .map_err(|e| format!("Failed to get AI model: {}", e))?
+                .ok_or_else(|| format!("Failed to get AI model: IRI not found"))?;
 
             if let Some(Object::Integer(max_tokens)) = model.properties.iter()
                 .find(|(k, _)| k == "foundation:maxInputTokens")
@@ -899,7 +793,7 @@ async fn get_max_input_tokens(executor: &DbExecutor) -> Result<usize, String> {
 /// Check DefaultAIModelSetting (user updates this setting, not creates new one)
 fn get_ai_model_iri(conn: &Connection) -> Result<Option<String>, String> {
     // Get setting from ontology (user updates this, not creates new one)
-    if let Ok(setting) = Individual::get(conn, "foundation:DefaultAIModelSetting") {
+    if let Ok(Some(setting)) = Individual::get(conn, "foundation:DefaultAIModelSetting") {
         if let Some(Object::Literal { value, .. }) = setting.properties.iter()
             .find(|(k, _)| k == "foundation:settingValue")
             .map(|(_, v)| v) {
@@ -941,7 +835,7 @@ async fn continue_conversation_after_recovery(
 
         let request = crate::ai::GenerateRequest {
             messages: api_messages,
-            max_tokens: Some(4096),
+            max_tokens: Some(MAX_OUTPUT_TOKENS),
             temperature: Some(0.3),
             system: Some(system_prompt),
             tools: Some(tools),

@@ -28,3 +28,4 @@ lcov.info
 src-tauri/target/llvm-cov
 src-tauri/target/llvm-cov-target
 src-tauri/target/coverage
+.claude/worktrees/

@@ -38,7 +38,7 @@ impl Property {
     }
 
     /// Get complete property data
-    pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Self> {
+    pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
         let iri = iri.into();
 
         // Get label
@@ -51,6 +51,9 @@ impl Property {
 
         // Get property type
         let types_result = query::get_by_entity_predicate(conn, &iri, rdf::TYPE)?;
+        if types_result.triples.is_empty() {
+            return Ok(None);
+        }
         let mut property_type = PropertyType::RdfProperty;
         let mut is_functional = false;
         let mut is_transitive = false;
@@ -107,7 +110,7 @@ impl Property {
             .and_then(|t| t.object.as_iri())
             .map(|s| s.to_string());
 
-        Ok(Self {
+        Ok(Some(Self {
             iri,
             label,
             comment,
@@ -120,7 +123,7 @@ impl Property {
             is_symmetric,
             inverse_of,
             unit,
-        })
+        }))
     }
 
     /// Assert a new property with metadata
@@ -216,11 +219,38 @@ impl Property {
         Ok(())
     }
 
-    /// Check if this property exists
-    #[allow(dead_code)]
-    pub fn exists(&self, conn: &Connection) -> Result<bool> {
-        let result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
-        Ok(!result.triples.is_empty())
+    pub fn get_all_iris(conn: &Connection) -> Result<Vec<String>> {
+        let obj_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::OBJECT_PROPERTY)?;
+        let data_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::DATATYPE_PROPERTY)?;
+        let mut iris: Vec<String> = obj_result.triples.into_iter()
+            .chain(data_result.triples)
+            .map(|t| t.subject)
+            .collect();
+        iris.sort();
+        iris.dedup();
+        Ok(iris)
+    }
+
+    pub fn retract(conn: &mut Connection, iri: &str, origin: &str) -> Result<Vec<String>> {
+        let facts = query::get_by_predicate(conn, iri)?;
+        let mut affected: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let facts_to_retract: Vec<Triple> = facts.triples.into_iter()
+            .map(|t| {
+                affected.insert(t.subject.clone());
+                Triple::new(t.subject, t.predicate, t.object)
+            })
+            .collect();
+        if !facts_to_retract.is_empty() {
+            store::retract_triples(conn, &facts_to_retract, origin)?;
+        }
+        let definition = query::get_by_entity(conn, iri)?;
+        let def_triples: Vec<Triple> = definition.triples.into_iter()
+            .map(|t| Triple::new(t.subject, t.predicate, t.object))
+            .collect();
+        if !def_triples.is_empty() {
+            store::retract_triples(conn, &def_triples, origin)?;
+        }
+        Ok(affected.into_iter().collect())
     }
 
     /// Check if a property is functional (has at most one value per subject)
@@ -311,7 +341,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Get complete property data
-        let property = Property::get(&conn, "foundation:hasAge").unwrap();
+        let property = Property::get(&conn, "foundation:hasAge").unwrap().unwrap();
         assert_eq!(property.iri, "foundation:hasAge");
         assert_eq!(property.label, Some("has age".to_string()));
         assert_eq!(property.comment, Some("The age of a person".to_string()));
@@ -340,9 +370,9 @@ mod tests {
         ).unwrap();
 
         // Get and verify
-        let property = Property::get(&conn, "foundation:hasParent").unwrap();
+        let property = Property::get(&conn, "foundation:hasParent").unwrap().unwrap();
         assert_eq!(property.property_type, PropertyType::ObjectProperty);
-        assert!(property.exists(&conn).unwrap());
+        assert!(Property::get(&conn, "foundation:hasParent").unwrap().is_some());
     }
 
     #[test]
@@ -434,7 +464,7 @@ mod tests {
         store::assert_triples(&mut conn, &[functional_triple], "test").unwrap();
 
         // Get and verify
-        let property = Property::get(&conn, "foundation:hasParent").unwrap();
+        let property = Property::get(&conn, "foundation:hasParent").unwrap().unwrap();
         assert!(property.is_functional);
     }
 }

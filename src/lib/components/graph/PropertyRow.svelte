@@ -10,7 +10,6 @@
 		unitLabel = null
 	} = $props();
 
-	// Helper to detect icon type
 	function getIconType(icon) {
 		if (!icon) return null;
 		if (icon.startsWith('http://') || icon.startsWith('https://') ||
@@ -22,9 +21,6 @@
 
 	const displayValue = valueLabel || value;
 	const iconType = valueIcon ? getIconType(valueIcon) : null;
-
-	// Format value with unit if available
-	const fullDisplayValue = unitLabel ? `${displayValue} ${unitLabel}` : displayValue;
 </script>
 
 <div class="property-row">
@@ -42,12 +38,18 @@
 						<span class="material-symbols-outlined">{valueIcon}</span>
 					{/if}
 				</span>
-				<span class="value-text">{fullDisplayValue}</span>
+				{#if unitLabel}
+					<span class="unit-badge">{unitLabel}</span>
+				{/if}
+				<span class="value-text">{displayValue}</span>
 			</div>
 		{:else}
 			<!-- Plain value without icon -->
 			<div class="value-pill" class:clickable={onValueClick} onclick={onValueClick}>
-				{fullDisplayValue}
+				{#if unitLabel}
+					<span class="unit-badge">{unitLabel}</span>
+				{/if}
+				<span class="value-text">{displayValue}</span>
 			</div>
 		{/if}
 	</div>
@@ -137,5 +139,14 @@
 
 	.value-text {
 		color: var(--color-neutral);
+	}
+
+	.unit-badge {
+		font-size: 11px;
+		color: var(--color-neutral);
+		padding: 2px 6px;
+		background: color-mix(in srgb, var(--color-white) 5%, transparent);
+		border-radius: 4px;
+		flex-shrink: 0;
 	}
 </style>

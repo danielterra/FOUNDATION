@@ -125,8 +125,8 @@ pub async fn setup__check(
     executor: State<'_, DbExecutor>,
 ) -> Result<bool, String> {
     executor.read(|conn| {
-        let foundation_instance = Individual::new("foundation:ThisFoundationInstance");
-        foundation_instance.exists(conn)
+        Individual::get(conn, "foundation:ThisFoundationInstance")
+            .map(|opt| opt.is_some())
             .map_err(|e| format!("Failed to check setup status: {}", e))
     }).await
 }
@@ -389,7 +389,8 @@ pub async fn setup__init(
     let locale_info = get_locale_info();
 
     let language_setting = Individual::get(conn, "foundation:DefaultLanguageSetting")
-        .map_err(|e| format!("Failed to get DefaultLanguageSetting: {}", e))?;
+        .map_err(|e| format!("Failed to get DefaultLanguageSetting: {}", e))?
+        .ok_or_else(|| "DefaultLanguageSetting not found".to_string())?;
     language_setting.add_property(conn, "foundation:settingValue", vec![Object::Literal {
         value: locale_info.language.clone(),
         datatype: Some("xsd:string".to_string()),
@@ -397,7 +398,8 @@ pub async fn setup__init(
     }], "setup").map_err(|e| format!("Failed to update language setting: {}", e))?;
 
     let locale_setting = Individual::get(conn, "foundation:DefaultLocaleSetting")
-        .map_err(|e| format!("Failed to get DefaultLocaleSetting: {}", e))?;
+        .map_err(|e| format!("Failed to get DefaultLocaleSetting: {}", e))?
+        .ok_or_else(|| "DefaultLocaleSetting not found".to_string())?;
     locale_setting.add_property(conn, "foundation:settingValue", vec![Object::Literal {
         value: locale_info.locale.clone(),
         datatype: Some("xsd:string".to_string()),
@@ -405,7 +407,8 @@ pub async fn setup__init(
     }], "setup").map_err(|e| format!("Failed to update locale setting: {}", e))?;
 
     let country_setting = Individual::get(conn, "foundation:DefaultCountrySetting")
-        .map_err(|e| format!("Failed to get DefaultCountrySetting: {}", e))?;
+        .map_err(|e| format!("Failed to get DefaultCountrySetting: {}", e))?
+        .ok_or_else(|| "DefaultCountrySetting not found".to_string())?;
     country_setting.add_property(conn, "foundation:settingValue", vec![Object::Literal {
         value: locale_info.country.clone(),
         datatype: Some("xsd:string".to_string()),
@@ -483,7 +486,7 @@ pub async fn setup__list_ai_services(
         for service_iri in service_iris {
             let service_iri = &service_iri;
 
-            if let Ok(service_ind) = Individual::get(conn, service_iri) {
+            if let Ok(Some(service_ind)) = Individual::get(conn, service_iri) {
                 let label = service_ind.label;
                 let comment = service_ind.properties.iter()
                     .find(|(k, _)| k == "rdfs:comment")
@@ -522,7 +525,7 @@ pub async fn setup__list_ai_models(
         for model_iri in model_iris {
             let model_iri = &model_iri;
 
-            if let Ok(model_ind) = Individual::get(conn, model_iri) {
+            if let Ok(Some(model_ind)) = Individual::get(conn, model_iri) {
                 let label = model_ind.label;
                 let comment = model_ind.properties.iter()
                     .find(|(k, _)| k == "rdfs:comment")

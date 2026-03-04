@@ -65,6 +65,27 @@ grep -n "debug!\|trace!\|println!\|eprintln!" src-tauri/src/**/*.rs
 grep -n "console\.\(log\|debug\|info\)" src/**/*.{ts,svelte}
 ```
 
+## Magic Numbers
+
+All numeric literals that carry business or domain meaning must be named constants. Flag any bare number that is not:
+- `0` or `1` used as neutral identity/boundary values
+- Array indices in trivially obvious context
+- A named constant (`const`, `static`, `let … = …` with a descriptive name)
+
+**Rust** — scan for integer and float literals outside of trivial positions:
+
+```
+grep -n "[^a-zA-Z_][0-9]\{2,\}\|[^a-zA-Z_][0-9]\+\.[0-9]\+" src-tauri/src/**/*.rs
+```
+
+**TypeScript / Svelte** — same idea:
+
+```
+grep -n "[^a-zA-Z_][0-9]\{2,\}\|[^a-zA-Z_][0-9]\+\.[0-9]\+" src/**/*.{ts,svelte}
+```
+
+For each violation, report: file, line number, the literal value, what it likely represents, and suggest a constant name (e.g., `MAX_RETRY_COUNT`, `TOKEN_ESTIMATE_IMAGE`).
+
 ## Formatting
 
 - Max 100 columns per line

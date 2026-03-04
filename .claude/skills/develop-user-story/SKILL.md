@@ -1,11 +1,11 @@
 ---
-name: develop-feature
-description: Implements a User Story by planning tasks, executing each one, and marking completion
+name: develop-user-story
+description: Implements a User Story by executing its planned tasks and marking completion
 disable-model-invocation: true
 argument-hint: "<foundation:UserStory_IRI>"
 ---
 
-# Develop Feature: $ARGUMENTS
+# Develop User Story: $ARGUMENTS
 
 Call `remember_thing` with `$ARGUMENTS` to retrieve the full User Story: capability, benefit,
 acceptance criteria, and related plans/tasks. Use this as the primary source of truth.
@@ -29,7 +29,7 @@ acceptance criteria, and related plans/tasks. Use this as the primary source of 
 
 ## Phase 2 — Explore Codebase
 
-Before planning tasks, orient yourself:
+Before implementing, orient yourself:
 
 - Run `git status --short` and `git log --oneline -5` to understand the current state
 - Explore the project structure and identify the relevant files and modules
@@ -60,41 +60,30 @@ and set `foundation:contributesTo` → `$ARGUMENTS` (value_type: iri).
 
 For each task (in dependency order):
 
-### 3a. Mark task In Progress
+### 4a. Mark task In Progress
 Call `learn_thing_detail` on the Task IRI:
 - `foundation:status` → `foundation:InProgress` (value_type: iri)
 - `foundation:startedAt` → current ISO datetime (datatype: xsd:dateTime)
 
-### 3b. Implement
+### 4b. Implement
 - Read all files the task touches before editing
 - Follow the layer order: Ontology → EAVTO → OWL → Commands → Frontend
 - Follow existing conventions — do not introduce new patterns unless required
 - Keep changes minimal and focused on the task description
 
-## Comments
+### 4c. Code Standards
 
-Only *why* comments are acceptable. Flag:
-- Comments describing *what* the code does
-- Commented-out code blocks
-- TODO/FIXME/HACK/XXX markers
+- **Comments**: only *why* comments are acceptable — flag what-comments, commented-out code, TODO/FIXME/HACK/XXX
+- **Logging**: flag `debug!`, `trace!`, `println!`, `eprintln!`, `console.log/debug` — acceptable: `error!`, `warn!`, key lifecycle events
+- **Semantic Colors**: never use raw hex/rgb/rgba in Svelte — use CSS variables from `src/lib/colors.css`
+- **Formatting**: max 100 columns per line; max 1000 lines per `.rs` or `.svelte` file
 
-## Logging
+### 4d. Validate
+Run: `cargo check --manifest-path src-tauri/Cargo.toml --message-format=short 2>&1 | head -n 40`
 
-Flag `debug!`, `trace!`, `println!`, `eprintln!`, `console.log/debug` in production code. Acceptable: `error!`, `warn!`, key lifecycle events.
+Fix any compilation errors before proceeding to the next task.
 
-## Semantic Colors
-
-Never use raw hex, rgb, or rgba values in Svelte components. All colors must use CSS variables
-defined in `src/lib/colors.css`. Each variable carries a semantic meaning (interactive, danger,
-warning, neutral, transition) — choose based on intent, not appearance. Flag any hardcoded color
-as a violation.
-
-## Formatting
-
-- Max 100 columns per line
-- Max 1000 lines per `.rs` or `.svelte` file
-
-## Test Coverage
+### 4e. Test Coverage
 
 If `eavto/` or `owl/` files changed, verify >80% coverage (blocking if not met):
 
@@ -103,12 +92,7 @@ cargo tarpaulin --manifest-path src-tauri/Cargo.toml \
   --include-files "src/eavto/*" "src/owl/*" --out Stdout 2>&1 | tail -n 20
 ```
 
-### 3c. Validate
-Run: `cargo check --manifest-path src-tauri/Cargo.toml --message-format=short 2>&1 | head -n 40`
-
-Fix any compilation errors before proceeding to the next task.
-
-### 3d. Mark task Completed or Failed
+### 4f. Mark task Completed or Failed
 Call `learn_thing_detail` on the Task IRI:
 - On success: `foundation:status` → `foundation:Completed` (value_type: iri)
 - On failure (task cannot be completed): `foundation:status` → `foundation:Failed` (value_type: iri)

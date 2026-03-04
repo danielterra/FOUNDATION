@@ -37,29 +37,32 @@ impl Individual {
         }
     }
 
-    /// Get complete individual data from database
-    pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Self> {
+    pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
         let iri = iri.into();
 
-        let label_result = query::get_by_entity_predicate(conn, &iri, rdfs::LABEL)?;
-        let label = label_result.triples.first()
+        let all_triples = query::get_by_entity(conn, &iri)?;
+        if all_triples.triples.is_empty() {
+            return Ok(None);
+        }
+
+        let label = all_triples.triples.iter()
+            .find(|t| t.predicate == rdfs::LABEL)
             .and_then(|t| t.object.as_literal());
 
-        let icon_result = query::get_by_entity_predicate(conn, &iri, "foundation:icon")?;
-        let icon = icon_result.triples.first()
+        let icon = all_triples.triples.iter()
+            .find(|t| t.predicate == "foundation:icon")
             .and_then(|t| t.object.as_literal());
 
-        let comment_result = query::get_by_entity_predicate(conn, &iri, rdfs::COMMENT)?;
-        let comment = comment_result.triples.first()
+        let comment = all_triples.triples.iter()
+            .find(|t| t.predicate == rdfs::COMMENT)
             .and_then(|t| t.object.as_literal());
 
-        let types_result = query::get_by_entity_predicate(conn, &iri, rdf::TYPE)?;
-        let types: Vec<Thing> = types_result.triples.iter()
+        let types: Vec<Thing> = all_triples.triples.iter()
+            .filter(|t| t.predicate == rdf::TYPE)
             .filter_map(|t| t.object.as_iri())
             .map(|type_iri| Thing::get(conn, type_iri))
             .collect();
 
-        let all_triples = query::get_by_entity(conn, &iri)?;
         let properties: Vec<(String, Object)> = all_triples.triples.into_iter()
             .filter(|t| {
                 t.predicate != rdfs::LABEL
@@ -75,7 +78,7 @@ impl Individual {
             .map(|t| (t.subject.clone(), t.predicate.clone(), t.object.clone()))
             .collect();
 
-        Ok(Self {
+        Ok(Some(Self {
             iri: iri.clone(),
             label,
             icon,
@@ -83,7 +86,7 @@ impl Individual {
             types,
             properties,
             backlinks,
-        })
+        }))
     }
 
     /// Assert individual with required metadata (label and icon)
@@ -139,32 +142,36 @@ impl Individual {
             ));
         }
 
+        let is_meta_property = property.starts_with("rdfs:") || property == "foundation:icon";
+
         let types_result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
 
         if types_result.triples.is_empty() {
             return Err(OwlError::NotFound(format!("Individual {} has no rdf:type", self.iri)));
         }
 
-        let mut property_is_valid = false;
+        if !is_meta_property {
+            let mut property_is_valid = false;
 
-        for triple in &types_result.triples {
-            if let Some(class_iri) = triple.object.as_iri() {
-                if let Ok(class) = Class::get(conn, class_iri) {
-                    if class.properties.iter().any(|(prop_iri, _)| prop_iri == property) {
-                        property_is_valid = true;
-                        break;
+            for triple in &types_result.triples {
+                if let Some(class_iri) = triple.object.as_iri() {
+                    if let Ok(Some(class)) = Class::get(conn, class_iri) {
+                        if class.properties.iter().any(|(prop_iri, _)| prop_iri == property) {
+                            property_is_valid = true;
+                            break;
+                        }
                     }
                 }
             }
-        }
 
-        if !property_is_valid {
-            return Err(OwlError::InvalidOperation(
-                format!(
-                    "Property {} is not defined in any class of individual {}",
-                    property, self.iri
-                )
-            ));
+            if !property_is_valid {
+                return Err(OwlError::InvalidOperation(
+                    format!(
+                        "Property {} is not defined in any class of individual {}",
+                        property, self.iri
+                    )
+                ));
+            }
         }
 
         for value in &values {
@@ -223,11 +230,51 @@ impl Individual {
         Ok(())
     }
 
-    /// Check if this individual exists (has at least one triple)
-    pub fn exists(&self, conn: &Connection) -> Result<bool> {
-        let result = query::get_by_entity(conn, &self.iri)?;
-        Ok(!result.triples.is_empty())
+    pub fn serializable_properties(&self, conn: &Connection) -> Vec<serde_json::Value> {
+        use crate::owl::Property;
+
+        self.properties.iter().map(|(prop_iri, value)| {
+            let unit = Property::get(conn, prop_iri).ok()
+                .flatten()
+                .and_then(|p| p.unit);
+
+            let json_value: serde_json::Value = match value {
+                Object::Integer(i) => serde_json::json!(i),
+                Object::Number(n) => serde_json::json!(n),
+                Object::Boolean(b) => serde_json::json!(b),
+                Object::Literal { value: v, datatype: Some(dt), .. }
+                    if matches!(dt.as_str(), "xsd:decimal" | "xsd:float" | "xsd:double") =>
+                {
+                    v.parse::<f64>()
+                        .map(|n| serde_json::json!(n))
+                        .unwrap_or_else(|_| serde_json::json!(v))
+                }
+                Object::Literal { value: v, datatype: Some(dt), .. }
+                    if dt.as_str() == "xsd:integer" =>
+                {
+                    v.parse::<i64>()
+                        .map(|n| serde_json::json!(n))
+                        .unwrap_or_else(|_| serde_json::json!(v))
+                }
+                _ => {
+                    let s = value.as_literal()
+                        .or_else(|| value.as_iri().map(|s| s.to_string()))
+                        .unwrap_or_default();
+                    serde_json::json!(s)
+                }
+            };
+
+            let mut entry = serde_json::json!({
+                "property": prop_iri,
+                "value": json_value,
+            });
+            if let Some(unit_iri) = unit {
+                entry["unit"] = serde_json::json!(unit_iri);
+            }
+            entry
+        }).collect()
     }
+
 
     /// Retract all triples for the given entity IRI
     pub fn retract(conn: &mut Connection, iri: &str, origin: &str) -> Result<()> {
@@ -236,6 +283,65 @@ impl Individual {
             store::retract_triples(conn, &all_triples.triples, origin)?;
         }
         Ok(())
+    }
+
+    pub fn search(conn: &Connection) -> Result<Vec<String>> {
+        let result = query::get_by_predicate(conn, rdf::TYPE)?;
+        let mut seen = std::collections::HashSet::new();
+        let iris = result.triples.into_iter()
+            .filter_map(|t| {
+                if let Some(class_iri) = t.object.as_iri() {
+                    if !class_iri.starts_with("owl:") &&
+                       !class_iri.starts_with("rdfs:") &&
+                       !class_iri.starts_with("rdf:") &&
+                       class_iri != "owl:Class" &&
+                       seen.insert(t.subject.clone()) {
+                        Some(t.subject)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Ok(iris)
+    }
+
+
+    pub fn remove_property_value(
+        conn: &mut Connection,
+        iri: &str,
+        property_iri: &str,
+        value_str: &str,
+        origin: &str,
+    ) -> Result<Option<Object>> {
+        let result = query::get_by_entity_predicate(conn, iri, property_iri)?;
+        for triple in result.triples {
+            let matches = match &triple.object {
+                Object::Iri(s) => s.as_str() == value_str,
+                Object::Blank(s) => s.as_str() == value_str,
+                Object::Literal { value: v, .. } => v.as_str() == value_str,
+                Object::Integer(i) => i.to_string() == value_str,
+                Object::Number(n) => {
+                    if let Ok(input) = value_str.parse::<f64>() {
+                        (n - input).abs() < f64::EPSILON
+                    } else {
+                        n.to_string() == value_str
+                    }
+                },
+                Object::Boolean(b) => b.to_string() == value_str,
+                Object::DateTime(dt) => dt.to_string() == value_str,
+            };
+            if matches {
+                let found = triple.object.clone();
+                store::retract_triples(
+                    conn, &[Triple::new(iri, property_iri, triple.object)], origin,
+                )?;
+                return Ok(Some(found));
+            }
+        }
+        Ok(None)
     }
 
     /// Find individuals of a specific class that match property constraints

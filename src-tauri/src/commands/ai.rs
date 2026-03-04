@@ -1,6 +1,6 @@
 use crate::ai;
 use crate::ai::{ChatMessage, GenerateRequest};
-use crate::ai::functions::{self, FunctionCall, FunctionResult};
+use crate::ai::functions::{self, ToolCall, ToolResult};
 use crate::owl::DbExecutor;
 use crate::owl::{self, Individual, Object};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -141,7 +141,7 @@ pub async fn ai__initialize(
             }
         }
 
-        let timeout = if let Ok(setting) =
+        let timeout = if let Ok(Some(setting)) =
             Individual::get(conn, "foundation:DefaultAPIRequestTimeoutSetting")
         {
             setting.properties.iter()
@@ -159,7 +159,8 @@ pub async fn ai__initialize(
     if model_identifier.is_none() {
         super::log_backend(
             "warn",
-            "No default model found in ontology. AI generation will fail until a model is configured in Settings.",
+            "No default model found in ontology. AI generation will fail \
+            until a model is configured in Settings.",
         );
     }
 
@@ -261,30 +262,30 @@ pub async fn ai__list_available_models(
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn ai__get_available_functions() -> Result<Value, String> {
-    let functions = functions::get_available_functions();
-    serde_json::to_value(functions)
-        .map_err(|e| format!("Failed to serialize functions: {}", e))
+pub async fn ai__get_available_tools() -> Result<Value, String> {
+    let tools = functions::get_available_tools();
+    serde_json::to_value(tools)
+        .map_err(|e| format!("Failed to serialize tools: {}", e))
 }
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn ai__execute_function(
+pub async fn ai__execute_tool(
     app: AppHandle,
     name: String,
     arguments: Value,
     executor: State<'_, DbExecutor>,
-) -> Result<FunctionResult, String> {
+) -> Result<ToolResult, String> {
 
-    let call = FunctionCall { name, arguments };
+    let call = ToolCall { name, arguments };
     let app_clone = app.clone();
 
     let result_json = executor.write(move |conn| {
-        let result = functions::execute_function(conn, &call, Some(&app_clone));
+        let result = functions::execute_tool(conn, &call, Some(&app_clone));
         serde_json::to_string(&result).map_err(|e| e.to_string())
-    }).await.map_err(|e| format!("Failed to execute function: {}", e))?;
+    }).await.map_err(|e| format!("Failed to execute tool: {}", e))?;
 
-    let result: FunctionResult = serde_json::from_str(&result_json)
+    let result: ToolResult = serde_json::from_str(&result_json)
         .map_err(|e| format!("Failed to parse result: {}", e))?;
 
 

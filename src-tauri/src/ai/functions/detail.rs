@@ -1,0 +1,426 @@
+use serde_json::Value;
+use crate::eavto::Connection;
+use tauri::Emitter;
+use super::ToolResult;
+
+pub fn create_detail(conn: &mut Connection, args: &Value) -> ToolResult {
+    let iri = match args.get("iri").and_then(|v| v.as_str()) {
+        Some(iri) => iri,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: iri".to_string()),
+        },
+    };
+
+    let label = match args.get("label").and_then(|v| v.as_str()) {
+        Some(label) => label,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: label".to_string()),
+        },
+    };
+
+    let detail_type_str = match args.get("detail_type").and_then(|v| v.as_str()) {
+        Some(t) => t,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: detail_type".to_string()),
+        },
+    };
+
+    let detail_type = match detail_type_str {
+        "object" => crate::owl::PropertyType::ObjectProperty,
+        "datatype" => crate::owl::PropertyType::DatatypeProperty,
+        _ => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Invalid detail_type. Must be 'object' or 'datatype'".to_string()),
+        },
+    };
+
+    let comment = args.get("comment").and_then(|v| v.as_str());
+    let domain = args.get("domain").and_then(|v| v.as_str());
+    let range = args.get("range").and_then(|v| v.as_str());
+    let unit = args.get("unit").and_then(|v| v.as_str());
+
+    match (|| {
+        use crate::owl::Property;
+
+        let detail = Property::new(iri);
+        detail.assert(conn, detail_type, label, comment, domain, range, unit, "ai")?;
+
+        Ok::<_, crate::owl::OwlError>(serde_json::json!({
+            "success": true,
+            "iri": iri,
+            "message": format!("Detail {} created successfully", label),
+        }))
+    })() {
+        Ok(result) => ToolResult {
+            success: true,
+            result: Some(result),
+            error: None,
+        },
+        Err(e) => ToolResult {
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+#[allow(dead_code)]
+pub fn search_details(conn: &Connection, args: &Value) -> ToolResult {
+    let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+
+    match (|| {
+        use crate::owl::Property;
+
+        let all_detail_iris = Property::get_all_iris(conn)?;
+
+        let search_tokens: Vec<String> = if query_str.is_empty() {
+            Vec::new()
+        } else {
+            query_str
+                .to_lowercase()
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .collect()
+        };
+
+        let mut details = Vec::new();
+        for iri in all_detail_iris {
+            if let Ok(Some(detail)) = Property::get(conn, &iri) {
+                if !search_tokens.is_empty() {
+                    if let Some(label) = &detail.label {
+                        let label_lower = label.to_lowercase();
+                        let comment_lower = detail.comment.as_ref().map(|c| c.to_lowercase());
+
+                        let matches = search_tokens.iter().all(|token| {
+                            label_lower.contains(token) ||
+                            comment_lower.as_ref().map(|c| c.contains(token)).unwrap_or(false)
+                        });
+
+                        if !matches {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+
+                details.push(serde_json::json!({
+                    "iri": detail.iri,
+                    "label": detail.label,
+                    "type": format!("{:?}", detail.property_type),
+                    "domains": detail.domains,
+                    "ranges": detail.ranges,
+                }));
+
+                if details.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        Ok::<_, crate::owl::OwlError>(serde_json::json!({
+            "details": details,
+            "count": details.len(),
+        }))
+    })() {
+        Ok(result) => ToolResult {
+            success: true,
+            result: Some(result),
+            error: None,
+        },
+        Err(e) => ToolResult {
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+pub fn get_detail(conn: &Connection, args: &Value) -> ToolResult {
+    let iri = match args.get("iri").and_then(|v| v.as_str()) {
+        Some(iri) => iri,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: iri".to_string()),
+        },
+    };
+
+    match (|| {
+        use crate::owl::{Property, Class, Individual};
+
+        let detail = Property::get(conn, iri)?
+            .ok_or_else(|| crate::owl::OwlError::NotFound(iri.to_string()))?;
+
+        let mut allowed_values: Vec<serde_json::Value> = Vec::new();
+        for range_iri in &detail.ranges {
+            if let Ok(Some(range_concept)) = Class::get(conn, range_iri) {
+                if !range_concept.one_of_values.is_empty() {
+                    for value_iri in &range_concept.one_of_values {
+                        let label = Individual::get(conn, value_iri)
+                            .ok()
+                            .flatten()
+                            .and_then(|ind| ind.label)
+                            .unwrap_or_else(|| value_iri.clone());
+
+                        allowed_values.push(serde_json::json!({
+                            "iri": value_iri,
+                            "label": label,
+                        }));
+                    }
+                }
+            }
+        }
+
+        let mut response = serde_json::json!({
+            "iri": detail.iri,
+            "label": detail.label,
+            "comment": detail.comment,
+            "type": format!("{:?}", detail.property_type),
+            "domains": detail.domains,
+            "ranges": detail.ranges,
+            "superProperties": detail.super_properties,
+            "isFunctional": detail.is_functional,
+            "isTransitive": detail.is_transitive,
+            "isSymmetric": detail.is_symmetric,
+            "inverseOf": detail.inverse_of,
+            "unit": detail.unit,
+        });
+
+        if !allowed_values.is_empty() {
+            response["allowedValues"] = serde_json::json!(allowed_values);
+        }
+
+        Ok::<_, crate::owl::OwlError>(response)
+    })() {
+        Ok(result) => ToolResult {
+            success: true,
+            result: Some(result),
+            error: None,
+        },
+        Err(e) => ToolResult {
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+pub fn delete_detail(
+    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    let iri = match args.get("iri").and_then(|v| v.as_str()) {
+        Some(iri) => iri,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: iri".to_string()),
+        },
+    };
+
+    match (|| {
+        use crate::owl::Property;
+
+        let affected_entities = Property::retract(conn, iri, "ai")?;
+        let affected_count = affected_entities.len();
+
+        if let Some(app_handle) = app {
+            for entity_id in &affected_entities {
+                app_handle.emit("entity-updated", serde_json::json!({"entityId": entity_id})).ok();
+            }
+            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
+        }
+
+        Ok::<_, crate::owl::OwlError>(serde_json::json!({
+            "success": true,
+            "message": format!("Detail {} deleted successfully", iri),
+            "affectedEntities": affected_count,
+        }))
+    })() {
+        Ok(result) => ToolResult {
+            success: true,
+            result: Some(result),
+            error: None,
+        },
+        Err(e) => ToolResult {
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+pub fn learn_detail_value(
+    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    let thing_iri = match args.get("thing_iri").and_then(|v| v.as_str()) {
+        Some(iri) => iri,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: thing_iri".to_string()),
+        },
+    };
+
+    let detail_iri = match args.get("detail_iri").and_then(|v| v.as_str()) {
+        Some(iri) => iri,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: detail_iri".to_string()),
+        },
+    };
+
+    let raw_values = match args.get("values").and_then(|v| v.as_array()) {
+        Some(arr) => arr.clone(),
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: values (must be an array)".to_string()),
+        },
+    };
+
+    if raw_values.is_empty() {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some("values array must not be empty".to_string()),
+        };
+    }
+
+    let value_type = args.get("value_type").and_then(|v| v.as_str()).unwrap_or("literal");
+    let datatype = args.get("datatype").and_then(|v| v.as_str()).unwrap_or("xsd:string");
+
+    match (|| {
+        use crate::owl::{Individual, Object};
+
+        let objects: Vec<Object> = raw_values.iter()
+            .filter_map(|v| v.as_str())
+            .map(|value| {
+                if value_type == "iri" {
+                    Object::Iri(value.to_string())
+                } else {
+                    Object::Literal {
+                        value: value.to_string(),
+                        datatype: Some(datatype.to_string()),
+                        language: None,
+                    }
+                }
+            })
+            .collect();
+
+        if objects.is_empty() {
+            return Err(crate::owl::OwlError::InvalidOperation(
+                "values array contains no valid string entries".to_string()
+            ));
+        }
+
+        let individual = Individual::new(thing_iri);
+        individual.add_property(conn, detail_iri, objects, "ai")?;
+
+        if let Some(app_handle) = app {
+            app_handle.emit("entity-updated", serde_json::json!({"entityId": thing_iri})).ok();
+            if value_type == "iri" {
+                for v in raw_values.iter().filter_map(|v| v.as_str()) {
+                    app_handle.emit("entity-updated", serde_json::json!({"entityId": v})).ok();
+                }
+            }
+        }
+
+        Ok::<_, crate::owl::OwlError>(serde_json::json!({
+            "success": true,
+            "message": format!(
+                "Detail {} set on {} ({} value(s))",
+                detail_iri, thing_iri, raw_values.len()
+            ),
+        }))
+    })() {
+        Ok(result) => ToolResult {
+            success: true,
+            result: Some(result),
+            error: None,
+        },
+        Err(e) => ToolResult {
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+pub fn forget_detail_value(
+    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    let thing_iri = match args.get("thing_iri").and_then(|v| v.as_str()) {
+        Some(iri) => iri,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: thing_iri".to_string()),
+        },
+    };
+
+    let detail_iri = match args.get("detail_iri").and_then(|v| v.as_str()) {
+        Some(iri) => iri,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: detail_iri".to_string()),
+        },
+    };
+
+    let value = match args.get("value").and_then(|v| v.as_str()) {
+        Some(v) => v,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: value".to_string()),
+        },
+    };
+
+    match (|| {
+        use crate::owl::{Individual, Object};
+
+        match Individual::remove_property_value(conn, thing_iri, detail_iri, value, "ai")? {
+            Some(removed) => {
+                if let Some(app_handle) = app {
+                    app_handle.emit(
+                        "entity-updated", serde_json::json!({"entityId": thing_iri}),
+                    ).ok();
+                    if let Object::Iri(iri) = removed {
+                        app_handle.emit(
+                            "entity-updated", serde_json::json!({"entityId": iri}),
+                        ).ok();
+                    }
+                }
+                Ok::<_, crate::owl::OwlError>(serde_json::json!({
+                    "success": true,
+                    "message": format!("Detail value removed from {}", thing_iri),
+                }))
+            }
+            None => Ok(serde_json::json!({
+                "success": false,
+                "message": "Detail value not found",
+            }))
+        }
+    })() {
+        Ok(result) => ToolResult {
+            success: true,
+            result: Some(result),
+            error: None,
+        },
+        Err(e) => ToolResult {
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+        },
+    }
+}

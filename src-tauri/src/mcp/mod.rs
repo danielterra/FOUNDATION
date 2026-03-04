@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
-use crate::ai::functions::{FunctionCall, FunctionResult, execute_function, get_available_functions};
+use crate::ai::functions::{ToolCall, ToolResult, execute_tool, get_available_tools};
 use crate::eavto::DbExecutor;
 
 const PORT: u16 = 47177;
@@ -24,7 +24,9 @@ pub async fn serve(app: AppHandle) {
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => l,
         Err(e) => {
-            crate::commands::log_backend("error", &format!("MCP server failed to bind on {addr}: {e}"));
+            crate::commands::log_backend(
+                "error", &format!("MCP server failed to bind on {addr}: {e}"),
+            );
             return;
         }
     };
@@ -64,7 +66,7 @@ async fn handle_mcp(
         }
 
         "tools/list" => {
-            let tools: Vec<Value> = get_available_functions()
+            let tools: Vec<Value> = get_available_tools()
                 .into_iter()
                 .map(to_mcp_tool)
                 .collect();
@@ -78,7 +80,9 @@ async fn handle_mcp(
         "tools/call" => {
             let name = match req["params"]["name"].as_str() {
                 Some(n) => n.to_string(),
-                None => return Json(error_response(id, -32602, "Missing tool name")).into_response(),
+                None => return Json(
+                    error_response(id, -32602, "Missing tool name"),
+                ).into_response(),
             };
 
             // Use the shared DbExecutor — same path as the internal AI in chat.rs
@@ -92,17 +96,17 @@ async fn handle_mcp(
             };
 
             let app = (*state.app).clone();
-            let call = FunctionCall { name, arguments: req["params"]["arguments"].clone() };
+            let call = ToolCall { name, arguments: req["params"]["arguments"].clone() };
 
             let result_json = match executor.write(move |conn| -> Result<String, String> {
-                let result = execute_function(conn, &call, Some(&app));
+                let result = execute_tool(conn, &call, Some(&app));
                 serde_json::to_string(&result).map_err(|e| e.to_string())
             }).await {
                 Ok(json) => json,
                 Err(e) => return Json(error_response(id, -32603, &e)).into_response(),
             };
 
-            let func_result: FunctionResult = match serde_json::from_str(&result_json) {
+            let func_result: ToolResult = match serde_json::from_str(&result_json) {
                 Ok(r) => r,
                 Err(e) => return Json(error_response(id, -32603, &e.to_string())).into_response(),
             };
@@ -112,7 +116,10 @@ async fn handle_mcp(
                     "jsonrpc": "2.0",
                     "id": id,
                     "result": {
-                        "content": [{ "type": "text", "text": func_result.result.unwrap_or_default().to_string() }]
+                        "content": [{
+                            "type": "text",
+                            "text": func_result.result.unwrap_or_default().to_string()
+                        }]
                     }
                 })).into_response()
             } else {
@@ -128,7 +135,7 @@ async fn handle_mcp(
     }
 }
 
-fn to_mcp_tool(f: crate::ai::functions::FunctionDefinition) -> Value {
+fn to_mcp_tool(f: crate::ai::functions::ToolTemplate) -> Value {
     let mut properties = serde_json::Map::new();
     let mut required = Vec::new();
 

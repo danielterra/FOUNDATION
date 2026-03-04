@@ -7,7 +7,7 @@
 
   let { properties, openEntityInspector } = $props();
 
-  const groupedProperties = $derived(
+  const groupedDetails = $derived(
     (properties ?? []).reduce((acc, prop) => {
       if (!acc[prop.property]) {
         acc[prop.property] = {
@@ -122,49 +122,51 @@
 </script>
 
 {#if properties?.length > 0}
-  <div class="properties-list">
-    {#each Object.values(groupedProperties) as propGroup (propGroup.property)}
-      <div class="property-item" transition:slide={{ duration: 400, easing: cubicOut }}>
-        <div class="property-header">
-          <div class="property-name">
-            {propGroup.propertyLabel}
-            {#if propGroup.isObjectProperty}
-              <span class="property-type">Object</span>
+  <div class="details-list">
+    {#each Object.values(groupedDetails) as detailGroup (detailGroup.property)}
+      <div class="detail-item" transition:slide={{ duration: 400, easing: cubicOut }}>
+        <div class="detail-header">
+          <div class="detail-name">
+            {detailGroup.propertyLabel}
+            {#if detailGroup.isObjectProperty}
+              <span class="detail-type">Object</span>
             {:else}
-              <span class="property-type">{formatDatatype(propGroup.datatype)}</span>
+              <span class="detail-type">{formatDatatype(detailGroup.datatype)}</span>
             {/if}
-            {#if propGroup.values.length > 1}
-              <span class="property-count">{propGroup.values.length}</span>
+            {#if detailGroup.values.length > 1}
+              <span class="detail-count">{detailGroup.values.length}</span>
             {/if}
           </div>
-          {#if propGroup.sourceClassLabel}
-            <div class="property-source">from {propGroup.sourceClassLabel}</div>
+          {#if detailGroup.sourceClassLabel}
+            <div class="detail-source">from {detailGroup.sourceClassLabel}</div>
           {/if}
         </div>
 
-        {#if propGroup.propertyComment}
-          <div class="property-comment">{propGroup.propertyComment}</div>
+        {#if detailGroup.propertyComment}
+          <div class="detail-comment">{detailGroup.propertyComment}</div>
         {/if}
 
-        <div class="property-values-group">
-          {#each propGroup.values as val, idx (propGroup.property + '_' + val.value + '_' + idx)}
+        <div class="detail-values-group">
+          {#each detailGroup.values as val, idx (
+            detailGroup.property + '_' + val.value + '_' + idx
+          )}
             <div
-              class="property-value"
-              class:clickable={propGroup.isObjectProperty}
-              role={propGroup.isObjectProperty ? "button" : undefined}
-              tabindex={propGroup.isObjectProperty ? 0 : undefined}
-              onclick={() => propGroup.isObjectProperty && openEntityInspector(val.value)}
+              class="detail-value"
+              class:clickable={detailGroup.isObjectProperty}
+              role={detailGroup.isObjectProperty ? "button" : undefined}
+              tabindex={detailGroup.isObjectProperty ? 0 : undefined}
+              onclick={() => detailGroup.isObjectProperty && openEntityInspector(val.value)}
               onkeydown={(e) =>
-                propGroup.isObjectProperty && e.key === 'Enter' && openEntityInspector(val.value)}
+                detailGroup.isObjectProperty && e.key === 'Enter' && openEntityInspector(val.value)}
             >
-              {#if propGroup.isObjectProperty && val.valueIcon}
+              {#if detailGroup.isObjectProperty && val.valueIcon}
                 {#if isIconUrl(val.valueIcon)}
                   <img src={getIconUrl(val.valueIcon)} alt="" class="value-icon-image" />
                 {:else}
                   <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
                 {/if}
               {/if}
-              {#if !propGroup.isObjectProperty && val.datatype === 'xsd:dateTime'}
+              {#if !detailGroup.isObjectProperty && val.datatype === 'xsd:dateTime'}
                 {@const date = new Date(val.value)}
                 <div class="timestamp-display">
                   <span class="value-text">
@@ -175,20 +177,20 @@
                   </span>
                   <span class="timestamp-relative">{formatDate(date.getTime())}</span>
                 </div>
-              {:else if !propGroup.isObjectProperty && isUrl(val.datatype)}
+              {:else if !detailGroup.isObjectProperty && isUrl(val.datatype)}
                 <button class="url-value" onclick={() => openUrl_(val.value)} title={val.value}>
                   <span class="value-text">{val.valueLabel || val.value}</span>
                   <span class="material-symbols-outlined url-open-icon">open_in_new</span>
                 </button>
-              {:else if !propGroup.isObjectProperty && isStringType(val.datatype)}
+              {:else if !detailGroup.isObjectProperty && isStringType(val.datatype)}
                 <div class="value-markdown markdown-content">
                   {@html marked.parse(val.value ?? '')}
                 </div>
               {:else}
+                {#if val.unitLabel}
+                  <span class="unit">{val.unitLabel}</span>
+                {/if}
                 <span class="value-text">{val.valueLabel || val.value}</span>
-              {/if}
-              {#if val.unitLabel}
-                <span class="unit">{val.unitLabel}</span>
               {/if}
               {#if val.valueStatus}
                 <span
@@ -211,28 +213,28 @@
 {/if}
 
 <style>
-  .properties-list {
+  .details-list {
     display: flex;
     flex-direction: column;
     gap: 12px;
     margin-bottom: 16px;
   }
 
-  .property-item {
+  .detail-item {
     padding: 12px;
     background: color-mix(in srgb, var(--color-white) 3%, transparent);
     border-radius: 8px;
     border-left: 3px solid color-mix(in srgb, var(--color-neutral) 30%, transparent);
   }
 
-  .property-header {
+  .detail-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 6px;
   }
 
-  .property-name {
+  .detail-name {
     font-family: var(--font-title);
     font-size: 13px;
     font-weight: 600;
@@ -242,7 +244,7 @@
     gap: 6px;
   }
 
-  .property-type {
+  .detail-type {
     font-size: 10px;
     padding: 2px 6px;
     background: color-mix(in srgb, var(--color-neutral) 20%, transparent);
@@ -251,7 +253,7 @@
     font-weight: 600;
   }
 
-  .property-count {
+  .detail-count {
     font-size: 10px;
     padding: 2px 6px;
     background: color-mix(in srgb, var(--color-accent) 20%, transparent);
@@ -260,26 +262,26 @@
     font-weight: 600;
   }
 
-  .property-source {
+  .detail-source {
     font-size: 11px;
     color: var(--color-neutral);
     font-family: var(--font-body);
   }
 
-  .property-comment {
+  .detail-comment {
     font-size: 12px;
     color: var(--color-neutral);
     margin-bottom: 8px;
     line-height: 1.4;
   }
 
-  .property-values-group {
+  .detail-values-group {
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
 
-  .property-value {
+  .detail-value {
     display: flex;
     align-items: center;
     gap: 8px;

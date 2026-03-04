@@ -8,17 +8,17 @@
   let collapsedGroups = $state(new Set());
   let initialized = $state(false);
 
-  const groupedByClass = $derived(
+  const groupedByConcept = $derived(
     (backlinks ?? []).reduce((acc, backlink) => {
-      const className = backlink.sourceClassLabel || 'Unknown';
-      const classIri = backlink.sourceClass || 'unknown';
+      const conceptName = backlink.sourceClassLabel || 'Unknown';
+      const conceptIri = backlink.sourceClass || 'unknown';
 
-      if (!acc[classIri]) {
-        acc[classIri] = { className, classIri, entities: {} };
+      if (!acc[conceptIri]) {
+        acc[conceptIri] = { conceptName, conceptIri, entities: {} };
       }
 
-      if (!acc[classIri].entities[backlink.value]) {
-        acc[classIri].entities[backlink.value] = {
+      if (!acc[conceptIri].entities[backlink.value]) {
+        acc[conceptIri].entities[backlink.value] = {
           entity: backlink.value,
           entityLabel: backlink.valueLabel || backlink.value,
           entityIcon: backlink.valueIcon,
@@ -27,7 +27,7 @@
         };
       }
 
-      acc[classIri].entities[backlink.value].properties.push({
+      acc[conceptIri].entities[backlink.value].properties.push({
         property: backlink.property,
         propertyLabel: backlink.propertyLabel,
         propertyComment: backlink.propertyComment
@@ -38,22 +38,22 @@
   );
 
   $effect(() => {
-    if (!initialized && Object.keys(groupedByClass).length > 0) {
+    if (!initialized && Object.keys(groupedByConcept).length > 0) {
       const autoCollapsed = new Set(
-        Object.values(groupedByClass)
+        Object.values(groupedByConcept)
           .filter(g => Object.keys(g.entities).length > 5)
-          .map(g => g.classIri)
+          .map(g => g.conceptIri)
       );
       collapsedGroups = autoCollapsed;
       initialized = true;
     }
   });
 
-  function toggleClassGroup(classIri) {
-    if (collapsedGroups.has(classIri)) {
-      collapsedGroups.delete(classIri);
+  function toggleConceptGroup(conceptIri) {
+    if (collapsedGroups.has(conceptIri)) {
+      collapsedGroups.delete(conceptIri);
     } else {
-      collapsedGroups.add(classIri);
+      collapsedGroups.add(conceptIri);
     }
     collapsedGroups = new Set(collapsedGroups);
   }
@@ -76,24 +76,24 @@
 
 {#if backlinks?.length > 0}
   <div class="backlinks-list">
-    {#each Object.values(groupedByClass) as classGroup}
-      {@const entityCount = Object.keys(classGroup.entities).length}
-      {@const isCollapsed = collapsedGroups.has(classGroup.classIri)}
-      <div class="class-group" transition:slide={{ duration: 400, easing: cubicOut }}>
+    {#each Object.values(groupedByConcept) as conceptGroup}
+      {@const entityCount = Object.keys(conceptGroup.entities).length}
+      {@const isCollapsed = collapsedGroups.has(conceptGroup.conceptIri)}
+      <div class="concept-group" transition:slide={{ duration: 400, easing: cubicOut }}>
         <button
-          class="class-header"
-          onclick={() => toggleClassGroup(classGroup.classIri)}
+          class="concept-header"
+          onclick={() => toggleConceptGroup(conceptGroup.conceptIri)}
         >
           <span class="material-symbols-outlined chevron" class:expanded={!isCollapsed}>
             chevron_right
           </span>
-          <span class="material-symbols-outlined class-icon">category</span>
-          <span class="class-name">{classGroup.className}</span>
-          <span class="class-count">{entityCount}</span>
+          <span class="material-symbols-outlined concept-icon">category</span>
+          <span class="concept-name">{conceptGroup.conceptName}</span>
+          <span class="concept-count">{entityCount}</span>
         </button>
 
         {#if !isCollapsed}
-          {#each Object.values(classGroup.entities) as group}
+          {#each Object.values(conceptGroup.entities) as group}
             {@const relCount = group.properties.length}
             <div class="backlink-group" transition:slide={{ duration: 400, easing: cubicOut }}>
               <div
@@ -162,13 +162,13 @@
     margin-bottom: 16px;
   }
 
-  .class-group {
+  .concept-group {
     display: flex;
     flex-direction: column;
     gap: 12px;
   }
 
-  .class-header {
+  .concept-header {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -182,7 +182,7 @@
     text-align: left;
   }
 
-  .class-header:hover {
+  .concept-header:hover {
     background: color-mix(in srgb, var(--color-white) 10%, transparent);
   }
 
@@ -196,12 +196,12 @@
     transform: rotate(90deg);
   }
 
-  .class-icon {
+  .concept-icon {
     font-size: 20px;
     color: var(--color-neutral);
   }
 
-  .class-name {
+  .concept-name {
     font-family: var(--font-title);
     font-size: 13px;
     font-weight: 700;
@@ -211,7 +211,7 @@
     flex: 1;
   }
 
-  .class-count {
+  .concept-count {
     font-size: 11px;
     font-weight: 600;
     color: var(--color-neutral);

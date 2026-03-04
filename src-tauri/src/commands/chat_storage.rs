@@ -8,6 +8,7 @@ pub enum ContentBlock {
     Text { text: String },
     Image { source: ImageSource },
     Document { source: DocumentSource },
+    FileRef { file_iri: String, file_name: String, token_estimate: usize },
     ToolUse { id: String, name: String, input: serde_json::Value },
     ToolResult {
         tool_use_id: String,
@@ -384,7 +385,8 @@ pub async fn load_conversation_history(
 /// Load a single message from the database
 pub(super) fn load_message(conn: &Connection, iri: &str) -> Result<AIConversationMessage, String> {
     let ind = Individual::get(conn, iri)
-        .map_err(|e| format!("Failed to load message: {}", e))?;
+        .map_err(|e| format!("Failed to load message: {}", e))?
+        .ok_or_else(|| format!("Message {} not found", iri))?;
 
     let role = ind.properties.iter()
         .find(|(k, _)| k == "foundation:role")
@@ -448,29 +450,34 @@ fn get_tokenizer() -> &'static tiktoken_rs::CoreBPE {
     })
 }
 
+pub fn tokenize_text(text: &str) -> usize {
+    get_tokenizer().encode_with_special_tokens(text).len()
+}
+
+const MESSAGE_TOKEN_OVERHEAD: usize = 4;
+const TOOL_TOKEN_OVERHEAD: usize = 10;
+
 fn calculate_content_tokens(content_json: &str) -> Result<usize, String> {
     let bpe = get_tokenizer();
 
     let blocks: Vec<ContentBlock> = serde_json::from_str(content_json)
         .map_err(|e| format!("Failed to parse content: {}", e))?;
 
-    let mut total = 4; // Base overhead per message
+    let mut total = MESSAGE_TOKEN_OVERHEAD;
 
-    for block in blocks {
+    for block in &blocks {
         total += match block {
-            ContentBlock::Text { text } => {
-                bpe.encode_with_special_tokens(&text).len()
-            },
+            ContentBlock::Text { text } => bpe.encode_with_special_tokens(text).len(),
             ContentBlock::ToolUse { name, input, .. } => {
-                let json = serde_json::to_string(&input).unwrap_or_default();
-                bpe.encode_with_special_tokens(&name).len() +
-                bpe.encode_with_special_tokens(&json).len() + 10
+                let json = serde_json::to_string(input).unwrap_or_default();
+                bpe.encode_with_special_tokens(name).len() +
+                bpe.encode_with_special_tokens(&json).len() + TOOL_TOKEN_OVERHEAD
             },
             ContentBlock::ToolResult { content, .. } => {
-                bpe.encode_with_special_tokens(&content).len() + 10
+                bpe.encode_with_special_tokens(content).len() + TOOL_TOKEN_OVERHEAD
             },
-            ContentBlock::Image { .. } => 1000, // Rough estimate
-            ContentBlock::Document { .. } => 2000, // Rough estimate
+            ContentBlock::Image { .. } | ContentBlock::Document { .. } => 0,
+            ContentBlock::FileRef { token_estimate, .. } => *token_estimate,
         };
     }
 

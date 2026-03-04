@@ -156,6 +156,13 @@ pub async fn entity__get(
     }).await
 }
 
+fn resolve_unit_label(conn: &Connection, unit_iri: &str) -> Option<String> {
+    owl::get_literal_property(conn, unit_iri, "qudt:currencyCode")
+        .ok()
+        .flatten()
+        .or_else(|| Some(crate::owl::Thing::get(conn, unit_iri).label))
+}
+
 fn resolve_entity_status(conn: &Connection, properties: &[PropertyValue]) -> Option<StatusInfo> {
     for prop in properties {
         if !prop.is_object_property || prop.value.is_empty() {
@@ -181,13 +188,11 @@ fn resolve_status_for_entity(conn: &Connection, entity_iri: &str) -> Option<Stat
 }
 
 fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityType, String> {
-    let class = Class::new(entity_id);
-    if class.exists(conn).map_err(|e| e.to_string())? {
+    if Class::get(conn, entity_id).map_err(|e| e.to_string())?.is_some() {
         return Ok(EntityType::Class);
     }
 
-    let individual = Individual::new(entity_id);
-    if individual.exists(conn).map_err(|e| e.to_string())? {
+    if Individual::get(conn, entity_id).map_err(|e| e.to_string())?.is_some() {
         return Ok(EntityType::Individual);
     }
 
@@ -196,7 +201,8 @@ fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityTyp
 
 fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, String> {
     let class = Class::get(conn, class_id)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Class {} not found", class_id))?;
 
     let label = class.label.unwrap_or_else(|| class_id.to_string());
     let icon = class.icon;
@@ -259,7 +265,8 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
 
     for (property_iri, _source_class_iri) in &class.properties {
         let prop = Property::get(conn, property_iri)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Property {} not found", property_iri))?;
 
         let property_label = prop.label.clone().unwrap_or_else(|| property_iri.clone());
 
@@ -352,7 +359,8 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
 
     for (property_iri, source_class_iri) in &class.properties {
         let prop = Property::get(conn, property_iri)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Property {} not found", property_iri))?;
 
         let property_label = prop.label.unwrap_or_else(|| property_iri.clone());
         let property_comment = prop.comment;
@@ -406,7 +414,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
     let mut backlinks = Vec::new();
     for (source_entity, property_iri, _value_obj) in &class.backlinks {
         let prop_result = Property::get(conn, property_iri);
-        let (property_label, property_comment) = if let Ok(prop) = prop_result {
+        let (property_label, property_comment) = if let Ok(Some(prop)) = prop_result {
             (prop.label.unwrap_or_else(|| property_iri.clone()), prop.comment)
         } else {
             (property_iri.clone(), None)
@@ -461,7 +469,8 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
 
 fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityData, String> {
     let individual = Individual::get(conn, individual_id)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Individual {} not found", individual_id))?;
 
     let label = individual.label.unwrap_or_else(|| individual_id.to_string());
     let icon = individual.icon;
@@ -471,18 +480,12 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     for (property_iri, value_obj) in &individual.properties {
         let prop_result = Property::get(conn, property_iri);
         let (property_label, property_comment, unit, unit_label, is_object_property) =
-            if let Ok(prop) = prop_result {
+            if let Ok(Some(prop)) = prop_result {
             let label = prop.label.clone().unwrap_or_else(|| property_iri.clone());
             let comment = prop.comment.clone();
 
             let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
-                let unit_display = owl::get_literal_property(conn, unit_iri, "qudt:symbol")
-                    .ok()
-                    .flatten()
-                    .or_else(|| {
-                        let unit_thing = crate::owl::Thing::get(conn, unit_iri);
-                        Some(unit_thing.label)
-                    });
+                let unit_display = resolve_unit_label(conn, unit_iri);
 
                 (Some(unit_iri.clone()), unit_display)
             } else {
@@ -565,7 +568,8 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         if prop.is_object_property {
             if !added_node_ids.contains(&prop.value) {
                 let related_thing = crate::owl::Thing::get(conn, &prop.value);
-                let entity_exists_flag = Individual::new(&prop.value).exists(conn).unwrap_or(false);
+                let entity_exists_flag =
+                    Individual::get(conn, &prop.value).ok().flatten().is_some();
 
                 nodes.push(GraphNode {
                     id: prop.value.clone(),
@@ -619,7 +623,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     for (subject, predicate_iri, _) in &individual.backlinks {
         if !added_node_ids.contains(subject) {
             let subject_thing = crate::owl::Thing::get(conn, subject);
-            let entity_exists_flag = Individual::new(subject).exists(conn).unwrap_or(false);
+            let entity_exists_flag = Individual::get(conn, subject).ok().flatten().is_some();
 
             nodes.push(GraphNode {
                 id: subject.clone(),
@@ -638,6 +642,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
 
         let prop_label = Property::get(conn, predicate_iri)
             .ok()
+            .flatten()
             .and_then(|p| p.label)
             .unwrap_or_else(|| predicate_iri.clone());
 
@@ -651,7 +656,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     let mut backlinks = Vec::new();
     for (source_entity, property_iri, _value_obj) in &individual.backlinks {
         let prop_result = Property::get(conn, property_iri);
-        let (property_label, property_comment) = if let Ok(prop) = prop_result {
+        let (property_label, property_comment) = if let Ok(Some(prop)) = prop_result {
             (prop.label.unwrap_or_else(|| property_iri.clone()), prop.comment)
         } else {
             (property_iri.clone(), None)
