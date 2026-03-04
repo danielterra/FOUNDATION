@@ -32,6 +32,7 @@ grep -n "eavto::" src-tauri/src/commands/*.rs
 
 ## Frontend Quality
 
+- Run `npm run build` to catch TypeScript and Svelte compilation errors
 - No `console.log` / `console.debug` / `console.info` — verbose logging not appropriate for production
 - `console.error` and `console.warn` are acceptable: `src/lib/logging.js` globally wraps them to forward to the backend log file
 - No `: any` / `: unknown` — use specific types
