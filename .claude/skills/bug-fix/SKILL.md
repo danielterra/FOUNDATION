@@ -16,14 +16,17 @@ and reproduction steps. Use this as the primary source of truth for the bug.
    - `foundation:issueStatus` → `foundation:InProgress` (value_type: iri)
    - `foundation:startedAt` → current ISO datetime (datatype: xsd:dateTime)
 2. **Analyse** — read the issue description, error excerpts, and affected files
-3. **Search code** — use Grep on key terms and file paths from the issue
-4. **Identify root cause** — trace the failure through the layer architecture
-5. **Fix** — follow the layer order: Commands → OWL → EAVTO (never bypass layers)
-6. **Validate** — run `cargo check --manifest-path src-tauri/Cargo.toml --message-format=short 2>&1 | head -n 30`
-7. **Code Review** — invoke the `/code-review` skill on the changed files and resolve any issues found before proceeding
-8. **Report** — call `learn_thing_detail` on `$ARGUMENTS`:
+3. **Load architecture context** — call `remember_things` with `concept_iri=foundation:FrontendArchitecturePlan`
+   and `concept_iri=foundation:BackendArchitecturePlan`, filtering by `foundation:contributesTo = foundation:FoundationProduct`;
+   for each plan found, call `remember_thing` to read its full content; use this context to guide the fix
+4. **Search code** — use Grep on key terms and file paths from the issue
+5. **Identify root cause** — trace the failure through the layer architecture
+6. **Fix** — follow the layer order: Commands → OWL → EAVTO (never bypass layers)
+7. **Validate** — run `cargo check --manifest-path src-tauri/Cargo.toml --message-format=short 2>&1 | head -n 30`
+8. **Code Review** — invoke the `/code-review` skill on the changed files and resolve any issues found before proceeding
+9. **Report** — call `learn_thing_detail` on `$ARGUMENTS`:
    - On success: `foundation:issueStatus` → `foundation:Completed` (value_type: iri)
    - On failure (cannot be fixed): `foundation:issueStatus` → `foundation:Failed` (value_type: iri)
    - `foundation:causeAnalysis` → description of the root cause identified
    - `foundation:resolution` → description of the fix applied or reason it could not be completed, including files changed
-9. **Output** — present the same report to the user: root cause, files changed, fix applied (or blocking reason).
+10. **Output** — present the same report to the user: root cause, files changed, fix applied (or blocking reason).

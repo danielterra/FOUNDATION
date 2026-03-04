@@ -19,7 +19,10 @@ argument-hint: "<description of the feature to plan>"
 
 1. **Understand the feature** from `$ARGUMENTS`
 2. **Explore the codebase** — read the project structure, identify languages, frameworks, layers, and conventions used
-3. **Decompose into User Stories** — each story: "As a [role], I want [capability], so that [benefit]"
+3. **Load architecture context** — call `remember_things` with `concept_iri=foundation:FrontendArchitecturePlan`
+   and `concept_iri=foundation:BackendArchitecturePlan`, filtering by `foundation:contributesTo = foundation:FoundationProduct`;
+   for each plan found, call `remember_thing` to read its full content; use this context to ensure new plans align with the existing architecture
+4. **Decompose into User Stories** — each story: "As a [role], I want [capability], so that [benefit]"
 4. **Identify plan perspectives per story** — only include types that apply:
    - `BackendArchitecturePlan`: server-side services, APIs, data access, business logic
    - `FrontendArchitecturePlan`: UI components, state management, routing, API integration

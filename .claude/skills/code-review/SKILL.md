@@ -14,10 +14,15 @@ Files to review: $ARGUMENTS (if empty, review all changed files above)
 
 ---
 
-## Architecture (Rust)
+## Architecture
 
-- `src-tauri/src/owl/` MUST use `eavto::` — never `sqlx::` or `rusqlite::` directly
-- `src-tauri/src/commands/` must NOT use `eavto::` — must go through OWL
+Load the architecture guidelines for this project:
+- Call `remember_things_by_details` with `concept_iri=foundation:BackendArchitecturePlan` and `foundation:contributesTo = foundation:FoundationProduct`
+- Call `remember_things_by_details` with `concept_iri=foundation:FrontendArchitecturePlan` and `foundation:contributesTo = foundation:FoundationProduct`
+- For each plan found, call `remember_thing` to read its full content
+- Verify the changed files comply with every rule in these plans; flag any violation
+
+Use these greps to verify the layer isolation rule:
 
 ```
 grep -n "sqlx::\|rusqlite::" src-tauri/src/owl/*.rs

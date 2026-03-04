@@ -34,6 +34,9 @@ Before implementing, orient yourself:
 - Run `git status --short` and `git log --oneline -5` to understand the current state
 - Explore the project structure and identify the relevant files and modules
 - Identify existing patterns to follow (naming, file structure, layer conventions)
+- **Load architecture context** — call `remember_things` with `concept_iri=foundation:FrontendArchitecturePlan`
+  and `concept_iri=foundation:BackendArchitecturePlan`, filtering by `foundation:contributesTo = foundation:FoundationProduct`;
+  for each plan found, call `remember_thing` to read its full content; use this context to guide all implementation decisions
 
 ---
 
