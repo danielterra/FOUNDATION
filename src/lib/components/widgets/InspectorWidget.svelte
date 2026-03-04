@@ -168,6 +168,10 @@
       </div>
     {:else if entityData}
       <div class="content-scroll">
+        {#if entityData?.label}
+          <div class="entity-full-name">{entityData.label}</div>
+        {/if}
+
         {#if entityData.comment}
           <div class="description markdown-content">
             {@html marked.parse(entityData.comment)}
@@ -286,6 +290,9 @@
     flex-direction: row;
     gap: 12px;
     align-items: center;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .widget-icon-container {
@@ -293,26 +300,26 @@
   }
 
   .entity-icon-symbol {
-    font-size: 30px;
+    font-size: 28px;
     color: var(--color-neutral-active);
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 60px;
-    height: 60px;
+    width: 36px;
+    height: 36px;
   }
 
   .entity-icon-image {
-    width: 60px;
-    height: 60px;
-    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
     object-fit: cover;
   }
 
   .widget-title-info {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 1px;
     flex: 1;
     min-width: 0;
   }
@@ -321,9 +328,17 @@
     display: flex;
     align-items: center;
     font-family: var(--font-title);
-    font-size: 14px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--color-neutral-active);
+    overflow: hidden;
+  }
+
+  .widget-title span {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
   }
 
   .close-btn {
@@ -447,6 +462,16 @@
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  .entity-full-name {
+    font-family: var(--font-title);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--color-neutral-active);
+    line-height: 1.4;
+    margin-bottom: 12px;
+    word-break: break-word;
   }
 
   .description {

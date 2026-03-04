@@ -3,10 +3,24 @@ use crate::eavto::Connection;
 use tauri::Emitter;
 use crate::owl::{Class, Individual, Object};
 use super::ToolResult;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const SCORE_LABEL_MATCH: usize = 3;
 const SCORE_COMMENT_MATCH: usize = 2;
 const SCORE_DETAIL_MATCH: usize = 1;
+
+static IRI_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn next_iri_id() -> u64 {
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+    loop {
+        let current = IRI_COUNTER.load(Ordering::Relaxed);
+        let next = if now > current { now } else { current + 1 };
+        if IRI_COUNTER.compare_exchange(current, next, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+            return next;
+        }
+    }
+}
 
 pub fn search_things(conn: &Connection, args: &Value) -> ToolResult {
     super::batch::run_multi_read(conn, args, search_things_one)
@@ -209,8 +223,7 @@ fn create_thing_one(
     let comment = args.get("comment").and_then(|v| v.as_str());
 
     let concept_name = concept_iri.split(':').last().unwrap_or("Thing");
-    let timestamp = chrono::Utc::now().timestamp_millis();
-    let generated_iri = format!("foundation:{}_{}", concept_name, timestamp);
+    let generated_iri = format!("foundation:{}_{}", concept_name, next_iri_id());
 
     match (|| {
         let individual = Individual::new(&generated_iri);

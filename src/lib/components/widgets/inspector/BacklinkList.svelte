@@ -6,54 +6,43 @@
   let { backlinks, openEntityInspector } = $props();
 
   let collapsedGroups = $state(new Set());
-  let initialized = $state(false);
 
-  const groupedByConcept = $derived(
+  const groups = $derived(
     (backlinks ?? []).reduce((acc, backlink) => {
-      const conceptName = backlink.sourceClassLabel || 'Unknown';
-      const conceptIri = backlink.sourceClass || 'unknown';
-
-      if (!acc[conceptIri]) {
-        acc[conceptIri] = { conceptName, conceptIri, entities: {} };
-      }
-
-      if (!acc[conceptIri].entities[backlink.value]) {
-        acc[conceptIri].entities[backlink.value] = {
-          entity: backlink.value,
-          entityLabel: backlink.valueLabel || backlink.value,
-          entityIcon: backlink.valueIcon,
-          entityStatus: backlink.valueStatus,
-          properties: []
+      const key = `${backlink.property}:${backlink.sourceClass || 'unknown'}`;
+      if (!acc[key]) {
+        acc[key] = {
+          key,
+          propertyLabel: backlink.propertyLabel || backlink.property,
+          conceptName: backlink.sourceClassLabel || 'Unknown',
+          entities: {}
         };
       }
-
-      acc[conceptIri].entities[backlink.value].properties.push({
-        property: backlink.property,
-        propertyLabel: backlink.propertyLabel,
-        propertyComment: backlink.propertyComment
-      });
-
+      const iri = backlink.value;
+      if (!acc[key].entities[iri]) {
+        acc[key].entities[iri] = {
+          iri,
+          label: backlink.valueLabel || iri,
+          icon: backlink.valueIcon,
+          status: backlink.valueStatus
+        };
+      }
       return acc;
     }, {})
   );
 
   $effect(() => {
-    if (!initialized && Object.keys(groupedByConcept).length > 0) {
-      const autoCollapsed = new Set(
-        Object.values(groupedByConcept)
-          .filter(g => Object.keys(g.entities).length > 5)
-          .map(g => g.conceptIri)
-      );
-      collapsedGroups = autoCollapsed;
-      initialized = true;
+    const keys = Object.keys(groups);
+    if (keys.length > 0 && collapsedGroups.size === 0) {
+      collapsedGroups = new Set(keys);
     }
   });
 
-  function toggleConceptGroup(conceptIri) {
-    if (collapsedGroups.has(conceptIri)) {
-      collapsedGroups.delete(conceptIri);
+  function toggleGroup(key) {
+    if (collapsedGroups.has(key)) {
+      collapsedGroups.delete(key);
     } else {
-      collapsedGroups.add(conceptIri);
+      collapsedGroups.add(key);
     }
     collapsedGroups = new Set(collapsedGroups);
   }
@@ -66,8 +55,8 @@
 
   function getIconUrl(icon) {
     if (!icon) return '';
-    if (icon.startsWith('http://') || icon.startsWith('https://') ||
-        icon.startsWith('data:')) return icon;
+    if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:'))
+      return icon;
     if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
     if (icon.startsWith('/')) return convertFileSrc(icon);
     return icon;
@@ -76,78 +65,56 @@
 
 {#if backlinks?.length > 0}
   <div class="backlinks-list">
-    {#each Object.values(groupedByConcept) as conceptGroup}
-      {@const entityCount = Object.keys(conceptGroup.entities).length}
-      {@const isCollapsed = collapsedGroups.has(conceptGroup.conceptIri)}
-      <div class="concept-group" transition:slide={{ duration: 400, easing: cubicOut }}>
-        <button
-          class="concept-header"
-          onclick={() => toggleConceptGroup(conceptGroup.conceptIri)}
-        >
+    {#each Object.values(groups) as group}
+      {@const entities = Object.values(group.entities)}
+      {@const isCollapsed = collapsedGroups.has(group.key)}
+      <div class="group" transition:slide={{ duration: 300, easing: cubicOut }}>
+        <button class="group-header" onclick={() => toggleGroup(group.key)}>
           <span class="material-symbols-outlined chevron" class:expanded={!isCollapsed}>
             chevron_right
           </span>
-          <span class="material-symbols-outlined concept-icon">category</span>
-          <span class="concept-name">{conceptGroup.conceptName}</span>
-          <span class="concept-count">{entityCount}</span>
+          <span class="group-label">
+            <span class="group-concept">{group.conceptName}</span>
+            <span class="group-arrow">→</span>
+            <span class="group-prop">{group.propertyLabel}</span>
+          </span>
+          <span class="group-count">{entities.length}</span>
         </button>
 
         {#if !isCollapsed}
-          {#each Object.values(conceptGroup.entities) as group}
-            {@const relCount = group.properties.length}
-            <div class="backlink-group" transition:slide={{ duration: 400, easing: cubicOut }}>
+          <div class="entity-list" transition:slide={{ duration: 300, easing: cubicOut }}>
+            {#each entities as entity}
               <div
-                class="backlink-entity clickable"
+                class="entity-item clickable"
                 role="button"
                 tabindex="0"
-                onclick={() => openEntityInspector(group.entity)}
-                onkeydown={(e) => e.key === 'Enter' && openEntityInspector(group.entity)}
+                onclick={() => openEntityInspector(entity.iri)}
+                onkeydown={(e) => e.key === 'Enter' && openEntityInspector(entity.iri)}
               >
-                {#if group.entityIcon}
-                  {#if isIconUrl(group.entityIcon)}
-                    <img src={getIconUrl(group.entityIcon)} alt="" class="entity-icon-image" />
+                {#if entity.icon}
+                  {#if isIconUrl(entity.icon)}
+                    <img src={getIconUrl(entity.icon)} alt="" class="entity-icon-image" />
                   {:else}
-                    <span class="material-symbols-outlined entity-icon">{group.entityIcon}</span>
+                    <span class="material-symbols-outlined entity-icon">{entity.icon}</span>
                   {/if}
                 {:else}
                   <span class="material-symbols-outlined entity-icon">link</span>
                 {/if}
-                <div class="entity-info">
-                  <div class="entity-label">{group.entityLabel}</div>
-                  <div class="entity-count">
-                    {relCount} {relCount === 1 ? 'relationship' : 'relationships'}
-                  </div>
-                </div>
-                {#if group.entityStatus}
+                <span class="entity-label">{entity.label}</span>
+                {#if entity.status}
                   <span
                     class="inline-status"
-                    style="--status-color: {group.entityStatus.color || 'var(--color-neutral)'}"
-                    title={group.entityStatus.iri}
+                    style="--status-color: {entity.status.color || 'var(--color-neutral)'}"
+                    title={entity.status.iri}
                   >
-                    <span class="material-symbols-outlined inline-status-icon">
-                      radio_button_checked
-                    </span>
-                    <span class="inline-status-label">{group.entityStatus.label}</span>
+                    <span class="material-symbols-outlined inline-status-icon">radio_button_checked</span>
+                    <span class="inline-status-label">{entity.status.label}</span>
                   </span>
                 {/if}
                 <span class="material-symbols-outlined arrow">arrow_forward</span>
               </div>
-
-              <div class="backlink-properties">
-                {#each group.properties as prop}
-                  <div class="backlink-property">
-                    <span class="material-symbols-outlined prop-icon">arrow_back</span>
-                    <div class="prop-info">
-                      <span class="prop-label">{prop.propertyLabel}</span>
-                      {#if prop.propertyComment}
-                        <span class="prop-comment">{prop.propertyComment}</span>
-                      {/if}
-                    </div>
-                  </div>
-                {/each}
-              </div>
-            </div>
-          {/each}
+            {/each}
+          </div>
         {/if}
       </div>
     {/each}
@@ -158,82 +125,106 @@
   .backlinks-list {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 6px;
     margin-bottom: 16px;
   }
 
-  .concept-group {
+  .group {
     display: flex;
     flex-direction: column;
-    gap: 12px;
   }
 
-  .concept-header {
+  .group-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: 6px;
+    padding: 6px 10px;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     border-radius: 8px;
     border: none;
     width: 100%;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.2s;
     text-align: left;
   }
 
-  .concept-header:hover {
-    background: color-mix(in srgb, var(--color-white) 10%, transparent);
+  .group-header:hover {
+    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
   }
 
   .chevron {
-    font-size: 20px;
-    color: var(--color-neutral);
+    font-size: 18px;
+    color: var(--color-interactive);
+    opacity: 0.8;
     transition: transform 0.2s;
+    flex-shrink: 0;
   }
 
   .chevron.expanded {
     transform: rotate(90deg);
   }
 
-  .concept-icon {
-    font-size: 20px;
-    color: var(--color-neutral);
+  .group-label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
   }
 
-  .concept-name {
-    font-family: var(--font-title);
-    font-size: 13px;
+  .group-concept {
+    font-family: var(--font-body);
+    font-size: 11px;
     font-weight: 700;
     color: var(--color-neutral-active);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    flex: 1;
+    letter-spacing: 0.4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .concept-count {
+  .group-arrow {
     font-size: 11px;
+    color: var(--color-neutral);
+    opacity: 0.4;
+    flex-shrink: 0;
+  }
+
+  .group-prop {
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--color-neutral);
+    opacity: 0.7;
+    white-space: nowrap;
+  }
+
+  .group-count {
+    font-size: 10px;
     font-weight: 600;
     color: var(--color-neutral);
-    padding: 2px 8px;
-    background: color-mix(in srgb, var(--color-white) 10%, transparent);
-    border-radius: 12px;
+    padding: 1px 6px;
+    background: color-mix(in srgb, var(--color-neutral) 15%, transparent);
+    border-radius: 10px;
+    flex-shrink: 0;
   }
 
-  .backlink-group {
-    background: color-mix(in srgb, var(--color-white) 3%, transparent);
-    border-radius: 8px;
-    overflow: hidden;
-    border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+  .entity-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 0 4px 8px;
   }
 
-  .backlink-entity {
+  .entity-item {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px;
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+    gap: 10px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--color-white) 3%, transparent);
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
     transition: all 0.2s;
   }
 
@@ -252,88 +243,41 @@
   }
 
   .entity-icon {
-    font-size: 24px;
+    font-size: 18px;
     color: var(--color-neutral);
+    flex-shrink: 0;
   }
 
   .entity-icon-image {
-    width: 40px;
-    height: 40px;
-    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    border-radius: 5px;
     object-fit: cover;
-  }
-
-  .entity-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    flex-shrink: 0;
   }
 
   .entity-label {
+    flex: 1;
     font-family: var(--font-title);
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--color-neutral-active);
-  }
-
-  .entity-count {
-    font-size: 11px;
-    color: var(--color-neutral);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .arrow {
-    font-size: 20px;
+    font-size: 18px;
     color: var(--color-neutral);
-    opacity: 0.5;
+    opacity: 0.4;
     transition: all 0.2s;
+    flex-shrink: 0;
   }
 
-  .backlink-entity:hover .arrow {
+  .entity-item:hover .arrow {
     opacity: 1;
-    transform: translateX(4px);
-  }
-
-  .backlink-properties {
-    padding: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .backlink-property {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px;
-    background: color-mix(in srgb, var(--color-black) 20%, transparent);
-    border-radius: 6px;
-  }
-
-  .prop-icon {
-    font-size: 16px;
-    color: var(--color-neutral);
-    opacity: 0.6;
-  }
-
-  .prop-info {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    flex: 1;
-  }
-
-  .prop-label {
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--color-neutral-active);
-  }
-
-  .prop-comment {
-    font-size: 11px;
-    color: var(--color-neutral);
-    line-height: 1.3;
+    transform: translateX(3px);
   }
 
   .inline-status {

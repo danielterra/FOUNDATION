@@ -268,6 +268,9 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             description: concat!(
                 "Learn a new type of connection or detail you can remember about things",
                 " (e.g., 'worksAt', 'bornOn', 'hasSkill').",
+                " If the IRI already exists, this performs an upsert — it updates the existing",
+                " connection type with the provided values. You do NOT need to forget and recreate",
+                " to update a connection type; simply call this with the same IRI.",
             ).to_string(),
             parameters: vec![
                 Parameter {

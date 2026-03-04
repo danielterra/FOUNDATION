@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "FOUNDATION-tauri-app"
+name = "FOUNDATION"
 version = "0.4.1"
 dependencies = [
  "async-trait",

@@ -334,7 +334,7 @@ pub async fn chat__send_and_reply(
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
     const CONVERSATION_ID: &str = "foundation:MainChatConversation";
-    const MAX_TOOL_LOOPS: usize = 10; // Prevent infinite loops
+    const MAX_TOOL_LOOPS: usize = 50;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
 
@@ -1088,7 +1088,7 @@ async fn continue_conversation_after_recovery(
     executor: DbExecutor,
 ) -> Result<(), String> {
     const CONVERSATION_ID: &str = "foundation:MainChatConversation";
-    const MAX_TOOL_LOOPS: usize = 10;
+    const MAX_TOOL_LOOPS: usize = 50;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
 
