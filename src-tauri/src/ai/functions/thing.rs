@@ -4,7 +4,15 @@ use tauri::Emitter;
 use crate::owl::{Class, Individual, Object};
 use super::ToolResult;
 
+const SCORE_LABEL_MATCH: usize = 3;
+const SCORE_COMMENT_MATCH: usize = 2;
+const SCORE_DETAIL_MATCH: usize = 1;
+
 pub fn search_things(conn: &Connection, args: &Value) -> ToolResult {
+    super::batch::run_multi_read(conn, args, search_things_one)
+}
+
+fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
     let concept_iri_opt = args.get("concept_iri")
         .and_then(|v| v.as_str());
 
@@ -59,11 +67,11 @@ pub fn search_things(conn: &Connection, args: &Value) -> ToolResult {
                     let mut match_count = 0;
                     for token in &search_tokens {
                         if label_lower.contains(token) {
-                            match_count += 3;
+                            match_count += SCORE_LABEL_MATCH;
                         } else if comment_lower.contains(token) {
-                            match_count += 2;
+                            match_count += SCORE_COMMENT_MATCH;
                         } else if detail_text.contains(token) {
-                            match_count += 1;
+                            match_count += SCORE_DETAIL_MATCH;
                         }
                     }
 
@@ -73,7 +81,7 @@ pub fn search_things(conn: &Connection, args: &Value) -> ToolResult {
 
                     match_count
                 } else {
-                    0 // No query, all things have equal score
+                    0
                 };
 
                 things_with_scores.push((serde_json::json!({
@@ -115,6 +123,10 @@ pub fn search_things(conn: &Connection, args: &Value) -> ToolResult {
 }
 
 pub fn get_thing(conn: &Connection, args: &Value) -> ToolResult {
+    super::batch::run_multi_read(conn, args, get_thing_one)
+}
+
+fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").or_else(|| args.get("IRI")).and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
@@ -155,6 +167,14 @@ pub fn get_thing(conn: &Connection, args: &Value) -> ToolResult {
 }
 
 pub fn create_thing(
+    conn: &mut Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, create_thing_one)
+}
+
+fn create_thing_one(
     conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
@@ -234,6 +254,14 @@ pub fn update_thing(
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, update_thing_one)
+}
+
+fn update_thing_one(
+    conn: &mut Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
@@ -303,6 +331,14 @@ pub fn delete_thing(
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, delete_thing_one)
+}
+
+fn delete_thing_one(
+    conn: &mut Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
@@ -338,6 +374,10 @@ pub fn delete_thing(
 }
 
 pub fn find_things_by_detail(conn: &Connection, args: &Value) -> ToolResult {
+    super::batch::run_multi_read(conn, args, find_things_by_detail_one)
+}
+
+fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
     let concept_iri = match args.get("concept_iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {

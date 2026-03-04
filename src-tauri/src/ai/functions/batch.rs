@@ -1,106 +1,114 @@
 use serde_json::Value;
 use rusqlite::Connection;
-use tauri::Emitter;
 use crate::eavto::enter_batch_transaction;
-use super::{ToolCall, ToolResult, execute_tool};
+use super::ToolResult;
 
-pub fn batch_operations(
-    conn: &mut Connection,
+pub(super) fn run_multi_read(
+    conn: &Connection,
     args: &Value,
-    app: Option<&tauri::AppHandle>,
+    exec_one: impl Fn(&Connection, &Value) -> ToolResult,
 ) -> ToolResult {
-    let operations = match args.get("operations").and_then(|v| v.as_array()) {
-        Some(ops) => ops.clone(),
+    let ops = match args.as_array() {
+        Some(ops) if !ops.is_empty() => ops.clone(),
+        Some(_) => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Operations array must not be empty".to_string()),
+        },
         None => return ToolResult {
             success: false,
             result: None,
-            error: Some("Missing required parameter: operations (must be an array)".to_string()),
+            error: Some("Arguments must be a non-empty array of operations".to_string()),
         },
     };
 
-    if operations.is_empty() {
-        return ToolResult {
-            success: false,
-            result: None,
-            error: Some("operations array must not be empty".to_string()),
-        };
+    let mut results = Vec::new();
+    for (i, op) in ops.iter().enumerate() {
+        let result = exec_one(conn, op);
+        if !result.success {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!(
+                    "Operation {} failed: {}",
+                    i,
+                    result.error.unwrap_or_else(|| "unknown error".to_string()),
+                )),
+            };
+        }
+        results.push(result.result);
     }
 
-    let outcome = run_batch(conn, &operations, app);
-
-    match outcome {
-        Ok(result) => ToolResult {
-            success: true,
-            result: Some(result),
-            error: None,
-        },
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e),
-        },
+    ToolResult {
+        success: true,
+        result: Some(serde_json::json!({ "results": results })),
+        error: None,
     }
 }
 
-fn run_batch(
+pub(super) fn run_atomic(
     conn: &mut Connection,
-    operations: &[Value],
+    args: &Value,
     app: Option<&tauri::AppHandle>,
-) -> Result<Value, String> {
-    conn.execute_batch("BEGIN")
-        .map_err(|e| format!("Failed to start transaction: {e}"))?;
+    exec_one: impl Fn(&mut Connection, &Value, Option<&tauri::AppHandle>) -> ToolResult,
+) -> ToolResult {
+    let ops = match args.as_array() {
+        Some(ops) if !ops.is_empty() => ops.clone(),
+        Some(_) => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Operations array must not be empty".to_string()),
+        },
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Arguments must be a non-empty array of operations".to_string()),
+        },
+    };
 
-    // The guard clears IN_BATCH_TX when run_batch returns (on both success and error paths).
-    // This is safe because after COMMIT/ROLLBACK below, the outer transaction is gone.
+    if let Err(e) = conn.execute_batch("BEGIN") {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!("Failed to start transaction: {e}")),
+        };
+    }
+
     let _guard = enter_batch_transaction();
-
     let mut results = Vec::new();
 
-    for (op_index, op) in operations.iter().enumerate() {
-        let tool_name = match op.get("tool").and_then(|v| v.as_str()) {
-            Some(name) => name,
-            None => {
-                conn.execute_batch("ROLLBACK").ok();
-                return Err(format!("Operation {op_index}: missing 'tool' field"));
-            }
-        };
-
-        let arguments = op.get("arguments")
-            .cloned()
-            .unwrap_or(Value::Object(serde_json::Map::new()));
-
-        let call = ToolCall {
-            name: tool_name.to_string(),
-            arguments,
-        };
-
-        let result = execute_tool(conn, &call, app);
-
+    for (i, op) in ops.iter().enumerate() {
+        let result = exec_one(conn, op, app);
         if !result.success {
-            let err = result.error.unwrap_or_else(|| "unknown error".to_string());
             conn.execute_batch("ROLLBACK").ok();
-            return Err(format!("Operation {op_index} ({tool_name}) failed: {err}"));
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!(
+                    "Operation {} failed: {}",
+                    i,
+                    result.error.unwrap_or_else(|| "unknown error".to_string()),
+                )),
+            };
         }
-
-        results.push(serde_json::json!({
-            "index": op_index,
-            "tool": tool_name,
-            "result": result.result,
-        }));
+        results.push(result.result);
     }
 
-    conn.execute_batch("COMMIT").map_err(|e| {
+    if let Err(e) = conn.execute_batch("COMMIT") {
         conn.execute_batch("ROLLBACK").ok();
-        format!("Failed to commit transaction: {e}")
-    })?;
-
-    if let Some(app_handle) = app {
-        app_handle.emit("batch-completed", serde_json::json!({"count": results.len()})).ok();
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!("Failed to commit transaction: {e}")),
+        };
     }
 
-    Ok(serde_json::json!({
-        "success": true,
-        "operationsCompleted": results.len(),
-        "results": results,
-    }))
+    ToolResult {
+        success: true,
+        result: Some(serde_json::json!({
+            "operationsCompleted": results.len(),
+            "results": results,
+        })),
+        error: None,
+    }
 }

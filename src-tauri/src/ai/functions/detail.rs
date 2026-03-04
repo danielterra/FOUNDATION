@@ -3,7 +3,15 @@ use crate::eavto::Connection;
 use tauri::Emitter;
 use super::ToolResult;
 
-pub fn create_detail(conn: &mut Connection, args: &Value) -> ToolResult {
+pub fn create_detail(
+    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, create_detail_one)
+}
+
+fn create_detail_one(
+    conn: &mut Connection, args: &Value, _app: Option<&tauri::AppHandle>,
+) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
@@ -71,80 +79,11 @@ pub fn create_detail(conn: &mut Connection, args: &Value) -> ToolResult {
     }
 }
 
-#[allow(dead_code)]
-pub fn search_details(conn: &Connection, args: &Value) -> ToolResult {
-    let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
-
-    match (|| {
-        use crate::owl::Property;
-
-        let all_detail_iris = Property::get_all_iris(conn)?;
-
-        let search_tokens: Vec<String> = if query_str.is_empty() {
-            Vec::new()
-        } else {
-            query_str
-                .to_lowercase()
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect()
-        };
-
-        let mut details = Vec::new();
-        for iri in all_detail_iris {
-            if let Ok(Some(detail)) = Property::get(conn, &iri) {
-                if !search_tokens.is_empty() {
-                    if let Some(label) = &detail.label {
-                        let label_lower = label.to_lowercase();
-                        let comment_lower = detail.comment.as_ref().map(|c| c.to_lowercase());
-
-                        let matches = search_tokens.iter().all(|token| {
-                            label_lower.contains(token) ||
-                            comment_lower.as_ref().map(|c| c.contains(token)).unwrap_or(false)
-                        });
-
-                        if !matches {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-
-                details.push(serde_json::json!({
-                    "iri": detail.iri,
-                    "label": detail.label,
-                    "type": format!("{:?}", detail.property_type),
-                    "domains": detail.domains,
-                    "ranges": detail.ranges,
-                }));
-
-                if details.len() >= limit {
-                    break;
-                }
-            }
-        }
-
-        Ok::<_, crate::owl::OwlError>(serde_json::json!({
-            "details": details,
-            "count": details.len(),
-        }))
-    })() {
-        Ok(result) => ToolResult {
-            success: true,
-            result: Some(result),
-            error: None,
-        },
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e.to_string()),
-        },
-    }
+pub fn get_detail(conn: &Connection, args: &Value) -> ToolResult {
+    super::batch::run_multi_read(conn, args, get_detail_one)
 }
 
-pub fn get_detail(conn: &Connection, args: &Value) -> ToolResult {
+fn get_detail_one(conn: &Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
@@ -217,6 +156,12 @@ pub fn get_detail(conn: &Connection, args: &Value) -> ToolResult {
 pub fn delete_detail(
     conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, delete_detail_one)
+}
+
+fn delete_detail_one(
+    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
+) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
@@ -259,6 +204,12 @@ pub fn delete_detail(
 }
 
 pub fn learn_detail_value(
+    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, learn_detail_value_one)
+}
+
+fn learn_detail_value_one(
     conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
     let thing_iri = match args.get("thing_iri").and_then(|v| v.as_str()) {
@@ -357,6 +308,12 @@ pub fn learn_detail_value(
 }
 
 pub fn forget_detail_value(
+    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, forget_detail_value_one)
+}
+
+fn forget_detail_value_one(
     conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
     let thing_iri = match args.get("thing_iri").and_then(|v| v.as_str()) {

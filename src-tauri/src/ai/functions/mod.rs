@@ -16,6 +16,8 @@ pub struct ToolTemplate {
     pub name: String,
     pub description: String,
     pub parameters: Vec<Parameter>,
+    #[serde(default)]
+    pub array_mode: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,11 +46,27 @@ impl ToolTemplate {
             }
         }
 
-        let input_schema = json!({
+        let item_schema = json!({
             "type": "object",
             "properties": properties,
             "required": required,
         });
+
+        let input_schema = if self.array_mode {
+            json!({
+                "type": "object",
+                "properties": {
+                    "operations": {
+                        "type": "array",
+                        "items": item_schema,
+                        "minItems": 1,
+                    }
+                },
+                "required": ["operations"],
+            })
+        } else {
+            item_schema
+        };
 
         crate::ai::providers::ClaudeTool {
             name: self.name.clone(),
@@ -57,34 +75,6 @@ impl ToolTemplate {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn to_openai_tool(&self) -> Value {
-        let mut properties = serde_json::Map::new();
-        let mut required = Vec::new();
-
-        for param in &self.parameters {
-            properties.insert(
-                param.name.clone(),
-                json!({
-                    "type": param.param_type,
-                    "description": param.description,
-                })
-            );
-            if param.required {
-                required.push(param.name.clone());
-            }
-        }
-
-        json!({
-            "name": self.name,
-            "description": self.description,
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-            }
-        })
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,27 +95,35 @@ pub fn execute_tool(
     call: &ToolCall,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
+    let is_array_mode = get_available_tools()
+        .iter()
+        .any(|t| t.name == call.name && t.array_mode);
+    let args = if is_array_mode {
+        &call.arguments["operations"]
+    } else {
+        &call.arguments
+    };
+
     match call.name.as_str() {
-        "learn_concept" => concept::create_concept(conn, &call.arguments, app),
-        "learn_thing" => thing::create_thing(conn, &call.arguments, app),
-        "learn_thing_detail" => detail::learn_detail_value(conn, &call.arguments, app),
-        "learn_connection_type" => detail::create_detail(conn, &call.arguments),
-        "remember_concept" => concept::get_concept(conn, &call.arguments),
-        "remember_thing" => thing::get_thing(conn, &call.arguments),
-        "remember_concepts" => concept::search_concepts(conn, &call.arguments),
-        "remember_things" => thing::search_things(conn, &call.arguments),
-        "remember_connection_type" => detail::get_detail(conn, &call.arguments),
-        "remember_things_by_details" => thing::find_things_by_detail(conn, &call.arguments),
-        "forget_concept" => concept::delete_concept(conn, &call.arguments, app),
-        "forget_thing" => thing::delete_thing(conn, &call.arguments, app),
-        "forget_connection_type" => detail::delete_detail(conn, &call.arguments, app),
-        "forget_thing_detail" => detail::forget_detail_value(conn, &call.arguments, app),
-        "update_concept" => concept::update_concept(conn, &call.arguments, app),
-        "update_thing" => thing::update_thing(conn, &call.arguments, app),
-        "batch_operations" => batch::batch_operations(conn, &call.arguments, app),
+        "learn_concept" => concept::create_concept(conn, args, app),
+        "learn_thing" => thing::create_thing(conn, args, app),
+        "learn_thing_detail" => detail::learn_detail_value(conn, args, app),
+        "learn_connection_type" => detail::create_detail(conn, args, app),
+        "remember_concept" => concept::get_concept(conn, args),
+        "remember_thing" => thing::get_thing(conn, args),
+        "remember_concepts" => concept::search_concepts(conn, args),
+        "remember_things" => thing::search_things(conn, args),
+        "remember_connection_type" => detail::get_detail(conn, args),
+        "remember_things_by_details" => thing::find_things_by_detail(conn, args),
+        "forget_concept" => concept::delete_concept(conn, args, app),
+        "forget_thing" => thing::delete_thing(conn, args, app),
+        "forget_connection_type" => detail::delete_detail(conn, args, app),
+        "forget_thing_detail" => detail::forget_detail_value(conn, args, app),
+        "update_concept" => concept::update_concept(conn, args, app),
+        "update_thing" => thing::update_thing(conn, args, app),
         "blackboard_show" => blackboard::blackboard_show(conn),
-        "blackboard_add_widget" => blackboard::blackboard_add_widget(conn, &call.arguments, app),
-        "blackboard_remove" => blackboard::blackboard_remove(conn, &call.arguments, app),
+        "blackboard_add_widget" => blackboard::blackboard_add_widget(conn, args, app),
+        "blackboard_remove" => blackboard::blackboard_remove(conn, args, app),
         "blackboard_clear" => blackboard::blackboard_clear(conn, app),
         _ => ToolResult {
             success: false,
@@ -188,13 +186,14 @@ mod tests {
         );
         store::assert_triples(&mut conn, &[one_of], "test").unwrap();
 
-        let args = serde_json::json!({"iri": "foundation:TaskPriority"});
+        let args = serde_json::json!([{"iri": "foundation:TaskPriority"}]);
         let result = concept::get_concept(&conn, &args);
 
         assert!(result.success, "get_concept should succeed");
         let response = result.result.unwrap();
-        assert!(response["allowedValues"].is_array(), "Should have allowedValues array");
-        let allowed = response["allowedValues"].as_array().unwrap();
+        let concept_result = &response["results"][0];
+        assert!(concept_result["allowedValues"].is_array(), "Should have allowedValues array");
+        let allowed = concept_result["allowedValues"].as_array().unwrap();
         assert_eq!(allowed.len(), 2, "Should have 2 allowed values");
 
         let high_value = allowed.iter().find(|v| v["iri"] == "foundation:HighPriority");
@@ -250,13 +249,14 @@ mod tests {
             "test",
         ).unwrap();
 
-        let args = serde_json::json!({"iri": "foundation:priority"});
+        let args = serde_json::json!([{"iri": "foundation:priority"}]);
         let result = detail::get_detail(&conn, &args);
 
         assert!(result.success, "get_detail should succeed");
         let response = result.result.unwrap();
-        assert!(response["allowedValues"].is_array(), "Should have allowedValues array");
-        let allowed = response["allowedValues"].as_array().unwrap();
+        let detail_result = &response["results"][0];
+        assert!(detail_result["allowedValues"].is_array(), "Should have allowedValues array");
+        let allowed = detail_result["allowedValues"].as_array().unwrap();
         assert_eq!(allowed.len(), 1, "Should have 1 allowed value");
         assert_eq!(allowed[0]["iri"], "foundation:HighPriority");
         assert_eq!(allowed[0]["label"], "High");

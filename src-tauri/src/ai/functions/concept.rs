@@ -5,7 +5,14 @@ use crate::owl::Class;
 use crate::eavto::query;
 use super::ToolResult;
 
+const SCORE_LABEL_MATCH: usize = 3;
+const SCORE_COMMENT_MATCH: usize = 2;
+
 pub fn search_concepts(conn: &Connection, args: &Value) -> ToolResult {
+    super::batch::run_multi_read(conn, args, search_concepts_one)
+}
+
+fn search_concepts_one(conn: &Connection, args: &Value) -> ToolResult {
     let query_str = args.get("query")
         .and_then(|v| v.as_str())
         .unwrap_or("");
@@ -54,9 +61,9 @@ pub fn search_concepts(conn: &Connection, args: &Value) -> ToolResult {
                     let mut match_count = 0;
                     for token in &search_tokens {
                         if label_lower.contains(token) {
-                            match_count += 3;
+                            match_count += SCORE_LABEL_MATCH;
                         } else if comment_lower.contains(token) {
-                            match_count += 2;
+                            match_count += SCORE_COMMENT_MATCH;
                         }
                     }
 
@@ -116,6 +123,10 @@ pub fn search_concepts(conn: &Connection, args: &Value) -> ToolResult {
 }
 
 pub fn get_concept(conn: &Connection, args: &Value) -> ToolResult {
+    super::batch::run_multi_read(conn, args, get_concept_one)
+}
+
+fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").or_else(|| args.get("IRI")).and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
@@ -196,6 +207,14 @@ pub fn create_concept(
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, create_concept_one)
+}
+
+fn create_concept_one(
+    conn: &mut Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
@@ -264,6 +283,14 @@ pub fn create_concept(
 }
 
 pub fn update_concept(
+    conn: &mut Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, update_concept_one)
+}
+
+fn update_concept_one(
     conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
@@ -369,6 +396,14 @@ pub fn delete_concept(
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, delete_concept_one)
+}
+
+fn delete_concept_one(
+    conn: &mut Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
@@ -411,75 +446,3 @@ pub fn delete_concept(
     }
 }
 
-#[allow(dead_code)]
-pub fn get_concept_hierarchy(conn: &Connection, args: &Value) -> ToolResult {
-    let iri = match args.get("iri").and_then(|v| v.as_str()) {
-        Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: iri".to_string()),
-        },
-    };
-
-    let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
-
-    match (|| {
-        use crate::owl::vocabulary::rdfs;
-
-        fn get_hierarchy_recursive(
-            conn: &Connection,
-            concept_iri: &str,
-            depth: usize,
-            max_depth: usize,
-            visited: &mut std::collections::HashSet<String>,
-        ) -> Result<Value, crate::owl::OwlError> {
-            if depth >= max_depth || visited.contains(concept_iri) {
-                return Ok(serde_json::json!({
-                    "iri": concept_iri,
-                    "label": Class::get(conn, concept_iri).ok().flatten().and_then(|c| c.label),
-                    "subClasses": [],
-                    "truncated": depth >= max_depth,
-                }));
-            }
-
-            visited.insert(concept_iri.to_string());
-
-            let concept = Class::get(conn, concept_iri)?
-                .ok_or_else(|| crate::owl::OwlError::NotFound(concept_iri.to_string()))?;
-            let mut sub_concepts = Vec::new();
-
-            let sub_result = query::get_by_predicate_object(conn, rdfs::SUB_CLASS_OF, concept_iri)?;
-            for triple in sub_result.triples {
-                let sub_hierarchy = get_hierarchy_recursive(
-                    conn, &triple.subject, depth + 1, max_depth, visited,
-                )?;
-                sub_concepts.push(sub_hierarchy);
-            }
-
-            Ok(serde_json::json!({
-                "iri": concept.iri,
-                "label": concept.label,
-                "icon": concept.icon,
-                "subClasses": sub_concepts,
-                "truncated": false,
-            }))
-        }
-
-        let mut visited = std::collections::HashSet::new();
-        let hierarchy = get_hierarchy_recursive(conn, iri, 0, max_depth, &mut visited)?;
-
-        Ok::<_, crate::owl::OwlError>(hierarchy)
-    })() {
-        Ok(result) => ToolResult {
-            success: true,
-            result: Some(result),
-            error: None,
-        },
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e.to_string()),
-        },
-    }
-}

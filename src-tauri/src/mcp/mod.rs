@@ -8,6 +8,9 @@ use crate::ai::functions::{ToolCall, ToolResult, execute_tool, get_available_too
 use crate::eavto::DbExecutor;
 
 const PORT: u16 = 47177;
+const JSONRPC_METHOD_NOT_FOUND: i32 = -32601;
+const JSONRPC_INVALID_PARAMS: i32 = -32602;
+const JSONRPC_INTERNAL_ERROR: i32 = -32603;
 
 #[derive(Clone)]
 struct McpState {
@@ -49,7 +52,6 @@ async fn handle_mcp(
 
     match method {
         "initialize" => {
-            // Echo back the client's protocol version if we support it
             let protocol_version = match req["params"]["protocolVersion"].as_str() {
                 Some("2025-03-26") => "2025-03-26",
                 _ => "2024-11-05",
@@ -81,16 +83,15 @@ async fn handle_mcp(
             let name = match req["params"]["name"].as_str() {
                 Some(n) => n.to_string(),
                 None => return Json(
-                    error_response(id, -32602, "Missing tool name"),
+                    error_response(id, JSONRPC_INVALID_PARAMS, "Missing tool name"),
                 ).into_response(),
             };
 
-            // Use the shared DbExecutor — same path as the internal AI in chat.rs
             let executor = match state.app.try_state::<DbExecutor>() {
                 Some(e) => e.inner().clone(),
                 None => return Json(error_response(
                     id,
-                    -32603,
+                    JSONRPC_INTERNAL_ERROR,
                     "Foundation not initialized yet — please wait for the app to finish loading",
                 )).into_response(),
             };
@@ -103,12 +104,16 @@ async fn handle_mcp(
                 serde_json::to_string(&result).map_err(|e| e.to_string())
             }).await {
                 Ok(json) => json,
-                Err(e) => return Json(error_response(id, -32603, &e)).into_response(),
+                Err(e) => return Json(
+                    error_response(id, JSONRPC_INTERNAL_ERROR, &e),
+                ).into_response(),
             };
 
             let func_result: ToolResult = match serde_json::from_str(&result_json) {
                 Ok(r) => r,
-                Err(e) => return Json(error_response(id, -32603, &e.to_string())).into_response(),
+                Err(e) => return Json(
+                    error_response(id, JSONRPC_INTERNAL_ERROR, &e.to_string()),
+                ).into_response(),
             };
 
             if func_result.success {
@@ -125,13 +130,13 @@ async fn handle_mcp(
             } else {
                 Json(error_response(
                     id,
-                    -32603,
+                    JSONRPC_INTERNAL_ERROR,
                     &func_result.error.unwrap_or_else(|| "Tool execution failed".to_string()),
                 )).into_response()
             }
         }
 
-        _ => Json(error_response(id, -32601, "Method not found")).into_response(),
+        _ => Json(error_response(id, JSONRPC_METHOD_NOT_FOUND, "Method not found")).into_response(),
     }
 }
 
@@ -149,14 +154,32 @@ fn to_mcp_tool(f: crate::ai::functions::ToolTemplate) -> Value {
         }
     }
 
+    let item_schema = json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+    });
+
+    let input_schema = if f.array_mode {
+        json!({
+            "type": "object",
+            "properties": {
+                "operations": {
+                    "type": "array",
+                    "items": item_schema,
+                    "minItems": 1,
+                }
+            },
+            "required": ["operations"],
+        })
+    } else {
+        item_schema
+    };
+
     json!({
         "name": f.name,
         "description": f.description,
-        "inputSchema": {
-            "type": "object",
-            "properties": properties,
-            "required": required
-        }
+        "inputSchema": input_schema
     })
 }
 

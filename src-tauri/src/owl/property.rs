@@ -219,18 +219,6 @@ impl Property {
         Ok(())
     }
 
-    pub fn get_all_iris(conn: &Connection) -> Result<Vec<String>> {
-        let obj_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::OBJECT_PROPERTY)?;
-        let data_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::DATATYPE_PROPERTY)?;
-        let mut iris: Vec<String> = obj_result.triples.into_iter()
-            .chain(data_result.triples)
-            .map(|t| t.subject)
-            .collect();
-        iris.sort();
-        iris.dedup();
-        Ok(iris)
-    }
-
     pub fn retract(conn: &mut Connection, iri: &str, origin: &str) -> Result<Vec<String>> {
         let facts = query::get_by_predicate(conn, iri)?;
         let mut affected: std::collections::HashSet<String> = std::collections::HashSet::new();

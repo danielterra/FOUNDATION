@@ -28,6 +28,52 @@ pub fn blackboard_add_widget(
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
+    let ops = match args.as_array() {
+        Some(ops) if !ops.is_empty() => ops.clone(),
+        Some(_) => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Operations array must not be empty".to_string()),
+        },
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Arguments must be a non-empty array of operations".to_string()),
+        },
+    };
+
+    let mut results = Vec::new();
+    for (i, op) in ops.iter().enumerate() {
+        let result = blackboard_add_widget_one(conn, op, app);
+        if !result.success {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!(
+                    "Operation {} failed: {}",
+                    i,
+                    result.error.unwrap_or_else(|| "unknown error".to_string()),
+                )),
+            };
+        }
+        results.push(result.result);
+    }
+
+    ToolResult {
+        success: true,
+        result: Some(serde_json::json!({
+            "operationsCompleted": results.len(),
+            "results": results,
+        })),
+        error: None,
+    }
+}
+
+fn blackboard_add_widget_one(
+    conn: &rusqlite::Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
     let widget_type = match args.get("widget_type").and_then(|v| v.as_str()) {
         Some(t) => t.to_lowercase(),
         None => return ToolResult {
@@ -101,6 +147,52 @@ pub fn blackboard_add_widget(
 }
 
 pub fn blackboard_remove(
+    conn: &rusqlite::Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    let ops = match args.as_array() {
+        Some(ops) if !ops.is_empty() => ops.clone(),
+        Some(_) => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Operations array must not be empty".to_string()),
+        },
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Arguments must be a non-empty array of operations".to_string()),
+        },
+    };
+
+    let mut results = Vec::new();
+    for (i, op) in ops.iter().enumerate() {
+        let result = blackboard_remove_one(conn, op, app);
+        if !result.success {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!(
+                    "Operation {} failed: {}",
+                    i,
+                    result.error.unwrap_or_else(|| "unknown error".to_string()),
+                )),
+            };
+        }
+        results.push(result.result);
+    }
+
+    ToolResult {
+        success: true,
+        result: Some(serde_json::json!({
+            "operationsCompleted": results.len(),
+            "results": results,
+        })),
+        error: None,
+    }
+}
+
+fn blackboard_remove_one(
     conn: &rusqlite::Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,

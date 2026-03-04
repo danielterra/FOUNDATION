@@ -11,6 +11,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
     vec![
         ToolTemplate {
             name: "remember_concepts".to_string(),
+            array_mode: true,
             description: concat!(
                 "Search your memory for concepts you know about. Find what types of things",
                 " you've learned. IMPORTANT: Always use English for concept searches and",
@@ -44,6 +45,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "remember_concept".to_string(),
+            array_mode: true,
             description: concat!(
                 "Remember everything you know about a specific concept -",
                 " what it's related to, what things belong to it.",
@@ -59,6 +61,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "remember_things".to_string(),
+            array_mode: true,
             description: concat!(
                 "Search your memory for specific things in a concept",
                 " (e.g., which people, places, or organizations you remember).",
@@ -98,6 +101,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "remember_thing".to_string(),
+            array_mode: true,
             description: concat!(
                 "Remember everything you know about a specific thing",
                 " - all its details and connections.",
@@ -113,6 +117,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "learn_concept".to_string(),
+            array_mode: true,
             description: concat!(
                 "Learn a new concept (e.g., when users mention a new type of thing you should",
                 " remember). IMPORTANT: Always create concepts with English labels and",
@@ -161,6 +166,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "learn_thing".to_string(),
+            array_mode: true,
             description: concat!(
                 "Learn about a new specific thing (person, place, organization, etc.).",
                 " You'll get back an ID to reference it later. IMPORTANT: Before creating a",
@@ -200,6 +206,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "learn_thing_detail".to_string(),
+            array_mode: true,
             description: concat!(
                 "Set the complete list of values for a property on a thing. ALWAYS replaces",
                 " all existing values — pass every desired value in a single call.",
@@ -257,6 +264,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "learn_connection_type".to_string(),
+            array_mode: true,
             description: concat!(
                 "Learn a new type of connection or detail you can remember about things",
                 " (e.g., 'worksAt', 'bornOn', 'hasSkill').",
@@ -320,6 +328,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "remember_connection_type".to_string(),
+            array_mode: true,
             description: concat!(
                 "Remember everything you know about a specific type of connection.",
             ).to_string(),
@@ -334,6 +343,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "forget_concept".to_string(),
+            array_mode: true,
             description: concat!(
                 "Forget a concept (but not the specific things that belong to it).",
             ).to_string(),
@@ -348,6 +358,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "forget_thing".to_string(),
+            array_mode: true,
             description: concat!(
                 "Forget a specific thing completely (all its details and connections).",
             ).to_string(),
@@ -362,6 +373,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "forget_connection_type".to_string(),
+            array_mode: true,
             description: "Forget a type of connection.".to_string(),
             parameters: vec![
                 Parameter {
@@ -374,6 +386,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "update_concept".to_string(),
+            array_mode: true,
             description: "Update details about a concept (name, icon, description).".to_string(),
             parameters: vec![
                 Parameter {
@@ -412,6 +425,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "update_thing".to_string(),
+            array_mode: true,
             description: "Update details about a thing (name, icon, description).".to_string(),
             parameters: vec![
                 Parameter {
@@ -444,6 +458,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "forget_thing_detail".to_string(),
+            array_mode: true,
             description: concat!(
                 "Forget a specific detail or connection about a thing",
                 " (e.g., forget that someone works at X).",
@@ -471,6 +486,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "remember_things_by_details".to_string(),
+            array_mode: true,
             description: concat!(
                 "Remember things that have specific details or connections",
                 " (e.g., remember all people who work at X).",
@@ -494,6 +510,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "blackboard_show".to_string(),
+            array_mode: false,
             description: concat!(
                 "See what is currently being displayed on the blackboard/canvas.",
                 " Returns a list of active widgets.",
@@ -502,6 +519,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "blackboard_add_widget".to_string(),
+            array_mode: true,
             description: concat!(
                 "Add a widget to the blackboard to display information visually.",
                 " The system will automatically position the widget.",
@@ -531,6 +549,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "blackboard_remove".to_string(),
+            array_mode: true,
             description: "Remove a specific widget from the blackboard by its ID.".to_string(),
             parameters: vec![
                 Parameter {
@@ -543,38 +562,11 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
         ToolTemplate {
             name: "blackboard_clear".to_string(),
+            array_mode: false,
             description: concat!(
                 "Clear all widgets from the blackboard. Use this to start fresh.",
             ).to_string(),
             parameters: vec![],
-        },
-        ToolTemplate {
-            name: "batch_operations".to_string(),
-            description: concat!(
-                "Execute multiple ontology-modifying operations as a single atomic database",
-                " transaction. If any operation fails, all previous operations in the batch",
-                " are rolled back, guaranteeing consistency. Supports any combination of",
-                " learn_thing, learn_thing_detail, forget_thing, forget_thing_detail,",
-                " update_thing, learn_concept, update_concept, forget_concept,",
-                " learn_connection_type, and forget_connection_type.",
-                " Read-only tools (remember_*) are also accepted but do not benefit from",
-                " the transaction guarantee.",
-            ).to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "operations".to_string(),
-                    param_type: "array".to_string(),
-                    description: concat!(
-                        "Array of operations to execute atomically. Each element must have:",
-                        " 'tool' (string, the tool name) and 'arguments' (object, the",
-                        " arguments for that tool). Example:",
-                        " [{\"tool\": \"learn_thing_detail\",",
-                        " \"arguments\": {\"thing_iri\": \"...\",",
-                        " \"detail_iri\": \"...\", \"values\": [\"...\"]}}]",
-                    ).to_string(),
-                    required: true,
-                },
-            ],
         },
     ]
 }
