@@ -6,11 +6,18 @@
   import { cubicOut } from 'svelte/easing';
   import InspectorWidget from './InspectorWidget.svelte';
 
+  const BASE_WIDGET_Z_INDEX = 100;
+  const CHAT_PANEL_WIDTH_RATIO = 0.3;
+  const CHAT_PANEL_MIN_WIDTH = 500;
+  const WIDGET_CASCADE_STEPS = 10;
+  const WIDGET_CASCADE_OFFSET = 30;
+  const WIDGET_FLY_DURATION = 1500;
+
   let widgets = $state([]);
   let unlisteners = [];
   let draggedWidget = $state(null);
   let dragOffset = $state({ x: 0, y: 0 });
-  let topZIndex = $state(100);
+  let topZIndex = $state(BASE_WIDGET_Z_INDEX);
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
   let widgetOffset = $state(0);
@@ -18,8 +25,7 @@
   function constrainToBounds(position, size) {
     const minX = 0;
     const minY = 0;
-    // Chat area takes 30% of viewport with min 500px, so exclude that from the right side
-    const chatWidth = Math.max(viewportWidth * 0.3, 500);
+    const chatWidth = Math.max(viewportWidth * CHAT_PANEL_WIDTH_RATIO, CHAT_PANEL_MIN_WIDTH);
     const maxX = viewportWidth - chatWidth - size.width;
     const maxY = viewportHeight - size.height;
 
@@ -33,7 +39,6 @@
     viewportWidth = window.innerWidth;
     viewportHeight = window.innerHeight;
 
-    // Reposition all widgets to ensure they're within bounds
     widgets = widgets.map(w => ({
       ...w,
       position: constrainToBounds(w.position, w.size)
@@ -45,11 +50,10 @@
       const result = await invoke('widget__get_all');
       widgets = result.map((w, index) => ({
         ...w,
-        zIndex: 100 + index
+        zIndex: BASE_WIDGET_Z_INDEX + index
       }));
-      topZIndex = Math.max(100, ...widgets.map(w => w.zIndex));
+      topZIndex = Math.max(BASE_WIDGET_Z_INDEX, ...widgets.map(w => w.zIndex));
 
-      // Constrain widgets to viewport after loading
       updateViewportSize();
     } catch (error) {
       console.error('Failed to load widgets:', error);
@@ -64,7 +68,6 @@
   }
 
   function startDrag(event, widget) {
-    // Only drag from header area
     if (!event.target.closest('.widget-header')) return;
     if (event.target.closest('.close-btn')) return;
 
@@ -85,7 +88,6 @@
     const newX = event.clientX - dragOffset.x;
     const newY = event.clientY - dragOffset.y;
 
-    // Update position locally for smooth dragging with bounds constraint
     widgets = widgets.map(w =>
       w.id === draggedWidget.id
         ? { ...w, position: constrainToBounds({ x: newX, y: newY }, w.size) }
@@ -93,32 +95,27 @@
     );
   }
 
-  async function stopDrag() {
+  function stopDrag() {
     if (!draggedWidget) return;
 
     const widget = widgets.find(w => w.id === draggedWidget.id);
-    if (widget) {
-      try {
-        await invoke('widget__update_position', {
-          widgetId: widget.id,
-          position: widget.position
-        });
-      } catch (error) {
-        console.error('Failed to update widget position:', error);
-      }
-    }
-
     draggedWidget = null;
+
+    if (widget) {
+      invoke('widget__update_position', {
+        widgetId: widget.id,
+        position: widget.position
+      }).catch(error => {
+        console.error('Failed to update widget position:', error);
+      });
+    }
   }
 
   onMount(async () => {
-    // Initialize viewport size
     updateViewportSize();
 
-    // Load widgets initially
     await loadWidgets();
 
-    // Listen for widget events
     const unlistenAdded = await listen('widget-added', (event) => {
       // If widget already exists (e.g. duplicate entity-created event), bring it to front
       const existingIdx = widgets.findIndex(w => w.id === event.payload.id);
@@ -130,15 +127,12 @@
       topZIndex++;
       const newWidget = { ...event.payload, zIndex: topZIndex };
 
-      // Add cascade offset (30px each direction)
-      const cascadeOffset = 30;
-      widgetOffset = (widgetOffset + 1) % 10; // Reset after 10 widgets
+      widgetOffset = (widgetOffset + 1) % WIDGET_CASCADE_STEPS;
       newWidget.position = {
-        x: newWidget.position.x + (widgetOffset * cascadeOffset),
-        y: newWidget.position.y + (widgetOffset * cascadeOffset)
+        x: newWidget.position.x + (widgetOffset * WIDGET_CASCADE_OFFSET),
+        y: newWidget.position.y + (widgetOffset * WIDGET_CASCADE_OFFSET)
       };
 
-      // Ensure new widget is within bounds
       newWidget.position = constrainToBounds(newWidget.position, newWidget.size);
       widgets = [...widgets, newWidget];
     });
@@ -151,7 +145,6 @@
       widgets = [];
     });
 
-    // Listen for entity-created events to auto-open inspector
     const unlistenEntityCreated = await listen('entity-created', async (event) => {
       try {
         await invoke('widget__add', {
@@ -167,11 +160,9 @@
 
     unlisteners = [unlistenAdded, unlistenRemoved, unlistenCleared, unlistenEntityCreated];
 
-    // Add global mouse event listeners for dragging
     document.addEventListener('mousemove', onDrag);
     document.addEventListener('mouseup', stopDrag);
 
-    // Add window resize listener to keep widgets in bounds
     window.addEventListener('resize', updateViewportSize);
   });
 
@@ -199,8 +190,8 @@
     role="dialog"
     tabindex="0"
     aria-label="Widget"
-    in:fly={{ x: -viewportWidth, duration: 1500, opacity: 1, easing: cubicOut }}
-    out:fly={{ x: -viewportWidth, duration: 1500, opacity: 1, easing: cubicOut }}
+    in:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicOut }}
+    out:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicOut }}
   >
     {#if widget.widget_type === 'inspector'}
       <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} />

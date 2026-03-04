@@ -106,19 +106,10 @@ cargo tarpaulin --manifest-path src-tauri/Cargo.toml \
   --include-files "src/eavto/*" "src/owl/*" --out Stdout 2>&1 | tail -n 20
 ```
 
-## Output — Create Issues in Foundation via MCP
+## Output — Report
 
-For each category that has violations, call `learn_thing` to create a `foundation:Issue` instance:
+Print a summary with:
 
-- `concept_iri`: `foundation:Issue`
-- `label`: `"<Category>: <brief description>"` — e.g., `"Layer violation in commands/widget.rs"`
-- `icon`: `bug_report`
-- `comment`: full description with file paths, line numbers, and what to change
-
-Then call `learn_thing_detail`:
-- `foundation:issueType` → `"bug"` (value_type: literal)
-- `foundation:issueStatus` → `foundation:Pending` (value_type: iri)
-
-One Issue per category with violations. Use a clear label that names the category and the most affected file, e.g. `"Layer violation in commands/widget.rs"` or `"Unwrap calls in owl/individual.rs"`. Only create Issues for categories that have actual violations.
-
-After creating Issues, print a summary: files reviewed, issues found by category, and the IRIs of created Issue instances.
+- **Files reviewed**
+- **Result**: `PASSED` if no violations were found, `FAILED` otherwise
+- For each category with violations: category name, list of file:line references, and what must be fixed
