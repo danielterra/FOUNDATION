@@ -225,24 +225,3 @@ fn blackboard_remove_one(
         },
     }
 }
-
-pub fn blackboard_clear(conn: &rusqlite::Connection, app: Option<&tauri::AppHandle>) -> ToolResult {
-    match widget::db_clear_all_widgets(conn) {
-        Ok(_) => {
-            if let Some(app_handle) = app {
-                app_handle.emit("widgets-cleared", ()).ok();
-            }
-
-            ToolResult {
-                success: true,
-                result: Some(serde_json::json!({"message": "All widgets cleared"})),
-                error: None,
-            }
-        },
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e),
-        },
-    }
-}

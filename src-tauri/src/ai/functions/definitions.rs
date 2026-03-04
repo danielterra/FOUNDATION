@@ -97,6 +97,33 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     description: "How many to skip for pagination (default: 0)".to_string(),
                     required: false,
                 },
+                Parameter {
+                    name: "from_millis".to_string(),
+                    param_type: "number".to_string(),
+                    description: concat!(
+                        "Filter to entities created at or after this Unix timestamp in milliseconds.",
+                        " Only applies when concept_iri is provided.",
+                    ).to_string(),
+                    required: false,
+                },
+                Parameter {
+                    name: "to_millis".to_string(),
+                    param_type: "number".to_string(),
+                    description: concat!(
+                        "Filter to entities created at or before this Unix timestamp in milliseconds.",
+                        " Only applies when concept_iri is provided.",
+                    ).to_string(),
+                    required: false,
+                },
+                Parameter {
+                    name: "include_retracted".to_string(),
+                    param_type: "boolean".to_string(),
+                    description: concat!(
+                        "When true, include retracted (deleted) entities in results.",
+                        " Default: false. Only applies when concept_iri is provided.",
+                    ).to_string(),
+                    required: false,
+                },
             ],
         },
         ToolTemplate {
@@ -505,9 +532,19 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     name: "properties".to_string(),
                     param_type: "array".to_string(),
                     description: concat!(
-                        "Details to match: array of {detail: 'IRI', value: 'VALUE'}",
+                        "Details to match: array of {detail: 'IRI', value: 'VALUE', operator: 'OP'}.",
+                        " operator is optional and defaults to '='. Supported operators: '=', '>=', '<=', '>', '<'.",
+                        " For xsd:dateTime values, the operator is applied to the Unix millisecond timestamp.",
                     ).to_string(),
                     required: true,
+                },
+                Parameter {
+                    name: "include_retracted".to_string(),
+                    param_type: "boolean".to_string(),
+                    description: concat!(
+                        "When true, include retracted (deleted) things in results. Default: false.",
+                    ).to_string(),
+                    required: false,
                 },
             ],
         },
@@ -562,14 +599,6 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     required: true,
                 },
             ],
-        },
-        ToolTemplate {
-            name: "blackboard_clear".to_string(),
-            array_mode: false,
-            description: concat!(
-                "Clear all widgets from the blackboard. Use this to start fresh.",
-            ).to_string(),
-            parameters: vec![],
         },
     ]
 }

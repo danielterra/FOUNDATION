@@ -383,6 +383,27 @@ impl Individual {
         query::find_by_class_and_properties(conn, class_iri, properties)
             .map_err(|e| OwlError::DatabaseError(e.to_string()))
     }
+
+    pub fn find_by_class_with_date_range(
+        conn: &Connection,
+        class_iri: &str,
+        from_millis: Option<i64>,
+        to_millis: Option<i64>,
+        include_retracted: bool,
+    ) -> Result<Vec<String>> {
+        query::find_entities_by_class_with_date_range(conn, class_iri, from_millis, to_millis, include_retracted)
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))
+    }
+
+    pub fn find_by_class_and_properties_with_options(
+        conn: &Connection,
+        class_iri: &str,
+        properties: &[(&str, &str, &str)],
+        include_retracted: bool,
+    ) -> Result<Vec<String>> {
+        query::find_by_class_and_properties_with_options(conn, class_iri, properties, include_retracted)
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))
+    }
 }
 
 #[cfg(test)]

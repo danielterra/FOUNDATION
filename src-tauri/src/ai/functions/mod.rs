@@ -124,8 +124,7 @@ pub fn execute_tool(
         "blackboard_show" => blackboard::blackboard_show(conn),
         "blackboard_add_widget" => blackboard::blackboard_add_widget(conn, args, app),
         "blackboard_remove" => blackboard::blackboard_remove(conn, args, app),
-        "blackboard_clear" => blackboard::blackboard_clear(conn, app),
-        _ => ToolResult {
+_ => ToolResult {
             success: false,
             result: None,
             error: Some(format!("Unknown tool: {}", call.name)),

@@ -6,6 +6,7 @@
   let { backlinks, openEntityInspector } = $props();
 
   let collapsedGroups = $state(new Set());
+  let initialized = $state(false);
 
   const groups = $derived(
     (backlinks ?? []).reduce((acc, backlink) => {
@@ -33,8 +34,9 @@
 
   $effect(() => {
     const keys = Object.keys(groups);
-    if (keys.length > 0 && collapsedGroups.size === 0) {
+    if (keys.length > 0 && !initialized) {
       collapsedGroups = new Set(keys);
+      initialized = true;
     }
   });
 

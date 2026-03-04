@@ -42,9 +42,23 @@ fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as usize;
 
+    let from_millis = args.get("from_millis").and_then(|v| v.as_i64());
+    let to_millis = args.get("to_millis").and_then(|v| v.as_i64());
+    let include_retracted = args.get("include_retracted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let use_extended_query = from_millis.is_some() || to_millis.is_some() || include_retracted;
+
     match (|| {
         let thing_iris = if let Some(concept_iri) = concept_iri_opt {
-            Class::get_instances(conn, concept_iri)?
+            if use_extended_query {
+                Individual::find_by_class_with_date_range(
+                    conn, concept_iri, from_millis, to_millis, include_retracted,
+                )?
+            } else {
+                Class::get_instances(conn, concept_iri)?
+            }
         } else {
             Individual::search(conn)?
         };
@@ -409,8 +423,12 @@ fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
         },
     };
 
+    let include_retracted = args.get("include_retracted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     match (|| {
-        let mut detail_constraints = Vec::new();
+        let mut detail_constraints: Vec<(String, String, String)> = Vec::new();
         for prop in properties {
             let detail_iri = prop.get("detail")
                 .and_then(|v| v.as_str())
@@ -422,12 +440,20 @@ fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
                 .ok_or_else(|| crate::owl::OwlError::ValidationError(
                     "Missing 'value' field in constraint".to_string(),
                 ))?;
+            let operator = prop.get("operator")
+                .and_then(|v| v.as_str())
+                .unwrap_or("=");
 
-            detail_constraints.push((detail_iri, value));
+            detail_constraints.push((detail_iri.to_string(), value.to_string(), operator.to_string()));
         }
 
-        let things = Individual::find_by_class_and_properties(
-            conn, concept_iri, &detail_constraints,
+        let constraint_refs: Vec<(&str, &str, &str)> = detail_constraints
+            .iter()
+            .map(|(d, v, o)| (d.as_str(), v.as_str(), o.as_str()))
+            .collect();
+
+        let things = Individual::find_by_class_and_properties_with_options(
+            conn, concept_iri, &constraint_refs, include_retracted,
         )?;
 
         let mut results = Vec::new();
@@ -441,9 +467,10 @@ fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
             }
         }
 
+        let count = results.len();
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "things": results,
-            "count": results.len(),
+            "count": count,
         }))
     })() {
         Ok(result) => ToolResult {

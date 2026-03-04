@@ -2,7 +2,7 @@
 ///
 /// Pure functions for querying the triple store
 
-use rusqlite::{Connection, Row};
+use rusqlite::{Connection, Row, types::Value as SqlValue};
 use super::triple_type::Triple;
 use super::object_type::Object;
 use super::query_result_type::QueryResult;
@@ -325,6 +325,146 @@ pub fn find_by_class_and_properties(
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     Ok(entities)
+}
+
+/// Find entities of a class with optional date range and retraction filtering
+///
+/// Filters by `created_at` on the `rdf:type` triple.
+/// When `include_retracted` is true, retracted entities are included.
+pub fn find_entities_by_class_with_date_range(
+    conn: &Connection,
+    class_iri: &str,
+    from_millis: Option<i64>,
+    to_millis: Option<i64>,
+    include_retracted: bool,
+) -> Result<Vec<String>> {
+    let retracted_clause = if include_retracted { "" } else { " AND retracted = 0" };
+
+    let mut conditions = format!(
+        "predicate = 'rdf:type' AND object = ?1{}",
+        retracted_clause,
+    );
+
+    if from_millis.is_some() {
+        conditions.push_str(" AND created_at >= ?2");
+    }
+    if to_millis.is_some() {
+        let param_num = if from_millis.is_some() { 3 } else { 2 };
+        conditions.push_str(&format!(" AND created_at <= ?{}", param_num));
+    }
+
+    let sql = format!(
+        "SELECT DISTINCT subject FROM triples WHERE {}",
+        conditions
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+
+    let entities: Vec<String> = match (from_millis, to_millis) {
+        (Some(from), Some(to)) => stmt
+            .query_map(rusqlite::params![class_iri, from, to], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?,
+        (Some(from), None) => stmt
+            .query_map(rusqlite::params![class_iri, from], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?,
+        (None, Some(to)) => stmt
+            .query_map(rusqlite::params![class_iri, to], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?,
+        (None, None) => stmt
+            .query_map(rusqlite::params![class_iri], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?,
+    };
+
+    Ok(entities)
+}
+
+/// Find entities by class and properties with operator and retraction support
+///
+/// Like `find_by_class_and_properties` but supports comparison operators for
+/// `xsd:dateTime` property values and an `include_retracted` flag.
+///
+/// The `operator` parameter applies to all property constraints and accepts
+/// `"="`, `">="`, `"<="`, `">"`, `"<"`. For `xsd:dateTime` values the
+/// `object_datetime` column (Unix millis) is used with the operator; for all
+/// other values equality matching against `object_value` / `object` is used.
+pub fn find_by_class_and_properties_with_options(
+    conn: &Connection,
+    class_iri: &str,
+    properties: &[(&str, &str, &str)],  // (predicate, value, operator)
+    include_retracted: bool,
+) -> Result<Vec<String>> {
+    if properties.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let type_retracted_filter = if include_retracted { "" } else { " AND t0.retracted = 0" };
+    let prop_retracted_filter = if include_retracted { "" } else { " AND retracted = 0" };
+
+    let mut query = String::from(
+        "SELECT DISTINCT t0.subject
+         FROM triples t0"
+    );
+    let mut params: Vec<SqlValue> = Vec::new();
+
+    for (i, _) in properties.iter().enumerate() {
+        let n = i + 1;
+        query.push_str(&format!("\n         INNER JOIN triples t{n} ON t0.subject = t{n}.subject"));
+    }
+
+    query.push_str(&format!(
+        "\n         WHERE t0.predicate = 'rdf:type' AND t0.object = ?{type_retracted_filter}"
+    ));
+    params.push(SqlValue::Text(class_iri.to_string()));
+
+    for (i, (prop_iri, _, _)) in properties.iter().enumerate() {
+        let n = i + 1;
+        query.push_str(&format!("\n           AND t{n}.predicate = ?{prop_retracted_filter}"));
+        params.push(SqlValue::Text(prop_iri.to_string()));
+    }
+
+    for (i, (_, value, operator)) in properties.iter().enumerate() {
+        let n = i + 1;
+        if let Ok(millis) = parse_datetime_to_millis(value) {
+            let sql_op = validate_operator(operator)
+                .map_err(|_| format!("Invalid operator '{operator}': must be one of =, >=, <=, >, <"))?;
+            // millis and sql_op are validated — safe to interpolate
+            query.push_str(&format!("\n           AND t{n}.object_datetime {sql_op} {millis}"));
+        } else if *value == "true" || *value == "false" {
+            let bool_val: i64 = if *value == "true" { 1 } else { 0 };
+            query.push_str(&format!(
+                "\n           AND (t{n}.object_value = ? OR t{n}.object = ? OR t{n}.object_boolean = ?)"
+            ));
+            params.push(SqlValue::Text(value.to_string()));
+            params.push(SqlValue::Text(value.to_string()));
+            params.push(SqlValue::Integer(bool_val));
+        } else {
+            query.push_str(&format!(
+                "\n           AND (t{n}.object_value = ? OR t{n}.object = ?)"
+            ));
+            params.push(SqlValue::Text(value.to_string()));
+            params.push(SqlValue::Text(value.to_string()));
+        }
+    }
+
+    let mut stmt = conn.prepare(&query)?;
+    let entities: Vec<String> = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| row.get(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(entities)
+}
+
+fn parse_datetime_to_millis(value: &str) -> std::result::Result<i64, ()> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|dt| dt.timestamp_millis())
+        .map_err(|_| ())
+}
+
+fn validate_operator(op: &str) -> std::result::Result<&str, ()> {
+    match op {
+        "=" | ">=" | "<=" | ">" | "<" => Ok(op),
+        _ => Err(()),
+    }
 }
 
 /// Find entities by attribute value (works for any property)

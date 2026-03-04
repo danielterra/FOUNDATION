@@ -3,7 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { fly } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
+  import { cubicOut, cubicIn } from 'svelte/easing';
   import InspectorWidget from './InspectorWidget.svelte';
 
   const BASE_WIDGET_Z_INDEX = 100;
@@ -11,7 +11,7 @@
   const CHAT_PANEL_MIN_WIDTH = 500;
   const WIDGET_CASCADE_STEPS = 10;
   const WIDGET_CASCADE_OFFSET = 30;
-  const WIDGET_FLY_DURATION = 1500;
+  const WIDGET_FLY_DURATION = 600;
 
   let widgets = $state([]);
   let unlisteners = [];
@@ -191,7 +191,7 @@
     tabindex="0"
     aria-label="Widget"
     in:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicOut }}
-    out:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicOut }}
+    out:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicIn }}
   >
     {#if widget.widget_type === 'inspector'}
       <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} />
