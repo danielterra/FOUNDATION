@@ -20,6 +20,7 @@ pub struct Individual {
     pub comment: Option<String>,
     pub types: Vec<Thing>,
     pub properties: Vec<(String, Object)>, // (property_iri, value)
+    pub property_tx: Vec<i64>, // transaction IDs parallel to properties
     pub backlinks: Vec<(String, String, Object)>, // (source_entity, property_iri, value)
 }
 
@@ -33,6 +34,7 @@ impl Individual {
             comment: None,
             types: Vec::new(),
             properties: Vec::new(),
+            property_tx: Vec::new(),
             backlinks: Vec::new(),
         }
     }
@@ -63,12 +65,16 @@ impl Individual {
             .map(|type_iri| Thing::get(conn, type_iri))
             .collect();
 
-        let properties: Vec<(String, Object)> = all_triples.triples.into_iter()
+        let prop_triples: Vec<_> = all_triples.triples.into_iter()
             .filter(|t| {
                 t.predicate != rdfs::LABEL
                     && t.predicate != rdfs::COMMENT
                     && t.predicate != "foundation:icon"
             })
+            .collect();
+
+        let property_tx: Vec<i64> = prop_triples.iter().map(|t| t.tx).collect();
+        let properties: Vec<(String, Object)> = prop_triples.into_iter()
             .map(|t| (t.predicate, t.object))
             .collect();
 
@@ -85,6 +91,7 @@ impl Individual {
             comment,
             types,
             properties,
+            property_tx,
             backlinks,
         }))
     }

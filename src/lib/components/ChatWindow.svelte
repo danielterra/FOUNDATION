@@ -29,6 +29,8 @@
 	let elapsedSeconds = $state(0);
 	let elapsedInterval = $state(null);
 	let errorMessage = $state(null);
+	let editingMessageIri = $state(null);
+	let editingMessageText = $state('');
 
 	// Load recent messages on mount and request location
 	onMount(async () => {
@@ -268,10 +270,64 @@
 		errorMessage = null;
 	}
 
+	function editMessage(iri, text) {
+		editingMessageIri = iri;
+		editingMessageText = text;
+		inputText = text;
+		if (textareaElement) {
+			textareaElement.focus();
+		}
+	}
+
+	function cancelEdit() {
+		editingMessageIri = null;
+		editingMessageText = '';
+		inputText = '';
+		if (textareaElement) {
+			textareaElement.style.height = 'auto';
+		}
+	}
+
+	async function retryMessage(iri) {
+		if (isLoading || !isInitialized) return;
+
+		startAIStatus('Claude is thinking');
+
+		invoke('chat__retry_from_message', { messageIri: iri }).then(() => {
+			stopAIStatus();
+		}).catch(err => {
+			console.error('Failed to retry message:', err);
+			showError(err);
+			stopAIStatus();
+		});
+	}
+
 	async function sendMessage() {
 		if ((!inputText.trim() && pendingAttachments.length === 0) || isLoading || !isInitialized) return;
 
 		const content = inputText.trim();
+
+		if (editingMessageIri) {
+			const iri = editingMessageIri;
+			editingMessageIri = null;
+			editingMessageText = '';
+			inputText = '';
+			if (textareaElement) {
+				textareaElement.style.height = 'auto';
+			}
+
+			startAIStatus('Claude is thinking');
+
+			invoke('chat__edit_and_retry', { messageIri: iri, newContent: content }).then(() => {
+				stopAIStatus();
+			}).catch(err => {
+				console.error('Failed to edit message:', err);
+				showError(err);
+				stopAIStatus();
+			});
+			return;
+		}
+
 		const attachmentIris = pendingAttachments.map(a => a.iri);
 
 		inputText = '';
@@ -467,6 +523,14 @@
 	<div class="chat-panel">
 		<div class="chat-header">
 			<h2>FOUNDATION</h2>
+			<button
+				class="header-action-btn"
+				onclick={downloadChat}
+				aria-label="Download chat"
+				title="Download chat"
+			>
+				<span class="material-symbols-outlined">download</span>
+			</button>
 		</div>
 		<div class="chat-content">
 				<!-- API Key Input -->
@@ -518,21 +582,15 @@
 					{:else}
 						{#each messages as message}
 							{#if shouldDisplayMessage(message)}
-								<ChatMessageBubble {message} {messages} />
+								<ChatMessageBubble
+									{message}
+									{messages}
+									onEdit={editMessage}
+									onRetry={retryMessage}
+								/>
 							{/if}
 						{/each}
 					{/if}
-				</div>
-
-				<!-- Actions bar -->
-				<div class="chat-actions">
-					<button
-						class="action-btn"
-						onclick={downloadChat}
-						aria-label="Download chat"
-					>
-						<span class="material-symbols-outlined">download</span>
-					</button>
 				</div>
 
 				<ChatAttachmentPreview
@@ -551,6 +609,8 @@
 					onFileSelect={handleFileSelect}
 					bind:textareaElement
 					bind:fileInputElement
+					{editingMessageIri}
+					onCancelEdit={cancelEdit}
 				/>
 				{/if}
 		</div>
@@ -572,6 +632,9 @@
 		padding: 20px 24px;
 		border-bottom: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
 		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
 	}
 
 	.chat-header h2 {
@@ -579,6 +642,31 @@
 		font-size: 20px;
 		font-weight: 600;
 		color: var(--color-neutral-active);
+	}
+
+	.header-action-btn {
+		width: 32px;
+		height: 32px;
+		border-radius: 8px;
+		background: transparent;
+		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+		color: var(--color-neutral);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: all 0.2s;
+		flex-shrink: 0;
+	}
+
+	.header-action-btn:hover {
+		background: color-mix(in srgb, var(--color-white) 10%, transparent);
+		border-color: var(--color-interactive);
+		color: var(--color-interactive);
+	}
+
+	.header-action-btn .material-symbols-outlined {
+		font-size: 18px;
 	}
 
 	.chat-content {
@@ -614,41 +702,6 @@
 	.empty-state .material-symbols-outlined {
 		font-size: 48px;
 		opacity: 0.3;
-	}
-
-	/* Actions bar */
-	.chat-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 8px;
-		margin-bottom: 12px;
-		padding-bottom: 12px;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-		flex-shrink: 0;
-	}
-
-	.action-btn {
-		width: 32px;
-		height: 32px;
-		border-radius: 8px;
-		background: transparent;
-		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-		color: var(--color-neutral);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: all 0.2s;
-	}
-
-	.action-btn:hover {
-		background: color-mix(in srgb, var(--color-white) 10%, transparent);
-		border-color: var(--color-interactive);
-		color: var(--color-interactive);
-	}
-
-	.action-btn .material-symbols-outlined {
-		font-size: 18px;
 	}
 
 	/* Error Banner */

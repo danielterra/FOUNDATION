@@ -548,5 +548,33 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             ).to_string(),
             parameters: vec![],
         },
+        ToolTemplate {
+            name: "batch_operations".to_string(),
+            description: concat!(
+                "Execute multiple ontology-modifying operations as a single atomic database",
+                " transaction. If any operation fails, all previous operations in the batch",
+                " are rolled back, guaranteeing consistency. Supports any combination of",
+                " learn_thing, learn_thing_detail, forget_thing, forget_thing_detail,",
+                " update_thing, learn_concept, update_concept, forget_concept,",
+                " learn_connection_type, and forget_connection_type.",
+                " Read-only tools (remember_*) are also accepted but do not benefit from",
+                " the transaction guarantee.",
+            ).to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "operations".to_string(),
+                    param_type: "array".to_string(),
+                    description: concat!(
+                        "Array of operations to execute atomically. Each element must have:",
+                        " 'tool' (string, the tool name) and 'arguments' (object, the",
+                        " arguments for that tool). Example:",
+                        " [{\"tool\": \"learn_thing_detail\",",
+                        " \"arguments\": {\"thing_iri\": \"...\",",
+                        " \"detail_iri\": \"...\", \"values\": [\"...\"]}}]",
+                    ).to_string(),
+                    required: true,
+                },
+            ],
+        },
     ]
 }

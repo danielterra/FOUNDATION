@@ -10,6 +10,8 @@
 		onFileSelect,
 		textareaElement = $bindable(null),
 		fileInputElement = $bindable(null),
+		editingMessageIri = null,
+		onCancelEdit = null,
 	} = $props();
 
 	function openFilePicker() {
@@ -38,6 +40,17 @@
 			</div>
 			<span class="ai-status-text">{aiStatus.status} ({elapsedSeconds}s)</span>
 		</div>
+	</div>
+{/if}
+
+<!-- Edit mode banner -->
+{#if editingMessageIri}
+	<div class="edit-banner">
+		<span class="material-symbols-outlined">edit</span>
+		<span class="edit-banner-text">Editing message</span>
+		<button class="edit-cancel-btn" onclick={onCancelEdit} aria-label="Cancel edit">
+			<span class="material-symbols-outlined">close</span>
+		</button>
 	</div>
 {/if}
 
@@ -143,6 +156,52 @@
 			transform: scale(1.2);
 			opacity: 1;
 		}
+	}
+
+	/* Edit banner */
+	.edit-banner {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 12px;
+		margin-bottom: 8px;
+		background: color-mix(in srgb, var(--color-interactive) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
+		border-radius: 8px;
+		font-size: 13px;
+		color: var(--color-interactive);
+		animation: fadeIn 0.2s;
+	}
+
+	.edit-banner .material-symbols-outlined {
+		font-size: 16px;
+		flex-shrink: 0;
+	}
+
+	.edit-banner-text {
+		flex: 1;
+		font-weight: 500;
+	}
+
+	.edit-cancel-btn {
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--color-interactive);
+		padding: 0;
+		display: flex;
+		align-items: center;
+		opacity: 0.7;
+		transition: opacity 0.15s;
+		flex-shrink: 0;
+	}
+
+	.edit-cancel-btn:hover {
+		opacity: 1;
+	}
+
+	.edit-cancel-btn .material-symbols-outlined {
+		font-size: 16px;
 	}
 
 	/* Input */

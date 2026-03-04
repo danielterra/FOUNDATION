@@ -420,6 +420,44 @@ pub fn get_history(conn: &Connection, entity: &str) -> Result<Vec<(i64, Vec<Trip
     Ok(result)
 }
 
+/// Get the maximum tx (most recent transaction) for each of the given entity IRIs.
+/// Returns a HashMap from entity IRI to its max tx value.
+/// Entities with no active triples are omitted from the result.
+pub fn get_entities_max_tx(
+    conn: &Connection,
+    entity_iris: &[String],
+) -> Result<std::collections::HashMap<String, i64>> {
+    if entity_iris.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let placeholders = entity_iris
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT subject, MAX(tx) FROM triples WHERE subject IN ({}) AND retracted = 0 GROUP BY subject",
+        placeholders
+    );
+
+    let params: Vec<&dyn rusqlite::ToSql> = entity_iris
+        .iter()
+        .map(|s| s as &dyn rusqlite::ToSql)
+        .collect();
+
+    let mut stmt = conn.prepare(&sql)?;
+    let result = stmt
+        .query_map(params.as_slice(), |row| {
+            let subject: String = row.get(0)?;
+            let max_tx: i64 = row.get(1)?;
+            Ok((subject, max_tx))
+        })?
+        .collect::<std::result::Result<std::collections::HashMap<_, _>, _>>()?;
+
+    Ok(result)
+}
+
 /// Convert SQLite row to Triple
 fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
     let subject: String = row.get(0)?;

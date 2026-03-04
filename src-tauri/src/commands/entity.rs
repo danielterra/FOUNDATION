@@ -2,10 +2,6 @@ use serde::Serialize;
 use tauri::State;
 use crate::owl::{self, Class, Individual, Property, Connection, DbExecutor};
 
-const GROUP_CLASS: u8 = 1;
-const GROUP_INDIVIDUAL: u8 = 6;
-const GROUP_LITERAL: u8 = 7;
-
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum EntityType {
@@ -146,14 +142,39 @@ pub async fn entity__get(
 ) -> Result<String, String> {
     executor.read(move |conn| {
         let entity_type = determine_entity_type(conn, &entity_id)?;
+        let groups = owl::load_graph_node_groups(conn);
 
         let data = match entity_type {
-            EntityType::Class => get_class_data(conn, &entity_id)?,
-            EntityType::Individual => get_individual_data(conn, &entity_id)?,
+            EntityType::Class => get_class_data(conn, &entity_id, groups)?,
+            EntityType::Individual => get_individual_data(conn, &entity_id, groups)?,
         };
 
         serde_json::to_string(&data).map_err(|e| e.to_string())
     }).await
+}
+
+/// Returns the GraphNodeType configuration stored in the ontology.
+/// The frontend uses this to map group discriminators to visual styles.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn entity__get_node_type_config(
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor.read(move |conn| {
+        let configs = owl::get_graph_node_type_config(conn);
+        serde_json::to_string(&configs).map_err(|e| e.to_string())
+    }).await
+}
+
+fn sort_backlinks_by_recency(conn: &Connection, backlinks: &mut Vec<PropertyValue>) {
+    let entity_iris: Vec<String> = backlinks.iter().map(|b| b.value.clone()).collect();
+    let max_tx_map = crate::eavto::query::get_entities_max_tx(conn, &entity_iris)
+        .unwrap_or_default();
+    backlinks.sort_by(|a, b| {
+        let tx_a = max_tx_map.get(&a.value).copied().unwrap_or(0);
+        let tx_b = max_tx_map.get(&b.value).copied().unwrap_or(0);
+        tx_b.cmp(&tx_a)
+    });
 }
 
 fn resolve_unit_label(conn: &Connection, unit_iri: &str) -> Option<String> {
@@ -199,7 +220,8 @@ fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityTyp
     Err(format!("Entity {} not found or unknown type", entity_id))
 }
 
-fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, String> {
+fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Result<EntityData, String> {
+    let (group_class, _group_individual, group_literal) = groups;
     let class = Class::get(conn, class_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Class {} not found", class_id))?;
@@ -217,7 +239,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         id: class_id.to_string(),
         label: label.clone(),
         icon: icon.clone(),
-        group: GROUP_CLASS,
+        group: group_class,
         is_broken_ref: None,
         is_literal: None,
     });
@@ -229,7 +251,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
                 id: super_class.iri.clone(),
                 label: super_class.label.clone(),
                 icon: super_class.icon.clone(),
-                group: GROUP_CLASS,
+                group: group_class,
                 is_broken_ref: None,
                 is_literal: None,
             });
@@ -249,7 +271,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
                 id: sub_class.iri.clone(),
                 label: sub_class.label.clone(),
                 icon: sub_class.icon.clone(),
-                group: GROUP_CLASS,
+                group: group_class,
                 is_broken_ref: None,
                 is_literal: None,
             });
@@ -278,7 +300,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
                         id: range_iri.clone(),
                         label: range_thing.label,
                         icon: range_thing.icon,
-                        group: GROUP_CLASS,
+                        group: group_class,
                         is_broken_ref: None,
                         is_literal: None,
                     });
@@ -302,7 +324,7 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
                         id: literal_node_id.clone(),
                         label: range_thing.label,
                         icon: range_thing.icon,
-                        group: GROUP_LITERAL,
+                        group: group_literal,
                         is_broken_ref: None,
                         is_literal: Some(true),
                     });
@@ -448,6 +470,8 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
         });
     }
 
+    sort_backlinks_by_recency(conn, &mut backlinks);
+
     let status = resolve_entity_status(conn, &properties);
 
     Ok(EntityData {
@@ -467,7 +491,8 @@ fn get_class_data(conn: &Connection, class_id: &str) -> Result<EntityData, Strin
     })
 }
 
-fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityData, String> {
+fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, u8)) -> Result<EntityData, String> {
+    let (group_class, group_individual, group_literal) = groups;
     let individual = Individual::get(conn, individual_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Individual {} not found", individual_id))?;
@@ -475,6 +500,16 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
     let label = individual.label.unwrap_or_else(|| individual_id.to_string());
     let icon = individual.icon;
     let comment = individual.comment;
+
+    let mut max_tx_per_predicate: std::collections::HashMap<String, i64> =
+        std::collections::HashMap::new();
+    for (idx, (property_iri, _)) in individual.properties.iter().enumerate() {
+        let tx = individual.property_tx.get(idx).copied().unwrap_or(0);
+        let entry = max_tx_per_predicate.entry(property_iri.clone()).or_insert(0);
+        if tx > *entry {
+            *entry = tx;
+        }
+    }
 
     let mut properties = Vec::new();
     for (property_iri, value_obj) in &individual.properties {
@@ -530,6 +565,12 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         });
     }
 
+    properties.sort_by(|a, b| {
+        let tx_a = max_tx_per_predicate.get(&a.property).copied().unwrap_or(0);
+        let tx_b = max_tx_per_predicate.get(&b.property).copied().unwrap_or(0);
+        tx_b.cmp(&tx_a)
+    });
+
     let mut nodes = Vec::new();
     let mut links = Vec::new();
     let mut added_node_ids = std::collections::HashSet::new();
@@ -538,7 +579,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
         id: individual_id.to_string(),
         label: label.clone(),
         icon: icon.clone(),
-        group: GROUP_INDIVIDUAL,
+        group: group_individual,
         is_broken_ref: None,
         is_literal: None,
     });
@@ -550,7 +591,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                 id: class_thing.iri.clone(),
                 label: class_thing.label.clone(),
                 icon: class_thing.icon.clone(),
-                group: GROUP_CLASS,
+                group: group_class,
                 is_broken_ref: None,
                 is_literal: None,
             });
@@ -579,7 +620,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                     } else {
                         Some("warning".to_string())
                     },
-                    group: GROUP_INDIVIDUAL,
+                    group: group_individual,
                     is_broken_ref: if entity_exists_flag { None } else { Some(true) },
                     is_literal: None,
                 });
@@ -605,7 +646,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                     id: literal_node_id.clone(),
                     label: display_value,
                     icon: prop.value_icon.clone(),
-                    group: GROUP_LITERAL,
+                    group: group_literal,
                     is_broken_ref: None,
                     is_literal: Some(true),
                 });
@@ -633,7 +674,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
                 } else {
                     Some("warning".to_string())
                 },
-                group: GROUP_INDIVIDUAL,
+                group: group_individual,
                 is_broken_ref: if entity_exists_flag { None } else { Some(true) },
                 is_literal: None,
             });
@@ -689,6 +730,8 @@ fn get_individual_data(conn: &Connection, individual_id: &str) -> Result<EntityD
             value_status: resolve_status_for_entity(conn, source_entity),
         });
     }
+
+    sort_backlinks_by_recency(conn, &mut backlinks);
 
     let status = resolve_entity_status(conn, &properties);
 

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use rusqlite::Connection;
 
+mod batch;
 mod blackboard;
 mod concept;
 mod definitions;
@@ -121,6 +122,7 @@ pub fn execute_tool(
         "forget_thing_detail" => detail::forget_detail_value(conn, &call.arguments, app),
         "update_concept" => concept::update_concept(conn, &call.arguments, app),
         "update_thing" => thing::update_thing(conn, &call.arguments, app),
+        "batch_operations" => batch::batch_operations(conn, &call.arguments, app),
         "blackboard_show" => blackboard::blackboard_show(conn),
         "blackboard_add_widget" => blackboard::blackboard_add_widget(conn, &call.arguments, app),
         "blackboard_remove" => blackboard::blackboard_remove(conn, &call.arguments, app),

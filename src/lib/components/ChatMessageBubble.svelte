@@ -8,7 +8,33 @@
 		gfm: true,
 	});
 
-	let { message, messages } = $props();
+	let { message, messages, onEdit = null, onRetry = null } = $props();
+
+	let copySuccess = $state(false);
+	let copyTimeout = null;
+
+	async function copyMessage() {
+		const text = extractTextFromContent(message.content);
+		try {
+			await navigator.clipboard.writeText(text);
+			copySuccess = true;
+			if (copyTimeout) clearTimeout(copyTimeout);
+			copyTimeout = setTimeout(() => {
+				copySuccess = false;
+			}, 2000);
+		} catch (err) {
+			console.error('Failed to copy:', err);
+		}
+	}
+
+	function handleEdit() {
+		const text = extractTextFromContent(message.content);
+		onEdit?.(message.iri, text);
+	}
+
+	function handleRetry() {
+		onRetry?.(message.iri);
+	}
 
 	function renderMarkdown(text) {
 		if (!text) return '';
@@ -86,6 +112,23 @@
 <div
 	class="message {message.role === 'user' ? 'user' : 'ai'} {message.isThinking ? 'thinking' : ''}"
 >
+	{#if !message.isThinking}
+		<div class="message-action-bar">
+			<button class="action-btn" onclick={copyMessage} title="Copy message">
+				<span class="material-symbols-outlined">{copySuccess ? 'check' : 'content_copy'}</span>
+			</button>
+			{#if message.role === 'user' && onEdit}
+				<button class="action-btn" onclick={handleEdit} title="Edit message">
+					<span class="material-symbols-outlined">edit</span>
+				</button>
+			{/if}
+			{#if message.role === 'assistant' && onRetry}
+				<button class="action-btn" onclick={handleRetry} title="Retry">
+					<span class="material-symbols-outlined">refresh</span>
+				</button>
+			{/if}
+		</div>
+	{/if}
 	<div class="message-content">
 		{#if message.isThinking}
 			<div class="thinking-indicator">
@@ -263,6 +306,48 @@
 
 	.message.ai {
 		align-items: flex-start;
+	}
+
+	.message-action-bar {
+		display: none;
+		gap: 2px;
+		margin-bottom: 2px;
+	}
+
+	.message:hover .message-action-bar {
+		display: flex;
+	}
+
+	.message.user .message-action-bar {
+		justify-content: flex-end;
+	}
+
+	.message.ai .message-action-bar {
+		justify-content: flex-start;
+	}
+
+	.action-btn {
+		width: 24px;
+		height: 24px;
+		border-radius: 4px;
+		background: transparent;
+		border: none;
+		color: var(--color-neutral-disabled);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: color 0.15s, background 0.15s;
+		padding: 0;
+	}
+
+	.action-btn:hover {
+		color: var(--color-neutral-active);
+		background: color-mix(in srgb, var(--color-white) 10%, transparent);
+	}
+
+	.action-btn .material-symbols-outlined {
+		font-size: 14px;
 	}
 
 	@keyframes fadeIn {

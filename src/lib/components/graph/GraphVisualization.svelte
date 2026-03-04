@@ -1,6 +1,7 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
 	import * as d3 from 'd3';
+	import { invoke } from '@tauri-apps/api/core';
 	import { createForceDirectedLayout } from './forceDirectedLayout.js';
 
 	export let graphData;
@@ -16,7 +17,7 @@
 
 	let nodes, links, linkLabelGroups, layoutLinks, layoutNodes;
 
-	const NODE_TYPE = {
+	let NODE_TYPE = {
 		CLASS: 1,
 		INDIVIDUAL: 6,
 		LITERAL: 7
@@ -106,7 +107,22 @@
 		if (linkLabelGroups) linkLabelGroups.style('opacity', 1);
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		try {
+			const raw = await invoke('entity__get_node_type_config');
+			const configs = JSON.parse(raw);
+			const labelToKey = { 'Class Node': 'CLASS', 'Individual Node': 'INDIVIDUAL', 'Literal Node': 'LITERAL' };
+			const resolved = {};
+			for (const entry of configs) {
+				const key = labelToKey[entry.label];
+				if (key !== undefined) resolved[key] = entry.group;
+			}
+			if (resolved.CLASS !== undefined && resolved.INDIVIDUAL !== undefined && resolved.LITERAL !== undefined) {
+				NODE_TYPE = resolved;
+			}
+		} catch (_) {
+		}
+
 		const updateSize = () => {
 			const newWidth = window.innerWidth;
 			const newHeight = window.innerHeight;

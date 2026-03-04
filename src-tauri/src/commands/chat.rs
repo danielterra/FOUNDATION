@@ -716,11 +716,62 @@ pub async fn chat__get_recent_messages(
             let content_blocks: Vec<ContentBlock> = serde_json::from_str(&content_json)
                 .unwrap_or_else(|_| vec![ContentBlock::Text { text: content_json.clone() }]);
 
+            let attachments: Vec<serde_json::Value> = content_blocks.iter()
+                .filter_map(|block| {
+                    if let ContentBlock::FileRef { file_iri, file_name, .. } = block {
+                        let file_entity = Individual::get(conn, file_iri).ok().flatten()?;
+
+                        let file_path = file_entity.properties.iter()
+                            .find(|(k, _)| k == "foundation:filePath")
+                            .and_then(|(_, v)| match v {
+                                Object::Literal { value, .. } => {
+                                    Some(value.trim_start_matches("file://").to_string())
+                                },
+                                _ => None,
+                            })?;
+
+                        let file_size = file_entity.properties.iter()
+                            .find(|(k, _)| k == "foundation:fileSize")
+                            .and_then(|(_, v)| match v {
+                                Object::Integer(n) => Some(*n),
+                                _ => None,
+                            })
+                            .unwrap_or(0);
+
+                        let mime_type = file_entity.properties.iter()
+                            .find(|(k, _)| k == "foundation:hasFileType")
+                            .and_then(|(_, v)| match v {
+                                Object::Iri(iri) => Individual::get(conn, iri.as_str()).ok()
+                                    .flatten()
+                                    .and_then(|ft| ft.properties.into_iter()
+                                        .find(|(k, _)| k == "foundation:mimeType")
+                                        .and_then(|(_, v)| match v {
+                                            Object::Literal { value, .. } => Some(value),
+                                            _ => None,
+                                        })
+                                    ),
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| "application/octet-stream".to_string());
+
+                        Some(serde_json::json!({
+                            "fileName": file_name,
+                            "filePath": file_path,
+                            "fileSize": file_size,
+                            "mimeType": mime_type,
+                        }))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             let msg_json = serde_json::json!({
                 "iri": iri,
                 "role": role,
                 "content": content_blocks,
                 "timestamp": timestamp,
+                "attachments": attachments,
             });
 
             messages_with_ts.push((timestamp, msg_json));
@@ -789,6 +840,7 @@ async fn get_max_input_tokens(executor: &DbExecutor) -> Result<usize, String> {
     }).await
 }
 
+
 /// Get AI model IRI with fallback logic:
 /// Check DefaultAIModelSetting (user updates this setting, not creates new one)
 fn get_ai_model_iri(conn: &Connection) -> Result<Option<String>, String> {
@@ -802,6 +854,232 @@ fn get_ai_model_iri(conn: &Connection) -> Result<Option<String>, String> {
     }
 
     Ok(None)
+}
+
+/// Retract all messages in the conversation with sentAt >= from_timestamp (exclusive of the
+/// message at exactly from_timestamp when exclude_exact is true).
+fn delete_messages_from_timestamp(
+    conn: &mut crate::owl::Connection,
+    conversation_iri: &str,
+    from_timestamp: i64,
+    exclude_exact: bool,
+) -> Result<(), String> {
+    let message_iris = Individual::find_by_class_and_properties(
+        conn,
+        "foundation:AIConversationMessage",
+        &[("foundation:partOfConversation", conversation_iri)],
+    ).map_err(|e| format!("Failed to query messages: {}", e))?;
+
+    for iri in message_iris {
+        let ind = match Individual::get(conn, &iri) {
+            Ok(Some(i)) => i,
+            _ => continue,
+        };
+
+        let timestamp = ind.properties.iter()
+            .find(|(k, _)| k == "foundation:sentAt")
+            .and_then(|(_, v)| match v {
+                Object::DateTime(ts) => Some(*ts),
+                Object::Literal { value, .. } => value.parse::<i64>().ok(),
+                _ => None,
+            });
+
+        let ts = match timestamp {
+            Some(t) => t,
+            None => continue,
+        };
+
+        let should_delete = if exclude_exact {
+            ts > from_timestamp
+        } else {
+            ts >= from_timestamp
+        };
+
+        if should_delete {
+            Individual::retract(conn, &iri, "chat")
+                .map_err(|e| format!("Failed to retract message {}: {}", iri, e))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Edit a user message and re-run the conversation from that point.
+/// All messages after the edited message are deleted before re-running.
+#[tauri::command]
+pub async fn chat__edit_and_retry(
+    message_iri: String,
+    new_content: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<Vec<serde_json::Value>, String> {
+    const CONVERSATION_ID: &str = "foundation:MainChatConversation";
+
+    // Find the message timestamp
+    let msg_timestamp = executor.read(move |conn| {
+        let ind = Individual::get(conn, &message_iri)
+            .map_err(|e| format!("Failed to load message: {}", e))?
+            .ok_or_else(|| format!("Message {} not found", message_iri))?;
+
+        let role = ind.properties.iter()
+            .find(|(k, _)| k == "foundation:role")
+            .and_then(|(_, v)| match v {
+                Object::Literal { value, .. } => Some(value.clone()),
+                _ => None,
+            })
+            .ok_or("Missing role")?;
+
+        if role != "user" {
+            return Err(format!("Message {} is not a user message", message_iri));
+        }
+
+        let timestamp = ind.properties.iter()
+            .find(|(k, _)| k == "foundation:sentAt")
+            .and_then(|(_, v)| match v {
+                Object::DateTime(ts) => Some(*ts),
+                Object::Literal { value, .. } => value.parse::<i64>().ok(),
+                _ => None,
+            })
+            .ok_or("Missing timestamp")?;
+
+        Ok((message_iri.clone(), timestamp))
+    }).await?;
+
+    let (iri, timestamp) = msg_timestamp;
+
+    // Delete all messages after the edited message (exclusive — keep the message itself)
+    let conversation_id = CONVERSATION_ID.to_string();
+    let iri_clone = iri.clone();
+    executor.write(move |conn| {
+        // Delete messages strictly after this timestamp
+        delete_messages_from_timestamp(conn, &conversation_id, timestamp, true)?;
+
+        // Update the message content: retract old content, assert new content
+        let new_blocks = vec![ContentBlock::Text { text: new_content.clone() }];
+        let new_content_json = serde_json::to_string(&new_blocks)
+            .map_err(|e| format!("Failed to serialize content: {}", e))?;
+
+        // Retract old content triple
+        let ind = Individual::get(conn, &iri_clone)
+            .map_err(|e| format!("Failed to reload message: {}", e))?
+            .ok_or_else(|| format!("Message {} not found after delete", iri_clone))?;
+
+        for (k, v) in &ind.properties {
+            if k == "foundation:content" {
+                let value_str = match v {
+                    Object::Literal { value, .. } => value.clone(),
+                    _ => continue,
+                };
+                Individual::remove_property_value(conn, &iri_clone, "foundation:content", &value_str, "chat")
+                    .map_err(|e| format!("Failed to retract old content: {}", e))?;
+                break;
+            }
+        }
+
+        // Assert new content
+        let msg = Individual::new(&iri_clone);
+        msg.add_property(conn, "foundation:content", vec![Object::Literal {
+            value: new_content_json,
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }], "chat").map_err(|e| format!("Failed to set new content: {}", e))?;
+
+        Ok(String::new())
+    }).await?;
+
+    app.emit("chat-message-added", ()).ok();
+
+    // Re-run the conversation loop from the updated history
+    let app_clone = app.clone();
+    let executor_clone = executor.inner().clone();
+    let mut response_messages = Vec::new();
+    continue_conversation_after_recovery(app_clone, executor_clone).await.map_err(|e| e)?;
+
+    // Load newly created assistant messages to return
+    let max_tokens = get_max_input_tokens(&executor).await?;
+    let history = load_conversation_history(&executor, CONVERSATION_ID, max_tokens).await?;
+    for msg in history.iter().rev() {
+        if msg.role == "assistant" && msg.timestamp > timestamp {
+            response_messages.push(serde_json::json!({
+                "iri": msg.iri,
+                "role": "assistant",
+                "content": msg.content,
+            }));
+        }
+    }
+    response_messages.reverse();
+
+    Ok(response_messages)
+}
+
+/// Retry from an assistant message: delete it and all subsequent messages, then re-run.
+#[tauri::command]
+pub async fn chat__retry_from_message(
+    message_iri: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<Vec<serde_json::Value>, String> {
+    const CONVERSATION_ID: &str = "foundation:MainChatConversation";
+
+    let msg_timestamp = executor.read(move |conn| {
+        let ind = Individual::get(conn, &message_iri)
+            .map_err(|e| format!("Failed to load message: {}", e))?
+            .ok_or_else(|| format!("Message {} not found", message_iri))?;
+
+        let role = ind.properties.iter()
+            .find(|(k, _)| k == "foundation:role")
+            .and_then(|(_, v)| match v {
+                Object::Literal { value, .. } => Some(value.clone()),
+                _ => None,
+            })
+            .ok_or("Missing role")?;
+
+        if role != "assistant" {
+            return Err(format!("Message {} is not an assistant message", message_iri));
+        }
+
+        let timestamp = ind.properties.iter()
+            .find(|(k, _)| k == "foundation:sentAt")
+            .and_then(|(_, v)| match v {
+                Object::DateTime(ts) => Some(*ts),
+                Object::Literal { value, .. } => value.parse::<i64>().ok(),
+                _ => None,
+            })
+            .ok_or("Missing timestamp")?;
+
+        Ok(timestamp)
+    }).await?;
+
+    // Delete the assistant message and all subsequent messages (inclusive of this timestamp)
+    let conversation_id = CONVERSATION_ID.to_string();
+    executor.write(move |conn| {
+        delete_messages_from_timestamp(conn, &conversation_id, msg_timestamp, false)?;
+        Ok(String::new())
+    }).await?;
+
+    app.emit("chat-message-added", ()).ok();
+
+    // Re-run the conversation loop
+    let app_clone = app.clone();
+    let executor_clone = executor.inner().clone();
+    continue_conversation_after_recovery(app_clone, executor_clone).await?;
+
+    // Load newly created assistant messages after the deleted timestamp
+    let max_tokens = get_max_input_tokens(&executor).await?;
+    let history = load_conversation_history(&executor, CONVERSATION_ID, max_tokens).await?;
+    let mut response_messages = Vec::new();
+    for msg in history.iter().rev() {
+        if msg.role == "assistant" && msg.timestamp >= msg_timestamp {
+            response_messages.push(serde_json::json!({
+                "iri": msg.iri,
+                "role": "assistant",
+                "content": msg.content,
+            }));
+        }
+    }
+    response_messages.reverse();
+
+    Ok(response_messages)
 }
 
 /// Helper function to continue conversation loop after recovery

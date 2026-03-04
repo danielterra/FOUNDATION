@@ -10,16 +10,72 @@ use chrono;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+std::thread_local! {
+    /// Set to true while batch_operations holds an outer transaction open.
+    /// When true, assert_triples/retract_triples use SAVEPOINTs instead of BEGIN
+    /// so that all operations participate in the same atomic transaction.
+    static IN_BATCH_TX: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Marks the current thread as being inside a batch transaction.
+/// Returns a guard that clears the flag on drop.
+pub fn enter_batch_transaction() -> BatchTransactionGuard {
+    IN_BATCH_TX.with(|f| f.set(true));
+    BatchTransactionGuard(())
+}
+
+pub struct BatchTransactionGuard(());
+
+impl Drop for BatchTransactionGuard {
+    fn drop(&mut self) {
+        IN_BATCH_TX.with(|f| f.set(false));
+    }
+}
+
 /// Assert triples (add new facts to the store)
 ///
-/// Returns the transaction ID of the assertion
+/// Returns the transaction ID of the assertion.
+/// If called from within batch_operations (enter_batch_transaction was called),
+/// uses a nested SAVEPOINT so all calls participate in a single atomic transaction.
 pub fn assert_triples(
     conn: &mut Connection,
     triples: &[Triple],
     origin: &str,
 ) -> Result<i64> {
-    let tx = conn.transaction()?;
+    if IN_BATCH_TX.with(|f| f.get()) {
+        assert_triples_savepoint(conn, triples, origin)
+    } else {
+        assert_triples_begin(conn, triples, origin)
+    }
+}
 
+fn assert_triples_begin(
+    conn: &mut Connection,
+    triples: &[Triple],
+    origin: &str,
+) -> Result<i64> {
+    let tx = conn.transaction()?;
+    let tx_id = do_assert_triples(&tx, triples, origin)?;
+    tx.commit()?;
+    Ok(tx_id)
+}
+
+fn assert_triples_savepoint(
+    conn: &mut Connection,
+    triples: &[Triple],
+    origin: &str,
+) -> Result<i64> {
+    let sp = conn.savepoint()?;
+    let tx_id = do_assert_triples(&sp, triples, origin)?;
+    sp.commit()?;
+    Ok(tx_id)
+}
+
+fn do_assert_triples(
+    tx: &rusqlite::Connection,
+    triples: &[Triple],
+    origin: &str,
+) -> Result<i64> {
     let now = now_millis();
     tx.execute(
         "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
@@ -28,7 +84,7 @@ pub fn assert_triples(
 
     let tx_id = tx.last_insert_rowid();
 
-    let origin_id = get_or_create_origin(&tx, origin)?;
+    let origin_id = get_or_create_origin(tx, origin)?;
 
     // Retract all existing values for each unique (subject, predicate) pair in the batch.
     // This must happen before any inserts so that passing multiple values for the same
@@ -48,7 +104,7 @@ pub fn assert_triples(
     }
 
     for triple in triples {
-        insert_triple(&tx, triple, tx_id, origin_id, now)?;
+        insert_triple(tx, triple, tx_id, origin_id, now)?;
     }
 
     {
@@ -99,20 +155,37 @@ pub fn assert_triples(
         }
     }
 
-    tx.commit()?;
     Ok(tx_id)
 }
 
 /// Retract triples (mark as retracted, don't delete)
 ///
-/// Returns the transaction ID of the retraction
+/// Returns the transaction ID of the retraction.
+/// If called from within batch_operations (enter_batch_transaction was called),
+/// uses a nested SAVEPOINT so all calls participate in a single atomic transaction.
 pub fn retract_triples(
     conn: &mut Connection,
     triples: &[Triple],
     origin: &str,
 ) -> Result<i64> {
-    let tx = conn.transaction()?;
+    if IN_BATCH_TX.with(|f| f.get()) {
+        let sp = conn.savepoint()?;
+        let tx_id = do_retract_triples(&sp, triples, origin)?;
+        sp.commit()?;
+        Ok(tx_id)
+    } else {
+        let tx = conn.transaction()?;
+        let tx_id = do_retract_triples(&tx, triples, origin)?;
+        tx.commit()?;
+        Ok(tx_id)
+    }
+}
 
+fn do_retract_triples(
+    tx: &Connection,
+    triples: &[Triple],
+    origin: &str,
+) -> Result<i64> {
     let now = now_millis();
     tx.execute(
         "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
@@ -120,7 +193,7 @@ pub fn retract_triples(
     )?;
 
     let tx_id = tx.last_insert_rowid();
-    let _origin_id = get_or_create_origin(&tx, origin)?;
+    let _origin_id = get_or_create_origin(tx, origin)?;
 
     // We need to match the exact triple (subject, predicate, AND object/object_value)
     for triple in triples {
@@ -185,13 +258,12 @@ pub fn retract_triples(
         }
     }
 
-    tx.commit()?;
     Ok(tx_id)
 }
 
 /// Insert a single triple into the database
 fn insert_triple(
-    tx: &rusqlite::Transaction,
+    tx: &rusqlite::Connection,
     triple: &Triple,
     tx_id: i64,
     origin_id: i64,
@@ -441,7 +513,7 @@ fn insert_triple(
 }
 
 /// Get or create origin ID
-fn get_or_create_origin(tx: &rusqlite::Transaction, origin: &str) -> rusqlite::Result<i64> {
+fn get_or_create_origin(tx: &rusqlite::Connection, origin: &str) -> rusqlite::Result<i64> {
     match tx.query_row(
         "SELECT id FROM origins WHERE name = ?",
         [origin],
@@ -707,5 +779,50 @@ mod tests {
             |row| row.get(0)
         ).unwrap();
         assert_eq!(active_value, "john@work.com");
+    }
+
+    #[test]
+    fn test_assert_triples_uses_savepoint_in_batch() {
+        let mut conn = setup_test_db();
+
+        // Set the batch flag and start a raw outer transaction (as batch_operations does)
+        let _guard = enter_batch_transaction();
+        conn.execute_batch("BEGIN").unwrap();
+
+        let triples = vec![Triple {
+            subject: "test:ThingA".to_string(),
+            predicate: "test:name".to_string(),
+            object: Object::Literal {
+                value: "Thing A".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            },
+            tx: 0,
+            created_at: 1000,
+            origin_id: 1,
+            retracted: false,
+        }];
+
+        // assert_triples should use SAVEPOINT (not BEGIN) because IN_BATCH_TX is true
+        assert_triples(&mut conn, &triples, "test").unwrap();
+
+        // Triple is visible within the outer transaction
+        let count_in_tx: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = 'test:ThingA' AND retracted = 0",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count_in_tx, 1);
+
+        // Rollback the outer transaction — all changes including the savepoint disappear
+        conn.execute_batch("ROLLBACK").unwrap();
+        drop(_guard);
+
+        let count_after_rollback: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = 'test:ThingA' AND retracted = 0",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count_after_rollback, 0, "Triple must be rolled back atomically");
     }
 }
