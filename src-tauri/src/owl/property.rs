@@ -436,7 +436,7 @@ mod tests {
             PropertyType::ObjectProperty,
             "has parent",
             None,
-            None,
+            &[],
             None,
             None,
             "test"

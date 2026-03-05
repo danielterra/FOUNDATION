@@ -121,6 +121,9 @@
       const existingIdx = widgets.findIndex(w => w.id === event.payload.id);
       if (existingIdx >= 0) {
         bringToFront(event.payload.id);
+        widgets = widgets.map(w =>
+          w.id === event.payload.id ? { ...w, refreshKey: (w.refreshKey ?? 0) + 1 } : w
+        );
         return;
       }
 
@@ -194,7 +197,7 @@
     out:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicIn }}
   >
     {#if widget.widget_type === 'inspector'}
-      <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} />
+      <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} />
     {/if}
   </div>
 {/each}

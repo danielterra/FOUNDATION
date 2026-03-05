@@ -2,8 +2,10 @@ use serde_json::Value;
 use rusqlite::Connection;
 use tauri::Emitter;
 use crate::owl::Class;
-use crate::eavto::query;
 use super::ToolResult;
+
+const SCORE_LABEL_MATCH: usize = 3;
+const SCORE_COMMENT_MATCH: usize = 2;
 
 pub fn search_classes(conn: &Connection, args: &Value) -> ToolResult {
     let query_str = args.get("query")
@@ -19,16 +21,7 @@ pub fn search_classes(conn: &Connection, args: &Value) -> ToolResult {
         .unwrap_or(0) as usize;
 
     match (|| {
-        let classes_result = query::get_by_predicate_object(conn, "rdf:type", "owl:Class")?;
-        let rdfs_classes_result = query::get_by_predicate_object(conn, "rdf:type", "rdfs:Class")?;
-
-        let mut all_class_iris: Vec<String> = classes_result.triples.into_iter()
-            .chain(rdfs_classes_result.triples)
-            .map(|t| t.subject)
-            .collect();
-
-        all_class_iris.sort();
-        all_class_iris.dedup();
+        let all_class_iris = Class::find_all_iris(conn)?;
 
         let search_tokens: Vec<String> = if query_str.is_empty() {
             Vec::new()
@@ -54,9 +47,9 @@ pub fn search_classes(conn: &Connection, args: &Value) -> ToolResult {
                     let mut match_count = 0;
                     for token in &search_tokens {
                         if label_lower.contains(token) {
-                            match_count += 3; // Label matches are more important
+                            match_count += SCORE_LABEL_MATCH;
                         } else if comment_lower.contains(token) {
-                            match_count += 2; // Comment matches are medium importance
+                            match_count += SCORE_COMMENT_MATCH;
                         }
                     }
 
@@ -126,14 +119,11 @@ pub fn get_class(conn: &Connection, args: &Value) -> ToolResult {
             .ok_or_else(|| crate::owl::OwlError::NotFound(iri.to_string()))?;
 
         let allowed_values: Vec<serde_json::Value> = if !class.one_of_values.is_empty() {
-            use crate::eavto::query;
             class.one_of_values.iter().map(|value_iri| {
-                let label_result =
-                    query::get_by_entity_predicate(conn, value_iri, "rdfs:label").ok();
-                let label = label_result
-                    .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()))
+                let label = crate::owl::get_literal_property(conn, value_iri, "rdfs:label")
+                    .ok()
+                    .flatten()
                     .unwrap_or_else(|| value_iri.clone());
-
                 serde_json::json!({
                     "iri": value_iri,
                     "label": label,
@@ -226,13 +216,7 @@ pub fn create_class(
         class.assert(conn, crate::owl::ClassType::OwlClass, label, icon, super_class, "ai")?;
 
         if let Some(comment_text) = comment {
-            use crate::eavto::{store, Triple, Object};
-            let comment_triple = Triple::new(iri, "rdfs:comment", Object::Literal {
-                value: comment_text.to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            });
-            store::assert_triples(conn, &[comment_triple], "ai")?;
+            Class::set_comment(conn, iri, comment_text, "ai")?;
         }
 
         if let Some(app_handle) = app {
@@ -273,69 +257,25 @@ pub fn update_class(
     };
 
     match (|| {
-        use crate::eavto::{store, query, Triple, Object};
-        use crate::owl::vocabulary::rdfs;
-
         let mut updated_fields = Vec::new();
 
         if let Some(label) = args.get("label").and_then(|v| v.as_str()) {
-            let old_labels = query::get_by_entity_predicate(conn, iri, rdfs::LABEL)?;
-            for triple in old_labels.triples {
-                store::retract_triples(
-                    conn, &[Triple::new(iri, rdfs::LABEL, triple.object)], "ai",
-                )?;
-            }
-            let new_label = Triple::new(iri, rdfs::LABEL, Object::Literal {
-                value: label.to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            });
-            store::assert_triples(conn, &[new_label], "ai")?;
+            Class::set_label(conn, iri, label, "ai")?;
             updated_fields.push("label");
         }
 
         if let Some(icon) = args.get("icon").and_then(|v| v.as_str()) {
-            let old_icons = query::get_by_entity_predicate(conn, iri, "foundation:icon")?;
-            for triple in old_icons.triples {
-                store::retract_triples(
-                    conn, &[Triple::new(iri, "foundation:icon", triple.object)], "ai",
-                )?;
-            }
-            let new_icon = Triple::new(iri, "foundation:icon", Object::Literal {
-                value: icon.to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            });
-            store::assert_triples(conn, &[new_icon], "ai")?;
+            Class::set_icon(conn, iri, icon, "ai")?;
             updated_fields.push("icon");
         }
 
         if let Some(comment) = args.get("comment").and_then(|v| v.as_str()) {
-            let old_comments = query::get_by_entity_predicate(conn, iri, rdfs::COMMENT)?;
-            for triple in old_comments.triples {
-                store::retract_triples(
-                    conn, &[Triple::new(iri, rdfs::COMMENT, triple.object)], "ai",
-                )?;
-            }
-            let new_comment = Triple::new(iri, rdfs::COMMENT, Object::Literal {
-                value: comment.to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            });
-            store::assert_triples(conn, &[new_comment], "ai")?;
+            Class::set_comment(conn, iri, comment, "ai")?;
             updated_fields.push("comment");
         }
 
         if let Some(super_class) = args.get("super_class").and_then(|v| v.as_str()) {
-            let old_supers = query::get_by_entity_predicate(conn, iri, rdfs::SUB_CLASS_OF)?;
-            for triple in old_supers.triples {
-                store::retract_triples(
-                    conn, &[Triple::new(iri, rdfs::SUB_CLASS_OF, triple.object)], "ai",
-                )?;
-            }
-            let new_super =
-                Triple::new(iri, rdfs::SUB_CLASS_OF, Object::Iri(super_class.to_string()));
-            store::assert_triples(conn, &[new_super], "ai")?;
+            Class::set_super_class(conn, iri, super_class, "ai")?;
             updated_fields.push("superClass");
         }
 
@@ -343,7 +283,7 @@ pub fn update_class(
             app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
         }
 
-        Ok::<_, Box<dyn std::error::Error>>(serde_json::json!({
+        Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
             "message": format!("Class {} updated successfully", iri),
             "updatedFields": updated_fields,
@@ -377,21 +317,13 @@ pub fn delete_class(
     };
 
     match (|| {
-        use crate::eavto::{store, query, Triple};
-
-        let triples_result = query::get_by_entity(conn, iri)?;
-
-        let triples_to_retract: Vec<Triple> = triples_result.triples.into_iter()
-            .map(|t| Triple::new(t.subject, t.predicate, t.object))
-            .collect();
-
-        store::retract_triples(conn, &triples_to_retract, "ai")?;
+        Class::retract_all(conn, iri, "ai")?;
 
         if let Some(app_handle) = app {
             app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
         }
 
-        Ok::<_, Box<dyn std::error::Error>>(serde_json::json!({
+        Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
             "message": format!("Class {} deleted successfully", iri),
         }))
@@ -423,8 +355,6 @@ pub fn get_class_hierarchy(conn: &Connection, args: &Value) -> ToolResult {
     let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
 
     match (|| {
-        use crate::owl::vocabulary::rdfs;
-
         fn get_hierarchy_recursive(
             conn: &Connection,
             class_iri: &str,
@@ -447,10 +377,10 @@ pub fn get_class_hierarchy(conn: &Connection, args: &Value) -> ToolResult {
                 .ok_or_else(|| crate::owl::OwlError::NotFound(class_iri.to_string()))?;
             let mut sub_classes = Vec::new();
 
-            let sub_result = query::get_by_predicate_object(conn, rdfs::SUB_CLASS_OF, class_iri)?;
-            for triple in sub_result.triples {
+            let sub_iris = Class::get_subclass_iris(conn, class_iri)?;
+            for sub_iri in sub_iris {
                 let sub_hierarchy = get_hierarchy_recursive(
-                    conn, &triple.subject, depth + 1, max_depth, visited,
+                    conn, &sub_iri, depth + 1, max_depth, visited,
                 )?;
                 sub_classes.push(sub_hierarchy);
             }

@@ -119,21 +119,40 @@ pub async fn ai__initialize(
 ) -> Result<(), String> {
 
     let (model_identifier, timeout_secs) = executor.read(|conn| {
-        let models = owl::find_entities_with_property(
-            conn, "foundation:offeredBy", "foundation:ClaudeAIService",
-        ).map_err(|e| format!("Failed to query models: {}", e))?;
+        // Check user's preferred model from DefaultAIModelSetting first
+        let preferred_model_iri = if let Ok(Some(setting)) =
+            Individual::get(conn, "foundation:DefaultAIModelSetting")
+        {
+            setting.properties.iter()
+                .find(|(k, _)| k == "foundation:settingValue")
+                .and_then(|(_, v)| v.as_literal())
+        } else {
+            None
+        };
 
-        let mut model = None;
-        for model_iri in &models {
-            if owl::has_property_literal(conn, model_iri, "foundation:isDefaultModel", "true") {
-                if let Ok(Some(identifier)) = owl::get_literal_property(
-                    conn, model_iri, "foundation:modelIdentifier",
-                ) {
-                    model = Some(identifier);
-                    break;
+        let model = if let Some(ref iri) = preferred_model_iri {
+            owl::get_literal_property(conn, iri, "foundation:modelIdentifier")
+                .ok()
+                .flatten()
+        } else {
+            // Fall back to the ontology default model
+            let models = owl::find_entities_with_property(
+                conn, "foundation:offeredBy", "foundation:ClaudeAIService",
+            ).map_err(|e| format!("Failed to query models: {}", e))?;
+
+            let mut default_model = None;
+            for model_iri in &models {
+                if owl::has_property_literal(conn, model_iri, "foundation:isDefaultModel", "true") {
+                    if let Ok(Some(identifier)) = owl::get_literal_property(
+                        conn, model_iri, "foundation:modelIdentifier",
+                    ) {
+                        default_model = Some(identifier);
+                        break;
+                    }
                 }
             }
-        }
+            default_model
+        };
 
         let timeout = if let Ok(Some(setting)) =
             Individual::get(conn, "foundation:DefaultAPIRequestTimeoutSetting")
@@ -158,7 +177,10 @@ pub async fn ai__initialize(
         );
     }
 
-    super::log_backend("info", &format!("[AI] Initializing with timeout={}s", timeout_secs));
+    super::log_backend("info", &format!(
+        "[AI] Initializing with model={:?}, timeout={}s",
+        model_identifier, timeout_secs
+    ));
     ai::initialize_ai_with_model(api_key, model_identifier, timeout_secs).await?;
 
     let executor_state = app.state::<DbExecutor>();

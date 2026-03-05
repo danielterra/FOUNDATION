@@ -41,8 +41,9 @@ impl ToolTemplate {
             } else {
                 json!({ "type": param.param_type })
             };
-            schema.as_object_mut().expect("schema is always a JSON object")
-                .insert("description".to_string(), json!(param.description));
+            if let Some(obj) = schema.as_object_mut() {
+                obj.insert("description".to_string(), json!(param.description));
+            }
             properties.insert(param.name.clone(), schema);
             if param.required {
                 required.push(param.name.clone());
@@ -148,7 +149,7 @@ mod tests {
 
         let priority_class = Class::new("foundation:TaskPriority");
         priority_class.assert(
-            &mut conn, ClassType::OwlClass, "Task Priority", "priority-icon", None, "test",
+            &mut conn, ClassType::OwlClass, "Task Priority", "https://example.com/priority.svg", None, "test",
         ).unwrap();
 
         let high = Triple::new(
@@ -209,12 +210,12 @@ mod tests {
 
         let task_class = Class::new("foundation:Task");
         task_class.assert(
-            &mut conn, ClassType::OwlClass, "Task", "task-icon", None, "test",
+            &mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
         ).unwrap();
 
         let priority_class = Class::new("foundation:TaskPriority");
         priority_class.assert(
-            &mut conn, ClassType::OwlClass, "Task Priority", "priority-icon", None, "test",
+            &mut conn, ClassType::OwlClass, "Task Priority", "https://example.com/priority.svg", None, "test",
         ).unwrap();
 
         let high = Triple::new(
@@ -245,7 +246,7 @@ mod tests {
             PropertyType::ObjectProperty,
             "priority",
             None,
-            Some("foundation:Task"),
+            &["foundation:Task"],
             Some("foundation:TaskPriority"),
             None,
             "test",

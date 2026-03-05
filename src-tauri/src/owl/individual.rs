@@ -52,8 +52,14 @@ impl Individual {
             .and_then(|t| t.object.as_literal());
 
         let icon = all_triples.triples.iter()
-            .find(|t| t.predicate == "foundation:icon")
-            .and_then(|t| t.object.as_literal());
+            .find(|t| t.predicate == "foundation:hasIcon")
+            .and_then(|t| t.object.as_iri())
+            .and_then(|iri| crate::owl::icon_iri_to_display(conn, iri))
+            .or_else(|| {
+                all_triples.triples.iter()
+                    .find(|t| t.predicate == "foundation:icon")
+                    .and_then(|t| t.object.as_literal())
+            });
 
         let comment = all_triples.triples.iter()
             .find(|t| t.predicate == rdfs::COMMENT)
@@ -70,6 +76,7 @@ impl Individual {
                 t.predicate != rdfs::LABEL
                     && t.predicate != rdfs::COMMENT
                     && t.predicate != "foundation:icon"
+                    && t.predicate != "foundation:hasIcon"
             })
             .collect();
 
@@ -106,6 +113,8 @@ impl Individual {
         icon: &str,
         origin: &str
     ) -> Result<()> {
+        crate::owl::validate_icon(conn, icon)?;
+
         let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(class_iri.to_string()));
         store::assert_triples(conn, &[triple], origin)?;
 
@@ -117,12 +126,8 @@ impl Individual {
         let label_triple = Triple::new(&self.iri, rdfs::LABEL, label_obj);
         store::assert_triples(conn, &[label_triple], origin)?;
 
-        let icon_obj = Object::Literal {
-            value: icon.to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        };
-        let icon_triple = Triple::new(&self.iri, "foundation:icon", icon_obj);
+        let (icon_pred, icon_obj) = crate::owl::icon_store_value(icon);
+        let icon_triple = Triple::new(&self.iri, icon_pred, icon_obj);
         store::assert_triples(conn, &[icon_triple], origin)?;
 
         Ok(())
@@ -149,7 +154,9 @@ impl Individual {
             ));
         }
 
-        let is_meta_property = property.starts_with("rdfs:") || property == "foundation:icon";
+        let is_meta_property = property.starts_with("rdfs:")
+            || property == "foundation:icon"
+            || property == "foundation:hasIcon";
 
         let types_result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
 
@@ -181,7 +188,9 @@ impl Individual {
             }
         }
 
+        Self::validate_value_type(conn, property, &values)?;
         for value in &values {
+            Self::validate_iri_exists(conn, property, value)?;
             Self::validate_one_of_constraint(conn, property, value)?;
             Self::validate_literal_datatype(property, value)?;
         }
@@ -249,6 +258,73 @@ impl Individual {
                 }
             }
             _ => {}
+        }
+
+        Ok(())
+    }
+
+    /// Validate that the value types match the property's declared type (ObjectProperty vs DatatypeProperty)
+    fn validate_value_type(conn: &Connection, property: &str, values: &[Object]) -> Result<()> {
+        use crate::owl::{Property, PropertyType};
+
+        let prop = match Property::get(conn, property)? {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+
+        match prop.property_type {
+            PropertyType::ObjectProperty => {
+                for value in values {
+                    if value.as_iri().is_none() {
+                        let range_hint = if !prop.ranges.is_empty() {
+                            format!(" (expected an IRI of type {})", prop.ranges.join(" or "))
+                        } else {
+                            " (expected an IRI)".to_string()
+                        };
+                        return Err(OwlError::ValidationError(format!(
+                            "Property '{}' is an ObjectProperty{}, but got a literal value: '{}'",
+                            property, range_hint,
+                            value.as_literal().unwrap_or_default()
+                        )));
+                    }
+                }
+            }
+            PropertyType::DatatypeProperty => {
+                for value in values {
+                    if value.as_iri().is_some() {
+                        let range_hint = if !prop.ranges.is_empty() {
+                            format!(" (expected a {} literal)", prop.ranges.join(" or "))
+                        } else {
+                            " (expected a literal value)".to_string()
+                        };
+                        return Err(OwlError::ValidationError(format!(
+                            "Property '{}' is a DatatypeProperty{}, but got an IRI: '{}'",
+                            property, range_hint,
+                            value.as_iri().unwrap()
+                        )));
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    /// Validate that an IRI value exists in the graph before referencing it
+    fn validate_iri_exists(conn: &Connection, property: &str, value: &Object) -> Result<()> {
+        let value_iri = match value.as_iri() {
+            Some(iri) => iri,
+            None => return Ok(()),
+        };
+
+        let result = query::get_by_entity(conn, value_iri)?;
+        if result.triples.is_empty() {
+            return Err(OwlError::ValidationError(format!(
+                "IRI '{}' does not exist in the graph. \
+                 Cannot set property '{}' to a non-existent resource.",
+                value_iri, property
+            )));
         }
 
         Ok(())
@@ -474,7 +550,7 @@ mod tests {
         // Create Task class
         let task_class = Class::new("foundation:Task");
         task_class.assert(
-            &mut conn, ClassType::OwlClass, "Task", "task-icon", None, "test",
+            &mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
         ).unwrap();
 
         // Create TaskPriority enumeration class
@@ -483,7 +559,7 @@ mod tests {
             &mut conn,
             ClassType::OwlClass,
             "Task Priority",
-            "priority-icon",
+            "https://example.com/priority.svg",
             None,
             "test",
         ).unwrap();
@@ -546,7 +622,7 @@ mod tests {
             PropertyType::ObjectProperty,
             "priority",
             None,
-            Some("foundation:Task"),
+            &["foundation:Task"],
             Some("foundation:TaskPriority"),
             None,
             "test",
@@ -554,7 +630,7 @@ mod tests {
 
         // Create task individual
         let task = Individual::new("foundation:MyTask");
-        task.assert(&mut conn, "foundation:Task", "My Task", "task-icon", "test").unwrap();
+        task.assert(&mut conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").unwrap();
 
         // Adding valid priority should succeed
         let result = task.add_property(
@@ -573,7 +649,7 @@ mod tests {
         // Create Task class
         let task_class = Class::new("foundation:Task");
         task_class.assert(
-            &mut conn, ClassType::OwlClass, "Task", "task-icon", None, "test",
+            &mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
         ).unwrap();
 
         // Create TaskPriority enumeration class
@@ -582,7 +658,7 @@ mod tests {
             &mut conn,
             ClassType::OwlClass,
             "Task Priority",
-            "priority-icon",
+            "https://example.com/priority.svg",
             None,
             "test",
         ).unwrap();
@@ -630,7 +706,7 @@ mod tests {
             PropertyType::ObjectProperty,
             "priority",
             None,
-            Some("foundation:Task"),
+            &["foundation:Task"],
             Some("foundation:TaskPriority"),
             None,
             "test",
@@ -638,7 +714,7 @@ mod tests {
 
         // Create task individual
         let task = Individual::new("foundation:MyTask");
-        task.assert(&mut conn, "foundation:Task", "My Task", "task-icon", "test").unwrap();
+        task.assert(&mut conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").unwrap();
 
         // Create an invalid value that's not in the owl:oneOf list
         let invalid = Triple::new(
@@ -660,6 +736,112 @@ mod tests {
         if let Err(OwlError::ValidationError(msg)) = result {
             assert!(msg.contains("not allowed"));
             assert!(msg.contains("foundation:LowPriority"));
+        } else {
+            panic!("Expected ValidationError");
+        }
+    }
+
+    #[test]
+    fn test_iri_existence_validation() {
+        let mut conn = setup_test_db();
+
+        // Create a class and a property
+        let task_class = Class::new("foundation:Task");
+        task_class.assert(
+            &mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
+        ).unwrap();
+
+        let prop = Property::new("foundation:assignedTo");
+        prop.assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "assignedTo",
+            None,
+            &["foundation:Task"],
+            None,
+            None,
+            "test",
+        ).unwrap();
+
+        let task = Individual::new("foundation:MyTask");
+        task.assert(&mut conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").unwrap();
+
+        // Referencing a non-existent IRI should fail
+        let result = task.add_property(
+            &mut conn,
+            "foundation:assignedTo",
+            vec![Object::Iri("foundation:NonExistentUser".to_string())],
+            "test",
+        );
+        assert!(result.is_err(), "Should reject reference to non-existent IRI");
+        if let Err(OwlError::ValidationError(msg)) = result {
+            assert!(msg.contains("foundation:NonExistentUser"));
+            assert!(msg.contains("does not exist"));
+        } else {
+            panic!("Expected ValidationError");
+        }
+
+        // Create the user and retry — should succeed
+        let user = Individual::new("foundation:NonExistentUser");
+        user.assert(&mut conn, "foundation:Task", "A User", "https://example.com/person.svg", "test").unwrap();
+
+        let result = task.add_property(
+            &mut conn,
+            "foundation:assignedTo",
+            vec![Object::Iri("foundation:NonExistentUser".to_string())],
+            "test",
+        );
+        assert!(result.is_ok(), "Should accept reference to existing IRI");
+    }
+
+    #[test]
+    fn test_value_type_mismatch_validation() {
+        let mut conn = setup_test_db();
+
+        let task_class = Class::new("foundation:Task");
+        task_class.assert(
+            &mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
+        ).unwrap();
+
+        // ObjectProperty
+        let obj_prop = Property::new("foundation:relatedTo");
+        obj_prop.assert(
+            &mut conn, PropertyType::ObjectProperty, "relatedTo",
+            None, &["foundation:Task"], None, None, "test",
+        ).unwrap();
+
+        // DatatypeProperty
+        let dt_prop = Property::new("foundation:title");
+        dt_prop.assert(
+            &mut conn, PropertyType::DatatypeProperty, "title",
+            None, &["foundation:Task"], Some("xsd:string"), None, "test",
+        ).unwrap();
+
+        let task = Individual::new("foundation:MyTask");
+        task.assert(&mut conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").unwrap();
+
+        // Literal on ObjectProperty → should fail
+        let result = task.add_property(
+            &mut conn, "foundation:relatedTo",
+            vec![Object::Literal { value: "some-string".to_string(), datatype: Some("xsd:string".to_string()), language: None }],
+            "test",
+        );
+        assert!(result.is_err(), "Should reject literal on ObjectProperty");
+        if let Err(OwlError::ValidationError(msg)) = result {
+            assert!(msg.contains("ObjectProperty"), "Error should mention ObjectProperty");
+        } else {
+            panic!("Expected ValidationError");
+        }
+
+        // IRI on DatatypeProperty → should fail
+        let result = task.add_property(
+            &mut conn, "foundation:title",
+            vec![Object::Iri("foundation:MyTask".to_string())],
+            "test",
+        );
+        assert!(result.is_err(), "Should reject IRI on DatatypeProperty");
+        if let Err(OwlError::ValidationError(msg)) = result {
+            assert!(msg.contains("DatatypeProperty"), "Error should mention DatatypeProperty");
         } else {
             panic!("Expected ValidationError");
         }

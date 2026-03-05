@@ -27,13 +27,16 @@ pub async fn initialize_app(
         return Ok(());
     }
 
-    let conn = owl::initialize_with_progress(app.clone())
+    let mut conn = owl::initialize_with_progress(app.clone())
         .map_err(|e| {
             let error_msg = format!("Failed to initialize database: {:?}", e);
             super::log_backend("error", &error_msg);
             let _ = app.emit("import-error", error_msg.clone());
             error_msg
         })?;
+
+    owl::seed_icon_library(&mut conn);
+    owl::migrate_icon_to_has_icon(&mut conn);
 
     if let Ok(stats) = owl::get_stats(&conn) {
         let stats_msg = format!(
@@ -317,7 +320,7 @@ pub async fn setup__init(
     ).map_err(|e| format!("Failed to link to SoftwareRelease: {}", e))?;
 
     let ai_assistant = Individual::new("foundation:LocalAIAssistant");
-    ai_assistant.assert(conn, "foundation:SoftwareAgent", "FOUNDATION AI Assistant", "ai", "setup")
+    ai_assistant.assert(conn, "foundation:SoftwareAgent", "FOUNDATION AI Assistant", "smart_toy", "setup")
         .map_err(|e| format!("Failed to create AI assistant: {}", e))?;
 
     let service_iri = ai_service_iri.unwrap_or_else(|| "foundation:ClaudeAIService".to_string());

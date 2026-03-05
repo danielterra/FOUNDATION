@@ -4,7 +4,7 @@ mod namespaces;
 mod commands;
 mod eavto;
 pub mod owl;
-mod ai;
+pub mod ai;
 mod mcp;
 
 #[derive(serde::Serialize)]

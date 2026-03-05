@@ -21,7 +21,6 @@
 	let entityData = $state(null);
 	let loading = $state(true);
 
-	// Helper to detect icon type
 	function getIconType(icon) {
 		if (!icon) return null;
 		if (icon.startsWith('http://') || icon.startsWith('https://') ||
@@ -31,7 +30,6 @@
 		return 'material-symbol';
 	}
 
-	// Get type display text - show what's defined in RDF
 	function getTypeText(data) {
 		if (!data) return '';
 
@@ -59,7 +57,6 @@
 		}
 	}
 
-	// Reagir a mudanças no entityId
 	$effect(() => {
 		if (entityId) {
 			loadEntityData();
@@ -74,21 +71,18 @@
 			});
 			const data = JSON.parse(dataJson);
 
-			// Filter out rdfs:label, rdfs:comment and foundation:icon (already shown in header or not needed)
 			const filteredProperties = (data.properties || []).filter(
 				prop => prop.property !== 'rdfs:label'
 					&& prop.property !== 'rdfs:comment'
-					&& prop.property !== 'foundation:icon'
+					&& prop.property !== 'foundation:hasIcon'
 			);
 
-			// Filter backlinks (already filtered in backend, but just in case)
 			const filteredBacklinks = (data.backlinks || []).filter(
 				prop => prop.property !== 'rdfs:label'
 					&& prop.property !== 'rdfs:comment'
-					&& prop.property !== 'foundation:icon'
+					&& prop.property !== 'foundation:hasIcon'
 			);
 
-			// Group properties by source class
 			const propertyGroups = new Map();
 
 			for (const prop of filteredProperties) {
@@ -115,7 +109,6 @@
 				});
 			}
 
-			// Convert to array and sort (own properties first, then inherited)
 			const groupsArray = Array.from(propertyGroups.values());
 			groupsArray.sort((a, b) => {
 				if (!a.sourceClass) return -1; // own properties first
@@ -123,7 +116,6 @@
 				return 0;
 			});
 
-			// Process backlinks
 			const backlinks = filteredBacklinks.map(prop => ({
 				id: prop.property,
 				label: prop.propertyLabel,

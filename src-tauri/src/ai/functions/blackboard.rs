@@ -119,8 +119,9 @@ fn blackboard_add_widget_one(
         Err(_) => Position { x: WIDGET_DEFAULT_X, y: WIDGET_DEFAULT_Y },
     };
 
+    let sanitized_entity = entity_id.replace([':', '/', '#', ' '], "_");
     let widget_obj = Widget {
-        id: format!("widget_{}_{}", widget_type, chrono::Utc::now().timestamp_millis()),
+        id: format!("widget_{}_{}", widget_type, sanitized_entity),
         widget_type: widget_type.to_string(),
         entity_id: entity_id.to_string(),
         position,

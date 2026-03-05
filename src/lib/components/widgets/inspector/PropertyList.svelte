@@ -167,7 +167,7 @@
                 {/if}
               {/if}
               {#if !detailGroup.isObjectProperty && val.datatype === 'xsd:dateTime'}
-                {@const date = new Date(val.value)}
+                {@const date = new Date(Number(val.value))}
                 <div class="timestamp-display">
                   <span class="value-text">
                     {date.toLocaleString('en-US', {
@@ -177,6 +177,12 @@
                   </span>
                   <span class="timestamp-relative">{formatDate(date.getTime())}</span>
                 </div>
+              {:else if !detailGroup.isObjectProperty && val.datatype === 'xsd:date'}
+                {@const [y, m, d] = val.value.split('-').map(Number)}
+                {@const date = new Date(y, m - 1, d)}
+                <span class="value-text">
+                  {date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                </span>
               {:else if !detailGroup.isObjectProperty && isUrl(val.datatype)}
                 <button class="url-value" onclick={() => openUrl_(val.value)} title={val.value}>
                   <span class="value-text">{val.valueLabel || val.value}</span>

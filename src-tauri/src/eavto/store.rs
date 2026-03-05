@@ -422,7 +422,7 @@ fn insert_triple(
                             date.and_hms_opt(0, 0, 0)
                                 .expect("midnight is always valid")
                                 .and_utc()
-                                .timestamp()
+                                .timestamp_millis()
                         })
                         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
                             std::io::Error::new(

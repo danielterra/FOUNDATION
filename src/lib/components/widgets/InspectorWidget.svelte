@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { marked } from 'marked';
@@ -8,7 +8,7 @@
   import PropertyList from './inspector/PropertyList.svelte';
   import BacklinkList from './inspector/BacklinkList.svelte';
 
-  let { entityId, widgetId } = $props();
+  let { entityId, widgetId, refreshKey = 0 } = $props();
 
   let entityData = $state(null);
   let loading = $state(true);
@@ -75,9 +75,12 @@
     return icon;
   }
 
-  onMount(async () => {
-    loadEntity();
+  $effect(() => {
+    refreshKey;
+    untrack(() => loadEntity());
+  });
 
+  onMount(async () => {
     unlistenEntityUpdated = await listen('entity-updated', (event) => {
       const updatedId = event.payload.entityId;
       if (updatedId === entityId) {

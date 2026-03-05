@@ -2,6 +2,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use crate::ai::{GenerateRequest, GenerateResponse, ToolCall};
 
+const WEB_TOOL_MAX_USES: u32 = 5;
+const WEB_FETCH_MAX_CONTENT_TOKENS: u32 = 100_000;
+const CLAUDE_CACHE_READ_PRICE_PER_MILLION_TOKENS: f64 = 2.70;
+
 #[async_trait]
 pub trait AIProvider: Send + Sync {
     async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, String>;
@@ -172,7 +176,7 @@ impl ClaudeProvider {
 #[async_trait]
 impl AIProvider for ClaudeProvider {
     async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, String> {
-        let mut messages: Vec<ClaudeMessage> = request
+        let messages: Vec<ClaudeMessage> = request
             .messages
             .into_iter()
             .map(|msg| {
@@ -189,33 +193,6 @@ impl AIProvider for ClaudeProvider {
             })
             .collect();
 
-        if messages.len() >= 2 {
-            let stable_idx = messages.len().saturating_sub(6);
-            if let Some(stable_msg) = messages.get_mut(stable_idx) {
-                match &mut stable_msg.content {
-                    serde_json::Value::Array(ref mut blocks) => {
-                        if let Some(last_block) = blocks.last_mut() {
-                            if let Some(obj) = last_block.as_object_mut() {
-                                obj.insert(
-                                    "cache_control".to_string(),
-                                    serde_json::json!({ "type": "ephemeral" }),
-                                );
-                            }
-                        }
-                    }
-                    serde_json::Value::String(text) => {
-                        let text = text.clone();
-                        stable_msg.content = serde_json::json!([{
-                            "type": "text",
-                            "text": text,
-                            "cache_control": { "type": "ephemeral" }
-                        }]);
-                    }
-                    _ => {}
-                }
-            }
-        }
-
         let model = self.model_identifier.clone()
             .ok_or_else(|| {
                 "No AI model configured. Please configure a model in Settings.".to_string()
@@ -229,14 +206,14 @@ impl AIProvider for ClaudeProvider {
             tools.push(serde_json::json!({
                 "type": "web_search_20260209",
                 "name": "web_search",
-                "max_uses": 5
+                "max_uses": WEB_TOOL_MAX_USES
             }));
 
             tools.push(serde_json::json!({
                 "type": "web_fetch_20260209",
                 "name": "web_fetch",
-                "max_uses": 5,
-                "max_content_tokens": 100000,
+                "max_uses": WEB_TOOL_MAX_USES,
+                "max_content_tokens": WEB_FETCH_MAX_CONTENT_TOKENS,
                 "citations": {
                     "enabled": true
                 }
@@ -368,7 +345,7 @@ impl AIProvider for ClaudeProvider {
                 format!(
                     " | cache hit: {} tokens (~${:.4} saved)",
                     usage.cache_read_input_tokens,
-                    (usage.cache_read_input_tokens as f64 / 1_000_000.0) * 2.70
+                    (usage.cache_read_input_tokens as f64 / 1_000_000.0) * CLAUDE_CACHE_READ_PRICE_PER_MILLION_TOKENS
                 )
             } else {
                 String::new()

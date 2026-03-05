@@ -670,7 +670,17 @@ fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
             } else if let Some(num) = object_number {
                 Object::Number(num)
             } else if let Some(dt) = object_datetime {
-                Object::DateTime(dt)
+                // xsd:date preserves the original YYYY-MM-DD string so the frontend
+                // can display it without a time component.
+                if object_datatype.as_deref() == Some("xsd:date") {
+                    Object::Literal {
+                        value: object_value.ok_or(rusqlite::Error::InvalidQuery)?,
+                        datatype: object_datatype,
+                        language: object_language,
+                    }
+                } else {
+                    Object::DateTime(dt)
+                }
             } else if let Some(bool_val) = object_boolean {
                 Object::Boolean(bool_val != 0)
             } else {

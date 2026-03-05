@@ -2,8 +2,11 @@ mod class;
 mod property;
 mod individual;
 mod thing;
+mod icons;
 pub mod vocabulary;
 pub mod cardinality;
+
+pub use icons::{validate_icon, icon_name_to_iri, icon_iri_to_display, icon_store_value, seed_icon_library, migrate_icon_to_has_icon};
 
 pub use class::{Class, ClassType};
 pub use property::{Property, PropertyType};
@@ -139,18 +142,28 @@ pub fn search_individuals(
                 let label_lower = label.to_lowercase();
 
                 if label_lower.contains(&query_lower) {
-                    let icon_result = query::get_by_entity_predicate(
-                        conn,
-                        individual_iri,
-                        "foundation:icon",
-                    )?;
-                    let icon = icon_result.triples.first().and_then(|t| {
-                        if let Object::Literal { value, .. } = &t.object {
-                            Some(value.clone())
+                    let icon = {
+                        let has_icon_result = query::get_by_entity_predicate(
+                            conn, individual_iri, "foundation:hasIcon",
+                        )?;
+                        let from_has_icon = has_icon_result.triples.first()
+                            .and_then(|t| t.object.as_iri())
+                            .and_then(|iri| icon_iri_to_display(conn, iri));
+                        if from_has_icon.is_some() {
+                            from_has_icon
                         } else {
-                            None
+                            let icon_result = query::get_by_entity_predicate(
+                                conn, individual_iri, "foundation:icon",
+                            )?;
+                            icon_result.triples.first().and_then(|t| {
+                                if let Object::Literal { value, .. } = &t.object {
+                                    Some(value.clone())
+                                } else {
+                                    None
+                                }
+                            })
                         }
-                    });
+                    };
 
                     let score = if label_lower == query_lower {
                         0
@@ -178,6 +191,43 @@ pub fn search_individuals(
     });
 
     Ok(results.into_iter().take(limit).map(|(_, r)| r).collect())
+}
+
+/// Returns all IRI values for a predicate on an entity
+pub fn get_all_iri_properties(
+    conn: &Connection,
+    entity: &str,
+    predicate: &str,
+) -> Result<Vec<String>> {
+    use crate::eavto::query;
+    let result = query::get_by_entity_predicate(conn, entity, predicate)?;
+    Ok(result.triples.iter()
+        .filter_map(|t| t.object.as_iri())
+        .map(|s| s.to_string())
+        .collect())
+}
+
+/// Replace all IRI values for a predicate on an entity with a new set
+pub fn replace_all_property_iris(
+    conn: &mut Connection,
+    entity: &str,
+    predicate: &str,
+    values: &[&str],
+    origin: &str,
+) -> Result<()> {
+    use crate::eavto::{store, query, Triple, Object};
+    let old = query::get_by_entity_predicate(conn, entity, predicate)?;
+    for triple in old.triples {
+        store::retract_triples(conn, &[Triple::new(entity, predicate, triple.object)], origin)?;
+    }
+    for value in values {
+        store::assert_triples(
+            conn,
+            &[Triple::new(entity, predicate, Object::Iri(value.to_string()))],
+            origin,
+        )?;
+    }
+    Ok(())
 }
 
 /// Returns the first literal value of a property for an entity
@@ -279,7 +329,11 @@ pub fn resolve_status_appearance(
 
     loop {
         if icon.is_none() {
-            icon = get_literal_property(conn, &current, "foundation:icon").ok().flatten();
+            icon = get_iri_property(conn, &current, "foundation:hasIcon")
+                .ok()
+                .flatten()
+                .and_then(|iri| icon_iri_to_display(conn, &iri))
+                .or_else(|| get_literal_property(conn, &current, "foundation:icon").ok().flatten());
         }
         if color.is_none() {
             color = get_literal_property(conn, &current, "foundation:color").ok().flatten();

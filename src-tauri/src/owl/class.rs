@@ -83,9 +83,14 @@ impl Class {
         let label = label_result.triples.first()
             .and_then(|t| t.object.as_literal());
 
-        let icon_result = query::get_by_entity_predicate(conn, &iri, "foundation:icon")?;
+        let icon_result = query::get_by_entity_predicate(conn, &iri, "foundation:hasIcon")?;
         let icon = icon_result.triples.first()
-            .and_then(|t| t.object.as_literal());
+            .and_then(|t| t.object.as_iri())
+            .and_then(|iri| crate::owl::icon_iri_to_display(conn, iri))
+            .or_else(|| {
+                query::get_by_entity_predicate(conn, &iri, "foundation:icon").ok()
+                    .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()))
+            });
 
         let comment_result = query::get_by_entity_predicate(conn, &iri, rdfs::COMMENT)?;
         let comment = comment_result.triples.first()
@@ -214,12 +219,8 @@ impl Class {
         let label_triple = Triple::new(&self.iri, rdfs::LABEL, label_obj);
         store::assert_triples(conn, &[label_triple], origin)?;
 
-        let icon_obj = Object::Literal {
-            value: icon.to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        };
-        let icon_triple = Triple::new(&self.iri, "foundation:icon", icon_obj);
+        let (icon_pred, icon_obj) = crate::owl::icon_store_value(icon);
+        let icon_triple = Triple::new(&self.iri, icon_pred, icon_obj);
         store::assert_triples(conn, &[icon_triple], origin)?;
 
         let parent = super_class.unwrap_or(owl::THING);
@@ -238,6 +239,94 @@ impl Class {
         Ok(result.triples.iter()
             .map(|t| t.subject.clone())
             .collect())
+    }
+
+    /// Get all class IRIs (owl:Class and rdfs:Class)
+    pub fn find_all_iris(conn: &Connection) -> Result<Vec<String>> {
+        let owl_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::CLASS)?;
+        let rdfs_result = query::get_by_predicate_object(conn, rdf::TYPE, rdfs::CLASS)?;
+        let mut iris: Vec<String> = owl_result.triples.into_iter()
+            .chain(rdfs_result.triples)
+            .map(|t| t.subject)
+            .collect();
+        iris.sort();
+        iris.dedup();
+        Ok(iris)
+    }
+
+    /// Get IRIs of all direct subclasses
+    pub fn get_subclass_iris(conn: &Connection, class_iri: &str) -> Result<Vec<String>> {
+        let result = query::get_by_predicate_object(conn, rdfs::SUB_CLASS_OF, class_iri)?;
+        Ok(result.triples.into_iter().map(|t| t.subject).collect())
+    }
+
+    /// Replace the label of an existing class
+    pub fn set_label(conn: &mut Connection, iri: &str, label: &str, origin: &str) -> Result<()> {
+        let old = query::get_by_entity_predicate(conn, iri, rdfs::LABEL)?;
+        for triple in old.triples {
+            store::retract_triples(conn, &[Triple::new(iri, rdfs::LABEL, triple.object)], origin)?;
+        }
+        store::assert_triples(conn, &[Triple::new(iri, rdfs::LABEL, Object::Literal {
+            value: label.to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        })], origin)?;
+        Ok(())
+    }
+
+    /// Replace the comment of an existing class (or add one if not present)
+    pub fn set_comment(conn: &mut Connection, iri: &str, comment: &str, origin: &str) -> Result<()> {
+        let old = query::get_by_entity_predicate(conn, iri, rdfs::COMMENT)?;
+        for triple in old.triples {
+            store::retract_triples(conn, &[Triple::new(iri, rdfs::COMMENT, triple.object)], origin)?;
+        }
+        store::assert_triples(conn, &[Triple::new(iri, rdfs::COMMENT, Object::Literal {
+            value: comment.to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        })], origin)?;
+        Ok(())
+    }
+
+    /// Replace the icon of an existing class (validates icon name)
+    pub fn set_icon(conn: &mut Connection, iri: &str, icon: &str, origin: &str) -> Result<()> {
+        crate::owl::validate_icon(conn, icon)?;
+        let (icon_pred, icon_obj) = crate::owl::icon_store_value(icon);
+        store::assert_triples(conn, &[Triple::new(iri, icon_pred, icon_obj)], origin)?;
+        Ok(())
+    }
+
+    /// Replace the rdfs:subClassOf relationship of an existing class
+    pub fn set_super_class(
+        conn: &mut Connection,
+        iri: &str,
+        super_class: &str,
+        origin: &str,
+    ) -> Result<()> {
+        let old = query::get_by_entity_predicate(conn, iri, rdfs::SUB_CLASS_OF)?;
+        for triple in old.triples {
+            store::retract_triples(
+                conn,
+                &[Triple::new(iri, rdfs::SUB_CLASS_OF, triple.object)],
+                origin,
+            )?;
+        }
+        store::assert_triples(
+            conn,
+            &[Triple::new(iri, rdfs::SUB_CLASS_OF, Object::Iri(super_class.to_string()))],
+            origin,
+        )?;
+        Ok(())
+    }
+
+    /// Retract all triples about this class IRI
+    pub fn retract_all(conn: &mut Connection, iri: &str, origin: &str) -> Result<()> {
+        let result = query::get_by_entity(conn, iri)?;
+        let triples: Vec<Triple> = result.triples.into_iter()
+            .map(|t| Triple::new(t.subject, t.predicate, t.object))
+            .collect();
+        store::retract_triples(conn, &triples, origin)?;
+        Ok(())
     }
 }
 

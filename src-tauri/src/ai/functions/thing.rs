@@ -410,11 +410,9 @@ fn update_thing_one(
         }
 
         if let Some(icon) = args.get("icon").and_then(|v| v.as_str()) {
-            individual.add_property(conn, "foundation:icon", vec![Object::Literal {
-                value: icon.to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }], "ai")?;
+            crate::owl::validate_icon(conn, icon)?;
+            let (icon_pred, icon_obj) = crate::owl::icon_store_value(icon);
+            individual.add_property(conn, icon_pred, vec![icon_obj], "ai")?;
             updated_fields.push("icon");
         }
 

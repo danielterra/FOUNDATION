@@ -2,7 +2,6 @@ use serde_json::Value;
 use rusqlite::Connection;
 use tauri::Emitter;
 use crate::owl::Class;
-use crate::eavto::query;
 use super::ToolResult;
 
 const SCORE_LABEL_MATCH: usize = 3;
@@ -26,16 +25,7 @@ fn search_concepts_one(conn: &Connection, args: &Value) -> ToolResult {
         .unwrap_or(0) as usize;
 
     match (|| {
-        let concepts_result = query::get_by_predicate_object(conn, "rdf:type", "owl:Class")?;
-        let rdfs_concepts_result = query::get_by_predicate_object(conn, "rdf:type", "rdfs:Class")?;
-
-        let mut all_concept_iris: Vec<String> = concepts_result.triples.into_iter()
-            .chain(rdfs_concepts_result.triples)
-            .map(|t| t.subject)
-            .collect();
-
-        all_concept_iris.sort();
-        all_concept_iris.dedup();
+        let all_concept_iris = Class::find_all_iris(conn)?;
 
         let search_tokens: Vec<String> = if query_str.is_empty() {
             Vec::new()
@@ -86,6 +76,7 @@ fn search_concepts_one(conn: &Connection, args: &Value) -> ToolResult {
                     "iri": concept.iri,
                     "label": concept.label,
                     "icon": concept.icon,
+                    "comment": concept.comment,
                     "superClasses": super_classes,
                     "subClasses": sub_classes,
                 }), score));
@@ -141,15 +132,11 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
             .ok_or_else(|| crate::owl::OwlError::NotFound(iri.to_string()))?;
 
         let allowed_values: Vec<serde_json::Value> = if !concept.one_of_values.is_empty() {
-            use crate::eavto::query;
             concept.one_of_values.iter().map(|value_iri| {
-                let label_result = query::get_by_entity_predicate(
-                    conn, value_iri, "rdfs:label",
-                ).ok();
-                let label = label_result
-                    .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()))
+                let label = crate::owl::get_literal_property(conn, value_iri, "rdfs:label")
+                    .ok()
+                    .flatten()
                     .unwrap_or_else(|| value_iri.clone());
-
                 serde_json::json!({
                     "iri": value_iri,
                     "label": label,
@@ -160,9 +147,8 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
         };
 
         let allowed_statuses: Vec<serde_json::Value> = {
-            let status_result = query::get_by_entity_predicate(conn, iri, "foundation:allowedStatus")?;
-            status_result.triples.iter()
-                .filter_map(|t| t.object.as_iri())
+            let status_iris = crate::owl::get_all_iri_properties(conn, iri, "foundation:allowedStatus")?;
+            status_iris.iter()
                 .map(|status_iri| {
                     let thing = crate::owl::Thing::get(conn, status_iri);
                     serde_json::json!({"iri": status_iri, "label": thing.label})
@@ -265,13 +251,7 @@ fn create_concept_one(
         concept.assert(conn, crate::owl::ClassType::OwlClass, label, icon, super_concept, "ai")?;
 
         if let Some(comment_text) = comment {
-            use crate::eavto::{store, Triple, Object};
-            let comment_triple = Triple::new(iri, "rdfs:comment", Object::Literal {
-                value: comment_text.to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            });
-            store::assert_triples(conn, &[comment_triple], "ai")?;
+            Class::set_comment(conn, iri, comment_text, "ai")?;
         }
 
         if let Some(app_handle) = app {
@@ -320,81 +300,35 @@ fn update_concept_one(
     };
 
     match (|| {
-        use crate::eavto::{store, query, Triple, Object};
-        use crate::owl::vocabulary::rdfs;
-
         let mut updated_fields = Vec::new();
 
         if let Some(label) = args.get("label").and_then(|v| v.as_str()) {
-            let old_labels = query::get_by_entity_predicate(conn, iri, rdfs::LABEL)?;
-            for triple in old_labels.triples {
-                let t = Triple::new(iri, rdfs::LABEL, triple.object);
-                store::retract_triples(conn, &[t], "ai")?;
-            }
-            let new_label = Triple::new(iri, rdfs::LABEL, Object::Literal {
-                value: label.to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            });
-            store::assert_triples(conn, &[new_label], "ai")?;
+            Class::set_label(conn, iri, label, "ai")?;
             updated_fields.push("label");
         }
 
         if let Some(icon) = args.get("icon").and_then(|v| v.as_str()) {
-            let old_icons = query::get_by_entity_predicate(conn, iri, "foundation:icon")?;
-            for triple in old_icons.triples {
-                let t = Triple::new(iri, "foundation:icon", triple.object);
-                store::retract_triples(conn, &[t], "ai")?;
-            }
-            let new_icon = Triple::new(iri, "foundation:icon", Object::Literal {
-                value: icon.to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            });
-            store::assert_triples(conn, &[new_icon], "ai")?;
+            Class::set_icon(conn, iri, icon, "ai")?;
             updated_fields.push("icon");
         }
 
         if let Some(comment) = args.get("comment").and_then(|v| v.as_str()) {
-            let old_comments = query::get_by_entity_predicate(conn, iri, rdfs::COMMENT)?;
-            for triple in old_comments.triples {
-                let t = Triple::new(iri, rdfs::COMMENT, triple.object);
-                store::retract_triples(conn, &[t], "ai")?;
-            }
-            let new_comment = Triple::new(iri, rdfs::COMMENT, Object::Literal {
-                value: comment.to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            });
-            store::assert_triples(conn, &[new_comment], "ai")?;
+            Class::set_comment(conn, iri, comment, "ai")?;
             updated_fields.push("comment");
         }
 
         if let Some(super_concept) = args.get("super_concept").and_then(|v| v.as_str()) {
-            let old_supers = query::get_by_entity_predicate(conn, iri, rdfs::SUB_CLASS_OF)?;
-            for triple in old_supers.triples {
-                let t = Triple::new(iri, rdfs::SUB_CLASS_OF, triple.object);
-                store::retract_triples(conn, &[t], "ai")?;
-            }
-            let new_super = Triple::new(
-                iri, rdfs::SUB_CLASS_OF, Object::Iri(super_concept.to_string()),
-            );
-            store::assert_triples(conn, &[new_super], "ai")?;
+            Class::set_super_class(conn, iri, super_concept, "ai")?;
             updated_fields.push("superConcept");
         }
 
         if let Some(allowed_statuses) = args.get("allowed_statuses").and_then(|v| v.as_array()) {
-            let old_statuses = query::get_by_entity_predicate(conn, iri, "foundation:allowedStatus")?;
-            for triple in old_statuses.triples {
-                let t = Triple::new(iri, "foundation:allowedStatus", triple.object);
-                store::retract_triples(conn, &[t], "ai")?;
-            }
-            for status_value in allowed_statuses {
-                if let Some(status_iri) = status_value.as_str() {
-                    let t = Triple::new(iri, "foundation:allowedStatus", Object::Iri(status_iri.to_string()));
-                    store::assert_triples(conn, &[t], "ai")?;
-                }
-            }
+            let status_iris: Vec<&str> = allowed_statuses.iter()
+                .filter_map(|v| v.as_str())
+                .collect();
+            crate::owl::replace_all_property_iris(
+                conn, iri, "foundation:allowedStatus", &status_iris, "ai",
+            )?;
             updated_fields.push("allowedStatuses");
         }
 
@@ -402,7 +336,7 @@ fn update_concept_one(
             app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
         }
 
-        Ok::<_, Box<dyn std::error::Error>>(serde_json::json!({
+        Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
             "message": format!("Concept {} updated successfully", iri),
             "updatedFields": updated_fields,
@@ -444,21 +378,13 @@ fn delete_concept_one(
     };
 
     match (|| {
-        use crate::eavto::{store, query, Triple};
-
-        let triples_result = query::get_by_entity(conn, iri)?;
-
-        let triples_to_retract: Vec<Triple> = triples_result.triples.into_iter()
-            .map(|t| Triple::new(t.subject, t.predicate, t.object))
-            .collect();
-
-        store::retract_triples(conn, &triples_to_retract, "ai")?;
+        Class::retract_all(conn, iri, "ai")?;
 
         if let Some(app_handle) = app {
             app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
         }
 
-        Ok::<_, Box<dyn std::error::Error>>(serde_json::json!({
+        Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
             "message": format!("Concept {} deleted successfully", iri),
         }))

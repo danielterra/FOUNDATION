@@ -74,7 +74,7 @@ pub async fn chat__attach_file(
     executor.write(move |conn| {
         let ind = Individual::new(&iri_clone);
 
-        ind.assert(conn, "foundation:File", &file_name_clone, "insert_drive_file", "chat")
+        ind.assert(conn, "foundation:File", &file_name_clone, "attach_file", "chat")
             .map_err(|e| format!("Failed to create File entity: {}", e))?;
 
         ind.add_property(conn, "foundation:fileName", vec![Object::Literal {

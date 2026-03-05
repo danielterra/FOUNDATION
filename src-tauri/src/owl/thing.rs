@@ -29,9 +29,19 @@ impl Thing {
             .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()))
             .unwrap_or_else(|| iri.clone());
 
-        let icon = query::get_by_entity_predicate(conn, &iri, "foundation:icon")
+        let icon = query::get_by_entity_predicate(conn, &iri, "foundation:hasIcon")
             .ok()
-            .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()));
+            .and_then(|r| {
+                r.triples.first()
+                    .and_then(|t| t.object.as_iri())
+                    .map(|s| s.to_string())
+            })
+            .and_then(|icon_iri| crate::owl::icon_iri_to_display(conn, &icon_iri))
+            .or_else(|| {
+                query::get_by_entity_predicate(conn, &iri, "foundation:icon")
+                    .ok()
+                    .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()))
+            });
 
         Thing {
             iri,
