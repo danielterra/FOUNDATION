@@ -16,7 +16,7 @@ pub use super::chat_storage::{
 use super::chat_storage::{create_message, load_message, ImageSource, DocumentSource};
 
 use message_utils::{message_to_api_format, inject_datetime_context, sanitize_tool_pairs, response_content_to_blocks};
-use settings::{get_system_prompt, get_max_input_tokens};
+use settings::{get_system_prompt, get_max_input_tokens, get_supports_web_tools};
 use recovery::{delete_messages_from_timestamp, continue_conversation_after_recovery};
 
 pub const MAX_OUTPUT_TOKENS: u32 = 4096;
@@ -154,6 +154,7 @@ pub async fn chat__send_and_reply(
 
         let system_prompt = get_system_prompt(&executor).await?;
         let tools = crate::ai::functions::get_claude_tools();
+        let supports_web_tools = get_supports_web_tools(&executor).await;
 
         let request = crate::ai::GenerateRequest {
             messages: api_messages,
@@ -161,6 +162,7 @@ pub async fn chat__send_and_reply(
             temperature: Some(0.3),
             system: Some(system_prompt),
             tools: Some(tools),
+            supports_web_tools,
         };
 
         app.emit("ai-status", serde_json::json!({ "status": "Claude is thinking" })).ok();

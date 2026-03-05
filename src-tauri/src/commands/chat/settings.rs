@@ -134,6 +134,24 @@ pub async fn get_max_input_tokens(executor: &DbExecutor) -> Result<usize, String
     }).await
 }
 
+pub async fn get_supports_web_tools(executor: &DbExecutor) -> bool {
+    executor.read(|conn| {
+        let model_iri = match get_ai_model_iri(conn)? {
+            Some(iri) => iri,
+            None => return Ok(false),
+        };
+        let model = match Individual::get(conn, &model_iri).map_err(|e| e.to_string())? {
+            Some(m) => m,
+            None => return Ok(false),
+        };
+        let has_web_tools = model.properties.iter().any(|(k, v)| {
+            k == "foundation:modelCapability"
+                && matches!(v, Object::Literal { value, .. } if value == "web_tools")
+        });
+        Ok(has_web_tools)
+    }).await.unwrap_or(false)
+}
+
 /// Get AI model IRI with fallback logic:
 /// Check DefaultAIModelSetting (user updates this setting, not creates new one)
 pub fn get_ai_model_iri(conn: &Connection) -> Result<Option<String>, String> {

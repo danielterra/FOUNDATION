@@ -3,7 +3,7 @@ use crate::commands::chat_storage::{create_assistant_message, load_conversation_
 use tauri::Emitter;
 use super::tool_execution::execute_tools_from_message;
 use super::message_utils::{message_to_api_format, inject_datetime_context, sanitize_tool_pairs, response_content_to_blocks};
-use super::settings::{get_system_prompt, get_max_input_tokens};
+use super::settings::{get_system_prompt, get_max_input_tokens, get_supports_web_tools};
 use super::super::log_backend;
 use super::MAX_OUTPUT_TOKENS;
 
@@ -85,6 +85,7 @@ pub async fn continue_conversation_after_recovery(
 
         let system_prompt = get_system_prompt(&executor).await?;
         let tools = crate::ai::functions::get_claude_tools();
+        let supports_web_tools = get_supports_web_tools(&executor).await;
 
         let request = crate::ai::GenerateRequest {
             messages: api_messages,
@@ -92,6 +93,7 @@ pub async fn continue_conversation_after_recovery(
             temperature: Some(0.3),
             system: Some(system_prompt),
             tools: Some(tools),
+            supports_web_tools,
         };
 
         app.emit(

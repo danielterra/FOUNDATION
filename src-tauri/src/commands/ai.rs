@@ -218,6 +218,7 @@ pub async fn ai__generate(
         temperature,
         system,
         tools: None,
+        supports_web_tools: false,
     };
 
     let response = ai::generate_response(request).await?;

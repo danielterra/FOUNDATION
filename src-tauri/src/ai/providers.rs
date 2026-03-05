@@ -203,21 +203,23 @@ impl AIProvider for ClaudeProvider {
                 .map(|t| serde_json::to_value(t).map_err(|e| e.to_string()))
                 .collect::<Result<Vec<_>, _>>()?;
 
-            tools.push(serde_json::json!({
-                "type": "web_search_20260209",
-                "name": "web_search",
-                "max_uses": WEB_TOOL_MAX_USES
-            }));
+            if request.supports_web_tools {
+                tools.push(serde_json::json!({
+                    "type": "web_search_20260209",
+                    "name": "web_search",
+                    "max_uses": WEB_TOOL_MAX_USES
+                }));
 
-            tools.push(serde_json::json!({
-                "type": "web_fetch_20260209",
-                "name": "web_fetch",
-                "max_uses": WEB_TOOL_MAX_USES,
-                "max_content_tokens": WEB_FETCH_MAX_CONTENT_TOKENS,
-                "citations": {
-                    "enabled": true
-                }
-            }));
+                tools.push(serde_json::json!({
+                    "type": "web_fetch_20260209",
+                    "name": "web_fetch",
+                    "max_uses": WEB_TOOL_MAX_USES,
+                    "max_content_tokens": WEB_FETCH_MAX_CONTENT_TOKENS,
+                    "citations": {
+                        "enabled": true
+                    }
+                }));
+            }
 
             if let Some(last_tool) = tools.last_mut() {
                 if let Some(obj) = last_tool.as_object_mut() {
@@ -257,7 +259,11 @@ impl AIProvider for ClaudeProvider {
             .header("anthropic-version", "2023-06-01")
             .header(
                 "anthropic-beta",
-                "prompt-caching-2024-07-31,code-execution-web-tools-2026-02-09",
+                if request.supports_web_tools {
+                    "prompt-caching-2024-07-31,code-execution-web-tools-2026-02-09"
+                } else {
+                    "prompt-caching-2024-07-31"
+                },
             )
             .header("content-type", "application/json")
             .json(&claude_request)

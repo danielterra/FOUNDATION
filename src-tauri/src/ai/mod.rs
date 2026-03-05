@@ -44,6 +44,7 @@ pub struct GenerateRequest {
     pub temperature: Option<f32>,
     pub system: Option<String>,
     pub tools: Option<Vec<providers::ClaudeTool>>,
+    pub supports_web_tools: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
