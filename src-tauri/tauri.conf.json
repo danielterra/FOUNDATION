@@ -41,9 +41,6 @@
     "copyright": "Copyright (c) 2026 Daniel Terra",
     "category": "Productivity",
     "licenseFile": "../LICENSE",
-    "resources": [
-      "../core-ontology"
-    ],
     "macOS": {
       "dmg": {
         "appPosition": {

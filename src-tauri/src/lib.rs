@@ -1,10 +1,9 @@
 #![allow(non_snake_case)]
 
-mod turtle;
 mod namespaces;
 mod commands;
 mod eavto;
-mod owl;
+pub mod owl;
 mod ai;
 mod mcp;
 

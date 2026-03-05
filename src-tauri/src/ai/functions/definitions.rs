@@ -145,8 +145,11 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             name: "remember_thing".to_string(),
             array_mode: true,
             description: concat!(
-                "Remember everything you know about a specific thing",
-                " - all its details and connections.",
+                "Remember everything you know about a specific thing - all its details and",
+                " connections. Returns backlinks grouped by concept as",
+                " [{concept, conceptLabel, count}] sorted by count descending,",
+                " so you can understand the shape of an entity's connections",
+                " and decide whether to paginate through them.",
             ).to_string(),
             parameters: vec![
                 Parameter {

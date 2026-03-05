@@ -1,11 +1,3 @@
-// ============================================================================
-// EAVTO Connection Module
-// ============================================================================
-// Manages SQLite database connection lifecycle and initialization
-//
-// Database location: ~/Documents/Foundation/FOUNDATION.db
-// ============================================================================
-
 use rusqlite::{Connection, Result};
 use std::path::{Path, PathBuf};
 use std::fs;
@@ -13,7 +5,6 @@ use std::fmt;
 use std::error::Error;
 use crate::commands::log_backend;
 
-/// Database initialization error types
 #[derive(Debug)]
 pub enum DbError {
     ConnectionError(rusqlite::Error),
@@ -53,10 +44,7 @@ impl From<std::io::Error> for DbError {
     }
 }
 
-/// Get the path to the database file
-/// Uses ~/Documents/Foundation/FOUNDATION.db for both dev and production
 pub fn get_db_path() -> Result<PathBuf, DbError> {
-    // Use Documents/Foundation directory for all builds
     let documents_dir = dirs::document_dir()
         .ok_or_else(|| DbError::IoError(std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -65,7 +53,6 @@ pub fn get_db_path() -> Result<PathBuf, DbError> {
 
     let foundation_dir = documents_dir.join("Foundation");
 
-    // Create Foundation directory if it doesn't exist
     if !foundation_dir.exists() {
         log_backend("info", &format!("Creating Foundation directory: {:?}", foundation_dir));
         fs::create_dir_all(&foundation_dir)?;
@@ -77,16 +64,9 @@ pub fn get_db_path() -> Result<PathBuf, DbError> {
     Ok(db_path)
 }
 
-/// SQL schema for database initialization
 const SCHEMA_SQL: &str = include_str!("../../../db/schema.sql");
+const ONTOLOGY_SQL: &str = include_str!("../../../core-ontology/ontology.sql");
 
-/// RDF/RDFS/OWL core ontology
-const RDF_CORE_TTL: &str = include_str!("../../../core-ontology/rdf-rdfs-owl-core.ttl");
-
-/// DTYPE (Datatype Schema) ontology
-const DTYPE_TTL: &str = include_str!("../../../core-ontology/dtype.ttl");
-
-/// Create database schema
 fn create_schema(conn: &Connection) -> Result<(), DbError> {
     log_backend("info", "Creating schema");
     conn.execute_batch(SCHEMA_SQL)?;
@@ -94,85 +74,19 @@ fn create_schema(conn: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
-/// Import RDF/RDFS/OWL core ontology
-fn import_rdf_core(conn: &mut Connection, app: Option<&tauri::AppHandle>) -> Result<u64, DbError> {
-    use tauri::Emitter;
-
-    log_backend("info", "Importing RDF/RDFS/OWL core ontology");
-
-    if let Some(handle) = app {
-        let _ = handle.emit("import-progress", crate::ImportProgress {
-            stage: "core".to_string(),
-            current_file: "rdf-rdfs-owl-core.ttl".to_string(),
-            current: 1,
-            total: 3, // core + dtype + foundation files
-            triples: 0,
-        });
-    }
-
-    let temp_dir = std::env::temp_dir();
-    let temp_file = temp_dir.join("rdf-rdfs-owl-core.ttl");
-
-    std::fs::write(&temp_file, RDF_CORE_TTL)
-        .map_err(|e| DbError::IoError(e))?;
-
-    let stats = crate::turtle::import_turtle_file(
-        conn,
-        &temp_file,
-        "core"
-    ).map_err(|e| DbError::SchemaError(format!("RDF core import failed: {:?}", e)))?;
-
-    let _ = std::fs::remove_file(&temp_file);
-
-    log_backend("info", &format!("Imported {} triples from RDF/RDFS/OWL", stats.triples_processed));
-    Ok(stats.triples_processed)
+fn import_ontology_sql(conn: &Connection) -> Result<(), DbError> {
+    log_backend("info", "Importing core ontology from SQL");
+    conn.execute_batch(ONTOLOGY_SQL)
+        .map_err(|e| DbError::SchemaError(format!("Ontology import failed: {}", e)))?;
+    log_backend("info", "Core ontology imported");
+    Ok(())
 }
 
-/// Import DTYPE ontology
-fn import_dtype(
-    conn: &mut Connection,
-    app: Option<&tauri::AppHandle>,
-    total_triples: u64,
-) -> Result<u64, DbError> {
-    use tauri::Emitter;
-
-    log_backend("info", "Importing DTYPE ontology");
-
-    if let Some(handle) = app {
-        let _ = handle.emit("import-progress", crate::ImportProgress {
-            stage: "dtype".to_string(),
-            current_file: "dtype.ttl".to_string(),
-            current: 2,
-            total: 3,
-            triples: total_triples,
-        });
-    }
-
-    let temp_dir = std::env::temp_dir();
-    let temp_file = temp_dir.join("dtype.ttl");
-
-    std::fs::write(&temp_file, DTYPE_TTL)
-        .map_err(|e| DbError::IoError(e))?;
-
-    let stats = crate::turtle::import_turtle_file(
-        conn,
-        &temp_file,
-        "core"
-    ).map_err(|e| DbError::SchemaError(format!("DTYPE import failed: {:?}", e)))?;
-
-    let _ = std::fs::remove_file(&temp_file);
-
-    log_backend("info", &format!("Imported {} triples from DTYPE", stats.triples_processed));
-    Ok(stats.triples_processed)
-}
-
-/// Initialize database with schema and ontologies
 #[allow(dead_code)]
 pub fn initialize_db(db_path: &Path) -> Result<Connection, DbError> {
     initialize_db_with_progress(db_path, None)
 }
 
-/// Initialize database with progress events
 fn initialize_db_with_progress(
     db_path: &Path,
     app: Option<&tauri::AppHandle>,
@@ -182,23 +96,13 @@ fn initialize_db_with_progress(
     let needs_initialization = !db_path.exists();
 
     log_backend("info", &format!("Using database: {:?}", db_path));
-    let mut conn = Connection::open(db_path)?;
+    let conn = Connection::open(db_path)?;
 
     if needs_initialization {
         log_backend("info", "Initializing new database");
 
         create_schema(&conn)?;
-
-        let mut total_triples = 0u64;
-        total_triples += import_rdf_core(&mut conn, app)?;
-        total_triples += import_dtype(&mut conn, app, total_triples)?;
-
-        total_triples += crate::turtle::import_all_foundation_ontologies(
-            &mut conn,
-            app,
-            total_triples,
-        )
-        .map_err(|e| DbError::SchemaError(format!("Ontology import failed: {:?}", e)))?;
+        import_ontology_sql(&conn)?;
 
         conn.execute(
             "UPDATE metadata SET value = 'true', updated_at = ? WHERE key = 'ontology_imported'",
@@ -208,39 +112,23 @@ fn initialize_db_with_progress(
                 .as_millis() as i64],
         )?;
 
-        log_backend(
-            "info",
-            &format!("Database initialization complete. Total triples: {}", total_triples),
-        );
+        log_backend("info", "Database initialization complete");
     } else {
-        log_backend("info", "Database exists, checking for ontology updates");
+        log_backend("info", "Database exists, skipping ontology import");
+    }
 
-        // Check for modified ontology files and reimport if needed
-        let modified_count = crate::turtle::import_all_foundation_ontologies(&mut conn, app, 0)
-            .map_err(|e| DbError::SchemaError(format!("Ontology update check failed: {:?}", e)))?;
-
-        if modified_count > 0 {
-            log_backend("info", &format!("Reimported {} modified triples", modified_count));
-        } else {
-            log_backend("info", "All ontology files up to date");
-        }
-
-        // Emit completion
-        if let Some(handle) = app {
-            let _ = handle.emit("import-complete", ());
-        }
+    if let Some(handle) = app {
+        let _ = handle.emit("import-complete", ());
     }
 
     Ok(conn)
 }
 
-/// Initialize database with progress events for Tauri
 pub fn initialize_with_progress(app: tauri::AppHandle) -> Result<Connection, DbError> {
     let db_path = get_db_path()?;
     initialize_db_with_progress(&db_path, Some(&app))
 }
 
-/// Get or create database connection
 #[allow(dead_code)]
 pub fn get_connection() -> Result<Connection, DbError> {
     let db_path = get_db_path()?;
@@ -281,7 +169,6 @@ mod tests {
 
         assert!(result.is_ok());
 
-        // Verify schema was created by checking for tables
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
             [],
@@ -303,7 +190,6 @@ mod tests {
         assert!(result.is_ok(), "Database initialization should succeed");
         assert!(db_path.exists(), "Database file should be created");
 
-        // Verify we can connect to the created database
         let conn = Connection::open(&db_path).expect("Should open created database");
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
@@ -319,7 +205,6 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let db_path = temp_dir.path().join("existing.db");
 
-        // Create a database first
         {
             let conn = Connection::open(&db_path).expect("Failed to create initial db");
             conn.execute_batch(SCHEMA_SQL).expect("Failed to create schema");
@@ -327,7 +212,6 @@ mod tests {
 
         assert!(db_path.exists(), "Database should exist");
 
-        // Initialize should reuse existing database
         let result = initialize_db(&db_path);
 
         assert!(result.is_ok(), "Should reuse existing database");

@@ -1,0 +1,8 @@
+[package]
+name = "dump-ontology"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+dirs = "5.0"

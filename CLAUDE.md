@@ -143,6 +143,16 @@ LIMIT 20;"
 - **NEVER access the database directly** via SQL INSERT/UPDATE/DELETE — always go through MCP tools
 - If MCP tools are not available (app not running), report findings and wait for the user to start the app
 
+### Looking Up Foundation IRIs
+
+**⚠️ CRITICAL RULE: NEVER deduce or guess IRIs — ALWAYS look them up using MCP tools.**
+
+- IRIs like `foundation:Planned`, `foundation:Active`, etc. do NOT necessarily exist — never assume
+- To find a status by label: `remember_things_by_details(concept_iri: foundation:Status, properties: [{detail: "rdfs:label", value: "<label>"}])`
+- To find any thing by label or property: use `remember_things_by_details` or `remember_thing`
+- **NEVER use SQL SELECT to find IRIs** — use the appropriate MCP tool instead
+- **NEVER hardcode an IRI without first confirming it exists via MCP**
+
 ## Database & Storage
 
 - **User database**: `~/Documents/Foundation/FOUNDATION.db`

@@ -32,21 +32,6 @@ pub fn expand_iri(iri: &str) -> String {
     iri.to_string()
 }
 
-/// Compresses a full IRI to its prefixed form
-/// Examples:
-/// - "http://www.w3.org/2000/01/rdf-schema#label" -> "rdfs:label"
-/// - "http://www.w3.org/2002/07/owl#Thing" -> "owl:Thing"
-/// - "http://foundation.local/ontology/Computer" -> "foundation:Computer"
-pub fn compress_iri(iri: &str) -> String {
-    for (prefix, namespace) in NAMESPACES.iter() {
-        if iri.starts_with(namespace) {
-            return iri.replace(namespace, prefix);
-        }
-    }
-    // Already compressed or unknown namespace
-    iri.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,18 +50,5 @@ mod tests {
             expand_iri("http://example.org/full"),
             "http://example.org/full"
         );
-    }
-
-    #[test]
-    fn test_compress_iri() {
-        assert_eq!(
-            compress_iri("http://www.w3.org/2000/01/rdf-schema#label"),
-            "rdfs:label"
-        );
-        assert_eq!(
-            compress_iri("http://www.w3.org/2002/07/owl#Thing"),
-            "owl:Thing"
-        );
-        assert_eq!(compress_iri("custom:Thing"), "custom:Thing");
     }
 }

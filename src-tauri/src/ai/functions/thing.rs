@@ -169,6 +169,44 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
         let individual = Individual::get(conn, iri)?
             .ok_or_else(|| crate::owl::OwlError::NotFound(iri.to_string()))?;
 
+        let source_iris: Vec<String> = individual.backlinks
+            .iter()
+            .map(|(src, _, _)| src.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let types_map = crate::eavto::query::get_types_for_subjects(conn, &source_iris)
+            .unwrap_or_default();
+
+        let mut concept_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for (src, _, _) in &individual.backlinks {
+            let concept = types_map
+                .get(src)
+                .and_then(|types| types.first())
+                .cloned()
+                .unwrap_or_else(|| "owl:Thing".to_string());
+            *concept_counts.entry(concept).or_insert(0) += 1;
+        }
+
+        let mut backlinks: Vec<serde_json::Value> = concept_counts
+            .into_iter()
+            .map(|(concept_iri, count)| {
+                let concept_label = crate::owl::Thing::get(conn, &concept_iri).label;
+                serde_json::json!({
+                    "concept": concept_iri,
+                    "conceptLabel": concept_label,
+                    "count": count,
+                })
+            })
+            .collect();
+        backlinks.sort_by(|a, b| {
+            let ca = a["count"].as_u64().unwrap_or(0);
+            let cb = b["count"].as_u64().unwrap_or(0);
+            cb.cmp(&ca)
+        });
+
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "iri": individual.iri,
             "label": individual.label,
@@ -179,7 +217,7 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
                 "label": t.label,
             })).collect::<Vec<_>>(),
             "properties": individual.serializable_properties(conn),
-            "backlinksCount": individual.backlinks.len(),
+            "backlinks": backlinks,
         }))
     })() {
         Ok(result) => ToolResult {

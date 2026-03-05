@@ -598,6 +598,50 @@ pub fn get_entities_max_tx(
     Ok(result)
 }
 
+/// Get rdf:type values for multiple subject IRIs in a single query.
+/// Returns a HashMap from subject IRI to its list of type IRIs.
+/// Subjects with no rdf:type are omitted from the result.
+pub fn get_types_for_subjects(
+    conn: &Connection,
+    subjects: &[String],
+) -> Result<std::collections::HashMap<String, Vec<String>>> {
+    if subjects.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let placeholders = subjects
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT subject, object FROM triples \
+         WHERE subject IN ({}) AND predicate = 'rdf:type' AND object_type = 'iri' AND retracted = 0",
+        placeholders
+    );
+
+    let params: Vec<&dyn rusqlite::ToSql> = subjects
+        .iter()
+        .map(|s| s as &dyn rusqlite::ToSql)
+        .collect();
+
+    let mut stmt = conn.prepare(&sql)?;
+    let mut map: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        let subject: String = row.get(0)?;
+        let type_iri: String = row.get(1)?;
+        Ok((subject, type_iri))
+    })?;
+
+    for row in rows {
+        let (subject, type_iri) = row?;
+        map.entry(subject).or_default().push(type_iri);
+    }
+
+    Ok(map)
+}
+
 /// Convert SQLite row to Triple
 fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
     let subject: String = row.get(0)?;

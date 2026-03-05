@@ -5,6 +5,24 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-03-05
+
+### Changed
+
+- **Ontology embedded as SQL**: replaced 104 TTL files with a single `core-ontology/ontology.sql` file loaded via `include_str!` at compile time; eliminates `rio_turtle`, `rio_xml`, `rio_api` dependencies and per-startup file checks
+- **OWL module made public**: `mod owl` is now `pub mod owl` in `lib.rs`, enabling external tooling to use `Class::get` and `Individual::get`
+
+### Fixed
+
+- Retracted 1,271 corrupt blank node triples (OWL Restriction nodes with colliding blank node IDs from TTL import) from the ontology dataset; zero blank nodes remain in the active dataset
+
+### Refactored
+
+- `namespaces.rs`: removed unused `compress_iri` function (only referenced by deleted turtle module)
+- `connection.rs`: removed TTL parsing infrastructure (`import_rdf_core`, `import_dtype`, ontology file hash check); initialization now calls `execute_batch(ONTOLOGY_SQL)` directly
+
+---
+
 ## [0.5.0] - 2026-03-05
 
 ### Added

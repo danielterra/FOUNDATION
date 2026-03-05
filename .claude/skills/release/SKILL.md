@@ -13,7 +13,7 @@ disable-model-invocation: false
 !`git log $(git describe --tags --abbrev=0 2>/dev/null || echo "HEAD~20")..HEAD --oneline 2>/dev/null || git log --oneline -15`
 
 ## Last Release Entry
-!`tail -n 20 core-ontology/SoftwareRelease.ttl`
+!`sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT t_ver.object_value, t_date.object_value, t_log.object_value FROM triples t_ver JOIN triples t_date ON t_date.subject = t_ver.subject AND t_date.predicate = 'foundation:releaseDate' AND t_date.retracted = 0 LEFT JOIN triples t_log ON t_log.subject = t_ver.subject AND t_log.predicate = 'foundation:changelog' AND t_log.retracted = 0 WHERE t_ver.predicate = 'foundation:versionNumber' AND t_ver.retracted = 0 AND t_ver.subject LIKE 'foundation:FoundationRelease_%' ORDER BY t_date.object_value DESC LIMIT 1;" 2>/dev/null || echo "(no releases found)"`
 
 ---
 
@@ -56,19 +56,28 @@ Prepend a new entry at the top of `CHANGELOG.md` (after the header), following K
 
 Only include sections that have content. Derive entries from the commit list.
 
-### Step 4 — Update core-ontology/SoftwareRelease.ttl
+### Step 3.5 — Dump and Verify Ontology
 
-Append a new individual at the end of the file:
+1. `cargo run --manifest-path scripts/dump-ontology/Cargo.toml`
+2. `cargo run --manifest-path scripts/verify-ontology/Cargo.toml` — must pass with zero differences
+3. Include `core-ontology/ontology.sql` in the `git add` on Step 7
 
-```turtle
-foundation:FoundationRelease_X_Y_Z a foundation:SoftwareRelease , owl:NamedIndividual ;
-    rdfs:label "FOUNDATION vX.Y.Z" ;
-    rdfs:comment "<one-line summary>" ;
-    foundation:releaseOf foundation:FoundationProduct ;
-    foundation:versionNumber "X.Y.Z" ;
-    foundation:licenseType "MIT" ;
-    foundation:releaseDate "YYYY-MM-DD"^^xsd:date ;
-    foundation:changelog "<semicolon-separated list of commit subjects>" .
+### Step 4 — Create SoftwareRelease individual via MCP
+
+Use `learn_thing` to create the release individual, then `learn_thing_detail` to add each property:
+
+```
+learn_thing(
+  iri: "foundation:FoundationRelease_X_Y_Z",
+  type_iri: "foundation:SoftwareRelease",
+  label: "FOUNDATION vX.Y.Z",
+  comment: "<one-line summary>"
+)
+learn_thing_detail(iri: "foundation:FoundationRelease_X_Y_Z", detail: "foundation:releaseOf",    value: "foundation:FoundationProduct")
+learn_thing_detail(iri: "foundation:FoundationRelease_X_Y_Z", detail: "foundation:versionNumber", value: "X.Y.Z")
+learn_thing_detail(iri: "foundation:FoundationRelease_X_Y_Z", detail: "foundation:licenseType",   value: "MIT")
+learn_thing_detail(iri: "foundation:FoundationRelease_X_Y_Z", detail: "foundation:releaseDate",   value: "YYYY-MM-DD")
+learn_thing_detail(iri: "foundation:FoundationRelease_X_Y_Z", detail: "foundation:changelog",     value: "<semicolon-separated list of commit subjects>")
 ```
 
 Use today's date from the system context (`currentDate`).
@@ -107,7 +116,7 @@ One entry per feature, single sentence, status tag at the end.
 
 Stage all changed files **by name** (never `git add -A`):
 ```
-git add src-tauri/Cargo.toml src-tauri/Cargo.lock package.json CHANGELOG.md core-ontology/SoftwareRelease.ttl README.md
+git add src-tauri/Cargo.toml src-tauri/Cargo.lock package.json CHANGELOG.md core-ontology/ontology.sql README.md
 ```
 
 Commit with:
