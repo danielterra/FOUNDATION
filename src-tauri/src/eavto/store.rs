@@ -310,7 +310,9 @@ fn insert_triple(
             )
         }
         Object::DateTime(dt) => {
-            dt_str = dt.to_string();
+            dt_str = chrono::DateTime::from_timestamp_millis(*dt)
+                .unwrap_or_default()
+                .to_rfc3339();
             (None, Some(dt_str.as_str()), Some("xsd:dateTime"), None, None, None, Some(*dt), None)
         }
 
@@ -392,16 +394,14 @@ fn insert_triple(
                     )
                 }
                 Some("xsd:dateTime") => {
-                    let timestamp = chrono::DateTime::parse_from_rfc3339(value)
-                        .map(|dt| dt.timestamp())
-                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    let millis = value.parse::<i64>()
+                        .map_err(|_| rusqlite::Error::ToSqlConversionFailure(Box::new(
                             std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 format!(
                                     "Failed to parse dateTime literal '{}' for triple: \
-                                     {} {} {} - Error: {} - Expected ISO 8601 format \
-                                     (e.g., '2025-01-28T18:38:46Z')",
-                                    value, triple.subject, triple.predicate, value, e,
+                                     {} {} {} - Expected Unix milliseconds (i64)",
+                                    value, triple.subject, triple.predicate, value,
                                 ),
                             )
                         )))?;
@@ -412,7 +412,7 @@ fn insert_triple(
                         language.as_deref(),
                         None,
                         None,
-                        Some(timestamp),
+                        Some(millis),
                         None,
                     )
                 }

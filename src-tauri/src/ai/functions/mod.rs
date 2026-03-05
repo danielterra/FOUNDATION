@@ -26,6 +26,8 @@ pub struct Parameter {
     pub param_type: String,
     pub description: String,
     pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
 }
 
 impl ToolTemplate {
@@ -34,13 +36,14 @@ impl ToolTemplate {
         let mut required = Vec::new();
 
         for param in &self.parameters {
-            properties.insert(
-                param.name.clone(),
-                json!({
-                    "type": param.param_type,
-                    "description": param.description,
-                })
-            );
+            let mut schema = if let Some(custom) = &param.schema {
+                custom.clone()
+            } else {
+                json!({ "type": param.param_type })
+            };
+            schema.as_object_mut().expect("schema is always a JSON object")
+                .insert("description".to_string(), json!(param.description));
+            properties.insert(param.name.clone(), schema);
             if param.required {
                 required.push(param.name.clone());
             }

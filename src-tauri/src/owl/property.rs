@@ -136,7 +136,7 @@ impl Property {
         property_type: PropertyType,
         label: &str,
         comment: Option<&str>,
-        domain: Option<&str>,
+        domains: &[&str],
         range: Option<&str>,
         unit: Option<&str>,
         origin: &str
@@ -196,8 +196,7 @@ impl Property {
             }));
         }
 
-        // Add domain if provided
-        if let Some(domain_class) = domain {
+        for domain_class in domains {
             triples.push(Triple::new(
                 &self.iri,
                 rdfs::DOMAIN,
@@ -301,7 +300,7 @@ mod tests {
             PropertyType::DatatypeProperty,
             "has age",
             Some("The age of a person"),
-            Some("foundation:Person"),
+            &["foundation:Person"],
             Some("xsd:integer"),
             None, // NO UNIT - should fail
             "test"
@@ -321,7 +320,7 @@ mod tests {
             PropertyType::DatatypeProperty,
             "has age",
             Some("The age of a person"),
-            Some("foundation:Person"),
+            &["foundation:Person"],
             Some("xsd:integer"),
             Some("unit:YR"), // WITH UNIT - should succeed
             "test"
@@ -351,7 +350,7 @@ mod tests {
             PropertyType::ObjectProperty,
             "has parent",
             None,
-            Some("foundation:Person"),
+            &["foundation:Person"],
             Some("foundation:Person"),
             None, // Object properties don't need units
             "test"
@@ -374,7 +373,7 @@ mod tests {
             PropertyType::DatatypeProperty,
             "has name",
             None,
-            Some("foundation:Person"),
+            &["foundation:Person"],
             Some("xsd:string"),
             Some("unit:GigaBYTE"), // String property with unit - should fail
             "test"
@@ -404,7 +403,7 @@ mod tests {
                 PropertyType::DatatypeProperty,
                 "test prop",
                 None,
-                None,
+                &[],
                 Some(xsd_type),
                 None,
                 "test"
@@ -417,7 +416,7 @@ mod tests {
                 PropertyType::DatatypeProperty,
                 "test prop",
                 None,
-                None,
+                &[],
                 Some(xsd_type),
                 Some(unit),
                 "test"

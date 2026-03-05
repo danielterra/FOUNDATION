@@ -402,8 +402,7 @@ pub(super) fn load_message(conn: &Connection, iri: &str) -> Result<AIConversatio
         .find(|(k, _)| k == "foundation:sentAt")
         .and_then(|(_, v)| match v {
             Object::DateTime(ts) => Some(*ts),
-            Object::Literal { value, .. } => value.parse::<i64>().ok(),
-            _ => None
+            _ => None,
         })
         .ok_or("Missing timestamp")?;
 
@@ -441,6 +440,103 @@ pub(super) fn load_message(conn: &Connection, iri: &str) -> Result<AIConversatio
         input_tokens,
         output_tokens,
     })
+}
+
+/// Log a single API call to the ontology as a foundation:AIAPICall entity
+pub async fn log_api_call(
+    executor: &DbExecutor,
+    model: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+    cache_creation_tokens: u32,
+    cache_read_tokens: u32,
+) -> Result<(), String> {
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let iri = format!("foundation:AIAPICall_{}", timestamp);
+    let model = model.to_string();
+
+    executor.write(move |conn| {
+        let call = Individual::new(&iri);
+
+        call.assert(conn, "foundation:AIAPICall", "AI API Call", "api", "ai")
+            .map_err(|e| format!("Failed to create AIAPICall: {}", e))?;
+
+        call.add_property(conn, "foundation:model", vec![Object::Literal {
+            value: model.clone(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }], "ai").map_err(|e| format!("Failed to set model: {}", e))?;
+
+        call.add_property(conn, "foundation:inputTokens",
+            vec![Object::Integer(input_tokens as i64)], "ai")
+            .map_err(|e| format!("Failed to set inputTokens: {}", e))?;
+
+        call.add_property(conn, "foundation:outputTokens",
+            vec![Object::Integer(output_tokens as i64)], "ai")
+            .map_err(|e| format!("Failed to set outputTokens: {}", e))?;
+
+        call.add_property(conn, "foundation:cacheCreationTokens",
+            vec![Object::Integer(cache_creation_tokens as i64)], "ai")
+            .map_err(|e| format!("Failed to set cacheCreationTokens: {}", e))?;
+
+        call.add_property(conn, "foundation:cacheReadTokens",
+            vec![Object::Integer(cache_read_tokens as i64)], "ai")
+            .map_err(|e| format!("Failed to set cacheReadTokens: {}", e))?;
+
+        call.add_property(conn, "foundation:calledAt",
+            vec![Object::DateTime(timestamp)], "ai")
+            .map_err(|e| format!("Failed to set calledAt: {}", e))?;
+
+        if let Some(cost) = estimate_call_cost(
+            conn, &model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+        ) {
+            call.add_property(conn, "foundation:estimatedCost",
+                vec![Object::Number(cost)], "ai")
+                .map_err(|e| format!("Failed to set estimatedCost: {}", e))?;
+        }
+
+        Ok(iri)
+    }).await.map(|_| ())
+}
+
+fn estimate_call_cost(
+    conn: &crate::eavto::Connection,
+    model_identifier: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+    cache_creation_tokens: u32,
+    cache_read_tokens: u32,
+) -> Option<f64> {
+    let model_iris = Individual::find_by_class_and_properties(
+        conn,
+        "foundation:AIModel",
+        &[("foundation:modelIdentifier", model_identifier)],
+    ).ok()?;
+
+    let model_iri = model_iris.into_iter().next()?;
+    let model_ind = Individual::get(conn, &model_iri).ok().flatten()?;
+
+    let get_price = |prop: &str| -> Option<f64> {
+        model_ind.properties.iter()
+            .find(|(k, _)| k == prop)
+            .and_then(|(_, v)| match v {
+                Object::Number(n) => Some(*n),
+                Object::Literal { value, .. } => value.parse::<f64>().ok(),
+                _ => None,
+            })
+    };
+
+    let input_price = get_price("foundation:inputPricePerMTok")?;
+    let output_price = get_price("foundation:outputPricePerMTok")?;
+    let cache_write_price = get_price("foundation:cacheWrite5minPricePerMTok").unwrap_or(0.0);
+    let cache_read_price = get_price("foundation:cacheReadPricePerMTok").unwrap_or(0.0);
+
+    let cost = (input_tokens as f64 * input_price
+        + output_tokens as f64 * output_price
+        + cache_creation_tokens as f64 * cache_write_price
+        + cache_read_tokens as f64 * cache_read_price) / 1_000_000.0;
+
+    Some(cost)
 }
 
 fn get_tokenizer() -> &'static tiktoken_rs::CoreBPE {

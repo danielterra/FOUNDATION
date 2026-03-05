@@ -66,6 +66,7 @@ pub struct EntityData {
 pub struct StatusInfo {
     pub iri: String,
     pub label: String,
+    pub icon: Option<String>,
     pub color: Option<String>,
 }
 
@@ -190,12 +191,11 @@ fn resolve_entity_status(conn: &Connection, properties: &[PropertyValue]) -> Opt
             continue;
         }
         if owl::is_instance_of(conn, &prop.value, "foundation:Status") {
-            let color = owl::get_literal_property(conn, &prop.value, "foundation:color")
-                .ok()
-                .flatten();
+            let (icon, color) = owl::resolve_status_appearance(conn, &prop.value);
             return Some(StatusInfo {
                 iri: prop.value.clone(),
                 label: prop.value_label.clone().unwrap_or_else(|| prop.value.clone()),
+                icon,
                 color,
             });
         }
@@ -205,7 +205,7 @@ fn resolve_entity_status(conn: &Connection, properties: &[PropertyValue]) -> Opt
 
 fn resolve_status_for_entity(conn: &Connection, entity_iri: &str) -> Option<StatusInfo> {
     owl::get_entity_status_info(conn, entity_iri)
-        .map(|(iri, label, color)| StatusInfo { iri, label, color })
+        .map(|(iri, label, color, icon)| StatusInfo { iri, label, icon, color })
 }
 
 fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityType, String> {

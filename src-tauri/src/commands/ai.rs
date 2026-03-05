@@ -34,8 +34,6 @@ pub async fn ai__save_api_key(
         let api_key_iri = format!("foundation:ClaudeAPIKey_{}", timestamp);
         let credential = Individual::new(&api_key_iri);
 
-        let now = chrono::Utc::now().to_rfc3339();
-
         credential.assert(
             conn,
             "foundation:APIKey",
@@ -72,11 +70,7 @@ pub async fn ai__save_api_key(
         credential.add_property(
             conn,
             "foundation:credentialCreatedAt",
-            vec![Object::Literal {
-                value: now,
-                datatype: Some("xsd:dateTime".to_string()),
-                language: None,
-            }],
+            vec![Object::DateTime(timestamp)],
             "ai"
         ).map_err(|e| format!("Failed to set created timestamp: {}", e))?;
 
@@ -189,6 +183,7 @@ pub async fn ai__initialize(
 #[allow(non_snake_case)]
 pub async fn ai__generate(
     _app: AppHandle,
+    executor: State<'_, DbExecutor>,
     messages: Vec<ChatMessage>,
     max_tokens: Option<u32>,
     temperature: Option<f32>,
@@ -205,6 +200,17 @@ pub async fn ai__generate(
 
     let response = ai::generate_response(request).await?;
 
+    if let Some(usage) = &response.usage {
+        let model = ai::get_current_model().unwrap_or_else(|_| "unknown".to_string());
+        super::chat_storage::log_api_call(
+            &executor,
+            &model,
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cache_creation_input_tokens,
+            usage.cache_read_input_tokens,
+        ).await.unwrap_or_else(|e| super::log_backend("warn", &format!("[AI] Failed to log API call: {}", e)));
+    }
 
     Ok(response.content)
 }

@@ -20,6 +20,13 @@ use super::chat_storage::{create_message, load_message, ImageSource, DocumentSou
 
 const MAX_OUTPUT_TOKENS: u32 = 4096;
 
+fn parse_timestamp(obj: &Object) -> Option<i64> {
+    match obj {
+        Object::DateTime(ts) => Some(*ts),
+        _ => None,
+    }
+}
+
 pub async fn execute_tools_from_message(
     executor: &DbExecutor,
     app: &tauri::AppHandle,
@@ -330,10 +337,11 @@ pub async fn chat__send_and_reply(
     latitude: Option<f64>,
     longitude: Option<f64>,
     attachment_iris: Option<Vec<String>>,
+    conversation_id: Option<String>,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    const CONVERSATION_ID: &str = "foundation:MainChatConversation";
+    let conversation_id = conversation_id.unwrap_or_else(|| "foundation:MainChatConversation".to_string());
     const MAX_TOOL_LOOPS: usize = 50;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
@@ -401,9 +409,9 @@ pub async fn chat__send_and_reply(
         }
         let content_json = serde_json::to_string(&blocks)
             .map_err(|e| format!("Failed to serialize message content: {}", e))?;
-        create_message(&executor, CONVERSATION_ID, "user", &content_json, None, None, None).await?
+        create_message(&executor, &conversation_id, "user", &content_json, None, None, None).await?
     } else {
-        create_user_message(&executor, CONVERSATION_ID, &content).await?
+        create_user_message(&executor, &conversation_id, &content).await?
     };
     super::log_backend("info", &format!("[CHAT] Created user message: {}", user_msg_iri));
 
@@ -433,7 +441,7 @@ pub async fn chat__send_and_reply(
 
         app.emit("ai-status", serde_json::json!({ "status": "Loading conversation history" })).ok();
 
-        let history = load_conversation_history(&executor, CONVERSATION_ID, max_tokens).await?;
+        let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
         super::log_backend(
             "info",
             &format!("[CHAT] Loaded {} messages from history", history.len()),
@@ -477,9 +485,22 @@ pub async fn chat__send_and_reply(
             .map_err(|e| format!("Failed to serialize content: {}", e))?;
 
         let current_model = crate::ai::get_current_model()?;
+
+        if let Some(usage) = &api_response.usage {
+            super::chat_storage::log_api_call(
+                &executor,
+                &current_model,
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_creation_input_tokens,
+                usage.cache_read_input_tokens,
+            ).await
+                .unwrap_or_else(|e| super::log_backend("warn", &format!("[CHAT] Failed to log API call: {}", e)));
+        }
+
         let assistant_msg_iri = create_assistant_message(
             &executor,
-            CONVERSATION_ID,
+            &conversation_id,
             &content_json,
             &current_model,
             &stop_reason,
@@ -522,7 +543,7 @@ pub async fn chat__send_and_reply(
             let tool_result_msg_iri = execute_tools_from_message(
                 &executor,
                 &app,
-                CONVERSATION_ID,
+                &conversation_id,
                 &assistant_msg,
             ).await?;
 
@@ -671,15 +692,16 @@ pub async fn chat__send_message(
 #[tauri::command]
 pub async fn chat__get_recent_messages(
     limit: usize,
+    conversation_id: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    const CONVERSATION_ID: &str = "foundation:MainChatConversation";
+    let conv_id = conversation_id.unwrap_or_else(|| "foundation:MainChatConversation".to_string());
 
     let messages = executor.read(move |conn| {
         let message_iris = Individual::find_by_class_and_properties(
             conn,
             "foundation:AIConversationMessage",
-            &[("foundation:partOfConversation", CONVERSATION_ID)],
+            &[("foundation:partOfConversation", &conv_id)],
         ).map_err(|e| format!("Failed to query messages: {}", e))?;
 
         let mut messages_with_ts: Vec<(i64, serde_json::Value)> = Vec::new();
@@ -707,10 +729,7 @@ pub async fn chat__get_recent_messages(
 
             let timestamp = msg.properties.iter()
                 .find(|(k, _)| k == "foundation:sentAt")
-                .and_then(|(_, v)| match v {
-                    Object::Literal { value, .. } => value.parse::<i64>().ok(),
-                    _ => None,
-                })
+                .and_then(|(_, v)| parse_timestamp(v))
                 .unwrap_or(0);
 
             let content_blocks: Vec<ContentBlock> = serde_json::from_str(&content_json)
@@ -876,15 +895,10 @@ fn delete_messages_from_timestamp(
             _ => continue,
         };
 
-        let timestamp = ind.properties.iter()
+        let ts = match ind.properties.iter()
             .find(|(k, _)| k == "foundation:sentAt")
-            .and_then(|(_, v)| match v {
-                Object::DateTime(ts) => Some(*ts),
-                Object::Literal { value, .. } => value.parse::<i64>().ok(),
-                _ => None,
-            });
-
-        let ts = match timestamp {
+            .and_then(|(_, v)| parse_timestamp(v))
+        {
             Some(t) => t,
             None => continue,
         };
@@ -910,10 +924,11 @@ fn delete_messages_from_timestamp(
 pub async fn chat__edit_and_retry(
     message_iri: String,
     new_content: String,
+    conversation_id: Option<String>,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    const CONVERSATION_ID: &str = "foundation:MainChatConversation";
+    let conversation_id = conversation_id.unwrap_or_else(|| "foundation:MainChatConversation".to_string());
 
     // Find the message timestamp
     let msg_timestamp = executor.read(move |conn| {
@@ -935,11 +950,7 @@ pub async fn chat__edit_and_retry(
 
         let timestamp = ind.properties.iter()
             .find(|(k, _)| k == "foundation:sentAt")
-            .and_then(|(_, v)| match v {
-                Object::DateTime(ts) => Some(*ts),
-                Object::Literal { value, .. } => value.parse::<i64>().ok(),
-                _ => None,
-            })
+            .and_then(|(_, v)| parse_timestamp(v))
             .ok_or("Missing timestamp")?;
 
         Ok((message_iri.clone(), timestamp))
@@ -948,11 +959,11 @@ pub async fn chat__edit_and_retry(
     let (iri, timestamp) = msg_timestamp;
 
     // Delete all messages after the edited message (exclusive — keep the message itself)
-    let conversation_id = CONVERSATION_ID.to_string();
     let iri_clone = iri.clone();
+    let conv_id_for_write = conversation_id.clone();
     executor.write(move |conn| {
         // Delete messages strictly after this timestamp
-        delete_messages_from_timestamp(conn, &conversation_id, timestamp, true)?;
+        delete_messages_from_timestamp(conn, &conv_id_for_write, timestamp, true)?;
 
         // Update the message content: retract old content, assert new content
         let new_blocks = vec![ContentBlock::Text { text: new_content.clone() }];
@@ -993,11 +1004,11 @@ pub async fn chat__edit_and_retry(
     let app_clone = app.clone();
     let executor_clone = executor.inner().clone();
     let mut response_messages = Vec::new();
-    continue_conversation_after_recovery(app_clone, executor_clone).await.map_err(|e| e)?;
+    continue_conversation_after_recovery(app_clone, executor_clone, conversation_id.clone()).await?;
 
     // Load newly created assistant messages to return
     let max_tokens = get_max_input_tokens(&executor).await?;
-    let history = load_conversation_history(&executor, CONVERSATION_ID, max_tokens).await?;
+    let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
     for msg in history.iter().rev() {
         if msg.role == "assistant" && msg.timestamp > timestamp {
             response_messages.push(serde_json::json!({
@@ -1016,10 +1027,11 @@ pub async fn chat__edit_and_retry(
 #[tauri::command]
 pub async fn chat__retry_from_message(
     message_iri: String,
+    conversation_id: Option<String>,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    const CONVERSATION_ID: &str = "foundation:MainChatConversation";
+    let conversation_id = conversation_id.unwrap_or_else(|| "foundation:MainChatConversation".to_string());
 
     let msg_timestamp = executor.read(move |conn| {
         let ind = Individual::get(conn, &message_iri)
@@ -1040,20 +1052,16 @@ pub async fn chat__retry_from_message(
 
         let timestamp = ind.properties.iter()
             .find(|(k, _)| k == "foundation:sentAt")
-            .and_then(|(_, v)| match v {
-                Object::DateTime(ts) => Some(*ts),
-                Object::Literal { value, .. } => value.parse::<i64>().ok(),
-                _ => None,
-            })
+            .and_then(|(_, v)| parse_timestamp(v))
             .ok_or("Missing timestamp")?;
 
         Ok(timestamp)
     }).await?;
 
     // Delete the assistant message and all subsequent messages (inclusive of this timestamp)
-    let conversation_id = CONVERSATION_ID.to_string();
+    let conv_id_for_write = conversation_id.clone();
     executor.write(move |conn| {
-        delete_messages_from_timestamp(conn, &conversation_id, msg_timestamp, false)?;
+        delete_messages_from_timestamp(conn, &conv_id_for_write, msg_timestamp, false)?;
         Ok(String::new())
     }).await?;
 
@@ -1062,11 +1070,11 @@ pub async fn chat__retry_from_message(
     // Re-run the conversation loop
     let app_clone = app.clone();
     let executor_clone = executor.inner().clone();
-    continue_conversation_after_recovery(app_clone, executor_clone).await?;
+    continue_conversation_after_recovery(app_clone, executor_clone, conversation_id.clone()).await?;
 
     // Load newly created assistant messages after the deleted timestamp
     let max_tokens = get_max_input_tokens(&executor).await?;
-    let history = load_conversation_history(&executor, CONVERSATION_ID, max_tokens).await?;
+    let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
     let mut response_messages = Vec::new();
     for msg in history.iter().rev() {
         if msg.role == "assistant" && msg.timestamp >= msg_timestamp {
@@ -1086,8 +1094,8 @@ pub async fn chat__retry_from_message(
 async fn continue_conversation_after_recovery(
     app: tauri::AppHandle,
     executor: DbExecutor,
+    conversation_id: String,
 ) -> Result<(), String> {
-    const CONVERSATION_ID: &str = "foundation:MainChatConversation";
     const MAX_TOOL_LOOPS: usize = 50;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
@@ -1099,7 +1107,7 @@ async fn continue_conversation_after_recovery(
             return Err("Too many tool execution loops during recovery".to_string());
         }
 
-        let history = load_conversation_history(&executor, CONVERSATION_ID, max_tokens).await?;
+        let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
 
         let mut api_messages: Vec<crate::ai::ChatMessage> = history.iter()
             .map(message_to_api_format)
@@ -1142,9 +1150,22 @@ async fn continue_conversation_after_recovery(
             .map_err(|e| format!("Failed to serialize content: {}", e))?;
 
         let current_model = crate::ai::get_current_model()?;
+
+        if let Some(usage) = &api_response.usage {
+            super::chat_storage::log_api_call(
+                &executor,
+                &current_model,
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_creation_input_tokens,
+                usage.cache_read_input_tokens,
+            ).await
+                .unwrap_or_else(|e| super::log_backend("warn", &format!("[RECOVERY] Failed to log API call: {}", e)));
+        }
+
         let assistant_msg_iri = create_assistant_message(
             &executor,
-            CONVERSATION_ID,
+            &conversation_id,
             &content_json,
             &current_model,
             &stop_reason,
@@ -1168,7 +1189,7 @@ async fn continue_conversation_after_recovery(
             let tool_result_msg_iri = execute_tools_from_message(
                 &executor,
                 &app,
-                CONVERSATION_ID,
+                &conversation_id,
                 &assistant_msg,
             ).await?;
 
@@ -1192,59 +1213,154 @@ pub async fn chat__recover_pending_tools(
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
 ) -> Result<usize, String> {
-    const CONVERSATION_ID: &str = "foundation:MainChatConversation";
-
     let max_tokens = get_max_input_tokens(&executor).await?;
 
-    let history = load_conversation_history(&executor, CONVERSATION_ID, max_tokens).await?;
 
-    if history.is_empty() {
-        return Ok(0); // No messages, nothing to recover
+    let mut conversation_iris: Vec<String> = vec!["foundation:MainChatConversation".to_string()];
+    let additional = executor.read(|conn| {
+        Individual::find_by_class_and_properties(conn, "foundation:AIConversation", &[])
+            .map_err(|e| format!("Failed to query conversations: {}", e))
+    }).await?;
+    for iri in additional {
+        if iri != "foundation:MainChatConversation" {
+            conversation_iris.push(iri);
+        }
     }
 
-    let last_msg = &history[history.len() - 1];
+    let mut recovered = 0usize;
 
-    let has_tool_use = last_msg.content.iter()
-        .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
+    for conv_id in conversation_iris {
+        let history = load_conversation_history(&executor, &conv_id, max_tokens).await?;
 
-    let has_tool_result = last_msg.content.iter()
-        .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
+        if history.is_empty() {
+            continue;
+        }
 
-    if last_msg.role == "assistant" && has_tool_use {
+        let last_msg = history.last().expect("history checked non-empty");
+
+        let has_tool_use = last_msg.content.iter()
+            .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
+
+        let needs_recovery = (last_msg.role == "assistant" && has_tool_use)
+            || last_msg.role == "user";
+
+        if !needs_recovery {
+            continue;
+        }
+
         super::log_backend(
             "info",
-            "[RECOVERY] Found assistant message with pending tool execution",
+            &format!("[RECOVERY] Conversation {} needs recovery (last role: {})", conv_id, last_msg.role),
         );
 
-        let tool_result_msg_iri = execute_tools_from_message(
-            &executor,
-            &app,
-            CONVERSATION_ID,
-            last_msg,
-        ).await?;
+        if last_msg.role == "assistant" && has_tool_use {
+            let tool_result_msg_iri = execute_tools_from_message(
+                &executor,
+                &app,
+                &conv_id,
+                last_msg,
+            ).await?;
+            super::log_backend(
+                "info",
+                &format!("[RECOVERY] Executed tools, created message: {}", tool_result_msg_iri),
+            );
+            app.emit("chat-message-added", ()).ok();
+        }
 
-        super::log_backend(
-            "info",
-            &format!("[RECOVERY] Executed tools, created message: {}", tool_result_msg_iri),
-        );
-        app.emit("chat-message-added", ()).ok();
-
-        continue_conversation_after_recovery(app, executor.inner().clone()).await?;
-
-        Ok(1)
-    } else if last_msg.role == "user" && has_tool_result {
-        super::log_backend("info", "[RECOVERY] Found user message with pending tool result");
-
-        continue_conversation_after_recovery(app, executor.inner().clone()).await?;
-
-        Ok(1)
-    } else if last_msg.role == "user" {
-        super::log_backend("info", "[RECOVERY] Found unanswered user message, sending to Claude");
-
-        continue_conversation_after_recovery(app, executor.inner().clone()).await?;
-
-        Ok(1)
-    } else {
-        Ok(0)
+        continue_conversation_after_recovery(app.clone(), executor.inner().clone(), conv_id).await?;
+        recovered += 1;
     }
+
+    Ok(recovered)
+}
+
+#[tauri::command]
+pub async fn chat__create_conversation(
+    label: Option<String>,
+    executor: State<'_, DbExecutor>,
+) -> Result<serde_json::Value, String> {
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let conv_iri = format!("foundation:Conversation_{}", timestamp);
+    let conv_label = label.unwrap_or_else(|| "New Conversation".to_string());
+
+    let iri_clone = conv_iri.clone();
+    let label_clone = conv_label.clone();
+
+    executor.write(move |conn| {
+        let conv = Individual::new(&iri_clone);
+
+        conv.assert(conn, "foundation:AIConversation", &label_clone, "chat", "ai")
+            .map_err(|e| format!("Failed to create conversation: {}", e))?;
+
+        conv.add_property(conn, "foundation:createdAt", vec![
+            Object::DateTime(timestamp),
+        ], "ai").map_err(|e| format!("Failed to set createdAt: {}", e))?;
+
+        conv.add_property(conn, "foundation:conversationStatus", vec![
+            Object::Iri("foundation:Active".to_string()),
+        ], "ai").map_err(|e| format!("Failed to set conversationStatus: {}", e))?;
+
+        Ok(iri_clone)
+    }).await?;
+
+    Ok(serde_json::json!({ "iri": conv_iri, "label": conv_label }))
+}
+
+#[tauri::command]
+pub async fn chat__list_conversations(
+    executor: State<'_, DbExecutor>,
+) -> Result<Vec<serde_json::Value>, String> {
+    executor.read(move |conn| {
+        let iris = Individual::find_by_class_with_date_range(
+            conn,
+            "foundation:AIConversation",
+            None,
+            None,
+            false,
+        ).map_err(|e| format!("Failed to query conversations: {}", e))?;
+
+        let mut conversations: Vec<(i64, serde_json::Value)> = Vec::new();
+
+        let main_iri = "foundation:MainChatConversation";
+        let main_already_included = iris.iter().any(|i| i == main_iri);
+        let all_iris: Vec<String> = if main_already_included {
+            iris
+        } else {
+            std::iter::once(main_iri.to_string()).chain(iris).collect()
+        };
+
+        for iri in all_iris {
+            let (label, started_at) = if iri == main_iri {
+                ("Main Chat".to_string(), 0i64)
+            } else {
+                let ind = Individual::get(conn, &iri)
+                    .ok().flatten()
+                    .unwrap_or_else(|| Individual::new(&iri));
+
+                let lbl = ind.properties.iter()
+                    .find(|(k, _)| k == "rdfs:label")
+                    .and_then(|(_, v)| match v {
+                        Object::Literal { value, .. } => Some(value.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| iri.clone());
+
+                let ts = ind.properties.iter()
+                    .find(|(k, _)| k == "foundation:createdAt")
+                    .and_then(|(_, v)| parse_timestamp(v))
+                    .unwrap_or(0);
+
+                (lbl, ts)
+            };
+
+            conversations.push((started_at, serde_json::json!({
+                "iri": iri,
+                "label": label,
+                "startedAt": started_at,
+            })));
+        }
+
+        conversations.sort_by(|a, b| b.0.cmp(&a.0));
+        Ok(conversations.into_iter().map(|(_, v)| v).collect())
+    }).await
 }

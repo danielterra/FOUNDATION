@@ -5,6 +5,7 @@ use crate::owl::{Class, Individual, Object};
 use super::ToolResult;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+
 const SCORE_LABEL_MATCH: usize = 3;
 const SCORE_COMMENT_MATCH: usize = 2;
 const SCORE_DETAIL_MATCH: usize = 1;
@@ -249,6 +250,64 @@ fn create_thing_one(
                 datatype: Some("xsd:string".to_string()),
                 language: None,
             }], "ai")?;
+        }
+
+        if let Some(properties) = args.get("properties").and_then(|v| v.as_array()) {
+            for prop_entry in properties {
+                let detail_iri = prop_entry.get("detail_iri")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| crate::owl::OwlError::ValidationError(
+                        "Each property entry must have 'detail_iri'".to_string()
+                    ))?;
+
+                let raw_values = prop_entry.get("values")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| crate::owl::OwlError::ValidationError(
+                        format!("Property '{}' must have 'values' array", detail_iri)
+                    ))?;
+
+                if raw_values.is_empty() {
+                    return Err(crate::owl::OwlError::ValidationError(
+                        format!("Property '{}' values array must not be empty", detail_iri)
+                    ));
+                }
+
+                let value_type = prop_entry.get("value_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("literal");
+                let datatype = prop_entry.get("datatype")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("xsd:string");
+
+                if detail_iri == "foundation:hasStatus" {
+                    if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
+                        crate::owl::validate_allowed_status(conn, concept_iri, status_iri)?;
+                    }
+                }
+
+                let objects: Vec<Object> = raw_values.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|value| {
+                        if value_type == "iri" {
+                            Object::Iri(value.to_string())
+                        } else {
+                            Object::Literal {
+                                value: value.to_string(),
+                                datatype: Some(datatype.to_string()),
+                                language: None,
+                            }
+                        }
+                    })
+                    .collect();
+
+                if objects.is_empty() {
+                    return Err(crate::owl::OwlError::ValidationError(
+                        format!("Property '{}' values contain no valid string entries", detail_iri)
+                    ));
+                }
+
+                individual.add_property(conn, detail_iri, objects, "ai")?;
+            }
         }
 
         if let Some(app_handle) = app {

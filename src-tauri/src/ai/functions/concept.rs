@@ -159,6 +159,17 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
             Vec::new()
         };
 
+        let allowed_statuses: Vec<serde_json::Value> = {
+            let status_result = query::get_by_entity_predicate(conn, iri, "foundation:allowedStatus")?;
+            status_result.triples.iter()
+                .filter_map(|t| t.object.as_iri())
+                .map(|status_iri| {
+                    let thing = crate::owl::Thing::get(conn, status_iri);
+                    serde_json::json!({"iri": status_iri, "label": thing.label})
+                })
+                .collect()
+        };
+
         let mut response = serde_json::json!({
             "iri": concept.iri,
             "label": concept.label,
@@ -185,6 +196,10 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
 
         if !allowed_values.is_empty() {
             response["allowedValues"] = serde_json::json!(allowed_values);
+        }
+
+        if !allowed_statuses.is_empty() {
+            response["allowedStatuses"] = serde_json::json!(allowed_statuses);
         }
 
         Ok::<_, crate::owl::OwlError>(response)
@@ -366,6 +381,21 @@ fn update_concept_one(
             );
             store::assert_triples(conn, &[new_super], "ai")?;
             updated_fields.push("superConcept");
+        }
+
+        if let Some(allowed_statuses) = args.get("allowed_statuses").and_then(|v| v.as_array()) {
+            let old_statuses = query::get_by_entity_predicate(conn, iri, "foundation:allowedStatus")?;
+            for triple in old_statuses.triples {
+                let t = Triple::new(iri, "foundation:allowedStatus", triple.object);
+                store::retract_triples(conn, &[t], "ai")?;
+            }
+            for status_value in allowed_statuses {
+                if let Some(status_iri) = status_value.as_str() {
+                    let t = Triple::new(iri, "foundation:allowedStatus", Object::Iri(status_iri.to_string()));
+                    store::assert_triples(conn, &[t], "ai")?;
+                }
+            }
+            updated_fields.push("allowedStatuses");
         }
 
         if let Some(app_handle) = app {

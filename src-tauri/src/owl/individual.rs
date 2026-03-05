@@ -183,6 +183,7 @@ impl Individual {
 
         for value in &values {
             Self::validate_one_of_constraint(conn, property, value)?;
+            Self::validate_literal_datatype(property, value)?;
         }
 
         crate::owl::cardinality::validate_property_cardinality(
@@ -196,6 +197,60 @@ impl Individual {
             .map(|v| Triple::new(&self.iri, property, v))
             .collect();
         store::assert_triples(conn, &triples, origin)?;
+        Ok(())
+    }
+
+    /// Validate that a literal value conforms to its declared xsd datatype
+    fn validate_literal_datatype(property: &str, value: &Object) -> Result<()> {
+        let (raw, datatype) = match value {
+            Object::Literal { value, datatype: Some(dt), .. } => (value.as_str(), dt.as_str()),
+            _ => return Ok(()),
+        };
+
+        match datatype {
+            "xsd:dateTime" => {
+                raw.parse::<i64>().map_err(|_| {
+                    OwlError::ValidationError(format!(
+                        "Property {}: '{}' is not a valid xsd:dateTime \
+                         (expected Unix milliseconds i64, e.g. '1772380322157')",
+                        property, raw
+                    ))
+                })?;
+            }
+            "xsd:date" => {
+                chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|_| {
+                    OwlError::ValidationError(format!(
+                        "Property {}: '{}' is not a valid xsd:date \
+                         (expected YYYY-MM-DD, e.g. '2025-01-28')",
+                        property, raw
+                    ))
+                })?;
+            }
+            "xsd:integer" | "xsd:long" | "xsd:int" | "xsd:short" => {
+                raw.parse::<i64>().map_err(|_| {
+                    OwlError::ValidationError(format!(
+                        "Property {}: '{}' is not a valid {}", property, raw, datatype
+                    ))
+                })?;
+            }
+            "xsd:decimal" | "xsd:float" | "xsd:double" => {
+                raw.parse::<f64>().map_err(|_| {
+                    OwlError::ValidationError(format!(
+                        "Property {}: '{}' is not a valid {}", property, raw, datatype
+                    ))
+                })?;
+            }
+            "xsd:boolean" => {
+                if raw != "true" && raw != "false" {
+                    return Err(OwlError::ValidationError(format!(
+                        "Property {}: '{}' is not a valid xsd:boolean (expected 'true' or 'false')",
+                        property, raw
+                    )));
+                }
+            }
+            _ => {}
+        }
+
         Ok(())
     }
 

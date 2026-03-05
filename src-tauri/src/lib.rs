@@ -144,6 +144,8 @@ pub fn run() {
             commands::chat__recover_pending_tools,
             commands::chat__edit_and_retry,
             commands::chat__retry_from_message,
+            commands::chat__create_conversation,
+            commands::chat__list_conversations,
             commands::widget__list_types,
             commands::widget__get_all,
             commands::widget__add,

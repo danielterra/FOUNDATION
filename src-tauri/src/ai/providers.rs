@@ -190,7 +190,7 @@ impl AIProvider for ClaudeProvider {
             .collect();
 
         if messages.len() >= 2 {
-            let stable_idx = messages.len() - 2;
+            let stable_idx = messages.len().saturating_sub(6);
             if let Some(stable_msg) = messages.get_mut(stable_idx) {
                 match &mut stable_msg.content {
                     serde_json::Value::Array(ref mut blocks) => {

@@ -242,20 +242,77 @@ pub fn find_entities_with_property(
     Ok(result.triples.into_iter().map(|t| t.subject).collect())
 }
 
+/// Validates that `status_iri` is in the `foundation:allowedStatus` list of `concept_iri`.
+/// If the concept has no `allowedStatus` triples, any status is accepted.
+pub fn validate_allowed_status(
+    conn: &Connection,
+    concept_iri: &str,
+    status_iri: &str,
+) -> Result<()> {
+    use crate::eavto::query;
+    let result = query::get_by_entity_predicate(conn, concept_iri, "foundation:allowedStatus")?;
+    if result.triples.is_empty() {
+        return Ok(());
+    }
+    let allowed: Vec<&str> = result.triples.iter()
+        .filter_map(|t| t.object.as_iri())
+        .collect();
+    if !allowed.contains(&status_iri) {
+        let allowed_list = allowed.join(", ");
+        return Err(OwlError::ValidationError(format!(
+            "Status '{}' is not allowed for concept '{}'. Allowed statuses: {}",
+            status_iri, concept_iri, allowed_list
+        )));
+    }
+    Ok(())
+}
+
+/// Resolves icon and color for a status IRI, following `foundation:parentStatus` recursively
+/// when either is absent on the status itself.
+pub fn resolve_status_appearance(
+    conn: &Connection,
+    status_iri: &str,
+) -> (Option<String>, Option<String>) {
+    let mut current = status_iri.to_string();
+    let mut icon: Option<String> = None;
+    let mut color: Option<String> = None;
+
+    loop {
+        if icon.is_none() {
+            icon = get_literal_property(conn, &current, "foundation:icon").ok().flatten();
+        }
+        if color.is_none() {
+            color = get_literal_property(conn, &current, "foundation:color").ok().flatten();
+        }
+
+        if icon.is_some() && color.is_some() {
+            break;
+        }
+
+        match get_iri_property(conn, &current, "foundation:parentStatus").ok().flatten() {
+            Some(parent) if parent != current => current = parent,
+            _ => break,
+        }
+    }
+
+    (icon, color)
+}
+
 /// Finds the first property value of the entity that is an instance of `foundation:Status`.
-/// Returns `(iri, label, color)` if a status is found.
+/// Returns `(iri, label, color, icon)` if a status is found.
+/// Color and icon are resolved recursively via `foundation:parentStatus` if absent.
 pub fn get_entity_status_info(
     conn: &Connection,
     entity_iri: &str,
-) -> Option<(String, String, Option<String>)> {
+) -> Option<(String, String, Option<String>, Option<String>)> {
     use crate::eavto::query;
     let result = query::get_by_entity(conn, entity_iri).ok()?;
     for triple in &result.triples {
         if let Some(iri) = triple.object.as_iri() {
             if is_instance_of(conn, iri, "foundation:Status") {
                 let thing = Thing::get(conn, iri);
-                let color = get_literal_property(conn, iri, "foundation:color").ok().flatten();
-                return Some((iri.to_string(), thing.label, color));
+                let (icon, color) = resolve_status_appearance(conn, iri);
+                return Some((iri.to_string(), thing.label, color, icon));
             }
         }
     }

@@ -50,7 +50,12 @@ fn create_detail_one(
     };
 
     let comment = args.get("comment").and_then(|v| v.as_str());
-    let domain = args.get("domain").and_then(|v| v.as_str());
+    let domain_strings: Vec<String> = match args.get("domain") {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(arr)) => arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect(),
+        _ => vec![],
+    };
+    let domains: Vec<&str> = domain_strings.iter().map(|s| s.as_str()).collect();
     let range = args.get("range").and_then(|v| v.as_str());
     let unit = args.get("unit").and_then(|v| v.as_str());
 
@@ -58,7 +63,7 @@ fn create_detail_one(
         use crate::owl::Property;
 
         let detail = Property::new(iri);
-        detail.assert(conn, detail_type, label, comment, domain, range, unit, "ai")?;
+        detail.assert(conn, detail_type, label, comment, &domains, range, unit, "ai")?;
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
@@ -252,6 +257,14 @@ fn learn_detail_value_one(
 
     match (|| {
         use crate::owl::{Individual, Object};
+
+        if detail_iri == "foundation:hasStatus" {
+            if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
+                if let Ok(Some(concept_iri)) = crate::owl::get_iri_property(conn, thing_iri, "rdf:type") {
+                    crate::owl::validate_allowed_status(conn, &concept_iri, status_iri)?;
+                }
+            }
+        }
 
         let objects: Vec<Object> = raw_values.iter()
             .filter_map(|v| v.as_str())

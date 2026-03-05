@@ -8,6 +8,33 @@
 		gfm: true,
 	});
 
+	function highlightJson(json) {
+		return json
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(
+				/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+				(match) => {
+					if (/^"/.test(match)) {
+						if (/:$/.test(match)) return `<span class="json-key">${match}</span>`;
+						return `<span class="json-string">${match}</span>`;
+					}
+					if (/true|false/.test(match)) return `<span class="json-boolean">${match}</span>`;
+					if (/null/.test(match)) return `<span class="json-null">${match}</span>`;
+					return `<span class="json-number">${match}</span>`;
+				}
+			);
+	}
+
+	function formatJson(content) {
+		if (typeof content === 'object') return JSON.stringify(content, null, 2);
+		if (typeof content === 'string') {
+			try { return JSON.stringify(JSON.parse(content), null, 2); } catch { return content; }
+		}
+		return String(content);
+	}
+
 	let { message, messages, onEdit = null, onRetry = null } = $props();
 
 	let copySuccess = $state(false);
@@ -112,24 +139,8 @@
 <div
 	class="message {message.role === 'user' ? 'user' : 'ai'} {message.isThinking ? 'thinking' : ''}"
 >
-	{#if !message.isThinking}
-		<div class="message-action-bar">
-			<button class="action-btn" onclick={copyMessage} title="Copy message">
-				<span class="material-symbols-outlined">{copySuccess ? 'check' : 'content_copy'}</span>
-			</button>
-			{#if message.role === 'user' && onEdit}
-				<button class="action-btn" onclick={handleEdit} title="Edit message">
-					<span class="material-symbols-outlined">edit</span>
-				</button>
-			{/if}
-			{#if message.role === 'assistant' && onRetry}
-				<button class="action-btn" onclick={handleRetry} title="Retry">
-					<span class="material-symbols-outlined">refresh</span>
-				</button>
-			{/if}
-		</div>
-	{/if}
 	<div class="message-content">
+		<div class="message-bubble">
 		{#if message.isThinking}
 			<div class="thinking-indicator">
 				<div class="thinking-dots">
@@ -203,77 +214,28 @@
 		{#if hasToolUses(message)}
 			{@const toolGroups = groupToolUsesWithResults(message, messages)}
 			{#if toolGroups.length > 0}
-			<div class="tool-execution-groups">
-				<div class="tool-header">
-					<span class="material-symbols-outlined">construction</span>
-					<span>Tool Executions ({toolGroups.length})</span>
-				</div>
+			<div class="tool-chips">
 				{#each toolGroups as group}
-					<details class="tool-group">
-						<summary
-						class="tool-group-summary {group.toolResult
-							? (group.toolResult.is_error ? 'error' : 'success')
-							: 'pending'}"
-					>
-							<span class="material-symbols-outlined">
+					<details class="tool-chip">
+						<summary class="tool-chip-summary {group.toolResult ? (group.toolResult.is_error ? 'error' : 'success') : 'pending'}">
+							<span class="material-symbols-outlined tool-chip-icon">
 								{group.toolResult
 									? (group.toolResult.is_error ? 'error' : 'check_circle')
 									: 'pending'}
 							</span>
-							<span class="tool-group-title">
-								{group.toolUse ? group.toolUse.name : 'Unknown Tool'}
-							</span>
-							{#if group.toolResult}
-								<span class="tool-status-badge {group.toolResult.is_error ? 'error' : 'success'}">
-									{group.toolResult.is_error ? '✗ Failed' : '✓ Success'}
-								</span>
-							{/if}
+							<span class="tool-chip-name">{group.toolUse ? group.toolUse.name : 'unknown'}</span>
 						</summary>
-						<div class="tool-group-content">
-							{#if group.toolUse}
-								<div class="tool-section">
-									<div class="tool-section-header">
-										<span class="material-symbols-outlined">call_made</span>
-										<strong>Request</strong>
-									</div>
-									<div class="tool-meta">
-										<strong>Tool Use ID:</strong> <code>{group.toolUse.id}</code>
-									</div>
-									{#if group.toolUse.input}
-										<div class="tool-input">
-											<strong>Input Parameters:</strong>
-											<pre class="tool-input-json">{JSON.stringify(group.toolUse.input, null, 2)}</pre>
-										</div>
-									{/if}
+						<div class="tool-chip-content">
+							{#if group.toolUse?.input}
+								<div class="tool-chip-section">
+									<span class="tool-chip-label">Request</span>
+									<pre class="tool-chip-json">{@html highlightJson(JSON.stringify(group.toolUse.input, null, 2))}</pre>
 								</div>
 							{/if}
-
 							{#if group.toolResult}
-								<div class="tool-section">
-									<div class="tool-section-header">
-										<span class="material-symbols-outlined">call_received</span>
-										<strong>Response</strong>
-									</div>
-									<div class="tool-meta">
-										<strong>Tool Use ID:</strong> <code>{group.toolResult.tool_use_id}</code>
-									</div>
-									<div class="tool-result-content-wrapper">
-										<strong>Result:</strong>
-										<pre class="tool-result-content">{(() => {
-											const content = group.toolResult.content;
-											if (typeof content === 'object') {
-												return JSON.stringify(content, null, 2);
-											}
-											if (typeof content === 'string') {
-												try {
-													return JSON.stringify(JSON.parse(content), null, 2);
-												} catch {
-													return content;
-												}
-											}
-											return String(content);
-										})()}</pre>
-									</div>
+								<div class="tool-chip-section">
+									<span class="tool-chip-label {group.toolResult.is_error ? 'error' : ''}">Response</span>
+									<pre class="tool-chip-json tool-chip-result {group.toolResult.is_error ? 'error' : ''}">{@html highlightJson(formatJson(group.toolResult.content))}</pre>
 								</div>
 							{/if}
 						</div>
@@ -282,6 +244,25 @@
 			</div>
 			{/if}
 		{/if}
+
+		{#if !message.isThinking}
+			<div class="message-action-bar">
+				<button class="action-btn" onclick={copyMessage} title="Copy message">
+					<span class="material-symbols-outlined">{copySuccess ? 'check' : 'content_copy'}</span>
+				</button>
+				{#if message.role === 'user' && onEdit}
+					<button class="action-btn" onclick={handleEdit} title="Edit message">
+						<span class="material-symbols-outlined">edit</span>
+					</button>
+				{/if}
+				{#if message.role === 'assistant' && onRetry}
+					<button class="action-btn" onclick={handleRetry} title="Retry">
+						<span class="material-symbols-outlined">refresh</span>
+					</button>
+				{/if}
+			</div>
+		{/if}
+		</div>
 
 		<div class="message-time">
 			{message.sentAt && !isNaN(new Date(message.sentAt).getTime())
@@ -309,21 +290,24 @@
 	}
 
 	.message-action-bar {
-		display: none;
+		position: absolute;
+		top: 4px;
+		right: 4px;
+		display: flex;
 		gap: 2px;
-		margin-bottom: 2px;
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.15s;
+		z-index: 1;
+		background: color-mix(in srgb, var(--color-black) 75%, transparent);
+		border-radius: 6px;
+		padding: 2px;
+		backdrop-filter: blur(8px);
 	}
 
 	.message:hover .message-action-bar {
-		display: flex;
-	}
-
-	.message.user .message-action-bar {
-		justify-content: flex-end;
-	}
-
-	.message.ai .message-action-bar {
-		justify-content: flex-start;
+		opacity: 1;
+		pointer-events: auto;
 	}
 
 	.action-btn {
@@ -332,18 +316,20 @@
 		border-radius: 4px;
 		background: transparent;
 		border: none;
-		color: var(--color-neutral-disabled);
+		color: var(--color-interactive);
 		cursor: pointer;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		transition: color 0.15s, background 0.15s;
 		padding: 0;
+		opacity: 0.7;
 	}
 
 	.action-btn:hover {
-		color: var(--color-neutral-active);
-		background: color-mix(in srgb, var(--color-white) 10%, transparent);
+		color: var(--color-interactive-hover);
+		background: color-mix(in srgb, var(--color-interactive) 10%, transparent);
+		opacity: 1;
 	}
 
 	.action-btn .material-symbols-outlined {
@@ -369,23 +355,34 @@
 		min-width: 0;
 	}
 
-	.message-text {
-		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+	.message-bubble {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		min-width: 0;
 		padding: 8px 12px;
 		border-radius: 10px;
+	}
+
+	.message.user .message-bubble {
+		background: color-mix(in srgb, var(--color-white) 16%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-white) 28%, transparent);
+	}
+
+	.message.ai .message-bubble {
+		background: color-mix(in srgb, var(--color-white) 4%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
+	}
+
+	.message-text {
 		line-height: 1.4;
 		font-size: 13px;
 		color: var(--color-neutral-active);
-		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
 		word-wrap: break-word;
 		overflow-wrap: break-word;
 		max-width: 100%;
 		box-sizing: border-box;
-	}
-
-	.message.ai .message-text {
-		background: color-mix(in srgb, var(--color-white) 10%, transparent);
-		border-color: color-mix(in srgb, var(--color-white) 20%, transparent);
 	}
 
 	.message-attachments {
@@ -555,175 +552,95 @@
 		}
 	}
 
-	.tool-execution-groups {
-		margin-top: 12px;
-		padding: 12px;
-		background: color-mix(in srgb, var(--color-white) 5%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-		border-radius: 8px;
-		font-size: 13px;
-	}
-
-	.tool-header {
+	.tool-chips {
 		display: flex;
-		align-items: center;
-		gap: 6px;
-		font-weight: 600;
-		color: var(--color-neutral-active);
-		margin-bottom: 12px;
+		flex-direction: column;
+		gap: 1px;
 	}
 
-	.tool-header .material-symbols-outlined {
-		font-size: 18px;
-	}
-
-	.tool-group {
-		margin-bottom: 8px;
-		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-		border-radius: 8px;
-		background: color-mix(in srgb, var(--color-white) 3%, transparent);
+	.tool-chip {
+		border-radius: 6px;
 		overflow: hidden;
 	}
 
-	.tool-group-summary {
-		padding: 12px 14px;
+	.tool-chip-summary {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		padding: 2px 0;
 		cursor: pointer;
 		user-select: none;
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		transition: background 0.2s;
-		font-weight: 600;
+		list-style: none;
+		width: fit-content;
 	}
 
-	.tool-group-summary:hover {
-		background: color-mix(in srgb, var(--color-white) 8%, transparent);
-	}
+	.tool-chip-summary::-webkit-details-marker { display: none; }
 
-	.tool-group-summary.success {
-		border-left: 3px solid var(--color-success);
-	}
-
-	.tool-group-summary.error {
-		border-left: 3px solid var(--color-error);
-	}
-
-	.tool-group-summary.pending {
-		border-left: 3px solid var(--color-neutral);
-	}
-
-	.tool-group-summary .material-symbols-outlined {
-		font-size: 20px;
-	}
-
-	.tool-group-summary.success .material-symbols-outlined {
-		color: var(--color-success);
-	}
-
-	.tool-group-summary.error .material-symbols-outlined {
-		color: var(--color-error);
-	}
-
-	.tool-group-summary.pending .material-symbols-outlined {
-		color: var(--color-neutral);
-	}
-
-	.tool-group-title {
-		flex: 1;
-		color: var(--color-interactive);
-	}
-
-	.tool-status-badge {
-		font-size: 11px;
-		padding: 4px 8px;
-		border-radius: 4px;
-		font-weight: 600;
-	}
-
-	.tool-status-badge.success {
-		background: color-mix(in srgb, var(--color-success) 20%, transparent);
-		color: var(--color-success);
-	}
-
-	.tool-status-badge.error {
-		background: color-mix(in srgb, var(--color-error) 20%, transparent);
-		color: var(--color-error);
-	}
-
-	.tool-group-content {
-		padding: 0;
-	}
-
-	.tool-section {
-		padding: 14px;
-		border-top: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-	}
-
-	.tool-section:first-child {
-		border-top: none;
-	}
-
-	.tool-section-header {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		margin-bottom: 10px;
-		color: var(--color-neutral-active);
-		font-size: 13px;
-	}
-
-	.tool-section-header .material-symbols-outlined {
-		font-size: 16px;
-		color: var(--color-interactive);
-	}
-
-	.tool-meta {
-		margin-bottom: 8px;
-		color: var(--color-neutral);
+	.tool-chip-icon {
 		font-size: 12px;
+		opacity: 0.7;
 	}
 
-	.tool-meta strong {
-		color: var(--color-neutral-active);
-	}
+	.tool-chip-summary.success .tool-chip-icon { color: var(--color-success); opacity: 1; }
+	.tool-chip-summary.error .tool-chip-icon { color: var(--color-error); opacity: 1; }
+	.tool-chip-summary.pending .tool-chip-icon { color: var(--color-neutral); }
 
-	.tool-meta code {
-		background: color-mix(in srgb, var(--color-black) 20%, transparent);
-		padding: 2px 6px;
-		border-radius: 3px;
+	.tool-chip-name {
+		font-size: 11px;
+		color: var(--color-neutral);
 		font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
-		font-size: 11px;
-		color: var(--color-neutral-active);
 	}
 
-	.tool-input,
-	.tool-result-content-wrapper {
-		margin-top: 12px;
+	.tool-chip-content {
+		margin-top: 4px;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
 	}
 
-	.tool-input strong,
-	.tool-result-content-wrapper strong {
-		display: block;
-		margin-bottom: 6px;
-		color: var(--color-neutral-active);
-		font-size: 12px;
+	.tool-chip-section {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
 	}
 
-	.tool-input-json,
-	.tool-result-content {
+	.tool-chip-label {
+		font-size: 9px;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--color-neutral-disabled);
+		padding-left: 2px;
+	}
+
+	.tool-chip-label.error {
+		color: var(--color-error);
+	}
+
+	.tool-chip-json {
 		margin: 0;
-		padding: 12px;
-		background: color-mix(in srgb, var(--color-black) 40%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+		padding: 8px;
+		background: color-mix(in srgb, var(--color-white) 4%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
 		border-radius: 6px;
-		font-size: 11px;
+		font-size: 10px;
 		font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
 		overflow-x: auto;
 		white-space: pre-wrap;
 		word-break: break-all;
-		max-height: 300px;
+		max-height: 200px;
 		overflow-y: auto;
 		color: var(--color-neutral);
-		line-height: 1.6;
+		line-height: 1.5;
 	}
+
+	.tool-chip-result.error {
+		border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
+	}
+
+	.tool-chip-json :global(.json-key)     { color: #9cdcfe; }
+	.tool-chip-json :global(.json-string)  { color: #ce9178; }
+	.tool-chip-json :global(.json-number)  { color: #b5cea8; }
+	.tool-chip-json :global(.json-boolean) { color: #569cd6; }
+	.tool-chip-json :global(.json-null)    { color: #569cd6; }
 </style>

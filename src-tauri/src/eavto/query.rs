@@ -398,7 +398,6 @@ pub fn find_by_class_and_properties_with_options(
     }
 
     let type_retracted_filter = if include_retracted { "" } else { " AND t0.retracted = 0" };
-    let prop_retracted_filter = if include_retracted { "" } else { " AND retracted = 0" };
 
     let mut query = String::from(
         "SELECT DISTINCT t0.subject
@@ -418,6 +417,7 @@ pub fn find_by_class_and_properties_with_options(
 
     for (i, (prop_iri, _, _)) in properties.iter().enumerate() {
         let n = i + 1;
+        let prop_retracted_filter = if include_retracted { String::new() } else { format!(" AND t{n}.retracted = 0") };
         query.push_str(&format!("\n           AND t{n}.predicate = ?{prop_retracted_filter}"));
         params.push(SqlValue::Text(prop_iri.to_string()));
     }
@@ -625,15 +625,8 @@ fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
                 Object::Integer(int)
             } else if let Some(num) = object_number {
                 Object::Number(num)
-            } else if let Some(_dt) = object_datetime {
-                // For DateTime, return the object_value (ISO8601 string) instead of
-                // the timestamp. This ensures as_literal() returns the full ISO date
-                // string, not just the Unix timestamp
-                Object::Literal {
-                    value: object_value.ok_or(rusqlite::Error::InvalidQuery)?,
-                    datatype: object_datatype,
-                    language: object_language,
-                }
+            } else if let Some(dt) = object_datetime {
+                Object::DateTime(dt)
             } else if let Some(bool_val) = object_boolean {
                 Object::Boolean(bool_val != 0)
             } else {

@@ -31,6 +31,8 @@
 	let errorMessage = $state(null);
 	let editingMessageIri = $state(null);
 	let editingMessageText = $state('');
+	let activeConversationIri = $state('foundation:MainChatConversation');
+	let conversations = $state([]);
 
 	// Load recent messages on mount and request location
 	onMount(async () => {
@@ -57,6 +59,10 @@
 			} catch (err) {
 				console.error('Failed to get API key:', err);
 				showApiKeyInput = true;
+			}
+			await loadConversations();
+			if (conversations.length > 0) {
+				activeConversationIri = conversations[0].iri;
 			}
 			await loadMessages();
 		};
@@ -172,10 +178,41 @@
 		}
 	}
 
+	async function loadConversations() {
+		try {
+			conversations = await invoke('chat__list_conversations');
+		} catch (err) {
+			console.error('Failed to load conversations:', err);
+		}
+	}
+
+	async function createConversation() {
+		try {
+			const conv = await invoke('chat__create_conversation', { label: null });
+			activeConversationIri = conv.iri;
+			messages = [];
+			messageLimit = 50;
+			hasMoreMessages = true;
+			await loadConversations();
+			await loadMessages();
+		} catch (err) {
+			console.error('Failed to create conversation:', err);
+		}
+	}
+
+	async function switchConversation(iri) {
+		activeConversationIri = iri;
+		messages = [];
+		messageLimit = 50;
+		hasMoreMessages = true;
+		await loadMessages();
+	}
+
 	async function loadMessages() {
 		try {
 			const msgs = await invoke('chat__get_recent_messages', {
-				limit: messageLimit
+				limit: messageLimit,
+				conversationId: activeConversationIri
 			});
 
 			// Check if we got fewer messages than requested (means we've loaded all)
@@ -201,7 +238,8 @@
 			messageLimit += 50;
 
 			const msgs = await invoke('chat__get_recent_messages', {
-				limit: messageLimit
+				limit: messageLimit,
+				conversationId: activeConversationIri
 			});
 			// Check if we got fewer messages than requested (means we've loaded all)
 			hasMoreMessages = msgs.length === messageLimit;
@@ -293,7 +331,7 @@
 
 		startAIStatus('Claude is thinking');
 
-		invoke('chat__retry_from_message', { messageIri: iri }).then(() => {
+		invoke('chat__retry_from_message', { messageIri: iri, conversationId: activeConversationIri }).then(() => {
 			stopAIStatus();
 		}).catch(err => {
 			console.error('Failed to retry message:', err);
@@ -318,7 +356,7 @@
 
 			startAIStatus('Claude is thinking');
 
-			invoke('chat__edit_and_retry', { messageIri: iri, newContent: content }).then(() => {
+			invoke('chat__edit_and_retry', { messageIri: iri, newContent: content, conversationId: activeConversationIri }).then(() => {
 				stopAIStatus();
 			}).catch(err => {
 				console.error('Failed to edit message:', err);
@@ -347,7 +385,8 @@
 			content,
 			latitude: userLocation?.latitude ?? null,
 			longitude: userLocation?.longitude ?? null,
-			attachmentIris: attachmentIris.length > 0 ? attachmentIris : null
+			attachmentIris: attachmentIris.length > 0 ? attachmentIris : null,
+			conversationId: activeConversationIri
 		}).then(() => {
 			stopAIStatus();
 		}).catch(err => {
@@ -532,6 +571,20 @@
 				<span class="material-symbols-outlined">download</span>
 			</button>
 		</div>
+		<div class="conversation-toolbar">
+			<select
+				class="conversation-select"
+				bind:value={activeConversationIri}
+				onchange={() => switchConversation(activeConversationIri)}
+			>
+				{#each conversations as conv}
+					<option value={conv.iri}>{conv.label}</option>
+				{/each}
+			</select>
+			<button class="new-conversation-btn" onclick={createConversation} title="New conversation">
+				<span class="material-symbols-outlined">add</span>
+			</button>
+		</div>
 		<div class="chat-content">
 				<!-- API Key Input -->
 				{#if showApiKeyInput}
@@ -637,6 +690,54 @@
 		justify-content: space-between;
 	}
 
+	.conversation-toolbar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 12px;
+		border-bottom: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+		flex-shrink: 0;
+	}
+
+
+
+	.conversation-select {
+		flex: 1;
+		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+		border-radius: 6px;
+		color: var(--color-neutral-active);
+		font-size: 13px;
+		padding: 4px 8px;
+		cursor: pointer;
+		min-width: 0;
+	}
+
+	.new-conversation-btn {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		background: transparent;
+		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+		border-radius: 6px;
+		color: var(--color-neutral);
+		cursor: pointer;
+		padding: 4px 8px;
+		font-size: 13px;
+		white-space: nowrap;
+		transition: all 0.2s;
+		flex-shrink: 0;
+	}
+
+	.new-conversation-btn:hover {
+		background: color-mix(in srgb, var(--color-white) 10%, transparent);
+		color: var(--color-neutral-active);
+	}
+
+	.new-conversation-btn .material-symbols-outlined {
+		font-size: 16px;
+	}
+
 	.chat-header h2 {
 		margin: 0;
 		font-size: 20px;
@@ -684,7 +785,7 @@
 		overflow-x: hidden;
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: 2px;
 		margin-bottom: 12px;
 		min-height: 0;
 	}
