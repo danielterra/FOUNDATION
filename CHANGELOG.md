@@ -5,6 +5,19 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-03-05
+
+### Refactored
+
+- **AI function layer compliance**: `ai/functions/class.rs` and `ai/functions/concept.rs` no longer access the EAVTO layer directly; all data operations now go through OWL layer methods (`Class::find_all_iris`, `Class::retract_all`, `Class::set_label/icon/comment/super_class`, etc.)
+- **OWL class helpers**: added `Class::find_all_iris`, `Class::get_subclass_iris`, `Class::set_label`, `Class::set_icon`, `Class::set_comment`, `Class::set_super_class`, and `Class::retract_all` to the OWL layer
+- **OWL module helpers**: added `get_all_iri_properties` and `replace_all_property_iris` utility functions to `owl/mod.rs`
+- **`chat.rs` split**: decomposed 1 357-line file into `chat/mod.rs`, `chat/tool_execution.rs`, `chat/message_utils.rs`, `chat/settings.rs`, and `chat/recovery.rs` (all under 750 lines)
+- **Magic number constants**: replaced bare numeric literals in `providers.rs` with `WEB_TOOL_MAX_USES`, `WEB_FETCH_MAX_CONTENT_TOKENS`, and `CLAUDE_CACHE_READ_PRICE_PER_MILLION_TOKENS`
+- **Test icon fixtures**: replaced placeholder icon names with URL-based icons in `individual.rs` and `functions/mod.rs` tests so they pass without a seeded database
+
+---
+
 ## [0.5.1] - 2026-03-05
 
 ### Changed
