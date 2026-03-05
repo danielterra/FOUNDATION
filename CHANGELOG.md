@@ -5,6 +5,43 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-03-05
+
+### Added
+
+- **Multi-conversation support**: create and list named conversations; all chat commands accept an optional `conversation_id` parameter (defaults to `foundation:MainChatConversation` for backward compatibility)
+- **API call cost tracking**: every Claude API call is persisted as a `foundation:AIAPICall` entity with input/output/cache tokens and estimated cost based on the model's pricing
+- **Atomic property setting on thing creation**: `learn_thing` now accepts a `properties` array to set multiple properties in a single transactional call; rolled back on any failure
+- **`allowedStatus` validation**: setting `foundation:hasStatus` on a thing is rejected if the status IRI is not in the concept's `allowedStatus` list
+- **`allowedStatuses` in concept queries**: `remember_concept` now returns the `allowedStatuses` array alongside `allowedValues`
+- **`update_concept` supports `allowed_statuses`**: AI can set or replace the full list of allowed statuses for a concept
+- **Date range filtering in `remember_things`**: new `from_millis` / `to_millis` parameters with inclusive semantics and timezone-aware documentation
+- **Comparison operators in `remember_things_by_details`**: properties can now use `=`, `>=`, `<=`, `>`, `<` operators
+- **Multi-domain support for connection types**: `learn_connection_type` `domain` parameter now accepts a string or an array of strings
+- **xsd datatype validation on literals**: storing a literal with `xsd:dateTime`, `xsd:date`, `xsd:integer`, `xsd:decimal`, or `xsd:boolean` datatype now validates the value format at write time
+- **Status icon inheritance**: `resolve_status_appearance` walks `foundation:parentStatus` recursively to inherit `icon` and `color` when absent on the status itself; `StatusInfo` now includes `icon`
+- **`chat__create_conversation` / `chat__list_conversations`** Tauri commands exposed to the frontend
+
+### Changed
+
+- **DateTime storage unified to Unix milliseconds (i64)**: `Object::DateTime` is now stored and read as a Unix millisecond timestamp; ISO 8601 strings are no longer accepted as `xsd:dateTime` literals
+- **Cache stable index extended**: prompt caching now marks the message at `len - 6` (instead of `len - 2`) as the stable cache point, improving cache hit rates in long conversations
+- **Tool chip UI redesigned**: tool executions in chat are now shown as compact inline chips instead of full accordion panels; action buttons moved inside the message bubble on hover
+- **`remember_things` query**: `prop_retracted_filter` is now applied per-property instead of globally, fixing incorrect results when `include_retracted` is false
+
+### Fixed
+
+- Removed no-op `.map_err(|e| e)` in conversation recovery path
+- Removed dead `has_tool_result` condition in `chat__recover_pending_tools`
+- `chat__recover_pending_tools` now scans all `foundation:AIConversation` individuals in addition to the legacy default conversation
+
+### Refactored
+
+- AI tool functions reorganized into `concept`, `thing`, and `detail` submodules
+- `parse_timestamp` helper extracted to eliminate duplicated timestamp parsing across chat commands
+
+---
+
 ## [0.1.0] - 2026-02-26 (Alpha Release)
 
 ### 🎉 Initial Release

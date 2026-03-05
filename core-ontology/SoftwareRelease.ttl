@@ -180,3 +180,12 @@ foundation:FoundationRelease_0_4_1 a foundation:SoftwareRelease , owl:NamedIndiv
     foundation:licenseType "MIT" ;
     foundation:releaseDate "2026-03-03"^^xsd:date ;
     foundation:changelog "fix: handle tool_use with max_tokens stop reason to continue conversation; feat: implement file attachment upload and send to Claude API; refactor: semantic colors, remove what-comments, drop unused import; feat: show inline status badges on inspector properties and backlinks; refactor: remove what-comments, fix formatting, load model from settings; feat: enable prompt caching and apply code-review quality fixes; refactor: decompose chat UI, AI functions, and setup into focused modules; refactor: Move hasFile to DigitalThing and fix InformationObject hierarchy; fix: Add hasFile property to BrazilianNFSe and make it generic; feat: Add Brazilian NFS-e ontology and improve property reference usage; refactor: Reorganize ontology structure and enhance cardinality support; feat: Add comprehensive financial and contract ontologies with QUDT integration; feat: Improve address ontology and fix file preview in inspector; feat: Add comprehensive ontology definitions and documentation; feat: Improve AI search and file attachment handling" .
+
+foundation:FoundationRelease_0_5_0 a foundation:SoftwareRelease , owl:NamedIndividual ;
+    rdfs:label "FOUNDATION v0.5.0" ;
+    rdfs:comment "Multi-conversation support, API cost tracking, and status validation" ;
+    foundation:releaseOf foundation:FoundationProduct ;
+    foundation:versionNumber "0.5.0" ;
+    foundation:licenseType "MIT" ;
+    foundation:releaseDate "2026-03-05"^^xsd:date ;
+    foundation:changelog "feat: multi-conversation support with create/list conversation commands; feat: API call cost tracking and logging as AIAPICall entities; feat: allowedStatus validation on concept and thing creation; feat: atomic property setting on thing creation via properties array; feat: date range filtering and comparison operators in AI query tools; feat: multi-domain support for connection types; feat: xsd datatype validation on literal values; feat: status icon inheritance via parentStatus chain; feat: compact tool chip UI in chat messages; fix: DateTime storage unified to Unix milliseconds; fix: cache stable index extended for better prompt caching; refactor: AI functions split into concept/thing/detail modules" .
