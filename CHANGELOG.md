@@ -5,6 +5,15 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-03-05
+
+### Fixed
+
+- **Web tools gated by ontology capability**: `web_search` and `web_fetch` are now only included in API requests when the configured model has `foundation:modelCapability = web_tools`; Haiku models (which don't support these tools) no longer receive a 400 error
+- Added `web_tools` capability to all Sonnet and Opus model individuals in the ontology; `GenerateRequest.supports_web_tools` is resolved at request time from the database instead of being hardcoded
+
+---
+
 ## [0.5.2] - 2026-03-05
 
 ### Refactored

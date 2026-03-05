@@ -2,24 +2,24 @@
 
 ![FOUNDATION Screenshot](static/Screenshot1.png)
 
-**Version 0.5.2** - AI-powered ontology management system with long-term memory
+**Version 0.5.3** - AI-powered ontology management system with long-term memory
 
 <!-- installers not yet available for this release
-[![Download for macOS](https://img.shields.io/badge/Download-macOS-blue?style=for-the-badge&logo=apple)](https://github.com/danielterra/FOUNDATION/releases/latest/download/FOUNDATION_0.5.2_universal.dmg)
-[![Download for Windows](https://img.shields.io/badge/Download-Windows-blue?style=for-the-badge&logo=windows)](https://github.com/danielterra/FOUNDATION/releases/latest/download/FOUNDATION_0.5.2_x64_en-US.msi)
-[![Download for Linux](https://img.shields.io/badge/Download-Linux-blue?style=for-the-badge&logo=linux)](https://github.com/danielterra/FOUNDATION/releases/latest/download/foundation_0.5.2_amd64.AppImage)
+[![Download for macOS](https://img.shields.io/badge/Download-macOS-blue?style=for-the-badge&logo=apple)](https://github.com/danielterra/FOUNDATION/releases/latest/download/FOUNDATION_0.5.3_universal.dmg)
+[![Download for Windows](https://img.shields.io/badge/Download-Windows-blue?style=for-the-badge&logo=windows)](https://github.com/danielterra/FOUNDATION/releases/latest/download/FOUNDATION_0.5.3_x64_en-US.msi)
+[![Download for Linux](https://img.shields.io/badge/Download-Linux-blue?style=for-the-badge&logo=linux)](https://github.com/danielterra/FOUNDATION/releases/latest/download/foundation_0.5.3_amd64.AppImage)
 -->
-[![Changelog](https://img.shields.io/badge/Changelog-v0.5.2-informational?style=for-the-badge)](https://github.com/danielterra/FOUNDATION/blob/main/CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/Changelog-v0.5.3-informational?style=for-the-badge)](https://github.com/danielterra/FOUNDATION/blob/main/CHANGELOG.md)
 
 ## Features
 
-- **Automation**: BPMN 2.0 workflow engine that reacts to data changes — connect to APIs, orchestrate multi-step processes, and trigger complex automations without manual intervention. `[em desenvolvimento]`
-- **Dynamic Blackboard with Widgets**: Visual canvas where multiple widgets display entities and their relationships simultaneously, providing rich interactive context for complex topics. `[em desenvolvimento]`
-- **Integrated AI Chat**: Built-in AI assistant with full access to the personal knowledge base, context-aware and persistent across sessions. `[em desenvolvimento]`
+- **Automation**: BPMN 2.0 workflow engine that reacts to data changes — connect to APIs, orchestrate multi-step processes, and trigger complex workflows without manual intervention. `[em desenvolvimento]`
+- **Dynamic Blackboard with Widgets**: A dynamic visual canvas where multiple widgets display entities and their relationships simultaneously, providing rich interactive context for complex topics. `[em desenvolvimento]`
+- **Integrated AI Chat**: Built-in AI chat with full access to the personal knowledge base, context-aware and persistent across sessions, deeply integrated with the ontology. `[em desenvolvimento]`
 - **Local MCP Server**: Exposes a local MCP server (localhost:47177) so external AI clients (Claude Code, etc.) can access the same memory and tools as the built-in assistant. `[finalizado]`
 - **Ontology**: Structures data through formal relationships between entities using a shared base ontology — enabling different FOUNDATION instances to understand each other's data without integrations or mappings. `[em desenvolvimento]`
 - **Open Source and Free**: GNU GPL licensed — no subscriptions, no vendor lock-in, no corporation owns it. `[finalizado]`
-- **Ownership**: Runs locally on your machine — your data, your control, no Big Tech servers required. `[finalizado]`
+- **Ownership**: Runs locally on your machine — no Big Tech servers required, your data and tools fully under your control. `[finalizado]`
 
 ## Quick Start
 
@@ -137,7 +137,7 @@ npm run tauri:build:linux    # Linux x64
 ./scripts/build-release.sh
 ```
 
-**Note**: To build for Windows and Linux from macOS, use GitHub Actions (push a tag like `v0.5.2`) or build on each platform natively.
+**Note**: To build for Windows and Linux from macOS, use GitHub Actions (push a tag like `v0.5.3`) or build on each platform natively.
 
 ### Important Paths
 
