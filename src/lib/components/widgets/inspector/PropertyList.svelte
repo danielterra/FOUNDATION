@@ -3,7 +3,7 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import { marked } from 'marked';
+  import MarkdownValue from './MarkdownValue.svelte';
 
   let { properties, requiredFields = [], openEntityInspector } = $props();
 
@@ -192,7 +192,7 @@
                   <span class="material-symbols-outlined url-open-icon">open_in_new</span>
                 </button>
               {:else if !detailGroup.isObjectProperty && isStringType(val.datatype)}
-                {#if (val.value ?? '').length > 2000}
+                {#if (val.value ?? '').length > 50_000}
                   <div class="value-large">
                     <pre class="value-pre">{val.value}</pre>
                     <button class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
@@ -200,9 +200,7 @@
                     </button>
                   </div>
                 {:else}
-                  <div class="value-markdown markdown-content">
-                    {@html marked.parse(val.value ?? '')}
-                  </div>
+                  <MarkdownValue value={val.value} />
                 {/if}
               {:else}
                 {#if val.unitLabel}
@@ -313,15 +311,6 @@
     padding: 8px;
     background: color-mix(in srgb, var(--color-black) 30%, transparent);
     border-radius: 6px;
-  }
-
-  .value-markdown {
-    flex: 1;
-    font-size: 13px;
-    color: var(--color-neutral-active);
-    line-height: 1.5;
-    word-wrap: break-word;
-    min-width: 0;
   }
 
   .value-large {
