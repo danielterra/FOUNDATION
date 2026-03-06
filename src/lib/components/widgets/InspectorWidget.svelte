@@ -229,7 +229,7 @@
           </div>
         {/if}
 
-        <PropertyList properties={entityData.properties} {openEntityInspector} />
+        <PropertyList properties={entityData.properties} requiredFields={entityData.requiredFields ?? []} {openEntityInspector} />
 
         <BacklinkList backlinks={entityData.backlinks} {openEntityInspector} />
 

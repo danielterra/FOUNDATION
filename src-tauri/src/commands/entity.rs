@@ -57,6 +57,7 @@ pub struct EntityData {
     pub properties: Vec<PropertyValue>,
     pub backlinks: Vec<PropertyValue>,
     pub status: Option<StatusInfo>,
+    pub required_fields: Vec<String>,
 
     pub nodes: Vec<GraphNode>,
     pub links: Vec<GraphLink>,
@@ -481,6 +482,13 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
 
     let status = resolve_entity_status(conn, &properties);
 
+    let required_fields = crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.is_required())
+        .map(|r| r.property_iri)
+        .collect();
+
     Ok(EntityData {
         id: class_id.to_string(),
         label,
@@ -493,6 +501,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
         properties,
         backlinks,
         status,
+        required_fields,
         nodes,
         links,
     })
@@ -796,6 +805,18 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
 
     let status = resolve_entity_status(conn, &properties);
 
+    let mut required_fields: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for type_thing in &individual.types {
+        if let Ok(restrictions) = crate::owl::cardinality::get_class_cardinality_restrictions(conn, &type_thing.iri) {
+            for r in restrictions {
+                if r.is_required() && seen.insert(r.property_iri.clone()) {
+                    required_fields.push(r.property_iri);
+                }
+            }
+        }
+    }
+
     Ok(EntityData {
         id: individual_id.to_string(),
         label,
@@ -808,6 +829,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
         properties,
         backlinks,
         status,
+        required_fields,
         nodes,
         links,
     })

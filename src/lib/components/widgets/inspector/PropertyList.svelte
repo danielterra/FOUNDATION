@@ -5,7 +5,7 @@
   import { cubicOut } from 'svelte/easing';
   import { marked } from 'marked';
 
-  let { properties, openEntityInspector } = $props();
+  let { properties, requiredFields = [], openEntityInspector } = $props();
 
   const groupedDetails = $derived(
     (properties ?? []).reduce((acc, prop) => {
@@ -135,6 +135,9 @@
             {/if}
             {#if detailGroup.values.length > 1}
               <span class="detail-count">{detailGroup.values.length}</span>
+            {/if}
+            {#if requiredFields.includes(detailGroup.property)}
+              <span class="detail-required" title="Required field">*</span>
             {/if}
           </div>
           {#if detailGroup.sourceClassLabel}
@@ -266,6 +269,13 @@
     color: var(--color-accent);
     border-radius: 4px;
     font-weight: 600;
+  }
+
+  .detail-required {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--color-warning, #f59e0b);
+    line-height: 1;
   }
 
   .detail-source {
