@@ -1,7 +1,7 @@
 # FOUNDATION
 
 <p align="center">
-  <img src="src-tauri/icons/icon.png" alt="FOUNDATION" width="256" />
+  <img src="static/foudation-icon-exports/foudation-icon-iOS-Dark-1024x1024@1x.png" alt="FOUNDATION" width="128" />
 </p>
 
 ![FOUNDATION Screenshot](static/Screenshot1.png)
