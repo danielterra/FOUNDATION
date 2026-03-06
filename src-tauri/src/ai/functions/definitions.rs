@@ -111,7 +111,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     description: concat!(
                         "Filter to entities created at or after this Unix timestamp in milliseconds (inclusive).",
                         " Timezone matters — always convert from local time.",
-                        " Example: 2026-03-04T00:00:00-03:00 = 1741057200000.",
+                        " Example: 2026-03-04T00:00:00-03:00 = 1772593200000.",
                         " Only applies when concept_iri is provided.",
                     ).to_string(),
                     required: false,
@@ -123,7 +123,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     description: concat!(
                         "Filter to entities created at or before this Unix timestamp in milliseconds (inclusive).",
                         " Timezone matters — always convert from local time.",
-                        " Example: 2026-03-04T23:59:59-03:00 = 1741143599000.",
+                        " Example: 2026-03-04T23:59:59-03:00 = 1772679599000.",
                         " Only applies when concept_iri is provided.",
                     ).to_string(),
                     required: false,
@@ -638,6 +638,20 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     description: concat!(
                         "When true, include retracted (deleted) things in results. Default: false.",
                     ).to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "limit".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Maximum number of results to return. Default: 100.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "offset".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Number of results to skip for pagination. Default: 0.".to_string(),
                     required: false,
                     schema: None,
                 },

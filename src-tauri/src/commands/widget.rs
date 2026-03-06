@@ -207,13 +207,16 @@ pub async fn widget__add(
         size: size.unwrap_or(Size { width: 400.0, height: 600.0 }),
     };
 
-    let widget_clone = widget.clone();
-    executor.write(move |conn| {
-        db_insert_widget(conn, &widget_clone)?;
-        Ok(widget_clone.id.clone())
-    }).await?;
-
     app.emit("widget-added", widget.clone()).ok();
+
+    let widget_clone = widget.clone();
+    let executor_clone = executor.inner().clone();
+    tokio::spawn(async move {
+        executor_clone.write(move |conn| {
+            db_insert_widget(conn, &widget_clone)?;
+            Ok(widget_clone.id.clone())
+        }).await.ok();
+    });
 
     Ok(widget)
 }
@@ -226,13 +229,15 @@ pub async fn widget__remove(
     widget_id: String,
     executor: State<'_, DbExecutor>
 ) -> Result<(), String> {
-    let widget_id_clone = widget_id.clone();
-    executor.write(move |conn| {
-        db_delete_widget(conn, &widget_id_clone)?;
-        Ok("deleted".to_string())
-    }).await?;
+    app.emit("widget-removed", widget_id.clone()).ok();
 
-    app.emit("widget-removed", widget_id).ok();
+    let executor_clone = executor.inner().clone();
+    tokio::spawn(async move {
+        executor_clone.write(move |conn| {
+            db_delete_widget(conn, &widget_id)?;
+            Ok("deleted".to_string())
+        }).await.ok();
+    });
 
     Ok(())
 }
@@ -274,12 +279,15 @@ pub async fn widget__clear_all(
     app: AppHandle,
     executor: State<'_, DbExecutor>
 ) -> Result<(), String> {
-    executor.write(|conn| {
-        db_clear_all_widgets(conn)?;
-        Ok("cleared".to_string())
-    }).await?;
-
     app.emit("widgets-cleared", ()).ok();
+
+    let executor_clone = executor.inner().clone();
+    tokio::spawn(async move {
+        executor_clone.write(|conn| {
+            db_clear_all_widgets(conn)?;
+            Ok("cleared".to_string())
+        }).await.ok();
+    });
 
     Ok(())
 }

@@ -97,6 +97,7 @@ fn initialize_db_with_progress(
 
     log_backend("info", &format!("Using database: {:?}", db_path));
     let conn = Connection::open(db_path)?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
 
     if needs_initialization {
         log_backend("info", "Initializing new database");
@@ -124,9 +125,10 @@ fn initialize_db_with_progress(
     Ok(conn)
 }
 
-pub fn initialize_with_progress(app: tauri::AppHandle) -> Result<Connection, DbError> {
+pub fn initialize_with_progress(app: tauri::AppHandle) -> Result<(Connection, PathBuf), DbError> {
     let db_path = get_db_path()?;
-    initialize_db_with_progress(&db_path, Some(&app))
+    let conn = initialize_db_with_progress(&db_path, Some(&app))?;
+    Ok((conn, db_path))
 }
 
 #[allow(dead_code)]

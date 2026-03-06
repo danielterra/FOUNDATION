@@ -394,13 +394,15 @@ fn insert_triple(
                     )
                 }
                 Some("xsd:dateTime") => {
-                    let millis = value.parse::<i64>()
+                    let millis = chrono::DateTime::parse_from_rfc3339(value)
+                        .map(|dt| dt.timestamp_millis())
+                        .or_else(|_| value.parse::<i64>())
                         .map_err(|_| rusqlite::Error::ToSqlConversionFailure(Box::new(
                             std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 format!(
                                     "Failed to parse dateTime literal '{}' for triple: \
-                                     {} {} {} - Expected Unix milliseconds (i64)",
+                                     {} {} {} - Expected RFC3339 string or Unix milliseconds (i64)",
                                     value, triple.subject, triple.predicate, value,
                                 ),
                             )

@@ -195,74 +195,64 @@ pub async fn load_conversation_history(
     ));
 
     let conversation_id = conversation_id.to_string();
-    let messages = executor.read(move |conn| {
-        let message_iris = Individual::find_by_class_and_properties(
-            conn,
-            "foundation:AIConversationMessage",
-            &[("foundation:partOfConversation", &conversation_id)],
-        ).map_err(|e| format!("Failed to query messages: {}", e))?;
+    let selected = executor.read(move |conn| {
+        // Load IRIs ordered newest-first — light query, no message content yet
+        let iris_desc = Individual::find_messages_by_conversation(conn, &conversation_id, usize::MAX, 0)
+            .map_err(|e| format!("Failed to query messages: {}", e))?;
 
-        let mut messages = Vec::new();
-        let mut failed_count = 0;
-        for iri in message_iris {
-            match load_message(conn, &iri) {
-                Ok(msg) => {
-                    messages.push(msg);
-                },
-                Err(_e) => {
-                    failed_count += 1;
-                }
+        let mut selected: Vec<AIConversationMessage> = Vec::new();
+        let mut total_tokens = 0;
+        let mut failed_count = 0usize;
+        let mut i = 0;
+
+        while i < iris_desc.len() {
+            let msg = match load_message(conn, &iris_desc[i]) {
+                Ok(m) => m,
+                Err(_) => { failed_count += 1; i += 1; continue; }
+            };
+            let msg_tokens = msg.token_count.unwrap_or(0);
+
+            let has_tool_results = msg.content.iter()
+                .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
+
+            if has_tool_results && i + 1 < iris_desc.len() {
+                let prev_msg = match load_message(conn, &iris_desc[i + 1]) {
+                    Ok(m) => m,
+                    Err(_) => {
+                        // Paired tool_use unreadable — include only this message
+                        failed_count += 1;
+                        if total_tokens + msg_tokens > max_tokens { break; }
+                        selected.push(msg);
+                        total_tokens += msg_tokens;
+                        i += 1;
+                        continue;
+                    }
+                };
+                let pair_tokens = msg_tokens + prev_msg.token_count.unwrap_or(0);
+                if total_tokens + pair_tokens > max_tokens { break; }
+                // Push newer first, then older — selected.reverse() restores chronological order
+                selected.push(msg);
+                selected.push(prev_msg);
+                total_tokens += pair_tokens;
+                i += 2;
+            } else {
+                if total_tokens + msg_tokens > max_tokens { break; }
+                selected.push(msg);
+                total_tokens += msg_tokens;
+                i += 1;
             }
         }
 
-        Ok::<(Vec<AIConversationMessage>, usize), String>((messages, failed_count))
+        super::log_backend("info", &format!(
+            "[CHAT] Loaded {} messages ({} skipped, {} failed)",
+            selected.len(), iris_desc.len().saturating_sub(i), failed_count,
+        ));
+
+        selected.reverse(); // now chronological (oldest first)
+        Ok::<(Vec<AIConversationMessage>, usize), String>((selected, total_tokens))
     }).await?;
 
-    let (mut messages, failed_count) = messages;
-
-    super::log_backend("info", &format!(
-        "[CHAT] Loaded {} messages, {} failed", messages.len(), failed_count
-    ));
-
-    messages.sort_by_key(|m| m.timestamp);
-
-    let mut selected = Vec::new();
-    let mut total_tokens = 0;
-    let mut i = messages.len();
-
-    while i > 0 {
-        i -= 1;
-        let msg = messages[i].clone();
-        let msg_tokens = msg.token_count.unwrap_or(0);
-
-        let has_tool_results = msg.content.iter()
-            .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
-
-        if has_tool_results && i > 0 {
-            let prev_msg = messages[i - 1].clone();
-            let prev_tokens = prev_msg.token_count.unwrap_or(0);
-            let pair_tokens = msg_tokens + prev_tokens;
-
-            if total_tokens + pair_tokens > max_tokens {
-                break; // Can't fit the pair, stop here
-            }
-
-            // Add msg first, then prev_msg so that after selected.reverse()
-            // they appear in correct chronological order: prev_msg (older) before msg (newer)
-            selected.push(msg);
-            selected.push(prev_msg);
-            total_tokens += pair_tokens;
-            i -= 1;
-        } else {
-            if total_tokens + msg_tokens > max_tokens {
-                break;
-            }
-            selected.push(msg);
-            total_tokens += msg_tokens;
-        }
-    }
-
-    selected.reverse();
+    let (selected, total_tokens) = selected;
 
     // Validate tool_use/tool_result adjacency — Claude API requires that each assistant message
     // with tool_use blocks is IMMEDIATELY followed by a user message containing tool_result blocks

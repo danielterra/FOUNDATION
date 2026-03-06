@@ -280,11 +280,9 @@ pub async fn chat__get_recent_messages(
     let conv_id = conversation_id.unwrap_or_else(|| "foundation:MainChatConversation".to_string());
 
     let messages = executor.read(move |conn| {
-        let message_iris = Individual::find_by_class_and_properties(
-            conn,
-            "foundation:AIConversationMessage",
-            &[("foundation:partOfConversation", &conv_id)],
-        ).map_err(|e| format!("Failed to query messages: {}", e))?;
+        // Load only the N most recent message IRIs directly from SQL — no in-memory sort needed
+        let message_iris = Individual::find_messages_by_conversation(conn, &conv_id, limit, 0)
+            .map_err(|e| format!("Failed to query messages: {}", e))?;
 
         let mut messages_with_ts: Vec<(i64, serde_json::Value)> = Vec::new();
 
@@ -378,16 +376,12 @@ pub async fn chat__get_recent_messages(
             messages_with_ts.push((timestamp, msg_json));
         }
 
-        messages_with_ts.sort_by(|a, b| b.0.cmp(&a.0));
-
+        // SQL already returned the N most recent messages in DESC order — just reverse to chronological
         let messages: Vec<serde_json::Value> = messages_with_ts
             .into_iter()
-            .take(limit)
+            .rev()
             .map(|(_, msg)| msg)
             .collect();
-
-        let mut messages = messages;
-        messages.reverse();
 
         Ok(messages)
     }).await?;

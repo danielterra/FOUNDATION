@@ -41,11 +41,6 @@
 		// Listen for database events and message updates
 		const { listen } = await import('@tauri-apps/api/event');
 
-		// Listen for import-complete in case database is still initializing
-		const unlistenImport = await listen('import-complete', async () => {
-			await initializeApp();
-		});
-
 		// Function to initialize app (API key + messages)
 		const initializeApp = async () => {
 			try {
@@ -66,6 +61,11 @@
 			}
 			await loadMessages();
 		};
+
+		// Listen for import-complete in case database is still initializing
+		const unlistenImport = await listen('import-complete', async () => {
+			await initializeApp();
+		});
 
 		// Try to initialize immediately (database should already be initialized)
 		await initializeApp();

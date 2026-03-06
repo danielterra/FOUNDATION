@@ -1,5 +1,6 @@
 use serde::Serialize;
 use tauri::State;
+use std::collections::HashMap;
 use crate::owl::{self, Class, Individual, Property, Connection, DbExecutor};
 
 #[derive(Debug, Serialize, Clone)]
@@ -87,6 +88,8 @@ pub struct PropertyValue {
     pub datatype: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value_status: Option<StatusInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_total: Option<usize>,
 }
 
 /// Search for entities (classes and individuals) by label
@@ -358,6 +361,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             unit_label: None,
             datatype: None,
             value_status: None,
+            group_total: None,
         });
     }
 
@@ -376,6 +380,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             unit_label: None,
             datatype: None,
             value_status: None,
+            group_total: None,
         });
     }
 
@@ -430,6 +435,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             unit_label,
             datatype: None,
             value_status: None,
+            group_total: None,
         });
     }
 
@@ -467,6 +473,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             unit_label: None,
             datatype: None,
             value_status: resolve_status_for_entity(conn, source_entity),
+            group_total: None,
         });
     }
 
@@ -562,6 +569,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
             unit_label,
             datatype,
             value_status,
+            group_total: None,
         });
     }
 
@@ -661,64 +669,118 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
         }
     }
 
-    for (subject, predicate_iri, _) in &individual.backlinks {
-        if !added_node_ids.contains(subject) {
-            let subject_thing = crate::owl::Thing::get(conn, subject);
-            let entity_exists_flag = Individual::get(conn, subject).ok().flatten().is_some();
+    // Batch-load all metadata needed for backlink nodes and the backlinks list.
+    let backlink_source_iris: Vec<String> = {
+        let mut seen = std::collections::HashSet::new();
+        individual.backlinks.iter()
+            .map(|b| b.subject.clone())
+            .filter(|s| seen.insert(s.clone()))
+            .collect()
+    };
 
+    let source_things = crate::owl::Thing::get_batch(conn, &backlink_source_iris);
+
+    let unique_class_iris: Vec<String> = individual.backlinks.iter()
+        .filter_map(|b| b.source_class.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let class_things = crate::owl::Thing::get_batch(conn, &unique_class_iris);
+
+    let mut prop_cache: HashMap<String, (String, Option<String>)> = HashMap::new();
+    {
+        let unique_prop_iris: std::collections::HashSet<String> = individual.backlinks.iter()
+            .map(|b| b.predicate.clone())
+            .collect();
+        for prop_iri in unique_prop_iris {
+            let (label, comment) = if let Ok(Some(prop)) = Property::get(conn, &prop_iri) {
+                (prop.label.unwrap_or_else(|| prop_iri.clone()), prop.comment)
+            } else {
+                (prop_iri.clone(), None)
+            };
+            prop_cache.insert(prop_iri, (label, comment));
+        }
+    }
+
+    let source_status_iris = crate::eavto::query::get_first_iri_property_batch(
+        conn, &backlink_source_iris, "foundation:hasStatus",
+    ).unwrap_or_default();
+
+    let unique_status_iris: Vec<String> = source_status_iris.values()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut status_cache: HashMap<String, StatusInfo> = HashMap::new();
+    for status_iri in unique_status_iris {
+        if owl::is_instance_of(conn, &status_iri, "foundation:Status") {
+            let status_thing = crate::owl::Thing::get(conn, &status_iri);
+            let (icon, color) = owl::resolve_status_appearance(conn, &status_iri);
+            status_cache.insert(status_iri.clone(), StatusInfo {
+                iri: status_iri,
+                label: status_thing.label,
+                icon,
+                color,
+            });
+        }
+    }
+
+    for b in &individual.backlinks {
+        if !added_node_ids.contains(&b.subject) {
+            let thing = source_things.get(&b.subject)
+                .cloned()
+                .unwrap_or_else(|| crate::owl::Thing::get(conn, &b.subject));
             nodes.push(GraphNode {
-                id: subject.clone(),
-                label: subject_thing.label,
-                icon: if entity_exists_flag {
-                    subject_thing.icon
-                } else {
-                    Some("warning".to_string())
-                },
+                id: b.subject.clone(),
+                label: thing.label,
+                icon: thing.icon,
                 group: group_individual,
-                is_broken_ref: if entity_exists_flag { None } else { Some(true) },
+                is_broken_ref: None,
                 is_literal: None,
             });
-            added_node_ids.insert(subject.clone());
+            added_node_ids.insert(b.subject.clone());
         }
 
-        let prop_label = Property::get(conn, predicate_iri)
-            .ok()
-            .flatten()
-            .and_then(|p| p.label)
-            .unwrap_or_else(|| predicate_iri.clone());
+        let prop_label = prop_cache.get(&b.predicate)
+            .map(|(l, _)| l.clone())
+            .unwrap_or_else(|| b.predicate.clone());
 
         links.push(GraphLink {
-            source: subject.clone(),
+            source: b.subject.clone(),
             target: individual_id.to_string(),
             label: prop_label,
         });
     }
 
     let mut backlinks = Vec::new();
-    for (source_entity, property_iri, _value_obj) in &individual.backlinks {
-        let prop_result = Property::get(conn, property_iri);
-        let (property_label, property_comment) = if let Ok(Some(prop)) = prop_result {
-            (prop.label.unwrap_or_else(|| property_iri.clone()), prop.comment)
-        } else {
-            (property_iri.clone(), None)
+    for b in &individual.backlinks {
+        let (property_label, property_comment) = prop_cache.get(&b.predicate)
+            .cloned()
+            .unwrap_or_else(|| (b.predicate.clone(), None));
+
+        let source_thing = source_things.get(&b.subject)
+            .cloned()
+            .unwrap_or_else(|| crate::owl::Thing::get(conn, &b.subject));
+
+        let (source_class_iri, source_class_label) = match &b.source_class {
+            Some(class_iri) => {
+                let label = class_things.get(class_iri)
+                    .map(|t| t.label.clone())
+                    .unwrap_or_else(|| class_iri.clone());
+                (Some(class_iri.clone()), Some(label))
+            }
+            None => (None, None),
         };
 
-        let source_thing = crate::owl::Thing::get(conn, source_entity);
-
-        let (source_class_iri, source_class_label) =
-            match owl::get_iri_property(conn, source_entity, "rdf:type") {
-                Ok(Some(class_iri)) => {
-                    let class_thing = crate::owl::Thing::get(conn, &class_iri);
-                    (Some(class_iri), Some(class_thing.label))
-                }
-                _ => (None, None),
-            };
+        let value_status = source_status_iris.get(&b.subject)
+            .and_then(|status_iri| status_cache.get(status_iri))
+            .cloned();
 
         backlinks.push(PropertyValue {
-            property: property_iri.clone(),
+            property: b.predicate.clone(),
             property_label,
             property_comment,
-            value: source_entity.clone(),
+            value: b.subject.clone(),
             value_label: Some(source_thing.label),
             value_icon: source_thing.icon,
             is_object_property: true,
@@ -727,11 +789,10 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
             unit: None,
             unit_label: None,
             datatype: None,
-            value_status: resolve_status_for_entity(conn, source_entity),
+            value_status,
+            group_total: Some(b.group_total),
         });
     }
-
-    sort_backlinks_by_recency(conn, &mut backlinks);
 
     let status = resolve_entity_status(conn, &properties);
 

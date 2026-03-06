@@ -16,6 +16,7 @@
           key,
           propertyLabel: backlink.propertyLabel || backlink.property,
           conceptName: backlink.sourceClassLabel || 'Unknown',
+          totalCount: backlink.groupTotal ?? null,
           entities: {}
         };
       }
@@ -80,7 +81,7 @@
             <span class="group-arrow">→</span>
             <span class="group-prop">{group.propertyLabel}</span>
           </span>
-          <span class="group-count">{entities.length}</span>
+          <span class="group-count">{group.totalCount ?? entities.length}</span>
         </button>
 
         {#if !isCollapsed}

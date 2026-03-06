@@ -212,25 +212,159 @@ pub fn get_by_predicate_object(
     Ok(QueryResult::new(triples))
 }
 
-/// Query by object (e.g., all triples that reference a specific entity)
-pub fn get_by_object(
+/// A single row returned by `get_backlinks_grouped_limited`.
+#[derive(Debug, Clone)]
+pub struct BacklinkRow {
+    pub subject: String,
+    pub predicate: String,
+    pub source_class: Option<String>,
+    pub group_total: usize,
+}
+
+/// Return backlinks grouped by (predicate, source_class), loading at most `limit_per_group`
+/// entities per group (the most recently active ones).
+/// Each row carries the real total count of distinct entities in its group.
+pub fn get_backlinks_grouped_limited(
     conn: &Connection,
     object: &str,
-) -> Result<QueryResult> {
-    let mut stmt = conn.prepare(
+    limit_per_group: usize,
+) -> Result<Vec<BacklinkRow>> {
+    let sql = format!(
+        "WITH
+         backlinks_raw AS (
+             SELECT t.subject, t.predicate, MAX(t.tx) AS last_tx
+             FROM triples t
+             WHERE t.object = ?1
+               AND t.object_type = 'iri'
+               AND t.retracted = 0
+               AND t.predicate != 'rdf:type'
+               AND t.subject != ?1
+             GROUP BY t.subject, t.predicate
+         ),
+         backlinks_with_class AS (
+             SELECT
+                 br.subject,
+                 br.predicate,
+                 br.last_tx,
+                 (SELECT t2.object FROM triples t2
+                  WHERE t2.subject = br.subject
+                    AND t2.predicate = 'rdf:type'
+                    AND t2.object_type = 'iri'
+                    AND t2.retracted = 0
+                  ORDER BY t2.tx DESC
+                  LIMIT 1) AS source_class
+             FROM backlinks_raw br
+         ),
+         group_counts AS (
+             SELECT predicate, source_class, COUNT(*) AS total
+             FROM backlinks_with_class
+             GROUP BY predicate, source_class
+         ),
+         ranked AS (
+             SELECT
+                 bwc.subject, bwc.predicate, bwc.source_class, bwc.last_tx,
+                 gc.total AS group_total,
+                 ROW_NUMBER() OVER (
+                     PARTITION BY bwc.predicate, bwc.source_class
+                     ORDER BY bwc.last_tx DESC
+                 ) AS rn
+             FROM backlinks_with_class bwc
+             JOIN group_counts gc
+               ON gc.predicate = bwc.predicate
+              AND gc.source_class IS bwc.source_class
+         )
+         SELECT subject, predicate, source_class, group_total
+         FROM ranked
+         WHERE rn <= {}
+         ORDER BY last_tx DESC",
+        limit_per_group
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map([object], |row| {
+            let subject: String = row.get(0)?;
+            let predicate: String = row.get(1)?;
+            let source_class: Option<String> = row.get(2)?;
+            let group_total: i64 = row.get(3)?;
+            Ok(BacklinkRow {
+                subject,
+                predicate,
+                source_class,
+                group_total: group_total as usize,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+
+/// Fetch values for specified predicates across multiple subjects in a single query.
+/// Returns Vec<(subject, predicate, object)> ordered by subject, predicate, tx DESC.
+/// Useful for batch-loading metadata (labels, icons) without N+1 queries.
+pub fn get_predicates_for_subjects(
+    conn: &Connection,
+    subjects: &[String],
+    predicates: &[&str],
+) -> Result<Vec<(String, String, Object)>> {
+    if subjects.is_empty() || predicates.is_empty() {
+        return Ok(Vec::new());
+    }
+    let subject_phs = subjects.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let predicate_phs = predicates.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_datetime, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
-         WHERE object = ? AND object_type = 'iri' AND retracted = 0
-         ORDER BY tx DESC"
-    )?;
-
+         WHERE subject IN ({}) AND predicate IN ({}) AND retracted = 0
+         ORDER BY subject, predicate, tx DESC",
+        subject_phs, predicate_phs
+    );
+    let mut params: Vec<SqlValue> = subjects.iter()
+        .map(|s| SqlValue::Text(s.clone()))
+        .collect();
+    params.extend(predicates.iter().map(|p| SqlValue::Text(p.to_string())));
+    let mut stmt = conn.prepare(&sql)?;
     let triples = stmt
-        .query_map([object], row_to_triple)?
+        .query_map(rusqlite::params_from_iter(params.iter()), row_to_triple)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(triples.into_iter().map(|t| (t.subject, t.predicate, t.object)).collect())
+}
 
-    Ok(QueryResult::new(triples))
+/// Fetch the most recent IRI value of a given predicate for multiple subjects.
+/// Returns a HashMap from subject IRI to the first (most recent) matching IRI value.
+/// Subjects with no matching triple are omitted.
+pub fn get_first_iri_property_batch(
+    conn: &Connection,
+    subjects: &[String],
+    predicate: &str,
+) -> Result<std::collections::HashMap<String, String>> {
+    if subjects.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = subjects.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT subject, object FROM triples
+         WHERE subject IN ({}) AND predicate = ? AND object_type = 'iri' AND retracted = 0
+         ORDER BY subject, tx DESC",
+        placeholders
+    );
+    let mut params: Vec<SqlValue> = subjects.iter()
+        .map(|s| SqlValue::Text(s.clone()))
+        .collect();
+    params.push(SqlValue::Text(predicate.to_string()));
+    let mut stmt = conn.prepare(&sql)?;
+    let mut map = std::collections::HashMap::new();
+    let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+        let subject: String = row.get(0)?;
+        let object: String = row.get(1)?;
+        Ok((subject, object))
+    })?;
+    for row in rows {
+        let (subject, object) = row?;
+        map.entry(subject).or_insert(object);
+    }
+    Ok(map)
 }
 
 /// Find entities by class and properties in a single query
@@ -392,33 +526,30 @@ pub fn find_by_class_and_properties_with_options(
     class_iri: &str,
     properties: &[(&str, &str, &str)],  // (predicate, value, operator)
     include_retracted: bool,
-) -> Result<Vec<String>> {
+    limit: usize,
+    offset: usize,
+) -> Result<(Vec<String>, usize)> {
     if properties.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), 0));
     }
 
     let type_retracted_filter = if include_retracted { "" } else { " AND t0.retracted = 0" };
 
-    let mut query = String::from(
-        "SELECT DISTINCT t0.subject
-         FROM triples t0"
+    let mut joins = String::new();
+    let mut where_clause = format!(
+        "WHERE t0.predicate = 'rdf:type' AND t0.object = ?{type_retracted_filter}"
     );
-    let mut params: Vec<SqlValue> = Vec::new();
+    let mut params: Vec<SqlValue> = vec![SqlValue::Text(class_iri.to_string())];
 
     for (i, _) in properties.iter().enumerate() {
         let n = i + 1;
-        query.push_str(&format!("\n         INNER JOIN triples t{n} ON t0.subject = t{n}.subject"));
+        joins.push_str(&format!("\n         INNER JOIN triples t{n} ON t0.subject = t{n}.subject"));
     }
-
-    query.push_str(&format!(
-        "\n         WHERE t0.predicate = 'rdf:type' AND t0.object = ?{type_retracted_filter}"
-    ));
-    params.push(SqlValue::Text(class_iri.to_string()));
 
     for (i, (prop_iri, _, _)) in properties.iter().enumerate() {
         let n = i + 1;
         let prop_retracted_filter = if include_retracted { String::new() } else { format!(" AND t{n}.retracted = 0") };
-        query.push_str(&format!("\n           AND t{n}.predicate = ?{prop_retracted_filter}"));
+        where_clause.push_str(&format!("\n           AND t{n}.predicate = ?{prop_retracted_filter}"));
         params.push(SqlValue::Text(prop_iri.to_string()));
     }
 
@@ -428,17 +559,17 @@ pub fn find_by_class_and_properties_with_options(
             let sql_op = validate_operator(operator)
                 .map_err(|_| format!("Invalid operator '{operator}': must be one of =, >=, <=, >, <"))?;
             // millis and sql_op are validated — safe to interpolate
-            query.push_str(&format!("\n           AND t{n}.object_datetime {sql_op} {millis}"));
+            where_clause.push_str(&format!("\n           AND t{n}.object_datetime {sql_op} {millis}"));
         } else if *value == "true" || *value == "false" {
             let bool_val: i64 = if *value == "true" { 1 } else { 0 };
-            query.push_str(&format!(
+            where_clause.push_str(&format!(
                 "\n           AND (t{n}.object_value = ? OR t{n}.object = ? OR t{n}.object_boolean = ?)"
             ));
             params.push(SqlValue::Text(value.to_string()));
             params.push(SqlValue::Text(value.to_string()));
             params.push(SqlValue::Integer(bool_val));
         } else {
-            query.push_str(&format!(
+            where_clause.push_str(&format!(
                 "\n           AND (t{n}.object_value = ? OR t{n}.object = ?)"
             ));
             params.push(SqlValue::Text(value.to_string()));
@@ -446,12 +577,66 @@ pub fn find_by_class_and_properties_with_options(
         }
     }
 
-    let mut stmt = conn.prepare(&query)?;
+    let count_query = format!(
+        "SELECT COUNT(*) FROM (SELECT DISTINCT t0.subject FROM triples t0{joins}\n         {where_clause})"
+    );
+    let total: usize = conn.query_row(
+        &count_query,
+        rusqlite::params_from_iter(params.iter()),
+        |row| row.get::<_, i64>(0),
+    )? as usize;
+
+    let mut data_params = params;
+    data_params.push(SqlValue::Integer(limit as i64));
+    data_params.push(SqlValue::Integer(offset as i64));
+
+    let data_query = format!(
+        "SELECT DISTINCT t0.subject FROM triples t0{joins}\n         {where_clause}\n         LIMIT ? OFFSET ?"
+    );
+    let mut stmt = conn.prepare(&data_query)?;
     let entities: Vec<String> = stmt
-        .query_map(rusqlite::params_from_iter(params.iter()), |row| row.get(0))?
+        .query_map(rusqlite::params_from_iter(data_params.iter()), |row| row.get(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    Ok(entities)
+    Ok((entities, total))
+}
+
+/// Returns IRIs of `foundation:AIConversationMessage` instances belonging to
+/// `conversation_iri`, ordered by `foundation:sentAt` descending (newest first).
+/// `limit = usize::MAX` means no limit (SQLite treats LIMIT -1 as unlimited).
+pub fn find_message_iris_by_conversation(
+    conn: &Connection,
+    conversation_iri: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<String>> {
+    let sql = "
+        SELECT subject FROM (
+            SELECT t_type.subject, MAX(t_sent.object_datetime) AS ts
+            FROM triples t_type
+            INNER JOIN triples t_conv
+                ON t_type.subject = t_conv.subject
+                AND t_conv.predicate = 'foundation:partOfConversation'
+                AND (t_conv.object = ?1 OR t_conv.object_value = ?1)
+                AND t_conv.retracted = 0
+            LEFT JOIN triples t_sent
+                ON t_type.subject = t_sent.subject
+                AND t_sent.predicate = 'foundation:sentAt'
+                AND t_sent.retracted = 0
+            WHERE t_type.predicate = 'rdf:type'
+              AND t_type.object = 'foundation:AIConversationMessage'
+              AND t_type.retracted = 0
+            GROUP BY t_type.subject
+        )
+        ORDER BY ts DESC
+        LIMIT ?2 OFFSET ?3
+    ";
+    let limit_i64: i64 = limit.try_into().unwrap_or(-1);
+    let mut stmt = conn.prepare(sql)?;
+    let iris = stmt
+        .query_map(rusqlite::params![conversation_iri, limit_i64, offset as i64], |row| row.get(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(iris)
 }
 
 fn parse_datetime_to_millis(value: &str) -> std::result::Result<i64, ()> {
@@ -598,49 +783,6 @@ pub fn get_entities_max_tx(
     Ok(result)
 }
 
-/// Get rdf:type values for multiple subject IRIs in a single query.
-/// Returns a HashMap from subject IRI to its list of type IRIs.
-/// Subjects with no rdf:type are omitted from the result.
-pub fn get_types_for_subjects(
-    conn: &Connection,
-    subjects: &[String],
-) -> Result<std::collections::HashMap<String, Vec<String>>> {
-    if subjects.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
-
-    let placeholders = subjects
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT subject, object FROM triples \
-         WHERE subject IN ({}) AND predicate = 'rdf:type' AND object_type = 'iri' AND retracted = 0",
-        placeholders
-    );
-
-    let params: Vec<&dyn rusqlite::ToSql> = subjects
-        .iter()
-        .map(|s| s as &dyn rusqlite::ToSql)
-        .collect();
-
-    let mut stmt = conn.prepare(&sql)?;
-    let mut map: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    let rows = stmt.query_map(params.as_slice(), |row| {
-        let subject: String = row.get(0)?;
-        let type_iri: String = row.get(1)?;
-        Ok((subject, type_iri))
-    })?;
-
-    for row in rows {
-        let (subject, type_iri) = row?;
-        map.entry(subject).or_default().push(type_iri);
-    }
-
-    Ok(map)
-}
 
 /// Convert SQLite row to Triple
 fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {

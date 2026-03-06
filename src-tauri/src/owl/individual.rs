@@ -21,7 +21,7 @@ pub struct Individual {
     pub types: Vec<Thing>,
     pub properties: Vec<(String, Object)>, // (property_iri, value)
     pub property_tx: Vec<i64>, // transaction IDs parallel to properties
-    pub backlinks: Vec<(String, String, Object)>, // (source_entity, property_iri, value)
+    pub backlinks: Vec<crate::eavto::query::BacklinkRow>,
 }
 
 impl Individual {
@@ -85,11 +85,8 @@ impl Individual {
             .map(|t| (t.predicate, t.object))
             .collect();
 
-        let backlinks_result = query::get_by_object(conn, &iri)?;
-        let backlinks: Vec<(String, String, Object)> = backlinks_result.triples.iter()
-            .filter(|t| t.subject != iri && t.predicate != rdf::TYPE)
-            .map(|t| (t.subject.clone(), t.predicate.clone(), t.object.clone()))
-            .collect();
+        const BACKLINK_LIMIT_PER_GROUP: usize = 15;
+        let backlinks = query::get_backlinks_grouped_limited(conn, &iri, BACKLINK_LIMIT_PER_GROUP)?;
 
         Ok(Some(Self {
             iri: iri.clone(),
@@ -531,8 +528,22 @@ impl Individual {
         class_iri: &str,
         properties: &[(&str, &str, &str)],
         include_retracted: bool,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<String>, usize)> {
+        query::find_by_class_and_properties_with_options(conn, class_iri, properties, include_retracted, limit, offset)
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))
+    }
+
+    /// Returns IRIs of messages in `conversation_iri` ordered by sentAt descending (newest first).
+    /// Pass `limit = usize::MAX` for no limit.
+    pub fn find_messages_by_conversation(
+        conn: &Connection,
+        conversation_iri: &str,
+        limit: usize,
+        offset: usize,
     ) -> Result<Vec<String>> {
-        query::find_by_class_and_properties_with_options(conn, class_iri, properties, include_retracted)
+        query::find_message_iris_by_conversation(conn, conversation_iri, limit, offset)
             .map_err(|e| OwlError::DatabaseError(e.to_string()))
     }
 }

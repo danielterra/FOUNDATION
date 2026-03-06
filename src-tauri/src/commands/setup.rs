@@ -21,13 +21,13 @@ pub async fn initialize_app(
         super::log_backend("info", "Skipping database initialization (build/CI mode)");
         let dummy_conn = Connection::open_in_memory()
             .map_err(|e| format!("Failed to create in-memory connection: {}", e))?;
-        let executor = DbExecutor::new(dummy_conn);
+        let executor = DbExecutor::new_in_memory(dummy_conn);
         app.manage(executor);
         let _ = app.emit("import-complete", ());
         return Ok(());
     }
 
-    let mut conn = owl::initialize_with_progress(app.clone())
+    let (mut conn, db_path) = owl::initialize_with_progress(app.clone())
         .map_err(|e| {
             let error_msg = format!("Failed to initialize database: {:?}", e);
             super::log_backend("error", &error_msg);
@@ -46,7 +46,7 @@ pub async fn initialize_app(
         super::log_backend("info", &stats_msg);
     }
 
-    let executor = DbExecutor::new(conn);
+    let executor = DbExecutor::new(conn, db_path);
     app.manage(executor);
     let _ = app.emit("import-complete", ());
 

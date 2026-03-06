@@ -169,25 +169,15 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
         let individual = Individual::get(conn, iri)?
             .ok_or_else(|| crate::owl::OwlError::NotFound(iri.to_string()))?;
 
-        let source_iris: Vec<String> = individual.backlinks
-            .iter()
-            .map(|(src, _, _)| src.clone())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-
-        let types_map = crate::eavto::query::get_types_for_subjects(conn, &source_iris)
-            .unwrap_or_default();
-
         let mut concept_counts: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
-        for (src, _, _) in &individual.backlinks {
-            let concept = types_map
-                .get(src)
-                .and_then(|types| types.first())
-                .cloned()
-                .unwrap_or_else(|| "owl:Thing".to_string());
-            *concept_counts.entry(concept).or_insert(0) += 1;
+        let mut seen_groups = std::collections::HashSet::new();
+        for b in &individual.backlinks {
+            let concept = b.source_class.clone().unwrap_or_else(|| "owl:Thing".to_string());
+            let group_key = format!("{}:{}", b.predicate, concept);
+            if seen_groups.insert(group_key) {
+                *concept_counts.entry(concept).or_insert(0) += b.group_total;
+            }
         }
 
         let mut backlinks: Vec<serde_json::Value> = concept_counts
@@ -522,6 +512,14 @@ fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    let limit = args.get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(100) as usize;
+
+    let offset = args.get("offset")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+
     match (|| {
         let mut detail_constraints: Vec<(String, String, String)> = Vec::new();
         for prop in properties {
@@ -547,12 +545,12 @@ fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
             .map(|(d, v, o)| (d.as_str(), v.as_str(), o.as_str()))
             .collect();
 
-        let things = Individual::find_by_class_and_properties_with_options(
-            conn, concept_iri, &constraint_refs, include_retracted,
+        let (paginated_iris, total) = Individual::find_by_class_and_properties_with_options(
+            conn, concept_iri, &constraint_refs, include_retracted, limit, offset,
         )?;
 
         let mut results = Vec::new();
-        for iri in things {
+        for iri in paginated_iris {
             if let Ok(Some(individual)) = Individual::get(conn, &iri) {
                 results.push(serde_json::json!({
                     "iri": individual.iri,
@@ -562,10 +560,12 @@ fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
             }
         }
 
-        let count = results.len();
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "things": results,
-            "count": count,
+            "count": results.len(),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
         }))
     })() {
         Ok(result) => ToolResult {
