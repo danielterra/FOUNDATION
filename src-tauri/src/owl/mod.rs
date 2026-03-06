@@ -429,3 +429,129 @@ pub struct GraphNodeTypeConfig {
     pub label: String,
     pub group: u8,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eavto::test_helpers::setup_test_db;
+    use crate::eavto::{store, Triple, Object};
+
+    #[test]
+    fn test_replace_all_property_iris_saves_all_values() {
+        let mut conn = setup_test_db();
+
+        // Create a subject entity
+        store::assert_triples(
+            &mut conn,
+            &[Triple::new(
+                "foundation:TestConcept",
+                "rdf:type",
+                Object::Iri("owl:Class".to_string()),
+            )],
+            "test",
+        ).unwrap();
+
+        // Create target IRI entities so they exist
+        for iri in &["foundation:StatusA", "foundation:StatusB", "foundation:StatusC"] {
+            store::assert_triples(
+                &mut conn,
+                &[Triple::new(*iri, "rdf:type", Object::Iri("foundation:Status".to_string()))],
+                "test",
+            ).unwrap();
+        }
+
+        // Replace with three values at once
+        replace_all_property_iris(
+            &mut conn,
+            "foundation:TestConcept",
+            "foundation:allowedStatus",
+            &["foundation:StatusA", "foundation:StatusB", "foundation:StatusC"],
+            "test",
+        ).unwrap();
+
+        // All three must be active
+        let active: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples \
+             WHERE subject = 'foundation:TestConcept' \
+               AND predicate = 'foundation:allowedStatus' \
+               AND retracted = 0",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(active, 3, "All three allowedStatus values must be stored");
+
+        // Verify the specific IRIs are present
+        for status in &["foundation:StatusA", "foundation:StatusB", "foundation:StatusC"] {
+            let exists: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM triples \
+                 WHERE subject = 'foundation:TestConcept' \
+                   AND predicate = 'foundation:allowedStatus' \
+                   AND object = ? AND retracted = 0",
+                [status],
+                |row| row.get(0),
+            ).unwrap();
+            assert!(exists, "{status} must be stored as allowedStatus");
+        }
+    }
+
+    #[test]
+    fn test_replace_all_property_iris_replaces_existing_values() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(
+            &mut conn,
+            &[Triple::new(
+                "foundation:TestConcept",
+                "rdf:type",
+                Object::Iri("owl:Class".to_string()),
+            )],
+            "test",
+        ).unwrap();
+
+        for iri in &["foundation:StatusA", "foundation:StatusB", "foundation:StatusC"] {
+            store::assert_triples(
+                &mut conn,
+                &[Triple::new(*iri, "rdf:type", Object::Iri("foundation:Status".to_string()))],
+                "test",
+            ).unwrap();
+        }
+
+        // Set initial values
+        replace_all_property_iris(
+            &mut conn,
+            "foundation:TestConcept",
+            "foundation:allowedStatus",
+            &["foundation:StatusA", "foundation:StatusB"],
+            "test",
+        ).unwrap();
+
+        // Replace with a different set
+        replace_all_property_iris(
+            &mut conn,
+            "foundation:TestConcept",
+            "foundation:allowedStatus",
+            &["foundation:StatusB", "foundation:StatusC"],
+            "test",
+        ).unwrap();
+
+        let active: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples \
+             WHERE subject = 'foundation:TestConcept' \
+               AND predicate = 'foundation:allowedStatus' \
+               AND retracted = 0",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(active, 2, "Only the new set of values must remain");
+
+        let status_a_active: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM triples \
+             WHERE subject = 'foundation:TestConcept' \
+               AND predicate = 'foundation:allowedStatus' \
+               AND object = 'foundation:StatusA' AND retracted = 0",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert!(!status_a_active, "StatusA must be retracted after replacement");
+    }
+}
