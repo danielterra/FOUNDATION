@@ -474,7 +474,7 @@ fn update_thing_one(
     };
 
     match (|| {
-        let mut updated_fields = Vec::new();
+        let mut updated_fields: Vec<String> = Vec::new();
 
         let individual = Individual::new(iri);
 
@@ -484,14 +484,14 @@ fn update_thing_one(
                 datatype: Some("xsd:string".to_string()),
                 language: None,
             }], "ai")?;
-            updated_fields.push("label");
+            updated_fields.push("label".to_string());
         }
 
         if let Some(icon) = args.get("icon").and_then(|v| v.as_str()) {
             crate::owl::validate_icon(conn, icon)?;
             let (icon_pred, icon_obj) = crate::owl::icon_store_value(icon);
             individual.add_property(conn, icon_pred, vec![icon_obj], "ai")?;
-            updated_fields.push("icon");
+            updated_fields.push("icon".to_string());
         }
 
         if let Some(comment) = args.get("comment").and_then(|v| v.as_str()) {
@@ -500,7 +500,74 @@ fn update_thing_one(
                 datatype: Some("xsd:string".to_string()),
                 language: None,
             }], "ai")?;
-            updated_fields.push("comment");
+            updated_fields.push("comment".to_string());
+        }
+
+        if let Some(properties) = args.get("properties").and_then(|v| v.as_array()) {
+            let concept_iri = if let Ok(Some(c)) = crate::owl::get_iri_property(conn, iri, "rdf:type") {
+                Some(c)
+            } else {
+                None
+            };
+
+            for prop_entry in properties {
+                let detail_iri = prop_entry.get("detail_iri")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| crate::owl::OwlError::ValidationError(
+                        "Each property entry must have 'detail_iri'".to_string()
+                    ))?;
+
+                let raw_values = prop_entry.get("values")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| crate::owl::OwlError::ValidationError(
+                        format!("Property '{}' must have 'values' array", detail_iri)
+                    ))?;
+
+                if raw_values.is_empty() {
+                    return Err(crate::owl::OwlError::ValidationError(
+                        format!("Property '{}' values array must not be empty", detail_iri)
+                    ));
+                }
+
+                let value_type = prop_entry.get("value_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("literal");
+                let datatype = prop_entry.get("datatype")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("xsd:string");
+
+                if detail_iri == "foundation:hasStatus" {
+                    if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
+                        if let Some(ref concept) = concept_iri {
+                            crate::owl::validate_allowed_status(conn, concept, status_iri)?;
+                        }
+                    }
+                }
+
+                let objects: Vec<Object> = raw_values.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|value| {
+                        if value_type == "iri" {
+                            Object::Iri(value.to_string())
+                        } else {
+                            Object::Literal {
+                                value: value.to_string(),
+                                datatype: Some(datatype.to_string()),
+                                language: None,
+                            }
+                        }
+                    })
+                    .collect();
+
+                if objects.is_empty() {
+                    return Err(crate::owl::OwlError::ValidationError(
+                        format!("Property '{}' values contain no valid string entries", detail_iri)
+                    ));
+                }
+
+                individual.add_property(conn, detail_iri, objects, "ai")?;
+                updated_fields.push(detail_iri.to_string());
+            }
         }
 
         if let Some(app_handle) = app {
@@ -666,5 +733,147 @@ fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
             result: None,
             error: Some(e.to_string()),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eavto::test_helpers::setup_test_db;
+    use crate::eavto::{store, Triple, Object};
+    use crate::owl::{Class, ClassType, Individual, Property, PropertyType};
+
+    fn setup_task_class_with_statuses(conn: &mut Connection) {
+        let task_class = Class::new("foundation:Task");
+        task_class.assert(conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test").unwrap();
+
+        let triples = vec![
+            Triple::new("foundation:ActiveStatus", "rdf:type", Object::Iri("foundation:Status".to_string())),
+            Triple::new("foundation:ActiveStatus", "rdfs:label", Object::Literal {
+                value: "Active".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:DoneStatus", "rdf:type", Object::Iri("foundation:Status".to_string())),
+            Triple::new("foundation:DoneStatus", "rdfs:label", Object::Literal {
+                value: "Done".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:Task", "foundation:allowedStatus", Object::Iri("foundation:ActiveStatus".to_string())),
+            Triple::new("foundation:Task", "foundation:allowedStatus", Object::Iri("foundation:DoneStatus".to_string())),
+        ];
+        store::assert_triples(conn, &triples, "test").unwrap();
+
+        Property::new("foundation:priority")
+            .assert(conn, PropertyType::DatatypeProperty, "priority", None, &["foundation:Task"], Some("xsd:string"), None, "test")
+            .unwrap();
+
+        Property::new("foundation:hasStatus")
+            .assert(conn, PropertyType::ObjectProperty, "hasStatus", None, &["foundation:Task"], None, None, "test")
+            .unwrap();
+    }
+
+    fn create_task(conn: &mut Connection, iri: &str) {
+        let individual = Individual::new(iri);
+        individual.assert(conn, "foundation:Task", "Test Task", "https://example.com/icon.svg", "test").unwrap();
+    }
+
+    #[test]
+    fn test_update_thing_with_properties_updates_literal_property() {
+        let mut conn = setup_test_db();
+        setup_task_class_with_statuses(&mut conn);
+        create_task(&mut conn, "foundation:Task_001");
+
+        let args = serde_json::json!({
+            "iri": "foundation:Task_001",
+            "properties": [
+                {
+                    "detail_iri": "foundation:priority",
+                    "values": ["High"],
+                    "value_type": "literal",
+                    "datatype": "xsd:string"
+                }
+            ]
+        });
+
+        let result = update_thing_one(&mut conn, &args, None);
+        assert!(result.success, "update_thing should succeed: {:?}", result.error);
+        let response = result.result.unwrap();
+        let updated = response["updatedFields"].as_array().unwrap();
+        assert!(
+            updated.iter().any(|v| v == "foundation:priority"),
+            "Should report foundation:priority as updated"
+        );
+    }
+
+    #[test]
+    fn test_update_thing_with_valid_status_succeeds() {
+        let mut conn = setup_test_db();
+        setup_task_class_with_statuses(&mut conn);
+        create_task(&mut conn, "foundation:Task_002");
+
+        let args = serde_json::json!({
+            "iri": "foundation:Task_002",
+            "properties": [
+                {
+                    "detail_iri": "foundation:hasStatus",
+                    "values": ["foundation:ActiveStatus"],
+                    "value_type": "iri"
+                }
+            ]
+        });
+
+        let result = update_thing_one(&mut conn, &args, None);
+        assert!(result.success, "update_thing with valid status should succeed: {:?}", result.error);
+    }
+
+    #[test]
+    fn test_update_thing_with_invalid_status_returns_descriptive_error() {
+        let mut conn = setup_test_db();
+        setup_task_class_with_statuses(&mut conn);
+        create_task(&mut conn, "foundation:Task_003");
+
+        let args = serde_json::json!({
+            "iri": "foundation:Task_003",
+            "properties": [
+                {
+                    "detail_iri": "foundation:hasStatus",
+                    "values": ["foundation:InvalidStatus"],
+                    "value_type": "iri"
+                }
+            ]
+        });
+
+        let result = update_thing_one(&mut conn, &args, None);
+        assert!(!result.success, "update_thing with invalid status should fail");
+        let error = result.error.unwrap();
+        assert!(
+            error.contains("foundation:InvalidStatus"),
+            "Error should mention the invalid status: {}", error
+        );
+        assert!(
+            error.contains("Allowed") || error.contains("allowed"),
+            "Error should list allowed statuses: {}", error
+        );
+    }
+
+    #[test]
+    fn test_update_thing_partial_update_with_only_label() {
+        let mut conn = setup_test_db();
+        setup_task_class_with_statuses(&mut conn);
+        create_task(&mut conn, "foundation:Task_004");
+
+        let args = serde_json::json!({
+            "iri": "foundation:Task_004",
+            "label": "Updated Task Name"
+        });
+
+        let result = update_thing_one(&mut conn, &args, None);
+        assert!(result.success, "Partial update with only label should succeed: {:?}", result.error);
+        let response = result.result.unwrap();
+        let updated = response["updatedFields"].as_array().unwrap();
+        assert_eq!(updated.len(), 1, "Only label should be reported as updated");
+        assert_eq!(updated[0], "label");
     }
 }

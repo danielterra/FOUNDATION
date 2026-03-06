@@ -1,5 +1,9 @@
 # FOUNDATION
 
+<p align="center">
+  <img src="src-tauri/icons/icon.png" alt="FOUNDATION" width="256" />
+</p>
+
 ![FOUNDATION Screenshot](static/Screenshot1.png)
 
 **Version 0.5.3** - AI-powered ontology management system with long-term memory

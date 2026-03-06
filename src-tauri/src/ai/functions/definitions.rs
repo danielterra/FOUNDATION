@@ -567,7 +567,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "update_thing".to_string(),
             array_mode: true,
-            description: "Update details about a thing (name, icon, description).".to_string(),
+            description: "Update a thing's properties. Pass only the properties you want to change (partial update). Validates hasStatus values against the concept's allowedStatus list.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -596,6 +596,17 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     name: "comment".to_string(),
                     param_type: "string".to_string(),
                     description: "New description".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "properties".to_string(),
+                    param_type: "array".to_string(),
+                    description: concat!(
+                        "Optional array of additional properties to update.",
+                        " Each entry: {detail_iri, values: [...], value_type: 'literal'|'iri', datatype: 'xsd:string'|...}.",
+                        " For foundation:hasStatus, the value is validated against the concept's allowedStatus list.",
+                    ).to_string(),
                     required: false,
                     schema: None,
                 },
