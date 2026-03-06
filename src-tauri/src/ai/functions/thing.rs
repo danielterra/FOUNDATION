@@ -503,7 +503,7 @@ fn update_thing_one(
             updated_fields.push("comment".to_string());
         }
 
-        let mut iri_values_emitted: Vec<String> = Vec::new();
+        let mut referenced_iris: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         if let Some(properties) = args.get("properties").and_then(|v| v.as_array()) {
             let concept_iri = if let Ok(Some(c)) = crate::owl::get_iri_property(conn, iri, "rdf:type") {
@@ -531,9 +531,9 @@ fn update_thing_one(
                     ));
                 }
 
-                let value_type = prop_entry.get("value_type")
+                let is_iri = prop_entry.get("value_type")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("literal");
+                    .unwrap_or("literal") == "iri";
                 let datatype = prop_entry.get("datatype")
                     .and_then(|v| v.as_str())
                     .unwrap_or("xsd:string");
@@ -549,7 +549,7 @@ fn update_thing_one(
                 let objects: Vec<Object> = raw_values.iter()
                     .filter_map(|v| v.as_str())
                     .map(|value| {
-                        if value_type == "iri" {
+                        if is_iri {
                             Object::Iri(value.to_string())
                         } else {
                             Object::Literal {
@@ -567,9 +567,9 @@ fn update_thing_one(
                     ));
                 }
 
-                if value_type == "iri" {
-                    for v in raw_values.iter().filter_map(|v| v.as_str()) {
-                        iri_values_emitted.push(v.to_string());
+                for obj in &objects {
+                    if let Object::Iri(ref_iri) = obj {
+                        referenced_iris.insert(ref_iri.clone());
                     }
                 }
 
@@ -580,7 +580,7 @@ fn update_thing_one(
 
         if let Some(app_handle) = app {
             app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
-            for ref_iri in &iri_values_emitted {
+            for ref_iri in &referenced_iris {
                 app_handle.emit("entity-updated", serde_json::json!({"entityId": ref_iri})).ok();
             }
         }
