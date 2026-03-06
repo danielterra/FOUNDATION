@@ -427,7 +427,14 @@ fn update_concept_one(
             updated_fields.push("comment");
         }
 
-        if let Some(super_concept) = args.get("super_concept").and_then(|v| v.as_str()) {
+        if let Some(super_concepts_val) = args.get("super_concepts") {
+            let iris: Vec<&str> = super_concepts_val
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            Class::set_super_classes(conn, iri, &iris, "ai")?;
+            updated_fields.push("superConcepts");
+        } else if let Some(super_concept) = args.get("super_concept").and_then(|v| v.as_str()) {
             Class::set_super_class(conn, iri, super_concept, "ai")?;
             updated_fields.push("superConcept");
         }

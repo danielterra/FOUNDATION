@@ -469,7 +469,20 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "super_concept".to_string(),
                     param_type: "string".to_string(),
-                    description: "New parent concept ID".to_string(),
+                    description: "New single parent concept ID. Replaces all existing superclasses with this one.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "super_concepts".to_string(),
+                    param_type: "array".to_string(),
+                    description: concat!(
+                        "List of parent concept IRIs for multiple inheritance.",
+                        " REPLACES all existing superclasses with this list.",
+                        " Use this instead of super_concept when a concept needs multiple parents.",
+                        " Example: ['foundation:ConcreteThing', 'foundation:AgentCapacity'].",
+                        " Pass an empty array to remove all superclasses.",
+                    ).to_string(),
                     required: false,
                     schema: None,
                 },

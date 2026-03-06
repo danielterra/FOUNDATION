@@ -296,11 +296,11 @@ impl Class {
         Ok(())
     }
 
-    /// Replace the rdfs:subClassOf relationship of an existing class
-    pub fn set_super_class(
+    /// Replace all rdfs:subClassOf relationships with the given list
+    pub fn set_super_classes(
         conn: &mut Connection,
         iri: &str,
-        super_class: &str,
+        super_classes: &[&str],
         origin: &str,
     ) -> Result<()> {
         let old = query::get_by_entity_predicate(conn, iri, rdfs::SUB_CLASS_OF)?;
@@ -311,12 +311,22 @@ impl Class {
                 origin,
             )?;
         }
-        store::assert_triples(
-            conn,
-            &[Triple::new(iri, rdfs::SUB_CLASS_OF, Object::Iri(super_class.to_string()))],
-            origin,
-        )?;
+        let new_triples: Vec<Triple> = super_classes
+            .iter()
+            .map(|sc| Triple::new(iri, rdfs::SUB_CLASS_OF, Object::Iri(sc.to_string())))
+            .collect();
+        store::assert_triples(conn, &new_triples, origin)?;
         Ok(())
+    }
+
+    /// Replace the rdfs:subClassOf relationship of an existing class with a single superclass
+    pub fn set_super_class(
+        conn: &mut Connection,
+        iri: &str,
+        super_class: &str,
+        origin: &str,
+    ) -> Result<()> {
+        Self::set_super_classes(conn, iri, &[super_class], origin)
     }
 
     /// Retract all triples about this class IRI
