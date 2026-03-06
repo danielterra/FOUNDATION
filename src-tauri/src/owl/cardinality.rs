@@ -429,6 +429,79 @@ mod tests {
     }
 
     #[test]
+    fn test_set_required_fields_preserves_parent_class_subclass_link() {
+        // Regression for Bug_1772765777624: set_class_required_fields must not retract
+        // the real rdfs:subClassOf link to the parent class when inserting blank node
+        // restriction links that share the same (subject, predicate).
+        use crate::eavto::{store, query, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:ParentClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:ChildClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:ChildClass", "rdfs:subClassOf", Object::Iri("foundation:ParentClass".to_string())),
+            Triple::new("foundation:childProp", "rdf:type", Object::Iri("owl:DatatypeProperty".to_string())),
+            Triple::new("foundation:childProp", "rdfs:domain", Object::Iri("foundation:ChildClass".to_string())),
+        ], "test").unwrap();
+
+        set_class_required_fields(&mut conn, "foundation:ChildClass", &["foundation:childProp"], "test").unwrap();
+
+        let subclass_result = query::get_by_entity_predicate(
+            &conn, "foundation:ChildClass", "rdfs:subClassOf",
+        ).unwrap();
+        let real_parent_links: Vec<&str> = subclass_result.triples.iter()
+            .filter_map(|t| t.object.as_iri())
+            .filter(|iri| !iri.starts_with("_:"))
+            .collect();
+
+        assert!(
+            real_parent_links.contains(&"foundation:ParentClass"),
+            "rdfs:subClassOf foundation:ParentClass must survive set_class_required_fields; got: {:?}",
+            real_parent_links
+        );
+    }
+
+    #[test]
+    fn test_inherited_properties_accessible_after_set_required_fields() {
+        // Regression for Bug_1772765777624: Class::get_properties must return inherited
+        // properties from the real parent class after set_class_required_fields has run.
+        // Previously, the parent rdfs:subClassOf link was destroyed, breaking inheritance.
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+        use crate::owl::Class;
+
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:FinancialTransaction", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:transactionDate", "rdf:type", Object::Iri("owl:DatatypeProperty".to_string())),
+            Triple::new("foundation:transactionDate", "rdfs:domain", Object::Iri("foundation:FinancialTransaction".to_string())),
+            Triple::new("foundation:InstallmentPayment", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:InstallmentPayment", "rdfs:subClassOf", Object::Iri("foundation:FinancialTransaction".to_string())),
+            Triple::new("foundation:dueDate", "rdf:type", Object::Iri("owl:DatatypeProperty".to_string())),
+            Triple::new("foundation:dueDate", "rdfs:domain", Object::Iri("foundation:InstallmentPayment".to_string())),
+        ], "test").unwrap();
+
+        set_class_required_fields(
+            &mut conn, "foundation:InstallmentPayment", &["foundation:dueDate"], "test",
+        ).unwrap();
+
+        let class = Class::get(&conn, "foundation:InstallmentPayment")
+            .unwrap()
+            .expect("InstallmentPayment class must exist after set_class_required_fields");
+
+        let prop_iris: Vec<&str> = class.properties.iter().map(|(iri, _)| iri.as_str()).collect();
+        assert!(
+            prop_iris.contains(&"foundation:transactionDate"),
+            "Inherited property foundation:transactionDate must remain accessible \
+             after set_class_required_fields; got: {:?}",
+            prop_iris
+        );
+    }
+
+    #[test]
     fn test_validate_property_cardinality() {
         use crate::eavto::{store, Triple, Object};
         use crate::eavto::test_helpers::setup_test_db;
