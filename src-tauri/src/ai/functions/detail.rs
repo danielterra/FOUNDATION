@@ -365,6 +365,15 @@ fn forget_detail_value_one(
 
     match (|| {
         use crate::owl::{Individual, Object};
+        use crate::eavto::query;
+
+        // Validate removal won't violate minCardinality
+        let current_count = query::get_by_entity_predicate(conn, thing_iri, detail_iri)
+            .map(|r| r.triples.len())
+            .unwrap_or(0);
+        crate::owl::cardinality::validate_property_cardinality(
+            conn, thing_iri, detail_iri, current_count.saturating_sub(1),
+        )?;
 
         match Individual::remove_property_value(conn, thing_iri, detail_iri, value, "ai")? {
             Some(removed) => {

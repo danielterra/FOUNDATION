@@ -403,6 +403,29 @@ fn create_thing_one(
             }
         }
 
+        // Validate all required fields were provided
+        let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, concept_iri)?;
+        let required: Vec<&str> = restrictions.iter()
+            .filter(|r| r.is_required())
+            .map(|r| r.property_iri.as_str())
+            .collect();
+        if !required.is_empty() {
+            let provided: std::collections::HashSet<&str> = args.get("properties")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter()
+                    .filter_map(|p| p.get("detail_iri").and_then(|v| v.as_str()))
+                    .collect())
+                .unwrap_or_default();
+            for prop_iri in &required {
+                if !provided.contains(*prop_iri) {
+                    return Err(crate::owl::OwlError::ValidationError(format!(
+                        "Required field '{}' must be provided when creating an instance of '{}'",
+                        prop_iri, concept_iri,
+                    )));
+                }
+            }
+        }
+
         if let Some(app_handle) = app {
             app_handle.emit(
                 "entity-created", serde_json::json!({"entityId": generated_iri.clone()}),
