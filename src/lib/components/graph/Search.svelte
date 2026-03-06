@@ -13,7 +13,6 @@
 	let inputElement;
 	let debounceTimer;
 
-	// Expose focus method to parent
 	export function focus() {
 		if (inputElement) {
 			inputElement.focus();
@@ -30,7 +29,6 @@
 
 		isSearching = true;
 		try {
-			// Call backend to search entities (increased limit to 100)
 			const resultsJson = await invoke('entity__search', {
 				query: query.trim(),
 				limit: 100
@@ -50,12 +48,10 @@
 	}
 
 	function handleInput() {
-		// Clear previous timer
 		if (debounceTimer) {
 			clearTimeout(debounceTimer);
 		}
 
-		// If query is too short, clear results immediately
 		if (!searchQuery || searchQuery.trim().length < 2) {
 			searchResults = [];
 			showResults = false;
@@ -64,10 +60,8 @@
 			return;
 		}
 
-		// Show searching state immediately
 		isSearching = true;
 
-		// Debounce the actual search by 500ms
 		debounceTimer = setTimeout(() => {
 			performSearch(searchQuery);
 		}, 500);
@@ -114,7 +108,6 @@
 	}
 
 	function scrollToSelected() {
-		// Scroll selected item into view
 		setTimeout(() => {
 			const selectedEl = document.querySelector('.result-item.selected');
 			if (selectedEl) {
@@ -124,7 +117,6 @@
 	}
 
 	function handleBlur() {
-		// Delay to allow click on results
 		setTimeout(() => {
 			showResults = false;
 			selectedIndex = -1;
@@ -140,14 +132,11 @@
 		}
 	}
 
-	// Determine result type label
-	function getTypeLabel(type) {
-		if (type === 'class') return 'CLASS';
-		if (type === 'individual') return 'Instance';
-		return type;
+	function shortenIri(iri) {
+		const colonIndex = iri.indexOf(':');
+		return colonIndex >= 0 ? iri.slice(colonIndex + 1) : iri;
 	}
 
-	// Cleanup on component destroy
 	onDestroy(() => {
 		if (debounceTimer) {
 			clearTimeout(debounceTimer);
@@ -199,7 +188,32 @@
 								{/if}
 								<div class="result-text">
 									<div class="result-label">{result.label}</div>
-									<div class="result-type">{getTypeLabel(result.type)}</div>
+									{#if result.conceptType}
+										<div class="concept-type">
+											{#if result.conceptType.icon}
+												<span class="material-symbols-outlined concept-type-icon">{result.conceptType.icon}</span>
+											{/if}
+											<span>{result.conceptType.label}</span>
+										</div>
+									{/if}
+									{#if result.status}
+										<div class="status-badge" style="color: {result.status.color}">
+											{#if result.status.icon}
+												<span class="material-symbols-outlined status-icon">{result.status.icon}</span>
+											{/if}
+											<span>{result.status.label}</span>
+										</div>
+									{/if}
+									{#if result.matchedProperties && result.matchedProperties.length > 0}
+										<div class="matched-props">
+											{#each result.matchedProperties as mp}
+												<div class="matched-prop-row">
+													<span class="matched-prop-key">{shortenIri(mp.detail_iri)}</span>
+													<span class="matched-prop-value">{mp.value}</span>
+												</div>
+											{/each}
+										</div>
+									{/if}
 								</div>
 							</div>
 						</button>
@@ -213,7 +227,7 @@
 <style>
 	.search-container {
 		position: relative;
-		width: 300px;
+		width: 480px;
 	}
 
 	.search-input-wrapper {
@@ -336,10 +350,54 @@
 		text-overflow: ellipsis;
 	}
 
-	.result-type {
+	.concept-type {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
 		color: var(--color-neutral);
 		font-size: 0.75rem;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
+	}
+
+	.concept-type-icon {
+		font-size: 14px;
+	}
+
+	.status-badge {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		font-size: 0.75rem;
+		font-weight: 500;
+	}
+
+	.status-icon {
+		font-size: 14px;
+	}
+
+	.matched-props {
+		display: flex;
+		flex-direction: column;
+		gap: 0.125rem;
+		margin-top: 0.25rem;
+	}
+
+	.matched-prop-row {
+		display: flex;
+		gap: 0.375rem;
+		font-size: 0.7rem;
+		color: var(--color-neutral);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.matched-prop-key {
+		font-weight: 600;
+		flex-shrink: 0;
+	}
+
+	.matched-prop-value {
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 </style>

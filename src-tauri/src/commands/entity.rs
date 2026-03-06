@@ -10,15 +10,6 @@ pub enum EntityType {
     Individual,
 }
 
-#[derive(Debug, Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SearchResult {
-    pub id: String,
-    pub label: String,
-    pub icon: Option<String>,
-    #[serde(rename = "type")]
-    pub entity_type: String,
-}
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -93,7 +84,7 @@ pub struct PropertyValue {
     pub group_total: Option<usize>,
 }
 
-/// Search for entities (classes and individuals) by label
+/// Search for instances by label and property values
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn entity__search(
@@ -103,37 +94,8 @@ pub async fn entity__search(
 ) -> Result<String, String> {
     executor.read(move |conn| {
         let limit = limit.unwrap_or(100);
-        let mut results = Vec::new();
-
-        let class_results = crate::owl::search_classes(conn, &query, limit)
+        let results = crate::owl::search_instances_rich(conn, &query, limit)
             .map_err(|e| e.to_string())?;
-
-        for class_result in class_results {
-            results.push(SearchResult {
-                id: class_result.id,
-                label: class_result.label,
-                icon: class_result.icon,
-                entity_type: "class".to_string(),
-            });
-        }
-
-        let remaining_limit = limit.saturating_sub(results.len());
-        if remaining_limit > 0 {
-            let individual_results = crate::owl::search_individuals(conn, &query, remaining_limit)
-                .map_err(|e| e.to_string())?;
-
-            for individual_result in individual_results {
-                results.push(SearchResult {
-                    id: individual_result.id,
-                    label: individual_result.label,
-                    icon: individual_result.icon,
-                    entity_type: "individual".to_string(),
-                });
-            }
-        }
-
-        results.truncate(limit);
-
         serde_json::to_string(&results).map_err(|e| e.to_string())
     }).await
 }

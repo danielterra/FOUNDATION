@@ -193,6 +193,143 @@ pub fn search_individuals(
     Ok(results.into_iter().take(limit).map(|(_, r)| r).collect())
 }
 
+/// Rich search result for instances, including matched properties, concept type and status.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RichSearchResult {
+    pub id: String,
+    pub label: String,
+    pub icon: Option<String>,
+    #[serde(rename = "type")]
+    pub entity_type: String,
+    pub matched_properties: Vec<serde_json::Value>,
+    pub concept_type: Option<serde_json::Value>,
+    pub status: Option<serde_json::Value>,
+}
+
+/// Search instances by label and all literal property values (case-insensitive, ranked by relevance).
+/// Returns only instances (not classes), enriched with matched properties, concept type and status.
+pub fn search_instances_rich(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<RichSearchResult>> {
+    use crate::eavto::query;
+
+    let thing_iris = Individual::search(conn)?;
+
+    let query_lower = query.to_lowercase();
+
+    let batch = query::batch_load_triples_for_subjects(conn, &thing_iris)
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+
+    let mut scored: Vec<(i32, RichSearchResult)> = Vec::new();
+
+    for iri in &thing_iris {
+        let triples = match batch.get(iri.as_str()) {
+            Some(t) => t,
+            None => continue,
+        };
+
+        let label = triples.iter()
+            .find(|t| t.predicate == vocabulary::rdfs::LABEL)
+            .and_then(|t| t.object.as_literal())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| iri.clone());
+
+        let icon = triples.iter()
+            .find(|t| t.predicate == "foundation:hasIcon")
+            .and_then(|t| t.object.as_iri())
+            .and_then(|icon_iri| icon_iri_to_display(conn, icon_iri))
+            .or_else(|| {
+                triples.iter()
+                    .find(|t| t.predicate == "foundation:icon")
+                    .and_then(|t| t.object.as_literal())
+                    .map(|s| s.to_string())
+            });
+
+        let label_lower = label.to_lowercase();
+
+        let score: i32;
+        let mut matched_properties: Vec<serde_json::Value> = Vec::new();
+
+        if query_lower.is_empty() {
+            score = 0;
+        } else if label_lower == query_lower {
+            score = 3;
+        } else if label_lower.starts_with(&query_lower) {
+            score = 2;
+        } else if label_lower.contains(&query_lower) {
+            score = 1;
+        } else {
+            let mut prop_score = 0i32;
+            for triple in triples.iter().filter(|t| {
+                t.predicate != vocabulary::rdfs::LABEL
+                    && t.predicate != "foundation:icon"
+                    && t.predicate != "foundation:hasIcon"
+            }) {
+                if let Some(val_str) = triple.object.as_literal() {
+                    if val_str.to_lowercase().contains(&query_lower) {
+                        prop_score += 1;
+                        let mut entry = serde_json::json!({
+                            "detail_iri": triple.predicate,
+                            "value": val_str,
+                        });
+                        if let Some(dt) = triple.object.datatype() {
+                            entry["datatype"] = serde_json::json!(dt);
+                        }
+                        matched_properties.push(entry);
+                    }
+                }
+            }
+            if prop_score == 0 {
+                continue;
+            }
+            matched_properties.dedup_by(|a, b| a["detail_iri"] == b["detail_iri"]);
+            score = prop_score;
+        }
+
+        let concept_type = triples.iter()
+            .find(|t| t.predicate == vocabulary::rdf::TYPE)
+            .and_then(|t| t.object.as_iri())
+            .filter(|type_iri| {
+                !type_iri.starts_with("owl:")
+                    && !type_iri.starts_with("rdfs:")
+                    && !type_iri.starts_with("rdf:")
+            })
+            .map(|type_iri| {
+                let type_thing = Thing::get(conn, type_iri);
+                serde_json::json!({
+                    "iri": type_iri,
+                    "label": type_thing.label,
+                    "icon": type_thing.icon,
+                })
+            });
+
+        let status = get_entity_status_info(conn, iri)
+            .map(|(s_iri, s_label, s_color, s_icon)| serde_json::json!({
+                "iri": s_iri,
+                "label": s_label,
+                "icon": s_icon,
+                "color": s_color,
+            }));
+
+        scored.push((score, RichSearchResult {
+            id: iri.clone(),
+            label,
+            icon,
+            entity_type: "individual".to_string(),
+            matched_properties,
+            concept_type,
+            status,
+        }));
+    }
+
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.label.len().cmp(&b.1.label.len())));
+
+    Ok(scored.into_iter().take(limit).map(|(_, r)| r).collect())
+}
+
 /// Returns all IRI values for a predicate on an entity
 pub fn get_all_iri_properties(
     conn: &Connection,
