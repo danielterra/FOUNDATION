@@ -15,14 +15,9 @@
 
   async function checkDatabaseStatus() {
     try {
-      // Check if database is initialized by checking if setup is complete
-      // This will fail if database doesn't exist or isn't initialized
       const isSetupDone = await invoke('setup__check');
       console.log('+page: Setup check result:', isSetupDone);
-
-      // Database exists and is initialized, skip import screen
       importing = false;
-
       if (isSetupDone) {
         setupComplete = true;
         goto("/home");
@@ -31,20 +26,16 @@
       }
     } catch (error) {
       const errorMsg = String(error);
-      console.log('+page: Database check failed:', errorMsg);
 
-      // If error is about state not managed, database is still initializing
-      if (errorMsg.includes('state not managed') || errorMsg.includes('conn')) {
-        console.log('+page: Database still initializing...');
-
-        // Show import screen if not already showing
-        if (importing === null) {
-          importing = true;
-        }
-
-        setTimeout(() => checkDatabaseStatus(), 500);
+      if (errorMsg.includes('state not managed')) {
+        // Executor not yet registered — wait for the backend to emit import-complete
+        if (importing === null) importing = true;
+        const { listen } = await import('@tauri-apps/api/event');
+        const unlisten = await listen('import-complete', async () => {
+          unlisten();
+          await checkDatabaseStatus();
+        });
       } else {
-        // Other errors mean database doesn't exist, show import screen
         console.log('+page: Database not initialized, showing import screen');
         importing = true;
       }

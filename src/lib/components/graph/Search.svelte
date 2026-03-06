@@ -5,6 +5,7 @@
 
 	let { onSelectResult } = $props();
 
+	let isOpen = $state(false);
 	let searchQuery = $state('');
 	let searchResults = $state([]);
 	let isSearching = $state(false);
@@ -13,10 +14,19 @@
 	let inputElement;
 	let debounceTimer;
 
-	export function focus() {
-		if (inputElement) {
-			inputElement.focus();
-		}
+	export function open() {
+		isOpen = true;
+		setTimeout(() => {
+			if (inputElement) inputElement.focus();
+		}, 0);
+	}
+
+	export function close() {
+		isOpen = false;
+		searchQuery = '';
+		searchResults = [];
+		showResults = false;
+		selectedIndex = -1;
 	}
 
 	async function performSearch(query) {
@@ -99,10 +109,7 @@
 				break;
 			case 'Escape':
 				e.preventDefault();
-				searchQuery = '';
-				searchResults = [];
-				showResults = false;
-				selectedIndex = -1;
+				close();
 				break;
 		}
 	}
@@ -118,8 +125,7 @@
 
 	function handleBlur() {
 		setTimeout(() => {
-			showResults = false;
-			selectedIndex = -1;
+			close();
 		}, 200);
 	}
 
@@ -144,90 +150,104 @@
 	});
 </script>
 
-<div class="search-container">
-	<Card>
-		<div class="search-input-wrapper">
-			<span class="material-symbols-outlined search-icon">search</span>
-			<input
-				bind:this={inputElement}
-				type="text"
-				bind:value={searchQuery}
-				placeholder="Search entities..."
-				oninput={handleInput}
-				onfocus={handleFocus}
-				onblur={handleBlur}
-				onkeydown={handleKeyDown}
-				class="search-input"
-				autocomplete="off"
-				autocorrect="off"
-				autocapitalize="off"
-				spellcheck="false"
-			/>
-			{#if isSearching}
-				<span class="material-symbols-outlined loading-icon">progress_activity</span>
-			{/if}
-		</div>
-	</Card>
-
-	{#if showResults && searchResults.length > 0}
-		<div class="search-results">
+{#if isOpen}
+	<div class="search-overlay" role="presentation">
+		<div class="search-container">
 			<Card>
-				<div class="results-list">
-					{#each searchResults as result, index}
-						<button
-							type="button"
-							class="result-item"
-							class:selected={index === selectedIndex}
-							onclick={() => handleResultClick(result)}
-						>
-							<div class="result-content">
-								{#if result.icon}
-									<span class="material-symbols-outlined result-icon">{result.icon}</span>
-								{:else}
-									<div class="result-placeholder"></div>
-								{/if}
-								<div class="result-text">
-									<div class="result-label">{result.label}</div>
-									{#if result.conceptType}
-										<div class="concept-type">
-											{#if result.conceptType.icon}
-												<span class="material-symbols-outlined concept-type-icon">{result.conceptType.icon}</span>
-											{/if}
-											<span>{result.conceptType.label}</span>
-										</div>
-									{/if}
-									{#if result.status}
-										<div class="status-badge" style="color: {result.status.color}">
-											{#if result.status.icon}
-												<span class="material-symbols-outlined status-icon">{result.status.icon}</span>
-											{/if}
-											<span>{result.status.label}</span>
-										</div>
-									{/if}
-									{#if result.matchedProperties && result.matchedProperties.length > 0}
-										<div class="matched-props">
-											{#each result.matchedProperties as mp}
-												<div class="matched-prop-row">
-													<span class="matched-prop-key">{shortenIri(mp.detail_iri)}</span>
-													<span class="matched-prop-value">{mp.value}</span>
-												</div>
-											{/each}
-										</div>
-									{/if}
-								</div>
-							</div>
-						</button>
-					{/each}
+				<div class="search-input-wrapper">
+					<span class="material-symbols-outlined search-icon">search</span>
+					<input
+						bind:this={inputElement}
+						type="text"
+						bind:value={searchQuery}
+						placeholder="Search entities..."
+						oninput={handleInput}
+						onfocus={handleFocus}
+						onblur={handleBlur}
+						onkeydown={handleKeyDown}
+						class="search-input"
+						autocomplete="off"
+						autocorrect="off"
+						autocapitalize="off"
+						spellcheck="false"
+					/>
+					{#if isSearching}
+						<span class="material-symbols-outlined loading-icon">progress_activity</span>
+					{/if}
 				</div>
 			</Card>
+
+			{#if showResults && searchResults.length > 0}
+				<div class="search-results">
+					<Card>
+						<div class="results-list">
+							{#each searchResults as result, index}
+								<button
+									type="button"
+									class="result-item"
+									class:selected={index === selectedIndex}
+									onclick={() => handleResultClick(result)}
+								>
+									<div class="result-content">
+										{#if result.icon}
+											<span class="material-symbols-outlined result-icon">{result.icon}</span>
+										{:else}
+											<div class="result-placeholder"></div>
+										{/if}
+										<div class="result-text">
+											<div class="result-label">{result.label}</div>
+											{#if result.conceptType}
+												<div class="concept-type">
+													{#if result.conceptType.icon}
+														<span class="material-symbols-outlined concept-type-icon">{result.conceptType.icon}</span>
+													{/if}
+													<span>{result.conceptType.label}</span>
+												</div>
+											{/if}
+											{#if result.status}
+												<div class="status-badge" style="color: {result.status.color}">
+													{#if result.status.icon}
+														<span class="material-symbols-outlined status-icon">{result.status.icon}</span>
+													{/if}
+													<span>{result.status.label}</span>
+												</div>
+											{/if}
+											{#if result.matchedProperties && result.matchedProperties.length > 0}
+												<div class="matched-props">
+													{#each result.matchedProperties as mp}
+														<div class="matched-prop-row">
+															<span class="matched-prop-key">{shortenIri(mp.detail_iri)}</span>
+															<span class="matched-prop-value">{mp.value}</span>
+														</div>
+													{/each}
+												</div>
+											{/if}
+										</div>
+									</div>
+								</button>
+							{/each}
+						</div>
+					</Card>
+				</div>
+			{/if}
 		</div>
-	{/if}
-</div>
+	</div>
+{/if}
 
 <style>
+	.search-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 2000;
+		display: flex;
+		justify-content: center;
+		padding-top: 80px;
+	}
+
 	.search-container {
 		position: relative;
 		width: 480px;
+		height: fit-content;
 	}
 
 	.search-input-wrapper {

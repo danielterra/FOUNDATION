@@ -1,17 +1,8 @@
 <script>
 	import Card from '$lib/components/Card.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
-	import Search from '$lib/components/graph/Search.svelte';
 
-	let { onRecenter, onSearch, screenName = 'Ontology Graph' } = $props();
-	let searchComponent;
-
-	// Expose focusSearch method to parent
-	export function focusSearch() {
-		if (searchComponent) {
-			searchComponent.focus();
-		}
-	}
+	let { onRecenter, onOpenSearch, screenName = 'Ontology Graph' } = $props();
 </script>
 
 <div class="floating-top-bar">
@@ -20,14 +11,13 @@
 			<header class="floating-header">
 				<h1>FOUNDATION</h1>
 				<span class="screen-indicator">{screenName}</span>
+				<button class="search-trigger" onclick={onOpenSearch} aria-label="Search (/)">
+					<span class="material-symbols-outlined">search</span>
+				</button>
 			</header>
 		</Card>
 
 		<IconButton icon="center_focus_strong" hint="Recenter graph (⌘0)" onclick={onRecenter} />
-	</div>
-
-	<div class="right-controls">
-		<Search bind:this={searchComponent} onSelectResult={onSearch} />
 	</div>
 </div>
 
@@ -45,16 +35,6 @@
 	}
 
 	.left-controls {
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-	}
-
-	.left-controls :global(.card) {
-		pointer-events: auto;
-	}
-
-	.right-controls {
 		display: flex;
 		align-items: center;
 		gap: 1rem;
@@ -80,5 +60,27 @@
 		color: var(--color-neutral);
 		padding-left: 0.75rem;
 		border-left: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+	}
+
+	.search-trigger {
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--color-neutral);
+		padding: 0.25rem;
+		display: flex;
+		align-items: center;
+		border-radius: 4px;
+		transition: color 0.15s, background 0.15s;
+		margin-left: 0.25rem;
+	}
+
+	.search-trigger:hover {
+		color: var(--color-neutral-active);
+		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+	}
+
+	.search-trigger span {
+		font-size: 20px;
 	}
 </style>

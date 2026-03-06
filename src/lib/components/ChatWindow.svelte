@@ -31,7 +31,7 @@
 	let errorMessage = $state(null);
 	let editingMessageIri = $state(null);
 	let editingMessageText = $state('');
-	let activeConversationIri = $state('foundation:MainChatConversation');
+	let activeConversationIri = $state(null);
 	let conversations = $state([]);
 
 	// Load recent messages on mount and request location
@@ -209,6 +209,7 @@
 	}
 
 	async function loadMessages() {
+		if (!activeConversationIri) return;
 		try {
 			const msgs = await invoke('chat__get_recent_messages', {
 				limit: messageLimit,

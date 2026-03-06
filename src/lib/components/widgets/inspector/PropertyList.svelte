@@ -192,9 +192,18 @@
                   <span class="material-symbols-outlined url-open-icon">open_in_new</span>
                 </button>
               {:else if !detailGroup.isObjectProperty && isStringType(val.datatype)}
-                <div class="value-markdown markdown-content">
-                  {@html marked.parse(val.value ?? '')}
-                </div>
+                {#if (val.value ?? '').length > 2000}
+                  <div class="value-large">
+                    <pre class="value-pre">{val.value}</pre>
+                    <button class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
+                      <span class="material-symbols-outlined">content_copy</span>
+                    </button>
+                  </div>
+                {:else}
+                  <div class="value-markdown markdown-content">
+                    {@html marked.parse(val.value ?? '')}
+                  </div>
+                {/if}
               {:else}
                 {#if val.unitLabel}
                   <span class="unit">{val.unitLabel}</span>
@@ -313,6 +322,49 @@
     line-height: 1.5;
     word-wrap: break-word;
     min-width: 0;
+  }
+
+  .value-large {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .value-pre {
+    font-family: monospace;
+    font-size: 11px;
+    color: var(--color-neutral-active);
+    background: color-mix(in srgb, var(--color-black) 40%, transparent);
+    border-radius: 4px;
+    padding: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0;
+  }
+
+  .copy-btn {
+    align-self: flex-end;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-neutral);
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    border-radius: 4px;
+    transition: color 0.15s;
+  }
+
+  .copy-btn:hover {
+    color: var(--color-neutral-active);
+  }
+
+  .copy-btn .material-symbols-outlined {
+    font-size: 16px;
   }
 
   .clickable {

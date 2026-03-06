@@ -35,11 +35,10 @@ pub async fn chat__send_and_reply(
     latitude: Option<f64>,
     longitude: Option<f64>,
     attachment_iris: Option<Vec<String>>,
-    conversation_id: Option<String>,
+    conversation_id: String,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let conversation_id = conversation_id.unwrap_or_else(|| "foundation:MainChatConversation".to_string());
     const MAX_TOOL_LOOPS: usize = 50;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
@@ -274,10 +273,10 @@ pub async fn chat__send_message(
 #[tauri::command]
 pub async fn chat__get_recent_messages(
     limit: usize,
-    conversation_id: Option<String>,
+    conversation_id: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let conv_id = conversation_id.unwrap_or_else(|| "foundation:MainChatConversation".to_string());
+    let conv_id = conversation_id;
 
     let messages = executor.read(move |conn| {
         // Load only the N most recent message IRIs directly from SQL — no in-memory sort needed
@@ -402,11 +401,10 @@ pub async fn chat__get_conversation_info(
 pub async fn chat__edit_and_retry(
     message_iri: String,
     new_content: String,
-    conversation_id: Option<String>,
+    conversation_id: String,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let conversation_id = conversation_id.unwrap_or_else(|| "foundation:MainChatConversation".to_string());
 
     let msg_timestamp = executor.read(move |conn| {
         let ind = Individual::get(conn, &message_iri)
@@ -497,11 +495,10 @@ pub async fn chat__edit_and_retry(
 #[tauri::command]
 pub async fn chat__retry_from_message(
     message_iri: String,
-    conversation_id: Option<String>,
+    conversation_id: String,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let conversation_id = conversation_id.unwrap_or_else(|| "foundation:MainChatConversation".to_string());
 
     let msg_timestamp = executor.read(move |conn| {
         let ind = Individual::get(conn, &message_iri)
@@ -564,62 +561,73 @@ pub async fn chat__recover_pending_tools(
 ) -> Result<usize, String> {
     let max_tokens = get_max_input_tokens(&executor).await?;
 
-    let mut conversation_iris: Vec<String> = vec!["foundation:MainChatConversation".to_string()];
-    let additional = executor.read(|conn| {
+    // Find the most recent conversation by looking at the latest message timestamp across all
+    // conversations. Recovery only applies to the most recent one — older conversations are
+    // already settled and should not be touched.
+    let all_conversation_iris = executor.read(|conn| {
         Individual::find_by_class_and_properties(conn, "foundation:AIConversation", &[])
             .map_err(|e| format!("Failed to query conversations: {}", e))
     }).await?;
-    for iri in additional {
-        if iri != "foundation:MainChatConversation" {
-            conversation_iris.push(iri);
+
+    let most_recent_conv = executor.read(move |conn| {
+        let mut best: Option<(i64, String)> = None;
+        for conv_iri in &all_conversation_iris {
+            let recent = Individual::find_messages_by_conversation(conn, conv_iri, 1, 0)
+                .unwrap_or_default();
+            if let Some(msg_iri) = recent.into_iter().next() {
+                if let Ok(msg) = load_message(conn, &msg_iri) {
+                    if best.as_ref().map_or(true, |(ts, _)| msg.timestamp > *ts) {
+                        best = Some((msg.timestamp, conv_iri.clone()));
+                    }
+                }
+            }
         }
+        Ok::<Option<String>, String>(best.map(|(_, iri)| iri))
+    }).await?;
+
+    let Some(conv_id) = most_recent_conv else {
+        return Ok(0);
+    };
+
+    let history = load_conversation_history(&executor, &conv_id, max_tokens).await?;
+
+    if history.is_empty() {
+        return Ok(0);
     }
 
-    let mut recovered = 0usize;
+    let last_msg = history.last().expect("history checked non-empty");
 
-    for conv_id in conversation_iris {
-        let history = load_conversation_history(&executor, &conv_id, max_tokens).await?;
+    let has_tool_use = last_msg.content.iter()
+        .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
 
-        if history.is_empty() {
-            continue;
-        }
+    let needs_recovery = (last_msg.role == "assistant" && has_tool_use)
+        || last_msg.role == "user";
 
-        let last_msg = history.last().expect("history checked non-empty");
+    if !needs_recovery {
+        return Ok(0);
+    }
 
-        let has_tool_use = last_msg.content.iter()
-            .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
+    super::log_backend(
+        "info",
+        &format!("[RECOVERY] Conversation {} needs recovery (last role: {})", conv_id, last_msg.role),
+    );
 
-        let needs_recovery = (last_msg.role == "assistant" && has_tool_use)
-            || last_msg.role == "user";
-
-        if !needs_recovery {
-            continue;
-        }
-
+    if last_msg.role == "assistant" && has_tool_use {
+        let tool_result_msg_iri = execute_tools_from_message(
+            &executor,
+            &app,
+            &conv_id,
+            last_msg,
+        ).await?;
         super::log_backend(
             "info",
-            &format!("[RECOVERY] Conversation {} needs recovery (last role: {})", conv_id, last_msg.role),
+            &format!("[RECOVERY] Executed tools, created message: {}", tool_result_msg_iri),
         );
-
-        if last_msg.role == "assistant" && has_tool_use {
-            let tool_result_msg_iri = execute_tools_from_message(
-                &executor,
-                &app,
-                &conv_id,
-                last_msg,
-            ).await?;
-            super::log_backend(
-                "info",
-                &format!("[RECOVERY] Executed tools, created message: {}", tool_result_msg_iri),
-            );
-            app.emit("chat-message-added", ()).ok();
-        }
-
-        continue_conversation_after_recovery(app.clone(), executor.inner().clone(), conv_id).await?;
-        recovered += 1;
+        app.emit("chat-message-added", ()).ok();
     }
 
-    Ok(recovered)
+    continue_conversation_after_recovery(app.clone(), executor.inner().clone(), conv_id).await?;
+    Ok(1)
 }
 
 #[tauri::command]
@@ -669,37 +677,23 @@ pub async fn chat__list_conversations(
 
         let mut conversations: Vec<(i64, serde_json::Value)> = Vec::new();
 
-        let main_iri = "foundation:MainChatConversation";
-        let main_already_included = iris.iter().any(|i| i == main_iri);
-        let all_iris: Vec<String> = if main_already_included {
-            iris
-        } else {
-            std::iter::once(main_iri.to_string()).chain(iris).collect()
-        };
+        for iri in iris {
+            let ind = Individual::get(conn, &iri)
+                .ok().flatten()
+                .unwrap_or_else(|| Individual::new(&iri));
 
-        for iri in all_iris {
-            let (label, started_at) = if iri == main_iri {
-                ("Main Chat".to_string(), 0i64)
-            } else {
-                let ind = Individual::get(conn, &iri)
-                    .ok().flatten()
-                    .unwrap_or_else(|| Individual::new(&iri));
+            let label = ind.properties.iter()
+                .find(|(k, _)| k == "rdfs:label")
+                .and_then(|(_, v)| match v {
+                    Object::Literal { value, .. } => Some(value.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| iri.clone());
 
-                let lbl = ind.properties.iter()
-                    .find(|(k, _)| k == "rdfs:label")
-                    .and_then(|(_, v)| match v {
-                        Object::Literal { value, .. } => Some(value.clone()),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| iri.clone());
-
-                let ts = ind.properties.iter()
-                    .find(|(k, _)| k == "foundation:createdAt")
-                    .and_then(|(_, v)| parse_timestamp(v))
-                    .unwrap_or(0);
-
-                (lbl, ts)
-            };
+            let started_at = ind.properties.iter()
+                .find(|(k, _)| k == "foundation:createdAt")
+                .and_then(|(_, v)| parse_timestamp(v))
+                .unwrap_or(0);
 
             conversations.push((started_at, serde_json::json!({
                 "iri": iri,
