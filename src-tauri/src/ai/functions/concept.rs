@@ -4,6 +4,73 @@ use tauri::Emitter;
 use crate::owl::Class;
 use super::ToolResult;
 
+#[cfg(test)]
+mod tests {
+    use super::update_concept_one;
+    use crate::eavto::{store, Triple, Object};
+    use crate::eavto::test_helpers::setup_test_db;
+
+    #[test]
+    fn test_update_concept_required_fields_rejects_nonexistent_property() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+        ], "test").unwrap();
+
+        let args = serde_json::json!({
+            "iri": "foundation:TestClass",
+            "required_fields": ["foundation:nonExistent"]
+        });
+
+        let result = update_concept_one(&mut conn, &args, None);
+
+        assert!(!result.success);
+        let error = result.error.unwrap();
+        assert!(
+            error.contains("foundation:nonExistent") && error.contains("not defined in this ontology"),
+            "Expected error about undefined property, got: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn test_update_concept_required_fields_accepts_valid_datatype_property() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:myProp", "rdf:type", Object::Iri("owl:DatatypeProperty".to_string())),
+        ], "test").unwrap();
+
+        let args = serde_json::json!({
+            "iri": "foundation:TestClass",
+            "required_fields": ["foundation:myProp"]
+        });
+
+        let result = update_concept_one(&mut conn, &args, None);
+        assert!(result.success, "Expected success, got error: {:?}", result.error);
+    }
+
+    #[test]
+    fn test_update_concept_required_fields_accepts_valid_object_property() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:myRef", "rdf:type", Object::Iri("owl:ObjectProperty".to_string())),
+        ], "test").unwrap();
+
+        let args = serde_json::json!({
+            "iri": "foundation:TestClass",
+            "required_fields": ["foundation:myRef"]
+        });
+
+        let result = update_concept_one(&mut conn, &args, None);
+        assert!(result.success, "Expected success, got error: {:?}", result.error);
+    }
+}
+
 const SCORE_LABEL_MATCH: usize = 3;
 const SCORE_COMMENT_MATCH: usize = 2;
 
@@ -384,6 +451,21 @@ fn update_concept_one(
             let prop_iris: Vec<&str> = required_fields.iter()
                 .filter_map(|v| v.as_str())
                 .collect();
+
+            for prop_iri in &prop_iris {
+                let prop = crate::owl::Property::get(conn, *prop_iri)?;
+                let is_valid = prop.map(|p| matches!(
+                    p.property_type,
+                    crate::owl::PropertyType::ObjectProperty | crate::owl::PropertyType::DatatypeProperty
+                )).unwrap_or(false);
+                if !is_valid {
+                    return Err(crate::owl::OwlError::ValidationError(format!(
+                        "Property '{}' is not defined in this ontology",
+                        prop_iri
+                    )));
+                }
+            }
+
             crate::owl::cardinality::set_class_required_fields(conn, iri, &prop_iris, "ai")?;
             updated_fields.push("requiredFields");
         }
