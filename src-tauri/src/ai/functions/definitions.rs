@@ -288,69 +288,6 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             ],
         },
         ToolTemplate {
-            name: "learn_thing_detail".to_string(),
-            array_mode: true,
-            description: concat!(
-                "Set the complete list of values for a property on a thing. ALWAYS replaces",
-                " all existing values — pass every desired value in a single call.",
-                " For multi-value fields (e.g., participants, tags), include ALL values,",
-                " not just the new one.",
-            ).to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "thing_iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "ID of the thing to update".to_string(),
-                    required: true,
-                    schema: None,
-                },
-                Parameter {
-                    name: "detail_iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: concat!(
-                        "What kind of connection or detail (e.g., 'foundation:worksAt')",
-                    ).to_string(),
-                    required: true,
-                    schema: None,
-                },
-                Parameter {
-                    name: "values".to_string(),
-                    param_type: "array".to_string(),
-                    description: concat!(
-                        "Complete final list of values (array of strings). This ALWAYS replaces",
-                        " everything — do NOT call this multiple times to append.",
-                        " For multi-value",
-                        " fields (e.g., participants, tags): first call remember_thing to see",
-                        " current values, then pass ALL desired values (existing + new) in one",
-                        " call. For single-value fields: pass a single-element array.",
-                    ).to_string(),
-                    required: true,
-                    schema: None,
-                },
-                Parameter {
-                    name: "value_type".to_string(),
-                    param_type: "string".to_string(),
-                    description: concat!(
-                        "'literal' for text/numbers/dates, 'iri' for connections to other things.",
-                        " Default: 'literal'. Applies to all values in the array.",
-                    ).to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "datatype".to_string(),
-                    param_type: "string".to_string(),
-                    description: concat!(
-                        "Data type: 'xsd:string', 'xsd:integer', 'xsd:decimal', 'xsd:boolean',",
-                        " 'xsd:date' (YYYY-MM-DD), 'xsd:dateTime' (Unix milliseconds i64), etc.",
-                        " Default: 'xsd:string'. Applies to all values in the array.",
-                    ).to_string(),
-                    required: false,
-                    schema: None,
-                },
-            ],
-        },
-        ToolTemplate {
             name: "learn_connection_type".to_string(),
             array_mode: true,
             description: concat!(
@@ -543,7 +480,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                         " REPLACES any existing allowedStatus values.",
                         " Pass an empty array to remove all restrictions.",
                         " Example: ['foundation:Active', 'foundation:Archived'].",
-                        " Once set, learn_thing_detail with foundation:hasStatus will reject",
+                        " Once set, update_thing with foundation:hasStatus will reject",
                         " status values not in this list.",
                     ).to_string(),
                     required: false,

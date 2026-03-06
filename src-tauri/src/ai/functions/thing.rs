@@ -503,6 +503,8 @@ fn update_thing_one(
             updated_fields.push("comment".to_string());
         }
 
+        let mut iri_values_emitted: Vec<String> = Vec::new();
+
         if let Some(properties) = args.get("properties").and_then(|v| v.as_array()) {
             let concept_iri = if let Ok(Some(c)) = crate::owl::get_iri_property(conn, iri, "rdf:type") {
                 Some(c)
@@ -565,6 +567,12 @@ fn update_thing_one(
                     ));
                 }
 
+                if value_type == "iri" {
+                    for v in raw_values.iter().filter_map(|v| v.as_str()) {
+                        iri_values_emitted.push(v.to_string());
+                    }
+                }
+
                 individual.add_property(conn, detail_iri, objects, "ai")?;
                 updated_fields.push(detail_iri.to_string());
             }
@@ -572,6 +580,9 @@ fn update_thing_one(
 
         if let Some(app_handle) = app {
             app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
+            for ref_iri in &iri_values_emitted {
+                app_handle.emit("entity-updated", serde_json::json!({"entityId": ref_iri})).ok();
+            }
         }
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({

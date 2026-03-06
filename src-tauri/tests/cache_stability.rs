@@ -18,7 +18,7 @@ through the available tools. An IRI like `foundation:Task_1234567890` is system-
 you cannot know it in advance without querying. Using a made-up IRI will corrupt the data.\n\n\
 3. **Read before write**: Before modifying any entity, call `remember_thing` to understand its \
 current state. Multi-value properties must include ALL desired values in a single \
-`learn_thing_detail` call — it replaces, not appends. Forgetting existing values when writing \
+`update_thing` call — it replaces, not appends. Forgetting existing values when writing \
 new ones is a destructive operation that silently loses data.\n\n\
 4. **Minimal footprint**: Only create entities when explicitly requested. Do not create \
 placeholder or example data unless the user specifically asks for it. Do not create helper \
@@ -73,16 +73,15 @@ Returns a list of matching things with their labels and IRIs.\n\n\
 Lists all concepts (classes) in the ontology, optionally filtered to subclasses of a given \
 concept. Use this to discover what types of things exist before assuming a class name. \
 The ontology is large and evolves over time — never assume a concept IRI without checking.\n\n\
-### `learn_thing_detail(thing_iri, detail_iri, values, value_type, datatype?)`\n\
-Sets the complete list of values for a property on an entity. This operation REPLACES all \
-existing values for that property. Always call `remember_thing` first to get current values \
-when you need to append rather than replace. Use `value_type: 'iri'` for entity references, \
-`value_type: 'literal'` for text, numbers, and dates. The `datatype` parameter controls the \
-XSD type for literals: `xsd:string` (default), `xsd:integer`, `xsd:decimal`, `xsd:boolean`, \
-`xsd:date` (YYYY-MM-DD), `xsd:dateTime` (Unix milliseconds as i64).\n\n\
+### `update_thing(iri, label?, icon?, comment?, properties?)`\n\
+Updates a thing's properties. Pass only the properties you want to change (partial update). \
+The `properties` array allows setting arbitrary properties: each entry has `detail_iri`, \
+`values` (complete replacement list), `value_type` (`iri` or `literal`), and `datatype`. \
+Always call `remember_thing` first to get current values when you need to append rather than \
+replace. For `foundation:hasStatus`, the value is validated against the concept's allowedStatus list.\n\n\
 ### `learn_thing(concept_iri, label, comment?, icon?)`\n\
 Creates a new instance of a concept with the given label. Returns the new thing's IRI. \
-Always follow creation with `learn_thing_detail` calls to set additional properties.\n\n\
+Always follow creation with `update_thing` calls to set additional properties.\n\n\
 ### `learn_concept(label, parent_iri?, comment?, icon?)`\n\
 Creates a new ontology class. Use only when the user explicitly wants to define a new type \
 of thing, not for creating instances.\n\n";
@@ -113,16 +112,16 @@ value: 'implement login page'}])` → get the task IRI\n\
 **Move a task to InProgress:**\n\
 1. `remember_things_by_details(concept_iri: foundation:Status, properties: [{detail: rdfs:label, \
 value: 'InProgress'}])` → find status IRI\n\
-2. `learn_thing_detail(thing_iri: <task_iri>, detail_iri: foundation:hasStatus, \
-values: [<status_iri>], value_type: iri)` → update status\n\n\
+2. `update_thing(iri: <task_iri>, properties: [{detail_iri: foundation:hasStatus, \
+values: [<status_iri>], value_type: iri}])` → update status\n\n\
 **List all open bugs for a feature:**\n\
 1. `remember_things_by_details(concept_iri: foundation:Bug, properties: \
 [{detail: foundation:bugOf, value: <feature_iri>}, {detail: foundation:hasStatus, \
 value: <pending_iri>}])` → returns matching bugs\n\n\
 **Add a tag to an entity without losing existing tags:**\n\
 1. `remember_thing(iri: <entity_iri>)` → note current tags\n\
-2. `learn_thing_detail(thing_iri: <entity_iri>, detail_iri: foundation:hasTag, \
-values: [<existing_tag_1>, <existing_tag_2>, <new_tag>], value_type: iri)` → set all tags\n\n\
+2. `update_thing(iri: <entity_iri>, properties: [{detail_iri: foundation:hasTag, \
+values: [<existing_tag_1>, <existing_tag_2>, <new_tag>], value_type: iri}])` → set all tags\n\n\
 Remember: you are operating on the user's personal knowledge base. Treat their data with care, \
 respect their intent, and maintain a well-structured and accurate knowledge graph at all times.";
 

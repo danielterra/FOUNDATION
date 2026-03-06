@@ -111,7 +111,6 @@ pub fn execute_tool(
     match call.name.as_str() {
         "learn_concept" => concept::create_concept(conn, args, app),
         "learn_thing" => thing::create_thing(conn, args, app),
-        "learn_thing_detail" => detail::learn_detail_value(conn, args, app),
         "learn_connection_type" => detail::create_detail(conn, args, app),
         "remember_concept" => concept::get_concept(conn, args),
         "remember_thing" => thing::get_thing(conn, args),
