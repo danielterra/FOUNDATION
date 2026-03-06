@@ -469,7 +469,10 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "super_concept".to_string(),
                     param_type: "string".to_string(),
-                    description: "New single parent concept ID. Replaces all existing superclasses with this one.".to_string(),
+                    description: concat!(
+                        "New single parent concept ID.",
+                        " Replaces all existing superclasses with this one.",
+                    ).to_string(),
                     required: false,
                     schema: None,
                 },

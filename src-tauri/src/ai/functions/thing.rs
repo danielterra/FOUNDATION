@@ -803,7 +803,7 @@ mod tests {
             ]
         });
 
-        let result = update_thing_one(&mut conn, &args, None);
+        let result = update_thing_one(&mut conn, &args);
         assert!(result.success, "update_thing should succeed: {:?}", result.error);
         let response = result.result.unwrap();
         let updated = response["updatedFields"].as_array().unwrap();
@@ -830,7 +830,7 @@ mod tests {
             ]
         });
 
-        let result = update_thing_one(&mut conn, &args, None);
+        let result = update_thing_one(&mut conn, &args);
         assert!(result.success, "update_thing with valid status should succeed: {:?}", result.error);
     }
 
@@ -851,7 +851,7 @@ mod tests {
             ]
         });
 
-        let result = update_thing_one(&mut conn, &args, None);
+        let result = update_thing_one(&mut conn, &args);
         assert!(!result.success, "update_thing with invalid status should fail");
         let error = result.error.unwrap();
         assert!(
@@ -875,7 +875,7 @@ mod tests {
             "label": "Updated Task Name"
         });
 
-        let result = update_thing_one(&mut conn, &args, None);
+        let result = update_thing_one(&mut conn, &args);
         assert!(result.success, "Partial update with only label should succeed: {:?}", result.error);
         let response = result.result.unwrap();
         let updated = response["updatedFields"].as_array().unwrap();
@@ -893,7 +893,7 @@ mod tests {
             "label": "My Inherited Icon Task"
         });
 
-        let result = create_thing_one(&mut conn, &args, None);
+        let result = create_thing_one(&mut conn, &args);
         assert!(result.success, "create_thing without icon should succeed: {:?}", result.error);
 
         let response = result.result.unwrap();
