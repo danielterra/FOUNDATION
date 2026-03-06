@@ -76,6 +76,8 @@ fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
         let mut things_with_scores: Vec<(Value, usize)> = Vec::new();
         for iri in thing_iris {
             if let Ok(Some(individual)) = Individual::get(conn, &iri) {
+                let mut matched_properties: Vec<serde_json::Value> = Vec::new();
+
                 let score = if !search_tokens.is_empty() {
                     let label_lower = individual.label.as_ref()
                         .map(|l| l.to_lowercase())
@@ -84,24 +86,47 @@ fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
                         .map(|c| c.to_lowercase())
                         .unwrap_or_default();
 
-                    let mut detail_text = String::new();
-                    for (_, value) in &individual.properties {
-                        if let Some(val_str) = value.as_literal() {
-                            detail_text.push_str(&val_str.to_lowercase());
-                            detail_text.push(' ');
-                        }
-                    }
-
                     let mut match_count = 0;
                     for token in &search_tokens {
                         if label_lower.contains(token) {
                             match_count += SCORE_LABEL_MATCH;
+                            if let Some(ref label) = individual.label {
+                                matched_properties.push(serde_json::json!({
+                                    "detail_iri": "rdfs:label",
+                                    "value": label,
+                                    "datatype": "xsd:string",
+                                }));
+                            }
                         } else if comment_lower.contains(token) {
                             match_count += SCORE_COMMENT_MATCH;
-                        } else if detail_text.contains(token) {
-                            match_count += SCORE_DETAIL_MATCH;
+                            if let Some(ref comment) = individual.comment {
+                                matched_properties.push(serde_json::json!({
+                                    "detail_iri": "rdfs:comment",
+                                    "value": comment,
+                                    "datatype": "xsd:string",
+                                }));
+                            }
+                        } else {
+                            for (predicate, value) in &individual.properties {
+                                if let Some(val_str) = value.as_literal() {
+                                    if val_str.to_lowercase().contains(token) {
+                                        match_count += SCORE_DETAIL_MATCH;
+                                        let mut entry = serde_json::json!({
+                                            "detail_iri": predicate,
+                                            "value": val_str,
+                                        });
+                                        if let Some(dt) = value.datatype() {
+                                            entry["datatype"] = serde_json::json!(dt);
+                                        }
+                                        matched_properties.push(entry);
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     }
+
+                    matched_properties.dedup_by(|a, b| a["detail_iri"] == b["detail_iri"]);
 
                     if match_count == 0 {
                         continue;
@@ -116,6 +141,7 @@ fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
                     "iri": individual.iri,
                     "label": individual.label,
                     "icon": individual.icon,
+                    "matchedProperties": matched_properties,
                 }), score));
             }
         }

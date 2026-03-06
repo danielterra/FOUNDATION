@@ -71,6 +71,10 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             description: concat!(
                 "Search your memory for specific things in a concept",
                 " (e.g., which people, places, or organizations you remember).",
+                " Each result in the 'things' array includes a 'matchedProperties' field:",
+                " an array of {detail_iri, value, datatype} objects representing only the",
+                " properties that matched the query. When no query is provided,",
+                " matchedProperties is an empty array.",
             ).to_string(),
             parameters: vec![
                 Parameter {
