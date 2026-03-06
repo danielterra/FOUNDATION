@@ -81,6 +81,23 @@ pub fn get_retracted_by_entity(conn: &Connection, entity: &str) -> Result<QueryR
     Ok(QueryResult::new(triples))
 }
 
+/// Query all active triples that reference a given IRI as their object
+pub fn get_by_object_iri(conn: &Connection, object_iri: &str) -> Result<QueryResult> {
+    let mut stmt = conn.prepare(
+        "SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                object_type, object_number, object_integer, object_datetime, object_boolean,
+                tx, origin_id, retracted, created_at
+         FROM triples
+         WHERE object = ? AND object_type = 'iri' AND retracted = 0"
+    )?;
+
+    let triples = stmt
+        .query_map([object_iri], row_to_triple)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(QueryResult::new(triples))
+}
+
 /// Query triples by predicate (V - value/property)
 pub fn get_by_predicate(conn: &Connection, predicate: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
