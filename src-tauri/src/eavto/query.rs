@@ -823,6 +823,68 @@ pub fn get_entities_max_tx(
     Ok(result)
 }
 
+/// Batch-load all active triples for the given subjects in a single SQL query.
+/// Returns a map from subject IRI to its list of triples, ordered by predicate and tx DESC.
+pub fn batch_load_triples_for_subjects(
+    conn: &Connection,
+    subjects: &[String],
+) -> Result<std::collections::HashMap<String, Vec<Triple>>> {
+    if subjects.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = subjects.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                object_type, object_number, object_integer, object_datetime, object_boolean,
+                tx, origin_id, retracted, created_at
+         FROM triples
+         WHERE subject IN ({}) AND retracted = 0
+         ORDER BY subject, predicate, tx DESC",
+        placeholders
+    );
+    let params: Vec<SqlValue> = subjects.iter().map(|s| SqlValue::Text(s.clone())).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let triples = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), row_to_triple)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut map: std::collections::HashMap<String, Vec<Triple>> = std::collections::HashMap::new();
+    for triple in triples {
+        map.entry(triple.subject.clone()).or_default().push(triple);
+    }
+    Ok(map)
+}
+
+/// Batch-load all retracted triples for the given subjects in a single SQL query.
+/// Returns a map from subject IRI to its list of retracted triples.
+pub fn batch_load_retracted_triples_for_subjects(
+    conn: &Connection,
+    subjects: &[String],
+) -> Result<std::collections::HashMap<String, Vec<Triple>>> {
+    if subjects.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = subjects.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                object_type, object_number, object_integer, object_datetime, object_boolean,
+                tx, origin_id, retracted, created_at
+         FROM triples
+         WHERE subject IN ({}) AND retracted = 1
+         ORDER BY subject, predicate, tx DESC",
+        placeholders
+    );
+    let params: Vec<SqlValue> = subjects.iter().map(|s| SqlValue::Text(s.clone())).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let triples = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), row_to_triple)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut map: std::collections::HashMap<String, Vec<Triple>> = std::collections::HashMap::new();
+    for triple in triples {
+        map.entry(triple.subject.clone()).or_default().push(triple);
+    }
+    Ok(map)
+}
+
 /// Convert SQLite row to Triple
 fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
     let subject: String = row.get(0)?;

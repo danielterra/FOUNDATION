@@ -73,82 +73,120 @@ fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
                 .collect()
         };
 
+        let batch = crate::eavto::query::batch_load_triples_for_subjects(conn, &thing_iris)
+            .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
+
+        let retracted_batch = if include_retracted {
+            let no_active: Vec<String> = thing_iris.iter()
+                .filter(|iri| !batch.contains_key(iri.as_str()))
+                .cloned()
+                .collect();
+            crate::eavto::query::batch_load_retracted_triples_for_subjects(conn, &no_active)
+                .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?
+        } else {
+            std::collections::HashMap::new()
+        };
+
         let mut things_with_scores: Vec<(Value, usize)> = Vec::new();
-        for iri in thing_iris {
-            let individual_opt = match Individual::get(conn, &iri) {
-                Ok(Some(ind)) => Some(ind),
-                Ok(None) if include_retracted => Individual::get_from_retracted(conn, &iri).ok().flatten(),
-                _ => None,
+        for iri in &thing_iris {
+            let triples = match batch.get(iri.as_str()) {
+                Some(t) => t,
+                None => match retracted_batch.get(iri.as_str()) {
+                    Some(t) => t,
+                    None => continue,
+                },
             };
-            if let Some(individual) = individual_opt {
-                let mut matched_properties: Vec<serde_json::Value> = Vec::new();
 
-                let score = if !search_tokens.is_empty() {
-                    let label_lower = individual.label.as_ref()
-                        .map(|l| l.to_lowercase())
-                        .unwrap_or_default();
-                    let comment_lower = individual.comment.as_ref()
-                        .map(|c| c.to_lowercase())
-                        .unwrap_or_default();
+            let label = triples.iter()
+                .find(|t| t.predicate == "rdfs:label")
+                .and_then(|t| t.object.as_literal());
 
-                    let mut match_count = 0;
-                    for token in &search_tokens {
-                        if label_lower.contains(token) {
-                            match_count += SCORE_LABEL_MATCH;
-                            if let Some(ref label) = individual.label {
-                                matched_properties.push(serde_json::json!({
-                                    "detail_iri": "rdfs:label",
-                                    "value": label,
-                                    "datatype": "xsd:string",
-                                }));
-                            }
-                        } else if comment_lower.contains(token) {
-                            match_count += SCORE_COMMENT_MATCH;
-                            if let Some(ref comment) = individual.comment {
-                                matched_properties.push(serde_json::json!({
-                                    "detail_iri": "rdfs:comment",
-                                    "value": comment,
-                                    "datatype": "xsd:string",
-                                }));
-                            }
-                        } else {
-                            for (predicate, value) in &individual.properties {
-                                if let Some(val_str) = value.as_literal() {
-                                    if val_str.to_lowercase().contains(token) {
-                                        match_count += SCORE_DETAIL_MATCH;
-                                        let mut entry = serde_json::json!({
-                                            "detail_iri": predicate,
-                                            "value": val_str,
-                                        });
-                                        if let Some(dt) = value.datatype() {
-                                            entry["datatype"] = serde_json::json!(dt);
-                                        }
-                                        matched_properties.push(entry);
-                                        break;
+            let icon = triples.iter()
+                .find(|t| t.predicate == "foundation:hasIcon")
+                .and_then(|t| t.object.as_iri())
+                .and_then(|icon_iri| crate::owl::icon_iri_to_display(conn, icon_iri))
+                .or_else(|| {
+                    triples.iter()
+                        .find(|t| t.predicate == "foundation:icon")
+                        .and_then(|t| t.object.as_literal())
+                });
+
+            let comment = triples.iter()
+                .find(|t| t.predicate == "rdfs:comment")
+                .and_then(|t| t.object.as_literal());
+
+            let mut matched_properties: Vec<serde_json::Value> = Vec::new();
+
+            let score = if !search_tokens.is_empty() {
+                let label_lower = label.as_ref()
+                    .map(|l| l.to_lowercase())
+                    .unwrap_or_default();
+                let comment_lower = comment.as_ref()
+                    .map(|c| c.to_lowercase())
+                    .unwrap_or_default();
+
+                let mut match_count = 0;
+                for token in &search_tokens {
+                    if label_lower.contains(token) {
+                        match_count += SCORE_LABEL_MATCH;
+                        if let Some(ref label_val) = label {
+                            matched_properties.push(serde_json::json!({
+                                "detail_iri": "rdfs:label",
+                                "value": label_val,
+                                "datatype": "xsd:string",
+                            }));
+                        }
+                    } else if comment_lower.contains(token) {
+                        match_count += SCORE_COMMENT_MATCH;
+                        if let Some(ref comment_val) = comment {
+                            matched_properties.push(serde_json::json!({
+                                "detail_iri": "rdfs:comment",
+                                "value": comment_val,
+                                "datatype": "xsd:string",
+                            }));
+                        }
+                    } else {
+                        for triple in triples.iter().filter(|t| {
+                            t.predicate != "rdfs:label"
+                                && t.predicate != "rdfs:comment"
+                                && t.predicate != "foundation:icon"
+                                && t.predicate != "foundation:hasIcon"
+                        }) {
+                            if let Some(val_str) = triple.object.as_literal() {
+                                if val_str.to_lowercase().contains(token) {
+                                    match_count += SCORE_DETAIL_MATCH;
+                                    let mut entry = serde_json::json!({
+                                        "detail_iri": triple.predicate,
+                                        "value": val_str,
+                                    });
+                                    if let Some(dt) = triple.object.datatype() {
+                                        entry["datatype"] = serde_json::json!(dt);
                                     }
+                                    matched_properties.push(entry);
+                                    break;
                                 }
                             }
                         }
                     }
+                }
 
-                    matched_properties.dedup_by(|a, b| a["detail_iri"] == b["detail_iri"]);
+                matched_properties.dedup_by(|a, b| a["detail_iri"] == b["detail_iri"]);
 
-                    if match_count == 0 {
-                        continue;
-                    }
+                if match_count == 0 {
+                    continue;
+                }
 
-                    match_count
-                } else {
-                    0
-                };
+                match_count
+            } else {
+                0
+            };
 
-                things_with_scores.push((serde_json::json!({
-                    "iri": individual.iri,
-                    "label": individual.label,
-                    "icon": individual.icon,
-                    "matchedProperties": matched_properties,
-                }), score));
-            }
+            things_with_scores.push((serde_json::json!({
+                "iri": iri,
+                "label": label,
+                "icon": icon,
+                "matchedProperties": matched_properties,
+            }), score));
         }
 
         if !search_tokens.is_empty() {
