@@ -935,4 +935,107 @@ mod tests {
             "Individual should inherit the concept's icon"
         );
     }
+
+    fn setup_event_hierarchy(conn: &mut Connection) {
+        let event_class = Class::new("foundation:Event");
+        event_class.assert(conn, ClassType::OwlClass, "Event", "https://example.com/event.svg", None, "test").unwrap();
+
+        let vacation_class = Class::new("foundation:Vacation");
+        vacation_class.assert(
+            conn, ClassType::OwlClass, "Vacation", "https://example.com/vacation.svg",
+            Some("foundation:Event"), "test",
+        ).unwrap();
+
+        Property::new("foundation:hasStatus")
+            .assert(conn, PropertyType::ObjectProperty, "hasStatus", None, &["foundation:Event"], None, None, "test")
+            .unwrap();
+    }
+
+    fn create_event(conn: &mut Connection, iri: &str, concept_iri: &str) {
+        let individual = Individual::new(iri);
+        individual.assert(conn, concept_iri, "Test Event", "https://example.com/event.svg", "test").unwrap();
+    }
+
+    #[test]
+    fn test_search_things_returns_subclass_instances() {
+        let mut conn = setup_test_db();
+        setup_event_hierarchy(&mut conn);
+
+        create_event(&mut conn, "foundation:Event_001", "foundation:Event");
+        create_event(&mut conn, "foundation:Vacation_001", "foundation:Vacation");
+
+        let args = serde_json::json!({
+            "concept_iri": "foundation:Event"
+        });
+
+        let result = search_things_one(&conn, &args);
+        assert!(result.success, "search_things should succeed: {:?}", result.error);
+
+        let response = result.result.unwrap();
+        let things = response["things"].as_array().unwrap();
+        let iris: Vec<&str> = things.iter()
+            .filter_map(|t| t["iri"].as_str())
+            .collect();
+
+        assert!(
+            iris.contains(&"foundation:Event_001"),
+            "Results should include direct Event instance"
+        );
+        assert!(
+            iris.contains(&"foundation:Vacation_001"),
+            "Results should include Vacation (subclass) instance"
+        );
+        assert_eq!(things.len(), 2, "Should return exactly both instances");
+    }
+
+    #[test]
+    fn test_find_things_by_detail_returns_subclass_instances() {
+        let mut conn = setup_test_db();
+        setup_event_hierarchy(&mut conn);
+
+        create_event(&mut conn, "foundation:Event_002", "foundation:Event");
+        create_event(&mut conn, "foundation:Vacation_002", "foundation:Vacation");
+
+        let status_iri = "foundation:PlannedStatus";
+        let status_triple = crate::eavto::Triple::new(
+            status_iri, "rdf:type", crate::eavto::Object::Iri("foundation:Status".to_string()),
+        );
+        crate::eavto::store::assert_triples(&mut conn, &[status_triple], "test").unwrap();
+
+        for iri in ["foundation:Event_002", "foundation:Vacation_002"] {
+            let individual = Individual::new(*iri);
+            individual.add_property(
+                &mut conn,
+                "foundation:hasStatus",
+                vec![crate::owl::Object::Iri(status_iri.to_string())],
+                "test",
+            ).unwrap();
+        }
+
+        let args = serde_json::json!({
+            "concept_iri": "foundation:Event",
+            "properties": [
+                {"detail": "foundation:hasStatus", "value": status_iri}
+            ]
+        });
+
+        let result = find_things_by_detail_one(&conn, &args);
+        assert!(result.success, "find_things_by_detail should succeed: {:?}", result.error);
+
+        let response = result.result.unwrap();
+        let things = response["things"].as_array().unwrap();
+        let iris: Vec<&str> = things.iter()
+            .filter_map(|t| t["iri"].as_str())
+            .collect();
+
+        assert!(
+            iris.contains(&"foundation:Event_002"),
+            "Results should include direct Event instance matching the filter"
+        );
+        assert!(
+            iris.contains(&"foundation:Vacation_002"),
+            "Results should include Vacation (subclass) instance matching the filter"
+        );
+        assert_eq!(things.len(), 2, "Should return exactly both instances");
+    }
 }

@@ -21,7 +21,8 @@
     "build:local": "cd scripts/release-local && cargo run --release",
     "build:release": "npm run build && npm run tauri:build",
     "logs": "./scripts/show-logs.sh \"$@\"",
-    "clear:chat": "./scripts/clear-chat-history.sh"
+    "clear:chat": "./scripts/clear-chat-history.sh",
+    "coverage": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --html"
   },
   "license": "MIT",
   "dependencies": {

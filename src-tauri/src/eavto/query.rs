@@ -549,34 +549,33 @@ pub fn find_entities_by_class_with_date_range(
     Ok(entities)
 }
 
-/// Find entities by class and properties with operator and retraction support
+/// Find entities belonging to any of the given class IRIs with property filtering.
 ///
-/// Like `find_by_class_and_properties` but supports comparison operators for
-/// `xsd:dateTime` property values and an `include_retracted` flag.
-///
-/// The `operator` parameter applies to all property constraints and accepts
-/// `"="`, `">="`, `"<="`, `">"`, `"<"`. For `xsd:dateTime` values the
-/// `object_datetime` column (Unix millis) is used with the operator; for all
-/// other values equality matching against `object_value` / `object` is used.
-pub fn find_by_class_and_properties_with_options(
+/// Accepts multiple class IRIs so that polymorphic queries (parent + all descendants)
+/// can be satisfied in a single SQL round-trip. The WHERE clause for the `rdf:type`
+/// triple uses `IN (?, ?, …)` bound to all provided class IRIs.
+pub fn find_by_class_iris_and_properties_with_options(
     conn: &Connection,
-    class_iri: &str,
+    class_iris: &[&str],
     properties: &[(&str, &str, &str)],  // (predicate, value, operator)
     include_retracted: bool,
     limit: usize,
     offset: usize,
 ) -> Result<(Vec<String>, usize)> {
-    if properties.is_empty() {
+    if properties.is_empty() || class_iris.is_empty() {
         return Ok((Vec::new(), 0));
     }
 
     let type_retracted_filter = if include_retracted { "" } else { " AND t0.retracted = 0" };
 
+    let class_placeholders = class_iris.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let mut joins = String::new();
     let mut where_clause = format!(
-        "WHERE t0.predicate = 'rdf:type' AND t0.object = ?{type_retracted_filter}"
+        "WHERE t0.predicate = 'rdf:type' AND t0.object IN ({class_placeholders}){type_retracted_filter}"
     );
-    let mut params: Vec<SqlValue> = vec![SqlValue::Text(class_iri.to_string())];
+    let mut params: Vec<SqlValue> = class_iris.iter()
+        .map(|iri| SqlValue::Text(iri.to_string()))
+        .collect();
 
     for (i, _) in properties.iter().enumerate() {
         let n = i + 1;
@@ -585,7 +584,11 @@ pub fn find_by_class_and_properties_with_options(
 
     for (i, (prop_iri, _, _)) in properties.iter().enumerate() {
         let n = i + 1;
-        let prop_retracted_filter = if include_retracted { String::new() } else { format!(" AND t{n}.retracted = 0") };
+        let prop_retracted_filter = if include_retracted {
+            String::new()
+        } else {
+            format!(" AND t{n}.retracted = 0")
+        };
         where_clause.push_str(&format!("\n           AND t{n}.predicate = ?{prop_retracted_filter}"));
         params.push(SqlValue::Text(prop_iri.to_string()));
     }
@@ -1054,5 +1057,64 @@ mod tests {
             Object::Integer(i) => assert_eq!(*i, 42),
             _ => panic!("Expected Integer object"),
         }
+    }
+
+    #[test]
+    fn test_find_by_class_iris_and_properties_returns_subclass_instances() {
+        let mut conn = setup_test_db();
+
+        // Parent class
+        assert_triples(&mut conn, &[
+            Triple { subject: "foundation:Animal".to_string(), predicate: "rdf:type".to_string(),
+                object: Object::Iri("owl:Class".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
+        ], "test").unwrap();
+
+        // Subclass Dog rdfs:subClassOf Animal
+        assert_triples(&mut conn, &[
+            Triple { subject: "foundation:Dog".to_string(), predicate: "rdf:type".to_string(),
+                object: Object::Iri("owl:Class".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
+            Triple { subject: "foundation:Dog".to_string(), predicate: "rdfs:subClassOf".to_string(),
+                object: Object::Iri("foundation:Animal".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
+        ], "test").unwrap();
+
+        // Instance of parent class with a name property
+        assert_triples(&mut conn, &[
+            Triple { subject: "foundation:Rex".to_string(), predicate: "rdf:type".to_string(),
+                object: Object::Iri("foundation:Dog".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
+            Triple { subject: "foundation:Rex".to_string(), predicate: "foundation:name".to_string(),
+                object: Object::Literal { value: "Rex".to_string(), datatype: Some("xsd:string".to_string()), language: None },
+                tx: 0, created_at: 0, origin_id: 1, retracted: false },
+        ], "test").unwrap();
+
+        // Query using both Animal and Dog class IRIs (simulating polymorphic expansion)
+        let (results, total) = find_by_class_iris_and_properties_with_options(
+            &conn,
+            &["foundation:Animal", "foundation:Dog"],
+            &[("foundation:name", "Rex", "=")],
+            false,
+            100,
+            0,
+        ).unwrap();
+
+        assert_eq!(total, 1);
+        assert!(results.contains(&"foundation:Rex".to_string()));
+    }
+
+    #[test]
+    fn test_find_by_class_iris_single_class_filters_by_property() {
+        let mut conn = setup_test_db();
+        setup_test_data(&mut conn);
+
+        let (results, total) = find_by_class_iris_and_properties_with_options(
+            &conn,
+            &["owl:Class"],
+            &[("rdfs:label", "Test Class", "=")],
+            false,
+            100,
+            0,
+        ).unwrap();
+
+        assert_eq!(total, 1);
+        assert!(results.contains(&"foundation:TestClass".to_string()));
     }
 }

@@ -535,8 +535,16 @@ impl Individual {
         limit: usize,
         offset: usize,
     ) -> Result<(Vec<String>, usize)> {
-        query::find_by_class_and_properties_with_options(conn, class_iri, properties, include_retracted, limit, offset)
-            .map_err(|e| OwlError::DatabaseError(e.to_string()))
+        let descendant_iris = Class::get_descendant_iris(conn, class_iri)?;
+        let class_iris: Vec<&str> = descendant_iris.iter().map(|s| s.as_str()).collect();
+        query::find_by_class_iris_and_properties_with_options(
+            conn,
+            &class_iris,
+            properties,
+            include_retracted,
+            limit,
+            offset,
+        ).map_err(|e| OwlError::DatabaseError(e.to_string()))
     }
 
     /// Returns IRIs of messages in `conversation_iri` ordered by sentAt descending (newest first).
@@ -860,5 +868,110 @@ mod tests {
         } else {
             panic!("Expected ValidationError");
         }
+    }
+
+    #[test]
+    fn test_find_by_class_and_properties_with_options_polymorphic() {
+
+        let mut conn = setup_test_db();
+
+        // Create parent class Animal and subclass Dog
+        let animal_class = Class::new("foundation:Animal");
+        animal_class.assert(
+            &mut conn, ClassType::OwlClass, "Animal", "https://example.com/animal.svg", None, "test",
+        ).unwrap();
+
+        let dog_class = Class::new("foundation:Dog");
+        dog_class.assert(
+            &mut conn, ClassType::OwlClass, "Dog", "https://example.com/dog.svg",
+            Some("foundation:Animal"), "test",
+        ).unwrap();
+
+        // Create a name property on Animal
+        let name_prop = Property::new("foundation:animalName");
+        name_prop.assert(
+            &mut conn, PropertyType::DatatypeProperty, "animalName",
+            None, &["foundation:Animal"], Some("xsd:string"), None, "test",
+        ).unwrap();
+
+        // Create an instance of Dog (subclass of Animal) with a name
+        store::assert_triples(&mut conn, &[
+            Triple { subject: "foundation:Rex".to_string(), predicate: rdf::TYPE.to_string(),
+                object: Object::Iri("foundation:Dog".to_string()),
+                tx: 0, created_at: 0, origin_id: 1, retracted: false },
+            Triple { subject: "foundation:Rex".to_string(), predicate: "foundation:animalName".to_string(),
+                object: Object::Literal { value: "Rex".to_string(),
+                    datatype: Some("xsd:string".to_string()), language: None },
+                tx: 0, created_at: 0, origin_id: 1, retracted: false },
+        ], "test").unwrap();
+
+        // Querying Animal should find the Dog instance via polymorphic expansion
+        let (results, total) = Individual::find_by_class_and_properties_with_options(
+            &conn,
+            "foundation:Animal",
+            &[("foundation:animalName", "Rex", "=")],
+            false,
+            100,
+            0,
+        ).unwrap();
+
+        assert_eq!(total, 1, "Should find 1 result via polymorphic search");
+        assert!(results.contains(&"foundation:Rex".to_string()), "Should include the Dog instance");
+    }
+
+    #[test]
+    fn test_find_by_class_and_properties_with_options_parent_has_no_direct_instances() {
+
+        let mut conn = setup_test_db();
+
+        // Create parent class Event with two subclasses
+        let event_class = Class::new("foundation:Event");
+        event_class.assert(
+            &mut conn, ClassType::OwlClass, "Event", "https://example.com/event.svg", None, "test",
+        ).unwrap();
+
+        let vacation_class = Class::new("foundation:Vacation");
+        vacation_class.assert(
+            &mut conn, ClassType::OwlClass, "Vacation", "https://example.com/vacation.svg",
+            Some("foundation:Event"), "test",
+        ).unwrap();
+
+        let social_class = Class::new("foundation:SocialEvent");
+        social_class.assert(
+            &mut conn, ClassType::OwlClass, "Social Event", "https://example.com/social.svg",
+            Some("foundation:Event"), "test",
+        ).unwrap();
+
+        // No direct Event instances — only subclass instances
+        store::assert_triples(&mut conn, &[
+            Triple { subject: "foundation:HolidayVacation".to_string(), predicate: rdf::TYPE.to_string(),
+                object: Object::Iri("foundation:Vacation".to_string()),
+                tx: 0, created_at: 0, origin_id: 1, retracted: false },
+            Triple { subject: "foundation:HolidayVacation".to_string(), predicate: "foundation:title".to_string(),
+                object: Object::Literal { value: "Holiday".to_string(),
+                    datatype: Some("xsd:string".to_string()), language: None },
+                tx: 0, created_at: 0, origin_id: 1, retracted: false },
+            Triple { subject: "foundation:BirthdayParty".to_string(), predicate: rdf::TYPE.to_string(),
+                object: Object::Iri("foundation:SocialEvent".to_string()),
+                tx: 0, created_at: 0, origin_id: 1, retracted: false },
+            Triple { subject: "foundation:BirthdayParty".to_string(), predicate: "foundation:title".to_string(),
+                object: Object::Literal { value: "Birthday".to_string(),
+                    datatype: Some("xsd:string".to_string()), language: None },
+                tx: 0, created_at: 0, origin_id: 1, retracted: false },
+        ], "test").unwrap();
+
+        // Querying Event with "Holiday" should find the Vacation instance
+        let (results, total) = Individual::find_by_class_and_properties_with_options(
+            &conn,
+            "foundation:Event",
+            &[("foundation:title", "Holiday", "=")],
+            false,
+            100,
+            0,
+        ).unwrap();
+
+        assert_eq!(total, 1);
+        assert!(results.contains(&"foundation:HolidayVacation".to_string()));
+        assert!(!results.contains(&"foundation:BirthdayParty".to_string()));
     }
 }

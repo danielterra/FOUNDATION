@@ -237,13 +237,20 @@ impl Class {
     }
 
 
-    /// Get all instances of this class (returned as IRIs only)
-    /// Call separately when needed - can be thousands of instances
+    /// Get all instances of this class and all its subclasses (polymorphic, returned as IRIs only)
     pub fn get_instances(conn: &Connection, class_iri: &str) -> Result<Vec<String>> {
-        let result = query::get_by_predicate_object(conn, rdf::TYPE, class_iri)?;
-        Ok(result.triples.iter()
-            .map(|t| t.subject.clone())
-            .collect())
+        let descendant_iris = Self::get_descendant_iris(conn, class_iri)?;
+        let mut seen = std::collections::HashSet::new();
+        let mut instances = Vec::new();
+        for iri in &descendant_iris {
+            let result = query::get_by_predicate_object(conn, rdf::TYPE, iri)?;
+            for t in result.triples {
+                if seen.insert(t.subject.clone()) {
+                    instances.push(t.subject);
+                }
+            }
+        }
+        Ok(instances)
     }
 
     /// Get all class IRIs (owl:Class and rdfs:Class)
@@ -263,6 +270,29 @@ impl Class {
     pub fn get_subclass_iris(conn: &Connection, class_iri: &str) -> Result<Vec<String>> {
         let result = query::get_by_predicate_object(conn, rdfs::SUB_CLASS_OF, class_iri)?;
         Ok(result.triples.into_iter().map(|t| t.subject).collect())
+    }
+
+    /// Get the given class IRI plus all descendant class IRIs (BFS traversal of rdfs:subClassOf)
+    pub fn get_descendant_iris(conn: &Connection, class_iri: &str) -> Result<Vec<String>> {
+        let mut result = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+
+        queue.push_back(class_iri.to_string());
+
+        while let Some(current) = queue.pop_front() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            result.push(current.clone());
+            for child in Self::get_subclass_iris(conn, &current)? {
+                if !visited.contains(&child) {
+                    queue.push_back(child);
+                }
+            }
+        }
+
+        Ok(result)
     }
 
     /// Replace the label of an existing class
@@ -424,6 +454,48 @@ mod tests {
         assert_eq!(instances.len(), 2);
         assert!(instances.contains(&"foundation:John".to_string()));
         assert!(instances.contains(&"foundation:Jane".to_string()));
+    }
+
+    #[test]
+    fn test_get_instances_polymorphic() {
+        let mut conn = setup_test_db();
+
+        Class::new("foundation:Animal").assert(
+            &mut conn, ClassType::OwlClass, "Animal", "animal", None, "test",
+        ).unwrap();
+        Class::new("foundation:Mammal").assert(
+            &mut conn, ClassType::OwlClass, "Mammal", "mammal",
+            Some("foundation:Animal"), "test",
+        ).unwrap();
+        Class::new("foundation:Dog").assert(
+            &mut conn, ClassType::OwlClass, "Dog", "dog",
+            Some("foundation:Mammal"), "test",
+        ).unwrap();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Rex", rdf::TYPE, Object::Iri("foundation:Dog".to_string())),
+            Triple::new("foundation:Lassie", rdf::TYPE, Object::Iri("foundation:Dog".to_string())),
+            Triple::new("foundation:Bat", rdf::TYPE, Object::Iri("foundation:Mammal".to_string())),
+            Triple::new("foundation:GenericAnimal", rdf::TYPE, Object::Iri("foundation:Animal".to_string())),
+        ], "test").unwrap();
+
+        let instances = Class::get_instances(&conn, "foundation:Animal").unwrap();
+        assert_eq!(instances.len(), 4);
+        assert!(instances.contains(&"foundation:Rex".to_string()));
+        assert!(instances.contains(&"foundation:Lassie".to_string()));
+        assert!(instances.contains(&"foundation:Bat".to_string()));
+        assert!(instances.contains(&"foundation:GenericAnimal".to_string()));
+
+        let mammal_instances = Class::get_instances(&conn, "foundation:Mammal").unwrap();
+        assert_eq!(mammal_instances.len(), 3);
+        assert!(mammal_instances.contains(&"foundation:Rex".to_string()));
+        assert!(mammal_instances.contains(&"foundation:Lassie".to_string()));
+        assert!(mammal_instances.contains(&"foundation:Bat".to_string()));
+
+        let dog_instances = Class::get_instances(&conn, "foundation:Dog").unwrap();
+        assert_eq!(dog_instances.len(), 2);
+        assert!(dog_instances.contains(&"foundation:Rex".to_string()));
+        assert!(dog_instances.contains(&"foundation:Lassie".to_string()));
     }
 
     #[test]
@@ -635,6 +707,34 @@ mod tests {
             "OWL restrictions must survive set_super_classes; got: {:?}",
             after,
         );
+    }
+
+    #[test]
+    fn test_get_descendant_iris() {
+        let mut conn = setup_test_db();
+
+        // Build: Animal -> Mammal -> Dog (3-level hierarchy)
+        Class::new("foundation:Animal").assert(
+            &mut conn, ClassType::OwlClass, "Animal", "animal", None, "test",
+        ).unwrap();
+        Class::new("foundation:Mammal").assert(
+            &mut conn, ClassType::OwlClass, "Mammal", "mammal",
+            Some("foundation:Animal"), "test",
+        ).unwrap();
+        Class::new("foundation:Dog").assert(
+            &mut conn, ClassType::OwlClass, "Dog", "dog",
+            Some("foundation:Mammal"), "test",
+        ).unwrap();
+
+        let descendants = Class::get_descendant_iris(&conn, "foundation:Animal").unwrap();
+        assert_eq!(descendants.len(), 3);
+        assert!(descendants.contains(&"foundation:Animal".to_string()));
+        assert!(descendants.contains(&"foundation:Mammal".to_string()));
+        assert!(descendants.contains(&"foundation:Dog".to_string()));
+
+        // Querying a leaf class returns only itself
+        let leaf = Class::get_descendant_iris(&conn, "foundation:Dog").unwrap();
+        assert_eq!(leaf, vec!["foundation:Dog".to_string()]);
     }
 
     #[test]
