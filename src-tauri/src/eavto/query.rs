@@ -60,6 +60,27 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
     Ok(QueryResult::new(current_triples))
 }
 
+/// Query retracted triples by entity (E - subject)
+///
+/// Returns all triples with retracted = 1 for the given entity.
+/// Used when include_retracted is true to show historical/removed facts.
+pub fn get_retracted_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
+    let mut stmt = conn.prepare(
+        "SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                object_type, object_number, object_integer, object_datetime, object_boolean,
+                tx, origin_id, retracted, created_at
+         FROM triples
+         WHERE subject = ? AND retracted = 1
+         ORDER BY predicate, tx DESC"
+    )?;
+
+    let triples = stmt
+        .query_map([entity], row_to_triple)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(QueryResult::new(triples))
+}
+
 /// Query triples by predicate (V - value/property)
 pub fn get_by_predicate(conn: &Connection, predicate: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
@@ -296,7 +317,6 @@ pub fn get_backlinks_grouped_limited(
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows)
 }
-
 
 /// Fetch values for specified predicates across multiple subjects in a single query.
 /// Returns Vec<(subject, predicate, object)> ordered by subject, predicate, tx DESC.
@@ -782,7 +802,6 @@ pub fn get_entities_max_tx(
 
     Ok(result)
 }
-
 
 /// Convert SQLite row to Triple
 fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {

@@ -165,6 +165,10 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
         },
     };
 
+    let include_retracted = args.get("include_retracted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     match (|| {
         let individual = Individual::get(conn, iri)?
             .ok_or_else(|| crate::owl::OwlError::NotFound(iri.to_string()))?;
@@ -197,6 +201,68 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
             cb.cmp(&ca)
         });
 
+        let mut properties = individual.serializable_properties(conn);
+
+        if include_retracted {
+            let retracted_triples = crate::eavto::query::get_retracted_by_entity(conn, iri)
+                .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
+            for triple in &retracted_triples.triples {
+                if triple.predicate == "rdfs:label"
+                    || triple.predicate == "rdfs:comment"
+                    || triple.predicate == "foundation:icon"
+                    || triple.predicate == "foundation:hasIcon"
+                {
+                    continue;
+                }
+                let value: serde_json::Value = match &triple.object {
+                    crate::eavto::Object::Iri(s) | crate::eavto::Object::Blank(s) => serde_json::json!(s),
+                    crate::eavto::Object::Literal { value: v, .. } => serde_json::json!(v),
+                    crate::eavto::Object::Integer(i) => serde_json::json!(i),
+                    crate::eavto::Object::Number(n) => serde_json::json!(n),
+                    crate::eavto::Object::Boolean(b) => serde_json::json!(b),
+                    crate::eavto::Object::DateTime(dt) => serde_json::json!(dt),
+                };
+                properties.push(serde_json::json!({
+                    "property": triple.predicate,
+                    "value": value,
+                    "retracted": true,
+                }));
+            }
+        }
+
+        let class_iris: Vec<String> = individual.types.iter()
+            .map(|t| t.iri.clone())
+            .filter(|iri| iri.starts_with("foundation:"))
+            .collect();
+
+        let mut allowed_statuses: Vec<serde_json::Value> = Vec::new();
+        let mut required_fields: Vec<String> = Vec::new();
+        let mut seen_required = std::collections::HashSet::new();
+
+        for class_iri in &class_iris {
+            let status_result = crate::eavto::query::get_by_entity_predicate(
+                conn, class_iri, "foundation:allowedStatus",
+            ).map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
+            for triple in &status_result.triples {
+                if let Some(status_iri) = triple.object.as_iri() {
+                    let label = crate::owl::Thing::get(conn, status_iri).label;
+                    allowed_statuses.push(serde_json::json!({
+                        "iri": status_iri,
+                        "label": label,
+                    }));
+                }
+            }
+
+            let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_iri)?;
+            for r in restrictions {
+                let is_required = r.exact.map(|e| e >= 1).unwrap_or(false)
+                    || r.min.map(|m| m >= 1).unwrap_or(false);
+                if is_required && seen_required.insert(r.property_iri.clone()) {
+                    required_fields.push(r.property_iri);
+                }
+            }
+        }
+
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "iri": individual.iri,
             "label": individual.label,
@@ -206,8 +272,10 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
                 "iri": t.iri,
                 "label": t.label,
             })).collect::<Vec<_>>(),
-            "properties": individual.serializable_properties(conn),
+            "properties": properties,
             "backlinks": backlinks,
+            "allowedStatuses": allowed_statuses,
+            "requiredFields": required_fields,
         }))
     })() {
         Ok(result) => ToolResult {
