@@ -39,6 +39,57 @@ impl Individual {
         }
     }
 
+    pub fn get_from_retracted(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
+        let iri = iri.into();
+        let retracted = query::get_retracted_by_entity(conn, &iri)?;
+        if retracted.triples.is_empty() {
+            return Ok(None);
+        }
+
+        let label = retracted.triples.iter()
+            .find(|t| t.predicate == rdfs::LABEL)
+            .and_then(|t| t.object.as_literal());
+
+        let icon = retracted.triples.iter()
+            .find(|t| t.predicate == "foundation:hasIcon")
+            .and_then(|t| t.object.as_iri())
+            .and_then(|iri| crate::owl::icon_iri_to_display(conn, iri))
+            .or_else(|| {
+                retracted.triples.iter()
+                    .find(|t| t.predicate == "foundation:icon")
+                    .and_then(|t| t.object.as_literal())
+            });
+
+        let comment = retracted.triples.iter()
+            .find(|t| t.predicate == rdfs::COMMENT)
+            .and_then(|t| t.object.as_literal());
+
+        let prop_triples: Vec<_> = retracted.triples.into_iter()
+            .filter(|t| {
+                t.predicate != rdfs::LABEL
+                    && t.predicate != rdfs::COMMENT
+                    && t.predicate != "foundation:icon"
+                    && t.predicate != "foundation:hasIcon"
+            })
+            .collect();
+
+        let property_tx: Vec<i64> = prop_triples.iter().map(|t| t.tx).collect();
+        let properties: Vec<(String, Object)> = prop_triples.into_iter()
+            .map(|t| (t.predicate, t.object))
+            .collect();
+
+        Ok(Some(Self {
+            iri,
+            label,
+            icon,
+            comment,
+            types: Vec::new(),
+            properties,
+            property_tx,
+            backlinks: Vec::new(),
+        }))
+    }
+
     pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
         let iri = iri.into();
 
