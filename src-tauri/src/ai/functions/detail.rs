@@ -1,6 +1,5 @@
 use serde_json::Value;
 use crate::eavto::Connection;
-use tauri::Emitter;
 use super::ToolResult;
 
 pub fn create_detail(
@@ -10,7 +9,7 @@ pub fn create_detail(
 }
 
 fn create_detail_one(
-    conn: &mut Connection, args: &Value, _app: Option<&tauri::AppHandle>,
+    conn: &mut Connection, args: &Value,
 ) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
@@ -165,7 +164,7 @@ pub fn delete_detail(
 }
 
 fn delete_detail_one(
-    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
+    conn: &mut Connection, args: &Value,
 ) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
@@ -182,12 +181,10 @@ fn delete_detail_one(
         let affected_entities = Property::retract(conn, iri, "ai")?;
         let affected_count = affected_entities.len();
 
-        if let Some(app_handle) = app {
-            for entity_id in &affected_entities {
-                app_handle.emit("entity-updated", serde_json::json!({"entityId": entity_id})).ok();
-            }
-            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
+        for entity_id in &affected_entities {
+            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": entity_id}));
         }
+        super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
@@ -215,7 +212,7 @@ pub fn forget_detail_value(
 }
 
 fn forget_detail_value_one(
-    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
+    conn: &mut Connection, args: &Value,
 ) -> ToolResult {
     let thing_iri = match args.get("thing_iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
@@ -258,15 +255,9 @@ fn forget_detail_value_one(
 
         match Individual::remove_property_value(conn, thing_iri, detail_iri, value, "ai")? {
             Some(removed) => {
-                if let Some(app_handle) = app {
-                    app_handle.emit(
-                        "entity-updated", serde_json::json!({"entityId": thing_iri}),
-                    ).ok();
-                    if let Object::Iri(iri) = removed {
-                        app_handle.emit(
-                            "entity-updated", serde_json::json!({"entityId": iri}),
-                        ).ok();
-                    }
+                super::batch::queue_event("entity-updated", serde_json::json!({"entityId": thing_iri}));
+                if let Object::Iri(iri) = removed {
+                    super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
                 }
                 Ok::<_, crate::owl::OwlError>(serde_json::json!({
                     "success": true,

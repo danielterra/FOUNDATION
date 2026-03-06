@@ -1,7 +1,21 @@
+use std::cell::RefCell;
 use serde_json::Value;
 use rusqlite::Connection;
+use tauri::Emitter;
 use crate::eavto::enter_batch_transaction;
 use super::ToolResult;
+
+thread_local! {
+    static PENDING_EVENTS: RefCell<Vec<(String, Value)>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(super) fn queue_event(name: &str, payload: Value) {
+    PENDING_EVENTS.with(|e| e.borrow_mut().push((name.to_string(), payload)));
+}
+
+fn take_events() -> Vec<(String, Value)> {
+    PENDING_EVENTS.with(|e| e.borrow_mut().drain(..).collect())
+}
 
 pub(super) fn run_multi_read(
     conn: &Connection,
@@ -50,7 +64,7 @@ pub(super) fn run_atomic(
     conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
-    exec_one: impl Fn(&mut Connection, &Value, Option<&tauri::AppHandle>) -> ToolResult,
+    exec_one: impl Fn(&mut Connection, &Value) -> ToolResult,
 ) -> ToolResult {
     let ops = match args.as_array() {
         Some(ops) if !ops.is_empty() => ops.clone(),
@@ -66,6 +80,8 @@ pub(super) fn run_atomic(
         },
     };
 
+    take_events();
+
     if let Err(e) = conn.execute_batch("BEGIN") {
         return ToolResult {
             success: false,
@@ -78,9 +94,10 @@ pub(super) fn run_atomic(
     let mut results = Vec::new();
 
     for (i, op) in ops.iter().enumerate() {
-        let result = exec_one(conn, op, app);
+        let result = exec_one(conn, op);
         if !result.success {
             conn.execute_batch("ROLLBACK").ok();
+            take_events();
             return ToolResult {
                 success: false,
                 result: None,
@@ -96,11 +113,20 @@ pub(super) fn run_atomic(
 
     if let Err(e) = conn.execute_batch("COMMIT") {
         conn.execute_batch("ROLLBACK").ok();
+        take_events();
         return ToolResult {
             success: false,
             result: None,
             error: Some(format!("Failed to commit transaction: {e}")),
         };
+    }
+
+    if let Some(app_handle) = app {
+        for (name, payload) in take_events() {
+            app_handle.emit(&name, payload).ok();
+        }
+    } else {
+        take_events();
     }
 
     ToolResult {

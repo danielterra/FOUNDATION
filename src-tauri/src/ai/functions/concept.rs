@@ -1,6 +1,5 @@
 use serde_json::Value;
 use rusqlite::Connection;
-use tauri::Emitter;
 use crate::owl::Class;
 use super::ToolResult;
 
@@ -23,7 +22,7 @@ mod tests {
             "required_fields": ["foundation:nonExistent"]
         });
 
-        let result = update_concept_one(&mut conn, &args, None);
+        let result = update_concept_one(&mut conn, &args);
 
         assert!(!result.success);
         let error = result.error.unwrap();
@@ -48,7 +47,7 @@ mod tests {
             "required_fields": ["foundation:myProp"]
         });
 
-        let result = update_concept_one(&mut conn, &args, None);
+        let result = update_concept_one(&mut conn, &args);
         assert!(result.success, "Expected success, got error: {:?}", result.error);
     }
 
@@ -66,7 +65,7 @@ mod tests {
             "required_fields": ["foundation:myRef"]
         });
 
-        let result = update_concept_one(&mut conn, &args, None);
+        let result = update_concept_one(&mut conn, &args);
         assert!(result.success, "Expected success, got error: {:?}", result.error);
     }
 }
@@ -329,7 +328,6 @@ pub fn create_concept(
 fn create_concept_one(
     conn: &mut Connection,
     args: &Value,
-    app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
@@ -369,9 +367,7 @@ fn create_concept_one(
             Class::set_comment(conn, iri, comment_text, "ai")?;
         }
 
-        if let Some(app_handle) = app {
-            app_handle.emit("entity-created", serde_json::json!({"entityId": iri})).ok();
-        }
+        super::batch::queue_event("entity-created", serde_json::json!({"entityId": iri}));
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
@@ -403,7 +399,6 @@ pub fn update_concept(
 fn update_concept_one(
     conn: &mut Connection,
     args: &Value,
-    app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
@@ -470,9 +465,7 @@ fn update_concept_one(
             updated_fields.push("requiredFields");
         }
 
-        if let Some(app_handle) = app {
-            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
-        }
+        super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
@@ -504,7 +497,6 @@ pub fn delete_concept(
 fn delete_concept_one(
     conn: &mut Connection,
     args: &Value,
-    app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
@@ -518,9 +510,7 @@ fn delete_concept_one(
     match (|| {
         Class::retract_all(conn, iri, "ai")?;
 
-        if let Some(app_handle) = app {
-            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
-        }
+        super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,

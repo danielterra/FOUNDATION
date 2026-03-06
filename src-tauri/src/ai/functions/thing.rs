@@ -1,6 +1,5 @@
 use serde_json::Value;
 use crate::eavto::Connection;
-use tauri::Emitter;
 use crate::owl::{Class, Individual, Object};
 use super::ToolResult;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -299,7 +298,6 @@ pub fn create_thing(
 fn create_thing_one(
     conn: &mut Connection,
     args: &Value,
-    app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
     let concept_iri = match args.get("concept_iri").and_then(|v| v.as_str()) {
         Some(concept_iri) => concept_iri,
@@ -433,11 +431,7 @@ fn create_thing_one(
             }
         }
 
-        if let Some(app_handle) = app {
-            app_handle.emit(
-                "entity-created", serde_json::json!({"entityId": generated_iri.clone()}),
-            ).ok();
-        }
+        super::batch::queue_event("entity-created", serde_json::json!({"entityId": generated_iri.clone()}));
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
@@ -469,7 +463,6 @@ pub fn update_thing(
 fn update_thing_one(
     conn: &mut Connection,
     args: &Value,
-    app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
@@ -585,11 +578,9 @@ fn update_thing_one(
             }
         }
 
-        if let Some(app_handle) = app {
-            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
-            for ref_iri in &referenced_iris {
-                app_handle.emit("entity-updated", serde_json::json!({"entityId": ref_iri})).ok();
-            }
+        super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+        for ref_iri in &referenced_iris {
+            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": ref_iri}));
         }
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
@@ -622,7 +613,6 @@ pub fn delete_thing(
 fn delete_thing_one(
     conn: &mut Connection,
     args: &Value,
-    app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
@@ -636,9 +626,7 @@ fn delete_thing_one(
     match (|| {
         Individual::retract(conn, iri, "ai")?;
 
-        if let Some(app_handle) = app {
-            app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
-        }
+        super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
