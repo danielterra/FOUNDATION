@@ -158,6 +158,47 @@ fn do_assert_triples(
     Ok(tx_id)
 }
 
+/// Append triples without retracting existing (subject, predicate) pairs.
+///
+/// Unlike `assert_triples`, this does NOT retract existing values for the same
+/// (subject, predicate) before inserting. Use this when you need to add triples
+/// that share a predicate with existing triples that must be preserved.
+pub fn append_triples(
+    conn: &mut Connection,
+    triples: &[Triple],
+    origin: &str,
+) -> Result<i64> {
+    if IN_BATCH_TX.with(|f| f.get()) {
+        let sp = conn.savepoint()?;
+        let tx_id = do_append_triples(&sp, triples, origin)?;
+        sp.commit()?;
+        Ok(tx_id)
+    } else {
+        let tx = conn.transaction()?;
+        let tx_id = do_append_triples(&tx, triples, origin)?;
+        tx.commit()?;
+        Ok(tx_id)
+    }
+}
+
+fn do_append_triples(
+    tx: &rusqlite::Connection,
+    triples: &[Triple],
+    origin: &str,
+) -> Result<i64> {
+    let now = now_millis();
+    tx.execute(
+        "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
+        (origin, now),
+    )?;
+    let tx_id = tx.last_insert_rowid();
+    let origin_id = get_or_create_origin(tx, origin)?;
+    for triple in triples {
+        insert_triple(tx, triple, tx_id, origin_id, now)?;
+    }
+    Ok(tx_id)
+}
+
 /// Retract triples (mark as retracted, don't delete)
 ///
 /// Returns the transaction ID of the retraction.

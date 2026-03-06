@@ -286,10 +286,9 @@ pub fn set_class_required_fields(
     }
 
     // 2. Assert new minCardinality = 1 restrictions for each required property.
-    // All triples must be submitted in a single assert_triples call so that the
-    // multiple rdfs:subClassOf blank node links are inserted atomically without
-    // each call retracting the previous one.
-    let mut new_triples: Vec<Triple> = Vec::new();
+    // The blank node internal triples use assert_triples (safe: fresh blank node subjects).
+    // The (class_iri, rdfs:subClassOf, blank_id) links use append_triples to avoid
+    // retracting the real parent class rdfs:subClassOf link.
     let mut blank_ids: Vec<String> = Vec::new();
 
     for prop_iri in required_properties {
@@ -300,15 +299,21 @@ pub fn set_class_required_fields(
         blank_ids.push(blank_id);
     }
 
+    let mut blank_internal_triples: Vec<Triple> = Vec::new();
+    let mut subclass_link_triples: Vec<Triple> = Vec::new();
+
     for (prop_iri, blank_id) in required_properties.iter().zip(blank_ids.iter()) {
-        new_triples.push(Triple::new(class_iri, "rdfs:subClassOf", Object::Blank(blank_id.clone())));
-        new_triples.push(Triple::new(blank_id.as_str(), "rdf:type", Object::Iri(owl::RESTRICTION.to_string())));
-        new_triples.push(Triple::new(blank_id.as_str(), owl::ON_PROPERTY, Object::Iri(prop_iri.to_string())));
-        new_triples.push(Triple::new(blank_id.as_str(), owl::MIN_CARDINALITY, Object::Integer(1)));
+        subclass_link_triples.push(Triple::new(class_iri, "rdfs:subClassOf", Object::Blank(blank_id.clone())));
+        blank_internal_triples.push(Triple::new(blank_id.as_str(), "rdf:type", Object::Iri(owl::RESTRICTION.to_string())));
+        blank_internal_triples.push(Triple::new(blank_id.as_str(), owl::ON_PROPERTY, Object::Iri(prop_iri.to_string())));
+        blank_internal_triples.push(Triple::new(blank_id.as_str(), owl::MIN_CARDINALITY, Object::Integer(1)));
     }
 
-    if !new_triples.is_empty() {
-        store::assert_triples(conn, &new_triples, origin)?;
+    if !blank_internal_triples.is_empty() {
+        store::assert_triples(conn, &blank_internal_triples, origin)?;
+    }
+    if !subclass_link_triples.is_empty() {
+        store::append_triples(conn, &subclass_link_triples, origin)?;
     }
 
     Ok(())
