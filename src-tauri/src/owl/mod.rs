@@ -220,12 +220,11 @@ pub fn replace_all_property_iris(
     for triple in old.triples {
         store::retract_triples(conn, &[Triple::new(entity, predicate, triple.object)], origin)?;
     }
-    for value in values {
-        store::assert_triples(
-            conn,
-            &[Triple::new(entity, predicate, Object::Iri(value.to_string()))],
-            origin,
-        )?;
+    let new_triples: Vec<Triple> = values.iter()
+        .map(|value| Triple::new(entity, predicate, Object::Iri(value.to_string())))
+        .collect();
+    if !new_triples.is_empty() {
+        store::assert_triples(conn, &new_triples, origin)?;
     }
     Ok(())
 }
