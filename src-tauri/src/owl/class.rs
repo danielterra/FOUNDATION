@@ -103,7 +103,10 @@ impl Class {
 
         let super_result = query::get_by_entity_predicate(conn, &iri, rdfs::SUB_CLASS_OF)?;
         let super_classes: Vec<Thing> = super_result.triples.iter()
-            .filter_map(|t| t.object.as_iri())
+            .filter_map(|t| match &t.object {
+                Object::Iri(iri) => Some(iri.as_str()),
+                _ => None,
+            })
             .map(|super_iri| Thing::get(conn, super_iri))
             .collect();
 
@@ -174,8 +177,10 @@ impl Class {
 
         let super_result = query::get_by_entity_predicate(conn, class_iri, rdfs::SUB_CLASS_OF)?;
         let super_classes: Vec<String> = super_result.triples.iter()
-            .filter_map(|t| t.object.as_iri())
-            .map(|s| s.to_string())
+            .filter_map(|t| match &t.object {
+                Object::Iri(iri) => Some(iri.clone()),
+                _ => None,
+            })
             .collect();
 
         for super_class_iri in super_classes {
@@ -296,7 +301,10 @@ impl Class {
         Ok(())
     }
 
-    /// Replace all rdfs:subClassOf relationships with the given list
+    /// Replace all rdfs:subClassOf relationships with the given list.
+    ///
+    /// Only IRI-type subClassOf triples are replaced. Blank node triples
+    /// (OWL restriction nodes added by set_class_required_fields) are preserved.
     pub fn set_super_classes(
         conn: &mut Connection,
         iri: &str,
@@ -305,17 +313,19 @@ impl Class {
     ) -> Result<()> {
         let old = query::get_by_entity_predicate(conn, iri, rdfs::SUB_CLASS_OF)?;
         for triple in old.triples {
-            store::retract_triples(
-                conn,
-                &[Triple::new(iri, rdfs::SUB_CLASS_OF, triple.object)],
-                origin,
-            )?;
+            if matches!(triple.object, Object::Iri(_)) {
+                store::retract_triples(
+                    conn,
+                    &[Triple::new(iri, rdfs::SUB_CLASS_OF, triple.object)],
+                    origin,
+                )?;
+            }
         }
         let new_triples: Vec<Triple> = super_classes
             .iter()
             .map(|sc| Triple::new(iri, rdfs::SUB_CLASS_OF, Object::Iri(sc.to_string())))
             .collect();
-        store::assert_triples(conn, &new_triples, origin)?;
+        store::append_triples(conn, &new_triples, origin)?;
         Ok(())
     }
 
@@ -586,5 +596,88 @@ mod tests {
         assert_eq!(values[0], "foundation:A");
         assert_eq!(values[1], "foundation:B");
         assert_eq!(values[2], "foundation:C");
+    }
+
+    #[test]
+    fn test_set_super_classes_preserves_owl_restrictions() {
+        use crate::owl::cardinality;
+
+        let mut conn = setup_test_db();
+
+        let class = Class::new("foundation:Task");
+        class.assert(
+            &mut conn, ClassType::OwlClass, "Task", "task-icon", None, "test",
+        ).unwrap();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new(
+                "foundation:taskName", "rdf:type",
+                Object::Iri("owl:DatatypeProperty".to_string()),
+            ),
+        ], "test").unwrap();
+
+        cardinality::set_class_required_fields(
+            &mut conn, "foundation:Task", &["foundation:taskName"], "test",
+        ).unwrap();
+
+        let before =
+            cardinality::get_class_cardinality_restrictions(&conn, "foundation:Task").unwrap();
+        assert_eq!(before.len(), 1, "Should have 1 restriction before set_super_classes");
+
+        Class::set_super_classes(
+            &mut conn, "foundation:Task", &["owl:Thing"], "test",
+        ).unwrap();
+
+        let after =
+            cardinality::get_class_cardinality_restrictions(&conn, "foundation:Task").unwrap();
+        assert_eq!(
+            after.len(), 1,
+            "OWL restrictions must survive set_super_classes; got: {:?}",
+            after,
+        );
+    }
+
+    #[test]
+    fn test_get_super_classes_excludes_blank_nodes() {
+        use crate::owl::cardinality;
+
+        let mut conn = setup_test_db();
+
+        let parent = Class::new("foundation:BaseItem");
+        parent.assert(
+            &mut conn, ClassType::OwlClass, "Base Item", "base-icon", None, "test",
+        ).unwrap();
+
+        let child = Class::new("foundation:SpecificItem");
+        child.assert(
+            &mut conn, ClassType::OwlClass, "Specific Item", "item-icon",
+            Some("foundation:BaseItem"), "test",
+        ).unwrap();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new(
+                "foundation:itemName", "rdf:type",
+                Object::Iri("owl:DatatypeProperty".to_string()),
+            ),
+        ], "test").unwrap();
+
+        cardinality::set_class_required_fields(
+            &mut conn, "foundation:SpecificItem", &["foundation:itemName"], "test",
+        ).unwrap();
+
+        let class_data = Class::get(&conn, "foundation:SpecificItem").unwrap().unwrap();
+        let super_iris: Vec<&str> =
+            class_data.super_classes.iter().map(|t| t.iri.as_str()).collect();
+
+        assert!(
+            !super_iris.iter().any(|iri| iri.starts_with("_:")),
+            "superClasses must not contain blank node restriction IRIs; got: {:?}",
+            super_iris,
+        );
+        assert!(
+            super_iris.contains(&"foundation:BaseItem"),
+            "superClasses must contain the real parent class; got: {:?}",
+            super_iris,
+        );
     }
 }

@@ -215,13 +215,16 @@ impl Individual {
 
         match datatype {
             "xsd:dateTime" => {
-                raw.parse::<i64>().map_err(|_| {
-                    OwlError::ValidationError(format!(
+                let valid = raw.parse::<i64>().is_ok()
+                    || chrono::DateTime::parse_from_rfc3339(raw).is_ok();
+                if !valid {
+                    return Err(OwlError::ValidationError(format!(
                         "Property {}: '{}' is not a valid xsd:dateTime \
-                         (expected Unix milliseconds i64, e.g. '1772380322157')",
+                         (expected Unix milliseconds i64, e.g. '1772380322157', \
+                         or RFC3339, e.g. '2026-03-06T12:00:00-03:00')",
                         property, raw
-                    ))
-                })?;
+                    )));
+                }
             }
             "xsd:date" => {
                 chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|_| {

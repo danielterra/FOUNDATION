@@ -58,11 +58,18 @@ fn create_detail_one(
     let range = args.get("range").and_then(|v| v.as_str());
     let unit = args.get("unit").and_then(|v| v.as_str());
 
+    let domain_strings_owned: Vec<String> = domain_strings.clone();
+
     match (|| {
         use crate::owl::Property;
 
         let detail = Property::new(iri);
         detail.assert(conn, detail_type, label, comment, &domains, range, unit, "ai")?;
+
+        super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+        for domain_iri in &domain_strings_owned {
+            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": domain_iri}));
+        }
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
@@ -123,6 +130,8 @@ fn get_detail_one(conn: &Connection, args: &Value) -> ToolResult {
             }
         }
 
+        let has_datetime_range = detail.ranges.iter().any(|r| r == "xsd:dateTime");
+
         let mut response = serde_json::json!({
             "iri": detail.iri,
             "label": detail.label,
@@ -137,6 +146,12 @@ fn get_detail_one(conn: &Connection, args: &Value) -> ToolResult {
             "inverseOf": detail.inverse_of,
             "unit": detail.unit,
         });
+
+        if has_datetime_range {
+            response["valueFormat"] = serde_json::json!(
+                "Unix milliseconds (i64), e.g. 1772380322157, or RFC3339, e.g. 2026-03-06T12:00:00-03:00"
+            );
+        }
 
         if !allowed_values.is_empty() {
             response["allowedValues"] = serde_json::json!(allowed_values);
