@@ -319,13 +319,21 @@ fn create_thing_one(
         },
     };
 
-    let icon = match args.get("icon").and_then(|v| v.as_str()) {
-        Some(icon) => icon,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: icon".to_string()),
-        },
+    let icon = if let Some(icon_str) = args.get("icon").and_then(|v| v.as_str()) {
+        icon_str.to_string()
+    } else {
+        let concept_thing = crate::owl::Thing::get(conn, concept_iri);
+        match concept_thing.icon {
+            Some(icon) => icon,
+            None => return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!(
+                    "No icon provided and concept '{}' has no icon to inherit",
+                    concept_iri
+                )),
+            },
+        }
     };
 
     let comment = args.get("comment").and_then(|v| v.as_str());
@@ -335,7 +343,7 @@ fn create_thing_one(
 
     match (|| {
         let individual = Individual::new(&generated_iri);
-        individual.assert(conn, concept_iri, label, icon, "ai")?;
+        individual.assert(conn, concept_iri, label, &icon, "ai")?;
 
         if let Some(comment_text) = comment {
             individual.add_property(conn, "rdfs:comment", vec![Object::Literal {
@@ -403,7 +411,6 @@ fn create_thing_one(
             }
         }
 
-        // Validate all required fields were provided
         let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, concept_iri)?;
         let required: Vec<&str> = restrictions.iter()
             .filter(|r| r.is_required())
@@ -886,5 +893,32 @@ mod tests {
         let updated = response["updatedFields"].as_array().unwrap();
         assert_eq!(updated.len(), 1, "Only label should be reported as updated");
         assert_eq!(updated[0], "label");
+    }
+
+    #[test]
+    fn test_create_thing_without_icon_inherits_from_concept() {
+        let mut conn = setup_test_db();
+        setup_task_class_with_statuses(&mut conn);
+
+        let args = serde_json::json!({
+            "concept_iri": "foundation:Task",
+            "label": "My Inherited Icon Task"
+        });
+
+        let result = create_thing_one(&mut conn, &args, None);
+        assert!(result.success, "create_thing without icon should succeed: {:?}", result.error);
+
+        let response = result.result.unwrap();
+        let iri = response["iri"].as_str().expect("result should have iri");
+
+        let individual = crate::owl::Individual::get(&conn, iri)
+            .expect("should be able to get individual")
+            .expect("individual should exist");
+
+        assert_eq!(
+            individual.icon.as_deref(),
+            Some("https://example.com/task.svg"),
+            "Individual should inherit the concept's icon"
+        );
     }
 }

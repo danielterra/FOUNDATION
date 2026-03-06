@@ -259,8 +259,9 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                         "Material icon name (e.g., 'person', 'business') OR image URL.",
                         " For attachment images, get foundation:filePath from the File entity",
                         " and use that URL (e.g., 'file:///path/to/image.jpg').",
+                        " Optional: if not provided, the concept's icon will be used.",
                     ).to_string(),
-                    required: true,
+                    required: false,
                     schema: None,
                 },
                 Parameter {
