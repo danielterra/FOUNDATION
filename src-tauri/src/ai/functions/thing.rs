@@ -36,7 +36,7 @@ fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
 
     let limit = args.get("limit")
         .and_then(|v| v.as_u64())
-        .unwrap_or(100) as usize;
+        .unwrap_or(15) as usize;
 
     let offset = args.get("offset")
         .and_then(|v| v.as_u64())
@@ -129,13 +129,6 @@ fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
                 for token in &search_tokens {
                     if label_lower.contains(token) {
                         match_count += SCORE_LABEL_MATCH;
-                        if let Some(ref label_val) = label {
-                            matched_properties.push(serde_json::json!({
-                                "detail_iri": "rdfs:label",
-                                "value": label_val,
-                                "datatype": "xsd:string",
-                            }));
-                        }
                     } else if comment_lower.contains(token) {
                         match_count += SCORE_COMMENT_MATCH;
                         if let Some(ref comment_val) = comment {
@@ -1371,10 +1364,11 @@ mod tests {
         let thing = things.iter().find(|t| t["iri"].as_str() == Some("foundation:Task_label_match_001"))
             .expect("Task should be in results");
 
+        assert_eq!(thing["label"].as_str(), Some("Ingresse Contract"), "label should appear at root level");
         let matched = thing["matchedProperties"].as_array().unwrap();
         assert!(
-            matched.iter().any(|p| p["detail_iri"].as_str() == Some("rdfs:label") && p["value"].as_str() == Some("Ingresse Contract")),
-            "matchedProperties should contain rdfs:label entry with value 'Ingresse Contract'"
+            matched.iter().all(|p| p["detail_iri"].as_str() != Some("rdfs:label")),
+            "matchedProperties must not contain rdfs:label (label is already at root level)"
         );
     }
 
