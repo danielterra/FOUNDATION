@@ -50,8 +50,10 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             name: "remember_concept".to_string(),
             array_mode: true,
             description: concat!(
-                "Remember everything you know about a specific concept -",
-                " what it's related to, what things belong to it.",
+                "Remember everything you know about a specific concept.",
+                " Returns properties (with source class), incomingProperties (object properties",
+                " whose range is this concept), allowedStatuses (iri + label + icon + color),",
+                " and requiredFields (properties with minCardinality >= 1).",
             ).to_string(),
             parameters: vec![
                 Parameter {

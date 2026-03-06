@@ -151,7 +151,56 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
             status_iris.iter()
                 .map(|status_iri| {
                     let thing = crate::owl::Thing::get(conn, status_iri);
-                    serde_json::json!({"iri": status_iri, "label": thing.label})
+                    let (icon, color) = crate::owl::resolve_status_appearance(conn, status_iri);
+                    serde_json::json!({
+                        "iri": status_iri,
+                        "label": thing.label,
+                        "icon": icon,
+                        "color": color,
+                    })
+                })
+                .collect()
+        };
+
+        let required_fields: Vec<serde_json::Value> = {
+            let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, iri)?;
+            restrictions.into_iter()
+                .filter(|r| r.exact.map(|e| e >= 1).unwrap_or(false) || r.min.map(|m| m >= 1).unwrap_or(false))
+                .map(|r| {
+                    let label = crate::owl::get_literal_property(conn, &r.property_iri, "rdfs:label")
+                        .ok()
+                        .flatten();
+                    serde_json::json!({
+                        "property": r.property_iri,
+                        "label": label,
+                    })
+                })
+                .collect()
+        };
+
+        let incoming_properties: Vec<serde_json::Value> = {
+            use crate::eavto::query;
+            let result = query::get_by_predicate_object(conn, "rdfs:range", iri)
+                .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
+            result.triples.iter()
+                .map(|t| {
+                    let prop_iri = &t.subject;
+                    let label = crate::owl::get_literal_property(conn, prop_iri, "rdfs:label")
+                        .ok()
+                        .flatten();
+                    let domain_iris = crate::owl::get_all_iri_properties(conn, prop_iri, "rdfs:domain")
+                        .unwrap_or_default();
+                    let domains: Vec<serde_json::Value> = domain_iris.iter()
+                        .map(|d| {
+                            let d_label = crate::owl::Thing::get(conn, d).label;
+                            serde_json::json!({"iri": d, "label": d_label})
+                        })
+                        .collect();
+                    serde_json::json!({
+                        "property": prop_iri,
+                        "label": label,
+                        "domains": domains,
+                    })
                 })
                 .collect()
         };
@@ -178,14 +227,13 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
                 "source": source,
             })).collect::<Vec<_>>(),
             "instanceCount": concept.backlinks.len(),
+            "allowedStatuses": allowed_statuses,
+            "requiredFields": required_fields,
+            "incomingProperties": incoming_properties,
         });
 
         if !allowed_values.is_empty() {
             response["allowedValues"] = serde_json::json!(allowed_values);
-        }
-
-        if !allowed_statuses.is_empty() {
-            response["allowedStatuses"] = serde_json::json!(allowed_statuses);
         }
 
         Ok::<_, crate::owl::OwlError>(response)
