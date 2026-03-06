@@ -5,6 +5,31 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-06
+
+### Added
+
+- **Ontology required fields validation**: `update_concept` now validates that each property in `required_fields` actually exists as a `DatatypeProperty` or `ObjectProperty` before saving; returns a descriptive error if any property is undefined
+- **Required fields display**: Inspector property list shows required fields with an asterisk
+- **Cardinality validation on detail removal**: Validates cardinality constraints when removing a thing detail
+- **Required fields management in AI functions**: AI can now manage required fields and cardinality constraints on concepts
+- **Enriched `remember_concept`**: Now returns statuses, requiredFields, and incomingProperties
+- **Enriched `remember_thing`**: Now returns retracted facts, allowed statuses, and required fields
+- **Partial property updates in `update_thing`**: Supports status validation and partial updates
+
+### Fixed
+
+- **Inspector backlinks limit**: Backlinks in inspector now limited to 15 per group with real total count
+- **`replace_all_property_iris` batch save**: Fixed retracting previous values by using batch `assert_triples`
+
+### Refactored
+
+- **`update_thing` IRI event deduplication**: Uses `HashSet` to avoid duplicate IRI event emissions
+- **Removed `learn_thing_detail`**: Replaced by `update_thing` for a cleaner API
+- **`learn_thing_detail` → `update_thing` migration**: Removed redundant function
+
+---
+
 ## [0.5.3] - 2026-03-05
 
 ### Fixed
