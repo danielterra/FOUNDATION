@@ -495,7 +495,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             name: "update_concept".to_string(),
             array_mode: true,
             description: concat!(
-                "Update details about a concept (name, icon, description, allowed statuses).",
+                "Update details about a concept (name, icon, description, allowed statuses, required fields).",
             ).to_string(),
             parameters: vec![
                 Parameter {
@@ -545,6 +545,19 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                         " Example: ['foundation:Active', 'foundation:Archived'].",
                         " Once set, learn_thing_detail with foundation:hasStatus will reject",
                         " status values not in this list.",
+                    ).to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "required_fields".to_string(),
+                    param_type: "array".to_string(),
+                    description: concat!(
+                        "Complete list of property IRIs that are required (minCardinality >= 1) for instances of this concept.",
+                        " REPLACES any existing OWL minCardinality restrictions.",
+                        " Pass an empty array to remove all required field restrictions.",
+                        " Example: ['foundation:name', 'foundation:hasStatus'].",
+                        " Once set, instances cannot be created without providing these fields.",
                     ).to_string(),
                     required: false,
                     schema: None,

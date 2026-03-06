@@ -19,6 +19,11 @@ pub struct CardinalityRestriction {
 }
 
 impl CardinalityRestriction {
+    /// Returns true if this restriction requires at least one value (minCardinality >= 1 or exact >= 1)
+    pub fn is_required(&self) -> bool {
+        self.exact.map(|e| e >= 1).unwrap_or(false) || self.min.map(|m| m >= 1).unwrap_or(false)
+    }
+
     /// Check if a count violates this cardinality restriction
     pub fn is_violated(&self, count: usize) -> bool {
         let count = count as u32;
@@ -237,6 +242,78 @@ pub fn validate_property_cardinality(
     Ok(())
 }
 
+/// Set the required fields for a class by creating OWL minCardinality restrictions.
+///
+/// Retracts all existing owl:Restriction blank nodes linked via rdfs:subClassOf,
+/// then asserts new ones for each property in `required_properties`.
+/// Pass an empty slice to remove all required field restrictions.
+pub fn set_class_required_fields(
+    conn: &mut Connection,
+    class_iri: &str,
+    required_properties: &[&str],
+    origin: &str,
+) -> Result<()> {
+    use crate::eavto::{store, query, Triple, Object};
+    use sha2::{Sha256, Digest};
+
+    // 1. Find and retract existing OWL restriction blank nodes
+    let subclass_result = query::get_by_entity_predicate(conn, class_iri, "rdfs:subClassOf")?;
+    for triple in &subclass_result.triples {
+        if let Some(node) = triple.object.as_iri() {
+            if !node.starts_with("_:") {
+                continue;
+            }
+            let type_result = query::get_by_entity_predicate(conn, node, "rdf:type")?;
+            let is_restriction = type_result.triples.iter()
+                .any(|t| t.object.as_iri().map(|iri| iri == owl::RESTRICTION).unwrap_or(false));
+            if !is_restriction {
+                continue;
+            }
+
+            let mut to_retract: Vec<Triple> = Vec::new();
+            to_retract.push(Triple::new(class_iri, "rdfs:subClassOf", triple.object.clone()));
+            for rt in &type_result.triples {
+                to_retract.push(Triple::new(node, "rdf:type", rt.object.clone()));
+            }
+            for predicate in [owl::ON_PROPERTY, owl::MIN_CARDINALITY, owl::CARDINALITY, owl::MAX_CARDINALITY] {
+                let result = query::get_by_entity_predicate(conn, node, predicate)?;
+                for rt in result.triples {
+                    to_retract.push(Triple::new(node, predicate, rt.object));
+                }
+            }
+            store::retract_triples(conn, &to_retract, origin)?;
+        }
+    }
+
+    // 2. Assert new minCardinality = 1 restrictions for each required property.
+    // All triples must be submitted in a single assert_triples call so that the
+    // multiple rdfs:subClassOf blank node links are inserted atomically without
+    // each call retracting the previous one.
+    let mut new_triples: Vec<Triple> = Vec::new();
+    let mut blank_ids: Vec<String> = Vec::new();
+
+    for prop_iri in required_properties {
+        let mut hasher = Sha256::new();
+        hasher.update(format!("{}:{}:restriction", class_iri, prop_iri).as_bytes());
+        let hash = hasher.finalize();
+        let blank_id = format!("_:restriction_{}", hash[..8].iter().map(|b| format!("{:02x}", b)).collect::<String>());
+        blank_ids.push(blank_id);
+    }
+
+    for (prop_iri, blank_id) in required_properties.iter().zip(blank_ids.iter()) {
+        new_triples.push(Triple::new(class_iri, "rdfs:subClassOf", Object::Blank(blank_id.clone())));
+        new_triples.push(Triple::new(blank_id.as_str(), "rdf:type", Object::Iri(owl::RESTRICTION.to_string())));
+        new_triples.push(Triple::new(blank_id.as_str(), owl::ON_PROPERTY, Object::Iri(prop_iri.to_string())));
+        new_triples.push(Triple::new(blank_id.as_str(), owl::MIN_CARDINALITY, Object::Integer(1)));
+    }
+
+    if !new_triples.is_empty() {
+        store::assert_triples(conn, &new_triples, origin)?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,5 +373,78 @@ mod tests {
         assert!(!restriction.is_violated(1)); // OK
         assert!(!restriction.is_violated(2)); // OK
         assert!(restriction.is_violated(3));  // Too many
+    }
+
+    #[test]
+    fn test_set_class_required_fields() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+
+        // Set up class
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+        ], "test").unwrap();
+
+        // Mark two properties as required
+        set_class_required_fields(
+            &mut conn,
+            "foundation:TestClass",
+            &["foundation:name", "foundation:email"],
+            "test",
+        ).unwrap();
+
+        // Verify restrictions exist
+        let restrictions = get_class_cardinality_restrictions(&conn, "foundation:TestClass").unwrap();
+        assert_eq!(restrictions.len(), 2);
+        let props: Vec<&str> = restrictions.iter().map(|r| r.property_iri.as_str()).collect();
+        assert!(props.contains(&"foundation:name"));
+        assert!(props.contains(&"foundation:email"));
+        for r in &restrictions {
+            assert_eq!(r.min, Some(1));
+        }
+
+        // Replace with just one required field
+        set_class_required_fields(
+            &mut conn,
+            "foundation:TestClass",
+            &["foundation:name"],
+            "test",
+        ).unwrap();
+
+        let restrictions2 = get_class_cardinality_restrictions(&conn, "foundation:TestClass").unwrap();
+        assert_eq!(restrictions2.len(), 1);
+        assert_eq!(restrictions2[0].property_iri, "foundation:name");
+
+        // Clear all required fields
+        set_class_required_fields(&mut conn, "foundation:TestClass", &[], "test").unwrap();
+        let restrictions3 = get_class_cardinality_restrictions(&conn, "foundation:TestClass").unwrap();
+        assert_eq!(restrictions3.len(), 0);
+    }
+
+    #[test]
+    fn test_validate_property_cardinality() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Person", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Person", "rdfs:subClassOf", Object::Blank("_:r1".to_string())),
+            Triple::new("_:r1", "rdf:type", Object::Iri("owl:Restriction".to_string())),
+            Triple::new("_:r1", "owl:onProperty", Object::Iri("foundation:name".to_string())),
+            Triple::new("_:r1", "owl:minCardinality", Object::Integer(1)),
+        ], "test").unwrap();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:john", "rdf:type", Object::Iri("foundation:Person".to_string())),
+        ], "test").unwrap();
+
+        validate_property_cardinality(&conn, "foundation:john", "foundation:name", 1).unwrap();
+
+        let result = validate_property_cardinality(&conn, "foundation:john", "foundation:name", 0);
+        assert!(result.is_err(), "Should fail with 0 values for a required field");
     }
 }

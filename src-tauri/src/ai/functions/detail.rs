@@ -287,6 +287,13 @@ fn learn_detail_value_one(
             ));
         }
 
+        crate::owl::cardinality::validate_property_cardinality(
+            conn,
+            thing_iri,
+            detail_iri,
+            objects.len(),
+        )?;
+
         let individual = Individual::new(thing_iri);
         individual.add_property(conn, detail_iri, objects, "ai")?;
 

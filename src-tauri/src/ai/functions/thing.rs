@@ -240,24 +240,21 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
         let mut seen_required = std::collections::HashSet::new();
 
         for class_iri in &class_iris {
-            let status_result = crate::eavto::query::get_by_entity_predicate(
-                conn, class_iri, "foundation:allowedStatus",
-            ).map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
-            for triple in &status_result.triples {
-                if let Some(status_iri) = triple.object.as_iri() {
-                    let label = crate::owl::Thing::get(conn, status_iri).label;
-                    allowed_statuses.push(serde_json::json!({
-                        "iri": status_iri,
-                        "label": label,
-                    }));
-                }
+            let status_iris = crate::owl::get_all_iri_properties(conn, class_iri, "foundation:allowedStatus")?;
+            for status_iri in status_iris {
+                let thing = crate::owl::Thing::get(conn, &status_iri);
+                let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri);
+                allowed_statuses.push(serde_json::json!({
+                    "iri": status_iri,
+                    "label": thing.label,
+                    "icon": icon,
+                    "color": color,
+                }));
             }
 
             let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_iri)?;
             for r in restrictions {
-                let is_required = r.exact.map(|e| e >= 1).unwrap_or(false)
-                    || r.min.map(|m| m >= 1).unwrap_or(false);
-                if is_required && seen_required.insert(r.property_iri.clone()) {
+                if r.is_required() && seen_required.insert(r.property_iri.clone()) {
                     required_fields.push(r.property_iri);
                 }
             }

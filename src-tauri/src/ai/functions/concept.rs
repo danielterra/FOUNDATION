@@ -165,7 +165,7 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
         let required_fields: Vec<serde_json::Value> = {
             let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, iri)?;
             restrictions.into_iter()
-                .filter(|r| r.exact.map(|e| e >= 1).unwrap_or(false) || r.min.map(|m| m >= 1).unwrap_or(false))
+                .filter(|r| r.is_required())
                 .map(|r| {
                     let label = crate::owl::get_literal_property(conn, &r.property_iri, "rdfs:label")
                         .ok()
@@ -378,6 +378,14 @@ fn update_concept_one(
                 conn, iri, "foundation:allowedStatus", &status_iris, "ai",
             )?;
             updated_fields.push("allowedStatuses");
+        }
+
+        if let Some(required_fields) = args.get("required_fields").and_then(|v| v.as_array()) {
+            let prop_iris: Vec<&str> = required_fields.iter()
+                .filter_map(|v| v.as_str())
+                .collect();
+            crate::owl::cardinality::set_class_required_fields(conn, iri, &prop_iris, "ai")?;
+            updated_fields.push("requiredFields");
         }
 
         if let Some(app_handle) = app {
