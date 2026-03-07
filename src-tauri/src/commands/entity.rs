@@ -82,6 +82,8 @@ pub struct PropertyValue {
     pub value_status: Option<StatusInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_total: Option<usize>,
+    pub is_calculated: bool,
+    pub formula_error: Option<String>,
 }
 
 /// Search for instances by label and property values
@@ -325,6 +327,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             datatype: None,
             value_status: None,
             group_total: None,
+            is_calculated: false,
+            formula_error: None,
         });
     }
 
@@ -344,6 +348,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             datatype: None,
             value_status: None,
             group_total: None,
+            is_calculated: false,
+            formula_error: None,
         });
     }
 
@@ -399,6 +405,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             datatype: None,
             value_status: None,
             group_total: None,
+            is_calculated: false,
+            formula_error: None,
         });
     }
 
@@ -437,6 +445,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             datatype: None,
             value_status: resolve_status_for_entity(conn, source_entity),
             group_total: None,
+            is_calculated: false,
+            formula_error: None,
         });
     }
 
@@ -526,6 +536,22 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
             (None, None, value_obj.datatype().map(|s| s.to_string()), None)
         };
 
+        let is_calculated = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = 'foundation:formula' AND retracted = 0",
+            rusqlite::params![property_iri],
+            |row| row.get::<_, i64>(0),
+        ).unwrap_or(0) > 0;
+
+        let formula_error: Option<String> = if is_calculated {
+            conn.query_row(
+                "SELECT error_message FROM formula_instance_errors WHERE instance_iri = ? AND property_iri = ?",
+                rusqlite::params![individual_id, property_iri],
+                |row| row.get(0),
+            ).ok()
+        } else {
+            None
+        };
+
         properties.push(PropertyValue {
             property: property_iri.clone(),
             property_label,
@@ -541,6 +567,8 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
             datatype,
             value_status,
             group_total: None,
+            is_calculated,
+            formula_error,
         });
     }
 
@@ -762,6 +790,8 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
             datatype: None,
             value_status,
             group_total: Some(b.group_total),
+            is_calculated: false,
+            formula_error: None,
         });
     }
 

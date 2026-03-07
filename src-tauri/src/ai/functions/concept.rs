@@ -5,7 +5,7 @@ use super::ToolResult;
 
 #[cfg(test)]
 mod tests {
-    use super::update_concept_one;
+    use super::learn_concept_one;
     use crate::eavto::{store, Triple, Object};
     use crate::eavto::test_helpers::setup_test_db;
 
@@ -15,6 +15,11 @@ mod tests {
 
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
+                value: "Test Class".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
         ], "test").unwrap();
 
         let args = serde_json::json!({
@@ -22,7 +27,7 @@ mod tests {
             "required_fields": ["foundation:nonExistent"]
         });
 
-        let result = update_concept_one(&mut conn, &args);
+        let result = learn_concept_one(&mut conn, &args);
 
         assert!(!result.success);
         let error = result.error.unwrap();
@@ -39,6 +44,11 @@ mod tests {
 
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
+                value: "Test Class".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
             Triple::new("foundation:myProp", "rdf:type", Object::Iri("owl:DatatypeProperty".to_string())),
         ], "test").unwrap();
 
@@ -47,7 +57,7 @@ mod tests {
             "required_fields": ["foundation:myProp"]
         });
 
-        let result = update_concept_one(&mut conn, &args);
+        let result = learn_concept_one(&mut conn, &args);
         assert!(result.success, "Expected success, got error: {:?}", result.error);
     }
 
@@ -57,6 +67,11 @@ mod tests {
 
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
+                value: "Test Class".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
             Triple::new("foundation:myRef", "rdf:type", Object::Iri("owl:ObjectProperty".to_string())),
         ], "test").unwrap();
 
@@ -65,7 +80,7 @@ mod tests {
             "required_fields": ["foundation:myRef"]
         });
 
-        let result = update_concept_one(&mut conn, &args);
+        let result = learn_concept_one(&mut conn, &args);
         assert!(result.success, "Expected success, got error: {:?}", result.error);
     }
 }
@@ -73,8 +88,16 @@ mod tests {
 const SCORE_LABEL_MATCH: usize = 3;
 const SCORE_COMMENT_MATCH: usize = 2;
 
-pub fn search_concepts(conn: &Connection, args: &Value) -> ToolResult {
-    super::batch::run_multi_read(conn, args, search_concepts_one)
+pub fn remember_concept(conn: &Connection, args: &Value) -> ToolResult {
+    super::batch::run_multi_read(conn, args, remember_concept_one)
+}
+
+fn remember_concept_one(conn: &Connection, args: &Value) -> ToolResult {
+    if args.get("iri").or_else(|| args.get("IRI")).is_some() {
+        get_concept_one(conn, args)
+    } else {
+        search_concepts_one(conn, args)
+    }
 }
 
 fn search_concepts_one(conn: &Connection, args: &Value) -> ToolResult {
@@ -177,10 +200,6 @@ fn search_concepts_one(conn: &Connection, args: &Value) -> ToolResult {
             error: Some(e.to_string()),
         },
     }
-}
-
-pub fn get_concept(conn: &Connection, args: &Value) -> ToolResult {
-    super::batch::run_multi_read(conn, args, get_concept_one)
 }
 
 fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
@@ -317,86 +336,15 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
     }
 }
 
-pub fn create_concept(
+pub fn learn_concept(
     conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
-    super::batch::run_atomic(conn, args, app, create_concept_one)
+    super::batch::run_atomic(conn, args, app, learn_concept_one)
 }
 
-fn create_concept_one(
-    conn: &mut Connection,
-    args: &Value,
-) -> ToolResult {
-    let iri = match args.get("iri").and_then(|v| v.as_str()) {
-        Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: iri".to_string()),
-        },
-    };
-
-    let label = match args.get("label").and_then(|v| v.as_str()) {
-        Some(label) => label,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: label".to_string()),
-        },
-    };
-
-    let icon = match args.get("icon").and_then(|v| v.as_str()) {
-        Some(icon) => icon,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: icon".to_string()),
-        },
-    };
-
-    let comment = args.get("comment").and_then(|v| v.as_str());
-    let super_concept = args.get("super_concept").and_then(|v| v.as_str());
-
-    match (|| {
-        let concept = Class::new(iri);
-        concept.assert(conn, crate::owl::ClassType::OwlClass, label, icon, super_concept, "ai")?;
-
-        if let Some(comment_text) = comment {
-            Class::set_comment(conn, iri, comment_text, "ai")?;
-        }
-
-        super::batch::queue_event("entity-created", serde_json::json!({"entityId": iri}));
-
-        Ok::<_, crate::owl::OwlError>(serde_json::json!({
-            "success": true,
-            "iri": iri,
-            "message": format!("Concept {} created successfully", label),
-        }))
-    })() {
-        Ok(result) => ToolResult {
-            success: true,
-            result: Some(result),
-            error: None,
-        },
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e.to_string()),
-        },
-    }
-}
-
-pub fn update_concept(
-    conn: &mut Connection,
-    args: &Value,
-    app: Option<&tauri::AppHandle>,
-) -> ToolResult {
-    super::batch::run_atomic(conn, args, app, update_concept_one)
-}
-
-fn update_concept_one(
+fn learn_concept_one(
     conn: &mut Connection,
     args: &Value,
 ) -> ToolResult {
@@ -410,21 +358,32 @@ fn update_concept_one(
     };
 
     match (|| {
-        let mut updated_fields = Vec::new();
+        let existing = Class::get(conn, iri)?;
+        let is_new = existing.is_none();
 
-        if let Some(label) = args.get("label").and_then(|v| v.as_str()) {
-            Class::set_label(conn, iri, label, "ai")?;
-            updated_fields.push("label");
-        }
+        let label_arg = args.get("label").and_then(|v| v.as_str());
+        let icon_arg = args.get("icon").and_then(|v| v.as_str());
+        let super_concept = args.get("super_concept").and_then(|v| v.as_str());
 
-        if let Some(icon) = args.get("icon").and_then(|v| v.as_str()) {
-            Class::set_icon(conn, iri, icon, "ai")?;
-            updated_fields.push("icon");
+        let needs_assert = is_new || label_arg.is_some() || icon_arg.is_some() || super_concept.is_some();
+
+        if needs_assert {
+            let label = label_arg
+                .or_else(|| existing.as_ref().and_then(|c| c.label.as_deref()))
+                .ok_or_else(|| crate::owl::OwlError::ValidationError(
+                    "Missing required parameter: label (required when creating a new concept)".to_string()
+                ))?;
+            let icon = icon_arg
+                .or_else(|| existing.as_ref().and_then(|c| c.icon.as_deref()))
+                .ok_or_else(|| crate::owl::OwlError::ValidationError(
+                    "Missing required parameter: icon (required when creating a new concept)".to_string()
+                ))?;
+            let concept = Class::new(iri);
+            concept.assert(conn, crate::owl::ClassType::OwlClass, label, icon, super_concept, "ai")?;
         }
 
         if let Some(comment) = args.get("comment").and_then(|v| v.as_str()) {
             Class::set_comment(conn, iri, comment, "ai")?;
-            updated_fields.push("comment");
         }
 
         if let Some(super_concepts_val) = args.get("super_concepts") {
@@ -433,10 +392,6 @@ fn update_concept_one(
                 .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
                 .unwrap_or_default();
             Class::set_super_classes(conn, iri, &iris, "ai")?;
-            updated_fields.push("superConcepts");
-        } else if let Some(super_concept) = args.get("super_concept").and_then(|v| v.as_str()) {
-            Class::set_super_class(conn, iri, super_concept, "ai")?;
-            updated_fields.push("superConcept");
         }
 
         if let Some(allowed_statuses) = args.get("allowed_statuses").and_then(|v| v.as_array()) {
@@ -446,7 +401,6 @@ fn update_concept_one(
             crate::owl::replace_all_property_iris(
                 conn, iri, "foundation:allowedStatus", &status_iris, "ai",
             )?;
-            updated_fields.push("allowedStatuses");
         }
 
         if let Some(required_fields) = args.get("required_fields").and_then(|v| v.as_array()) {
@@ -469,15 +423,54 @@ fn update_concept_one(
             }
 
             crate::owl::cardinality::set_class_required_fields(conn, iri, &prop_iris, "ai")?;
-            updated_fields.push("requiredFields");
         }
 
-        super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+        if let Some(fields) = args.get("calculated_fields").and_then(|v| v.as_array()) {
+            for field in fields {
+                let mut field_args = field.clone();
+                field_args["detail_type"] = serde_json::json!("datatype");
+                if field_args.get("domain").is_none() {
+                    field_args["domain"] = serde_json::json!(iri);
+                }
+                let result = super::detail::create_detail_one(conn, &field_args);
+                if !result.success {
+                    return Err(crate::owl::OwlError::ValidationError(
+                        result.error.unwrap_or_else(|| "Failed to create calculated field".to_string())
+                    ));
+                }
+            }
+        }
+
+        if let Some(connections) = args.get("connections").and_then(|v| v.as_array()) {
+            for conn_def in connections {
+                let mut conn_args = conn_def.clone();
+                conn_args["detail_type"] = serde_json::json!("object");
+                if conn_args.get("domain").is_none() {
+                    conn_args["domain"] = serde_json::json!(iri);
+                }
+                let result = super::detail::create_detail_one(conn, &conn_args);
+                if !result.success {
+                    return Err(crate::owl::OwlError::ValidationError(
+                        result.error.unwrap_or_else(|| "Failed to create connection".to_string())
+                    ));
+                }
+            }
+        }
+
+        if is_new {
+            super::batch::queue_event("entity-created", serde_json::json!({"entityId": iri}));
+        } else {
+            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+        }
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "success": true,
-            "message": format!("Concept {} updated successfully", iri),
-            "updatedFields": updated_fields,
+            "iri": iri,
+            "message": if is_new {
+                format!("Concept {} created successfully", iri)
+            } else {
+                format!("Concept {} updated successfully", iri)
+            },
         }))
     })() {
         Ok(result) => ToolResult {
@@ -536,4 +529,3 @@ fn delete_concept_one(
         },
     }
 }
-

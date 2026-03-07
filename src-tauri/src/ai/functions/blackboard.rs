@@ -9,21 +9,8 @@ const WIDGET_DEFAULT_Y: f64 = 100.0;
 const WIDGET_DEFAULT_WIDTH: f64 = 400.0;
 const WIDGET_DEFAULT_HEIGHT: f64 = 600.0;
 
-pub fn blackboard_show(conn: &rusqlite::Connection) -> ToolResult {
-    match widget::db_get_all_widgets(conn) {
-        Ok(widgets) => match serde_json::to_value(widgets) {
-            Ok(value) => ToolResult { success: true, result: Some(value), error: None },
-            Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()) },
-        },
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e),
-        },
-    }
-}
 
-pub fn blackboard_add_widget(
+pub fn blackboard_update(
     conn: &rusqlite::Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
@@ -44,7 +31,27 @@ pub fn blackboard_add_widget(
 
     let mut results = Vec::new();
     for (i, op) in ops.iter().enumerate() {
-        let result = blackboard_add_widget_one(conn, op, app);
+        let operation = op.get("operation").and_then(|v| v.as_str()).unwrap_or("");
+        let result = match operation {
+            "add" => blackboard_add_widget_one(conn, op, app),
+            "remove" => {
+                let widget_id = op.get("params")
+                    .and_then(|p| p.get("widget_id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let remove_args = serde_json::json!({"widget_id": widget_id});
+                blackboard_remove_one(conn, &remove_args, app)
+            }
+            "replace" => blackboard_replace(conn, op, app),
+            _ => ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!(
+                    "Unknown operation '{}'. Use 'add', 'remove', or 'replace'.",
+                    operation
+                )),
+            },
+        };
         if !result.success {
             return ToolResult {
                 success: false,
@@ -63,9 +70,36 @@ pub fn blackboard_add_widget(
         success: true,
         result: Some(serde_json::json!({
             "operationsCompleted": results.len(),
-            "results": results,
         })),
         error: None,
+    }
+}
+
+fn blackboard_replace(
+    conn: &rusqlite::Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    match widget::db_get_all_widgets(conn) {
+        Ok(widgets) => {
+            for w in &widgets {
+                let _ = widget::db_delete_widget(conn, &w.id);
+                if let Some(app_handle) = app {
+                    app_handle.emit("widget-removed", w.id.clone()).ok();
+                }
+            }
+        }
+        Err(e) => return ToolResult { success: false, result: None, error: Some(e) },
+    }
+
+    if args.get("widget_type").is_some() {
+        blackboard_add_widget_one(conn, args, app)
+    } else {
+        ToolResult {
+            success: true,
+            result: Some(serde_json::json!({"message": "Blackboard cleared"})),
+            error: None,
+        }
     }
 }
 
@@ -147,51 +181,6 @@ fn blackboard_add_widget_one(
     }
 }
 
-pub fn blackboard_remove(
-    conn: &rusqlite::Connection,
-    args: &Value,
-    app: Option<&tauri::AppHandle>,
-) -> ToolResult {
-    let ops = match args.as_array() {
-        Some(ops) if !ops.is_empty() => ops.clone(),
-        Some(_) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Operations array must not be empty".to_string()),
-        },
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Arguments must be a non-empty array of operations".to_string()),
-        },
-    };
-
-    let mut results = Vec::new();
-    for (i, op) in ops.iter().enumerate() {
-        let result = blackboard_remove_one(conn, op, app);
-        if !result.success {
-            return ToolResult {
-                success: false,
-                result: None,
-                error: Some(format!(
-                    "Operation {} failed: {}",
-                    i,
-                    result.error.unwrap_or_else(|| "unknown error".to_string()),
-                )),
-            };
-        }
-        results.push(result.result);
-    }
-
-    ToolResult {
-        success: true,
-        result: Some(serde_json::json!({
-            "operationsCompleted": results.len(),
-            "results": results,
-        })),
-        error: None,
-    }
-}
 
 fn blackboard_remove_one(
     conn: &rusqlite::Connection,

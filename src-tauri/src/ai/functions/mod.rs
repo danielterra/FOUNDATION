@@ -109,25 +109,14 @@ pub fn execute_tool(
     };
 
     match call.name.as_str() {
-        "learn_concept" => concept::create_concept(conn, args, app),
-        "learn_thing" => thing::create_thing(conn, args, app),
-        "learn_connection_type" => detail::create_detail(conn, args, app),
-        "remember_concept" => concept::get_concept(conn, args),
-        "remember_thing" => thing::get_thing(conn, args),
-        "remember_concepts" => concept::search_concepts(conn, args),
-        "remember_things" => thing::search_things(conn, args),
-        "remember_connection_type" => detail::get_detail(conn, args),
-        "remember_things_by_details" => thing::find_things_by_detail(conn, args),
-        "forget_concept" => concept::delete_concept(conn, args, app),
-        "forget_thing" => thing::delete_thing(conn, args, app),
-        "forget_connection_type" => detail::delete_detail(conn, args, app),
-        "forget_thing_detail" => detail::forget_detail_value(conn, args, app),
-        "update_concept" => concept::update_concept(conn, args, app),
-        "update_thing" => thing::update_thing(conn, args, app),
-        "blackboard_show" => blackboard::blackboard_show(conn),
-        "blackboard_add_widget" => blackboard::blackboard_add_widget(conn, args, app),
-        "blackboard_remove" => blackboard::blackboard_remove(conn, args, app),
-_ => ToolResult {
+        "learn_concepts" => concept::learn_concept(conn, args, app),
+        "learn_things" => thing::learn_thing(conn, args, app),
+        "remember_concepts" => concept::remember_concept(conn, args),
+        "remember_things" => thing::remember_thing(conn, args),
+        "forget_concepts" => concept::delete_concept(conn, args, app),
+        "forget_things" => thing::delete_thing(conn, args, app),
+        "blackboard_update" => blackboard::blackboard_update(conn, args, app),
+        _ => ToolResult {
             success: false,
             result: None,
             error: Some(format!("Unknown tool: {}", call.name)),
@@ -139,128 +128,183 @@ _ => ToolResult {
 mod tests {
     use super::*;
     use crate::eavto::test_helpers::setup_test_db;
-    use crate::owl::{Class, ClassType, Property, PropertyType, vocabulary::{rdf, owl}};
-    use crate::eavto::{store, Triple, Object};
+    use crate::owl::{Property, PropertyType};
+
+    // ---- connections via learn_concept ----
 
     #[test]
-    fn test_get_concept_with_one_of_returns_allowed_values() {
+    fn test_learn_concept_with_connections_creates_object_properties() {
+        let mut conn = setup_test_db();
+        let call = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:Employee",
+                    "label": "Employee",
+                    "icon": "person",
+                    "connections": [
+                        {"iri": "foundation:worksAt", "label": "works at"},
+                        {"iri": "foundation:reportsTo", "label": "reports to", "range": "foundation:Employee"}
+                    ]
+                }]
+            }),
+        };
+        let result = execute_tool(&mut conn, &call, None);
+        assert!(result.success, "learn_concept with connections should succeed: {:?}", result.error);
+
+        let works_at = Property::get(&conn, "foundation:worksAt").unwrap().unwrap();
+        assert_eq!(works_at.property_type, PropertyType::ObjectProperty);
+        assert!(works_at.domains.iter().any(|d| d == "foundation:Employee"));
+
+        let reports_to = Property::get(&conn, "foundation:reportsTo").unwrap().unwrap();
+        assert_eq!(reports_to.property_type, PropertyType::ObjectProperty);
+        assert!(reports_to.ranges.iter().any(|r| r == "foundation:Employee"));
+    }
+
+    // ---- calculated_fields via learn_concept ----
+
+    #[test]
+    fn test_learn_concept_with_calculated_fields_creates_properties() {
         let mut conn = setup_test_db();
 
-        let priority_class = Class::new("foundation:TaskPriority");
-        priority_class.assert(
-            &mut conn, ClassType::OwlClass, "Task Priority", "https://example.com/priority.svg", None, "test",
+        let call = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:Rectangle",
+                    "label": "Rectangle",
+                    "icon": "rectangle",
+                    "calculated_fields": [
+                        {"iri": "foundation:width", "label": "width"},
+                        {"iri": "foundation:height", "label": "height"},
+                        {
+                            "iri": "foundation:area",
+                            "label": "area",
+                            "formula": "{{foundation:width}} * {{foundation:height}}"
+                        }
+                    ]
+                }]
+            }),
+        };
+        let result = execute_tool(&mut conn, &call, None);
+        assert!(result.success, "learn_concept with calculated_fields should succeed: {:?}", result.error);
+
+        let width = Property::get(&conn, "foundation:width").unwrap().unwrap();
+        assert_eq!(width.property_type, PropertyType::DatatypeProperty);
+
+        let area = Property::get(&conn, "foundation:area").unwrap().unwrap();
+        assert_eq!(area.property_type, PropertyType::DatatypeProperty);
+
+        let stored = crate::eavto::query::get_by_entity_predicate(
+            &conn, "foundation:area", "foundation:formula"
         ).unwrap();
-
-        let high = Triple::new(
-            "foundation:HighPriority", rdf::TYPE,
-            Object::Iri("foundation:TaskPriority".to_string()),
+        assert!(!stored.triples.is_empty(), "Formula triple should be stored");
+        assert_eq!(
+            stored.triples[0].object.as_literal().unwrap(),
+            "{{foundation:width}} * {{foundation:height}}"
         );
-        let high_label = Triple::new("foundation:HighPriority", "rdfs:label", Object::Literal {
-            value: "High Priority".to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        });
-        let medium = Triple::new(
-            "foundation:MediumPriority", rdf::TYPE,
-            Object::Iri("foundation:TaskPriority".to_string()),
-        );
-        let medium_label = Triple::new("foundation:MediumPriority", "rdfs:label", Object::Literal {
-            value: "Medium Priority".to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        });
-        store::assert_triples(
-            &mut conn, &[high, high_label, medium, medium_label], "test",
-        ).unwrap();
-
-        let list2 = Triple::new(
-            "_:list2", rdf::FIRST, Object::Iri("foundation:MediumPriority".to_string()),
-        );
-        let list2_rest = Triple::new("_:list2", rdf::REST, Object::Iri(rdf::NIL.to_string()));
-        let list1 = Triple::new(
-            "_:list1", rdf::FIRST, Object::Iri("foundation:HighPriority".to_string()),
-        );
-        let list1_rest = Triple::new("_:list1", rdf::REST, Object::Iri("_:list2".to_string()));
-        store::assert_triples(&mut conn, &[list1, list1_rest, list2, list2_rest], "test").unwrap();
-
-        let one_of = Triple::new(
-            "foundation:TaskPriority", owl::ONE_OF, Object::Iri("_:list1".to_string()),
-        );
-        store::assert_triples(&mut conn, &[one_of], "test").unwrap();
-
-        let args = serde_json::json!([{"iri": "foundation:TaskPriority"}]);
-        let result = concept::get_concept(&conn, &args);
-
-        assert!(result.success, "get_concept should succeed");
-        let response = result.result.unwrap();
-        let concept_result = &response["results"][0];
-        assert!(concept_result["allowedValues"].is_array(), "Should have allowedValues array");
-        let allowed = concept_result["allowedValues"].as_array().unwrap();
-        assert_eq!(allowed.len(), 2, "Should have 2 allowed values");
-
-        let high_value = allowed.iter().find(|v| v["iri"] == "foundation:HighPriority");
-        assert!(high_value.is_some());
-        assert_eq!(high_value.unwrap()["label"], "High Priority");
     }
 
     #[test]
-    fn test_get_detail_with_one_of_range_returns_allowed_values() {
+    fn test_learn_concept_calculated_field_domain_defaults_to_concept() {
         let mut conn = setup_test_db();
 
-        let task_class = Class::new("foundation:Task");
-        task_class.assert(
-            &mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
-        ).unwrap();
+        let call = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:Box",
+                    "label": "Box",
+                    "icon": "box",
+                    "calculated_fields": [
+                        {"iri": "foundation:boxSize", "label": "size"}
+                    ]
+                }]
+            }),
+        };
+        execute_tool(&mut conn, &call, None);
 
-        let priority_class = Class::new("foundation:TaskPriority");
-        priority_class.assert(
-            &mut conn, ClassType::OwlClass, "Task Priority", "https://example.com/priority.svg", None, "test",
-        ).unwrap();
-
-        let high = Triple::new(
-            "foundation:HighPriority", rdf::TYPE,
-            Object::Iri("foundation:TaskPriority".to_string()),
+        let prop = Property::get(&conn, "foundation:boxSize").unwrap().unwrap();
+        assert!(
+            prop.domains.iter().any(|d| d == "foundation:Box"),
+            "Domain should default to concept IRI, got: {:?}",
+            prop.domains
         );
-        let high_label = Triple::new("foundation:HighPriority", "rdfs:label", Object::Literal {
-            value: "High".to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        });
-        store::assert_triples(&mut conn, &[high, high_label], "test").unwrap();
-
-        let list1 = Triple::new(
-            "_:list1", rdf::FIRST, Object::Iri("foundation:HighPriority".to_string()),
-        );
-        let list1_rest = Triple::new("_:list1", rdf::REST, Object::Iri(rdf::NIL.to_string()));
-        store::assert_triples(&mut conn, &[list1, list1_rest], "test").unwrap();
-
-        let one_of = Triple::new(
-            "foundation:TaskPriority", owl::ONE_OF, Object::Iri("_:list1".to_string()),
-        );
-        store::assert_triples(&mut conn, &[one_of], "test").unwrap();
-
-        let priority_prop = Property::new("foundation:priority");
-        priority_prop.assert(
-            &mut conn,
-            PropertyType::ObjectProperty,
-            "priority",
-            None,
-            &["foundation:Task"],
-            Some("foundation:TaskPriority"),
-            None,
-            "test",
-        ).unwrap();
-
-        let args = serde_json::json!([{"iri": "foundation:priority"}]);
-        let result = detail::get_detail(&conn, &args);
-
-        assert!(result.success, "get_detail should succeed");
-        let response = result.result.unwrap();
-        let detail_result = &response["results"][0];
-        assert!(detail_result["allowedValues"].is_array(), "Should have allowedValues array");
-        let allowed = detail_result["allowedValues"].as_array().unwrap();
-        assert_eq!(allowed.len(), 1, "Should have 1 allowed value");
-        assert_eq!(allowed[0]["iri"], "foundation:HighPriority");
-        assert_eq!(allowed[0]["label"], "High");
     }
+
+    #[test]
+    fn test_learn_concept_calculated_field_circular_formula_is_rejected() {
+        let mut conn = setup_test_db();
+
+        let call = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:Thing",
+                    "label": "Thing",
+                    "icon": "thing",
+                    "calculated_fields": [
+                        {
+                            "iri": "foundation:selfRef",
+                            "label": "self ref",
+                            "formula": "{{foundation:selfRef}} + 1"
+                        }
+                    ]
+                }]
+            }),
+        };
+        let result = execute_tool(&mut conn, &call, None);
+        assert!(!result.success, "Circular formula should be rejected");
+        let err = result.error.unwrap();
+        assert!(err.contains("Circular"), "Expected circular dependency error, got: {err}");
+    }
+
+    // ---- learn_concept upsert: adding calculated_fields to existing concept ----
+
+    #[test]
+    fn test_update_concept_adds_calculated_fields() {
+        let mut conn = setup_test_db();
+
+        let create_call = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:Circle",
+                    "label": "Circle",
+                    "icon": "circle",
+                    "calculated_fields": [
+                        {"iri": "foundation:radius", "label": "radius"}
+                    ]
+                }]
+            }),
+        };
+        execute_tool(&mut conn, &create_call, None);
+
+        let update_call = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:Circle",
+                    "calculated_fields": [
+                        {
+                            "iri": "foundation:circumference",
+                            "label": "circumference",
+                            "formula": "{{foundation:radius}} * 6"
+                        }
+                    ]
+                }]
+            }),
+        };
+        let result = execute_tool(&mut conn, &update_call, None);
+        assert!(result.success, "learn_concept upsert with calculated_fields should succeed: {:?}", result.error);
+
+        let prop = Property::get(&conn, "foundation:circumference").unwrap().unwrap();
+        assert_eq!(prop.property_type, PropertyType::DatatypeProperty);
+
+        let stored = crate::eavto::query::get_by_entity_predicate(
+            &conn, "foundation:circumference", "foundation:formula"
+        ).unwrap();
+        assert!(!stored.triples.is_empty(), "Formula triple should be stored");
+    }
+
 }

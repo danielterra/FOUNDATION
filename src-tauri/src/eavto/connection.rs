@@ -118,11 +118,40 @@ fn initialize_db_with_progress(
         log_backend("info", "Database exists, skipping ontology import");
     }
 
+    run_migrations(&conn)?;
+
     if let Some(handle) = app {
         let _ = handle.emit("import-complete", ());
     }
 
     Ok(conn)
+}
+
+fn run_migrations(conn: &Connection) -> Result<(), DbError> {
+    conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS formula_recalc_jobs (
+            id              TEXT    PRIMARY KEY,
+            property_iri    TEXT    NOT NULL,
+            property_label  TEXT,
+            class_iri       TEXT    NOT NULL,
+            class_label     TEXT,
+            status          TEXT    NOT NULL DEFAULT 'pending',
+            total           INTEGER NOT NULL DEFAULT 0,
+            processed       INTEGER NOT NULL DEFAULT 0,
+            last_offset     INTEGER NOT NULL DEFAULT 0,
+            error_message   TEXT,
+            created_at      INTEGER NOT NULL,
+            updated_at      INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS formula_instance_errors (
+            instance_iri    TEXT NOT NULL,
+            property_iri    TEXT NOT NULL,
+            error_message   TEXT NOT NULL,
+            created_at      INTEGER NOT NULL,
+            PRIMARY KEY (instance_iri, property_iri)
+        );
+    ")?;
+    Ok(())
 }
 
 pub fn initialize_with_progress(app: tauri::AppHandle) -> Result<(Connection, PathBuf), DbError> {

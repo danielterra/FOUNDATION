@@ -16,6 +16,7 @@ pub struct Property {
     pub is_symmetric: bool,
     pub inverse_of: Option<String>,
     pub unit: Option<String>,
+    pub formula: Option<String>,
 }
 
 impl Property {
@@ -34,6 +35,7 @@ impl Property {
             is_symmetric: false,
             inverse_of: None,
             unit: None,
+            formula: None,
         }
     }
 
@@ -110,6 +112,9 @@ impl Property {
             .and_then(|t| t.object.as_iri())
             .map(|s| s.to_string());
 
+        let formula_result = query::get_by_entity_predicate(conn, &iri, "foundation:formula")?;
+        let formula = formula_result.triples.first().and_then(|t| t.object.as_literal());
+
         Ok(Some(Self {
             iri,
             label,
@@ -123,6 +128,7 @@ impl Property {
             is_symmetric,
             inverse_of,
             unit,
+            formula,
         }))
     }
 
@@ -215,6 +221,16 @@ impl Property {
         }
 
         store::assert_triples(conn, &triples, origin)?;
+
+        if let Some(formula_str) = &self.formula {
+            let formula_triple = Triple::new(&self.iri, "foundation:formula", Object::Literal {
+                value: formula_str.clone(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            });
+            store::assert_triples(conn, &[formula_triple], origin)?;
+        }
+
         Ok(())
     }
 

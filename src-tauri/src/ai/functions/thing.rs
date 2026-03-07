@@ -22,11 +22,50 @@ fn next_iri_id() -> u64 {
     }
 }
 
-pub fn search_things(conn: &Connection, args: &Value) -> ToolResult {
-    super::batch::run_multi_read(conn, args, search_things_one)
+pub fn remember_thing(conn: &Connection, args: &Value) -> ToolResult {
+    super::batch::run_multi_read(conn, args, remember_thing_one)
+}
+
+fn remember_thing_one(conn: &Connection, args: &Value) -> ToolResult {
+    if args.get("iri").or_else(|| args.get("IRI")).is_some() {
+        get_thing_one(conn, args)
+    } else {
+        search_things_one(conn, args)
+    }
+}
+
+pub fn learn_thing(
+    conn: &mut Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, learn_thing_one)
+}
+
+fn learn_thing_one(conn: &mut Connection, args: &Value) -> ToolResult {
+    if args.get("iri").is_some() {
+        update_thing_one(conn, args)
+    } else {
+        create_thing_one(conn, args)
+    }
+}
+
+fn truncate_value(s: &str) -> String {
+    const MAX: usize = 300;
+    if s.len() <= MAX {
+        s.to_string()
+    } else {
+        let mut end = MAX;
+        while !s.is_char_boundary(end) { end -= 1; }
+        format!("{}…", &s[..end])
+    }
 }
 
 fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
+    if args.get("properties").and_then(|v| v.as_array()).is_some() {
+        return find_things_by_detail_one(conn, args);
+    }
+
     let concept_iri_opt = args.get("concept_iri")
         .and_then(|v| v.as_str());
 
@@ -132,9 +171,10 @@ fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
                     } else if comment_lower.contains(token) {
                         match_count += SCORE_COMMENT_MATCH;
                         if let Some(ref comment_val) = comment {
+                            let truncated = truncate_value(comment_val);
                             matched_properties.push(serde_json::json!({
                                 "detail_iri": "rdfs:comment",
-                                "value": comment_val,
+                                "value": truncated,
                                 "datatype": "xsd:string",
                             }));
                         }
@@ -150,7 +190,7 @@ fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
                                     match_count += SCORE_DETAIL_MATCH;
                                     let mut entry = serde_json::json!({
                                         "detail_iri": triple.predicate,
-                                        "value": val_str,
+                                        "value": truncate_value(&val_str),
                                     });
                                     if let Some(dt) = triple.object.datatype() {
                                         entry["datatype"] = serde_json::json!(dt);
@@ -210,10 +250,6 @@ fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
             error: Some(e.to_string()),
         },
     }
-}
-
-pub fn get_thing(conn: &Connection, args: &Value) -> ToolResult {
-    super::batch::run_multi_read(conn, args, get_thing_one)
 }
 
 fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
@@ -347,14 +383,6 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
             error: Some(e.to_string()),
         },
     }
-}
-
-pub fn create_thing(
-    conn: &mut Connection,
-    args: &Value,
-    app: Option<&tauri::AppHandle>,
-) -> ToolResult {
-    super::batch::run_atomic(conn, args, app, create_thing_one)
 }
 
 fn create_thing_one(
@@ -512,14 +540,6 @@ fn create_thing_one(
             error: Some(e.to_string()),
         },
     }
-}
-
-pub fn update_thing(
-    conn: &mut Connection,
-    args: &Value,
-    app: Option<&tauri::AppHandle>,
-) -> ToolResult {
-    super::batch::run_atomic(conn, args, app, update_thing_one)
 }
 
 fn update_thing_one(
@@ -685,15 +705,55 @@ fn delete_thing_one(
         },
     };
 
+    let detail_iri = args.get("detail_iri").and_then(|v| v.as_str());
+    let value = args.get("value").and_then(|v| v.as_str());
+
     match (|| {
-        Individual::retract(conn, iri, "ai")?;
-
-        super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
-
-        Ok::<_, crate::owl::OwlError>(serde_json::json!({
-            "success": true,
-            "message": format!("Thing {} deleted successfully", iri),
-        }))
+        match (detail_iri, value) {
+            (Some(detail), Some(val)) => {
+                let current_count = crate::eavto::query::get_by_entity_predicate(conn, iri, detail)
+                    .map(|r| r.triples.len())
+                    .unwrap_or(0);
+                crate::owl::cardinality::validate_property_cardinality(
+                    conn, iri, detail, current_count.saturating_sub(1),
+                )?;
+                match Individual::remove_property_value(conn, iri, detail, val, "ai")? {
+                    Some(removed) => {
+                        super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+                        if let Object::Iri(ref_iri) = removed {
+                            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": ref_iri}));
+                        }
+                        Ok::<_, crate::owl::OwlError>(serde_json::json!({
+                            "success": true,
+                            "message": format!("Value removed from {} on {}", detail, iri),
+                        }))
+                    }
+                    None => Ok(serde_json::json!({
+                        "success": false,
+                        "message": "Value not found",
+                    }))
+                }
+            }
+            (Some(detail), None) => {
+                let result = crate::eavto::query::get_by_entity_predicate(conn, iri, detail)?;
+                if !result.triples.is_empty() {
+                    crate::eavto::store::retract_triples(conn, &result.triples, "ai")?;
+                }
+                super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+                Ok::<_, crate::owl::OwlError>(serde_json::json!({
+                    "success": true,
+                    "message": format!("All values of {} removed from {}", detail, iri),
+                }))
+            }
+            _ => {
+                Individual::retract(conn, iri, "ai")?;
+                super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+                Ok::<_, crate::owl::OwlError>(serde_json::json!({
+                    "success": true,
+                    "message": format!("Thing {} deleted successfully", iri),
+                }))
+            }
+        }
     })() {
         Ok(result) => ToolResult {
             success: true,
@@ -708,9 +768,6 @@ fn delete_thing_one(
     }
 }
 
-pub fn find_things_by_detail(conn: &Connection, args: &Value) -> ToolResult {
-    super::batch::run_multi_read(conn, args, find_things_by_detail_one)
-}
 
 fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
     let concept_iri = match args.get("concept_iri").and_then(|v| v.as_str()) {

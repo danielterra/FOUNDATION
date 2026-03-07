@@ -2,6 +2,7 @@ use serde::Serialize;
 use tauri::{State, AppHandle, Emitter, Manager};
 
 use crate::owl::{self, Connection, DbExecutor, Individual, Object};
+use crate::owl::formula_worker::FormulaWorker;
 use super::setup_system_info::{get_cpu_info, get_memory_info, get_os_info, get_locale_info};
 
 /// Initialize the application database
@@ -46,11 +47,55 @@ pub async fn initialize_app(
         super::log_backend("info", &stats_msg);
     }
 
-    let executor = DbExecutor::new(conn, db_path);
+    let executor = DbExecutor::new(conn, db_path.clone());
     app.manage(executor);
+
+    let worker = FormulaWorker::spawn(app.clone(), db_path.clone());
+    recover_pending_jobs(&db_path, &worker);
+    app.manage(worker);
+
     let _ = app.emit("import-complete", ());
 
     Ok(())
+}
+
+fn recover_pending_jobs(
+    db_path: &std::path::PathBuf,
+    worker: &FormulaWorker,
+) {
+    use crate::owl::formula_worker::WorkerCommand;
+
+    let conn = match rusqlite::Connection::open(db_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+
+    let _ = conn.execute(
+        "UPDATE formula_recalc_jobs SET status = 'pending', updated_at = ? WHERE status = 'running'",
+        rusqlite::params![now],
+    );
+
+    let job_ids: Vec<String> = {
+        let mut stmt = match conn.prepare(
+            "SELECT id FROM formula_recalc_jobs WHERE status = 'pending' ORDER BY created_at",
+        ) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        stmt.query_map([], |row| row.get(0))
+            .unwrap_or_else(|_| panic!("query_map failed"))
+            .filter_map(|r| r.ok())
+            .collect()
+    };
+
+    for job_id in job_ids {
+        let _ = worker.sender.try_send(WorkerCommand::Enqueue { job_id });
+    }
 }
 
 #[derive(Debug, Serialize, serde::Deserialize)]

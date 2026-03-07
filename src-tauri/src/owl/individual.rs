@@ -206,6 +206,15 @@ impl Individual {
             || property == "foundation:icon"
             || property == "foundation:hasIcon";
 
+        if !is_meta_property {
+            if let Ok(true) = is_formula_property(conn, property) {
+                return Err(OwlError::ValidationError(format!(
+                    "Property '{}' is calculated via a formula and cannot be set directly",
+                    property
+                )));
+            }
+        }
+
         let types_result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
 
         if types_result.triples.is_empty() {
@@ -611,6 +620,11 @@ impl Individual {
     }
 }
 
+fn is_formula_property(conn: &Connection, property_iri: &str) -> Result<bool> {
+    let result = query::get_by_entity_predicate(conn, property_iri, "foundation:formula")?;
+    Ok(!result.triples.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -968,6 +982,146 @@ mod tests {
 
         assert_eq!(total, 1, "Should find 1 result via polymorphic search");
         assert!(results.contains(&"foundation:Rex".to_string()), "Should include the Dog instance");
+    }
+
+    #[test]
+    fn test_write_to_calculated_property_is_rejected() {
+        let mut conn = setup_test_db();
+
+        let c = Class::new("foundation:Rectangle");
+        c.assert(&mut conn, ClassType::OwlClass, "Rectangle", "https://example.com/rect.svg", None, "test").unwrap();
+
+        let width_prop = Property::new("foundation:hasWidth");
+        width_prop.assert(&mut conn, PropertyType::DatatypeProperty, "has width", None,
+            &["foundation:Rectangle"], Some("xsd:integer"), Some("unit:Meter"), "test").unwrap();
+
+        let area_prop = Property::new("foundation:hasArea");
+        area_prop.assert(&mut conn, PropertyType::DatatypeProperty, "has area", None,
+            &["foundation:Rectangle"], Some("xsd:decimal"), Some("unit:SquareMeter"), "test").unwrap();
+
+        let ind = Individual::new("foundation:MyRect");
+        ind.assert(&mut conn, "foundation:Rectangle", "My Rect", "https://example.com/rect.svg", "test").unwrap();
+
+        conn.execute(
+            "INSERT INTO transactions (origin, created_at) VALUES ('test', 0)",
+            [],
+        ).unwrap();
+        let tx_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted) \
+             VALUES (?, 'foundation:formula', ?, 'literal', 'xsd:string', 1, ?, 0, 0)",
+            rusqlite::params!["foundation:hasArea", "{{foundation:hasWidth}} * 2", tx_id],
+        ).unwrap();
+
+        let result = ind.add_property(
+            &mut conn,
+            "foundation:hasArea",
+            vec![Object::Literal { value: "100".to_string(), datatype: Some("xsd:decimal".to_string()), language: None }],
+            "test",
+        );
+
+        assert!(result.is_err(), "Should reject write to calculated property");
+        if let Err(OwlError::ValidationError(msg)) = result {
+            assert!(msg.contains("calculated via a formula"));
+        } else {
+            panic!("Expected ValidationError");
+        }
+    }
+
+    #[test]
+    fn test_write_to_non_calculated_property_succeeds() {
+        let mut conn = setup_test_db();
+
+        let c = Class::new("foundation:Rectangle");
+        c.assert(&mut conn, ClassType::OwlClass, "Rectangle", "https://example.com/rect.svg", None, "test").unwrap();
+
+        let width_prop = Property::new("foundation:hasWidth");
+        width_prop.assert(&mut conn, PropertyType::DatatypeProperty, "has width", None,
+            &["foundation:Rectangle"], Some("xsd:integer"), Some("unit:Meter"), "test").unwrap();
+
+        let ind = Individual::new("foundation:MyRect");
+        ind.assert(&mut conn, "foundation:Rectangle", "My Rect", "https://example.com/rect.svg", "test").unwrap();
+
+        let result = ind.add_property(
+            &mut conn,
+            "foundation:hasWidth",
+            vec![Object::Literal { value: "5".to_string(), datatype: Some("xsd:integer".to_string()), language: None }],
+            "test",
+        );
+
+        assert!(result.is_ok(), "Should accept write to non-calculated property");
+    }
+
+    #[test]
+    fn test_meta_property_bypasses_formula_protection() {
+        let mut conn = setup_test_db();
+
+        let c = Class::new("foundation:Rectangle");
+        c.assert(&mut conn, ClassType::OwlClass, "Rectangle", "https://example.com/rect.svg", None, "test").unwrap();
+
+        let ind = Individual::new("foundation:MyRect");
+        ind.assert(&mut conn, "foundation:Rectangle", "My Rect", "https://example.com/rect.svg", "test").unwrap();
+
+        conn.execute(
+            "INSERT INTO transactions (origin, created_at) VALUES ('test', 0)",
+            [],
+        ).unwrap();
+        let tx_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted) \
+             VALUES (?, 'foundation:formula', ?, 'literal', 'xsd:string', 1, ?, 0, 0)",
+            rusqlite::params!["rdfs:label", "some formula", tx_id],
+        ).unwrap();
+
+        let result = ind.add_property(
+            &mut conn,
+            "rdfs:label",
+            vec![Object::Literal { value: "Updated Label".to_string(), datatype: Some("xsd:string".to_string()), language: None }],
+            "test",
+        );
+
+        assert!(result.is_ok(), "Meta properties should bypass formula protection");
+    }
+
+    #[test]
+    fn test_calculated_property_error_message_is_descriptive() {
+        let mut conn = setup_test_db();
+
+        let c = Class::new("foundation:Rectangle");
+        c.assert(&mut conn, ClassType::OwlClass, "Rectangle", "https://example.com/rect.svg", None, "test").unwrap();
+
+        let area_prop = Property::new("foundation:hasArea");
+        area_prop.assert(&mut conn, PropertyType::DatatypeProperty, "has area", None,
+            &["foundation:Rectangle"], Some("xsd:decimal"), Some("unit:SquareMeter"), "test").unwrap();
+
+        let ind = Individual::new("foundation:MyRect");
+        ind.assert(&mut conn, "foundation:Rectangle", "My Rect", "https://example.com/rect.svg", "test").unwrap();
+
+        conn.execute(
+            "INSERT INTO transactions (origin, created_at) VALUES ('test', 0)",
+            [],
+        ).unwrap();
+        let tx_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted) \
+             VALUES (?, 'foundation:formula', ?, 'literal', 'xsd:string', 1, ?, 0, 0)",
+            rusqlite::params!["foundation:hasArea", "{{foundation:hasWidth}} * 2", tx_id],
+        ).unwrap();
+
+        let result = ind.add_property(
+            &mut conn,
+            "foundation:hasArea",
+            vec![Object::Literal { value: "100".to_string(), datatype: Some("xsd:decimal".to_string()), language: None }],
+            "test",
+        );
+
+        if let Err(OwlError::ValidationError(msg)) = result {
+            assert!(msg.contains("foundation:hasArea"), "Error should contain the property IRI");
+            assert!(msg.contains("calculated via a formula"), "Error should mention formula");
+            assert!(msg.contains("cannot be set directly"), "Error should say cannot be set directly");
+        } else {
+            panic!("Expected ValidationError");
+        }
     }
 
     #[test]

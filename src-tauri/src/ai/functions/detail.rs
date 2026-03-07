@@ -2,13 +2,7 @@ use serde_json::Value;
 use crate::eavto::Connection;
 use super::ToolResult;
 
-pub fn create_detail(
-    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
-) -> ToolResult {
-    super::batch::run_atomic(conn, args, app, create_detail_one)
-}
-
-fn create_detail_one(
+pub(super) fn create_detail_one(
     conn: &mut Connection, args: &Value,
 ) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
@@ -57,6 +51,7 @@ fn create_detail_one(
     let domains: Vec<&str> = domain_strings.iter().map(|s| s.as_str()).collect();
     let range = args.get("range").and_then(|v| v.as_str());
     let unit = args.get("unit").and_then(|v| v.as_str());
+    let formula = args.get("formula").and_then(|v| v.as_str());
 
     let domain_strings_owned: Vec<String> = domain_strings.clone();
 
@@ -65,6 +60,23 @@ fn create_detail_one(
 
         let detail = Property::new(iri);
         detail.assert(conn, detail_type, label, comment, &domains, range, unit, "ai")?;
+
+        if let Some(formula_str) = formula {
+            if detail_type == crate::owl::PropertyType::ObjectProperty {
+                return Err(crate::owl::OwlError::ValidationError(
+                    "Formula is only supported on datatype properties, not object properties. \
+                     A formula computes a literal value — use detail_type: 'datatype' for calculated fields.".to_string()
+                ));
+            }
+            crate::owl::formula::validate_no_cycle(conn, iri, formula_str)?;
+            use crate::eavto::{store, Triple, Object};
+            let formula_triple = Triple::new(iri, "foundation:formula", Object::Literal {
+                value: formula_str.to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            });
+            store::assert_triples(conn, &[formula_triple], "ai")?;
+        }
 
         super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
         for domain_iri in &domain_strings_owned {
@@ -90,210 +102,3 @@ fn create_detail_one(
     }
 }
 
-pub fn get_detail(conn: &Connection, args: &Value) -> ToolResult {
-    super::batch::run_multi_read(conn, args, get_detail_one)
-}
-
-fn get_detail_one(conn: &Connection, args: &Value) -> ToolResult {
-    let iri = match args.get("iri").and_then(|v| v.as_str()) {
-        Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: iri".to_string()),
-        },
-    };
-
-    match (|| {
-        use crate::owl::{Property, Class, Individual};
-
-        let detail = Property::get(conn, iri)?
-            .ok_or_else(|| crate::owl::OwlError::NotFound(iri.to_string()))?;
-
-        let mut allowed_values: Vec<serde_json::Value> = Vec::new();
-        for range_iri in &detail.ranges {
-            if let Ok(Some(range_concept)) = Class::get(conn, range_iri) {
-                if !range_concept.one_of_values.is_empty() {
-                    for value_iri in &range_concept.one_of_values {
-                        let label = Individual::get(conn, value_iri)
-                            .ok()
-                            .flatten()
-                            .and_then(|ind| ind.label)
-                            .unwrap_or_else(|| value_iri.clone());
-
-                        allowed_values.push(serde_json::json!({
-                            "iri": value_iri,
-                            "label": label,
-                        }));
-                    }
-                }
-            }
-        }
-
-        let has_datetime_range = detail.ranges.iter().any(|r| r == "xsd:dateTime");
-
-        let mut response = serde_json::json!({
-            "iri": detail.iri,
-            "label": detail.label,
-            "comment": detail.comment,
-            "type": format!("{:?}", detail.property_type),
-            "domains": detail.domains,
-            "ranges": detail.ranges,
-            "superProperties": detail.super_properties,
-            "isFunctional": detail.is_functional,
-            "isTransitive": detail.is_transitive,
-            "isSymmetric": detail.is_symmetric,
-            "inverseOf": detail.inverse_of,
-            "unit": detail.unit,
-        });
-
-        if has_datetime_range {
-            response["valueFormat"] = serde_json::json!(
-                "Unix milliseconds (i64), e.g. 1772380322157, or RFC3339, e.g. 2026-03-06T12:00:00-03:00"
-            );
-        }
-
-        if !allowed_values.is_empty() {
-            response["allowedValues"] = serde_json::json!(allowed_values);
-        }
-
-        Ok::<_, crate::owl::OwlError>(response)
-    })() {
-        Ok(result) => ToolResult {
-            success: true,
-            result: Some(result),
-            error: None,
-        },
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e.to_string()),
-        },
-    }
-}
-
-pub fn delete_detail(
-    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
-) -> ToolResult {
-    super::batch::run_atomic(conn, args, app, delete_detail_one)
-}
-
-fn delete_detail_one(
-    conn: &mut Connection, args: &Value,
-) -> ToolResult {
-    let iri = match args.get("iri").and_then(|v| v.as_str()) {
-        Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: iri".to_string()),
-        },
-    };
-
-    match (|| {
-        use crate::owl::Property;
-
-        let affected_entities = Property::retract(conn, iri, "ai")?;
-        let affected_count = affected_entities.len();
-
-        for entity_id in &affected_entities {
-            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": entity_id}));
-        }
-        super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
-
-        Ok::<_, crate::owl::OwlError>(serde_json::json!({
-            "success": true,
-            "message": format!("Detail {} deleted successfully", iri),
-            "affectedEntities": affected_count,
-        }))
-    })() {
-        Ok(result) => ToolResult {
-            success: true,
-            result: Some(result),
-            error: None,
-        },
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e.to_string()),
-        },
-    }
-}
-
-pub fn forget_detail_value(
-    conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>,
-) -> ToolResult {
-    super::batch::run_atomic(conn, args, app, forget_detail_value_one)
-}
-
-fn forget_detail_value_one(
-    conn: &mut Connection, args: &Value,
-) -> ToolResult {
-    let thing_iri = match args.get("thing_iri").and_then(|v| v.as_str()) {
-        Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: thing_iri".to_string()),
-        },
-    };
-
-    let detail_iri = match args.get("detail_iri").and_then(|v| v.as_str()) {
-        Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: detail_iri".to_string()),
-        },
-    };
-
-    let value = match args.get("value").and_then(|v| v.as_str()) {
-        Some(v) => v,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: value".to_string()),
-        },
-    };
-
-    match (|| {
-        use crate::owl::{Individual, Object};
-        use crate::eavto::query;
-
-        // Validate removal won't violate minCardinality
-        let current_count = query::get_by_entity_predicate(conn, thing_iri, detail_iri)
-            .map(|r| r.triples.len())
-            .unwrap_or(0);
-        crate::owl::cardinality::validate_property_cardinality(
-            conn, thing_iri, detail_iri, current_count.saturating_sub(1),
-        )?;
-
-        match Individual::remove_property_value(conn, thing_iri, detail_iri, value, "ai")? {
-            Some(removed) => {
-                super::batch::queue_event("entity-updated", serde_json::json!({"entityId": thing_iri}));
-                if let Object::Iri(iri) = removed {
-                    super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
-                }
-                Ok::<_, crate::owl::OwlError>(serde_json::json!({
-                    "success": true,
-                    "message": format!("Detail value removed from {}", thing_iri),
-                }))
-            }
-            None => Ok(serde_json::json!({
-                "success": false,
-                "message": "Detail value not found",
-            }))
-        }
-    })() {
-        Ok(result) => ToolResult {
-            success: true,
-            result: Some(result),
-            error: None,
-        },
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e.to_string()),
-        },
-    }
-}

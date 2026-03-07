@@ -5,6 +5,8 @@ mod thing;
 mod icons;
 pub mod vocabulary;
 pub mod cardinality;
+pub mod formula;
+pub mod formula_worker;
 
 pub use icons::{validate_icon, icon_name_to_iri, icon_iri_to_display, icon_store_value, seed_icon_library, migrate_icon_to_has_icon};
 

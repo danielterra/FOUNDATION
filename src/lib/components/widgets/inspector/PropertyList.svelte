@@ -17,6 +17,7 @@
           isObjectProperty: prop.isObjectProperty,
           sourceClassLabel: prop.sourceClassLabel,
           datatype: prop.datatype,
+          isCalculated: prop.isCalculated ?? false,
           values: []
         };
       }
@@ -26,7 +27,8 @@
         valueIcon: prop.valueIcon,
         unitLabel: prop.unitLabel,
         datatype: prop.datatype,
-        valueStatus: prop.valueStatus
+        valueStatus: prop.valueStatus,
+        formulaError: prop.formulaError ?? null
       });
       return acc;
     }, {})
@@ -133,6 +135,9 @@
             {:else}
               <span class="detail-type">{formatDatatype(detailGroup.datatype)}</span>
             {/if}
+            {#if detailGroup.isCalculated}
+              <span class="calculated-badge" title="Calculated field">ƒ</span>
+            {/if}
             {#if detailGroup.values.length > 1}
               <span class="detail-count">{detailGroup.values.length}</span>
             {/if}
@@ -155,6 +160,7 @@
           )}
             <div
               class="detail-value"
+              class:calculated={detailGroup.isCalculated}
               class:clickable={detailGroup.isObjectProperty}
               role={detailGroup.isObjectProperty ? "button" : undefined}
               tabindex={detailGroup.isObjectProperty ? 0 : undefined}
@@ -218,6 +224,12 @@
                     radio_button_checked
                   </span>
                   <span class="inline-status-label">{val.valueStatus.label}</span>
+                </span>
+              {/if}
+              {#if val.formulaError}
+                <span class="formula-error" title={val.formulaError}>
+                  <span class="material-symbols-outlined formula-error-icon">warning</span>
+                  <span class="formula-error-text">{val.formulaError}</span>
                 </span>
               {/if}
             </div>
@@ -458,5 +470,55 @@
     font-weight: 600;
     color: var(--status-color);
     white-space: nowrap;
+  }
+
+  .calculated-badge {
+    font-size: 11px;
+    font-weight: 700;
+    font-style: italic;
+    padding: 2px 6px;
+    background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+    color: var(--color-accent);
+    border-radius: 4px;
+    line-height: 1;
+    cursor: default;
+  }
+
+  .detail-value.calculated {
+    font-style: italic;
+    color: var(--color-neutral);
+    background: color-mix(in srgb, var(--color-black) 20%, transparent);
+    border-left: 2px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+  }
+
+  .detail-value.calculated .value-text {
+    color: var(--color-neutral);
+  }
+
+  .formula-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 4px 6px;
+    background: color-mix(in srgb, var(--color-error, #ef4444) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent);
+    border-radius: 4px;
+    width: 100%;
+    margin-top: 4px;
+    box-sizing: border-box;
+  }
+
+  .formula-error-icon {
+    font-size: 14px;
+    color: var(--color-error, #ef4444);
+    flex-shrink: 0;
+    line-height: 1.4;
+  }
+
+  .formula-error-text {
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--color-error, #ef4444);
+    line-height: 1.4;
   }
 </style>
