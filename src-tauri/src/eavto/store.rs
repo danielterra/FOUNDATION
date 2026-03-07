@@ -77,34 +77,58 @@ fn do_assert_triples(
     origin: &str,
 ) -> Result<i64> {
     let now = now_millis();
+
+    // Group incoming triples by (subject, predicate), preserving order.
+    let mut groups: Vec<((&str, &str), Vec<usize>)> = Vec::new();
+    let mut group_index: std::collections::HashMap<(&str, &str), usize> =
+        std::collections::HashMap::new();
+    for (i, triple) in triples.iter().enumerate() {
+        let key = (triple.subject.as_str(), triple.predicate.as_str());
+        if let Some(&idx) = group_index.get(&key) {
+            groups[idx].1.push(i);
+        } else {
+            group_index.insert(key, groups.len());
+            groups.push((key, vec![i]));
+        }
+    }
+
+    // Compare incoming with existing to find what actually needs to change.
+    let mut rows_to_retract: Vec<i64> = Vec::new();
+    let mut indices_to_insert: Vec<usize> = Vec::new();
+
+    for ((subject, predicate), incoming_indices) in &groups {
+        let existing = fetch_existing_rows(tx, subject, predicate)?;
+        let incoming: Vec<&Object> = incoming_indices.iter().map(|&i| &triples[i].object).collect();
+
+        for row in &existing {
+            if !incoming.iter().any(|obj| object_matches_row(obj, row)) {
+                rows_to_retract.push(row.id);
+            }
+        }
+        for &idx in incoming_indices {
+            if !existing.iter().any(|row| object_matches_row(&triples[idx].object, row)) {
+                indices_to_insert.push(idx);
+            }
+        }
+    }
+
+    // Nothing to do — return 0 to signal no-op without writing any rows.
+    if rows_to_retract.is_empty() && indices_to_insert.is_empty() {
+        return Ok(0);
+    }
+
     tx.execute(
         "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
         (origin, now),
     )?;
-
     let tx_id = tx.last_insert_rowid();
-
     let origin_id = get_or_create_origin(tx, origin)?;
 
-    // Retract all existing values for each unique (subject, predicate) pair in the batch.
-    // This must happen before any inserts so that passing multiple values for the same
-    // predicate (e.g., multiple participants) replaces the full set atomically.
-    let mut retracted_pairs: std::collections::HashSet<(&str, &str)> =
-        std::collections::HashSet::new();
-    for triple in triples {
-        let key = (triple.subject.as_str(), triple.predicate.as_str());
-        if retracted_pairs.insert(key) {
-            tx.execute(
-                "UPDATE triples
-                 SET retracted = 1
-                 WHERE subject = ? AND predicate = ? AND retracted = 0",
-                (&triple.subject, &triple.predicate),
-            )?;
-        }
+    for id in &rows_to_retract {
+        tx.execute("UPDATE triples SET retracted = 1 WHERE id = ?", [id])?;
     }
-
-    for triple in triples {
-        insert_triple(tx, triple, tx_id, origin_id, now)?;
+    for &idx in &indices_to_insert {
+        insert_triple(tx, &triples[idx], tx_id, origin_id, now)?;
     }
 
     {
@@ -187,14 +211,28 @@ fn do_append_triples(
     origin: &str,
 ) -> Result<i64> {
     let now = now_millis();
+
+    // Only insert triples whose exact (subject, predicate, object) doesn't already exist.
+    let mut indices_to_insert: Vec<usize> = Vec::new();
+    for (i, triple) in triples.iter().enumerate() {
+        let existing = fetch_existing_rows(tx, &triple.subject, &triple.predicate)?;
+        if !existing.iter().any(|row| object_matches_row(&triple.object, row)) {
+            indices_to_insert.push(i);
+        }
+    }
+
+    if indices_to_insert.is_empty() {
+        return Ok(0);
+    }
+
     tx.execute(
         "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
         (origin, now),
     )?;
     let tx_id = tx.last_insert_rowid();
     let origin_id = get_or_create_origin(tx, origin)?;
-    for triple in triples {
-        insert_triple(tx, triple, tx_id, origin_id, now)?;
+    for &idx in &indices_to_insert {
+        insert_triple(tx, &triples[idx], tx_id, origin_id, now)?;
     }
     Ok(tx_id)
 }
@@ -300,6 +338,66 @@ fn do_retract_triples(
     }
 
     Ok(tx_id)
+}
+
+/// Represents an existing active triple row fetched from the DB for comparison.
+struct ExistingRow {
+    id: i64,
+    object: Option<String>,
+    object_value: Option<String>,
+    object_datatype: Option<String>,
+    object_language: Option<String>,
+    object_integer: Option<i64>,
+    object_number: Option<f64>,
+    object_boolean: Option<i64>,
+    object_datetime: Option<i64>,
+}
+
+/// Fetch all active (retracted = 0) rows for a given (subject, predicate) pair.
+fn fetch_existing_rows(
+    tx: &rusqlite::Connection,
+    subject: &str,
+    predicate: &str,
+) -> rusqlite::Result<Vec<ExistingRow>> {
+    let mut stmt = tx.prepare(
+        "SELECT id, object, object_value, object_datatype, object_language,
+                object_integer, object_number, object_boolean, object_datetime
+         FROM triples
+         WHERE subject = ? AND predicate = ? AND retracted = 0",
+    )?;
+    let rows = stmt.query_map([subject, predicate], |row| {
+        Ok(ExistingRow {
+            id: row.get(0)?,
+            object: row.get(1)?,
+            object_value: row.get(2)?,
+            object_datatype: row.get(3)?,
+            object_language: row.get(4)?,
+            object_integer: row.get(5)?,
+            object_number: row.get(6)?,
+            object_boolean: row.get(7)?,
+            object_datetime: row.get(8)?,
+        })
+    })?
+    .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Returns true if an incoming `Object` is semantically identical to a DB row.
+fn object_matches_row(obj: &Object, row: &ExistingRow) -> bool {
+    match obj {
+        Object::Iri(iri) | Object::Blank(iri) => row.object.as_deref() == Some(iri.as_str()),
+        Object::Literal { value, datatype, language } => {
+            row.object_value.as_deref() == Some(value.as_str())
+                && row.object_datatype.as_deref().unwrap_or("xsd:string")
+                    == datatype.as_deref().unwrap_or("xsd:string")
+                && row.object_language.as_deref().unwrap_or("")
+                    == language.as_deref().unwrap_or("")
+        }
+        Object::Integer(i) => row.object_integer == Some(*i),
+        Object::Number(n) => row.object_number == Some(*n),
+        Object::Boolean(b) => row.object_boolean == Some(if *b { 1 } else { 0 }),
+        Object::DateTime(dt) => row.object_datetime == Some(*dt),
+    }
 }
 
 /// Insert a single triple into the database
@@ -822,6 +920,152 @@ mod tests {
             |row| row.get(0)
         ).unwrap();
         assert_eq!(active_value, "john@work.com");
+    }
+
+    #[test]
+    fn test_assert_same_value_twice_is_noop() {
+        let mut conn = setup_test_db();
+
+        let triple = vec![Triple {
+            subject: "test:Thing".to_string(),
+            predicate: "rdfs:label".to_string(),
+            object: Object::Literal {
+                value: "Hello".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            },
+            tx: 0,
+            created_at: 0,
+            origin_id: 1,
+            retracted: false,
+        }];
+
+        assert_triples(&mut conn, &triple, "test").unwrap();
+        let total_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM triples", [], |r| r.get(0))
+            .unwrap();
+
+        let tx_id = assert_triples(&mut conn, &triple, "test").unwrap();
+        assert_eq!(tx_id, 0, "second assert with same value must be a no-op");
+
+        let total_after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM triples", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(total_before, total_after, "no new rows should be written on no-op");
+
+        let tx_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tx_count, 1, "no new transaction record should be created on no-op");
+    }
+
+    #[test]
+    fn test_assert_different_value_does_retract_and_insert() {
+        let mut conn = setup_test_db();
+
+        assert_triples(&mut conn, &[Triple {
+            subject: "test:Thing".to_string(),
+            predicate: "rdfs:label".to_string(),
+            object: Object::Literal { value: "Old".to_string(), datatype: Some("xsd:string".to_string()), language: None },
+            tx: 0, created_at: 0, origin_id: 1, retracted: false,
+        }], "test").unwrap();
+
+        let tx_id = assert_triples(&mut conn, &[Triple {
+            subject: "test:Thing".to_string(),
+            predicate: "rdfs:label".to_string(),
+            object: Object::Literal { value: "New".to_string(), datatype: Some("xsd:string".to_string()), language: None },
+            tx: 0, created_at: 0, origin_id: 1, retracted: false,
+        }], "test").unwrap();
+
+        assert!(tx_id > 0, "changing a value must create a real transaction");
+        let active: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject='test:Thing' AND retracted=0",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(active, 1);
+        let active_value: String = conn.query_row(
+            "SELECT object_value FROM triples WHERE subject='test:Thing' AND retracted=0",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(active_value, "New");
+    }
+
+    #[test]
+    fn test_append_same_value_twice_is_noop() {
+        let mut conn = setup_test_db();
+
+        let triple = vec![Triple {
+            subject: "test:Thing".to_string(),
+            predicate: "foundation:tag".to_string(),
+            object: Object::Literal {
+                value: "rust".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            },
+            tx: 0, created_at: 0, origin_id: 1, retracted: false,
+        }];
+
+        append_triples(&mut conn, &triple, "test").unwrap();
+        let total_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM triples", [], |r| r.get(0))
+            .unwrap();
+
+        let tx_id = append_triples(&mut conn, &triple, "test").unwrap();
+        assert_eq!(tx_id, 0, "second append with same value must be a no-op");
+
+        let total_after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM triples", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(total_before, total_after, "no new rows should be written on no-op");
+    }
+
+    #[test]
+    fn test_assert_iri_same_value_is_noop() {
+        let mut conn = setup_test_db();
+
+        let triple = vec![Triple {
+            subject: "test:Thing".to_string(),
+            predicate: "rdf:type".to_string(),
+            object: Object::Iri("foundation:Task".to_string()),
+            tx: 0, created_at: 0, origin_id: 1, retracted: false,
+        }];
+
+        assert_triples(&mut conn, &triple, "test").unwrap();
+        let tx_id = assert_triples(&mut conn, &triple, "test").unwrap();
+        assert_eq!(tx_id, 0);
+    }
+
+    #[test]
+    fn test_assert_multivalue_partial_overlap_only_changes_diff() {
+        let mut conn = setup_test_db();
+
+        let mk = |v: &str| Triple {
+            subject: "test:Thing".to_string(),
+            predicate: "foundation:tag".to_string(),
+            object: Object::Literal { value: v.to_string(), datatype: Some("xsd:string".to_string()), language: None },
+            tx: 0, created_at: 0, origin_id: 1, retracted: false,
+        };
+
+        // Start with [A, B]
+        append_triples(&mut conn, &[mk("A"), mk("B")], "test").unwrap();
+
+        // Assert [A, C] — B should be retracted, C inserted, A unchanged
+        assert_triples(&mut conn, &[mk("A"), mk("C")], "test").unwrap();
+
+        let active: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT object_value FROM triples WHERE subject='test:Thing' AND predicate='foundation:tag' AND retracted=0 ORDER BY object_value"
+            ).unwrap();
+            stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(active, vec!["A", "C"]);
+
+        // A should have only 1 row total (not retracted + reinserted)
+        let a_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject='test:Thing' AND predicate='foundation:tag' AND object_value='A'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(a_rows, 1, "unchanged value A must not be duplicated");
     }
 
     #[test]

@@ -260,3 +260,194 @@ fn cancel_jobs_for_property(db_path: &PathBuf, property_iri: &str) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("
+            CREATE TABLE formula_recalc_jobs (
+                id              TEXT    PRIMARY KEY,
+                property_iri    TEXT    NOT NULL,
+                property_label  TEXT,
+                class_iri       TEXT    NOT NULL,
+                class_label     TEXT,
+                status          TEXT    NOT NULL DEFAULT 'pending',
+                total           INTEGER NOT NULL DEFAULT 0,
+                processed       INTEGER NOT NULL DEFAULT 0,
+                last_offset     INTEGER NOT NULL DEFAULT 0,
+                error_message   TEXT,
+                created_at      INTEGER NOT NULL,
+                updated_at      INTEGER NOT NULL
+            );
+            CREATE TABLE formula_instance_errors (
+                instance_iri    TEXT NOT NULL,
+                property_iri    TEXT NOT NULL,
+                error_message   TEXT NOT NULL,
+                created_at      INTEGER NOT NULL,
+                PRIMARY KEY (instance_iri, property_iri)
+            );
+            CREATE TABLE triples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL,
+                predicate TEXT NOT NULL,
+                object TEXT,
+                object_value TEXT,
+                object_type TEXT NOT NULL,
+                object_datatype TEXT,
+                object_language TEXT,
+                object_number REAL,
+                object_integer INTEGER,
+                object_datetime INTEGER,
+                object_boolean INTEGER,
+                tx INTEGER NOT NULL DEFAULT 0,
+                origin_id INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL DEFAULT 0,
+                retracted INTEGER NOT NULL DEFAULT 0
+            );
+        ").unwrap();
+        conn
+    }
+
+    fn insert_job(conn: &Connection, id: &str, property_iri: &str, class_iri: &str, status: &str) {
+        conn.execute(
+            "INSERT INTO formula_recalc_jobs
+             (id, property_iri, property_label, class_iri, class_label, status, created_at, updated_at)
+             VALUES (?, ?, '', ?, '', ?, 0, 0)",
+            rusqlite::params![id, property_iri, class_iri, status],
+        ).unwrap();
+    }
+
+    // ── load_job ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_load_job_returns_none_when_not_found() {
+        let conn = setup_test_db();
+        assert!(load_job(&conn, "nonexistent-job").is_none());
+    }
+
+    #[test]
+    fn test_load_job_returns_none_for_non_pending_status() {
+        let conn = setup_test_db();
+        insert_job(&conn, "job1", "foundation:MyProp", "foundation:Task", "running");
+
+        let result = load_job(&conn, "job1");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_load_job_returns_record_for_pending_status() {
+        let conn = setup_test_db();
+        insert_job(&conn, "job1", "foundation:MyProp", "foundation:Task", "pending");
+
+        let result = load_job(&conn, "job1");
+        assert!(result.is_some());
+        let record = result.unwrap();
+        assert_eq!(record.property_iri, "foundation:MyProp");
+        assert_eq!(record.class_iri, "foundation:Task");
+        assert_eq!(record.processed, 0);
+        assert_eq!(record.last_offset, 0);
+    }
+
+    #[test]
+    fn test_load_job_returns_none_for_cancelled_status() {
+        let conn = setup_test_db();
+        insert_job(&conn, "job1", "foundation:MyProp", "foundation:Task", "cancelled");
+
+        assert!(load_job(&conn, "job1").is_none());
+    }
+
+    #[test]
+    fn test_load_job_returns_none_for_completed_status() {
+        let conn = setup_test_db();
+        insert_job(&conn, "job1", "foundation:MyProp", "foundation:Task", "completed");
+
+        assert!(load_job(&conn, "job1").is_none());
+    }
+
+    // ── store_calculated_value ────────────────────────────────────────────────
+
+    #[test]
+    fn test_store_calculated_value_inserts_new_triple() {
+        let conn = setup_test_db();
+        store_calculated_value(&conn, "foundation:Instance1", "foundation:score", "42", 1000);
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = ? AND retracted = 0",
+            rusqlite::params!["foundation:Instance1", "foundation:score"],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+
+        let value: String = conn.query_row(
+            "SELECT object_value FROM triples WHERE subject = ? AND predicate = ? AND retracted = 0",
+            rusqlite::params!["foundation:Instance1", "foundation:score"],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(value, "42");
+    }
+
+    #[test]
+    fn test_store_calculated_value_retracts_existing_before_insert() {
+        let conn = setup_test_db();
+        // Insert an existing value
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object_value, object_type, origin_id, tx, created_at, retracted)
+             VALUES ('foundation:Instance1', 'foundation:score', 'old', 'literal', 1, 0, 0, 0)",
+            [],
+        ).unwrap();
+
+        store_calculated_value(&conn, "foundation:Instance1", "foundation:score", "new", 2000);
+
+        let retracted: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = ? AND retracted = 1",
+            rusqlite::params!["foundation:Instance1", "foundation:score"],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(retracted, 1);
+
+        let active: String = conn.query_row(
+            "SELECT object_value FROM triples WHERE subject = ? AND predicate = ? AND retracted = 0",
+            rusqlite::params!["foundation:Instance1", "foundation:score"],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(active, "new");
+    }
+
+    #[test]
+    fn test_store_calculated_value_clears_formula_errors() {
+        let conn = setup_test_db();
+        // Insert an existing error
+        conn.execute(
+            "INSERT INTO formula_instance_errors (instance_iri, property_iri, error_message, created_at)
+             VALUES ('foundation:Instance1', 'foundation:score', 'previous error', 0)",
+            [],
+        ).unwrap();
+
+        store_calculated_value(&conn, "foundation:Instance1", "foundation:score", "42", 1000);
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM formula_instance_errors WHERE instance_iri = ? AND property_iri = ?",
+            rusqlite::params!["foundation:Instance1", "foundation:score"],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    // ── now_millis ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_now_millis_is_positive() {
+        assert!(now_millis() > 0);
+    }
+
+    #[test]
+    fn test_now_millis_increases_over_time() {
+        let t1 = now_millis();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let t2 = now_millis();
+        assert!(t2 >= t1);
+    }
+}

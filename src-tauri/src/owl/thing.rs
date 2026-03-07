@@ -107,3 +107,115 @@ impl Thing {
         }).collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eavto::{store, test_helpers::setup_test_db, Triple, Object};
+    use crate::owl::vocabulary::rdfs;
+
+    #[test]
+    fn test_get_batch_empty_slice_returns_empty_map() {
+        let conn = setup_test_db();
+        let result = Thing::get_batch(&conn, &[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_get_batch_unknown_iri_uses_iri_as_label() {
+        let conn = setup_test_db();
+        let iris = vec!["foundation:Unknown".to_string()];
+        let result = Thing::get_batch(&conn, &iris);
+        let thing = result.get("foundation:Unknown").unwrap();
+        assert_eq!(thing.iri, "foundation:Unknown");
+        assert_eq!(thing.label, "foundation:Unknown");
+        assert!(thing.icon.is_none());
+    }
+
+    #[test]
+    fn test_get_batch_returns_label_for_known_entity() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:MyEntity", rdfs::LABEL, Object::Literal {
+                value: "My Entity".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let iris = vec!["foundation:MyEntity".to_string()];
+        let result = Thing::get_batch(&conn, &iris);
+        let thing = result.get("foundation:MyEntity").unwrap();
+        assert_eq!(thing.label, "My Entity");
+        assert!(thing.icon.is_none());
+    }
+
+    #[test]
+    fn test_get_batch_returns_icon_literal() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:MyEntity", rdfs::LABEL, Object::Literal {
+                value: "My Entity".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:MyEntity", "foundation:icon", Object::Literal {
+                value: "star".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let iris = vec!["foundation:MyEntity".to_string()];
+        let result = Thing::get_batch(&conn, &iris);
+        let thing = result.get("foundation:MyEntity").unwrap();
+        assert_eq!(thing.icon, Some("star".to_string()));
+    }
+
+    #[test]
+    fn test_get_batch_loads_multiple_entities() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:EntityA", rdfs::LABEL, Object::Literal {
+                value: "Entity A".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:EntityB", rdfs::LABEL, Object::Literal {
+                value: "Entity B".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let iris = vec![
+            "foundation:EntityA".to_string(),
+            "foundation:EntityB".to_string(),
+        ];
+        let result = Thing::get_batch(&conn, &iris);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.get("foundation:EntityA").unwrap().label, "Entity A");
+        assert_eq!(result.get("foundation:EntityB").unwrap().label, "Entity B");
+    }
+
+    #[test]
+    fn test_get_batch_mixed_known_and_unknown() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Known", rdfs::LABEL, Object::Literal {
+                value: "Known Entity".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let iris = vec![
+            "foundation:Known".to_string(),
+            "foundation:Unknown".to_string(),
+        ];
+        let result = Thing::get_batch(&conn, &iris);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.get("foundation:Known").unwrap().label, "Known Entity");
+        assert_eq!(result.get("foundation:Unknown").unwrap().label, "foundation:Unknown");
+    }
+}

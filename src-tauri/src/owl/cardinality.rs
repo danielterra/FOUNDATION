@@ -501,6 +501,175 @@ mod tests {
         );
     }
 
+    // ── is_required ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_required_exact_one() {
+        let r = CardinalityRestriction { property_iri: "p".to_string(), min: None, max: None, exact: Some(1) };
+        assert!(r.is_required());
+    }
+
+    #[test]
+    fn test_is_required_exact_zero_is_not_required() {
+        let r = CardinalityRestriction { property_iri: "p".to_string(), min: None, max: None, exact: Some(0) };
+        assert!(!r.is_required());
+    }
+
+    #[test]
+    fn test_is_required_min_one() {
+        let r = CardinalityRestriction { property_iri: "p".to_string(), min: Some(1), max: None, exact: None };
+        assert!(r.is_required());
+    }
+
+    #[test]
+    fn test_is_required_min_zero_is_not_required() {
+        let r = CardinalityRestriction { property_iri: "p".to_string(), min: Some(0), max: None, exact: None };
+        assert!(!r.is_required());
+    }
+
+    #[test]
+    fn test_is_required_no_constraints_is_not_required() {
+        let r = CardinalityRestriction { property_iri: "p".to_string(), min: None, max: None, exact: None };
+        assert!(!r.is_required());
+    }
+
+    #[test]
+    fn test_is_required_max_only_is_not_required() {
+        let r = CardinalityRestriction { property_iri: "p".to_string(), min: None, max: Some(5), exact: None };
+        assert!(!r.is_required());
+    }
+
+    // ── violation_message ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_violation_message_exact_uses_property_label() {
+        let r = CardinalityRestriction { property_iri: "foundation:name".to_string(), min: None, max: None, exact: Some(1) };
+        let msg = r.violation_message(0, Some("Name"));
+        assert_eq!(msg, "Property 'Name' requires exactly 1 value(s), but has 0");
+    }
+
+    #[test]
+    fn test_violation_message_exact_falls_back_to_iri() {
+        let r = CardinalityRestriction { property_iri: "foundation:name".to_string(), min: None, max: None, exact: Some(2) };
+        let msg = r.violation_message(3, None);
+        assert_eq!(msg, "Property 'foundation:name' requires exactly 2 value(s), but has 3");
+    }
+
+    #[test]
+    fn test_violation_message_min_below_threshold() {
+        let r = CardinalityRestriction { property_iri: "foundation:email".to_string(), min: Some(1), max: None, exact: None };
+        let msg = r.violation_message(0, Some("Email"));
+        assert_eq!(msg, "Property 'Email' requires at least 1 value(s), but has 0");
+    }
+
+    #[test]
+    fn test_violation_message_max_exceeded() {
+        let r = CardinalityRestriction { property_iri: "foundation:phone".to_string(), min: None, max: Some(3), exact: None };
+        let msg = r.violation_message(5, Some("Phone"));
+        assert_eq!(msg, "Property 'Phone' allows at most 3 value(s), but has 5");
+    }
+
+    #[test]
+    fn test_violation_message_fallback_when_no_branch_matches() {
+        // Fallback: called with min+max but count is within bounds (defensive path)
+        let r = CardinalityRestriction { property_iri: "foundation:tag".to_string(), min: Some(1), max: Some(5), exact: None };
+        let msg = r.violation_message(3, Some("Tag"));
+        assert_eq!(msg, "Property 'Tag' cardinality constraint violated");
+    }
+
+    // ── get_class_cardinality_restrictions ──────────────────────────────────
+
+    #[test]
+    fn test_get_class_cardinality_restrictions_empty_for_no_restrictions() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Task", "rdf:type", Object::Iri("owl:Class".to_string())),
+        ], "test").unwrap();
+
+        let restrictions = get_class_cardinality_restrictions(&conn, "foundation:Task").unwrap();
+        assert!(restrictions.is_empty());
+    }
+
+    #[test]
+    fn test_get_class_cardinality_restrictions_reads_min_cardinality() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Project", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Project", "rdfs:subClassOf", Object::Blank("_:r1".to_string())),
+            Triple::new("_:r1", "rdf:type", Object::Iri("owl:Restriction".to_string())),
+            Triple::new("_:r1", "owl:onProperty", Object::Iri("foundation:title".to_string())),
+            Triple::new("_:r1", "owl:minCardinality", Object::Integer(1)),
+        ], "test").unwrap();
+
+        let restrictions = get_class_cardinality_restrictions(&conn, "foundation:Project").unwrap();
+        assert_eq!(restrictions.len(), 1);
+        assert_eq!(restrictions[0].property_iri, "foundation:title");
+        assert_eq!(restrictions[0].min, Some(1));
+        assert_eq!(restrictions[0].max, None);
+        assert_eq!(restrictions[0].exact, None);
+    }
+
+    #[test]
+    fn test_get_class_cardinality_restrictions_reads_exact_cardinality() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Invoice", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Invoice", "rdfs:subClassOf", Object::Blank("_:r2".to_string())),
+            Triple::new("_:r2", "rdf:type", Object::Iri("owl:Restriction".to_string())),
+            Triple::new("_:r2", "owl:onProperty", Object::Iri("foundation:invoiceNumber".to_string())),
+            Triple::new("_:r2", "owl:cardinality", Object::Integer(1)),
+        ], "test").unwrap();
+
+        let restrictions = get_class_cardinality_restrictions(&conn, "foundation:Invoice").unwrap();
+        assert_eq!(restrictions.len(), 1);
+        assert_eq!(restrictions[0].exact, Some(1));
+    }
+
+    #[test]
+    fn test_get_class_cardinality_restrictions_reads_max_cardinality() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Task", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Task", "rdfs:subClassOf", Object::Blank("_:r3".to_string())),
+            Triple::new("_:r3", "rdf:type", Object::Iri("owl:Restriction".to_string())),
+            Triple::new("_:r3", "owl:onProperty", Object::Iri("foundation:assignedTo".to_string())),
+            Triple::new("_:r3", "owl:maxCardinality", Object::Integer(5)),
+        ], "test").unwrap();
+
+        let restrictions = get_class_cardinality_restrictions(&conn, "foundation:Task").unwrap();
+        assert_eq!(restrictions.len(), 1);
+        assert_eq!(restrictions[0].max, Some(5));
+    }
+
+    #[test]
+    fn test_get_class_cardinality_restrictions_ignores_non_restriction_subclasses() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Child", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Child", "rdfs:subClassOf", Object::Iri("foundation:Parent".to_string())),
+        ], "test").unwrap();
+
+        let restrictions = get_class_cardinality_restrictions(&conn, "foundation:Child").unwrap();
+        assert!(restrictions.is_empty(), "plain IRI subClassOf must not be treated as restriction");
+    }
+
+    // ── validate_property_cardinality ───────────────────────────────────────
+
     #[test]
     fn test_validate_property_cardinality() {
         use crate::eavto::{store, Triple, Object};
@@ -524,5 +693,80 @@ mod tests {
 
         let result = validate_property_cardinality(&conn, "foundation:john", "foundation:name", 0);
         assert!(result.is_err(), "Should fail with 0 values for a required field");
+    }
+
+    #[test]
+    fn test_validate_property_cardinality_exact_violation() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Invoice", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Invoice", "rdfs:subClassOf", Object::Blank("_:r1".to_string())),
+            Triple::new("_:r1", "rdf:type", Object::Iri("owl:Restriction".to_string())),
+            Triple::new("_:r1", "owl:onProperty", Object::Iri("foundation:invoiceNumber".to_string())),
+            Triple::new("_:r1", "owl:cardinality", Object::Integer(1)),
+            Triple::new("foundation:inv1", "rdf:type", Object::Iri("foundation:Invoice".to_string())),
+        ], "test").unwrap();
+
+        assert!(validate_property_cardinality(&conn, "foundation:inv1", "foundation:invoiceNumber", 1).is_ok());
+        assert!(validate_property_cardinality(&conn, "foundation:inv1", "foundation:invoiceNumber", 0).is_err());
+        assert!(validate_property_cardinality(&conn, "foundation:inv1", "foundation:invoiceNumber", 2).is_err());
+    }
+
+    #[test]
+    fn test_validate_property_cardinality_max_violation() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Task", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Task", "rdfs:subClassOf", Object::Blank("_:r2".to_string())),
+            Triple::new("_:r2", "rdf:type", Object::Iri("owl:Restriction".to_string())),
+            Triple::new("_:r2", "owl:onProperty", Object::Iri("foundation:assignedTo".to_string())),
+            Triple::new("_:r2", "owl:maxCardinality", Object::Integer(3)),
+            Triple::new("foundation:task1", "rdf:type", Object::Iri("foundation:Task".to_string())),
+        ], "test").unwrap();
+
+        assert!(validate_property_cardinality(&conn, "foundation:task1", "foundation:assignedTo", 3).is_ok());
+        assert!(validate_property_cardinality(&conn, "foundation:task1", "foundation:assignedTo", 4).is_err());
+    }
+
+    #[test]
+    fn test_validate_property_cardinality_error_message_contains_property_label() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Person", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Person", "rdfs:subClassOf", Object::Blank("_:r3".to_string())),
+            Triple::new("_:r3", "rdf:type", Object::Iri("owl:Restriction".to_string())),
+            Triple::new("_:r3", "owl:onProperty", Object::Iri("foundation:fullName".to_string())),
+            Triple::new("_:r3", "owl:minCardinality", Object::Integer(1)),
+            Triple::new("foundation:fullName", "rdfs:label", Object::Literal {
+                value: "Full Name".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:alice", "rdf:type", Object::Iri("foundation:Person".to_string())),
+        ], "test").unwrap();
+
+        let err = validate_property_cardinality(&conn, "foundation:alice", "foundation:fullName", 0)
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Full Name"), "error message should use property label, got: {msg}");
+        assert!(msg.contains("0"), "error message should mention the count, got: {msg}");
+    }
+
+    #[test]
+    fn test_validate_property_cardinality_no_type_skips_validation() {
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let conn = setup_test_db();
+        // Individual with no rdf:type — should pass without error
+        assert!(validate_property_cardinality(&conn, "foundation:orphan", "foundation:name", 0).is_ok());
     }
 }

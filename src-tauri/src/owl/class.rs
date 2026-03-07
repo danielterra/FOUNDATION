@@ -780,4 +780,288 @@ mod tests {
             super_iris,
         );
     }
+
+    // ── find_all_iris ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_find_all_iris_empty_db() {
+        let conn = setup_test_db();
+        let iris = Class::find_all_iris(&conn).unwrap();
+        assert!(iris.is_empty(), "Fresh DB should have no classes");
+    }
+
+    #[test]
+    fn test_find_all_iris_returns_owl_classes() {
+        let mut conn = setup_test_db();
+
+        Class::new("foundation:Person").assert(
+            &mut conn, ClassType::OwlClass, "Person", "person", None, "test",
+        ).unwrap();
+        Class::new("foundation:Task").assert(
+            &mut conn, ClassType::OwlClass, "Task", "task", None, "test",
+        ).unwrap();
+
+        let iris = Class::find_all_iris(&conn).unwrap();
+        assert!(iris.contains(&"foundation:Person".to_string()));
+        assert!(iris.contains(&"foundation:Task".to_string()));
+    }
+
+    #[test]
+    fn test_find_all_iris_returns_rdfs_classes() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:RdfsOnly", rdf::TYPE, Object::Iri(rdfs::CLASS.to_string())),
+        ], "test").unwrap();
+
+        let iris = Class::find_all_iris(&conn).unwrap();
+        assert!(iris.contains(&"foundation:RdfsOnly".to_string()));
+    }
+
+    #[test]
+    fn test_find_all_iris_deduplicates_dual_typed_class() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Both", rdf::TYPE, Object::Iri(owl::CLASS.to_string())),
+        ], "test").unwrap();
+        store::append_triples(&mut conn, &[
+            Triple::new("foundation:Both", rdf::TYPE, Object::Iri(rdfs::CLASS.to_string())),
+        ], "test").unwrap();
+
+        let iris = Class::find_all_iris(&conn).unwrap();
+        let count = iris.iter().filter(|iri| *iri == "foundation:Both").count();
+        assert_eq!(count, 1, "Duplicate IRI should appear only once");
+    }
+
+    #[test]
+    fn test_find_all_iris_is_sorted() {
+        let mut conn = setup_test_db();
+
+        Class::new("foundation:Zebra").assert(
+            &mut conn, ClassType::OwlClass, "Zebra", "zebra", None, "test",
+        ).unwrap();
+        Class::new("foundation:Apple").assert(
+            &mut conn, ClassType::OwlClass, "Apple", "apple", None, "test",
+        ).unwrap();
+        Class::new("foundation:Mango").assert(
+            &mut conn, ClassType::OwlClass, "Mango", "mango", None, "test",
+        ).unwrap();
+
+        let iris = Class::find_all_iris(&conn).unwrap();
+        let foundation_iris: Vec<&str> = iris.iter()
+            .filter(|iri| iri.starts_with("foundation:"))
+            .map(|s| s.as_str())
+            .collect();
+
+        let mut sorted = foundation_iris.clone();
+        sorted.sort();
+        assert_eq!(foundation_iris, sorted, "Result should be sorted alphabetically");
+    }
+
+    // ── retract_all ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_retract_all_removes_class() {
+        let mut conn = setup_test_db();
+
+        Class::new("foundation:Person").assert(
+            &mut conn, ClassType::OwlClass, "Person", "person", None, "test",
+        ).unwrap();
+
+        assert!(Class::get(&conn, "foundation:Person").unwrap().is_some());
+
+        Class::retract_all(&mut conn, "foundation:Person", "test").unwrap();
+
+        assert!(Class::get(&conn, "foundation:Person").unwrap().is_none(),
+            "Class should be gone after retract_all");
+    }
+
+    #[test]
+    fn test_retract_all_removes_all_triples() {
+        let mut conn = setup_test_db();
+
+        Class::new("foundation:Person").assert(
+            &mut conn, ClassType::OwlClass, "Person", "person", Some("foundation:Agent"), "test",
+        ).unwrap();
+
+        Class::retract_all(&mut conn, "foundation:Person", "test").unwrap();
+
+        let remaining = crate::eavto::query::get_by_entity(&conn, "foundation:Person").unwrap();
+        assert!(remaining.triples.is_empty(), "All triples should be retracted");
+    }
+
+    #[test]
+    fn test_retract_all_noop_on_nonexistent_class() {
+        let mut conn = setup_test_db();
+
+        let result = Class::retract_all(&mut conn, "foundation:Ghost", "test");
+        assert!(result.is_ok(), "retract_all on non-existent class should not error");
+    }
+
+    #[test]
+    fn test_retract_all_does_not_affect_other_classes() {
+        let mut conn = setup_test_db();
+
+        Class::new("foundation:Person").assert(
+            &mut conn, ClassType::OwlClass, "Person", "person", None, "test",
+        ).unwrap();
+        Class::new("foundation:Task").assert(
+            &mut conn, ClassType::OwlClass, "Task", "task", None, "test",
+        ).unwrap();
+
+        Class::retract_all(&mut conn, "foundation:Person", "test").unwrap();
+
+        assert!(Class::get(&conn, "foundation:Person").unwrap().is_none());
+        assert!(Class::get(&conn, "foundation:Task").unwrap().is_some(),
+            "Other classes should be unaffected");
+    }
+
+    #[test]
+    fn test_retract_all_class_no_longer_in_find_all_iris() {
+        let mut conn = setup_test_db();
+
+        Class::new("foundation:Person").assert(
+            &mut conn, ClassType::OwlClass, "Person", "person", None, "test",
+        ).unwrap();
+
+        let before = Class::find_all_iris(&conn).unwrap();
+        assert!(before.contains(&"foundation:Person".to_string()));
+
+        Class::retract_all(&mut conn, "foundation:Person", "test").unwrap();
+
+        let after = Class::find_all_iris(&conn).unwrap();
+        assert!(!after.contains(&"foundation:Person".to_string()),
+            "Retracted class should not appear in find_all_iris");
+    }
+
+    // ── set_label ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_label_updates_label() {
+        let mut conn = setup_test_db();
+        Class::new("foundation:Task").assert(
+            &mut conn, ClassType::OwlClass, "Old Label", "https://example.com/icon.svg", None, "test",
+        ).unwrap();
+
+        Class::set_label(&mut conn, "foundation:Task", "New Label", "test").unwrap();
+
+        let class = Class::get(&conn, "foundation:Task").unwrap().unwrap();
+        assert_eq!(class.label, Some("New Label".to_string()));
+    }
+
+    #[test]
+    fn test_set_label_retracts_old_label() {
+        let mut conn = setup_test_db();
+        Class::new("foundation:Task").assert(
+            &mut conn, ClassType::OwlClass, "Old Label", "https://example.com/icon.svg", None, "test",
+        ).unwrap();
+
+        Class::set_label(&mut conn, "foundation:Task", "New Label", "test").unwrap();
+
+        let retracted: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = 'foundation:Task' AND predicate = 'rdfs:label' AND retracted = 1",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        let active: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = 'foundation:Task' AND predicate = 'rdfs:label' AND retracted = 0",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(retracted, 1, "Old label should be retracted");
+        assert_eq!(active, 1, "Only the new label should be active");
+    }
+
+    // ── set_comment ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_comment_adds_comment() {
+        let mut conn = setup_test_db();
+        Class::new("foundation:Task").assert(
+            &mut conn, ClassType::OwlClass, "Task", "https://example.com/icon.svg", None, "test",
+        ).unwrap();
+
+        Class::set_comment(&mut conn, "foundation:Task", "A task entity", "test").unwrap();
+
+        let class = Class::get(&conn, "foundation:Task").unwrap().unwrap();
+        assert_eq!(class.comment, Some("A task entity".to_string()));
+    }
+
+    #[test]
+    fn test_set_comment_replaces_existing_comment() {
+        let mut conn = setup_test_db();
+        Class::new("foundation:Task").assert(
+            &mut conn, ClassType::OwlClass, "Task", "https://example.com/icon.svg", None, "test",
+        ).unwrap();
+        Class::set_comment(&mut conn, "foundation:Task", "First comment", "test").unwrap();
+        Class::set_comment(&mut conn, "foundation:Task", "Updated comment", "test").unwrap();
+
+        let class = Class::get(&conn, "foundation:Task").unwrap().unwrap();
+        assert_eq!(class.comment, Some("Updated comment".to_string()));
+
+        let active: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = 'foundation:Task' AND predicate = 'rdfs:comment' AND retracted = 0",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(active, 1, "Only one active comment should exist");
+    }
+
+    // ── set_icon ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_icon_url_icon_stores_as_literal() {
+        let mut conn = setup_test_db();
+        Class::new("foundation:Task").assert(
+            &mut conn, ClassType::OwlClass, "Task", "https://example.com/original.svg", None, "test",
+        ).unwrap();
+
+        Class::set_icon(&mut conn, "foundation:Task", "https://example.com/new.svg", "test").unwrap();
+
+        let active: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = 'foundation:Task' AND predicate = 'foundation:icon' AND retracted = 0",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(active, 1);
+    }
+
+    // ── set_super_class ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_super_class_updates_parent() {
+        let mut conn = setup_test_db();
+        Class::new("foundation:Task").assert(
+            &mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg",
+            Some("foundation:Work"), "test",
+        ).unwrap();
+
+        Class::set_super_class(&mut conn, "foundation:Task", "foundation:Activity", "test").unwrap();
+
+        let class = Class::get(&conn, "foundation:Task").unwrap().unwrap();
+        let super_iris: Vec<&str> = class.super_classes.iter().map(|t| t.iri.as_str()).collect();
+        assert!(super_iris.contains(&"foundation:Activity"),
+            "New super class should be set, got: {:?}", super_iris);
+        assert!(!super_iris.contains(&"foundation:Work"),
+            "Old super class should be removed, got: {:?}", super_iris);
+    }
+
+    #[test]
+    fn test_set_super_class_replaces_old() {
+        let mut conn = setup_test_db();
+        Class::new("foundation:Task").assert(
+            &mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg",
+            Some("foundation:Work"), "test",
+        ).unwrap();
+
+        Class::set_super_class(&mut conn, "foundation:Task", "foundation:NewParent", "test").unwrap();
+
+        let active: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = 'foundation:Task' AND predicate = 'rdfs:subClassOf' AND retracted = 0 AND object IS NOT NULL",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(active, 1, "Only one active subClassOf should exist");
+    }
 }

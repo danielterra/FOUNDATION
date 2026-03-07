@@ -1179,4 +1179,672 @@ mod tests {
         assert!(results.contains(&"foundation:HolidayVacation".to_string()));
         assert!(!results.contains(&"foundation:BirthdayParty".to_string()));
     }
+
+    // ── get_from_retracted ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_from_retracted_returns_none_when_nothing_retracted() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", rdf::TYPE, Object::Iri("foundation:Person".to_string())),
+        ], "test").unwrap();
+
+        let result = Individual::get_from_retracted(&conn, "foundation:Alice").unwrap();
+        assert!(result.is_none(), "No retracted triples → should return None");
+    }
+
+    #[test]
+    fn test_get_from_retracted_returns_none_for_unknown_iri() {
+        let conn = setup_test_db();
+
+        let result = Individual::get_from_retracted(&conn, "foundation:Unknown").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_from_retracted_finds_deleted_individual() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", rdf::TYPE, Object::Iri("foundation:Person".to_string())),
+            Triple::new("foundation:Alice", rdfs::LABEL, Object::Literal {
+                value: "Alice".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:Alice", "foundation:age", Object::Integer(30)),
+        ], "test").unwrap();
+
+        Individual::retract(&mut conn, "foundation:Alice", "test").unwrap();
+
+        let result = Individual::get_from_retracted(&conn, "foundation:Alice").unwrap();
+        assert!(result.is_some(), "Should find retracted individual");
+
+        let ind = result.unwrap();
+        assert_eq!(ind.iri, "foundation:Alice");
+        assert_eq!(ind.label, Some("Alice".to_string()));
+        assert!(ind.properties.iter().any(|(p, _)| p == "foundation:age"));
+    }
+
+    #[test]
+    fn test_get_from_retracted_extracts_label_and_comment() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Bob", rdf::TYPE, Object::Iri("foundation:Person".to_string())),
+            Triple::new("foundation:Bob", rdfs::LABEL, Object::Literal {
+                value: "Bob Smith".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:Bob", rdfs::COMMENT, Object::Literal {
+                value: "A test person".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        Individual::retract(&mut conn, "foundation:Bob", "test").unwrap();
+
+        let ind = Individual::get_from_retracted(&conn, "foundation:Bob").unwrap().unwrap();
+        assert_eq!(ind.label, Some("Bob Smith".to_string()));
+        assert_eq!(ind.comment, Some("A test person".to_string()));
+    }
+
+    #[test]
+    fn test_get_from_retracted_excludes_label_and_comment_from_properties() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Bob", rdf::TYPE, Object::Iri("foundation:Person".to_string())),
+            Triple::new("foundation:Bob", rdfs::LABEL, Object::Literal {
+                value: "Bob".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:Bob", rdfs::COMMENT, Object::Literal {
+                value: "A comment".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:Bob", "foundation:score", Object::Integer(42)),
+        ], "test").unwrap();
+
+        Individual::retract(&mut conn, "foundation:Bob", "test").unwrap();
+
+        let ind = Individual::get_from_retracted(&conn, "foundation:Bob").unwrap().unwrap();
+        assert!(!ind.properties.iter().any(|(p, _)| p == rdfs::LABEL));
+        assert!(!ind.properties.iter().any(|(p, _)| p == rdfs::COMMENT));
+        assert!(ind.properties.iter().any(|(p, _)| p == "foundation:score"));
+    }
+
+    // ── serializable_properties ─────────────────────────────────────────────
+
+    #[test]
+    fn test_serializable_properties_integer() {
+        let conn = setup_test_db();
+
+        let ind = Individual {
+            iri: "foundation:Alice".to_string(),
+            label: None,
+            icon: None,
+            comment: None,
+            types: vec![],
+            properties: vec![("foundation:age".to_string(), Object::Integer(30))],
+            property_tx: vec![0],
+            backlinks: vec![],
+        };
+
+        let props = ind.serializable_properties(&conn);
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0]["property"], "foundation:age");
+        assert_eq!(props[0]["value"], 30);
+    }
+
+    #[test]
+    fn test_serializable_properties_number() {
+        let conn = setup_test_db();
+
+        let ind = Individual {
+            iri: "foundation:Alice".to_string(),
+            label: None, icon: None, comment: None, types: vec![],
+            properties: vec![("foundation:score".to_string(), Object::Number(9.5))],
+            property_tx: vec![0],
+            backlinks: vec![],
+        };
+
+        let props = ind.serializable_properties(&conn);
+        assert_eq!(props[0]["value"], 9.5);
+    }
+
+    #[test]
+    fn test_serializable_properties_boolean() {
+        let conn = setup_test_db();
+
+        let ind = Individual {
+            iri: "foundation:Alice".to_string(),
+            label: None, icon: None, comment: None, types: vec![],
+            properties: vec![("foundation:active".to_string(), Object::Boolean(true))],
+            property_tx: vec![0],
+            backlinks: vec![],
+        };
+
+        let props = ind.serializable_properties(&conn);
+        assert_eq!(props[0]["value"], true);
+    }
+
+    #[test]
+    fn test_serializable_properties_string_literal() {
+        let conn = setup_test_db();
+
+        let ind = Individual {
+            iri: "foundation:Alice".to_string(),
+            label: None, icon: None, comment: None, types: vec![],
+            properties: vec![("foundation:name".to_string(), Object::Literal {
+                value: "Alice".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            })],
+            property_tx: vec![0],
+            backlinks: vec![],
+        };
+
+        let props = ind.serializable_properties(&conn);
+        assert_eq!(props[0]["value"], "Alice");
+    }
+
+    #[test]
+    fn test_serializable_properties_decimal_literal_parsed_as_number() {
+        let conn = setup_test_db();
+
+        let ind = Individual {
+            iri: "foundation:Alice".to_string(),
+            label: None, icon: None, comment: None, types: vec![],
+            properties: vec![("foundation:ratio".to_string(), Object::Literal {
+                value: "3.14".to_string(),
+                datatype: Some("xsd:decimal".to_string()),
+                language: None,
+            })],
+            property_tx: vec![0],
+            backlinks: vec![],
+        };
+
+        let props = ind.serializable_properties(&conn);
+        assert_eq!(props[0]["value"], 3.14);
+    }
+
+    #[test]
+    fn test_serializable_properties_integer_literal_parsed_as_number() {
+        let conn = setup_test_db();
+
+        let ind = Individual {
+            iri: "foundation:Alice".to_string(),
+            label: None, icon: None, comment: None, types: vec![],
+            properties: vec![("foundation:count".to_string(), Object::Literal {
+                value: "99".to_string(),
+                datatype: Some("xsd:integer".to_string()),
+                language: None,
+            })],
+            property_tx: vec![0],
+            backlinks: vec![],
+        };
+
+        let props = ind.serializable_properties(&conn);
+        assert_eq!(props[0]["value"], 99);
+    }
+
+    #[test]
+    fn test_serializable_properties_iri_value() {
+        let conn = setup_test_db();
+
+        let ind = Individual {
+            iri: "foundation:Alice".to_string(),
+            label: None, icon: None, comment: None, types: vec![],
+            properties: vec![("foundation:knows".to_string(), Object::Iri("foundation:Bob".to_string()))],
+            property_tx: vec![0],
+            backlinks: vec![],
+        };
+
+        let props = ind.serializable_properties(&conn);
+        assert_eq!(props[0]["value"], "foundation:Bob");
+    }
+
+    #[test]
+    fn test_serializable_properties_includes_unit_when_property_has_one() {
+        let mut conn = setup_test_db();
+
+        Property::new("foundation:height").assert(
+            &mut conn,
+            PropertyType::DatatypeProperty,
+            "height",
+            None,
+            &[],
+            Some("xsd:decimal"),
+            Some("unit:Meter"),
+            "test",
+        ).unwrap();
+
+        let ind = Individual {
+            iri: "foundation:Alice".to_string(),
+            label: None, icon: None, comment: None, types: vec![],
+            properties: vec![("foundation:height".to_string(), Object::Number(1.75))],
+            property_tx: vec![0],
+            backlinks: vec![],
+        };
+
+        let props = ind.serializable_properties(&conn);
+        assert_eq!(props[0]["unit"], "unit:Meter");
+    }
+
+    #[test]
+    fn test_serializable_properties_no_unit_key_when_property_has_none() {
+        let conn = setup_test_db();
+
+        let ind = Individual {
+            iri: "foundation:Alice".to_string(),
+            label: None, icon: None, comment: None, types: vec![],
+            properties: vec![("foundation:nickname".to_string(), Object::Literal {
+                value: "Ally".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            })],
+            property_tx: vec![0],
+            backlinks: vec![],
+        };
+
+        let props = ind.serializable_properties(&conn);
+        assert!(props[0].get("unit").is_none(), "No unit key when property has no unit");
+    }
+
+    #[test]
+    fn test_serializable_properties_multiple() {
+        let conn = setup_test_db();
+
+        let ind = Individual {
+            iri: "foundation:Alice".to_string(),
+            label: None, icon: None, comment: None, types: vec![],
+            properties: vec![
+                ("foundation:age".to_string(), Object::Integer(30)),
+                ("foundation:name".to_string(), Object::Literal {
+                    value: "Alice".to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                }),
+                ("foundation:active".to_string(), Object::Boolean(false)),
+            ],
+            property_tx: vec![0, 0, 0],
+            backlinks: vec![],
+        };
+
+        let props = ind.serializable_properties(&conn);
+        assert_eq!(props.len(), 3);
+    }
+
+    // ── remove_property_value ───────────────────────────────────────────────
+
+    #[test]
+    fn test_remove_property_value_iri_happy_path() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", rdf::TYPE, Object::Iri("foundation:Person".to_string())),
+            Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
+        ], "test").unwrap();
+
+        let result = Individual::remove_property_value(
+            &mut conn,
+            "foundation:Alice",
+            "foundation:knows",
+            "foundation:Bob",
+            "test",
+        ).unwrap();
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), Object::Iri("foundation:Bob".to_string()));
+
+        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        assert!(after.triples.is_empty(), "Triple should have been retracted");
+    }
+
+    #[test]
+    fn test_remove_property_value_integer() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:age", Object::Integer(30)),
+        ], "test").unwrap();
+
+        let result = Individual::remove_property_value(
+            &mut conn,
+            "foundation:Alice",
+            "foundation:age",
+            "30",
+            "test",
+        ).unwrap();
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), Object::Integer(30));
+
+        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:age").unwrap();
+        assert!(after.triples.is_empty(), "Integer triple should have been retracted");
+    }
+
+    #[test]
+    fn test_remove_property_value_string_literal() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:nickname", Object::Literal {
+                value: "Ally".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let result = Individual::remove_property_value(
+            &mut conn,
+            "foundation:Alice",
+            "foundation:nickname",
+            "Ally",
+            "test",
+        ).unwrap();
+
+        assert!(result.is_some());
+
+        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:nickname").unwrap();
+        assert!(after.triples.is_empty(), "String literal triple should have been retracted");
+    }
+
+    #[test]
+    fn test_remove_property_value_nonexistent_value_returns_none() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
+        ], "test").unwrap();
+
+        let result = Individual::remove_property_value(
+            &mut conn,
+            "foundation:Alice",
+            "foundation:knows",
+            "foundation:Charlie",
+            "test",
+        ).unwrap();
+
+        assert!(result.is_none(), "Should return None when value does not match");
+
+        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        assert_eq!(after.triples.len(), 1, "Existing triple should be untouched");
+    }
+
+    #[test]
+    fn test_remove_property_value_no_triples_returns_none() {
+        let mut conn = setup_test_db();
+
+        let result = Individual::remove_property_value(
+            &mut conn,
+            "foundation:Alice",
+            "foundation:knows",
+            "foundation:Bob",
+            "test",
+        ).unwrap();
+
+        assert!(result.is_none(), "Should return None when property has no triples");
+    }
+
+    #[test]
+    fn test_remove_property_value_boolean() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:active", Object::Boolean(true)),
+        ], "test").unwrap();
+
+        let result = Individual::remove_property_value(
+            &mut conn,
+            "foundation:Alice",
+            "foundation:active",
+            "true",
+            "test",
+        ).unwrap();
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), Object::Boolean(true));
+    }
+
+    #[test]
+    fn test_remove_property_value_number() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:score", Object::Number(9.5)),
+        ], "test").unwrap();
+
+        let result = Individual::remove_property_value(
+            &mut conn,
+            "foundation:Alice",
+            "foundation:score",
+            "9.5",
+            "test",
+        ).unwrap();
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), Object::Number(9.5));
+    }
+
+    #[test]
+    fn test_remove_property_value_only_removes_matching_multivalue() {
+        let mut conn = setup_test_db();
+
+        store::append_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
+            Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Carol".to_string())),
+        ], "test").unwrap();
+
+        let result = Individual::remove_property_value(
+            &mut conn,
+            "foundation:Alice",
+            "foundation:knows",
+            "foundation:Bob",
+            "test",
+        ).unwrap();
+
+        assert!(result.is_some());
+
+        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        assert_eq!(after.triples.len(), 1, "Only the matching value should be removed");
+        assert_eq!(
+            after.triples[0].object,
+            Object::Iri("foundation:Carol".to_string()),
+        );
+    }
+
+    // ── find_by_class_and_properties ─────────────────────────────────────────
+
+    #[test]
+    fn test_find_by_class_and_properties_empty_properties_returns_empty() {
+        let conn = setup_test_db();
+        let result = Individual::find_by_class_and_properties(
+            &conn,
+            "foundation:Task",
+            &[],
+        ).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_find_by_class_and_properties_single_filter() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskA", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
+            Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskB", "foundation:hasStatus", Object::Iri("foundation:Done".to_string())),
+        ], "test").unwrap();
+
+        let result = Individual::find_by_class_and_properties(
+            &conn,
+            "foundation:Task",
+            &[("foundation:hasStatus", "foundation:Active")],
+        ).unwrap();
+
+        assert_eq!(result, vec!["foundation:TaskA".to_string()]);
+    }
+
+    #[test]
+    fn test_find_by_class_and_properties_multiple_filters() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskA", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
+            Triple::new("foundation:TaskA", "foundation:priority", Object::Literal { value: "high".to_string(), datatype: None, language: None }),
+            Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskB", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
+            Triple::new("foundation:TaskB", "foundation:priority", Object::Literal { value: "low".to_string(), datatype: None, language: None }),
+        ], "test").unwrap();
+
+        let result = Individual::find_by_class_and_properties(
+            &conn,
+            "foundation:Task",
+            &[
+                ("foundation:hasStatus", "foundation:Active"),
+                ("foundation:priority", "high"),
+            ],
+        ).unwrap();
+
+        assert_eq!(result, vec!["foundation:TaskA".to_string()]);
+    }
+
+    #[test]
+    fn test_find_by_class_and_properties_no_match_returns_empty() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskA", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
+        ], "test").unwrap();
+
+        let result = Individual::find_by_class_and_properties(
+            &conn,
+            "foundation:Task",
+            &[("foundation:hasStatus", "foundation:Done")],
+        ).unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_find_by_class_and_properties_literal_value() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:ReleaseA", rdf::TYPE, Object::Iri("foundation:Release".to_string())),
+            Triple::new("foundation:ReleaseA", "foundation:versionNumber", Object::Literal { value: "1.0.0".to_string(), datatype: None, language: None }),
+            Triple::new("foundation:ReleaseB", rdf::TYPE, Object::Iri("foundation:Release".to_string())),
+            Triple::new("foundation:ReleaseB", "foundation:versionNumber", Object::Literal { value: "2.0.0".to_string(), datatype: None, language: None }),
+        ], "test").unwrap();
+
+        let result = Individual::find_by_class_and_properties(
+            &conn,
+            "foundation:Release",
+            &[("foundation:versionNumber", "1.0.0")],
+        ).unwrap();
+
+        assert_eq!(result, vec!["foundation:ReleaseA".to_string()]);
+    }
+
+    // ── find_messages_by_conversation ────────────────────────────────────────
+
+    fn insert_message(conn: &mut Connection, iri: &str, conversation_iri: &str, sent_at_ms: i64) {
+        store::assert_triples(conn, &[
+            Triple::new(iri, rdf::TYPE, Object::Iri("foundation:AIConversationMessage".to_string())),
+            Triple::new(iri, "foundation:partOfConversation", Object::Iri(conversation_iri.to_string())),
+            Triple::new(iri, "foundation:sentAt", Object::DateTime(sent_at_ms)),
+        ], "test").unwrap();
+    }
+
+    #[test]
+    fn test_find_messages_by_conversation_empty_db() {
+        let conn = setup_test_db();
+        let result = Individual::find_messages_by_conversation(
+            &conn,
+            "foundation:ConvA",
+            usize::MAX,
+            0,
+        ).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_find_messages_by_conversation_returns_messages_ordered_newest_first() {
+        let mut conn = setup_test_db();
+        insert_message(&mut conn, "foundation:Msg1", "foundation:ConvA", 1_000);
+        insert_message(&mut conn, "foundation:Msg2", "foundation:ConvA", 3_000);
+        insert_message(&mut conn, "foundation:Msg3", "foundation:ConvA", 2_000);
+
+        let result = Individual::find_messages_by_conversation(
+            &conn,
+            "foundation:ConvA",
+            usize::MAX,
+            0,
+        ).unwrap();
+
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], "foundation:Msg2");
+        assert_eq!(result[1], "foundation:Msg3");
+        assert_eq!(result[2], "foundation:Msg1");
+    }
+
+    #[test]
+    fn test_find_messages_by_conversation_respects_limit() {
+        let mut conn = setup_test_db();
+        insert_message(&mut conn, "foundation:Msg1", "foundation:ConvA", 1_000);
+        insert_message(&mut conn, "foundation:Msg2", "foundation:ConvA", 3_000);
+        insert_message(&mut conn, "foundation:Msg3", "foundation:ConvA", 2_000);
+
+        let result = Individual::find_messages_by_conversation(
+            &conn,
+            "foundation:ConvA",
+            2,
+            0,
+        ).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "foundation:Msg2");
+        assert_eq!(result[1], "foundation:Msg3");
+    }
+
+    #[test]
+    fn test_find_messages_by_conversation_respects_offset() {
+        let mut conn = setup_test_db();
+        insert_message(&mut conn, "foundation:Msg1", "foundation:ConvA", 1_000);
+        insert_message(&mut conn, "foundation:Msg2", "foundation:ConvA", 3_000);
+        insert_message(&mut conn, "foundation:Msg3", "foundation:ConvA", 2_000);
+
+        let result = Individual::find_messages_by_conversation(
+            &conn,
+            "foundation:ConvA",
+            usize::MAX,
+            1,
+        ).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "foundation:Msg3");
+        assert_eq!(result[1], "foundation:Msg1");
+    }
+
+    #[test]
+    fn test_find_messages_by_conversation_excludes_other_conversations() {
+        let mut conn = setup_test_db();
+        insert_message(&mut conn, "foundation:Msg1", "foundation:ConvA", 1_000);
+        insert_message(&mut conn, "foundation:Msg2", "foundation:ConvB", 3_000);
+
+        let result = Individual::find_messages_by_conversation(
+            &conn,
+            "foundation:ConvA",
+            usize::MAX,
+            0,
+        ).unwrap();
+
+        assert_eq!(result, vec!["foundation:Msg1".to_string()]);
+    }
 }

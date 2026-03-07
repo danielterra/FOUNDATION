@@ -202,6 +202,275 @@ pub fn migrate_icon_to_has_icon(conn: &mut Connection) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eavto::test_helpers::setup_test_db;
+    use crate::eavto::{Triple, Object};
+    use crate::eavto::store;
+
+    // ── icon_name_to_iri ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_icon_name_to_iri() {
+        assert_eq!(
+            icon_name_to_iri("person"),
+            "foundation:icon-material-symbols-name-person"
+        );
+        assert_eq!(
+            icon_name_to_iri("home"),
+            "foundation:icon-material-symbols-name-home"
+        );
+    }
+
+    // ── icon_iri_to_display ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_icon_iri_to_display_symbol() {
+        let conn = setup_test_db();
+        let iri = icon_name_to_iri("star");
+        assert_eq!(icon_iri_to_display(&conn, &iri), Some("star".to_string()));
+    }
+
+    #[test]
+    fn test_icon_iri_to_display_unknown_returns_none() {
+        let conn = setup_test_db();
+        assert_eq!(icon_iri_to_display(&conn, "foundation:icon-unknown-xyz"), None);
+    }
+
+    #[test]
+    fn test_icon_iri_to_display_non_icon_iri_returns_none() {
+        let conn = setup_test_db();
+        assert_eq!(icon_iri_to_display(&conn, "foundation:SomethingElse"), None);
+    }
+
+    // ── icon_store_value ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_icon_store_value_symbol_name_uses_has_icon_iri() {
+        let (pred, obj) = icon_store_value("home");
+        assert_eq!(pred, "foundation:hasIcon");
+        assert!(matches!(obj, Object::Iri(iri) if iri == "foundation:icon-material-symbols-name-home"));
+    }
+
+    #[test]
+    fn test_icon_store_value_https_url_uses_icon_literal() {
+        let (pred, obj) = icon_store_value("https://example.com/icon.png");
+        assert_eq!(pred, "foundation:icon");
+        assert!(matches!(obj, Object::Literal { ref value, .. } if value == "https://example.com/icon.png"));
+    }
+
+    #[test]
+    fn test_icon_store_value_http_url_uses_icon_literal() {
+        let (pred, obj) = icon_store_value("http://example.com/icon.png");
+        assert_eq!(pred, "foundation:icon");
+        assert!(matches!(obj, Object::Literal { ref value, .. } if value == "http://example.com/icon.png"));
+    }
+
+    #[test]
+    fn test_icon_store_value_file_url_uses_icon_literal() {
+        let (pred, obj) = icon_store_value("file:///path/to/icon.png");
+        assert_eq!(pred, "foundation:icon");
+        assert!(matches!(obj, Object::Literal { ref value, .. } if value == "file:///path/to/icon.png"));
+    }
+
+    #[test]
+    fn test_icon_store_value_data_url_uses_icon_literal() {
+        let (pred, obj) = icon_store_value("data:image/png;base64,abc");
+        assert_eq!(pred, "foundation:icon");
+        assert!(matches!(obj, Object::Literal { ref value, .. } if value == "data:image/png;base64,abc"));
+    }
+
+    // ── seed_icon_library ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_seed_icon_library_seeds_known_icons() {
+        let mut conn = setup_test_db();
+        seed_icon_library(&mut conn);
+
+        let home_iri = icon_name_to_iri("home");
+        let key = crate::owl::get_literal_property(&conn, &home_iri, "foundation:iconKey")
+            .unwrap()
+            .unwrap();
+        assert_eq!(key, "home");
+    }
+
+    #[test]
+    fn test_seed_icon_library_sets_version() {
+        let mut conn = setup_test_db();
+        seed_icon_library(&mut conn);
+
+        let version = crate::owl::get_literal_property(
+            &conn,
+            MATERIAL_SYMBOLS_LIBRARY_IRI,
+            "foundation:libraryVersion",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(version, MATERIAL_SYMBOLS_VERSION);
+    }
+
+    #[test]
+    fn test_seed_icon_library_is_idempotent() {
+        let mut conn = setup_test_db();
+        seed_icon_library(&mut conn);
+        seed_icon_library(&mut conn);
+
+        let home_iri = icon_name_to_iri("home");
+        let key = crate::owl::get_literal_property(&conn, &home_iri, "foundation:iconKey")
+            .unwrap()
+            .unwrap();
+        assert_eq!(key, "home");
+    }
+
+    #[test]
+    fn test_seed_icon_library_sets_self_referential_has_icon() {
+        let mut conn = setup_test_db();
+        seed_icon_library(&mut conn);
+
+        let home_iri = icon_name_to_iri("home");
+        let result = crate::eavto::query::get_by_entity_predicate(
+            &conn, &home_iri, "foundation:hasIcon"
+        ).unwrap();
+        assert_eq!(result.triples.len(), 1);
+        assert!(matches!(&result.triples[0].object, Object::Iri(iri) if iri == &home_iri));
+    }
+
+    // ── validate_icon ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_icon_valid_symbol_name() {
+        let mut conn = setup_test_db();
+        seed_icon_library(&mut conn);
+        assert!(validate_icon(&conn, "home").is_ok());
+        assert!(validate_icon(&conn, "person").is_ok());
+    }
+
+    #[test]
+    fn test_validate_icon_invalid_symbol_name() {
+        let mut conn = setup_test_db();
+        seed_icon_library(&mut conn);
+        let err = validate_icon(&conn, "not_a_real_icon_xyz_abc");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_validate_icon_url_formats_always_valid() {
+        let conn = setup_test_db();
+        assert!(validate_icon(&conn, "https://example.com/icon.png").is_ok());
+        assert!(validate_icon(&conn, "http://example.com/icon.png").is_ok());
+        assert!(validate_icon(&conn, "file:///path/to/icon.png").is_ok());
+        assert!(validate_icon(&conn, "data:image/png;base64,abc").is_ok());
+    }
+
+    // ── migrate_icon_to_has_icon ────────────────────────────────────────────
+
+    #[test]
+    fn test_migrate_converts_symbol_literal_to_has_icon_iri() {
+        let mut conn = setup_test_db();
+        store::assert_triples(
+            &mut conn,
+            &[Triple::new(
+                "foundation:TestThing",
+                "foundation:icon",
+                Object::Literal {
+                    value: "person".to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            )],
+            "test",
+        )
+        .unwrap();
+
+        migrate_icon_to_has_icon(&mut conn);
+
+        let old = crate::eavto::query::get_by_entity_predicate(
+            &conn, "foundation:TestThing", "foundation:icon",
+        )
+        .unwrap();
+        assert!(old.triples.is_empty(), "old foundation:icon literal should be retracted");
+
+        let new = crate::eavto::query::get_by_entity_predicate(
+            &conn, "foundation:TestThing", "foundation:hasIcon",
+        )
+        .unwrap();
+        assert_eq!(new.triples.len(), 1);
+        assert!(matches!(
+            &new.triples[0].object,
+            Object::Iri(iri) if iri == "foundation:icon-material-symbols-name-person"
+        ));
+    }
+
+    #[test]
+    fn test_migrate_skips_url_icons() {
+        let mut conn = setup_test_db();
+        store::assert_triples(
+            &mut conn,
+            &[Triple::new(
+                "foundation:TestThing",
+                "foundation:icon",
+                Object::Literal {
+                    value: "https://example.com/icon.png".to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            )],
+            "test",
+        )
+        .unwrap();
+
+        migrate_icon_to_has_icon(&mut conn);
+
+        let existing = crate::eavto::query::get_by_entity_predicate(
+            &conn, "foundation:TestThing", "foundation:icon",
+        )
+        .unwrap();
+        assert_eq!(existing.triples.len(), 1, "URL icon should not be retracted");
+
+        let new = crate::eavto::query::get_by_entity_predicate(
+            &conn, "foundation:TestThing", "foundation:hasIcon",
+        )
+        .unwrap();
+        assert!(new.triples.is_empty(), "no hasIcon should be created for URL icons");
+    }
+
+    #[test]
+    fn test_migrate_is_idempotent() {
+        let mut conn = setup_test_db();
+        store::assert_triples(
+            &mut conn,
+            &[Triple::new(
+                "foundation:TestThing",
+                "foundation:icon",
+                Object::Literal {
+                    value: "star".to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            )],
+            "test",
+        )
+        .unwrap();
+
+        migrate_icon_to_has_icon(&mut conn);
+        migrate_icon_to_has_icon(&mut conn);
+
+        let new = crate::eavto::query::get_by_entity_predicate(
+            &conn, "foundation:TestThing", "foundation:hasIcon",
+        )
+        .unwrap();
+        assert_eq!(new.triples.len(), 1, "second migration should not duplicate the triple");
+    }
+
+    #[test]
+    fn test_migrate_no_op_when_nothing_to_migrate() {
+        let mut conn = setup_test_db();
+        migrate_icon_to_has_icon(&mut conn);
+        // No panic, no error — just a no-op
+    }
+}
+
 fn seed_icons_batch(conn: &mut Connection, version: &str) {
     use crate::eavto::store::{assert_triples, enter_batch_transaction};
     use crate::eavto::{Triple, Object};
@@ -246,6 +515,11 @@ fn seed_icons_batch(conn: &mut Connection, version: &str) {
             &iri,
             "foundation:fromLibrary",
             Object::Iri(MATERIAL_SYMBOLS_LIBRARY_IRI.to_string()),
+        ));
+        all_triples.push(Triple::new(
+            &iri,
+            "foundation:hasIcon",
+            Object::Iri(iri.clone()),
         ));
     }
 

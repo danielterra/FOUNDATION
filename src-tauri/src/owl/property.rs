@@ -441,6 +441,120 @@ mod tests {
         }
     }
 
+    // ── retract ─────────────────────────────────────────────────────────────
+
+    fn assert_object_property(conn: &mut Connection, iri: &str) {
+        Property::new(iri).assert(
+            conn,
+            PropertyType::ObjectProperty,
+            "Test Property",
+            Some("A test property"),
+            &["foundation:Person"],
+            Some("foundation:Person"),
+            None,
+            "test",
+        ).unwrap();
+    }
+
+    #[test]
+    fn test_retract_removes_property_definition() {
+        let mut conn = setup_test_db();
+        assert_object_property(&mut conn, "foundation:hasParent");
+
+        assert!(Property::get(&conn, "foundation:hasParent").unwrap().is_some());
+
+        Property::retract(&mut conn, "foundation:hasParent", "test").unwrap();
+
+        assert!(Property::get(&conn, "foundation:hasParent").unwrap().is_none(),
+            "property should no longer exist after retraction");
+    }
+
+    #[test]
+    fn test_retract_removes_fact_triples_using_property() {
+        let mut conn = setup_test_db();
+        assert_object_property(&mut conn, "foundation:hasParent");
+
+        // Create two instances using this property
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:alice", "foundation:hasParent", Object::Iri("foundation:bob".to_string())),
+            Triple::new("foundation:carol", "foundation:hasParent", Object::Iri("foundation:dave".to_string())),
+        ], "test").unwrap();
+
+        Property::retract(&mut conn, "foundation:hasParent", "test").unwrap();
+
+        // Fact triples must be gone
+        let alice_facts = crate::eavto::query::get_by_entity_predicate(
+            &conn, "foundation:alice", "foundation:hasParent"
+        ).unwrap();
+        assert!(alice_facts.triples.is_empty(), "fact triple for alice must be retracted");
+
+        let carol_facts = crate::eavto::query::get_by_entity_predicate(
+            &conn, "foundation:carol", "foundation:hasParent"
+        ).unwrap();
+        assert!(carol_facts.triples.is_empty(), "fact triple for carol must be retracted");
+    }
+
+    #[test]
+    fn test_retract_returns_affected_subjects() {
+        let mut conn = setup_test_db();
+        assert_object_property(&mut conn, "foundation:hasParent");
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:alice", "foundation:hasParent", Object::Iri("foundation:bob".to_string())),
+            Triple::new("foundation:carol", "foundation:hasParent", Object::Iri("foundation:dave".to_string())),
+        ], "test").unwrap();
+
+        let mut affected = Property::retract(&mut conn, "foundation:hasParent", "test").unwrap();
+        affected.sort();
+
+        assert_eq!(affected, vec!["foundation:alice", "foundation:carol"]);
+    }
+
+    #[test]
+    fn test_retract_nonexistent_property_returns_empty() {
+        let mut conn = setup_test_db();
+
+        let affected = Property::retract(&mut conn, "foundation:ghost", "test").unwrap();
+        assert!(affected.is_empty(), "retracting a non-existent property must not error");
+    }
+
+    #[test]
+    fn test_retract_with_no_usages_returns_empty_affected() {
+        let mut conn = setup_test_db();
+        assert_object_property(&mut conn, "foundation:hasParent");
+
+        let affected = Property::retract(&mut conn, "foundation:hasParent", "test").unwrap();
+        assert!(affected.is_empty(), "no instances used the property, so affected must be empty");
+    }
+
+    #[test]
+    fn test_retract_datatype_property() {
+        let mut conn = setup_test_db();
+
+        Property::new("foundation:birthDate").assert(
+            &mut conn,
+            PropertyType::DatatypeProperty,
+            "birth date",
+            None,
+            &["foundation:Person"],
+            Some("xsd:string"),
+            None,
+            "test",
+        ).unwrap();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:alice", "foundation:birthDate", Object::Literal {
+                value: "1990-01-01".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let affected = Property::retract(&mut conn, "foundation:birthDate", "test").unwrap();
+        assert!(affected.contains(&"foundation:alice".to_string()));
+        assert!(Property::get(&conn, "foundation:birthDate").unwrap().is_none());
+    }
+
     #[test]
     fn test_property_characteristics() {
         let mut conn = setup_test_db();
@@ -469,5 +583,127 @@ mod tests {
         // Get and verify
         let property = Property::get(&conn, "foundation:hasParent").unwrap().unwrap();
         assert!(property.is_functional);
+    }
+
+    #[test]
+    fn test_transitive_property_detection() {
+        let mut conn = setup_test_db();
+
+        Property::new("foundation:isAncestorOf").assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "is ancestor of",
+            None,
+            &[],
+            None,
+            None,
+            "test",
+        ).unwrap();
+
+        store::append_triples(&mut conn, &[
+            Triple::new("foundation:isAncestorOf", rdf::TYPE, Object::Iri(owl::TRANSITIVE_PROPERTY.to_string())),
+        ], "test").unwrap();
+
+        let property = Property::get(&conn, "foundation:isAncestorOf").unwrap().unwrap();
+        assert!(property.is_transitive, "property should be detected as transitive");
+        assert!(!property.is_symmetric);
+        assert!(!property.is_functional);
+        assert_eq!(property.property_type, PropertyType::ObjectProperty);
+    }
+
+    #[test]
+    fn test_symmetric_property_detection() {
+        let mut conn = setup_test_db();
+
+        Property::new("foundation:isSiblingOf").assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "is sibling of",
+            None,
+            &[],
+            None,
+            None,
+            "test",
+        ).unwrap();
+
+        store::append_triples(&mut conn, &[
+            Triple::new("foundation:isSiblingOf", rdf::TYPE, Object::Iri(owl::SYMMETRIC_PROPERTY.to_string())),
+        ], "test").unwrap();
+
+        let property = Property::get(&conn, "foundation:isSiblingOf").unwrap().unwrap();
+        assert!(property.is_symmetric, "property should be detected as symmetric");
+        assert!(!property.is_transitive);
+        assert!(!property.is_functional);
+        assert_eq!(property.property_type, PropertyType::ObjectProperty);
+    }
+
+    #[test]
+    fn test_annotation_property_detection() {
+        let mut conn = setup_test_db();
+
+        Property::new("foundation:seeAlso").assert(
+            &mut conn,
+            PropertyType::AnnotationProperty,
+            "see also",
+            None,
+            &[],
+            None,
+            None,
+            "test",
+        ).unwrap();
+
+        let property = Property::get(&conn, "foundation:seeAlso").unwrap().unwrap();
+        assert_eq!(property.property_type, PropertyType::AnnotationProperty);
+        assert!(!property.is_functional);
+        assert!(!property.is_transitive);
+        assert!(!property.is_symmetric);
+    }
+
+    #[test]
+    fn test_transitive_and_symmetric_combined() {
+        let mut conn = setup_test_db();
+
+        Property::new("foundation:equals").assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "equals",
+            None,
+            &[],
+            None,
+            None,
+            "test",
+        ).unwrap();
+
+        store::append_triples(&mut conn, &[
+            Triple::new("foundation:equals", rdf::TYPE, Object::Iri(owl::TRANSITIVE_PROPERTY.to_string())),
+            Triple::new("foundation:equals", rdf::TYPE, Object::Iri(owl::SYMMETRIC_PROPERTY.to_string())),
+        ], "test").unwrap();
+
+        let property = Property::get(&conn, "foundation:equals").unwrap().unwrap();
+        assert!(property.is_transitive);
+        assert!(property.is_symmetric);
+        assert_eq!(property.property_type, PropertyType::ObjectProperty);
+    }
+
+    #[test]
+    fn test_property_without_characteristics_has_all_false() {
+        let mut conn = setup_test_db();
+
+        Property::new("foundation:hasName").assert(
+            &mut conn,
+            PropertyType::DatatypeProperty,
+            "has name",
+            None,
+            &[],
+            Some("xsd:string"),
+            None,
+            "test",
+        ).unwrap();
+
+        let property = Property::get(&conn, "foundation:hasName").unwrap().unwrap();
+        assert!(!property.is_functional);
+        assert!(!property.is_transitive);
+        assert!(!property.is_symmetric);
+        assert_eq!(property.property_type, PropertyType::DatatypeProperty);
     }
 }
