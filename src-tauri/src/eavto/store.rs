@@ -102,7 +102,7 @@ fn do_assert_triples(
 
         for row in &existing {
             if !incoming.iter().any(|obj| object_matches_row(obj, row)) {
-                rows_to_retract.push(row.id);
+                rows_to_retract.push(row.rowid);
             }
         }
         for &idx in incoming_indices {
@@ -125,7 +125,7 @@ fn do_assert_triples(
     let origin_id = get_or_create_origin(tx, origin)?;
 
     for id in &rows_to_retract {
-        tx.execute("UPDATE triples SET retracted = 1 WHERE id = ?", [id])?;
+        tx.execute("UPDATE triples SET retracted = 1 WHERE rowid = ?", [id])?;
     }
     for &idx in &indices_to_insert {
         insert_triple(tx, &triples[idx], tx_id, origin_id, now)?;
@@ -342,7 +342,7 @@ fn do_retract_triples(
 
 /// Represents an existing active triple row fetched from the DB for comparison.
 struct ExistingRow {
-    id: i64,
+    rowid: i64,
     object: Option<String>,
     object_value: Option<String>,
     object_datatype: Option<String>,
@@ -360,14 +360,14 @@ fn fetch_existing_rows(
     predicate: &str,
 ) -> rusqlite::Result<Vec<ExistingRow>> {
     let mut stmt = tx.prepare(
-        "SELECT id, object, object_value, object_datatype, object_language,
+        "SELECT rowid, object, object_value, object_datatype, object_language,
                 object_integer, object_number, object_boolean, object_datetime
          FROM triples
          WHERE subject = ? AND predicate = ? AND retracted = 0",
     )?;
     let rows = stmt.query_map([subject, predicate], |row| {
         Ok(ExistingRow {
-            id: row.get(0)?,
+            rowid: row.get(0)?,
             object: row.get(1)?,
             object_value: row.get(2)?,
             object_datatype: row.get(3)?,

@@ -190,6 +190,7 @@
     style:z-index={widget.zIndex}
     onmousedown={(e) => startDrag(e, widget)}
     onclick={() => bringToFront(widget.id)}
+    onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && bringToFront(widget.id)}
     role="dialog"
     tabindex="0"
     aria-label="Widget"

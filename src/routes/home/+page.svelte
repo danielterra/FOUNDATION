@@ -4,7 +4,7 @@
   import WidgetManager from '$lib/components/widgets/WidgetManager.svelte';
   import Search from '$lib/components/graph/Search.svelte';
 
-  let isChatOpen = true;
+  let isChatOpen = $state(true);
   let searchComponent = $state();
 
   async function handleSearchResult(entityId) {

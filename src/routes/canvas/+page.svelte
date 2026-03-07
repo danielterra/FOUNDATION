@@ -8,7 +8,7 @@
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import { calculateGraphLayout, extractRelationships, calculateBoundingBox } from '$lib/utils/graphLayout';
 
-	let canvasComponent;
+	let canvasComponent = $state();
 	let showSetupWizard = $state(false);
 	let checkingSetup = $state(true);
 	let inspectorPanels = $state([]);

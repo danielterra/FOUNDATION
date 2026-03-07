@@ -11,7 +11,7 @@
 	let isSearching = $state(false);
 	let showResults = $state(false);
 	let selectedIndex = $state(-1);
-	let inputElement;
+	let inputElement = $state();
 	let debounceTimer;
 
 	export function open() {

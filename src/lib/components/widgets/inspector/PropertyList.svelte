@@ -158,81 +158,109 @@
           {#each detailGroup.values as val, idx (
             detailGroup.property + '_' + val.value + '_' + idx
           )}
-            <div
-              class="detail-value"
-              class:calculated={detailGroup.isCalculated}
-              class:clickable={detailGroup.isObjectProperty}
-              role={detailGroup.isObjectProperty ? "button" : undefined}
-              tabindex={detailGroup.isObjectProperty ? 0 : undefined}
-              onclick={() => detailGroup.isObjectProperty && openEntityInspector(val.value)}
-              onkeydown={(e) =>
-                detailGroup.isObjectProperty && e.key === 'Enter' && openEntityInspector(val.value)}
-            >
-              {#if detailGroup.isObjectProperty && val.valueIcon}
-                {#if isIconUrl(val.valueIcon)}
-                  <img src={getIconUrl(val.valueIcon)} alt="" class="value-icon-image" />
-                {:else}
-                  <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
+            {#if detailGroup.isObjectProperty}
+              <div
+                class="detail-value clickable"
+                class:calculated={detailGroup.isCalculated}
+                role="button"
+                tabindex="0"
+                onclick={() => openEntityInspector(val.value)}
+                onkeydown={(e) => e.key === 'Enter' && openEntityInspector(val.value)}
+              >
+                {#if val.valueIcon}
+                  {#if isIconUrl(val.valueIcon)}
+                    <img src={getIconUrl(val.valueIcon)} alt="" class="value-icon-image" />
+                  {:else}
+                    <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
+                  {/if}
                 {/if}
-              {/if}
-              {#if !detailGroup.isObjectProperty && val.datatype === 'xsd:dateTime'}
-                {@const date = new Date(Number(val.value))}
-                <div class="timestamp-display">
-                  <span class="value-text">
-                    {date.toLocaleString('en-US', {
-                      year: 'numeric', month: 'short', day: 'numeric',
-                      hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true
-                    })}
-                  </span>
-                  <span class="timestamp-relative">{formatDate(date.getTime())}</span>
-                </div>
-              {:else if !detailGroup.isObjectProperty && val.datatype === 'xsd:date'}
-                {@const [y, m, d] = val.value.split('-').map(Number)}
-                {@const date = new Date(y, m - 1, d)}
-                <span class="value-text">
-                  {date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
-                </span>
-              {:else if !detailGroup.isObjectProperty && isUrl(val.datatype)}
-                <button class="url-value" onclick={() => openUrl_(val.value)} title={val.value}>
-                  <span class="value-text">{val.valueLabel || val.value}</span>
-                  <span class="material-symbols-outlined url-open-icon">open_in_new</span>
-                </button>
-              {:else if !detailGroup.isObjectProperty && isStringType(val.datatype)}
-                {#if (val.value ?? '').length > 50_000}
-                  <div class="value-large">
-                    <pre class="value-pre">{val.value}</pre>
-                    <button class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
-                      <span class="material-symbols-outlined">content_copy</span>
-                    </button>
-                  </div>
-                {:else}
-                  <MarkdownValue value={val.value} />
-                {/if}
-              {:else}
                 {#if val.unitLabel}
                   <span class="unit">{val.unitLabel}</span>
                 {/if}
                 <span class="value-text">{val.valueLabel || val.value}</span>
-              {/if}
-              {#if val.valueStatus}
-                <span
-                  class="inline-status"
-                  style="--status-color: {val.valueStatus.color || 'var(--color-neutral)'}"
-                  title={val.valueStatus.iri}
-                >
-                  <span class="material-symbols-outlined inline-status-icon">
-                    radio_button_checked
+                {#if val.valueStatus}
+                  <span
+                    class="inline-status"
+                    style="--status-color: {val.valueStatus.color || 'var(--color-neutral)'}"
+                    title={val.valueStatus.iri}
+                  >
+                    <span class="material-symbols-outlined inline-status-icon">
+                      radio_button_checked
+                    </span>
+                    <span class="inline-status-label">{val.valueStatus.label}</span>
                   </span>
-                  <span class="inline-status-label">{val.valueStatus.label}</span>
-                </span>
-              {/if}
-              {#if val.formulaError}
-                <span class="formula-error" title={val.formulaError}>
-                  <span class="material-symbols-outlined formula-error-icon">warning</span>
-                  <span class="formula-error-text">{val.formulaError}</span>
-                </span>
-              {/if}
-            </div>
+                {/if}
+                {#if val.formulaError}
+                  <span class="formula-error" title={val.formulaError}>
+                    <span class="material-symbols-outlined formula-error-icon">warning</span>
+                    <span class="formula-error-text">{val.formulaError}</span>
+                  </span>
+                {/if}
+              </div>
+            {:else}
+              <div
+                class="detail-value"
+                class:calculated={detailGroup.isCalculated}
+              >
+                {#if val.datatype === 'xsd:dateTime'}
+                  {@const date = new Date(Number(val.value))}
+                  <div class="timestamp-display">
+                    <span class="value-text">
+                      {date.toLocaleString('en-US', {
+                        year: 'numeric', month: 'short', day: 'numeric',
+                        hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true
+                      })}
+                    </span>
+                    <span class="timestamp-relative">{formatDate(date.getTime())}</span>
+                  </div>
+                {:else if val.datatype === 'xsd:date'}
+                  {@const [y, m, d] = val.value.split('-').map(Number)}
+                  {@const date = new Date(y, m - 1, d)}
+                  <span class="value-text">
+                    {date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                  </span>
+                {:else if isUrl(val.datatype)}
+                  <button class="url-value" onclick={() => openUrl_(val.value)} title={val.value}>
+                    <span class="value-text">{val.valueLabel || val.value}</span>
+                    <span class="material-symbols-outlined url-open-icon">open_in_new</span>
+                  </button>
+                {:else if isStringType(val.datatype)}
+                  {#if (val.value ?? '').length > 50_000}
+                    <div class="value-large">
+                      <pre class="value-pre">{val.value}</pre>
+                      <button class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
+                        <span class="material-symbols-outlined">content_copy</span>
+                      </button>
+                    </div>
+                  {:else}
+                    <MarkdownValue value={val.value} />
+                  {/if}
+                {:else}
+                  {#if val.unitLabel}
+                    <span class="unit">{val.unitLabel}</span>
+                  {/if}
+                  <span class="value-text">{val.valueLabel || val.value}</span>
+                {/if}
+                {#if val.valueStatus}
+                  <span
+                    class="inline-status"
+                    style="--status-color: {val.valueStatus.color || 'var(--color-neutral)'}"
+                    title={val.valueStatus.iri}
+                  >
+                    <span class="material-symbols-outlined inline-status-icon">
+                      radio_button_checked
+                    </span>
+                    <span class="inline-status-label">{val.valueStatus.label}</span>
+                  </span>
+                {/if}
+                {#if val.formulaError}
+                  <span class="formula-error" title={val.formulaError}>
+                    <span class="material-symbols-outlined formula-error-icon">warning</span>
+                    <span class="formula-error-text">{val.formulaError}</span>
+                  </span>
+                {/if}
+              </div>
+            {/if}
           {/each}
         </div>
       </div>

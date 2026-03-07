@@ -64,7 +64,7 @@
 	class:dragging={isDragging}
 	onwheel={(e) => e.stopPropagation()}
 >
-	<div class="drag-detector" onmousedown={handleDragStart}>
+	<div class="drag-detector" role="none" onmousedown={handleDragStart} onkeydown={() => {}}>
 		{@render children()}
 	</div>
 </div>
@@ -87,8 +87,4 @@
 		pointer-events: none;
 	}
 
-	.draggable-panel.dragging .panel-drag-handle {
-		pointer-events: auto;
-		cursor: grabbing !important;
-	}
 </style>

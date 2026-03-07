@@ -23,33 +23,39 @@
 	const iconType = valueIcon ? getIconType(valueIcon) : null;
 </script>
 
+{#snippet pillContent()}
+	{#if valueIcon}
+		<span class="value-icon">
+			{#if iconType === 'image'}
+				<img src={valueIcon} alt={displayValue} />
+			{:else}
+				<span class="material-symbols-outlined">{valueIcon}</span>
+			{/if}
+		</span>
+	{/if}
+	{#if unitLabel}
+		<span class="unit-badge">{unitLabel}</span>
+	{/if}
+	<span class="value-text">{displayValue}</span>
+{/snippet}
+
 <div class="property-row">
 	<div class="property-label" title={comment || undefined}>
 		{label}
 	</div>
 	<div class="property-value-container">
-		{#if valueIcon}
-			<!-- Pill with icon on the left -->
-			<div class="value-pill" class:clickable={onValueClick} onclick={onValueClick}>
-				<span class="value-icon">
-					{#if iconType === 'image'}
-						<img src={valueIcon} alt={displayValue} />
-					{:else}
-						<span class="material-symbols-outlined">{valueIcon}</span>
-					{/if}
-				</span>
-				{#if unitLabel}
-					<span class="unit-badge">{unitLabel}</span>
-				{/if}
-				<span class="value-text">{displayValue}</span>
-			</div>
+		{#if onValueClick}
+			<button
+				type="button"
+				class="value-pill clickable"
+				onclick={onValueClick}
+				onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onValueClick(e)}
+			>
+				{@render pillContent()}
+			</button>
 		{:else}
-			<!-- Plain value without icon -->
-			<div class="value-pill" class:clickable={onValueClick} onclick={onValueClick}>
-				{#if unitLabel}
-					<span class="unit-badge">{unitLabel}</span>
-				{/if}
-				<span class="value-text">{displayValue}</span>
+			<div class="value-pill">
+				{@render pillContent()}
 			</div>
 		{/if}
 	</div>
@@ -83,6 +89,12 @@
 	}
 
 	/* Base pill style */
+	button.value-pill {
+		font-family: inherit;
+		font-size: inherit;
+		text-align: left;
+	}
+
 	.value-pill {
 		display: inline-flex;
 		align-items: center;
