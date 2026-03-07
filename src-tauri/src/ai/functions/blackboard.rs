@@ -1,6 +1,7 @@
 use serde_json::Value;
 use tauri::Emitter;
 use crate::commands::widget::{self, Widget, Position, Size};
+use crate::owl::Connection;
 use super::ToolResult;
 
 const WIDGET_CASCADE_STEP: f64 = 50.0;
@@ -10,8 +11,76 @@ const WIDGET_DEFAULT_WIDTH: f64 = 400.0;
 const WIDGET_DEFAULT_HEIGHT: f64 = 600.0;
 
 
+pub fn blackboard_widgets_list(conn: &Connection, args: &Value) -> ToolResult {
+    let concept_iri_filter = args.get("concept_iri").and_then(|v| v.as_str());
+
+    let widget_iris = match crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:WidgetDefinition") {
+        Ok(iris) => iris,
+        Err(e) => return ToolResult { success: false, result: None, error: Some(e.to_string()) },
+    };
+
+    let mut widgets = Vec::new();
+    for iri in widget_iris {
+        let ind = match crate::owl::Individual::get(conn, &iri) {
+            Ok(Some(ind)) => ind,
+            _ => continue,
+        };
+
+        if let Some(filter_iri) = concept_iri_filter {
+            let supports_entity = ind.properties.iter()
+                .find(|(p, _)| p == "foundation:widgetDefSupportsEntity")
+                .and_then(|(_, v)| v.as_literal())
+                .map(|s| s == "true")
+                .unwrap_or(false);
+
+            if !supports_entity {
+                continue;
+            }
+
+            let supported_concepts: Vec<String> = ind.properties.iter()
+                .filter(|(p, _)| p == "foundation:widgetDefSupportedConcepts")
+                .filter_map(|(_, v)| v.as_iri().map(String::from))
+                .collect();
+
+            if !supported_concepts.is_empty() && !supported_concepts.iter().any(|c| c == filter_iri) {
+                continue;
+            }
+        }
+
+        let id = ind.properties.iter()
+            .find(|(p, _)| p == "foundation:widgetDefId")
+            .and_then(|(_, v)| v.as_literal())
+            .unwrap_or_default();
+
+        let description = ind.properties.iter()
+            .find(|(p, _)| p == "foundation:widgetDefDescription")
+            .and_then(|(_, v)| v.as_literal())
+            .unwrap_or_default();
+
+        let params_str = ind.properties.iter()
+            .find(|(p, _)| p == "foundation:widgetDefParams")
+            .and_then(|(_, v)| v.as_literal())
+            .unwrap_or_default();
+
+        let params: serde_json::Value = serde_json::from_str(&params_str)
+            .unwrap_or(serde_json::json!({}));
+
+        widgets.push(serde_json::json!({
+            "type": id,
+            "description": description,
+            "params": params,
+        }));
+    }
+
+    ToolResult {
+        success: true,
+        result: Some(serde_json::json!({ "widgets": widgets })),
+        error: None,
+    }
+}
+
 pub fn blackboard_update(
-    conn: &rusqlite::Connection,
+    conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
@@ -76,14 +145,14 @@ pub fn blackboard_update(
 }
 
 fn blackboard_replace(
-    conn: &rusqlite::Connection,
+    conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
-    match widget::db_get_all_widgets(conn) {
+    match widget::owl_get_all_widgets(conn) {
         Ok(widgets) => {
             for w in &widgets {
-                let _ = widget::db_delete_widget(conn, &w.id);
+                let _ = widget::owl_delete_widget(conn, &w.id);
                 if let Some(app_handle) = app {
                     app_handle.emit("widget-removed", w.id.clone()).ok();
                 }
@@ -104,7 +173,7 @@ fn blackboard_replace(
 }
 
 fn blackboard_add_widget_one(
-    conn: &rusqlite::Connection,
+    conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
@@ -126,12 +195,15 @@ fn blackboard_add_widget_one(
         },
     };
 
-    if widget_type != "inspector" {
+    let valid_types = widget::widget__list_types();
+    if !valid_types.iter().any(|t| t.id == widget_type) {
         return ToolResult {
             success: false,
             result: None,
             error: Some(format!(
-                "Unknown widget type: {}. Available types: Inspector", widget_type,
+                "Unknown widget type: {}. Available types: {}",
+                widget_type,
+                valid_types.iter().map(|t| t.id.as_str()).collect::<Vec<_>>().join(", ")
             )),
         };
     }
@@ -141,11 +213,23 @@ fn blackboard_add_widget_one(
         None => return ToolResult {
             success: false,
             result: None,
-            error: Some("Inspector widget requires 'entity_id' in params".to_string()),
+            error: Some(format!("{} widget requires 'entity_id' in params", widget_type)),
         },
     };
 
-    let position = match widget::db_get_all_widgets(conn) {
+    let content = params.get("content").and_then(|v| v.as_str()).map(String::from)
+        .or_else(|| {
+            if widget_type == "mermaid" {
+                crate::owl::Individual::get(conn, entity_id).ok().flatten()
+                    .and_then(|ind| ind.properties.into_iter()
+                        .find(|(p, _)| p == "foundation:diagramSource")
+                        .and_then(|(_, v)| v.as_literal()))
+            } else {
+                None
+            }
+        });
+
+    let position = match widget::owl_get_all_widgets(conn) {
         Ok(widgets) => {
             let offset = widgets.len() as f64 * WIDGET_CASCADE_STEP;
             Position { x: WIDGET_DEFAULT_X + offset, y: WIDGET_DEFAULT_Y + offset }
@@ -155,14 +239,15 @@ fn blackboard_add_widget_one(
 
     let sanitized_entity = entity_id.replace([':', '/', '#', ' '], "_");
     let widget_obj = Widget {
-        id: format!("widget_{}_{}", widget_type, sanitized_entity),
+        id: format!("foundation:Widget_{widget_type}_{sanitized_entity}"),
         widget_type: widget_type.to_string(),
         entity_id: entity_id.to_string(),
+        content,
         position,
         size: Size { width: WIDGET_DEFAULT_WIDTH, height: WIDGET_DEFAULT_HEIGHT },
     };
 
-    match widget::db_insert_widget(conn, &widget_obj) {
+    match widget::owl_insert_widget(conn, &widget_obj) {
         Ok(_) => {
             if let Some(app_handle) = app {
                 app_handle.emit("widget-added", widget_obj.clone()).ok();
@@ -183,7 +268,7 @@ fn blackboard_add_widget_one(
 
 
 fn blackboard_remove_one(
-    conn: &rusqlite::Connection,
+    conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
@@ -196,7 +281,7 @@ fn blackboard_remove_one(
         },
     };
 
-    match widget::db_delete_widget(conn, widget_id) {
+    match widget::owl_delete_widget(conn, widget_id) {
         Ok(_) => {
             if let Some(app_handle) = app {
                 app_handle.emit("widget-removed", widget_id.to_string()).ok();

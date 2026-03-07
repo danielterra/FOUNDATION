@@ -5,6 +5,7 @@
   import { fly } from 'svelte/transition';
   import { cubicOut, cubicIn } from 'svelte/easing';
   import InspectorWidget from './InspectorWidget.svelte';
+  import MermaidWidget from './MermaidWidget.svelte';
 
   const BASE_WIDGET_Z_INDEX = 100;
   const CHAT_PANEL_WIDTH_RATIO = 0.3;
@@ -199,6 +200,8 @@
   >
     {#if widget.widget_type === 'inspector'}
       <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} />
+    {:else if widget.widget_type === 'mermaid'}
+      <MermaidWidget widgetId={widget.id} entityId={widget.entity_id} />
     {/if}
   </div>
 {/each}

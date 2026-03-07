@@ -84,6 +84,7 @@ pub async fn continue_conversation_after_recovery(
         sanitize_tool_pairs(&mut api_messages);
 
         let system_prompt = get_system_prompt(&executor).await?;
+        let blackboard_context = super::build_blackboard_context(&executor).await;
         let tools = crate::ai::functions::get_claude_tools();
         let supports_web_tools = get_supports_web_tools(&executor).await;
 
@@ -92,6 +93,7 @@ pub async fn continue_conversation_after_recovery(
             max_tokens: Some(MAX_OUTPUT_TOKENS),
             temperature: Some(0.3),
             system: Some(system_prompt),
+            blackboard_context,
             tools: Some(tools),
             supports_web_tools,
         };

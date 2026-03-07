@@ -115,6 +115,7 @@ pub fn execute_tool(
         "remember_things" => thing::remember_thing(conn, args),
         "forget_concepts" => concept::delete_concept(conn, args, app),
         "forget_things" => thing::delete_thing(conn, args, app),
+        "blackboard_widgets_list" => blackboard::blackboard_widgets_list(conn, args),
         "blackboard_update" => blackboard::blackboard_update(conn, args, app),
         _ => ToolResult {
             success: false,

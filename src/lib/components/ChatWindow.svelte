@@ -95,6 +95,13 @@
 			}
 		});
 
+		// Listen for diagram node clicks from MermaidWidget
+		function handleChatInject(e) {
+			inputText += (inputText ? ' ' : '') + e.detail.text;
+			textareaElement?.focus();
+		}
+		document.addEventListener('chat-inject', handleChatInject);
+
 		// Cleanup listeners on unmount
 		return () => {
 			unlistenImport();
@@ -102,6 +109,7 @@
 			unlistenAIProcessing();
 			unlistenAIStatus();
 			unlistenAIError();
+			document.removeEventListener('chat-inject', handleChatInject);
 			if (elapsedInterval) {
 				clearInterval(elapsedInterval);
 			}

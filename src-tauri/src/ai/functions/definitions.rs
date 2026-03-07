@@ -378,6 +378,21 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         // BLACKBOARD
         // ----------------------------------------------------------------
         ToolTemplate {
+            name: "blackboard_widgets_list".to_string(),
+            array_mode: false,
+            description: "List available widget types and their required params. Call this before using blackboard_update. Pass concept_iri to filter to widgets that can render a specific entity.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "concept_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Optional. IRI of the entity concept (e.g. 'foundation:Task'). When provided, only entity-bound widgets are returned.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
             name: "blackboard_update".to_string(),
             array_mode: true,
             description: concat!(
@@ -386,6 +401,10 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 " 'remove': remove a widget (params.widget_id required).",
                 " 'replace': remove all existing widgets;",
                 " if widget_type and params are also provided, adds those widgets after clearing.",
+                " IMPORTANT: Widgets are live — any update to the underlying entity's properties",
+                " (e.g. diagramSource on a MermaidDiagram) is reflected on screen in real time.",
+                " You do NOT need to call blackboard_update to refresh a widget after editing an entity;",
+                " just update the entity with learn_things and the widget updates automatically.",
             ).to_string(),
             parameters: vec![
                 Parameter {
@@ -398,18 +417,14 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "widget_type".to_string(),
                     param_type: "string".to_string(),
-                    description: "Widget type (e.g. 'Inspector'). Required for 'add'; optional for 'replace'.".to_string(),
+                    description: "Widget type for 'add'/'replace'. Call blackboard_widgets_list to see available types and required params.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "params".to_string(),
                     param_type: "object".to_string(),
-                    description: concat!(
-                        "Operation parameters.",
-                        " For 'add'/'replace': widget-specific data (e.g. {\"entity_id\": \"foundation:SomeIRI\"} for Inspector).",
-                        " For 'remove': {\"widget_id\": \"...\"}.",
-                    ).to_string(),
+                    description: "Widget-specific params for 'add'/'replace', or {\"widget_id\": \"...\"} for 'remove'. Call blackboard_widgets_list to see required params per widget type.".to_string(),
                     required: false,
                     schema: None,
                 },

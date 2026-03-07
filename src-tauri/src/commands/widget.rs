@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
-use crate::owl::{Connection, DbExecutor};
-use crate::eavto::{store, query, Triple, Object};
-use crate::owl::vocabulary::{rdf, rdfs};
+use crate::owl::{Connection, DbExecutor, Object, Individual};
+use crate::owl::vocabulary::rdf;
 
 const WIDGET_CLASS: &str = "foundation:Widget";
+const WIDGET_ICON: &str = "widgets";
 const PRED_WIDGET_TYPE: &str = "foundation:widgetType";
 const PRED_ENTITY_ID: &str = "foundation:widgetEntityId";
 const PRED_CONTENT: &str = "foundation:widgetContent";
@@ -41,9 +41,17 @@ pub struct WidgetType {
     pub id: String,
     pub name: String,
     pub description: String,
+    /// Whether this widget renders a specific entity (true = entity-bound, false = content-only)
+    pub supports_entity: bool,
 }
 
-fn str_literal(value: impl Into<String>) -> Object {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WidgetDefinitionInfo {
+    pub widget_type: String,
+    pub description: String,
+}
+
+fn str_obj(value: impl Into<String>) -> Object {
     Object::Literal {
         value: value.into(),
         datatype: Some("xsd:string".to_string()),
@@ -51,33 +59,33 @@ fn str_literal(value: impl Into<String>) -> Object {
     }
 }
 
-fn extract_str(triples: &[Triple], pred: &str) -> Option<String> {
-    triples.iter()
-        .find(|t| t.predicate == pred)
-        .and_then(|t| t.object.as_literal())
+fn prop_str(ind: &Individual, pred: &str) -> Option<String> {
+    ind.properties.iter()
+        .find(|(p, _)| p == pred)
+        .and_then(|(_, v)| v.as_literal())
 }
 
-fn extract_f64(triples: &[Triple], pred: &str) -> Option<f64> {
-    triples.iter()
-        .find(|t| t.predicate == pred)
-        .and_then(|t| match &t.object {
+fn prop_f64(ind: &Individual, pred: &str) -> Option<f64> {
+    ind.properties.iter()
+        .find(|(p, _)| p == pred)
+        .and_then(|(_, v)| match v {
             Object::Number(n) => Some(*n),
             Object::Integer(i) => Some(*i as f64),
             _ => None,
         })
 }
 
-fn widget_from_triples(iri: String, triples: &[Triple]) -> Option<Widget> {
-    let widget_type = extract_str(triples, PRED_WIDGET_TYPE)?;
-    let entity_id = extract_str(triples, PRED_ENTITY_ID)?;
-    let x = extract_f64(triples, PRED_POSITION_X)?;
-    let y = extract_f64(triples, PRED_POSITION_Y)?;
-    let width = extract_f64(triples, PRED_SIZE_WIDTH)?;
-    let height = extract_f64(triples, PRED_SIZE_HEIGHT)?;
-    let content = extract_str(triples, PRED_CONTENT);
+fn individual_to_widget(ind: Individual) -> Option<Widget> {
+    let widget_type = prop_str(&ind, PRED_WIDGET_TYPE)?;
+    let entity_id = prop_str(&ind, PRED_ENTITY_ID)?;
+    let x = prop_f64(&ind, PRED_POSITION_X)?;
+    let y = prop_f64(&ind, PRED_POSITION_Y)?;
+    let width = prop_f64(&ind, PRED_SIZE_WIDTH)?;
+    let height = prop_f64(&ind, PRED_SIZE_HEIGHT)?;
+    let content = prop_str(&ind, PRED_CONTENT);
 
     Some(Widget {
-        id: iri,
+        id: ind.iri,
         widget_type,
         entity_id,
         content,
@@ -86,51 +94,52 @@ fn widget_from_triples(iri: String, triples: &[Triple]) -> Option<Widget> {
     })
 }
 
-fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), String> {
-    let iri = &widget.id;
-    let mut triples = vec![
-        Triple::new(iri, rdf::TYPE, Object::Iri(WIDGET_CLASS.to_string())),
-        Triple::new(iri, rdfs::LABEL, str_literal(&widget.widget_type)),
-        Triple::new(iri, PRED_WIDGET_TYPE, str_literal(&widget.widget_type)),
-        Triple::new(iri, PRED_ENTITY_ID, str_literal(&widget.entity_id)),
-        Triple::new(iri, PRED_POSITION_X, Object::Number(widget.position.x)),
-        Triple::new(iri, PRED_POSITION_Y, Object::Number(widget.position.y)),
-        Triple::new(iri, PRED_SIZE_WIDTH, Object::Number(widget.size.width)),
-        Triple::new(iri, PRED_SIZE_HEIGHT, Object::Number(widget.size.height)),
-    ];
+pub fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), String> {
+    let ind = Individual::new(&widget.id);
+    ind.assert(conn, WIDGET_CLASS, &widget.widget_type, WIDGET_ICON, WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, PRED_WIDGET_TYPE, vec![str_obj(&widget.widget_type)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, PRED_ENTITY_ID, vec![str_obj(&widget.entity_id)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, PRED_POSITION_X, vec![Object::Number(widget.position.x)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, PRED_POSITION_Y, vec![Object::Number(widget.position.y)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, PRED_SIZE_WIDTH, vec![Object::Number(widget.size.width)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, PRED_SIZE_HEIGHT, vec![Object::Number(widget.size.height)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())?;
     if let Some(content) = &widget.content {
-        triples.push(Triple::new(iri, PRED_CONTENT, str_literal(content)));
+        ind.add_property(conn, PRED_CONTENT, vec![str_obj(content)], WIDGET_ORIGIN)
+            .map_err(|e| e.to_string())?;
     }
-    store::assert_triples(conn, &triples, WIDGET_ORIGIN)
-        .map(|_| ())
-        .map_err(|e| format!("Failed to insert widget: {}", e))
+    Ok(())
 }
 
-fn owl_get_all_widgets(conn: &Connection) -> Result<Vec<Widget>, String> {
-    let type_triples = query::get_by_predicate_object(conn, rdf::TYPE, WIDGET_CLASS)
-        .map_err(|e| format!("Failed to query widgets: {}", e))?;
-
+pub fn owl_get_all_widgets(conn: &Connection) -> Result<Vec<Widget>, String> {
+    let widget_iris = crate::owl::find_entities_with_property(conn, rdf::TYPE, WIDGET_CLASS)
+        .map_err(|e| e.to_string())?;
     let mut widgets = Vec::new();
-    for triple in &type_triples.triples {
-        let iri = triple.subject.clone();
-        let all = query::get_by_entity(conn, &iri)
-            .map_err(|e| format!("Failed to load widget {}: {}", iri, e))?;
-        if let Some(widget) = widget_from_triples(iri, &all.triples) {
-            widgets.push(widget);
+    for iri in widget_iris {
+        if let Ok(Some(ind)) = Individual::get(conn, &iri) {
+            if let Some(widget) = individual_to_widget(ind) {
+                widgets.push(widget);
+            }
         }
     }
     Ok(widgets)
 }
 
-fn owl_delete_widget(conn: &mut Connection, widget_id: &str) -> Result<(), String> {
-    let all = query::get_by_entity(conn, widget_id)
-        .map_err(|e| format!("Failed to load widget: {}", e))?;
-    if all.triples.is_empty() {
+pub fn owl_delete_widget(conn: &mut Connection, widget_id: &str) -> Result<(), String> {
+    let exists = Individual::get(conn, widget_id)
+        .map_err(|e| e.to_string())?
+        .is_some();
+    if !exists {
         return Err(format!("Widget not found: {}", widget_id));
     }
-    store::retract_triples(conn, &all.triples, WIDGET_ORIGIN)
-        .map(|_| ())
-        .map_err(|e| format!("Failed to delete widget: {}", e))
+    Individual::retract(conn, widget_id, WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())
 }
 
 fn owl_update_widget_position(
@@ -138,21 +147,11 @@ fn owl_update_widget_position(
     widget_id: &str,
     position: &Position,
 ) -> Result<(), String> {
-    for pred in [PRED_POSITION_X, PRED_POSITION_Y] {
-        let existing = query::get_by_entity_predicate(conn, widget_id, pred)
-            .map_err(|e| format!("Failed to query position: {}", e))?;
-        if !existing.triples.is_empty() {
-            store::retract_triples(conn, &existing.triples, WIDGET_ORIGIN)
-                .map(|_| ())
-                .map_err(|e| format!("Failed to retract position: {}", e))?;
-        }
-    }
-    store::assert_triples(conn, &[
-        Triple::new(widget_id, PRED_POSITION_X, Object::Number(position.x)),
-        Triple::new(widget_id, PRED_POSITION_Y, Object::Number(position.y)),
-    ], WIDGET_ORIGIN)
-    .map(|_| ())
-    .map_err(|e| format!("Failed to update position: {}", e))
+    let ind = Individual::new(widget_id);
+    ind.add_property(conn, PRED_POSITION_X, vec![Object::Number(position.x)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, PRED_POSITION_Y, vec![Object::Number(position.y)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())
 }
 
 fn owl_update_widget_size(
@@ -160,21 +159,11 @@ fn owl_update_widget_size(
     widget_id: &str,
     size: &Size,
 ) -> Result<(), String> {
-    for pred in [PRED_SIZE_WIDTH, PRED_SIZE_HEIGHT] {
-        let existing = query::get_by_entity_predicate(conn, widget_id, pred)
-            .map_err(|e| format!("Failed to query size: {}", e))?;
-        if !existing.triples.is_empty() {
-            store::retract_triples(conn, &existing.triples, WIDGET_ORIGIN)
-                .map(|_| ())
-                .map_err(|e| format!("Failed to retract size: {}", e))?;
-        }
-    }
-    store::assert_triples(conn, &[
-        Triple::new(widget_id, PRED_SIZE_WIDTH, Object::Number(size.width)),
-        Triple::new(widget_id, PRED_SIZE_HEIGHT, Object::Number(size.height)),
-    ], WIDGET_ORIGIN)
-    .map(|_| ())
-    .map_err(|e| format!("Failed to update size: {}", e))
+    let ind = Individual::new(widget_id);
+    ind.add_property(conn, PRED_SIZE_WIDTH, vec![Object::Number(size.width)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, PRED_SIZE_HEIGHT, vec![Object::Number(size.height)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())
 }
 
 fn owl_update_widget_content(
@@ -182,31 +171,17 @@ fn owl_update_widget_content(
     widget_id: &str,
     content: &str,
 ) -> Result<(), String> {
-    let existing = query::get_by_entity_predicate(conn, widget_id, PRED_CONTENT)
-        .map_err(|e| format!("Failed to query content: {}", e))?;
-    if !existing.triples.is_empty() {
-        store::retract_triples(conn, &existing.triples, WIDGET_ORIGIN)
-            .map(|_| ())
-            .map_err(|e| format!("Failed to retract content: {}", e))?;
-    }
-    store::assert_triples(conn, &[
-        Triple::new(widget_id, PRED_CONTENT, str_literal(content)),
-    ], WIDGET_ORIGIN)
-    .map(|_| ())
-    .map_err(|e| format!("Failed to update content: {}", e))
+    let ind = Individual::new(widget_id);
+    ind.add_property(conn, PRED_CONTENT, vec![str_obj(content)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())
 }
 
 fn owl_clear_all_widgets(conn: &mut Connection) -> Result<(), String> {
-    let type_triples = query::get_by_predicate_object(conn, rdf::TYPE, WIDGET_CLASS)
-        .map_err(|e| format!("Failed to query widgets: {}", e))?;
-    for triple in &type_triples.triples {
-        let all = query::get_by_entity(conn, &triple.subject)
-            .map_err(|e| format!("Failed to load widget: {}", e))?;
-        if !all.triples.is_empty() {
-            store::retract_triples(conn, &all.triples, WIDGET_ORIGIN)
-                .map(|_| ())
-                .map_err(|e| format!("Failed to clear widget: {}", e))?;
-        }
+    let widget_iris = crate::owl::find_entities_with_property(conn, rdf::TYPE, WIDGET_CLASS)
+        .map_err(|e| e.to_string())?;
+    for iri in widget_iris {
+        Individual::retract(conn, &iri, WIDGET_ORIGIN)
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -220,11 +195,13 @@ pub fn widget__list_types() -> Vec<WidgetType> {
             id: "inspector".to_string(),
             name: "Inspector".to_string(),
             description: "Display detailed information about a class or instance".to_string(),
+            supports_entity: true,
         },
         WidgetType {
             id: "mermaid".to_string(),
             name: "Mermaid Diagram".to_string(),
             description: "Display a Mermaid diagram".to_string(),
+            supports_entity: false,
         },
     ]
 }
@@ -348,12 +325,86 @@ pub async fn widget__update_content(
     content: String,
     executor: State<'_, DbExecutor>
 ) -> Result<(), String> {
+    let widget_id_clone = widget_id.clone();
     executor.write(move |conn| {
-        owl_update_widget_content(conn, &widget_id, &content)?;
+        owl_update_widget_content(conn, &widget_id_clone, &content)?;
+        if let Ok(Some(ind)) = Individual::get(conn, &widget_id_clone) {
+            let is_mermaid = ind.properties.iter()
+                .any(|(p, v)| p == PRED_WIDGET_TYPE && v.as_literal().map_or(false, |s| s == "mermaid"));
+            if is_mermaid {
+                if let Some(entity_id) = ind.properties.iter()
+                    .find(|(p, _)| p == PRED_ENTITY_ID)
+                    .and_then(|(_, v)| v.as_literal())
+                {
+                    Individual::new(&entity_id)
+                        .add_property(conn, "foundation:diagramSource", vec![str_obj(&content)], WIDGET_ORIGIN)
+                        .ok();
+                }
+            }
+        }
         Ok("updated".to_string())
     }).await?;
     app.emit("widget-content-updated", widget_id).ok();
     Ok(())
+}
+
+/// List widget definitions from the ontology, optionally filtered by concept IRI
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget__list_definitions(
+    concept_iri: Option<String>,
+    executor: State<'_, DbExecutor>,
+) -> Result<Vec<WidgetDefinitionInfo>, String> {
+    executor.read(move |conn| {
+        let widget_iris = crate::owl::find_entities_with_property(conn, rdf::TYPE, "foundation:WidgetDefinition")
+            .map_err(|e| e.to_string())?;
+
+        let mut results = Vec::new();
+        for iri in widget_iris {
+            let ind = match Individual::get(conn, &iri) {
+                Ok(Some(ind)) => ind,
+                _ => continue,
+            };
+
+            if let Some(ref filter_iri) = concept_iri {
+                let supports_entity = ind.properties.iter()
+                    .find(|(p, _)| p == "foundation:widgetDefSupportsEntity")
+                    .and_then(|(_, v)| v.as_literal())
+                    .map(|s| s == "true")
+                    .unwrap_or(false);
+
+                if !supports_entity {
+                    continue;
+                }
+
+                let supported_concepts: Vec<String> = ind.properties.iter()
+                    .filter(|(p, _)| p == "foundation:widgetDefSupportedConcepts")
+                    .filter_map(|(_, v)| v.as_iri().map(String::from))
+                    .collect();
+
+                if !supported_concepts.is_empty() && !supported_concepts.iter().any(|c| c == filter_iri) {
+                    continue;
+                }
+            }
+
+            let id = ind.properties.iter()
+                .find(|(p, _)| p == "foundation:widgetDefId")
+                .and_then(|(_, v)| v.as_literal())
+                .unwrap_or_default();
+
+            let description = ind.properties.iter()
+                .find(|(p, _)| p == "foundation:widgetDefDescription")
+                .and_then(|(_, v)| v.as_literal())
+                .unwrap_or_default();
+
+            results.push(WidgetDefinitionInfo {
+                widget_type: id.to_string(),
+                description: description.to_string(),
+            });
+        }
+
+        Ok(results)
+    }).await
 }
 
 /// Clear all widgets from the blackboard

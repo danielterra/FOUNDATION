@@ -239,13 +239,23 @@ impl AIProvider for ClaudeProvider {
             model,
             max_tokens: request.max_tokens.unwrap_or(4096),
             messages,
-            system: request.system.map(|s| {
-                serde_json::json!([{
-                    "type": "text",
-                    "text": s,
-                    "cache_control": { "type": "ephemeral" }
-                }])
-            }),
+            system: {
+                let mut blocks: Vec<serde_json::Value> = Vec::new();
+                if let Some(s) = request.system {
+                    blocks.push(serde_json::json!({
+                        "type": "text",
+                        "text": s,
+                        "cache_control": { "type": "ephemeral" }
+                    }));
+                }
+                if let Some(ctx) = request.blackboard_context {
+                    blocks.push(serde_json::json!({
+                        "type": "text",
+                        "text": ctx,
+                    }));
+                }
+                if blocks.is_empty() { None } else { Some(serde_json::Value::Array(blocks)) }
+            },
             temperature: request.temperature,
             tools,
         };

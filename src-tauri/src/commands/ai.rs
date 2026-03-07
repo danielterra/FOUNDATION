@@ -217,6 +217,7 @@ pub async fn ai__generate(
         max_tokens,
         temperature,
         system,
+        blackboard_context: None,
         tools: None,
         supports_web_tools: false,
     };

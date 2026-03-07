@@ -21,6 +21,58 @@ use recovery::{delete_messages_from_timestamp, continue_conversation_after_recov
 
 pub const MAX_OUTPUT_TOKENS: u32 = 4096;
 
+pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor) -> Option<String> {
+    executor.read(|conn| {
+        let widgets = crate::commands::widget::owl_get_all_widgets(conn)
+            .unwrap_or_default();
+
+        if widgets.is_empty() {
+            return Ok(None);
+        }
+
+        let mut lines = Vec::new();
+        for w in &widgets {
+            let entity_ind = crate::owl::Individual::get(conn, &w.entity_id)
+                .ok()
+                .flatten();
+
+            let entity_label = entity_ind.as_ref()
+                .and_then(|ind| ind.properties.iter()
+                    .find(|(p, _)| p == "rdfs:label")
+                    .and_then(|(_, v)| v.as_literal()))
+                .unwrap_or_default();
+
+            let concept_iri = entity_ind.as_ref()
+                .and_then(|ind| ind.properties.iter()
+                    .find(|(p, _)| p == "rdf:type")
+                    .and_then(|(_, v)| v.as_iri().map(String::from)))
+                .unwrap_or_default();
+
+            let concept_label = if concept_iri.is_empty() {
+                String::new()
+            } else {
+                crate::owl::Individual::get(conn, &concept_iri)
+                    .ok()
+                    .flatten()
+                    .and_then(|ind| ind.properties.into_iter()
+                        .find(|(p, _)| p == "rdfs:label")
+                        .and_then(|(_, v)| v.as_literal()))
+                    .unwrap_or_default()
+            };
+
+            lines.push(format!(
+                "- widget_type={}, concept_iri={}, concept_name={}, thing_iri={}, thing_name={}",
+                w.widget_type, concept_iri, concept_label, w.entity_id, entity_label
+            ));
+        }
+
+        Ok(Some(format!(
+            "## Blackboard\nThe user is currently viewing the following widgets:\n{}",
+            lines.join("\n")
+        )))
+    }).await.ok().flatten()
+}
+
 fn parse_timestamp(obj: &Object) -> Option<i64> {
     match obj {
         Object::DateTime(ts) => Some(*ts),
@@ -152,6 +204,7 @@ pub async fn chat__send_and_reply(
         sanitize_tool_pairs(&mut api_messages);
 
         let system_prompt = get_system_prompt(&executor).await?;
+        let blackboard_context = build_blackboard_context(&executor).await;
         let tools = crate::ai::functions::get_claude_tools();
         let supports_web_tools = get_supports_web_tools(&executor).await;
 
@@ -160,6 +213,7 @@ pub async fn chat__send_and_reply(
             max_tokens: Some(MAX_OUTPUT_TOKENS),
             temperature: Some(0.3),
             system: Some(system_prompt),
+            blackboard_context,
             tools: Some(tools),
             supports_web_tools,
         };

@@ -13,6 +13,7 @@
   let entityData = $state(null);
   let loading = $state(true);
   let error = $state(null);
+  let widgetDefinitions = $state([]);
   let unlistenEntityUpdated = $state(null);
 
   async function loadEntity() {
@@ -22,6 +23,18 @@
     try {
       const resultStr = await invoke('entity__get', { entityId });
       entityData = JSON.parse(resultStr);
+
+      const conceptIri = entityData?.types?.[0]?.iri ?? null;
+      if (conceptIri) {
+        try {
+          const defs = await invoke('widget__list_definitions', { conceptIri });
+          widgetDefinitions = defs.filter(d => d.widget_type !== 'inspector');
+        } catch {
+          widgetDefinitions = [];
+        }
+      } else {
+        widgetDefinitions = [];
+      }
     } catch (err) {
       error = `Failed to load entity: ${entityId}`;
       console.error('Failed to load entity:', err);
@@ -59,6 +72,23 @@
       console.error('Failed to open inspector:', err);
     }
   }
+
+  async function openWidgetForEntity(widgetType) {
+    try {
+      await invoke('widget__add', {
+        widgetType,
+        entityId,
+        position: null,
+        size: null
+      });
+    } catch (err) {
+      console.error(`Failed to open ${widgetType} widget:`, err);
+    }
+  }
+
+  const WIDGET_TYPE_ICONS = {
+    mermaid: 'account_tree',
+  };
 
   function isIconUrl(icon) {
     if (!icon) return false;
@@ -137,6 +167,11 @@
       </div>
       <div class="header-actions">
         <div class="header-action-buttons">
+          {#each widgetDefinitions as def}
+            <button class="action-btn" onclick={() => openWidgetForEntity(def.widget_type)} title={def.description}>
+              <span class="material-symbols-outlined">{WIDGET_TYPE_ICONS[def.widget_type] ?? 'open_in_new'}</span>
+            </button>
+          {/each}
           <button class="action-btn" onclick={copyEntityIri} title="Copy IRI">
             <span class="material-symbols-outlined">content_copy</span>
           </button>
