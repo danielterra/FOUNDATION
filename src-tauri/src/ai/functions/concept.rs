@@ -83,6 +83,101 @@ mod tests {
         let result = learn_concept_one(&mut conn, &args);
         assert!(result.success, "Expected success, got error: {:?}", result.error);
     }
+
+    #[test]
+    fn test_allowed_statuses_rejects_nonexistent_status_iri() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
+                value: "Test Class".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let args = serde_json::json!({
+            "iri": "foundation:TestClass",
+            "allowed_statuses": ["foundation:Status_inactive"]
+        });
+
+        let result = learn_concept_one(&mut conn, &args);
+
+        assert!(!result.success);
+        let error = result.error.unwrap();
+        assert!(
+            error.contains("foundation:Status_inactive") && error.contains("does not exist"),
+            "Expected error about non-existent status, got: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn test_allowed_statuses_rejects_status_without_icon() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
+                value: "Test Class".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:StatusNoIcon", "rdfs:label", Object::Literal {
+                value: "No Icon Status".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let args = serde_json::json!({
+            "iri": "foundation:TestClass",
+            "allowed_statuses": ["foundation:StatusNoIcon"]
+        });
+
+        let result = learn_concept_one(&mut conn, &args);
+
+        assert!(!result.success);
+        let error = result.error.unwrap();
+        assert!(
+            error.contains("foundation:StatusNoIcon") && error.contains("no icon"),
+            "Expected error about missing icon, got: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn test_allowed_statuses_accepts_valid_status_with_icon() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
+                value: "Test Class".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:StatusWithIcon", "rdfs:label", Object::Literal {
+                value: "Active".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:StatusWithIcon", "foundation:icon", Object::Literal {
+                value: "check_circle".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let args = serde_json::json!({
+            "iri": "foundation:TestClass",
+            "allowed_statuses": ["foundation:StatusWithIcon"]
+        });
+
+        let result = learn_concept_one(&mut conn, &args);
+        assert!(result.success, "Expected success, got error: {:?}", result.error);
+    }
 }
 
 const SCORE_LABEL_MATCH: usize = 3;
@@ -398,6 +493,24 @@ fn learn_concept_one(
             let status_iris: Vec<&str> = allowed_statuses.iter()
                 .filter_map(|v| v.as_str())
                 .collect();
+
+            for status_iri in &status_iris {
+                let individual = crate::owl::Individual::get(conn, *status_iri)?;
+                if individual.is_none() {
+                    return Err(crate::owl::OwlError::ValidationError(format!(
+                        "Status '{}' does not exist. Use remember_concepts to query existing Status instances before setting allowedStatuses.",
+                        status_iri
+                    )));
+                }
+                let (icon, _) = crate::owl::resolve_status_appearance(conn, status_iri);
+                if icon.is_none() {
+                    return Err(crate::owl::OwlError::ValidationError(format!(
+                        "Status '{}' exists but has no icon. All statuses must have a valid icon.",
+                        status_iri
+                    )));
+                }
+            }
+
             crate::owl::replace_all_property_iris(
                 conn, iri, "foundation:allowedStatus", &status_iris, "ai",
             )?;
