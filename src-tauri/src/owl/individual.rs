@@ -618,6 +618,56 @@ impl Individual {
         query::find_message_iris_by_conversation(conn, conversation_iri, limit, offset)
             .map_err(|e| OwlError::DatabaseError(e.to_string()))
     }
+
+    /// Returns the number of current (non-retracted) values for a property on an individual.
+    pub fn get_property_count(conn: &Connection, iri: &str, property_iri: &str) -> Result<usize> {
+        let result = query::get_by_entity_predicate(conn, iri, property_iri)?;
+        Ok(result.triples.len())
+    }
+
+    /// Retracts all current values of `property_iri` on individual `iri`.
+    pub fn clear_property(
+        conn: &mut Connection,
+        iri: &str,
+        property_iri: &str,
+        origin: &str,
+    ) -> Result<()> {
+        let result = query::get_by_entity_predicate(conn, iri, property_iri)?;
+        if !result.triples.is_empty() {
+            store::retract_triples(conn, &result.triples, origin)?;
+        }
+        Ok(())
+    }
+
+    /// Returns retracted triples for an individual, excluding metadata predicates.
+    pub fn get_retracted_properties(conn: &Connection, iri: &str) -> Result<Vec<Triple>> {
+        query::get_retracted_by_entity(conn, iri)
+            .map(|r| r.triples.into_iter().filter(|t| {
+                t.predicate != "rdfs:label"
+                    && t.predicate != "rdfs:comment"
+                    && t.predicate != "foundation:icon"
+                    && t.predicate != "foundation:hasIcon"
+            }).collect())
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))
+    }
+
+    /// Batch-loads active triples for a list of individual IRIs in a single query.
+    pub fn batch_load_triples(
+        conn: &Connection,
+        iris: &[String],
+    ) -> Result<std::collections::HashMap<String, Vec<Triple>>> {
+        query::batch_load_triples_for_subjects(conn, iris)
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))
+    }
+
+    /// Batch-loads retracted triples for a list of individual IRIs in a single query.
+    pub fn batch_load_retracted_triples(
+        conn: &Connection,
+        iris: &[String],
+    ) -> Result<std::collections::HashMap<String, Vec<Triple>>> {
+        query::batch_load_retracted_triples_for_subjects(conn, iris)
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))
+    }
 }
 
 fn is_formula_property(conn: &Connection, property_iri: &str) -> Result<bool> {
@@ -1846,5 +1896,204 @@ mod tests {
         ).unwrap();
 
         assert_eq!(result, vec!["foundation:Msg1".to_string()]);
+    }
+
+    // ── get_property_count ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_property_count_returns_zero_when_no_values() {
+        let conn = setup_test_db();
+        let count = Individual::get_property_count(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_get_property_count_returns_one_for_single_value() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
+        ], "test").unwrap();
+
+        let count = Individual::get_property_count(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_get_property_count_returns_correct_count_for_multiple_values() {
+        let mut conn = setup_test_db();
+        store::append_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
+            Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Carol".to_string())),
+            Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Dave".to_string())),
+        ], "test").unwrap();
+
+        let count = Individual::get_property_count(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_get_property_count_excludes_retracted_values() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
+        ], "test").unwrap();
+        Individual::remove_property_value(&mut conn, "foundation:Alice", "foundation:knows", "foundation:Bob", "test").unwrap();
+
+        let count = Individual::get_property_count(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        assert_eq!(count, 0);
+    }
+
+    // ── clear_property ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_clear_property_removes_all_values() {
+        let mut conn = setup_test_db();
+        store::append_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
+            Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Carol".to_string())),
+        ], "test").unwrap();
+
+        Individual::clear_property(&mut conn, "foundation:Alice", "foundation:knows", "test").unwrap();
+
+        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        assert!(after.triples.is_empty(), "All values should have been retracted");
+    }
+
+    #[test]
+    fn test_clear_property_is_noop_when_no_values() {
+        let mut conn = setup_test_db();
+        let result = Individual::clear_property(&mut conn, "foundation:Alice", "foundation:knows", "test");
+        assert!(result.is_ok(), "clear_property on empty property should not error");
+    }
+
+    #[test]
+    fn test_clear_property_preserves_other_properties() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
+            Triple::new("foundation:Alice", "foundation:name", Object::Literal {
+                value: "Alice".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        Individual::clear_property(&mut conn, "foundation:Alice", "foundation:knows", "test").unwrap();
+
+        let knows = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        assert!(knows.triples.is_empty(), "foundation:knows should be cleared");
+
+        let name = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:name").unwrap();
+        assert_eq!(name.triples.len(), 1, "foundation:name must not be affected");
+    }
+
+    // ── get_retracted_properties ─────────────────────────────────────────────
+
+    #[test]
+    fn test_get_retracted_properties_empty_when_nothing_retracted() {
+        let conn = setup_test_db();
+        let result = Individual::get_retracted_properties(&conn, "foundation:Alice").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_get_retracted_properties_returns_retracted_triples() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:score", Object::Integer(42)),
+        ], "test").unwrap();
+        Individual::clear_property(&mut conn, "foundation:Alice", "foundation:score", "test").unwrap();
+
+        let result = Individual::get_retracted_properties(&conn, "foundation:Alice").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].predicate, "foundation:score");
+    }
+
+    #[test]
+    fn test_get_retracted_properties_filters_metadata_predicates() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "rdfs:label", Object::Literal {
+                value: "Alice".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+            Triple::new("foundation:Alice", "rdfs:comment", Object::Literal {
+                value: "A person".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+            Triple::new("foundation:Alice", "foundation:icon", Object::Literal {
+                value: "person".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+            Triple::new("foundation:Alice", "foundation:score", Object::Integer(10)),
+        ], "test").unwrap();
+
+        Individual::clear_property(&mut conn, "foundation:Alice", "rdfs:label", "test").unwrap();
+        Individual::clear_property(&mut conn, "foundation:Alice", "rdfs:comment", "test").unwrap();
+        Individual::clear_property(&mut conn, "foundation:Alice", "foundation:icon", "test").unwrap();
+        Individual::clear_property(&mut conn, "foundation:Alice", "foundation:score", "test").unwrap();
+
+        let result = Individual::get_retracted_properties(&conn, "foundation:Alice").unwrap();
+        let predicates: Vec<&str> = result.iter().map(|t| t.predicate.as_str()).collect();
+        assert!(!predicates.contains(&"rdfs:label"), "rdfs:label must be filtered");
+        assert!(!predicates.contains(&"rdfs:comment"), "rdfs:comment must be filtered");
+        assert!(!predicates.contains(&"foundation:icon"), "foundation:icon must be filtered");
+        assert!(predicates.contains(&"foundation:score"), "foundation:score must be included");
+    }
+
+    // ── batch_load_triples ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_batch_load_triples_returns_empty_for_empty_input() {
+        let conn = setup_test_db();
+        let result = Individual::batch_load_triples(&conn, &[]).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_batch_load_triples_returns_triples_for_known_iris() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:score", Object::Integer(1)),
+            Triple::new("foundation:Bob", "foundation:score", Object::Integer(2)),
+        ], "test").unwrap();
+
+        let iris = vec!["foundation:Alice".to_string(), "foundation:Bob".to_string()];
+        let result = Individual::batch_load_triples(&conn, &iris).unwrap();
+
+        assert!(result.contains_key("foundation:Alice"), "Alice should be in batch result");
+        assert!(result.contains_key("foundation:Bob"), "Bob should be in batch result");
+    }
+
+    #[test]
+    fn test_batch_load_triples_omits_unknown_iris() {
+        let conn = setup_test_db();
+        let iris = vec!["foundation:Ghost".to_string()];
+        let result = Individual::batch_load_triples(&conn, &iris).unwrap();
+        assert!(!result.contains_key("foundation:Ghost"), "Unknown IRI must not appear in result");
+    }
+
+    // ── batch_load_retracted_triples ─────────────────────────────────────────
+
+    #[test]
+    fn test_batch_load_retracted_triples_empty_for_active_individuals() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", "foundation:score", Object::Integer(1)),
+        ], "test").unwrap();
+
+        let iris = vec!["foundation:Alice".to_string()];
+        let result = Individual::batch_load_retracted_triples(&conn, &iris).unwrap();
+        assert!(!result.contains_key("foundation:Alice"), "Active individual must not appear in retracted batch");
+    }
+
+    #[test]
+    fn test_batch_load_retracted_triples_returns_retracted_individuals() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Alice", rdf::TYPE, Object::Iri("foundation:Person".to_string())),
+        ], "test").unwrap();
+        Individual::retract(&mut conn, "foundation:Alice", "test").unwrap();
+
+        let iris = vec!["foundation:Alice".to_string()];
+        let result = Individual::batch_load_retracted_triples(&conn, &iris).unwrap();
+        assert!(result.contains_key("foundation:Alice"), "Retracted individual should appear in retracted batch");
     }
 }

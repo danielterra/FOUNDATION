@@ -112,16 +112,14 @@ fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
                 .collect()
         };
 
-        let batch = crate::eavto::query::batch_load_triples_for_subjects(conn, &thing_iris)
-            .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
+        let batch = Individual::batch_load_triples(conn, &thing_iris)?;
 
         let retracted_batch = if include_retracted {
             let no_active: Vec<String> = thing_iris.iter()
                 .filter(|iri| !batch.contains_key(iri.as_str()))
                 .cloned()
                 .collect();
-            crate::eavto::query::batch_load_retracted_triples_for_subjects(conn, &no_active)
-                .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?
+            Individual::batch_load_retracted_triples(conn, &no_active)?
         } else {
             std::collections::HashMap::new()
         };
@@ -301,23 +299,15 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
         let mut properties = individual.serializable_properties(conn);
 
         if include_retracted {
-            let retracted_triples = crate::eavto::query::get_retracted_by_entity(conn, iri)
-                .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
-            for triple in &retracted_triples.triples {
-                if triple.predicate == "rdfs:label"
-                    || triple.predicate == "rdfs:comment"
-                    || triple.predicate == "foundation:icon"
-                    || triple.predicate == "foundation:hasIcon"
-                {
-                    continue;
-                }
+            let retracted_triples = Individual::get_retracted_properties(conn, iri)?;
+            for triple in &retracted_triples {
                 let value: serde_json::Value = match &triple.object {
-                    crate::eavto::Object::Iri(s) | crate::eavto::Object::Blank(s) => serde_json::json!(s),
-                    crate::eavto::Object::Literal { value: v, .. } => serde_json::json!(v),
-                    crate::eavto::Object::Integer(i) => serde_json::json!(i),
-                    crate::eavto::Object::Number(n) => serde_json::json!(n),
-                    crate::eavto::Object::Boolean(b) => serde_json::json!(b),
-                    crate::eavto::Object::DateTime(dt) => serde_json::json!(dt),
+                    Object::Iri(s) | Object::Blank(s) => serde_json::json!(s),
+                    Object::Literal { value: v, .. } => serde_json::json!(v),
+                    Object::Integer(i) => serde_json::json!(i),
+                    Object::Number(n) => serde_json::json!(n),
+                    Object::Boolean(b) => serde_json::json!(b),
+                    Object::DateTime(dt) => serde_json::json!(dt),
                 };
                 properties.push(serde_json::json!({
                     "property": triple.predicate,
@@ -714,9 +704,7 @@ fn delete_thing_one(
     match (|| {
         match (detail_iri, value) {
             (Some(detail), Some(val)) => {
-                let current_count = crate::eavto::query::get_by_entity_predicate(conn, iri, detail)
-                    .map(|r| r.triples.len())
-                    .unwrap_or(0);
+                let current_count = Individual::get_property_count(conn, iri, detail)?;
                 crate::owl::cardinality::validate_property_cardinality(
                     conn, iri, detail, current_count.saturating_sub(1),
                 )?;
@@ -738,10 +726,7 @@ fn delete_thing_one(
                 }
             }
             (Some(detail), None) => {
-                let result = crate::eavto::query::get_by_entity_predicate(conn, iri, detail)?;
-                if !result.triples.is_empty() {
-                    crate::eavto::store::retract_triples(conn, &result.triples, "ai")?;
-                }
+                Individual::clear_property(conn, iri, detail, "ai")?;
                 super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
                 Ok::<_, crate::owl::OwlError>(serde_json::json!({
                     "success": true,
