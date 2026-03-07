@@ -505,12 +505,15 @@ fn create_thing_one(
             .map(|r| r.property_iri.as_str())
             .collect();
         if !required.is_empty() {
-            let provided: std::collections::HashSet<&str> = args.get("properties")
+            let mut provided: std::collections::HashSet<String> = args.get("properties")
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter()
                     .filter_map(|p| p.get("detail_iri").and_then(|v| v.as_str()))
+                    .map(|s| s.to_string())
                     .collect())
                 .unwrap_or_default();
+            // label is always required for creation and is stored as rdfs:label
+            provided.insert("rdfs:label".to_string());
             for prop_iri in &required {
                 if !provided.contains(*prop_iri) {
                     return Err(crate::owl::OwlError::ValidationError(format!(
@@ -1756,5 +1759,58 @@ mod tests {
             println!("[concept query run {}] {} results in {:?}", i + 1, n, elapsed);
         }
         println!("[concept query] average: {:?}", total / runs);
+    }
+
+    #[test]
+    fn test_create_thing_label_satisfies_rdfs_label_required_field() {
+        // Regression for Bug_1772766219258: creating an instance with label should satisfy
+        // an rdfs:label cardinality restriction, since label is always stored as rdfs:label.
+        let mut conn = setup_test_db();
+        setup_task_class_with_statuses(&mut conn);
+
+        crate::owl::cardinality::set_class_required_fields(
+            &mut conn, "foundation:Task", &["foundation:priority"], "test",
+        ).unwrap();
+
+        // Simulate how rdfs:label ends up as a required field (legacy data or direct store)
+        crate::eavto::store::append_triples(&mut conn, &[
+            {
+                let blank_id = "_:restriction_rdfs_label_test".to_string();
+                crate::eavto::Triple::new(
+                    "foundation:Task", "rdfs:subClassOf",
+                    crate::eavto::Object::Blank(blank_id.clone()),
+                )
+            },
+        ], "test").unwrap();
+        crate::eavto::store::assert_triples(&mut conn, &[
+            crate::eavto::Triple::new(
+                "_:restriction_rdfs_label_test", "rdf:type",
+                crate::eavto::Object::Iri("owl:Restriction".to_string()),
+            ),
+            crate::eavto::Triple::new(
+                "_:restriction_rdfs_label_test", "owl:onProperty",
+                crate::eavto::Object::Iri("rdfs:label".to_string()),
+            ),
+            crate::eavto::Triple::new(
+                "_:restriction_rdfs_label_test", "owl:minCardinality",
+                crate::eavto::Object::Integer(1),
+            ),
+        ], "test").unwrap();
+
+        // Creating with just label (which maps to rdfs:label) must succeed
+        let args = serde_json::json!({
+            "concept_iri": "foundation:Task",
+            "label": "My Task",
+            "properties": [
+                {"detail_iri": "foundation:priority", "values": ["High"], "value_type": "literal"}
+            ]
+        });
+
+        let result = create_thing_one(&mut conn, &args);
+        assert!(
+            result.success,
+            "Creating a thing with label should satisfy rdfs:label required field; got: {:?}",
+            result.error
+        );
     }
 }
