@@ -5,6 +5,39 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-03-07
+
+### Added
+
+- **Global search modal**: Search entities across the entire knowledge base with enriched results including concept type, status, and matched properties
+- **Polymorphic subclass expansion**: Instance queries now expand to include all subclass descendants
+- **`matchedProperties` in search results**: `remember_things` returns the properties that matched the query
+- **Optional icon in `learn_thing`**: Icon field is now optional and inherits from the concept when omitted
+- **Enriched entity search**: Results enriched with concept type, status icon/color, and matched property values
+
+### Fixed
+
+- Label argument now satisfies `rdfs:label` required field restriction
+- Exclude `rdfs:label` from `matchedProperties` in `remember_things` results
+- Inspector updates correctly on property changes
+- Blank nodes filtered from `superClasses` in class results
+- Accept RFC3339 format for `xsd:dateTime` values (in addition to Unix milliseconds)
+- Support multiple inheritance in `update_concept` via `super_concepts` parameter
+- Entity-updated events emitted after transaction COMMIT (not before)
+- Orphaned references cleaned up when deleting an entity
+- Fixed `include_retracted` bug in `search_things`
+
+### Performance
+
+- Markdown rendering moved to a Web Worker to avoid blocking the main thread
+- Global entity query optimized to 30× faster; unused document data removed
+
+### Refactored
+
+- EAVTO calls moved from AI layer into `OWL Individual` methods
+- AI tool API simplified to 7 tools; dead code removed; matched property values truncated
+- Large source files split into focused modules; production `panic!` in setup replaced with graceful return
+
 ## [0.6.0] - 2026-03-06
 
 ### Added
