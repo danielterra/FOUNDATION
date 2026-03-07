@@ -85,6 +85,53 @@ mod tests {
     }
 
     #[test]
+    fn test_required_fields_can_reference_property_created_in_same_call() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
+                value: "Test Class".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let args = serde_json::json!({
+            "iri": "foundation:TestClass",
+            "calculated_fields": [{"iri": "foundation:newProp", "label": "new prop", "range": "xsd:string"}],
+            "required_fields": ["foundation:newProp"]
+        });
+
+        let result = learn_concept_one(&mut conn, &args);
+        assert!(result.success, "Expected success when required_field is created in same call, got error: {:?}", result.error);
+    }
+
+    #[test]
+    fn test_required_fields_can_reference_connection_created_in_same_call() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
+                value: "Test Class".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:TargetClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+        ], "test").unwrap();
+
+        let args = serde_json::json!({
+            "iri": "foundation:TestClass",
+            "connections": [{"iri": "foundation:newRef", "label": "new ref", "range": "foundation:TargetClass"}],
+            "required_fields": ["foundation:newRef"]
+        });
+
+        let result = learn_concept_one(&mut conn, &args);
+        assert!(result.success, "Expected success when required_field is a connection created in same call, got error: {:?}", result.error);
+    }
+
+    #[test]
     fn test_allowed_statuses_rejects_nonexistent_status_iri() {
         let mut conn = setup_test_db();
 
@@ -516,28 +563,6 @@ fn learn_concept_one(
             )?;
         }
 
-        if let Some(required_fields) = args.get("required_fields").and_then(|v| v.as_array()) {
-            let prop_iris: Vec<&str> = required_fields.iter()
-                .filter_map(|v| v.as_str())
-                .collect();
-
-            for prop_iri in &prop_iris {
-                let prop = crate::owl::Property::get(conn, *prop_iri)?;
-                let is_valid = prop.map(|p| matches!(
-                    p.property_type,
-                    crate::owl::PropertyType::ObjectProperty | crate::owl::PropertyType::DatatypeProperty
-                )).unwrap_or(false);
-                if !is_valid {
-                    return Err(crate::owl::OwlError::ValidationError(format!(
-                        "Property '{}' is not defined in this ontology",
-                        prop_iri
-                    )));
-                }
-            }
-
-            crate::owl::cardinality::set_class_required_fields(conn, iri, &prop_iris, "ai")?;
-        }
-
         if let Some(fields) = args.get("calculated_fields").and_then(|v| v.as_array()) {
             for field in fields {
                 let mut field_args = field.clone();
@@ -568,6 +593,28 @@ fn learn_concept_one(
                     ));
                 }
             }
+        }
+
+        if let Some(required_fields) = args.get("required_fields").and_then(|v| v.as_array()) {
+            let prop_iris: Vec<&str> = required_fields.iter()
+                .filter_map(|v| v.as_str())
+                .collect();
+
+            for prop_iri in &prop_iris {
+                let prop = crate::owl::Property::get(conn, *prop_iri)?;
+                let is_valid = prop.map(|p| matches!(
+                    p.property_type,
+                    crate::owl::PropertyType::ObjectProperty | crate::owl::PropertyType::DatatypeProperty
+                )).unwrap_or(false);
+                if !is_valid {
+                    return Err(crate::owl::OwlError::ValidationError(format!(
+                        "Property '{}' is not defined in this ontology",
+                        prop_iri
+                    )));
+                }
+            }
+
+            crate::owl::cardinality::set_class_required_fields(conn, iri, &prop_iris, "ai")?;
         }
 
         if is_new {
