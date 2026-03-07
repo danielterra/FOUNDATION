@@ -5,6 +5,21 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-03-07
+
+### Added
+
+- **Mermaid diagram widget**: Interactive Mermaid diagram widget on the blackboard that loads content from a linked entity, supports pan/zoom (up to 5000%), and updates live when the entity's `diagramSource` property changes
+- **Fit-to-view on widget open**: Diagram automatically fits to the canvas when the modal is opened
+- **InspectorWidget dynamic actions**: Inspector header now shows action buttons for compatible widget types, allowing users to open entity-bound widgets directly from the inspector
+- **`widget__list_definitions` command**: New Tauri command that exposes available widget definitions from the ontology, optionally filtered by concept IRI
+- **Blackboard context in AI prompts**: Current blackboard state (widget type, concept IRI/name, thing IRI/name) is injected as a non-cached system block into every AI API call so the assistant knows what the user is viewing
+
+### Fixed
+
+- Fixed `rowid` vs `id` references in triple queries causing incorrect results
+- Fixed Svelte a11y warnings in chat and widget components
+
 ## [0.7.0] - 2026-03-07
 
 ### Added
