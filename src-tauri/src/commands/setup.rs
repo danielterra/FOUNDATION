@@ -87,10 +87,10 @@ fn recover_pending_jobs(
             Ok(s) => s,
             Err(_) => return,
         };
-        stmt.query_map([], |row| row.get(0))
-            .unwrap_or_else(|_| panic!("query_map failed"))
-            .filter_map(|r| r.ok())
-            .collect()
+        let Ok(rows) = stmt.query_map([], |row| row.get(0)) else {
+            return;
+        };
+        rows.filter_map(|r| r.ok()).collect()
     };
 
     for job_id in job_ids {
