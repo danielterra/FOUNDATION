@@ -1,12 +1,25 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use crate::owl::{Connection, DbExecutor};
+use crate::eavto::{store, query, Triple, Object};
+use crate::owl::vocabulary::{rdf, rdfs};
+
+const WIDGET_CLASS: &str = "foundation:Widget";
+const PRED_WIDGET_TYPE: &str = "foundation:widgetType";
+const PRED_ENTITY_ID: &str = "foundation:widgetEntityId";
+const PRED_CONTENT: &str = "foundation:widgetContent";
+const PRED_POSITION_X: &str = "foundation:widgetPositionX";
+const PRED_POSITION_Y: &str = "foundation:widgetPositionY";
+const PRED_SIZE_WIDTH: &str = "foundation:widgetSizeWidth";
+const PRED_SIZE_HEIGHT: &str = "foundation:widgetSizeHeight";
+const WIDGET_ORIGIN: &str = "widget";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Widget {
     pub id: String,
     pub widget_type: String,
     pub entity_id: String,
+    pub content: Option<String>,
     pub position: Position,
     pub size: Size,
 }
@@ -30,130 +43,171 @@ pub struct WidgetType {
     pub description: String,
 }
 
-pub fn ensure_widget_table(conn: &Connection) -> Result<(), String> {
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS widgets (
-            id TEXT PRIMARY KEY,
-            widget_type TEXT NOT NULL,
-            entity_id TEXT NOT NULL,
-            position_x REAL NOT NULL,
-            position_y REAL NOT NULL,
-            size_width REAL NOT NULL,
-            size_height REAL NOT NULL,
-            created_at INTEGER NOT NULL
-        )",
-        [],
-    ).map_err(|e| format!("Failed to create widgets table: {}", e))?;
-    Ok(())
+fn str_literal(value: impl Into<String>) -> Object {
+    Object::Literal {
+        value: value.into(),
+        datatype: Some("xsd:string".to_string()),
+        language: None,
+    }
 }
 
-pub fn db_insert_widget(conn: &Connection, widget: &Widget) -> Result<bool, String> {
-    ensure_widget_table(conn)?;
-
-    let rows = conn.execute(
-        "INSERT OR IGNORE INTO widgets \
-         (id, widget_type, entity_id, position_x, position_y, size_width, size_height, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        rusqlite::params![
-            widget.id,
-            widget.widget_type,
-            widget.entity_id,
-            widget.position.x,
-            widget.position.y,
-            widget.size.width,
-            widget.size.height,
-            chrono::Utc::now().timestamp_millis(),
-        ],
-    ).map_err(|e| format!("Failed to insert widget: {}", e))?;
-
-    Ok(rows > 0)
+fn extract_str(triples: &[Triple], pred: &str) -> Option<String> {
+    triples.iter()
+        .find(|t| t.predicate == pred)
+        .and_then(|t| t.object.as_literal())
 }
 
-pub fn db_get_all_widgets(conn: &Connection) -> Result<Vec<Widget>, String> {
-    ensure_widget_table(conn)?;
-
-    let mut stmt = conn.prepare(
-        "SELECT id, widget_type, entity_id, position_x, position_y, size_width, size_height
-         FROM widgets
-         ORDER BY created_at DESC"
-    ).map_err(|e| format!("Failed to prepare query: {}", e))?;
-
-    let widgets = stmt.query_map([], |row| {
-        Ok(Widget {
-            id: row.get(0)?,
-            widget_type: row.get(1)?,
-            entity_id: row.get(2)?,
-            position: Position {
-                x: row.get(3)?,
-                y: row.get(4)?,
-            },
-            size: Size {
-                width: row.get(5)?,
-                height: row.get(6)?,
-            },
+fn extract_f64(triples: &[Triple], pred: &str) -> Option<f64> {
+    triples.iter()
+        .find(|t| t.predicate == pred)
+        .and_then(|t| match &t.object {
+            Object::Number(n) => Some(*n),
+            Object::Integer(i) => Some(*i as f64),
+            _ => None,
         })
-    }).map_err(|e| format!("Failed to query widgets: {}", e))?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(|e| format!("Failed to collect widgets: {}", e))?;
+}
 
+fn widget_from_triples(iri: String, triples: &[Triple]) -> Option<Widget> {
+    let widget_type = extract_str(triples, PRED_WIDGET_TYPE)?;
+    let entity_id = extract_str(triples, PRED_ENTITY_ID)?;
+    let x = extract_f64(triples, PRED_POSITION_X)?;
+    let y = extract_f64(triples, PRED_POSITION_Y)?;
+    let width = extract_f64(triples, PRED_SIZE_WIDTH)?;
+    let height = extract_f64(triples, PRED_SIZE_HEIGHT)?;
+    let content = extract_str(triples, PRED_CONTENT);
+
+    Some(Widget {
+        id: iri,
+        widget_type,
+        entity_id,
+        content,
+        position: Position { x, y },
+        size: Size { width, height },
+    })
+}
+
+fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), String> {
+    let iri = &widget.id;
+    let mut triples = vec![
+        Triple::new(iri, rdf::TYPE, Object::Iri(WIDGET_CLASS.to_string())),
+        Triple::new(iri, rdfs::LABEL, str_literal(&widget.widget_type)),
+        Triple::new(iri, PRED_WIDGET_TYPE, str_literal(&widget.widget_type)),
+        Triple::new(iri, PRED_ENTITY_ID, str_literal(&widget.entity_id)),
+        Triple::new(iri, PRED_POSITION_X, Object::Number(widget.position.x)),
+        Triple::new(iri, PRED_POSITION_Y, Object::Number(widget.position.y)),
+        Triple::new(iri, PRED_SIZE_WIDTH, Object::Number(widget.size.width)),
+        Triple::new(iri, PRED_SIZE_HEIGHT, Object::Number(widget.size.height)),
+    ];
+    if let Some(content) = &widget.content {
+        triples.push(Triple::new(iri, PRED_CONTENT, str_literal(content)));
+    }
+    store::assert_triples(conn, &triples, WIDGET_ORIGIN)
+        .map(|_| ())
+        .map_err(|e| format!("Failed to insert widget: {}", e))
+}
+
+fn owl_get_all_widgets(conn: &Connection) -> Result<Vec<Widget>, String> {
+    let type_triples = query::get_by_predicate_object(conn, rdf::TYPE, WIDGET_CLASS)
+        .map_err(|e| format!("Failed to query widgets: {}", e))?;
+
+    let mut widgets = Vec::new();
+    for triple in &type_triples.triples {
+        let iri = triple.subject.clone();
+        let all = query::get_by_entity(conn, &iri)
+            .map_err(|e| format!("Failed to load widget {}: {}", iri, e))?;
+        if let Some(widget) = widget_from_triples(iri, &all.triples) {
+            widgets.push(widget);
+        }
+    }
     Ok(widgets)
 }
 
-pub fn db_delete_widget(conn: &Connection, widget_id: &str) -> Result<(), String> {
-    ensure_widget_table(conn)?;
-
-    let rows_affected = conn.execute(
-        "DELETE FROM widgets WHERE id = ?1",
-        rusqlite::params![widget_id],
-    ).map_err(|e| format!("Failed to delete widget: {}", e))?;
-
-    if rows_affected == 0 {
+fn owl_delete_widget(conn: &mut Connection, widget_id: &str) -> Result<(), String> {
+    let all = query::get_by_entity(conn, widget_id)
+        .map_err(|e| format!("Failed to load widget: {}", e))?;
+    if all.triples.is_empty() {
         return Err(format!("Widget not found: {}", widget_id));
     }
-
-    Ok(())
+    store::retract_triples(conn, &all.triples, WIDGET_ORIGIN)
+        .map(|_| ())
+        .map_err(|e| format!("Failed to delete widget: {}", e))
 }
 
-fn db_update_widget_position(
-    conn: &Connection,
+fn owl_update_widget_position(
+    conn: &mut Connection,
     widget_id: &str,
     position: &Position,
 ) -> Result<(), String> {
-    ensure_widget_table(conn)?;
-
-    let rows_affected = conn.execute(
-        "UPDATE widgets SET position_x = ?1, position_y = ?2 WHERE id = ?3",
-        rusqlite::params![position.x, position.y, widget_id],
-    ).map_err(|e| format!("Failed to update widget position: {}", e))?;
-
-    if rows_affected == 0 {
-        return Err(format!("Widget not found: {}", widget_id));
+    for pred in [PRED_POSITION_X, PRED_POSITION_Y] {
+        let existing = query::get_by_entity_predicate(conn, widget_id, pred)
+            .map_err(|e| format!("Failed to query position: {}", e))?;
+        if !existing.triples.is_empty() {
+            store::retract_triples(conn, &existing.triples, WIDGET_ORIGIN)
+                .map(|_| ())
+                .map_err(|e| format!("Failed to retract position: {}", e))?;
+        }
     }
-
-    Ok(())
+    store::assert_triples(conn, &[
+        Triple::new(widget_id, PRED_POSITION_X, Object::Number(position.x)),
+        Triple::new(widget_id, PRED_POSITION_Y, Object::Number(position.y)),
+    ], WIDGET_ORIGIN)
+    .map(|_| ())
+    .map_err(|e| format!("Failed to update position: {}", e))
 }
 
-fn db_update_widget_size(conn: &Connection, widget_id: &str, size: &Size) -> Result<(), String> {
-    ensure_widget_table(conn)?;
-
-    let rows_affected = conn.execute(
-        "UPDATE widgets SET size_width = ?1, size_height = ?2 WHERE id = ?3",
-        rusqlite::params![size.width, size.height, widget_id],
-    ).map_err(|e| format!("Failed to update widget size: {}", e))?;
-
-    if rows_affected == 0 {
-        return Err(format!("Widget not found: {}", widget_id));
+fn owl_update_widget_size(
+    conn: &mut Connection,
+    widget_id: &str,
+    size: &Size,
+) -> Result<(), String> {
+    for pred in [PRED_SIZE_WIDTH, PRED_SIZE_HEIGHT] {
+        let existing = query::get_by_entity_predicate(conn, widget_id, pred)
+            .map_err(|e| format!("Failed to query size: {}", e))?;
+        if !existing.triples.is_empty() {
+            store::retract_triples(conn, &existing.triples, WIDGET_ORIGIN)
+                .map(|_| ())
+                .map_err(|e| format!("Failed to retract size: {}", e))?;
+        }
     }
-
-    Ok(())
+    store::assert_triples(conn, &[
+        Triple::new(widget_id, PRED_SIZE_WIDTH, Object::Number(size.width)),
+        Triple::new(widget_id, PRED_SIZE_HEIGHT, Object::Number(size.height)),
+    ], WIDGET_ORIGIN)
+    .map(|_| ())
+    .map_err(|e| format!("Failed to update size: {}", e))
 }
 
-pub fn db_clear_all_widgets(conn: &Connection) -> Result<(), String> {
-    ensure_widget_table(conn)?;
+fn owl_update_widget_content(
+    conn: &mut Connection,
+    widget_id: &str,
+    content: &str,
+) -> Result<(), String> {
+    let existing = query::get_by_entity_predicate(conn, widget_id, PRED_CONTENT)
+        .map_err(|e| format!("Failed to query content: {}", e))?;
+    if !existing.triples.is_empty() {
+        store::retract_triples(conn, &existing.triples, WIDGET_ORIGIN)
+            .map(|_| ())
+            .map_err(|e| format!("Failed to retract content: {}", e))?;
+    }
+    store::assert_triples(conn, &[
+        Triple::new(widget_id, PRED_CONTENT, str_literal(content)),
+    ], WIDGET_ORIGIN)
+    .map(|_| ())
+    .map_err(|e| format!("Failed to update content: {}", e))
+}
 
-    conn.execute("DELETE FROM widgets", [])
-        .map_err(|e| format!("Failed to clear widgets: {}", e))?;
-
+fn owl_clear_all_widgets(conn: &mut Connection) -> Result<(), String> {
+    let type_triples = query::get_by_predicate_object(conn, rdf::TYPE, WIDGET_CLASS)
+        .map_err(|e| format!("Failed to query widgets: {}", e))?;
+    for triple in &type_triples.triples {
+        let all = query::get_by_entity(conn, &triple.subject)
+            .map_err(|e| format!("Failed to load widget: {}", e))?;
+        if !all.triples.is_empty() {
+            store::retract_triples(conn, &all.triples, WIDGET_ORIGIN)
+                .map(|_| ())
+                .map_err(|e| format!("Failed to clear widget: {}", e))?;
+        }
+    }
     Ok(())
 }
 
@@ -167,6 +221,11 @@ pub fn widget__list_types() -> Vec<WidgetType> {
             name: "Inspector".to_string(),
             description: "Display detailed information about a class or instance".to_string(),
         },
+        WidgetType {
+            id: "mermaid".to_string(),
+            name: "Mermaid Diagram".to_string(),
+            description: "Display a Mermaid diagram".to_string(),
+        },
     ]
 }
 
@@ -175,7 +234,7 @@ pub fn widget__list_types() -> Vec<WidgetType> {
 #[allow(non_snake_case)]
 pub async fn widget__get_all(executor: State<'_, DbExecutor>) -> Result<Vec<Widget>, String> {
     executor.read(|conn| {
-        db_get_all_widgets(conn)
+        owl_get_all_widgets(conn)
     }).await
 }
 
@@ -186,6 +245,7 @@ pub async fn widget__add(
     app: AppHandle,
     widget_type: String,
     entity_id: String,
+    content: Option<String>,
     position: Option<Position>,
     size: Option<Size>,
     executor: State<'_, DbExecutor>
@@ -199,12 +259,19 @@ pub async fn widget__add(
     }
 
     let sanitized_entity = entity_id.replace([':', '/', '#', ' '], "_");
+    let default_size = if widget_type == "mermaid" {
+        Size { width: 600.0, height: 500.0 }
+    } else {
+        Size { width: 400.0, height: 600.0 }
+    };
+
     let widget = Widget {
-        id: format!("widget_{}_{}", widget_type, sanitized_entity),
+        id: format!("foundation:Widget_{widget_type}_{sanitized_entity}"),
         widget_type,
         entity_id,
+        content,
         position: position.unwrap_or(Position { x: 100.0, y: 100.0 }),
-        size: size.unwrap_or(Size { width: 400.0, height: 600.0 }),
+        size: size.unwrap_or(default_size),
     };
 
     app.emit("widget-added", widget.clone()).ok();
@@ -213,7 +280,7 @@ pub async fn widget__add(
     let executor_clone = executor.inner().clone();
     tokio::spawn(async move {
         executor_clone.write(move |conn| {
-            db_insert_widget(conn, &widget_clone)?;
+            owl_insert_widget(conn, &widget_clone)?;
             Ok(widget_clone.id.clone())
         }).await.ok();
     });
@@ -234,7 +301,7 @@ pub async fn widget__remove(
     let executor_clone = executor.inner().clone();
     tokio::spawn(async move {
         executor_clone.write(move |conn| {
-            db_delete_widget(conn, &widget_id)?;
+            owl_delete_widget(conn, &widget_id)?;
             Ok("deleted".to_string())
         }).await.ok();
     });
@@ -251,7 +318,7 @@ pub async fn widget__update_position(
     executor: State<'_, DbExecutor>
 ) -> Result<(), String> {
     executor.write(move |conn| {
-        db_update_widget_position(conn, &widget_id, &position)?;
+        owl_update_widget_position(conn, &widget_id, &position)?;
         Ok("updated".to_string())
     }).await?;
     Ok(())
@@ -266,9 +333,26 @@ pub async fn widget__update_size(
     executor: State<'_, DbExecutor>
 ) -> Result<(), String> {
     executor.write(move |conn| {
-        db_update_widget_size(conn, &widget_id, &size)?;
+        owl_update_widget_size(conn, &widget_id, &size)?;
         Ok("updated".to_string())
     }).await?;
+    Ok(())
+}
+
+/// Update widget content (e.g. Mermaid diagram source)
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget__update_content(
+    app: AppHandle,
+    widget_id: String,
+    content: String,
+    executor: State<'_, DbExecutor>
+) -> Result<(), String> {
+    executor.write(move |conn| {
+        owl_update_widget_content(conn, &widget_id, &content)?;
+        Ok("updated".to_string())
+    }).await?;
+    app.emit("widget-content-updated", widget_id).ok();
     Ok(())
 }
 
@@ -284,7 +368,7 @@ pub async fn widget__clear_all(
     let executor_clone = executor.inner().clone();
     tokio::spawn(async move {
         executor_clone.write(|conn| {
-            db_clear_all_widgets(conn)?;
+            owl_clear_all_widgets(conn)?;
             Ok("cleared".to_string())
         }).await.ok();
     });

@@ -36,7 +36,8 @@
     "d3": "^7.9.0",
     "dagre": "^0.8.5",
     "marked": "^17.0.3",
-    "material-symbols": "^0.40.1"
+    "material-symbols": "^0.40.1",
+    "mermaid": "^11.12.3"
   },
   "devDependencies": {
     "@rdfjs/parser-n3": "^2.1.0",

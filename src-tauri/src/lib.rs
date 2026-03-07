@@ -151,6 +151,7 @@ pub fn run() {
             commands::widget__remove,
             commands::widget__update_position,
             commands::widget__update_size,
+            commands::widget__update_content,
             commands::widget__clear_all
         ])
         .run(tauri::generate_context!())
