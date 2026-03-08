@@ -1,5 +1,21 @@
 use super::*;
 
+fn is_subclass_of_or_equal(conn: &Connection, class_iri: &str, target: &str) -> bool {
+    if class_iri == target {
+        return true;
+    }
+    if let Ok(result) = query::get_by_entity_predicate(conn, class_iri, rdfs::SUB_CLASS_OF) {
+        for triple in &result.triples {
+            if let Some(parent) = triple.object.as_iri() {
+                if parent != class_iri && is_subclass_of_or_equal(conn, parent, target) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 impl Individual {
     /// Validate that a literal value conforms to its declared xsd datatype
     pub(super) fn validate_literal_datatype(property: &str, value: &Object) -> Result<()> {
@@ -123,6 +139,41 @@ impl Individual {
         }
 
         Ok(())
+    }
+
+    /// Validate that an IRI value is an instance of the property's declared rdfs:range class
+    pub(super) fn validate_range_type(conn: &Connection, property: &str, value: &Object) -> Result<()> {
+        let value_iri = match value.as_iri() {
+            Some(iri) => iri,
+            None => return Ok(()),
+        };
+
+        let range_result = query::get_by_entity_predicate(conn, property, rdfs::RANGE)?;
+        let range_class = match range_result.triples.first() {
+            Some(triple) => match triple.object.as_iri() {
+                Some(iri) if iri != "owl:Thing" => iri.to_string(),
+                _ => return Ok(()),
+            },
+            None => return Ok(()),
+        };
+
+        let types_result = query::get_by_entity_predicate(conn, value_iri, rdf::TYPE)?;
+        let value_types: Vec<String> = types_result.triples.iter()
+            .filter_map(|t| t.object.as_iri())
+            .map(|s| s.to_string())
+            .collect();
+
+        if value_types.iter().any(|t| is_subclass_of_or_equal(conn, t, &range_class)) {
+            return Ok(());
+        }
+
+        Err(OwlError::ValidationError(format!(
+            "Value '{}' for property '{}' must be an instance of '{}', but has types: {}",
+            value_iri,
+            property,
+            range_class,
+            if value_types.is_empty() { "none".to_string() } else { value_types.join(", ") }
+        )))
     }
 
     /// Validate that a value conforms to owl:oneOf constraint on the property's range
@@ -448,5 +499,135 @@ mod tests {
         } else {
             panic!("Expected ValidationError");
         }
+    }
+
+    #[test]
+    fn test_range_type_validation_rejects_wrong_class() {
+        let mut conn = setup_test_db();
+
+        let bug_class = Class::new("foundation:Bug");
+        bug_class.assert(&mut conn, ClassType::OwlClass, "Bug", "https://example.com/bug.svg", None, "test").unwrap();
+
+        let user_story_class = Class::new("foundation:UserStory");
+        user_story_class.assert(&mut conn, ClassType::OwlClass, "User Story", "https://example.com/story.svg", None, "test").unwrap();
+
+        let product_class = Class::new("foundation:SoftwareProduct");
+        product_class.assert(&mut conn, ClassType::OwlClass, "Software Product", "https://example.com/product.svg", None, "test").unwrap();
+
+        let bug_of_prop = Property::new("foundation:bugOf");
+        bug_of_prop.assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "bug of",
+            None,
+            &["foundation:Bug"],
+            Some("foundation:UserStory"),
+            None,
+            "test",
+        ).unwrap();
+
+        let bug = Individual::new("foundation:MyBug");
+        bug.assert(&mut conn, "foundation:Bug", "My Bug", "https://example.com/bug.svg", "test").unwrap();
+
+        let product = Individual::new("foundation:FoundationProduct");
+        product.assert(&mut conn, "foundation:SoftwareProduct", "Foundation Product", "https://example.com/product.svg", "test").unwrap();
+
+        let result = bug.add_property(
+            &mut conn,
+            "foundation:bugOf",
+            vec![Object::Iri("foundation:FoundationProduct".to_string())],
+            "test",
+        );
+
+        assert!(result.is_err(), "Should reject value of wrong class");
+        if let Err(OwlError::ValidationError(msg)) = result {
+            assert!(msg.contains("foundation:UserStory"), "Error should mention the expected class");
+            assert!(msg.contains("foundation:FoundationProduct"), "Error should mention the rejected value");
+        } else {
+            panic!("Expected ValidationError");
+        }
+    }
+
+    #[test]
+    fn test_range_type_validation_accepts_correct_class() {
+        let mut conn = setup_test_db();
+
+        let bug_class = Class::new("foundation:Bug");
+        bug_class.assert(&mut conn, ClassType::OwlClass, "Bug", "https://example.com/bug.svg", None, "test").unwrap();
+
+        let user_story_class = Class::new("foundation:UserStory");
+        user_story_class.assert(&mut conn, ClassType::OwlClass, "User Story", "https://example.com/story.svg", None, "test").unwrap();
+
+        let bug_of_prop = Property::new("foundation:bugOf");
+        bug_of_prop.assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "bug of",
+            None,
+            &["foundation:Bug"],
+            Some("foundation:UserStory"),
+            None,
+            "test",
+        ).unwrap();
+
+        let bug = Individual::new("foundation:MyBug");
+        bug.assert(&mut conn, "foundation:Bug", "My Bug", "https://example.com/bug.svg", "test").unwrap();
+
+        let story = Individual::new("foundation:MyStory");
+        story.assert(&mut conn, "foundation:UserStory", "My Story", "https://example.com/story.svg", "test").unwrap();
+
+        let result = bug.add_property(
+            &mut conn,
+            "foundation:bugOf",
+            vec![Object::Iri("foundation:MyStory".to_string())],
+            "test",
+        );
+
+        assert!(result.is_ok(), "Should accept value of correct class");
+    }
+
+    #[test]
+    fn test_range_type_validation_accepts_subclass_instance() {
+        let mut conn = setup_test_db();
+
+        let task_class = Class::new("foundation:Task");
+        task_class.assert(&mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test").unwrap();
+
+        let work_item_class = Class::new("foundation:WorkItem");
+        work_item_class.assert(&mut conn, ClassType::OwlClass, "Work Item", "https://example.com/work.svg", None, "test").unwrap();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Task", rdfs::SUB_CLASS_OF, Object::Iri("foundation:WorkItem".to_string())),
+        ], "test").unwrap();
+
+        let assigned_class = Class::new("foundation:Assignment");
+        assigned_class.assert(&mut conn, ClassType::OwlClass, "Assignment", "https://example.com/assign.svg", None, "test").unwrap();
+
+        let related_prop = Property::new("foundation:relatedWorkItem");
+        related_prop.assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "related work item",
+            None,
+            &["foundation:Assignment"],
+            Some("foundation:WorkItem"),
+            None,
+            "test",
+        ).unwrap();
+
+        let assignment = Individual::new("foundation:MyAssignment");
+        assignment.assert(&mut conn, "foundation:Assignment", "My Assignment", "https://example.com/assign.svg", "test").unwrap();
+
+        let task = Individual::new("foundation:MyTask");
+        task.assert(&mut conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").unwrap();
+
+        let result = assignment.add_property(
+            &mut conn,
+            "foundation:relatedWorkItem",
+            vec![Object::Iri("foundation:MyTask".to_string())],
+            "test",
+        );
+
+        assert!(result.is_ok(), "Should accept instance of a subclass of the declared range");
     }
 }

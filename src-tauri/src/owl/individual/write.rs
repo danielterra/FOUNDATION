@@ -103,6 +103,7 @@ impl Individual {
         Self::validate_value_type(conn, property, &values)?;
         for value in &values {
             Self::validate_iri_exists(conn, property, value)?;
+            Self::validate_range_type(conn, property, value)?;
             Self::validate_one_of_constraint(conn, property, value)?;
             Self::validate_literal_datatype(property, value)?;
         }
