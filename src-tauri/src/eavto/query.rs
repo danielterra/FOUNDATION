@@ -680,9 +680,13 @@ pub fn find_message_iris_by_conversation(
 }
 
 fn parse_datetime_to_millis(value: &str) -> std::result::Result<i64, ()> {
-    chrono::DateTime::parse_from_rfc3339(value)
-        .map(|dt| dt.timestamp_millis())
-        .map_err(|_| ())
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(value) {
+        return Ok(dt.timestamp_millis());
+    }
+    if let Ok(ms) = value.parse::<i64>() {
+        return Ok(ms);
+    }
+    Err(())
 }
 
 fn validate_operator(op: &str) -> std::result::Result<&str, ()> {

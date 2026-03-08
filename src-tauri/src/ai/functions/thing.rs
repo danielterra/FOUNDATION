@@ -781,6 +781,22 @@ fn delete_thing_one(
 }
 
 
+/// Converts an ISO date ("YYYY-MM-DD") or ISO datetime (RFC3339) string to
+/// a Unix millisecond timestamp string, so the OWL layer always receives
+/// a numeric millisecond value for temporal comparisons.
+/// Returns the original string unchanged if it doesn't look like a date/datetime.
+fn iso_date_to_unix_millis_str(value: &str) -> String {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(value) {
+        return dt.timestamp_millis().to_string();
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        if let Some(dt) = date.and_hms_opt(0, 0, 0) {
+            return dt.and_utc().timestamp_millis().to_string();
+        }
+    }
+    value.to_string()
+}
+
 fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
     let concept_iri = match args.get("concept_iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
@@ -829,7 +845,8 @@ fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
                 .and_then(|v| v.as_str())
                 .unwrap_or("=");
 
-            detail_constraints.push((detail_iri.to_string(), value.to_string(), operator.to_string()));
+            let normalized_value = iso_date_to_unix_millis_str(value);
+            detail_constraints.push((detail_iri.to_string(), normalized_value, operator.to_string()));
         }
 
         let constraint_refs: Vec<(&str, &str, &str)> = detail_constraints

@@ -1061,3 +1061,101 @@ fn test_part_of_process_accessible_on_sequence_flow() {
     assert!(set_part_of_process(&mut conn, "foundation:SeqFlow_Reg").is_ok(),
         "partOfProcess must be settable on bpmn_SequenceFlow (direct domain match)");
 }
+
+#[test]
+fn test_find_things_by_detail_date_filter_with_operators() {
+    let mut conn = setup_test_db();
+
+    let task_class = Class::new("foundation:Task");
+    task_class.assert(&mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test").unwrap();
+
+    Property::new("foundation:dueDate")
+        .assert(&mut conn, PropertyType::DatatypeProperty, "dueDate", None, &["foundation:Task"], Some("xsd:date"), None, "test")
+        .unwrap();
+
+    Individual::new("foundation:TaskDue0307")
+        .assert(&mut conn, "foundation:Task", "Task Due 2026-03-07", "https://example.com/task.svg", "test").unwrap();
+    Individual::new("foundation:TaskDue0308")
+        .assert(&mut conn, "foundation:Task", "Task Due 2026-03-08", "https://example.com/task.svg", "test").unwrap();
+    Individual::new("foundation:TaskDue0309")
+        .assert(&mut conn, "foundation:Task", "Task Due 2026-03-09", "https://example.com/task.svg", "test").unwrap();
+
+    for (iri, date_str) in [
+        ("foundation:TaskDue0307", "2026-03-07"),
+        ("foundation:TaskDue0308", "2026-03-08"),
+        ("foundation:TaskDue0309", "2026-03-09"),
+    ] {
+        Individual::new(iri).add_property(
+            &mut conn,
+            "foundation:dueDate",
+            vec![crate::owl::Object::Literal {
+                value: date_str.to_string(),
+                datatype: Some("xsd:date".to_string()),
+                language: None,
+            }],
+            "test",
+        ).unwrap();
+    }
+
+    let args = serde_json::json!({
+        "concept_iri": "foundation:Task",
+        "properties": [
+            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": "="}
+        ]
+    });
+    let result = find_things_by_detail_one(&conn, &args);
+    assert!(result.success, "date '=' filter should succeed: {:?}", result.error);
+    let things = result.result.unwrap()["things"].as_array().unwrap().clone();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["iri"].as_str()).collect();
+    assert_eq!(iris, vec!["foundation:TaskDue0308"], "date '=' should return only the matching task");
+
+    let args_gte = serde_json::json!({
+        "concept_iri": "foundation:Task",
+        "properties": [
+            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": ">="}
+        ]
+    });
+    let result_gte = find_things_by_detail_one(&conn, &args_gte);
+    assert!(result_gte.success, "date '>=' filter should succeed: {:?}", result_gte.error);
+    let things_gte = result_gte.result.unwrap()["things"].as_array().unwrap().clone();
+    let iris_gte: Vec<&str> = things_gte.iter().filter_map(|t| t["iri"].as_str()).collect();
+    assert!(iris_gte.contains(&"foundation:TaskDue0308"), "'>=' should include 2026-03-08");
+    assert!(iris_gte.contains(&"foundation:TaskDue0309"), "'>=' should include 2026-03-09");
+    assert!(!iris_gte.contains(&"foundation:TaskDue0307"), "'>=' should exclude 2026-03-07");
+
+    let args_lte = serde_json::json!({
+        "concept_iri": "foundation:Task",
+        "properties": [
+            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": "<="}
+        ]
+    });
+    let result_lte = find_things_by_detail_one(&conn, &args_lte);
+    assert!(result_lte.success, "date '<=' filter should succeed: {:?}", result_lte.error);
+    let things_lte = result_lte.result.unwrap()["things"].as_array().unwrap().clone();
+    let iris_lte: Vec<&str> = things_lte.iter().filter_map(|t| t["iri"].as_str()).collect();
+    assert!(iris_lte.contains(&"foundation:TaskDue0307"), "'<=' should include 2026-03-07");
+    assert!(iris_lte.contains(&"foundation:TaskDue0308"), "'<=' should include 2026-03-08");
+    assert!(!iris_lte.contains(&"foundation:TaskDue0309"), "'<=' should exclude 2026-03-09");
+
+    let args_range = serde_json::json!({
+        "concept_iri": "foundation:Task",
+        "properties": [
+            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": ">="},
+            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": "<="}
+        ]
+    });
+    let result_range = find_things_by_detail_one(&conn, &args_range);
+    assert!(result_range.success, "date range filter should succeed: {:?}", result_range.error);
+    let things_range = result_range.result.unwrap()["things"].as_array().unwrap().clone();
+    assert_eq!(things_range.len(), 1, "range >=2026-03-08 AND <=2026-03-08 should return exactly 1");
+    assert_eq!(things_range[0]["iri"].as_str().unwrap(), "foundation:TaskDue0308");
+}
+
+#[test]
+fn test_iso_date_to_unix_millis_str_converts_correctly() {
+    assert_eq!(iso_date_to_unix_millis_str("2026-03-08"), "1772928000000");
+    let rfc3339_result = iso_date_to_unix_millis_str("2026-03-08T00:00:00Z");
+    assert_eq!(rfc3339_result, "1772928000000");
+    assert_eq!(iso_date_to_unix_millis_str("foundation:SomeIri"), "foundation:SomeIri");
+    assert_eq!(iso_date_to_unix_millis_str("active"), "active");
+}
