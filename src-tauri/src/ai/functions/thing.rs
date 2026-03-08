@@ -431,7 +431,7 @@ fn create_thing_one(
             }], "ai")?;
         }
 
-        if let Some(properties) = args.get("add_properties").and_then(|v| v.as_array()) {
+        if let Some(properties) = args.get("upsert_properties").and_then(|v| v.as_array()) {
             for prop_entry in properties {
                 let detail_iri = prop_entry.get("detail_iri")
                     .and_then(|v| v.as_str())
@@ -495,7 +495,7 @@ fn create_thing_one(
             .map(|r| r.property_iri.as_str())
             .collect();
         if !required.is_empty() {
-            let mut provided: std::collections::HashSet<String> = args.get("add_properties")
+            let mut provided: std::collections::HashSet<String> = args.get("upsert_properties")
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter()
                     .filter_map(|p| p.get("detail_iri").and_then(|v| v.as_str()))
@@ -593,9 +593,18 @@ fn update_thing_one(
             updated_fields.push("comment".to_string());
         }
 
+        if let Some(remove_props) = args.get("remove_properties").and_then(|v| v.as_array()) {
+            for item in remove_props {
+                if let Some(detail_iri) = item.as_str() {
+                    Individual::clear_property(conn, iri, detail_iri, "ai")?;
+                    updated_fields.push(format!("-{}", detail_iri));
+                }
+            }
+        }
+
         let mut referenced_iris: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        if let Some(properties) = args.get("add_properties").and_then(|v| v.as_array()) {
+        if let Some(properties) = args.get("upsert_properties").and_then(|v| v.as_array()) {
             let concept_iri = if let Ok(Some(c)) = crate::owl::get_iri_property(conn, iri, "rdf:type") {
                 Some(c)
             } else {
@@ -665,15 +674,6 @@ fn update_thing_one(
 
                 individual.add_property(conn, detail_iri, objects, "ai")?;
                 updated_fields.push(detail_iri.to_string());
-            }
-        }
-
-        if let Some(remove_props) = args.get("remove_properties").and_then(|v| v.as_array()) {
-            for item in remove_props {
-                if let Some(detail_iri) = item.as_str() {
-                    Individual::clear_property(conn, iri, detail_iri, "ai")?;
-                    updated_fields.push(format!("-{}", detail_iri));
-                }
             }
         }
 

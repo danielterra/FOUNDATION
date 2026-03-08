@@ -47,7 +47,7 @@ fn test_update_thing_with_properties_updates_literal_property() {
 
     let args = serde_json::json!({
         "iri": "foundation:Task_001",
-        "add_properties": [
+        "upsert_properties": [
             {
                 "detail_iri": "foundation:priority",
                 "values": ["High"],
@@ -75,7 +75,7 @@ fn test_update_thing_with_valid_status_succeeds() {
 
     let args = serde_json::json!({
         "iri": "foundation:Task_002",
-        "add_properties": [
+        "upsert_properties": [
             {
                 "detail_iri": "foundation:hasStatus",
                 "values": ["foundation:ActiveStatus"],
@@ -96,7 +96,7 @@ fn test_update_thing_with_invalid_status_returns_descriptive_error() {
 
     let args = serde_json::json!({
         "iri": "foundation:Task_003",
-        "add_properties": [
+        "upsert_properties": [
             {
                 "detail_iri": "foundation:hasStatus",
                 "values": ["foundation:InvalidStatus"],
@@ -831,6 +831,44 @@ fn test_search_things_response_fields_are_correct() {
     assert_eq!(response["count"].as_u64().unwrap(), 2, "count field should be 2");
 }
 
+#[test]
+fn test_remove_before_add_in_same_operation_preserves_new_value() {
+    // Regression for Bug_1772970415230: remove_properties must execute before upsert_properties
+    // so the new value written by upsert_properties is not wiped by the subsequent remove.
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+    create_task(&mut conn, "foundation:Task_migrate_001");
+
+    let individual = Individual::new("foundation:Task_migrate_001");
+    individual.add_property(&mut conn, "foundation:priority", vec![Object::Literal {
+        value: "Low".to_string(),
+        datatype: Some("xsd:string".to_string()),
+        language: None,
+    }], "test").unwrap();
+
+    let args = serde_json::json!({
+        "iri": "foundation:Task_migrate_001",
+        "remove_properties": ["foundation:priority"],
+        "upsert_properties": [
+            {
+                "detail_iri": "foundation:priority",
+                "values": ["High"],
+                "value_type": "literal",
+                "datatype": "xsd:string"
+            }
+        ]
+    });
+
+    let result = update_thing_one(&mut conn, &args);
+    assert!(result.success, "update_thing with remove+add should succeed: {:?}", result.error);
+
+    let priority = crate::owl::get_literal_property(&conn, "foundation:Task_migrate_001", "foundation:priority")
+        .expect("query should succeed")
+        .expect("priority should have a value after the operation");
+
+    assert_eq!(priority, "High", "New value must survive: remove_properties wiped it (wrong order)");
+}
+
 // Performance tests — run with a copy of the real DB:
 //   sqlite3 ~/Documents/Foundation/FOUNDATION.db "VACUUM INTO '/tmp/foundation_bench.db'"
 //   FOUNDATION_BENCH_DB=/tmp/foundation_bench.db cargo test --lib perf_ -- --ignored --nocapture
@@ -933,7 +971,7 @@ fn test_create_thing_label_satisfies_rdfs_label_required_field() {
     let args = serde_json::json!({
         "concept_iri": "foundation:Task",
         "label": "My Task",
-        "add_properties": [
+        "upsert_properties": [
             {"detail_iri": "foundation:priority", "values": ["High"], "value_type": "literal"}
         ]
     });

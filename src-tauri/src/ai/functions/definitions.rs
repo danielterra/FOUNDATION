@@ -177,10 +177,10 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     schema: None,
                 },
                 Parameter {
-                    name: "add_properties".to_string(),
+                    name: "upsert_properties".to_string(),
                     param_type: "array".to_string(),
                     description: concat!(
-                        "ADDS or updates detail and connection values on this thing.",
+                        "UPSERTS detail and connection values on this thing: replaces existing value if present, inserts if absent.",
                         " Each item: {detail_iri, values: [...], value_type?: 'iri'|'literal',",
                         " datatype?: 'xsd:string'|...}.",
                         " For foundation:hasStatus, value is validated against the concept's",
