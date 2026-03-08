@@ -983,3 +983,81 @@ fn test_create_thing_label_satisfies_rdfs_label_required_field() {
         result.error
     );
 }
+
+// regression: Bug_1772994393082 — partOfProcess domain must be bpmn_FlowNode,
+// not bpmn_SequenceFlow, so all flow node subtypes can set the property.
+
+const ICON_URL: &str = "https://example.com/icon.svg";
+
+fn setup_bpmn_hierarchy(conn: &mut Connection) {
+    let i = ICON_URL;
+    Class::new("foundation:bpmn_Process")
+        .assert(conn, ClassType::OwlClass, "BPMN Process", i, None, "test").unwrap();
+    Class::new("foundation:bpmn_FlowNode")
+        .assert(conn, ClassType::OwlClass, "Flow Node", i, None, "test").unwrap();
+    Property::new("foundation:partOfProcess")
+        .assert(conn, PropertyType::ObjectProperty, "Part of Process", None,
+            &["foundation:bpmn_FlowNode"], Some("foundation:bpmn_Process"), None, "test")
+        .unwrap();
+    Class::new("foundation:bpmn_Event")
+        .assert(conn, ClassType::OwlClass, "BPMN Event", i,
+            Some("foundation:bpmn_FlowNode"), "test").unwrap();
+    Class::new("foundation:bpmn_StartEvent")
+        .assert(conn, ClassType::OwlClass, "Start Event", i,
+            Some("foundation:bpmn_Event"), "test").unwrap();
+    Class::new("foundation:bpmn_Task")
+        .assert(conn, ClassType::OwlClass, "BPMN Task", i,
+            Some("foundation:bpmn_FlowNode"), "test").unwrap();
+    Class::new("foundation:bpmn_AgentTask")
+        .assert(conn, ClassType::OwlClass, "Agent Task", i,
+            Some("foundation:bpmn_Task"), "test").unwrap();
+    Individual::new("foundation:Process_Reg")
+        .assert(conn, "foundation:bpmn_Process", "Reg Process", i, "test").unwrap();
+}
+
+fn set_part_of_process(
+    conn: &mut Connection, ind_iri: &str,
+) -> Result<(), crate::owl::OwlError> {
+    Individual::new(ind_iri).add_property(
+        conn, "foundation:partOfProcess",
+        vec![Object::Iri("foundation:Process_Reg".to_string())], "test",
+    )
+}
+
+#[test]
+fn test_part_of_process_accessible_on_start_event() {
+    let mut conn = setup_test_db();
+    setup_bpmn_hierarchy(&mut conn);
+    Individual::new("foundation:StartEvent_Reg")
+        .assert(&mut conn, "foundation:bpmn_StartEvent", "Reg Start", ICON_URL, "test").unwrap();
+    assert!(set_part_of_process(&mut conn, "foundation:StartEvent_Reg").is_ok(),
+        "partOfProcess must be settable on bpmn_StartEvent via bpmn_FlowNode inheritance");
+}
+
+#[test]
+fn test_part_of_process_accessible_on_agent_task() {
+    let mut conn = setup_test_db();
+    setup_bpmn_hierarchy(&mut conn);
+    Individual::new("foundation:AgentTask_Reg")
+        .assert(&mut conn, "foundation:bpmn_AgentTask", "Reg Agent", ICON_URL, "test").unwrap();
+    assert!(set_part_of_process(&mut conn, "foundation:AgentTask_Reg").is_ok(),
+        "partOfProcess must be settable on bpmn_AgentTask via bpmn_FlowNode inheritance");
+}
+
+#[test]
+fn test_part_of_process_accessible_on_sequence_flow() {
+    let mut conn = setup_test_db();
+    setup_bpmn_hierarchy(&mut conn);
+    // partOfProcess domain covers both bpmn_FlowNode and bpmn_SequenceFlow
+    Property::new("foundation:partOfProcess")
+        .assert(&mut conn, PropertyType::ObjectProperty, "Part of Process", None,
+            &["foundation:bpmn_FlowNode", "foundation:bpmn_SequenceFlow"],
+            Some("foundation:bpmn_Process"), None, "test")
+        .unwrap();
+    Class::new("foundation:bpmn_SequenceFlow")
+        .assert(&mut conn, ClassType::OwlClass, "Sequence Flow", ICON_URL, None, "test").unwrap();
+    Individual::new("foundation:SeqFlow_Reg")
+        .assert(&mut conn, "foundation:bpmn_SequenceFlow", "Reg Flow", ICON_URL, "test").unwrap();
+    assert!(set_part_of_process(&mut conn, "foundation:SeqFlow_Reg").is_ok(),
+        "partOfProcess must be settable on bpmn_SequenceFlow (direct domain match)");
+}

@@ -6,6 +6,7 @@ mod eavto;
 pub mod owl;
 pub mod ai;
 mod mcp;
+pub mod process_automation;
 
 #[derive(serde::Serialize)]
 pub struct TripleData {
@@ -107,12 +108,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
+        .manage(process_automation::scheduler::SchedulerState::new())
         .setup(|app| {
             // Setup is intentionally minimal - initialization happens via initialize_app command
             // This allows the app to start quickly and not block during build/CI
             // The initialize_app command will register the DbExecutor when called
             let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(mcp::serve(app_handle));
+            tauri::async_runtime::spawn(mcp::serve(app_handle.clone()));
+            tauri::async_runtime::spawn(process_automation::scheduler::start(app_handle.clone()));
+            process_automation::trigger::register_listeners(app_handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -154,7 +158,14 @@ pub fn run() {
             commands::widget__update_size,
             commands::widget__update_content,
             commands::widget__list_definitions,
-            commands::widget__clear_all
+            commands::widget__clear_all,
+            commands::process__reload_scheduler,
+            commands::process__execute,
+            commands::connector__save_credential,
+            commands::connector__get_credential_summary,
+            commands::connector__test_auth,
+            commands::connector__export_package,
+            commands::connector__import_package
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

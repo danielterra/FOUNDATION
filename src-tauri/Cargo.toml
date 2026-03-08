@@ -28,6 +28,7 @@ dirs = "5.0"
 lazy_static = "1.4"
 sha2 = "0.10"
 chrono = "0.4"
+cron = "0.12"
 sysinfo = "0.32"  # For system information
 hostname = "0.4"  # For hostname detection
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "net", "io-util"] }  # For async executor and tests

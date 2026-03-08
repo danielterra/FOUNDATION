@@ -6,8 +6,8 @@ mod batch;
 mod blackboard;
 mod concept;
 mod definitions;
+mod property;
 mod thing;
-mod detail;
 
 pub use definitions::{get_available_tools, get_claude_tools};
 
@@ -111,17 +111,56 @@ pub fn execute_tool(
     match call.name.as_str() {
         "learn_concepts" => concept::learn_concept(conn, args, app),
         "learn_things" => thing::learn_thing(conn, args, app),
+        "learn_properties" => property::learn_property(conn, args, app),
         "remember_concepts" => concept::remember_concept(conn, args),
         "remember_things" => thing::remember_thing(conn, args),
+        "remember_properties" => property::remember_property(conn, args),
         "forget_concepts" => concept::delete_concept(conn, args, app),
         "forget_things" => thing::delete_thing(conn, args, app),
+        "forget_properties" => property::forget_property(conn, args, app),
         "blackboard_widgets_list" => blackboard::blackboard_widgets_list(conn, args),
         "blackboard_update" => blackboard::blackboard_update(conn, args, app),
+        "run_process" => run_process_tool(args, app),
         _ => ToolResult {
             success: false,
             result: None,
             error: Some(format!("Unknown tool: {}", call.name)),
         },
+    }
+}
+
+fn run_process_tool(args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult {
+    let app = match app {
+        Some(a) => a.clone(),
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("run_process requires a running Foundation app".to_string()),
+        },
+    };
+
+    let process_iri = match args["process_iri"].as_str() {
+        Some(iri) if !iri.is_empty() => iri.to_string(),
+        _ => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("process_iri is required".to_string()),
+        },
+    };
+
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = crate::process_automation::executor::run_process(&app, &process_iri).await {
+            crate::commands::log_backend(
+                "error",
+                &format!("[run_process] Error running {}: {}", process_iri, e),
+            );
+        }
+    });
+
+    ToolResult {
+        success: true,
+        result: Some(json!({ "message": format!("Process {} started", args["process_iri"].as_str().unwrap_or("")) })),
+        error: None,
     }
 }
 
@@ -131,22 +170,31 @@ mod tests {
     use crate::eavto::test_helpers::setup_test_db;
     use crate::owl::{Property, PropertyType};
 
-    // ---- connections via learn_concept ----
+    // ---- connections via learn_properties + learn_concepts ----
 
     #[test]
     fn test_learn_concept_with_connections_creates_object_properties() {
         let mut conn = setup_test_db();
+
+        let props_call = ToolCall {
+            name: "learn_properties".to_string(),
+            arguments: serde_json::json!({
+                "operations": [
+                    {"iri": "foundation:worksAt", "label": "works at", "property_type": "object"},
+                    {"iri": "foundation:reportsTo", "label": "reports to", "property_type": "object", "range": "foundation:Employee"}
+                ]
+            }),
+        };
+        assert!(execute_tool(&mut conn, &props_call, None).success);
+
         let call = ToolCall {
             name: "learn_concepts".to_string(),
             arguments: serde_json::json!({
                 "operations": [{
                     "iri": "foundation:Employee",
                     "label": "Employee",
-                    "icon": "person",
-                    "add_details": [
-                        {"iri": "foundation:worksAt", "label": "works at", "detail_type": "object"},
-                        {"iri": "foundation:reportsTo", "label": "reports to", "detail_type": "object", "range": "foundation:Employee"}
-                    ]
+                    "icon": "https://example.com/icon.svg",
+                    "upsert_details": ["foundation:worksAt", "foundation:reportsTo"]
                 }]
             }),
         };
@@ -162,11 +210,23 @@ mod tests {
         assert!(reports_to.ranges.iter().any(|r| r == "foundation:Employee"));
     }
 
-    // ---- calculated_fields via learn_concept ----
+    // ---- calculated fields via learn_properties + learn_concepts ----
 
     #[test]
     fn test_learn_concept_with_calculated_fields_creates_properties() {
         let mut conn = setup_test_db();
+
+        let props_call = ToolCall {
+            name: "learn_properties".to_string(),
+            arguments: serde_json::json!({
+                "operations": [
+                    {"iri": "foundation:width", "label": "width", "property_type": "datatype"},
+                    {"iri": "foundation:height", "label": "height", "property_type": "datatype"},
+                    {"iri": "foundation:area", "label": "area", "property_type": "datatype", "formula": "{{foundation:width}} * {{foundation:height}}"}
+                ]
+            }),
+        };
+        assert!(execute_tool(&mut conn, &props_call, None).success);
 
         let call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -174,22 +234,13 @@ mod tests {
                 "operations": [{
                     "iri": "foundation:Rectangle",
                     "label": "Rectangle",
-                    "icon": "rectangle",
-                    "add_details": [
-                        {"iri": "foundation:width", "label": "width", "detail_type": "datatype"},
-                        {"iri": "foundation:height", "label": "height", "detail_type": "datatype"},
-                        {
-                            "iri": "foundation:area",
-                            "label": "area",
-                            "detail_type": "datatype",
-                            "formula": "{{foundation:width}} * {{foundation:height}}"
-                        }
-                    ]
+                    "icon": "https://example.com/icon.svg",
+                    "upsert_details": ["foundation:width", "foundation:height", "foundation:area"]
                 }]
             }),
         };
         let result = execute_tool(&mut conn, &call, None);
-        assert!(result.success, "learn_concept with calculated_fields should succeed: {:?}", result.error);
+        assert!(result.success, "learn_concept with calculated fields should succeed: {:?}", result.error);
 
         let width = Property::get(&conn, "foundation:width").unwrap().unwrap();
         assert_eq!(width.property_type, PropertyType::DatatypeProperty);
@@ -208,8 +259,16 @@ mod tests {
     }
 
     #[test]
-    fn test_learn_concept_calculated_field_domain_defaults_to_concept() {
+    fn test_learn_concept_property_domain_set_to_concept() {
         let mut conn = setup_test_db();
+
+        let props_call = ToolCall {
+            name: "learn_properties".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{"iri": "foundation:boxSize", "label": "size", "property_type": "datatype"}]
+            }),
+        };
+        assert!(execute_tool(&mut conn, &props_call, None).success);
 
         let call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -217,10 +276,8 @@ mod tests {
                 "operations": [{
                     "iri": "foundation:Box",
                     "label": "Box",
-                    "icon": "box",
-                    "add_details": [
-                        {"iri": "foundation:boxSize", "label": "size", "detail_type": "datatype"}
-                    ]
+                    "icon": "https://example.com/icon.svg",
+                    "upsert_details": ["foundation:boxSize"]
                 }]
             }),
         };
@@ -229,30 +286,23 @@ mod tests {
         let prop = Property::get(&conn, "foundation:boxSize").unwrap().unwrap();
         assert!(
             prop.domains.iter().any(|d| d == "foundation:Box"),
-            "Domain should default to concept IRI, got: {:?}",
+            "Domain should be set to concept IRI, got: {:?}",
             prop.domains
         );
     }
 
     #[test]
-    fn test_learn_concept_calculated_field_circular_formula_is_rejected() {
+    fn test_learn_property_circular_formula_is_rejected() {
         let mut conn = setup_test_db();
 
         let call = ToolCall {
-            name: "learn_concepts".to_string(),
+            name: "learn_properties".to_string(),
             arguments: serde_json::json!({
                 "operations": [{
-                    "iri": "foundation:Thing",
-                    "label": "Thing",
-                    "icon": "thing",
-                    "add_details": [
-                        {
-                            "iri": "foundation:selfRef",
-                            "label": "self ref",
-                            "detail_type": "datatype",
-                            "formula": "{{foundation:selfRef}} + 1"
-                        }
-                    ]
+                    "iri": "foundation:selfRef",
+                    "label": "self ref",
+                    "property_type": "datatype",
+                    "formula": "{{foundation:selfRef}} + 1"
                 }]
             }),
         };
@@ -262,11 +312,19 @@ mod tests {
         assert!(err.contains("Circular"), "Expected circular dependency error, got: {err}");
     }
 
-    // ---- learn_concept upsert: adding calculated_fields to existing concept ----
+    // ---- learn_concept upsert: adding properties to existing concept ----
 
     #[test]
     fn test_update_concept_adds_calculated_fields() {
         let mut conn = setup_test_db();
+
+        let radius_call = ToolCall {
+            name: "learn_properties".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{"iri": "foundation:radius", "label": "radius", "property_type": "datatype"}]
+            }),
+        };
+        assert!(execute_tool(&mut conn, &radius_call, None).success);
 
         let create_call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -274,33 +332,37 @@ mod tests {
                 "operations": [{
                     "iri": "foundation:Circle",
                     "label": "Circle",
-                    "icon": "circle",
-                    "add_details": [
-                        {"iri": "foundation:radius", "label": "radius", "detail_type": "datatype"}
-                    ]
+                    "icon": "https://example.com/icon.svg",
+                    "upsert_details": ["foundation:radius"]
                 }]
             }),
         };
         execute_tool(&mut conn, &create_call, None);
+
+        let circ_call = ToolCall {
+            name: "learn_properties".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:circumference",
+                    "label": "circumference",
+                    "property_type": "datatype",
+                    "formula": "{{foundation:radius}} * 6"
+                }]
+            }),
+        };
+        assert!(execute_tool(&mut conn, &circ_call, None).success);
 
         let update_call = ToolCall {
             name: "learn_concepts".to_string(),
             arguments: serde_json::json!({
                 "operations": [{
                     "iri": "foundation:Circle",
-                    "add_details": [
-                        {
-                            "iri": "foundation:circumference",
-                            "label": "circumference",
-                            "detail_type": "datatype",
-                            "formula": "{{foundation:radius}} * 6"
-                        }
-                    ]
+                    "upsert_details": ["foundation:circumference"]
                 }]
             }),
         };
         let result = execute_tool(&mut conn, &update_call, None);
-        assert!(result.success, "learn_concept upsert with calculated_fields should succeed: {:?}", result.error);
+        assert!(result.success, "updating concept with new property should succeed: {:?}", result.error);
 
         let prop = Property::get(&conn, "foundation:circumference").unwrap().unwrap();
         assert_eq!(prop.property_type, PropertyType::DatatypeProperty);

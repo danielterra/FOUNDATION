@@ -6,6 +6,9 @@
   import { cubicOut, cubicIn } from 'svelte/easing';
   import InspectorWidget from './InspectorWidget.svelte';
   import MermaidWidget from './MermaidWidget.svelte';
+  import ProcessStatusWidget from './ProcessStatusWidget.svelte';
+  import ConnectorCredentialWidget from './ConnectorCredentialWidget.svelte';
+  import ConnectorManagerWidget from './ConnectorManagerWidget.svelte';
 
   const BASE_WIDGET_Z_INDEX = 100;
   const CHAT_PANEL_WIDTH_RATIO = 0.3;
@@ -204,6 +207,12 @@
       <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} onResize={(w, h) => resizeWidget(widget.id, w, h)} />
     {:else if widget.widget_type === 'mermaid'}
       <MermaidWidget widgetId={widget.id} entityId={widget.entity_id} />
+    {:else if widget.widget_type === 'process_status'}
+      <ProcessStatusWidget widgetId={widget.id} entityId={widget.entity_id} />
+    {:else if widget.widget_type === 'connector_credential'}
+      <ConnectorCredentialWidget widgetId={widget.id} entityId={widget.entity_id} />
+    {:else if widget.widget_type === 'connector_manager'}
+      <ConnectorManagerWidget widgetId={widget.id} entityId={widget.entity_id} />
     {/if}
   </div>
 {/each}

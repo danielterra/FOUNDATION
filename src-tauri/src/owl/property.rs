@@ -263,6 +263,18 @@ impl Property {
     ///
     /// IMPORTANT: This method uses get_by_entity_predicate_internal with check_functional=false
     /// to avoid infinite recursion.
+    pub fn find_all_iris(conn: &Connection) -> Result<Vec<String>> {
+        let obj_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::OBJECT_PROPERTY)?;
+        let dat_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::DATATYPE_PROPERTY)?;
+        let mut iris: Vec<String> = obj_result.triples.into_iter()
+            .chain(dat_result.triples)
+            .map(|t| t.subject)
+            .collect();
+        iris.sort();
+        iris.dedup();
+        Ok(iris)
+    }
+
     pub fn is_functional(conn: &Connection, property_iri: &str) -> Result<bool> {
         let types_result = crate::eavto::query::get_by_entity_predicate_internal(
             conn,

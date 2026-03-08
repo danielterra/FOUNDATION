@@ -8,6 +8,9 @@ mod chat;
 mod chat_attachments;
 mod chat_storage;
 pub mod widget;
+mod process_automation;
+mod connector;
+mod connector_package;
 
 pub use setup::*;
 pub use entity::*;
@@ -17,3 +20,6 @@ pub use ai::*;
 pub use chat::*;
 pub use chat_attachments::*;
 pub use widget::*;
+pub use process_automation::*;
+pub use connector::*;
+pub use connector_package::*;

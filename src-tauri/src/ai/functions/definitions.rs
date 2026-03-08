@@ -46,16 +46,9 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     schema: None,
                 },
                 Parameter {
-                    name: "super_concept".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Single parent concept IRI. Replaces existing parent.".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
                     name: "super_concepts".to_string(),
                     param_type: "array".to_string(),
-                    description: "Parent concept IRIs (multiple inheritance). REPLACES all existing parents.".to_string(),
+                    description: "Parent concept IRIs. REPLACES all existing parents. Use a single-element array for single inheritance.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -77,10 +70,9 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     name: "upsert_details".to_string(),
                     param_type: "array".to_string(),
                     description: concat!(
-                        "Upsert property definitions on this concept.",
-                        " Each item: {iri, label, detail_type ('object'|'datatype'), range?, formula?, unit?, comment?}.",
-                        " 'formula': {{property_iri}} expression — calculated, read-only. Circular deps rejected.",
-                        " 'unit': QUDT IRI required for numeric types (e.g. 'unit:BRL').",
+                        "Array of property IRIs to associate with this concept (adds concept as a domain).",
+                        " Each item is a property IRI string (e.g. 'foundation:hasAge').",
+                        " The property must already exist — define it first with learn_properties.",
                         " Does NOT remove unlisted details — use remove_details.",
                     ).to_string(),
                     required: false,
@@ -157,9 +149,104 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             ],
         },
 
+        ToolTemplate {
+            name: "learn_properties".to_string(),
+            array_mode: true,
+            description: concat!(
+                "Create or update an OWL property (reusable across multiple concepts).",
+                " Domains are managed exclusively via learn_concepts upsert_details.",
+            ).to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the property (e.g. 'foundation:partOfProcess'). Required.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "label".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Display name. Required when creating a new property.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "property_type".to_string(),
+                    param_type: "string".to_string(),
+                    description: "'object' (links to another thing) or 'datatype' (stores a literal value). Required when creating.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "range".to_string(),
+                    param_type: "string".to_string(),
+                    description: "For 'object': target class IRI. For 'datatype': xsd type (e.g. 'xsd:string', 'xsd:integer'). Omit to keep existing.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "comment".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Optional description.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "unit".to_string(),
+                    param_type: "string".to_string(),
+                    description: "QUDT unit IRI. Required for numeric ranges (e.g. 'unit:Second', 'unit:Meter'). Omit to keep existing.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "formula".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Calculated formula using {{property_iri}} syntax. Datatype properties only. Circular dependencies are rejected.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
         // ----------------------------------------------------------------
         // REMEMBER (fetch by iri, or search without iri)
         // ----------------------------------------------------------------
+        ToolTemplate {
+            name: "remember_properties".to_string(),
+            array_mode: true,
+            description: "Fetch or search OWL properties. With 'iri': full details (type, domains, ranges, unit, formula). Without 'iri': keyword search across all properties.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the property to fetch. Omit to search instead.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "query".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Search keywords matched against label, comment, and IRI.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "limit".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Max results for search (default: 50).".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "offset".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Skip N results for pagination (default: 0).".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
         ToolTemplate {
             name: "remember_concepts".to_string(),
             array_mode: true,
@@ -284,6 +371,20 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             ],
         },
         ToolTemplate {
+            name: "forget_properties".to_string(),
+            array_mode: true,
+            description: "Permanently remove an OWL property definition and all its triples.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the property to forget.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+        ToolTemplate {
             name: "forget_things".to_string(),
             array_mode: true,
             description: "Forget a thing or remove a detail value. iri only: forgets thing. + detail_iri: removes all values of that detail. + value: removes that specific value only.".to_string(),
@@ -307,6 +408,24 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     param_type: "string".to_string(),
                     description: "Specific value to remove. If omitted, all values of detail_iri are removed.".to_string(),
                     required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        // ----------------------------------------------------------------
+        // PROCESS AUTOMATION
+        // ----------------------------------------------------------------
+        ToolTemplate {
+            name: "run_process".to_string(),
+            array_mode: false,
+            description: "Trigger a BPMN process by IRI. The process runs asynchronously in the background. Returns immediately with confirmation.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "process_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the bpmn_Process to execute (e.g. 'foundation:bpmn_Process_123').".to_string(),
+                    required: true,
                     schema: None,
                 },
             ],

@@ -85,8 +85,12 @@ mod tests {
     }
 
     #[test]
-    fn test_required_fields_can_reference_property_created_in_same_call() {
+    fn test_required_fields_can_reference_property_in_upsert_details() {
         let mut conn = setup_test_db();
+
+        crate::owl::Property::new("foundation:newProp")
+            .assert(&mut conn, crate::owl::PropertyType::DatatypeProperty, "new prop", None, &[], Some("xsd:string"), None, "test")
+            .unwrap();
 
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
@@ -99,17 +103,21 @@ mod tests {
 
         let args = serde_json::json!({
             "iri": "foundation:TestClass",
-            "upsert_details": [{"iri": "foundation:newProp", "label": "new prop", "detail_type": "datatype", "range": "xsd:string"}],
+            "upsert_details": ["foundation:newProp"],
             "required_fields": ["foundation:newProp"]
         });
 
         let result = learn_concept_one(&mut conn, &args);
-        assert!(result.success, "Expected success when required_field is created in same call, got error: {:?}", result.error);
+        assert!(result.success, "Expected success when required_field is in upsert_details, got error: {:?}", result.error);
     }
 
     #[test]
-    fn test_required_fields_can_reference_connection_created_in_same_call() {
+    fn test_required_fields_can_reference_connection_in_upsert_details() {
         let mut conn = setup_test_db();
+
+        crate::owl::Property::new("foundation:newRef")
+            .assert(&mut conn, crate::owl::PropertyType::ObjectProperty, "new ref", None, &[], Some("foundation:TargetClass"), None, "test")
+            .unwrap();
 
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
@@ -123,12 +131,12 @@ mod tests {
 
         let args = serde_json::json!({
             "iri": "foundation:TestClass",
-            "upsert_details": [{"iri": "foundation:newRef", "label": "new ref", "detail_type": "object", "range": "foundation:TargetClass"}],
+            "upsert_details": ["foundation:newRef"],
             "required_fields": ["foundation:newRef"]
         });
 
         let result = learn_concept_one(&mut conn, &args);
-        assert!(result.success, "Expected success when required_field is a connection created in same call, got error: {:?}", result.error);
+        assert!(result.success, "Expected success when required_field is a connection in upsert_details, got error: {:?}", result.error);
     }
 
     #[test]
@@ -224,6 +232,91 @@ mod tests {
 
         let result = learn_concept_one(&mut conn, &args);
         assert!(result.success, "Expected success, got error: {:?}", result.error);
+    }
+
+    // ── remove_details ───────────────────────────────────────────────────────
+
+    fn setup_two_concepts_with_shared_property(conn: &mut crate::eavto::Connection) {
+        crate::owl::Property::new("foundation:sharedProp")
+            .assert(conn, crate::owl::PropertyType::DatatypeProperty, "Shared Prop", None, &[], Some("xsd:string"), None, "test")
+            .unwrap();
+
+        store::assert_triples(conn, &[
+            Triple::new("foundation:ConceptA", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:ConceptA", "rdfs:label", Object::Literal {
+                value: "Concept A".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+            Triple::new("foundation:ConceptB", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:ConceptB", "rdfs:label", Object::Literal {
+                value: "Concept B".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+        ], "test").unwrap();
+
+        learn_concept_one(conn, &serde_json::json!({"iri": "foundation:ConceptA", "upsert_details": ["foundation:sharedProp"]}));
+        learn_concept_one(conn, &serde_json::json!({"iri": "foundation:ConceptB", "upsert_details": ["foundation:sharedProp"]}));
+    }
+
+    #[test]
+    fn test_remove_details_with_other_domains_preserves_property() {
+        let mut conn = setup_test_db();
+        setup_two_concepts_with_shared_property(&mut conn);
+
+        let result = learn_concept_one(&mut conn, &serde_json::json!({
+            "iri": "foundation:ConceptA",
+            "remove_details": ["foundation:sharedProp"]
+        }));
+        assert!(result.success, "remove_details should succeed: {:?}", result.error);
+
+        let prop = crate::owl::Property::get(&conn, "foundation:sharedProp").unwrap();
+        assert!(prop.is_some(), "property must still exist (has other domain)");
+        let domains = prop.unwrap().domains;
+        assert!(!domains.contains(&"foundation:ConceptA".to_string()), "ConceptA must be removed from domains");
+        assert!(domains.contains(&"foundation:ConceptB".to_string()), "ConceptB domain must be preserved");
+    }
+
+    #[test]
+    fn test_remove_details_last_domain_deletes_property() {
+        let mut conn = setup_test_db();
+
+        crate::owl::Property::new("foundation:singleDomainProp")
+            .assert(&mut conn, crate::owl::PropertyType::DatatypeProperty, "Single Domain Prop", None, &[], Some("xsd:string"), None, "test")
+            .unwrap();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:OnlyOwner", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:OnlyOwner", "rdfs:label", Object::Literal {
+                value: "Only Owner".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+        ], "test").unwrap();
+
+        learn_concept_one(&mut conn, &serde_json::json!({"iri": "foundation:OnlyOwner", "upsert_details": ["foundation:singleDomainProp"]}));
+
+        let result = learn_concept_one(&mut conn, &serde_json::json!({
+            "iri": "foundation:OnlyOwner",
+            "remove_details": ["foundation:singleDomainProp"]
+        }));
+        assert!(result.success, "remove_details should succeed: {:?}", result.error);
+
+        let prop = crate::owl::Property::get(&conn, "foundation:singleDomainProp").unwrap();
+        assert!(prop.is_none(), "property must be deleted when it has no remaining domains");
+    }
+
+    #[test]
+    fn test_remove_details_nonexistent_property_is_ignored() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:SomeConcept", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:SomeConcept", "rdfs:label", Object::Literal {
+                value: "Some Concept".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+        ], "test").unwrap();
+
+        let result = learn_concept_one(&mut conn, &serde_json::json!({
+            "iri": "foundation:SomeConcept",
+            "remove_details": ["foundation:doesNotExist"]
+        }));
+        assert!(result.success, "remove_details with nonexistent property must succeed silently");
     }
 }
 
@@ -505,9 +598,8 @@ fn learn_concept_one(
 
         let label_arg = args.get("label").and_then(|v| v.as_str());
         let icon_arg = args.get("icon").and_then(|v| v.as_str());
-        let super_concept = args.get("super_concept").and_then(|v| v.as_str());
 
-        let needs_assert = is_new || label_arg.is_some() || icon_arg.is_some() || super_concept.is_some();
+        let needs_assert = is_new || label_arg.is_some() || icon_arg.is_some();
 
         if needs_assert {
             let label = label_arg
@@ -521,7 +613,7 @@ fn learn_concept_one(
                     "Missing required parameter: icon (required when creating a new concept)".to_string()
                 ))?;
             let concept = Class::new(iri);
-            concept.assert(conn, crate::owl::ClassType::OwlClass, label, icon, super_concept, "ai")?;
+            concept.assert(conn, crate::owl::ClassType::OwlClass, label, icon, None, "ai")?;
         }
 
         if let Some(comment) = args.get("comment").and_then(|v| v.as_str()) {
@@ -566,23 +658,43 @@ fn learn_concept_one(
         if let Some(remove_details) = args.get("remove_details").and_then(|v| v.as_array()) {
             for item in remove_details {
                 if let Some(prop_iri) = item.as_str() {
-                    crate::owl::Property::retract(conn, prop_iri, "ai")?;
+                    let mut prop = match crate::owl::Property::get(conn, prop_iri)? {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    prop.domains.retain(|d| d != iri);
+                    if prop.domains.is_empty() {
+                        crate::owl::Property::retract(conn, prop_iri, "ai")?;
+                    } else {
+                        let domains: Vec<&str> = prop.domains.iter().map(|s| s.as_str()).collect();
+                        prop.assert(conn, prop.property_type, prop.label.as_deref().unwrap_or(""), None, &domains, prop.ranges.first().map(|s| s.as_str()), prop.unit.as_deref(), "ai")?;
+                    }
+                    super::batch::queue_event("entity-updated", serde_json::json!({"entityId": prop_iri}));
                 }
             }
         }
 
         if let Some(details) = args.get("upsert_details").and_then(|v| v.as_array()) {
             for detail in details {
-                let mut detail_args = detail.clone();
-                if detail_args.get("domain").is_none() {
-                    detail_args["domain"] = serde_json::json!(iri);
+                let prop_iri = detail.as_str()
+                    .or_else(|| detail.get("iri").and_then(|v| v.as_str()))
+                    .ok_or_else(|| crate::owl::OwlError::ValidationError(
+                        "Each upsert_details item must be a property IRI string".to_string()
+                    ))?;
+
+                let mut prop = crate::owl::Property::get(conn, prop_iri)?
+                    .ok_or_else(|| crate::owl::OwlError::ValidationError(
+                        format!("Property '{}' not found. Define it first with learn_properties.", prop_iri)
+                    ))?;
+
+                if !prop.domains.contains(&iri.to_string()) {
+                    prop.domains.push(iri.to_string());
+                    let domains: Vec<&str> = prop.domains.iter().map(|s| s.as_str()).collect();
+                    prop.assert(conn, prop.property_type, prop.label.as_deref().unwrap_or(""), None, &domains, prop.ranges.first().map(|s| s.as_str()), prop.unit.as_deref(), "ai")?;
                 }
-                let result = super::detail::create_detail_one(conn, &detail_args);
-                if !result.success {
-                    return Err(crate::owl::OwlError::ValidationError(
-                        result.error.unwrap_or_else(|| "Failed to create detail".to_string())
-                    ));
-                }
+
+                super::batch::queue_event("entity-updated", serde_json::json!({"entityId": prop_iri}));
+                super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
             }
         }
 

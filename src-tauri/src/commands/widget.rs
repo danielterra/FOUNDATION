@@ -203,6 +203,24 @@ pub fn widget__list_types() -> Vec<WidgetType> {
             description: "Display a Mermaid diagram".to_string(),
             supports_entity: false,
         },
+        WidgetType {
+            id: "process_status".to_string(),
+            name: "Process Status".to_string(),
+            description: "Display real-time execution status of a BPMN process".to_string(),
+            supports_entity: true,
+        },
+        WidgetType {
+            id: "connector_credential".to_string(),
+            name: "Connector Credentials".to_string(),
+            description: "Configure authentication credentials for an external service connector".to_string(),
+            supports_entity: true,
+        },
+        WidgetType {
+            id: "connector_manager".to_string(),
+            name: "Connector Manager".to_string(),
+            description: "Export, import and manage credentials for a service connector".to_string(),
+            supports_entity: true,
+        },
     ]
 }
 
