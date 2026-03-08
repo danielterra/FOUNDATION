@@ -5,6 +5,26 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-03-07
+
+### Added
+
+- **Per-agent chat configuration**: Each conversation now loads its own agent config (model, API key, system prompt, timeout) from the linked agent entity via `foundation:handledBy`
+- **WhatsApp-style chat header**: Agent avatar (clickable → opens Inspector), agent name, and icon-only action buttons replace the old plain title bar
+- **Conversation rename**: Inline rename input in the conversation bar with confirm/cancel; renamed labels persist across app reloads
+- **`chat__rename_conversation` command**: New Tauri command to rename a conversation by updating its `rdfs:label` triple
+- **Empty property stubs in Inspector**: Properties defined on a class now appear in the Inspector even when the individual has no value set, making it easier to fill in missing data
+
+### Changed
+
+- **Conversation bar**: Moved to its own row below the header; displays conversation label instead of IRI; extracted into a dedicated `ConversationBar` Svelte component
+- **`chat__create_conversation`**: Default label is now a human-readable date string (e.g. `Conversation Mar 07, 2026 14:30`) instead of `"New Conversation"`
+
+### Fixed
+
+- Fixed `required_fields` in `learn_concepts` failing when referencing properties created in the same call
+- Fixed `allowedStatus` validation to verify IRI existence and icon before setting
+
 ## [0.8.0] - 2026-03-07
 
 ### Added
