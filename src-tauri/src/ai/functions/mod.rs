@@ -143,9 +143,9 @@ mod tests {
                     "iri": "foundation:Employee",
                     "label": "Employee",
                     "icon": "person",
-                    "connections": [
-                        {"iri": "foundation:worksAt", "label": "works at"},
-                        {"iri": "foundation:reportsTo", "label": "reports to", "range": "foundation:Employee"}
+                    "add_details": [
+                        {"iri": "foundation:worksAt", "label": "works at", "detail_type": "object"},
+                        {"iri": "foundation:reportsTo", "label": "reports to", "detail_type": "object", "range": "foundation:Employee"}
                     ]
                 }]
             }),
@@ -175,12 +175,13 @@ mod tests {
                     "iri": "foundation:Rectangle",
                     "label": "Rectangle",
                     "icon": "rectangle",
-                    "calculated_fields": [
-                        {"iri": "foundation:width", "label": "width"},
-                        {"iri": "foundation:height", "label": "height"},
+                    "add_details": [
+                        {"iri": "foundation:width", "label": "width", "detail_type": "datatype"},
+                        {"iri": "foundation:height", "label": "height", "detail_type": "datatype"},
                         {
                             "iri": "foundation:area",
                             "label": "area",
+                            "detail_type": "datatype",
                             "formula": "{{foundation:width}} * {{foundation:height}}"
                         }
                     ]
@@ -217,8 +218,8 @@ mod tests {
                     "iri": "foundation:Box",
                     "label": "Box",
                     "icon": "box",
-                    "calculated_fields": [
-                        {"iri": "foundation:boxSize", "label": "size"}
+                    "add_details": [
+                        {"iri": "foundation:boxSize", "label": "size", "detail_type": "datatype"}
                     ]
                 }]
             }),
@@ -244,10 +245,11 @@ mod tests {
                     "iri": "foundation:Thing",
                     "label": "Thing",
                     "icon": "thing",
-                    "calculated_fields": [
+                    "add_details": [
                         {
                             "iri": "foundation:selfRef",
                             "label": "self ref",
+                            "detail_type": "datatype",
                             "formula": "{{foundation:selfRef}} + 1"
                         }
                     ]
@@ -273,8 +275,8 @@ mod tests {
                     "iri": "foundation:Circle",
                     "label": "Circle",
                     "icon": "circle",
-                    "calculated_fields": [
-                        {"iri": "foundation:radius", "label": "radius"}
+                    "add_details": [
+                        {"iri": "foundation:radius", "label": "radius", "detail_type": "datatype"}
                     ]
                 }]
             }),
@@ -286,10 +288,11 @@ mod tests {
             arguments: serde_json::json!({
                 "operations": [{
                     "iri": "foundation:Circle",
-                    "calculated_fields": [
+                    "add_details": [
                         {
                             "iri": "foundation:circumference",
                             "label": "circumference",
+                            "detail_type": "datatype",
                             "formula": "{{foundation:radius}} * 6"
                         }
                     ]

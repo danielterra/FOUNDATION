@@ -99,7 +99,7 @@ mod tests {
 
         let args = serde_json::json!({
             "iri": "foundation:TestClass",
-            "calculated_fields": [{"iri": "foundation:newProp", "label": "new prop", "range": "xsd:string"}],
+            "add_details": [{"iri": "foundation:newProp", "label": "new prop", "detail_type": "datatype", "range": "xsd:string"}],
             "required_fields": ["foundation:newProp"]
         });
 
@@ -123,7 +123,7 @@ mod tests {
 
         let args = serde_json::json!({
             "iri": "foundation:TestClass",
-            "connections": [{"iri": "foundation:newRef", "label": "new ref", "range": "foundation:TargetClass"}],
+            "add_details": [{"iri": "foundation:newRef", "label": "new ref", "detail_type": "object", "range": "foundation:TargetClass"}],
             "required_fields": ["foundation:newRef"]
         });
 
@@ -563,33 +563,24 @@ fn learn_concept_one(
             )?;
         }
 
-        if let Some(fields) = args.get("calculated_fields").and_then(|v| v.as_array()) {
-            for field in fields {
-                let mut field_args = field.clone();
-                field_args["detail_type"] = serde_json::json!("datatype");
-                if field_args.get("domain").is_none() {
-                    field_args["domain"] = serde_json::json!(iri);
-                }
-                let result = super::detail::create_detail_one(conn, &field_args);
-                if !result.success {
-                    return Err(crate::owl::OwlError::ValidationError(
-                        result.error.unwrap_or_else(|| "Failed to create calculated field".to_string())
-                    ));
+        if let Some(remove_details) = args.get("remove_details").and_then(|v| v.as_array()) {
+            for item in remove_details {
+                if let Some(prop_iri) = item.as_str() {
+                    crate::owl::Property::retract(conn, prop_iri, "ai")?;
                 }
             }
         }
 
-        if let Some(connections) = args.get("connections").and_then(|v| v.as_array()) {
-            for conn_def in connections {
-                let mut conn_args = conn_def.clone();
-                conn_args["detail_type"] = serde_json::json!("object");
-                if conn_args.get("domain").is_none() {
-                    conn_args["domain"] = serde_json::json!(iri);
+        if let Some(details) = args.get("add_details").and_then(|v| v.as_array()) {
+            for detail in details {
+                let mut detail_args = detail.clone();
+                if detail_args.get("domain").is_none() {
+                    detail_args["domain"] = serde_json::json!(iri);
                 }
-                let result = super::detail::create_detail_one(conn, &conn_args);
+                let result = super::detail::create_detail_one(conn, &detail_args);
                 if !result.success {
                     return Err(crate::owl::OwlError::ValidationError(
-                        result.error.unwrap_or_else(|| "Failed to create connection".to_string())
+                        result.error.unwrap_or_else(|| "Failed to create detail".to_string())
                     ));
                 }
             }

@@ -47,7 +47,7 @@ fn test_update_thing_with_properties_updates_literal_property() {
 
     let args = serde_json::json!({
         "iri": "foundation:Task_001",
-        "properties": [
+        "add_properties": [
             {
                 "detail_iri": "foundation:priority",
                 "values": ["High"],
@@ -75,7 +75,7 @@ fn test_update_thing_with_valid_status_succeeds() {
 
     let args = serde_json::json!({
         "iri": "foundation:Task_002",
-        "properties": [
+        "add_properties": [
             {
                 "detail_iri": "foundation:hasStatus",
                 "values": ["foundation:ActiveStatus"],
@@ -96,7 +96,7 @@ fn test_update_thing_with_invalid_status_returns_descriptive_error() {
 
     let args = serde_json::json!({
         "iri": "foundation:Task_003",
-        "properties": [
+        "add_properties": [
             {
                 "detail_iri": "foundation:hasStatus",
                 "values": ["foundation:InvalidStatus"],
@@ -933,7 +933,7 @@ fn test_create_thing_label_satisfies_rdfs_label_required_field() {
     let args = serde_json::json!({
         "concept_iri": "foundation:Task",
         "label": "My Task",
-        "properties": [
+        "add_properties": [
             {"detail_iri": "foundation:priority", "values": ["High"], "value_type": "literal"}
         ]
     });
