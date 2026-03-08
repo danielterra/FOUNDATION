@@ -1,6 +1,6 @@
 {
   "name": "FOUNDATION",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Simple as a spreadsheet. Powerful as enterprise software",
   "type": "module",
   "scripts": {

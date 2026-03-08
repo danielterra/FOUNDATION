@@ -5,6 +5,14 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-03-08
+
+### Fixed
+
+- **rdfs:range class validation**: ObjectProperty writes now enforce that the value IRI is an instance of the declared range class (with subclass support); previously any existing IRI was accepted regardless of type
+- **Explicit add/remove API for concept details and thing properties**: Corrected API behavior for adding and removing concept details and thing properties
+- **Widget cascade offset removed**: Widgets no longer shift position on each open
+
 ## [0.9.0] - 2026-03-07
 
 ### Added
