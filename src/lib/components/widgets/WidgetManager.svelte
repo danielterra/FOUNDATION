@@ -10,8 +10,6 @@
   const BASE_WIDGET_Z_INDEX = 100;
   const CHAT_PANEL_WIDTH_RATIO = 0.3;
   const CHAT_PANEL_MIN_WIDTH = 500;
-  const WIDGET_CASCADE_STEPS = 10;
-  const WIDGET_CASCADE_OFFSET = 30;
   const WIDGET_FLY_DURATION = 600;
 
   let widgets = $state([]);
@@ -21,7 +19,6 @@
   let topZIndex = $state(BASE_WIDGET_Z_INDEX);
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
-  let widgetOffset = $state(0);
 
   function constrainToBounds(position, size) {
     const minX = 0;
@@ -141,12 +138,6 @@
 
       topZIndex++;
       const newWidget = { ...event.payload, zIndex: topZIndex };
-
-      widgetOffset = (widgetOffset + 1) % WIDGET_CASCADE_STEPS;
-      newWidget.position = {
-        x: newWidget.position.x + (widgetOffset * WIDGET_CASCADE_OFFSET),
-        y: newWidget.position.y + (widgetOffset * WIDGET_CASCADE_OFFSET)
-      };
 
       newWidget.position = constrainToBounds(newWidget.position, newWidget.size);
       widgets = [...widgets, newWidget];
