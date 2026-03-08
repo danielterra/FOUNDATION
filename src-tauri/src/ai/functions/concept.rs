@@ -99,7 +99,7 @@ mod tests {
 
         let args = serde_json::json!({
             "iri": "foundation:TestClass",
-            "add_details": [{"iri": "foundation:newProp", "label": "new prop", "detail_type": "datatype", "range": "xsd:string"}],
+            "upsert_details": [{"iri": "foundation:newProp", "label": "new prop", "detail_type": "datatype", "range": "xsd:string"}],
             "required_fields": ["foundation:newProp"]
         });
 
@@ -123,7 +123,7 @@ mod tests {
 
         let args = serde_json::json!({
             "iri": "foundation:TestClass",
-            "add_details": [{"iri": "foundation:newRef", "label": "new ref", "detail_type": "object", "range": "foundation:TargetClass"}],
+            "upsert_details": [{"iri": "foundation:newRef", "label": "new ref", "detail_type": "object", "range": "foundation:TargetClass"}],
             "required_fields": ["foundation:newRef"]
         });
 
@@ -571,7 +571,7 @@ fn learn_concept_one(
             }
         }
 
-        if let Some(details) = args.get("add_details").and_then(|v| v.as_array()) {
+        if let Some(details) = args.get("upsert_details").and_then(|v| v.as_array()) {
             for detail in details {
                 let mut detail_args = detail.clone();
                 if detail_args.get("domain").is_none() {

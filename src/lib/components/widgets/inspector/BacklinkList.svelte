@@ -265,9 +265,6 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--color-neutral-active);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .arrow {

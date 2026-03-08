@@ -15,41 +15,26 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "learn_concepts".to_string(),
             array_mode: true,
-            description: concat!(
-                "Create or update a concept (a type of thing, e.g. 'Person', 'Project', 'Invoice').",
-                " Without an existing IRI this creates a new concept; with an existing IRI it updates it.",
-                " IMPORTANT: Always use English labels and descriptions.",
-                " Define the concept's value fields (details) via 'calculated_fields'",
-                " and its relationships to other concepts (connections) via 'connections'.",
-                " Calculated fields are read-only — their value is auto-computed from a formula",
-                " using {{property_iri}} syntax (e.g. \"{{foundation:width}} * {{foundation:height}}\").",
-                " Circular formula dependencies are rejected at creation time.",
-            ).to_string(),
+            description: "Create or update a concept (a class of things). Without 'iri' creates; with existing 'iri' updates. Use English labels.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "Unique ID for this concept (e.g. 'foundation:Project'). Required.".to_string(),
+                    description: "IRI for this concept (e.g. 'foundation:Project'). Required.".to_string(),
                     required: true,
                     schema: None,
                 },
                 Parameter {
                     name: "label".to_string(),
                     param_type: "string".to_string(),
-                    description: concat!(
-                        "Name in ENGLISH (e.g. 'Driver License' not 'CNH').",
-                        " Required when creating a new concept.",
-                    ).to_string(),
+                    description: "English name. Required when creating.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "icon".to_string(),
                     param_type: "string".to_string(),
-                    description: concat!(
-                        "Material icon name (e.g. 'category', 'label') OR image URL.",
-                        " Required when creating a new concept.",
-                    ).to_string(),
+                    description: "Material icon name or image URL. Required when creating.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -70,45 +55,33 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "super_concepts".to_string(),
                     param_type: "array".to_string(),
-                    description: concat!(
-                        "List of parent concept IRIs for multiple inheritance.",
-                        " REPLACES all existing parents. Pass [] to remove all.",
-                    ).to_string(),
+                    description: "Parent concept IRIs (multiple inheritance). REPLACES all existing parents.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "allowed_statuses".to_string(),
                     param_type: "array".to_string(),
-                    description: concat!(
-                        "Complete list of Status IRIs allowed for things of this concept.",
-                        " REPLACES existing values. Pass [] to remove all restrictions.",
-                    ).to_string(),
+                    description: "Status IRIs allowed for this concept's things. REPLACES existing values.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "required_fields".to_string(),
                     param_type: "array".to_string(),
-                    description: concat!(
-                        "Property IRIs that must be provided when creating a thing of this concept.",
-                        " REPLACES existing restrictions. Pass [] to remove all.",
-                    ).to_string(),
+                    description: "Property IRIs required when creating a thing of this concept. REPLACES existing.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
-                    name: "add_details".to_string(),
+                    name: "upsert_details".to_string(),
                     param_type: "array".to_string(),
                     description: concat!(
-                        "ADDS or updates property definitions for this concept.",
-                        " Each item: {iri, label, detail_type, range?, formula?, unit?, comment?}.",
-                        " 'detail_type': 'object' for connections to other concepts,",
-                        " 'datatype' for value fields (editable or calculated).",
-                        " 'range': target concept IRI (object) or xsd: type (datatype, default xsd:string).",
-                        " 'formula': {{property_iri}} expression — makes the field calculated and read-only.",
-                        " 'unit': QUDT IRI (e.g. 'unit:M2', 'unit:BRL') — required for numeric types.",
-                        " Does NOT remove details not listed — use remove_details for that.",
+                        "Upsert property definitions on this concept.",
+                        " Each item: {iri, label, detail_type ('object'|'datatype'), range?, formula?, unit?, comment?}.",
+                        " 'formula': {{property_iri}} expression — calculated, read-only. Circular deps rejected.",
+                        " 'unit': QUDT IRI required for numeric types (e.g. 'unit:BRL').",
+                        " Does NOT remove unlisted details — use remove_details.",
                     ).to_string(),
                     required: false,
                     schema: None,
@@ -116,12 +89,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "remove_details".to_string(),
                     param_type: "array".to_string(),
-                    description: concat!(
-                        "List of property IRIs to permanently remove from this concept.",
-                        " Each item is a string IRI (e.g. 'foundation:myField').",
-                        " Works for both connections and calculated/value fields.",
-                        " Also retracts all existing values of that property from every thing.",
-                    ).to_string(),
+                    description: "Property IRIs to permanently remove (also retracts all existing values on every thing).".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -130,13 +98,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "learn_things".to_string(),
             array_mode: true,
-            description: concat!(
-                "Create or update a specific thing (an instance of a concept).",
-                " Without 'iri' this creates a new thing and returns its generated IRI.",
-                " With 'iri' of an existing thing this updates it.",
-                " IMPORTANT: Before creating, ALWAYS search first with remember_things",
-                " (without iri) to avoid duplicates.",
-            ).to_string(),
+            description: "Create or update a thing (instance of a concept). Without 'iri' creates; with 'iri' updates. Search first with remember_things to avoid duplicates.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -162,10 +124,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "icon".to_string(),
                     param_type: "string".to_string(),
-                    description: concat!(
-                        "Material icon name or image URL.",
-                        " Optional — inherits from concept when not provided.",
-                    ).to_string(),
+                    description: "Material icon name or image URL. Inherits from concept if omitted.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -180,12 +139,10 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     name: "upsert_properties".to_string(),
                     param_type: "array".to_string(),
                     description: concat!(
-                        "UPSERTS detail and connection values on this thing: replaces existing value if present, inserts if absent.",
-                        " Each item: {detail_iri, values: [...], value_type?: 'iri'|'literal',",
-                        " datatype?: 'xsd:string'|...}.",
-                        " For foundation:hasStatus, value is validated against the concept's",
-                        " allowedStatus list.",
-                        " Does NOT remove properties not listed — use remove_properties for that.",
+                        "Upsert property values on this thing.",
+                        " Each item: {detail_iri, values: [...], value_type?: 'iri'|'literal', datatype?: 'xsd:string'|...}.",
+                        " foundation:hasStatus is validated against the concept's allowedStatus list.",
+                        " Does NOT remove unlisted properties — use remove_properties.",
                     ).to_string(),
                     required: false,
                     schema: None,
@@ -193,12 +150,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "remove_properties".to_string(),
                     param_type: "array".to_string(),
-                    description: concat!(
-                        "List of detail IRIs whose values should be removed from this thing.",
-                        " Each item is a string IRI (e.g. 'foundation:myDetail').",
-                        " Removes ALL values of that property from this thing.",
-                        " To remove a single value, use forget_things instead.",
-                    ).to_string(),
+                    description: "Property IRIs to clear all values of. Use forget_things to remove a single value.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -211,13 +163,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "remember_concepts".to_string(),
             array_mode: true,
-            description: concat!(
-                "Fetch or search concepts.",
-                " With 'iri': returns full details of that concept (properties, connections,",
-                " allowedStatuses, requiredFields, subclasses, etc.).",
-                " Without 'iri': searches all concepts by keyword.",
-                " IMPORTANT: Always use English for searches.",
-            ).to_string(),
+            description: "Fetch or search concepts. With 'iri': full details (properties, connections, allowedStatuses, subclasses). Without 'iri': keyword search. Always use English.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -229,10 +175,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "query".to_string(),
                     param_type: "string".to_string(),
-                    description: concat!(
-                        "Search keywords (used when no iri). ALL words must match (AND search).",
-                        " Use 1-3 important words in ENGLISH.",
-                    ).to_string(),
+                    description: "Search keywords (used when no iri). ALL words must match (AND search). Use 1-3 important words in ENGLISH.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -255,13 +198,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "remember_things".to_string(),
             array_mode: true,
-            description: concat!(
-                "Fetch or search things.",
-                " With 'iri': returns full details of that thing (all properties, connections,",
-                " backlinks, allowedStatuses, requiredFields).",
-                " Without 'iri': searches things by keyword, optionally filtered by concept.",
-                " Each search result includes 'matchedProperties' showing which fields matched.",
-            ).to_string(),
+            description: "Fetch or search things. With 'iri': full details (all properties, connections, backlinks, allowedStatuses, requiredFields). Without 'iri': searches things by keyword, optionally filtered by concept. Each search result includes 'matchedProperties' showing which fields matched.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -301,20 +238,14 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "from_millis".to_string(),
                     param_type: "number".to_string(),
-                    description: concat!(
-                        "Filter to things created at or after this Unix timestamp in ms.",
-                        " Only applies when concept_iri is provided.",
-                    ).to_string(),
+                    description: "Min creation timestamp in ms. Requires concept_iri.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "to_millis".to_string(),
                     param_type: "number".to_string(),
-                    description: concat!(
-                        "Filter to things created at or before this Unix timestamp in ms.",
-                        " Only applies when concept_iri is provided.",
-                    ).to_string(),
+                    description: "Max creation timestamp in ms. Requires concept_iri.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -328,11 +259,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "properties".to_string(),
                     param_type: "array".to_string(),
-                    description: concat!(
-                        "Filter by specific detail values. Requires concept_iri.",
-                        " Each item: {detail: 'IRI', value: 'VALUE', operator?: '='|'>='|'<='|'>'|'<'}.",
-                        " operator defaults to '='. For xsd:dateTime, operator applies to Unix ms timestamp.",
-                    ).to_string(),
+                    description: "Filter by detail values. Requires concept_iri. Each item: {detail: 'IRI', value: 'VALUE', operator?: '='|'>='|'<='|'>'|'<'}. operator defaults to '='. For xsd:dateTime, operator applies to Unix ms timestamp.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -359,12 +286,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "forget_things".to_string(),
             array_mode: true,
-            description: concat!(
-                "Forget a thing or remove a specific detail value from it.",
-                " With only 'iri': forgets the thing completely.",
-                " With 'iri' + 'detail_iri': removes all values of that detail from the thing.",
-                " With 'iri' + 'detail_iri' + 'value': removes only that specific value.",
-            ).to_string(),
+            description: "Forget a thing or remove a detail value. iri only: forgets thing. + detail_iri: removes all values of that detail. + value: removes that specific value only.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -376,14 +298,14 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "detail_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "IRI of the detail to remove. If omitted, the entire thing is forgotten.".to_string(),
+                    description: "Detail to remove. If omitted, the entire thing is forgotten.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "value".to_string(),
                     param_type: "string".to_string(),
-                    description: "Specific value to remove. If omitted and detail_iri is set, all values of that detail are removed.".to_string(),
+                    description: "Specific value to remove. If omitted, all values of detail_iri are removed.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -396,12 +318,12 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "blackboard_widgets_list".to_string(),
             array_mode: false,
-            description: "List available widget types and their required params. Call this before using blackboard_update. Pass concept_iri to filter to widgets that can render a specific entity.".to_string(),
+            description: "List available widget types and required params. Call before blackboard_update. Pass concept_iri to filter to widgets for a specific entity type.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "concept_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "Optional. IRI of the entity concept (e.g. 'foundation:Task'). When provided, only entity-bound widgets are returned.".to_string(),
+                    description: "Filter to widgets that can render this concept (e.g. 'foundation:Task').".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -413,14 +335,10 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             array_mode: true,
             description: concat!(
                 "Update the blackboard.",
-                " 'add': add a widget (requires widget_type and params with widget-specific data).",
+                " 'add': add a widget (needs widget_type + params).",
                 " 'remove': remove a widget (params.widget_id required).",
-                " 'replace': remove all existing widgets;",
-                " if widget_type and params are also provided, adds those widgets after clearing.",
-                " IMPORTANT: Widgets are live — any update to the underlying entity's properties",
-                " (e.g. diagramSource on a MermaidDiagram) is reflected on screen in real time.",
-                " You do NOT need to call blackboard_update to refresh a widget after editing an entity;",
-                " just update the entity with learn_things and the widget updates automatically.",
+                " 'replace': clear all widgets; optionally add new ones if widget_type+params provided.",
+                " Widgets are live — no need to call after learn_things changes; entities update automatically.",
             ).to_string(),
             parameters: vec![
                 Parameter {
@@ -433,14 +351,14 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "widget_type".to_string(),
                     param_type: "string".to_string(),
-                    description: "Widget type for 'add'/'replace'. Call blackboard_widgets_list to see available types and required params.".to_string(),
+                    description: "Widget type for 'add'/'replace'. See blackboard_widgets_list.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "params".to_string(),
                     param_type: "object".to_string(),
-                    description: "Widget-specific params for 'add'/'replace', or {\"widget_id\": \"...\"} for 'remove'. Call blackboard_widgets_list to see required params per widget type.".to_string(),
+                    description: "Widget-specific params for 'add'/'replace', or {widget_id} for 'remove'. See blackboard_widgets_list.".to_string(),
                     required: false,
                     schema: None,
                 },
