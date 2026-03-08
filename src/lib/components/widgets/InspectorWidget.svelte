@@ -1,5 +1,7 @@
 <script>
   import { onMount, onDestroy, untrack } from 'svelte';
+  import { slide } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
   import { invoke } from '@tauri-apps/api/core';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { marked } from 'marked';
@@ -8,7 +10,82 @@
   import PropertyList from './inspector/PropertyList.svelte';
   import BacklinkList from './inspector/BacklinkList.svelte';
 
-  let { entityId, widgetId, refreshKey = 0 } = $props();
+  let { entityId, widgetId, refreshKey = 0, onResize } = $props();
+
+  let minimized = $state(false);
+  let storedHeight = $state(null);
+  let widgetEl = $state(null);
+  let headerEl = $state(null);
+
+  async function toggleMinimize() {
+    if (!minimized) {
+      storedHeight = widgetEl?.offsetHeight ?? 500;
+      const headerHeight = headerEl?.offsetHeight ?? 70;
+      const width = widgetEl?.offsetWidth ?? 320;
+      minimized = true;
+      await new Promise(r => setTimeout(r, 260));
+      onResize?.(width, headerHeight);
+    } else {
+      const width = widgetEl?.offsetWidth ?? 320;
+      onResize?.(width, storedHeight ?? 500);
+      minimized = false;
+    }
+  }
+
+  function sticky(node, { top = 0 } = {}) {
+    let scroller, section, nodeTop, sectionTop;
+
+    function findScroller() {
+      let el = node.parentElement;
+      while (el) {
+        const ov = getComputedStyle(el).overflowY;
+        if (ov === 'auto' || ov === 'scroll') return el;
+        el = el.parentElement;
+      }
+      return null;
+    }
+
+    function computeOffsets() {
+      const saved = node.style.transform;
+      node.style.transform = 'none';
+      const scrollerRect = scroller.getBoundingClientRect();
+      const nr = node.getBoundingClientRect();
+      const sr = section.getBoundingClientRect();
+      node.style.transform = saved;
+      nodeTop = nr.top - scrollerRect.top + scroller.scrollTop;
+      sectionTop = sr.top - scrollerRect.top + scroller.scrollTop;
+    }
+
+    function onScroll() {
+      const scrollTop = scroller.scrollTop;
+      const sectionHeight = section.offsetHeight;
+      const nodeHeight = node.offsetHeight;
+      if (scrollTop + top > nodeTop) {
+        const shift = Math.max(0, Math.min(
+          scrollTop + top - nodeTop,
+          sectionTop + sectionHeight - nodeTop - nodeHeight
+        ));
+        node.style.transform = `translateY(${shift}px)`;
+      } else {
+        node.style.transform = '';
+      }
+    }
+
+    requestAnimationFrame(() => {
+      scroller = findScroller();
+      section = node.parentElement;
+      if (!scroller) return;
+      computeOffsets();
+      scroller.addEventListener('scroll', onScroll, { passive: true });
+      onScroll();
+    });
+
+    return {
+      destroy() {
+        if (scroller) scroller.removeEventListener('scroll', onScroll);
+      }
+    };
+  }
 
   let entityData = $state(null);
   let loading = $state(true);
@@ -134,8 +211,8 @@
   });
 </script>
 
-<div class="inspector-widget">
-  <div class="widget-header">
+<div class="inspector-widget" bind:this={widgetEl}>
+  <div class="widget-header" bind:this={headerEl}>
     <div class="header-top">
       <div class="widget-title-wrapper">
         <div class="widget-icon-container">
@@ -175,6 +252,9 @@
           <button class="action-btn" onclick={copyEntityIri} title="Copy IRI">
             <span class="material-symbols-outlined">content_copy</span>
           </button>
+          <button class="action-btn" onclick={toggleMinimize} title={minimized ? 'Expand' : 'Minimize'}>
+            <span class="material-symbols-outlined">{minimized ? 'expand_more' : 'expand_less'}</span>
+          </button>
           <button class="close-btn" onclick={closeWidget}>
             <span class="material-symbols-outlined">close</span>
           </button>
@@ -193,7 +273,8 @@
     </div>
   </div>
 
-  <div class="widget-content">
+  {#if !minimized}
+    <div class="widget-content" transition:slide={{ duration: 250, easing: cubicOut }}>
     {#if loading}
       <div class="loading">
         <span class="material-symbols-outlined spinning">progress_activity</span>
@@ -219,52 +300,94 @@
         <FilePreview {entityData} />
 
         {#if entityData.superClasses?.length > 0}
-          <div class="thing-list">
-            {#each entityData.superClasses as superClass}
-              <div
-                class="thing-item clickable"
-                role="button"
-                tabindex="0"
-                onclick={() => openEntityInspector(superClass.iri)}
-                onkeydown={(e) => e.key === 'Enter' && openEntityInspector(superClass.iri)}
-              >
-                {#if superClass.icon}
-                  {#if isIconUrl(superClass.icon)}
-                    <img src={getIconUrl(superClass.icon)} alt="" class="thing-icon-image" />
-                  {:else}
-                    <span class="material-symbols-outlined">{superClass.icon}</span>
+          <div class="section-group">
+            <div class="section-label" use:sticky={{ top: 0 }}>Parent Classes</div>
+            <div class="thing-list">
+              {#each entityData.superClasses as superClass}
+                <div
+                  class="thing-item clickable"
+                  role="button"
+                  tabindex="0"
+                  onclick={() => openEntityInspector(superClass.iri)}
+                  onkeydown={(e) => e.key === 'Enter' && openEntityInspector(superClass.iri)}
+                >
+                  {#if superClass.icon}
+                    {#if isIconUrl(superClass.icon)}
+                      <img src={getIconUrl(superClass.icon)} alt="" class="thing-icon-image" />
+                    {:else}
+                      <span class="material-symbols-outlined">{superClass.icon}</span>
+                    {/if}
                   {/if}
-                {/if}
-                <span class="thing-label">{superClass.label}</span>
-              </div>
-            {/each}
+                  <span class="thing-label">{superClass.label}</span>
+                </div>
+              {/each}
+            </div>
           </div>
         {/if}
 
         {#if entityData.subClasses?.length > 0}
-          <div class="thing-list">
-            {#each entityData.subClasses as subClass}
-              <div
-                class="thing-item clickable"
-                role="button"
-                tabindex="0"
-                onclick={() => openEntityInspector(subClass.iri)}
-                onkeydown={(e) => e.key === 'Enter' && openEntityInspector(subClass.iri)}
-              >
-                {#if subClass.icon}
-                  {#if isIconUrl(subClass.icon)}
-                    <img src={getIconUrl(subClass.icon)} alt="" class="thing-icon-image" />
-                  {:else}
-                    <span class="material-symbols-outlined">{subClass.icon}</span>
+          <div class="section-group">
+            <div class="section-label" use:sticky={{ top: 0 }}>Child Classes</div>
+            <div class="thing-list">
+              {#each entityData.subClasses as subClass}
+                <div
+                  class="thing-item clickable"
+                  role="button"
+                  tabindex="0"
+                  onclick={() => openEntityInspector(subClass.iri)}
+                  onkeydown={(e) => e.key === 'Enter' && openEntityInspector(subClass.iri)}
+                >
+                  {#if subClass.icon}
+                    {#if isIconUrl(subClass.icon)}
+                      <img src={getIconUrl(subClass.icon)} alt="" class="thing-icon-image" />
+                    {:else}
+                      <span class="material-symbols-outlined">{subClass.icon}</span>
+                    {/if}
                   {/if}
-                {/if}
-                <span class="thing-label">{subClass.label}</span>
-              </div>
-            {/each}
+                  <span class="thing-label">{subClass.label}</span>
+                </div>
+              {/each}
+            </div>
           </div>
         {/if}
 
-        <PropertyList properties={entityData.properties} requiredFields={entityData.requiredFields ?? []} {openEntityInspector} />
+        {#if entityData.isClass && entityData.allowedStatuses?.length > 0}
+          <div class="section-group">
+            <div class="section-label" use:sticky={{ top: 0 }}>Allowed Statuses</div>
+            <div class="thing-list">
+              {#each entityData.allowedStatuses as status}
+                <div
+                  class="thing-item clickable status-item"
+                  style="--status-color: {status.color || 'var(--color-neutral)'}"
+                  role="button"
+                  tabindex="0"
+                  onclick={() => openEntityInspector(status.iri)}
+                  onkeydown={(e) => e.key === 'Enter' && openEntityInspector(status.iri)}
+                >
+                  {#if status.icon}
+                    {#if isIconUrl(status.icon)}
+                      <img src={getIconUrl(status.icon)} alt="" class="thing-icon-image" />
+                    {:else}
+                      <span class="material-symbols-outlined status-dot">{status.icon}</span>
+                    {/if}
+                  {:else}
+                    <span class="material-symbols-outlined status-dot">radio_button_checked</span>
+                  {/if}
+                  <span class="thing-label">{status.label}</span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        <PropertyList
+          properties={entityData.isClass
+            ? (entityData.properties ?? []).filter(p => p.property !== 'rdf:type' && p.property !== 'rdfs:subClassOf')
+            : (entityData.properties ?? []).filter(p => p.property !== 'foundation:hasStatus' && p.property !== 'rdf:type')}
+          requiredFields={entityData.requiredFields ?? []}
+          isClass={entityData.isClass}
+          {openEntityInspector}
+        />
 
         <BacklinkList backlinks={entityData.backlinks} {openEntityInspector} />
 
@@ -292,7 +415,8 @@
         {/if}
       </div>
     {/if}
-  </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -520,6 +644,25 @@
     word-wrap: break-word;
   }
 
+  .section-group {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .section-label {
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
+    margin-bottom: 6px;
+    z-index: 2;
+    padding: 6px 0 4px;
+    background: color-mix(in srgb, var(--color-black) 97%, transparent);
+    backdrop-filter: blur(12px);
+  }
+
   .thing-list {
     display: flex;
     flex-direction: column;
@@ -557,6 +700,16 @@
 
   .thing-item.instance {
     border-left: 3px solid var(--color-interactive);
+  }
+
+  .thing-item.status-item {
+    border-left: 3px solid var(--status-color);
+  }
+
+  .status-dot {
+    font-size: 16px;
+    color: var(--status-color);
+    flex-shrink: 0;
   }
 
   .thing-item .material-symbols-outlined {

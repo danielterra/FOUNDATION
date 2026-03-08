@@ -45,6 +45,9 @@ pub struct EntityData {
     pub sub_classes: Vec<crate::owl::Thing>,
     pub instances: Vec<crate::owl::Thing>,
 
+    pub is_class: bool,
+    pub allowed_statuses: Vec<StatusInfo>,
+
     pub properties: Vec<PropertyValue>,
     pub backlinks: Vec<PropertyValue>,
     pub status: Option<StatusInfo>,
@@ -84,6 +87,7 @@ pub struct PropertyValue {
     pub group_total: Option<usize>,
     pub is_calculated: bool,
     pub formula_error: Option<String>,
+    pub is_empty: bool,
 }
 
 /// Search for instances by label and property values
@@ -329,6 +333,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             group_total: None,
             is_calculated: false,
             formula_error: None,
+            is_empty: false,
         });
     }
 
@@ -350,6 +355,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             group_total: None,
             is_calculated: false,
             formula_error: None,
+            is_empty: false,
         });
     }
 
@@ -407,6 +413,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             group_total: None,
             is_calculated: false,
             formula_error: None,
+            is_empty: false,
         });
     }
 
@@ -447,6 +454,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             group_total: None,
             is_calculated: false,
             formula_error: None,
+            is_empty: false,
         });
     }
 
@@ -461,11 +469,23 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
         .map(|r| r.property_iri)
         .collect();
 
+    let allowed_statuses = crate::owl::get_all_iri_properties(conn, class_id, "foundation:allowedStatus")
+        .unwrap_or_default()
+        .into_iter()
+        .map(|status_iri| {
+            let thing = crate::owl::Thing::get(conn, &status_iri);
+            let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri);
+            StatusInfo { iri: status_iri, label: thing.label, icon, color }
+        })
+        .collect();
+
     Ok(EntityData {
         id: class_id.to_string(),
         label,
         icon,
         comment,
+        is_class: true,
+        allowed_statuses,
         types: class.types.clone(),
         super_classes: class.super_classes.clone(),
         sub_classes: class.sub_classes.clone(),
@@ -569,6 +589,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
             group_total: None,
             is_calculated,
             formula_error,
+            is_empty: false,
         });
     }
 
@@ -577,6 +598,61 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
         let tx_b = max_tx_per_predicate.get(&b.property).copied().unwrap_or(0);
         tx_b.cmp(&tx_a)
     });
+
+    {
+        let filled_iris: std::collections::HashSet<String> = properties.iter()
+            .map(|p| p.property.clone())
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+
+        for type_thing in &individual.types {
+            if let Ok(Some(class)) = Class::get(conn, &type_thing.iri) {
+                for (prop_iri, source_class_iri) in &class.properties {
+                    if filled_iris.contains(prop_iri) { continue; }
+                    if !seen.insert(prop_iri.clone()) { continue; }
+
+                    let Ok(Some(prop)) = Property::get(conn, prop_iri) else { continue };
+
+                    let property_label = prop.label.unwrap_or_else(|| prop_iri.clone());
+                    let property_comment = prop.comment;
+                    let is_object_property = prop.property_type == crate::owl::PropertyType::ObjectProperty;
+
+                    let (source_class, source_class_label) = if source_class_iri != &type_thing.iri {
+                        let source_thing = crate::owl::Thing::get(conn, source_class_iri);
+                        (Some(source_class_iri.clone()), Some(source_thing.label))
+                    } else {
+                        (None, None)
+                    };
+
+                    let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
+                        (Some(unit_iri.clone()), resolve_unit_label(conn, unit_iri))
+                    } else {
+                        (None, None)
+                    };
+
+                    properties.push(PropertyValue {
+                        property: prop_iri.clone(),
+                        property_label,
+                        property_comment,
+                        value: String::new(),
+                        value_label: None,
+                        value_icon: None,
+                        is_object_property,
+                        source_class,
+                        source_class_label,
+                        unit,
+                        unit_label,
+                        datatype: None,
+                        value_status: None,
+                        group_total: None,
+                        is_calculated: false,
+                        formula_error: None,
+                        is_empty: true,
+                    });
+                }
+            }
+        }
+    }
 
     let mut nodes = Vec::new();
     let mut links = Vec::new();
@@ -792,6 +868,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
             group_total: Some(b.group_total),
             is_calculated: false,
             formula_error: None,
+            is_empty: false,
         });
     }
 
@@ -814,6 +891,8 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
         label,
         icon,
         comment,
+        is_class: false,
+        allowed_statuses: vec![],
         types: individual.types.clone(),
         super_classes: vec![],
         sub_classes: vec![],

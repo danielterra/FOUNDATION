@@ -28,6 +28,7 @@
   let dragMoved = false;
   let unlistenContentUpdated = null;
   let unlistenEntityUpdated = null;
+  let renderCount = 0;
 
   function portal(node) {
     const target = document.querySelector('.canvas-area') ?? document.body;
@@ -65,7 +66,7 @@
     if (!renderContainer) return;
     renderError = null;
     try {
-      const id = `mermaid-${widgetId.replace(/[^a-zA-Z0-9]/g, '_')}`;
+      const id = `mermaid-${widgetId.replace(/[^a-zA-Z0-9]/g, '_')}_${++renderCount}`;
       const { svg } = await mermaid.render(id, content);
       renderContainer.innerHTML = svg;
     } catch (err) {
@@ -77,7 +78,7 @@
   async function renderModalDiagram() {
     if (!modalRenderContainer) return;
     try {
-      const id = `mermaid-modal-${widgetId.replace(/[^a-zA-Z0-9]/g, '_')}`;
+      const id = `mermaid-modal-${widgetId.replace(/[^a-zA-Z0-9]/g, '_')}_${++renderCount}`;
       const { svg } = await mermaid.render(id, content);
       modalRenderContainer.innerHTML = svg;
     } catch {

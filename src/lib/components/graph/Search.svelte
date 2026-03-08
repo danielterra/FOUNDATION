@@ -1,6 +1,9 @@
 <script>
 	import { onDestroy } from 'svelte';
+	import { fade, fly } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 	import { invoke } from '@tauri-apps/api/core';
+	import { convertFileSrc } from '@tauri-apps/api/core';
 	import Card from '$lib/components/Card.svelte';
 
 	let { onSelectResult } = $props();
@@ -81,10 +84,7 @@
 		if (onSelectResult) {
 			onSelectResult(result.id, result.label);
 		}
-		searchQuery = '';
-		searchResults = [];
-		showResults = false;
-		selectedIndex = -1;
+		close();
 	}
 
 	function handleKeyDown(e) {
@@ -138,6 +138,21 @@
 		}
 	}
 
+	function isIconUrl(icon) {
+		if (!icon) return false;
+		return icon.startsWith('http://') || icon.startsWith('https://') ||
+			icon.startsWith('data:') || icon.startsWith('file://') || icon.startsWith('/');
+	}
+
+	function getIconUrl(icon) {
+		if (!icon) return '';
+		if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:'))
+			return icon;
+		if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
+		if (icon.startsWith('/')) return convertFileSrc(icon);
+		return icon;
+	}
+
 	function shortenIri(iri) {
 		const colonIndex = iri.indexOf(':');
 		return colonIndex >= 0 ? iri.slice(colonIndex + 1) : iri;
@@ -151,8 +166,8 @@
 </script>
 
 {#if isOpen}
-	<div class="search-overlay" role="presentation">
-		<div class="search-container">
+	<div class="search-overlay" role="presentation" transition:fade={{ duration: 200 }}>
+		<div class="search-container" transition:fly={{ y: -16, duration: 220, easing: cubicOut }}>
 			<Card>
 				<div class="search-input-wrapper">
 					<span class="material-symbols-outlined search-icon">search</span>
@@ -190,7 +205,11 @@
 								>
 									<div class="result-content">
 										{#if result.icon}
-											<span class="material-symbols-outlined result-icon">{result.icon}</span>
+											{#if isIconUrl(result.icon)}
+												<img src={getIconUrl(result.icon)} alt="" class="result-icon-image" />
+											{:else}
+												<span class="material-symbols-outlined result-icon">{result.icon}</span>
+											{/if}
 										{:else}
 											<div class="result-placeholder"></div>
 										{/if}
@@ -242,6 +261,9 @@
 		display: flex;
 		justify-content: center;
 		padding-top: 80px;
+		background: color-mix(in srgb, var(--color-black) 40%, transparent);
+		backdrop-filter: blur(6px);
+		-webkit-backdrop-filter: blur(6px);
 	}
 
 	.search-container {
@@ -344,6 +366,14 @@
 		color: var(--color-interactive);
 		font-size: 24px;
 		flex-shrink: 0;
+	}
+
+	.result-icon-image {
+		width: 24px;
+		height: 24px;
+		object-fit: contain;
+		flex-shrink: 0;
+		border-radius: 4px;
 	}
 
 	.result-placeholder {

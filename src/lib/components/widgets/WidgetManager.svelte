@@ -73,10 +73,9 @@
     if (event.target.closest('.close-btn')) return;
 
     draggedWidget = widget;
-    const rect = event.currentTarget.getBoundingClientRect();
     dragOffset = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top
+      x: event.clientX - widget.position.x,
+      y: event.clientY - widget.position.y
     };
     bringToFront(widget.id);
 
@@ -110,6 +109,18 @@
         console.error('Failed to update widget position:', error);
       });
     }
+  }
+
+  function resizeWidget(widgetId, width, height) {
+    widgets = widgets.map(w =>
+      w.id === widgetId ? { ...w, size: { width, height } } : w
+    );
+    invoke('widget__update_size', {
+      widgetId,
+      size: { width, height }
+    }).catch(error => {
+      console.error('Failed to update widget size:', error);
+    });
   }
 
   onMount(async () => {
@@ -199,7 +210,7 @@
     out:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicIn }}
   >
     {#if widget.widget_type === 'inspector'}
-      <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} />
+      <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} onResize={(w, h) => resizeWidget(widget.id, w, h)} />
     {:else if widget.widget_type === 'mermaid'}
       <MermaidWidget widgetId={widget.id} entityId={widget.entity_id} />
     {/if}

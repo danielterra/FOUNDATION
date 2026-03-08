@@ -553,6 +553,21 @@ fn update_thing_one(
 
         let individual = Individual::new(iri);
 
+        if let Some(concept_iri) = args.get("concept_iri").and_then(|v| v.as_str()) {
+            let has_type = crate::owl::get_iri_property(conn, iri, "rdf:type")
+                .ok().flatten().is_some();
+            if !has_type {
+                let existing_label = crate::owl::get_literal_property(conn, iri, "rdfs:label")
+                    .ok().flatten();
+                let label = args.get("label").and_then(|v| v.as_str())
+                    .or_else(|| existing_label.as_deref())
+                    .unwrap_or("Unknown");
+                let icon = args.get("icon").and_then(|v| v.as_str()).unwrap_or("category");
+                individual.assert(conn, concept_iri, label, icon, "ai")?;
+                updated_fields.push("rdf:type".to_string());
+            }
+        }
+
         if let Some(label) = args.get("label").and_then(|v| v.as_str()) {
             individual.add_property(conn, "rdfs:label", vec![Object::Literal {
                 value: label.to_string(),

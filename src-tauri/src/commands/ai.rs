@@ -15,19 +15,14 @@ pub async fn ai__save_api_key(
 ) -> Result<(), String> {
 
     executor.write(move |conn| {
-        let owned = owl::find_entities_with_property(
-            conn, "foundation:ownedBy", "foundation:ThisUser",
-        ).map_err(|e| format!("Failed to query credentials: {}", e))?;
+        let service_iri = owl::get_iri_property(conn, "foundation:LocalAIAssistant", "foundation:usesService")
+            .map_err(|e| format!("Failed to get service: {}", e))?
+            .ok_or_else(|| "LocalAIAssistant has no usesService".to_string())?;
 
-        for credential_iri in &owned {
-            if owl::has_property_iri(
-                conn, credential_iri,
-                "foundation:credentialFor", "foundation:ClaudeAIService",
-            ) && owl::has_property_iri(conn, credential_iri, "rdf:type", "foundation:APIKey")
-            {
-                Individual::retract(conn, credential_iri, "ai")
-                    .map_err(|e| format!("Failed to retract old credential: {}", e))?;
-            }
+        // Retract previous API key if one is linked to the service
+        if let Ok(Some(old_key_iri)) = owl::get_iri_property(conn, &service_iri, "foundation:apiKey") {
+            Individual::retract(conn, &old_key_iri, "ai")
+                .map_err(|e| format!("Failed to retract old credential: {}", e))?;
         }
 
         let timestamp = chrono::Utc::now().timestamp_millis();
@@ -41,20 +36,6 @@ pub async fn ai__save_api_key(
             "vpn_key",
             "ai"
         ).map_err(|e| format!("Failed to create APIKey: {}", e))?;
-
-        credential.add_property(
-            conn,
-            "foundation:credentialFor",
-            vec![Object::Iri("foundation:ClaudeAIService".to_string())],
-            "ai"
-        ).map_err(|e| format!("Failed to link to service: {}", e))?;
-
-        credential.add_property(
-            conn,
-            "foundation:ownedBy",
-            vec![Object::Iri("foundation:ThisUser".to_string())],
-            "ai"
-        ).map_err(|e| format!("Failed to set owner: {}", e))?;
 
         credential.add_property(
             conn,
@@ -74,6 +55,15 @@ pub async fn ai__save_api_key(
             "ai"
         ).map_err(|e| format!("Failed to set created timestamp: {}", e))?;
 
+        // Link the new key to the service
+        let service = Individual::new(&service_iri);
+        service.add_property(
+            conn,
+            "foundation:apiKey",
+            vec![Object::Iri(api_key_iri)],
+            "ai"
+        ).map_err(|e| format!("Failed to link key to service: {}", e))?;
+
         Ok("saved".to_string())
     }).await?;
 
@@ -88,19 +78,12 @@ pub async fn ai__get_api_key(
     executor: State<'_, DbExecutor>,
 ) -> Result<Option<String>, String> {
     executor.read(|conn| {
-        let owned = owl::find_entities_with_property(
-            conn, "foundation:ownedBy", "foundation:ThisUser",
-        ).map_err(|e| format!("Failed to query credentials: {}", e))?;
+        let service_iri = owl::get_iri_property(conn, "foundation:LocalAIAssistant", "foundation:usesService")
+            .ok().flatten();
 
-        for credential_iri in &owned {
-            if owl::has_property_iri(
-                conn, credential_iri,
-                "foundation:credentialFor", "foundation:ClaudeAIService",
-            ) && owl::has_property_iri(conn, credential_iri, "rdf:type", "foundation:APIKey")
-            {
-                if let Ok(Some(value)) = owl::get_literal_property(
-                    conn, credential_iri, "foundation:credentialValue",
-                ) {
+        if let Some(service_iri) = service_iri {
+            if let Ok(Some(api_key_iri)) = owl::get_iri_property(conn, &service_iri, "foundation:apiKey") {
+                if let Ok(Some(value)) = owl::get_literal_property(conn, &api_key_iri, "foundation:credentialValue") {
                     return Ok(Some(value));
                 }
             }
@@ -135,23 +118,15 @@ pub async fn ai__initialize(
                 .ok()
                 .flatten()
         } else {
-            // Fall back to the ontology default model
-            let models = owl::find_entities_with_property(
-                conn, "foundation:offeredBy", "foundation:ClaudeAIService",
-            ).map_err(|e| format!("Failed to query models: {}", e))?;
-
-            let mut default_model = None;
-            for model_iri in &models {
-                if owl::has_property_literal(conn, model_iri, "foundation:isDefaultModel", "true") {
-                    if let Ok(Some(identifier)) = owl::get_literal_property(
-                        conn, model_iri, "foundation:modelIdentifier",
-                    ) {
-                        default_model = Some(identifier);
-                        break;
-                    }
-                }
-            }
-            default_model
+            // Fall back to the model on LocalAIAssistant
+            let model_iri = owl::get_iri_property(conn, "foundation:LocalAIAssistant", "foundation:usesModel")
+                .ok()
+                .flatten();
+            model_iri.and_then(|iri| {
+                owl::get_literal_property(conn, &iri, "foundation:modelIdentifier")
+                    .ok()
+                    .flatten()
+            })
         };
 
         let timeout = if let Ok(Some(setting)) =

@@ -1,10 +1,13 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
 	import { onMount } from 'svelte';
+	import { fly } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 	import Card from './Card.svelte';
 	import ChatMessageBubble from './ChatMessageBubble.svelte';
 	import ChatAttachmentPreview from './ChatAttachmentPreview.svelte';
 	import ChatInputArea from './ChatInputArea.svelte';
+	import ConversationBar from './ConversationBar.svelte';
 
 	// Props
 	let { isOpen = $bindable(false) } = $props();
@@ -33,6 +36,15 @@
 	let editingMessageText = $state('');
 	let activeConversationIri = $state(null);
 	let conversations = $state([]);
+	let conversationAgent = $state(null);
+
+	$effect(() => {
+		if (activeConversationIri) {
+			loadConversationAgent(activeConversationIri);
+		} else {
+			conversationAgent = null;
+		}
+	});
 
 	// Load recent messages on mount and request location
 	onMount(async () => {
@@ -116,19 +128,13 @@
 		};
 	});
 
-	// Check if message should be displayed (skip messages that are only tool_result)
 	function shouldDisplayMessage(message) {
 		if (!Array.isArray(message.content)) return true;
 		if (message.content.length === 0) return false;
-
-		// If message contains only tool_result blocks, don't display it
-		// (it will be shown grouped with the previous tool_use message)
 		const hasOnlyToolResults = message.content.every(block => block.type === 'tool_result');
-
 		return !hasOnlyToolResults;
 	}
 
-	// Auto-resize textarea
 	function autoResizeTextarea() {
 		if (!textareaElement) return;
 
@@ -183,6 +189,35 @@
 					console.warn('Failed to get location:', error.message);
 				}
 			);
+		}
+	}
+
+	async function loadConversationAgent(conversationIri) {
+		try {
+			const convStr = await invoke('entity__get', { entityId: conversationIri });
+			const conv = JSON.parse(convStr);
+			const agentIri = conv.properties?.find(p => p.property === 'foundation:handledBy')?.value;
+			if (!agentIri) { conversationAgent = null; return; }
+
+			const agentStr = await invoke('entity__get', { entityId: agentIri });
+			const agent = JSON.parse(agentStr);
+			conversationAgent = { iri: agentIri, label: agent.label, icon: agent.icon };
+		} catch {
+			conversationAgent = null;
+		}
+	}
+
+	async function openAgentInspector() {
+		if (!conversationAgent) return;
+		try {
+			await invoke('widget__add', {
+				widgetType: 'inspector',
+				entityId: conversationAgent.iri,
+				position: null,
+				size: null
+			});
+		} catch (err) {
+			console.error('Failed to open agent inspector:', err);
 		}
 	}
 
@@ -570,30 +605,22 @@
 {#if isOpen}
 	<div class="chat-panel">
 		<div class="chat-header">
-			<h2>FOUNDATION</h2>
-			<button
-				class="header-action-btn"
-				onclick={downloadChat}
-				aria-label="Download chat"
-				title="Download chat"
-			>
-				<span class="material-symbols-outlined">download</span>
-			</button>
+			<div class="chat-header-left">
+				<button class="agent-avatar" onclick={openAgentInspector} title={conversationAgent ? `Open ${conversationAgent.label} in Inspector` : 'AI Assistant'}>
+					<span class="material-symbols-outlined">{conversationAgent?.icon || 'smart_toy'}</span>
+				</button>
+				<span class="agent-name">{conversationAgent?.label || 'AI Assistant'}</span>
+			</div>
+			<div class="chat-header-right">
+				<button class="header-action-btn" onclick={createConversation} title="New conversation">
+					<span class="material-symbols-outlined">add</span>
+				</button>
+				<button class="header-action-btn" onclick={downloadChat} title="Download chat">
+					<span class="material-symbols-outlined">download</span>
+				</button>
+			</div>
 		</div>
-		<div class="conversation-toolbar">
-			<select
-				class="conversation-select"
-				bind:value={activeConversationIri}
-				onchange={() => switchConversation(activeConversationIri)}
-			>
-				{#each conversations as conv}
-					<option value={conv.iri}>{conv.label}</option>
-				{/each}
-			</select>
-			<button class="new-conversation-btn" onclick={createConversation} title="New conversation">
-				<span class="material-symbols-outlined">add</span>
-			</button>
-		</div>
+		<ConversationBar bind:conversations bind:activeConversationIri onSwitch={switchConversation} />
 		<div class="chat-content">
 				<!-- API Key Input -->
 				{#if showApiKeyInput}
@@ -642,20 +669,22 @@
 							<p>Start a conversation with the AI assistant</p>
 						</div>
 					{:else}
-						{#each messages as message}
+						{#each messages as message (message.iri)}
 							{#if shouldDisplayMessage(message)}
-								<ChatMessageBubble
-									{message}
-									{messages}
-									onEdit={editMessage}
-									onRetry={retryMessage}
-								/>
+								<div in:fly={{ y: 80, duration: 380, easing: cubicOut }}>
+									<ChatMessageBubble
+										{message}
+										{messages}
+										onEdit={editMessage}
+										onRetry={retryMessage}
+									/>
+								</div>
 							{/if}
 						{/each}
 					{/if}
 				</div>
 
-				<ChatAttachmentPreview
+			<ChatAttachmentPreview
 					pendingAttachments={pendingAttachments}
 					onRemove={removeAttachment}
 				/>
@@ -691,88 +720,80 @@
 	}
 
 	.chat-header {
-		padding: 20px 24px;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-		flex-shrink: 0;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-	}
-
-	.conversation-toolbar {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 8px 12px;
+		padding: 10px 14px;
 		border-bottom: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
 		flex-shrink: 0;
+		gap: 8px;
 	}
 
-
-
-	.conversation-select {
-		flex: 1;
-		background: color-mix(in srgb, var(--color-white) 8%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-		border-radius: 6px;
-		color: var(--color-neutral-active);
-		font-size: 13px;
-		padding: 4px 8px;
-		cursor: pointer;
+	.chat-header-left {
+		display: flex;
+		align-items: center;
+		gap: 10px;
 		min-width: 0;
+		flex: 1;
 	}
 
-	.new-conversation-btn {
+	.agent-avatar {
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
+		color: var(--color-interactive);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		transition: all 0.2s;
+	}
+
+	.agent-avatar:hover {
+		background: color-mix(in srgb, var(--color-interactive) 28%, transparent);
+		border-color: var(--color-interactive);
+	}
+
+	.agent-avatar .material-symbols-outlined {
+		font-size: 18px;
+	}
+
+	.agent-name {
+		font-size: 14px;
+		font-weight: 600;
+		color: var(--color-neutral-active);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.chat-header-right {
 		display: flex;
 		align-items: center;
 		gap: 4px;
-		background: transparent;
-		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-		border-radius: 6px;
-		color: var(--color-neutral);
-		cursor: pointer;
-		padding: 4px 8px;
-		font-size: 13px;
-		white-space: nowrap;
-		transition: all 0.2s;
 		flex-shrink: 0;
-	}
-
-	.new-conversation-btn:hover {
-		background: color-mix(in srgb, var(--color-white) 10%, transparent);
-		color: var(--color-neutral-active);
-	}
-
-	.new-conversation-btn .material-symbols-outlined {
-		font-size: 16px;
-	}
-
-	.chat-header h2 {
-		margin: 0;
-		font-size: 20px;
-		font-weight: 600;
-		color: var(--color-neutral-active);
 	}
 
 	.header-action-btn {
 		width: 32px;
 		height: 32px;
-		border-radius: 8px;
+		border-radius: 6px;
 		background: transparent;
-		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+		border: none;
 		color: var(--color-neutral);
 		cursor: pointer;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		transition: all 0.2s;
-		flex-shrink: 0;
+		transition: all 0.15s;
 	}
 
 	.header-action-btn:hover {
 		background: color-mix(in srgb, var(--color-white) 10%, transparent);
-		border-color: var(--color-interactive);
-		color: var(--color-interactive);
+		color: var(--color-neutral-active);
 	}
 
 	.header-action-btn .material-symbols-outlined {

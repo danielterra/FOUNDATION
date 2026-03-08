@@ -5,7 +5,65 @@
   import { cubicOut } from 'svelte/easing';
   import MarkdownValue from './MarkdownValue.svelte';
 
-  let { properties, requiredFields = [], openEntityInspector } = $props();
+  let { properties, requiredFields = [], isClass = false, openEntityInspector } = $props();
+
+  function sticky(node, { top = 0 } = {}) {
+    let scroller, section, nodeTop, sectionTop;
+
+    function findScroller() {
+      let el = node.parentElement;
+      while (el) {
+        const ov = getComputedStyle(el).overflowY;
+        if (ov === 'auto' || ov === 'scroll') return el;
+        el = el.parentElement;
+      }
+      return null;
+    }
+
+    function computeOffsets() {
+      const saved = node.style.transform;
+      node.style.transform = 'none';
+      const scrollerRect = scroller.getBoundingClientRect();
+      const nr = node.getBoundingClientRect();
+      const sr = section.getBoundingClientRect();
+      node.style.transform = saved;
+      nodeTop = nr.top - scrollerRect.top + scroller.scrollTop;
+      sectionTop = sr.top - scrollerRect.top + scroller.scrollTop;
+    }
+
+    function onScroll() {
+      const scrollTop = scroller.scrollTop;
+      const sectionHeight = section.offsetHeight;
+      const nodeHeight = node.offsetHeight;
+      if (scrollTop + top > nodeTop) {
+        const shift = Math.max(0, Math.min(
+          scrollTop + top - nodeTop,
+          sectionTop + sectionHeight - nodeTop - nodeHeight
+        ));
+        node.style.transform = `translateY(${shift}px)`;
+      } else {
+        node.style.transform = '';
+      }
+    }
+
+    requestAnimationFrame(() => {
+      scroller = findScroller();
+      section = node.parentElement;
+      if (!scroller) return;
+      computeOffsets();
+      scroller.addEventListener('scroll', onScroll, { passive: true });
+      onScroll();
+    });
+
+    return {
+      destroy() {
+        if (scroller) scroller.removeEventListener('scroll', onScroll);
+      }
+    };
+  }
+
+  let optionalCollapsed = $state(true);
+  let emptyCollapsed = $state(true);
 
   const groupedDetails = $derived(
     (properties ?? []).reduce((acc, prop) => {
@@ -18,21 +76,65 @@
           sourceClassLabel: prop.sourceClassLabel,
           datatype: prop.datatype,
           isCalculated: prop.isCalculated ?? false,
+          isEmpty: prop.isEmpty ?? false,
           values: []
         };
       }
-      acc[prop.property].values.push({
-        value: prop.value,
-        valueLabel: prop.valueLabel,
-        valueIcon: prop.valueIcon,
-        unitLabel: prop.unitLabel,
-        datatype: prop.datatype,
-        valueStatus: prop.valueStatus,
-        formulaError: prop.formulaError ?? null
-      });
+      if (!prop.isEmpty) {
+        acc[prop.property].values.push({
+          value: prop.value,
+          valueLabel: prop.valueLabel,
+          valueIcon: prop.valueIcon,
+          unitLabel: prop.unitLabel,
+          datatype: prop.datatype,
+          valueStatus: prop.valueStatus,
+          formulaError: prop.formulaError ?? null
+        });
+      }
       return acc;
     }, {})
   );
+
+  const sections = $derived.by(() => {
+    const all = Object.values(groupedDetails);
+
+    function groupBySource(items) {
+      const buckets = new Map();
+      for (const item of items) {
+        const key = item.sourceClassLabel ?? null;
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(item);
+      }
+      const result = [];
+      if (buckets.has(null)) result.push({ sourceClassLabel: null, items: buckets.get(null) });
+      for (const [key, items] of buckets) {
+        if (key !== null) result.push({ sourceClassLabel: key, items });
+      }
+      return result;
+    }
+
+    if (isClass) {
+      const required = all.filter(g => requiredFields.includes(g.property));
+      const optional = all.filter(g => !requiredFields.includes(g.property));
+      return {
+        mode: 'class',
+        required: groupBySource(required),
+        optional: groupBySource(optional),
+        requiredCount: required.length,
+        optionalCount: optional.length,
+      };
+    } else {
+      const filled = all.filter(g => !g.isEmpty);
+      const empty = all.filter(g => g.isEmpty);
+      return {
+        mode: 'thing',
+        filled: groupBySource(filled),
+        empty: groupBySource(empty),
+        filledCount: filled.length,
+        emptyCount: empty.length,
+      };
+    }
+  });
 
   function isUrl(datatype) {
     return datatype === 'xsd:anyURI';
@@ -123,148 +225,216 @@
   }
 </script>
 
-{#if properties?.length > 0}
-  <div class="details-list">
-    {#each Object.values(groupedDetails) as detailGroup (detailGroup.property)}
-      <div class="detail-item" transition:slide={{ duration: 400, easing: cubicOut }}>
-        <div class="detail-header">
-          <div class="detail-name">
-            {detailGroup.propertyLabel}
-            {#if detailGroup.isObjectProperty}
-              <span class="detail-type">Object</span>
-            {:else}
-              <span class="detail-type">{formatDatatype(detailGroup.datatype)}</span>
-            {/if}
-            {#if detailGroup.isCalculated}
-              <span class="calculated-badge" title="Calculated field">ƒ</span>
-            {/if}
-            {#if detailGroup.values.length > 1}
-              <span class="detail-count">{detailGroup.values.length}</span>
-            {/if}
-            {#if requiredFields.includes(detailGroup.property)}
-              <span class="detail-required" title="Required field">*</span>
-            {/if}
-          </div>
-          {#if detailGroup.sourceClassLabel}
-            <div class="detail-source">from {detailGroup.sourceClassLabel}</div>
-          {/if}
-        </div>
-
-        {#if detailGroup.propertyComment}
-          <div class="detail-comment">{detailGroup.propertyComment}</div>
+{#snippet detailItem(detailGroup)}
+  <div class="detail-item" transition:slide={{ duration: 300, easing: cubicOut }}>
+    <div class="detail-header">
+      <div class="detail-name">
+        {detailGroup.propertyLabel}
+        {#if detailGroup.isObjectProperty}
+          <span class="detail-type">Object</span>
+        {:else}
+          <span class="detail-type">{formatDatatype(detailGroup.datatype)}</span>
         {/if}
+        {#if detailGroup.isCalculated}
+          <span class="calculated-badge" title="Calculated field">ƒ</span>
+        {/if}
+        {#if detailGroup.values.length > 1}
+          <span class="detail-count">{detailGroup.values.length}</span>
+        {/if}
+      </div>
+    </div>
 
-        <div class="detail-values-group">
-          {#each detailGroup.values as val, idx (
-            detailGroup.property + '_' + val.value + '_' + idx
-          )}
-            {#if detailGroup.isObjectProperty}
-              <div
-                class="detail-value clickable"
-                class:calculated={detailGroup.isCalculated}
-                role="button"
-                tabindex="0"
-                onclick={() => openEntityInspector(val.value)}
-                onkeydown={(e) => e.key === 'Enter' && openEntityInspector(val.value)}
-              >
-                {#if val.valueIcon}
-                  {#if isIconUrl(val.valueIcon)}
-                    <img src={getIconUrl(val.valueIcon)} alt="" class="value-icon-image" />
-                  {:else}
-                    <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
-                  {/if}
+    {#if detailGroup.propertyComment}
+      <div class="detail-comment">{detailGroup.propertyComment}</div>
+    {/if}
+
+    {#if detailGroup.isEmpty}
+      <div class="empty-value">—</div>
+    {:else}
+      <div class="detail-values-group">
+        {#each detailGroup.values as val, idx (detailGroup.property + '_' + val.value + '_' + idx)}
+          {#if detailGroup.isObjectProperty}
+            <div
+              class="detail-value clickable"
+              class:calculated={detailGroup.isCalculated}
+              role="button"
+              tabindex="0"
+              onclick={() => openEntityInspector(val.value)}
+              onkeydown={(e) => e.key === 'Enter' && openEntityInspector(val.value)}
+            >
+              {#if val.valueIcon}
+                {#if isIconUrl(val.valueIcon)}
+                  <img src={getIconUrl(val.valueIcon)} alt="" class="value-icon-image" />
+                {:else}
+                  <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
                 {/if}
+              {/if}
+              {#if val.unitLabel}
+                <span class="unit">{val.unitLabel}</span>
+              {/if}
+              <span class="value-text">{val.valueLabel || val.value}</span>
+              {#if val.valueStatus}
+                <span
+                  class="inline-status"
+                  style="--status-color: {val.valueStatus.color || 'var(--color-neutral)'}"
+                  title={val.valueStatus.iri}
+                >
+                  <span class="material-symbols-outlined inline-status-icon">radio_button_checked</span>
+                  <span class="inline-status-label">{val.valueStatus.label}</span>
+                </span>
+              {/if}
+              {#if val.formulaError}
+                <span class="formula-error" title={val.formulaError}>
+                  <span class="material-symbols-outlined formula-error-icon">warning</span>
+                  <span class="formula-error-text">{val.formulaError}</span>
+                </span>
+              {/if}
+            </div>
+          {:else}
+            <div class="detail-value" class:calculated={detailGroup.isCalculated}>
+              {#if val.datatype === 'xsd:dateTime'}
+                {@const date = new Date(Number(val.value))}
+                <div class="timestamp-display">
+                  <span class="value-text">
+                    {date.toLocaleString('en-US', {
+                      year: 'numeric', month: 'short', day: 'numeric',
+                      hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true
+                    })}
+                  </span>
+                  <span class="timestamp-relative">{formatDate(date.getTime())}</span>
+                </div>
+              {:else if val.datatype === 'xsd:date'}
+                {@const [y, m, d] = val.value.split('-').map(Number)}
+                {@const date = new Date(y, m - 1, d)}
+                <span class="value-text">
+                  {date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                </span>
+              {:else if isUrl(val.datatype)}
+                <button class="url-value" onclick={() => openUrl_(val.value)} title={val.value}>
+                  <span class="value-text">{val.valueLabel || val.value}</span>
+                  <span class="material-symbols-outlined url-open-icon">open_in_new</span>
+                </button>
+              {:else if isStringType(val.datatype)}
+                {#if (val.value ?? '').length > 50_000}
+                  <div class="value-large">
+                    <pre class="value-pre">{val.value}</pre>
+                    <button class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
+                      <span class="material-symbols-outlined">content_copy</span>
+                    </button>
+                  </div>
+                {:else}
+                  <MarkdownValue value={val.value} />
+                {/if}
+              {:else}
                 {#if val.unitLabel}
                   <span class="unit">{val.unitLabel}</span>
                 {/if}
                 <span class="value-text">{val.valueLabel || val.value}</span>
-                {#if val.valueStatus}
-                  <span
-                    class="inline-status"
-                    style="--status-color: {val.valueStatus.color || 'var(--color-neutral)'}"
-                    title={val.valueStatus.iri}
-                  >
-                    <span class="material-symbols-outlined inline-status-icon">
-                      radio_button_checked
-                    </span>
-                    <span class="inline-status-label">{val.valueStatus.label}</span>
-                  </span>
-                {/if}
-                {#if val.formulaError}
-                  <span class="formula-error" title={val.formulaError}>
-                    <span class="material-symbols-outlined formula-error-icon">warning</span>
-                    <span class="formula-error-text">{val.formulaError}</span>
-                  </span>
-                {/if}
-              </div>
-            {:else}
-              <div
-                class="detail-value"
-                class:calculated={detailGroup.isCalculated}
-              >
-                {#if val.datatype === 'xsd:dateTime'}
-                  {@const date = new Date(Number(val.value))}
-                  <div class="timestamp-display">
-                    <span class="value-text">
-                      {date.toLocaleString('en-US', {
-                        year: 'numeric', month: 'short', day: 'numeric',
-                        hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true
-                      })}
-                    </span>
-                    <span class="timestamp-relative">{formatDate(date.getTime())}</span>
-                  </div>
-                {:else if val.datatype === 'xsd:date'}
-                  {@const [y, m, d] = val.value.split('-').map(Number)}
-                  {@const date = new Date(y, m - 1, d)}
-                  <span class="value-text">
-                    {date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
-                  </span>
-                {:else if isUrl(val.datatype)}
-                  <button class="url-value" onclick={() => openUrl_(val.value)} title={val.value}>
-                    <span class="value-text">{val.valueLabel || val.value}</span>
-                    <span class="material-symbols-outlined url-open-icon">open_in_new</span>
-                  </button>
-                {:else if isStringType(val.datatype)}
-                  {#if (val.value ?? '').length > 50_000}
-                    <div class="value-large">
-                      <pre class="value-pre">{val.value}</pre>
-                      <button class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
-                        <span class="material-symbols-outlined">content_copy</span>
-                      </button>
-                    </div>
-                  {:else}
-                    <MarkdownValue value={val.value} />
-                  {/if}
-                {:else}
-                  {#if val.unitLabel}
-                    <span class="unit">{val.unitLabel}</span>
-                  {/if}
-                  <span class="value-text">{val.valueLabel || val.value}</span>
-                {/if}
-                {#if val.valueStatus}
-                  <span
-                    class="inline-status"
-                    style="--status-color: {val.valueStatus.color || 'var(--color-neutral)'}"
-                    title={val.valueStatus.iri}
-                  >
-                    <span class="material-symbols-outlined inline-status-icon">
-                      radio_button_checked
-                    </span>
-                    <span class="inline-status-label">{val.valueStatus.label}</span>
-                  </span>
-                {/if}
-                {#if val.formulaError}
-                  <span class="formula-error" title={val.formulaError}>
-                    <span class="material-symbols-outlined formula-error-icon">warning</span>
-                    <span class="formula-error-text">{val.formulaError}</span>
-                  </span>
-                {/if}
-              </div>
-            {/if}
-          {/each}
-        </div>
+              {/if}
+              {#if val.valueStatus}
+                <span
+                  class="inline-status"
+                  style="--status-color: {val.valueStatus.color || 'var(--color-neutral)'}"
+                  title={val.valueStatus.iri}
+                >
+                  <span class="material-symbols-outlined inline-status-icon">radio_button_checked</span>
+                  <span class="inline-status-label">{val.valueStatus.label}</span>
+                </span>
+              {/if}
+              {#if val.formulaError}
+                <span class="formula-error" title={val.formulaError}>
+                  <span class="material-symbols-outlined formula-error-icon">warning</span>
+                  <span class="formula-error-text">{val.formulaError}</span>
+                </span>
+              {/if}
+            </div>
+          {/if}
+        {/each}
       </div>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet sourceGroups(groups, sepTop = 0)}
+  {#each groups as sourceGroup}
+    {#if sourceGroup.sourceClassLabel}
+      <div class="source-separator" use:sticky={{ top: sepTop }}>{sourceGroup.sourceClassLabel}</div>
+    {/if}
+    {#each sourceGroup.items as detailGroup (detailGroup.property)}
+      {@render detailItem(detailGroup)}
     {/each}
+  {/each}
+{/snippet}
+
+{#if properties?.length > 0}
+  <div class="details-list">
+
+    {#if sections.mode === 'class'}
+
+      {#if sections.requiredCount > 0}
+        <div class="section">
+          <div class="section-header" use:sticky={{ top: 0 }}>
+            <span class="section-title">Required</span>
+            <span class="section-count">{sections.requiredCount}</span>
+          </div>
+          <div class="section-body">
+            {@render sourceGroups(sections.required, 28)}
+          </div>
+        </div>
+      {/if}
+
+      {#if sections.optionalCount > 0}
+        <div class="section">
+          <button
+            class="section-header collapsible"
+            use:sticky={{ top: 0 }}
+            onclick={() => optionalCollapsed = !optionalCollapsed}
+          >
+            <span class="material-symbols-outlined chevron" class:expanded={!optionalCollapsed}>
+              chevron_right
+            </span>
+            <span class="section-title">Optional</span>
+            <span class="section-count">{sections.optionalCount}</span>
+          </button>
+          {#if !optionalCollapsed}
+            <div class="section-body" transition:slide={{ duration: 300, easing: cubicOut }}>
+              {@render sourceGroups(sections.optional, 28)}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+    {:else}
+
+      {#if sections.filledCount > 0}
+        <div class="section-body">
+          {@render sourceGroups(sections.filled, 0)}
+        </div>
+      {/if}
+
+      {#if sections.emptyCount > 0}
+        <div class="section">
+          <button
+            class="section-header collapsible"
+            use:sticky={{ top: 0 }}
+            onclick={() => emptyCollapsed = !emptyCollapsed}
+          >
+            <span class="material-symbols-outlined chevron" class:expanded={!emptyCollapsed}>
+              chevron_right
+            </span>
+            <span class="section-title">Empty fields</span>
+            <span class="section-count">{sections.emptyCount}</span>
+          </button>
+          {#if !emptyCollapsed}
+            <div class="section-body" transition:slide={{ duration: 300, easing: cubicOut }}>
+              {@render sourceGroups(sections.empty, 28)}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+    {/if}
+
   </div>
 {/if}
 
@@ -272,12 +442,98 @@
   .details-list {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
     margin-bottom: 16px;
   }
 
+  .section {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 2px;
+    margin-bottom: 6px;
+    z-index: 2;
+    background: color-mix(in srgb, var(--color-black) 97%, transparent);
+    backdrop-filter: blur(12px);
+  }
+
+  .section-header.collapsible {
+    background: color-mix(in srgb, var(--color-black) 97%, transparent);
+    border: none;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    border-radius: 4px;
+    transition: background 0.15s;
+  }
+
+  .section-header.collapsible:hover {
+    background: color-mix(in srgb, var(--color-black) 92%, var(--color-white) 4%);
+  }
+
+  .chevron {
+    font-size: 16px;
+    color: var(--color-neutral);
+    opacity: 0.6;
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+
+  .chevron.expanded {
+    transform: rotate(90deg);
+  }
+
+  .section-title {
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
+    flex: 1;
+  }
+
+  .section-count {
+    font-size: 10px;
+    font-weight: 600;
+    color: color-mix(in srgb, var(--color-neutral) 70%, transparent);
+    padding: 1px 6px;
+    background: color-mix(in srgb, var(--color-neutral) 15%, transparent);
+    border-radius: 10px;
+  }
+
+  .section-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .source-separator {
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 600;
+    color: color-mix(in srgb, var(--color-neutral) 40%, transparent);
+    padding: 6px 2px 2px;
+    border-top: 1px solid color-mix(in srgb, var(--color-neutral) 12%, transparent);
+    margin-top: 4px;
+    z-index: 1;
+    background: color-mix(in srgb, var(--color-black) 97%, transparent);
+    backdrop-filter: blur(12px);
+  }
+
+  .source-separator:first-child {
+    margin-top: 0;
+    border-top: none;
+    padding-top: 2px;
+  }
+
   .detail-item {
-    padding: 12px;
+    padding: 10px 12px;
     background: color-mix(in srgb, var(--color-white) 3%, transparent);
     border-radius: 8px;
     border-left: 3px solid color-mix(in srgb, var(--color-neutral) 30%, transparent);
@@ -318,24 +574,19 @@
     font-weight: 600;
   }
 
-  .detail-required {
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--color-warning, #f59e0b);
-    line-height: 1;
-  }
-
-  .detail-source {
-    font-size: 11px;
-    color: var(--color-neutral);
-    font-family: var(--font-body);
-  }
-
   .detail-comment {
     font-size: 12px;
     color: var(--color-neutral);
     margin-bottom: 8px;
     line-height: 1.4;
+  }
+
+  .empty-value {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--color-neutral);
+    opacity: 0.35;
+    padding: 2px 0;
   }
 
   .detail-values-group {

@@ -134,6 +134,12 @@
 			console.error('Failed to open file:', err);
 		}
 	}
+
+	function formatTime(sentAt) {
+		if (!sentAt || isNaN(new Date(sentAt).getTime())) return '';
+		const d = new Date(sentAt);
+		return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+	}
 </script>
 
 <div
@@ -246,6 +252,9 @@
 		{/if}
 
 		{#if !message.isThinking}
+			<div class="message-bubble-footer">
+				<span class="message-time">{formatTime(message.sentAt)}</span>
+			</div>
 			<div class="message-action-bar">
 				<button class="action-btn" onclick={copyMessage} title="Copy message">
 					<span class="material-symbols-outlined">{copySuccess ? 'check' : 'content_copy'}</span>
@@ -263,12 +272,6 @@
 			</div>
 		{/if}
 		</div>
-
-		<div class="message-time">
-			{message.sentAt && !isNaN(new Date(message.sentAt).getTime())
-				? new Date(message.sentAt).toLocaleTimeString()
-				: ''}
-		</div>
 	</div>
 </div>
 
@@ -277,7 +280,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
-		animation: fadeIn 0.3s;
 		width: 100%;
 	}
 
@@ -334,17 +336,6 @@
 
 	.action-btn .material-symbols-outlined {
 		font-size: 14px;
-	}
-
-	@keyframes fadeIn {
-		from {
-			opacity: 0;
-			transform: translateY(10px);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0);
-		}
 	}
 
 	.message-content {
@@ -476,9 +467,17 @@
 		white-space: nowrap;
 	}
 
+	.message-bubble-footer {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: 2px;
+	}
+
 	.message-time {
-		font-size: 11px;
+		font-size: 10px;
 		color: var(--color-neutral-disabled);
+		opacity: 0.7;
+		line-height: 1;
 	}
 
 	.thinking-indicator {

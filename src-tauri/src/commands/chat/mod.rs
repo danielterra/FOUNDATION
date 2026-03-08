@@ -16,7 +16,7 @@ pub use super::chat_storage::{
 use super::chat_storage::{create_message, load_message, ImageSource, DocumentSource};
 
 use message_utils::{message_to_api_format, inject_datetime_context, sanitize_tool_pairs, response_content_to_blocks};
-use settings::{get_system_prompt, get_max_input_tokens, get_supports_web_tools};
+use settings::{get_max_input_tokens, load_agent_config};
 use recovery::{delete_messages_from_timestamp, continue_conversation_after_recovery};
 
 pub const MAX_OUTPUT_TOKENS: u32 = 4096;
@@ -93,7 +93,10 @@ pub async fn chat__send_and_reply(
 ) -> Result<Vec<serde_json::Value>, String> {
     const MAX_TOOL_LOOPS: usize = 50;
 
-    let max_tokens = get_max_input_tokens(&executor).await?;
+    let conv_id = conversation_id.clone();
+    let agent_config = executor.read(move |conn| {
+        load_agent_config(conn, &conv_id)
+    }).await?;
 
     if latitude.is_some() || longitude.is_some() {
         super::log_backend(
@@ -190,7 +193,7 @@ pub async fn chat__send_and_reply(
 
         app.emit("ai-status", serde_json::json!({ "status": "Loading conversation history" })).ok();
 
-        let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
+        let history = load_conversation_history(&executor, &conversation_id, agent_config.max_tokens).await?;
         super::log_backend(
             "info",
             &format!("[CHAT] Loaded {} messages from history", history.len()),
@@ -203,24 +206,29 @@ pub async fn chat__send_and_reply(
         inject_datetime_context(&mut api_messages);
         sanitize_tool_pairs(&mut api_messages);
 
-        let system_prompt = get_system_prompt(&executor).await?;
         let blackboard_context = build_blackboard_context(&executor).await;
         let tools = crate::ai::functions::get_claude_tools();
-        let supports_web_tools = get_supports_web_tools(&executor).await;
 
         let request = crate::ai::GenerateRequest {
             messages: api_messages,
             max_tokens: Some(MAX_OUTPUT_TOKENS),
             temperature: Some(0.3),
-            system: Some(system_prompt),
+            system: Some(agent_config.system_prompt.clone()),
             blackboard_context,
             tools: Some(tools),
-            supports_web_tools,
+            supports_web_tools: agent_config.supports_web_tools,
         };
+
+        let provider = crate::ai::providers::ClaudeProvider::with_model(
+            agent_config.api_key.clone(),
+            agent_config.model_identifier.clone(),
+            agent_config.timeout_secs,
+        );
+        let assistant = crate::ai::AIAssistant::new(Box::new(provider));
 
         app.emit("ai-status", serde_json::json!({ "status": "Claude is thinking" })).ok();
         super::log_backend("info", "[CHAT] Calling Claude API...");
-        let api_response = crate::ai::generate_response(request).await
+        let api_response = assistant.generate(request).await
             .map_err(|e| format!("Claude API error: {}", e))?;
 
         let stop_reason = api_response.stop_reason.clone()
@@ -237,7 +245,7 @@ pub async fn chat__send_and_reply(
         let content_json = serde_json::to_string(&content_blocks)
             .map_err(|e| format!("Failed to serialize content: {}", e))?;
 
-        let current_model = crate::ai::get_current_model()?;
+        let current_model = agent_config.model_identifier.clone();
 
         if let Some(usage) = &api_response.usage {
             super::chat_storage::log_api_call(
@@ -691,7 +699,11 @@ pub async fn chat__create_conversation(
 ) -> Result<serde_json::Value, String> {
     let timestamp = chrono::Utc::now().timestamp_millis();
     let conv_iri = format!("foundation:Conversation_{}", timestamp);
-    let conv_label = label.unwrap_or_else(|| "New Conversation".to_string());
+    let conv_label = label.unwrap_or_else(|| {
+        chrono::DateTime::from_timestamp(timestamp / 1000, 0)
+            .map(|dt| dt.format("Conversation %b %d, %Y %H:%M").to_string())
+            .unwrap_or_else(|| "New Conversation".to_string())
+    });
 
     let iri_clone = conv_iri.clone();
     let label_clone = conv_label.clone();
@@ -709,6 +721,10 @@ pub async fn chat__create_conversation(
         conv.add_property(conn, "foundation:hasStatus", vec![
             Object::Iri("foundation:InProgress".to_string()),
         ], "ai").map_err(|e| format!("Failed to set conversation status: {}", e))?;
+
+        conv.add_property(conn, "foundation:handledBy", vec![
+            Object::Iri("foundation:LocalAIAssistant".to_string()),
+        ], "ai").map_err(|e| format!("Failed to set handledBy: {}", e))?;
 
         Ok(iri_clone)
     }).await?;
@@ -736,18 +752,21 @@ pub async fn chat__list_conversations(
                 .ok().flatten()
                 .unwrap_or_else(|| Individual::new(&iri));
 
-            let label = ind.properties.iter()
-                .find(|(k, _)| k == "rdfs:label")
-                .and_then(|(_, v)| match v {
-                    Object::Literal { value, .. } => Some(value.clone()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| iri.clone());
-
             let started_at = ind.properties.iter()
                 .find(|(k, _)| k == "foundation:createdAt")
                 .and_then(|(_, v)| parse_timestamp(v))
                 .unwrap_or(0);
+
+            let label = ind.label.clone().filter(|l| !l.is_empty()).unwrap_or_else(|| {
+                if started_at > 0 {
+                    let secs = started_at / 1000;
+                    chrono::DateTime::from_timestamp(secs, 0)
+                        .map(|dt| dt.format("Conversation %b %d, %Y %H:%M").to_string())
+                        .unwrap_or_else(|| "New Conversation".to_string())
+                } else {
+                    "New Conversation".to_string()
+                }
+            });
 
             conversations.push((started_at, serde_json::json!({
                 "iri": iri,
@@ -759,4 +778,22 @@ pub async fn chat__list_conversations(
         conversations.sort_by(|a, b| b.0.cmp(&a.0));
         Ok(conversations.into_iter().map(|(_, v)| v).collect())
     }).await
+}
+
+#[tauri::command]
+pub async fn chat__rename_conversation(
+    conversation_id: String,
+    label: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    executor.write(move |conn| {
+        let ind = Individual::new(&conversation_id);
+        ind.add_property(conn, "rdfs:label", vec![Object::Literal {
+            value: label,
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }], "user")
+            .map_err(|e| format!("Failed to rename conversation: {}", e))?;
+        Ok("".to_string())
+    }).await.map(|_| ())
 }

@@ -527,7 +527,7 @@ pub async fn setup__list_ai_services(
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
     executor.read(|conn| {
-        let service_iris = owl::find_entities_with_property(conn, "rdf:type", "foundation:Service")
+        let service_iris = owl::find_entities_with_property(conn, "rdf:type", "foundation:AIAPIService")
             .map_err(|e| format!("Failed to query services: {}", e))?;
 
         let mut result = Vec::new();
