@@ -1,7 +1,7 @@
 use serde::Serialize;
-use tauri::State;
+use tauri::{State, Emitter};
 use std::collections::HashMap;
-use crate::owl::{self, Class, Individual, Property, Connection, DbExecutor};
+use crate::owl::{self, Class, Individual, Property, Connection, DbExecutor, Object};
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
@@ -88,6 +88,23 @@ pub struct PropertyValue {
     pub is_calculated: bool,
     pub formula_error: Option<String>,
     pub is_empty: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range_class_iri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range_class_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range_class_icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_info: Option<FileInfo>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileInfo {
+    pub file_path: Option<String>,
+    pub file_name: Option<String>,
+    pub file_size: Option<i64>,
+    pub file_type_iri: Option<String>,
 }
 
 /// Search for instances by label and property values
@@ -137,6 +154,29 @@ pub async fn entity__get_node_type_config(
         let configs = owl::get_graph_node_type_config(conn);
         serde_json::to_string(&configs).map_err(|e| e.to_string())
     }).await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn entity__update_literal(
+    entity_id: String,
+    property_iri: String,
+    value: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let entity_id_clone = entity_id.clone();
+    executor.write(move |conn| {
+        let individual = Individual::new(&entity_id_clone);
+        individual.add_property(conn, &property_iri, vec![Object::Literal {
+            value,
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }], "user").map_err(|e| e.to_string())?;
+        Ok("updated".to_string())
+    }).await?;
+    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    Ok(())
 }
 
 fn sort_backlinks_by_recency(conn: &Connection, backlinks: &mut Vec<PropertyValue>) {
@@ -334,6 +374,10 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             is_calculated: false,
             formula_error: None,
             is_empty: false,
+            range_class_iri: None,
+            range_class_label: None,
+            range_class_icon: None,
+            file_info: None,
         });
     }
 
@@ -356,6 +400,10 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             is_calculated: false,
             formula_error: None,
             is_empty: false,
+            range_class_iri: None,
+            range_class_label: None,
+            range_class_icon: None,
+            file_info: None,
         });
     }
 
@@ -414,6 +462,10 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             is_calculated: false,
             formula_error: None,
             is_empty: false,
+            range_class_iri: None,
+            range_class_label: None,
+            range_class_icon: None,
+            file_info: None,
         });
     }
 
@@ -455,6 +507,10 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             is_calculated: false,
             formula_error: None,
             is_empty: false,
+            range_class_iri: None,
+            range_class_label: None,
+            range_class_icon: None,
+            file_info: None,
         });
     }
 
@@ -522,7 +578,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
     let mut properties = Vec::new();
     for (property_iri, value_obj) in &individual.properties {
         let prop_result = Property::get(conn, property_iri);
-        let (property_label, property_comment, unit, unit_label, is_object_property) =
+        let (property_label, property_comment, unit, unit_label, is_object_property, prop_ranges) =
             if let Ok(Some(prop)) = prop_result {
             let label = prop.label.clone().unwrap_or_else(|| property_iri.clone());
             let comment = prop.comment.clone();
@@ -537,9 +593,9 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
 
             let is_obj_prop = prop.property_type == crate::owl::PropertyType::ObjectProperty
                 || value_obj.is_iri();
-            (label, comment, unit, unit_label, is_obj_prop)
+            (label, comment, unit, unit_label, is_obj_prop, prop.ranges)
         } else {
-            (property_iri.clone(), None, None, None, value_obj.is_iri())
+            (property_iri.clone(), None, None, None, value_obj.is_iri(), vec![])
         };
 
         let value = if is_object_property {
@@ -554,6 +610,26 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
             (Some(target_thing.label), target_thing.icon, None, status)
         } else {
             (None, None, value_obj.datatype().map(|s| s.to_string()), None)
+        };
+
+        let (range_class_iri, range_class_label, range_class_icon) = if is_object_property {
+            prop_ranges.first().map(|range_iri| {
+                let range_thing = crate::owl::Thing::get(conn, range_iri);
+                (Some(range_iri.clone()), Some(range_thing.label), range_thing.icon)
+            }).unwrap_or((None, None, None))
+        } else {
+            (None, None, None)
+        };
+
+        let file_info = if range_class_iri.as_deref() == Some("foundation:File") && !value.is_empty() {
+            let file_path = owl::get_literal_property(conn, &value, "foundation:filePath").ok().flatten();
+            let file_name = owl::get_literal_property(conn, &value, "foundation:fileName").ok().flatten();
+            let file_size = owl::get_literal_property(conn, &value, "foundation:fileSize").ok().flatten()
+                .and_then(|s| s.parse::<i64>().ok());
+            let file_type_iri = owl::get_iri_property(conn, &value, "foundation:hasFileType").ok().flatten();
+            Some(FileInfo { file_path, file_name, file_size, file_type_iri })
+        } else {
+            None
         };
 
         let is_calculated = conn.query_row(
@@ -590,6 +666,10 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
             is_calculated,
             formula_error,
             is_empty: false,
+            range_class_iri,
+            range_class_label,
+            range_class_icon,
+            file_info,
         });
     }
 
@@ -630,6 +710,15 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
                         (None, None)
                     };
 
+                    let (range_class_iri, range_class_label, range_class_icon) = if is_object_property {
+                        prop.ranges.first().map(|range_iri| {
+                            let range_thing = crate::owl::Thing::get(conn, range_iri);
+                            (Some(range_iri.clone()), Some(range_thing.label), range_thing.icon)
+                        }).unwrap_or((None, None, None))
+                    } else {
+                        (None, None, None)
+                    };
+
                     properties.push(PropertyValue {
                         property: prop_iri.clone(),
                         property_label,
@@ -648,6 +737,10 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
                         is_calculated: false,
                         formula_error: None,
                         is_empty: true,
+                        range_class_iri,
+                        range_class_label,
+                        range_class_icon,
+                        file_info: None,
                     });
                 }
             }
@@ -869,6 +962,10 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
             is_calculated: false,
             formula_error: None,
             is_empty: false,
+            range_class_iri: None,
+            range_class_label: None,
+            range_class_icon: None,
+            file_info: None,
         });
     }
 

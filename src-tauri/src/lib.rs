@@ -128,6 +128,7 @@ pub fn run() {
             commands::entity__get,
             commands::entity__search,
             commands::entity__get_node_type_config,
+            commands::entity__update_literal,
             commands::shortcuts__get_all,
             commands::log_frontend,
             commands::get_log_file_path_command,

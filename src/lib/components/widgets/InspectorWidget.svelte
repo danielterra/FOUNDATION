@@ -137,6 +137,14 @@
     }
   }
 
+  async function saveProperty(propertyIri, value) {
+    try {
+      await invoke('entity__update_literal', { entityId, propertyIri, value });
+    } catch (err) {
+      console.error('Failed to update property:', err);
+    }
+  }
+
   async function openEntityInspector(entityIri) {
     try {
       await invoke('widget__add', {
@@ -387,6 +395,7 @@
           requiredFields={entityData.requiredFields ?? []}
           isClass={entityData.isClass}
           {openEntityInspector}
+          onSave={entityData.isClass ? null : saveProperty}
         />
 
         <BacklinkList backlinks={entityData.backlinks} {openEntityInspector} />

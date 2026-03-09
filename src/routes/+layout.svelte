@@ -6,6 +6,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import { openUrl } from '@tauri-apps/plugin-opener';
 
   type FormulaProgressEvent = {
     jobId: string;
@@ -37,8 +38,18 @@
 
   const selectedVideo = backgroundVideos[Math.floor(Math.random() * backgroundVideos.length)];
 
+  function handleLinkClick(event: MouseEvent) {
+    const anchor = (event.target as Element).closest('a');
+    if (!anchor) return;
+    const href = anchor.getAttribute('href');
+    if (!href || (!href.startsWith('http://') && !href.startsWith('https://'))) return;
+    event.preventDefault();
+    openUrl(href).catch(err => console.error('[App] Failed to open URL:', err));
+  }
+
   onMount(async () => {
     initializeLogging();
+    document.addEventListener('click', handleLinkClick, true);
 
     try {
       await invoke('initialize_app');
@@ -68,6 +79,7 @@
   });
 
   onDestroy(() => {
+    document.removeEventListener('click', handleLinkClick, true);
     unlistenRecalc?.();
   });
 </script>

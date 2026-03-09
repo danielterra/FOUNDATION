@@ -1,11 +1,53 @@
 <script>
-  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { openUrl, openPath } from '@tauri-apps/plugin-opener';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import MarkdownValue from './MarkdownValue.svelte';
 
-  let { properties, requiredFields = [], isClass = false, openEntityInspector } = $props();
+  let { properties, requiredFields = [], isClass = false, openEntityInspector, onSave } = $props();
+
+  let editingKey = $state(null);
+  let draftValue = $state('');
+  let saving = $state(false);
+
+  function editKey(propertyIri, valueIdx) {
+    return `${propertyIri}::${valueIdx}`;
+  }
+
+  function startEdit(propertyIri, currentValue, valueIdx) {
+    editingKey = editKey(propertyIri, valueIdx);
+    draftValue = currentValue ?? '';
+  }
+
+  function cancelEdit() {
+    editingKey = null;
+    draftValue = '';
+  }
+
+  async function saveEdit(propertyIri) {
+    if (!onSave || saving) return;
+    saving = true;
+    try {
+      await onSave(propertyIri, draftValue);
+    } finally {
+      saving = false;
+      editingKey = null;
+      draftValue = '';
+    }
+  }
+
+  function handleBlur(propertyIri) {
+    saveEdit(propertyIri);
+  }
+
+  function handleKeydown(event, propertyIri) {
+    if (event.key === 'Escape') {
+      cancelEdit();
+    } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      saveEdit(propertyIri);
+    }
+  }
 
   function sticky(node, { top = 0 } = {}) {
     let scroller, section, nodeTop, sectionTop;
@@ -75,6 +117,9 @@
           isObjectProperty: prop.isObjectProperty,
           sourceClassLabel: prop.sourceClassLabel,
           datatype: prop.datatype,
+          rangeClassIri: prop.rangeClassIri,
+          rangeClassLabel: prop.rangeClassLabel,
+          rangeClassIcon: prop.rangeClassIcon,
           isCalculated: prop.isCalculated ?? false,
           isEmpty: prop.isEmpty ?? false,
           values: []
@@ -88,7 +133,8 @@
           unitLabel: prop.unitLabel,
           datatype: prop.datatype,
           valueStatus: prop.valueStatus,
-          formulaError: prop.formulaError ?? null
+          formulaError: prop.formulaError ?? null,
+          fileInfo: prop.fileInfo ?? null
         });
       }
       return acc;
@@ -203,7 +249,7 @@
   }
 
   function formatDatatype(datatype) {
-    if (!datatype) return 'Data';
+    if (!datatype || datatype === 'xsd:string' || datatype === 'rdf:langString') return 'String';
     const parts = datatype.split(':');
     const typeName = parts.length > 1 ? parts[1] : datatype;
     return typeName.charAt(0).toUpperCase() + typeName.slice(1);
@@ -223,7 +269,76 @@
     if (icon.startsWith('/')) return convertFileSrc(icon);
     return icon;
   }
+
+  const FILE_TYPE_MIME = {
+    'foundation:FileType_PDF':  'application/pdf',
+    'foundation:FileType_PNG':  'image/png',
+    'foundation:FileType_JPEG': 'image/jpeg',
+    'foundation:FileType_JPG':  'image/jpeg',
+    'foundation:FileType_GIF':  'image/gif',
+    'foundation:FileType_WEBP': 'image/webp',
+    'foundation:FileType_BMP':  'image/bmp',
+    'foundation:FileType_SVG':  'image/svg+xml',
+  };
+
+  function getFileMimeType(fileInfo) {
+    return fileInfo?.fileTypeIri ? (FILE_TYPE_MIME[fileInfo.fileTypeIri] ?? null) : null;
+  }
+
+  function getFileDisplayPath(filePath) {
+    if (!filePath) return null;
+    return filePath.startsWith('file://') ? filePath.replace('file://', '') : filePath;
+  }
+
+  function formatFileSize(bytes) {
+    if (!bytes) return null;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`;
+  }
+
+  async function openFileFromInfo(fileInfo) {
+    const cleanPath = getFileDisplayPath(fileInfo?.filePath);
+    if (!cleanPath) return;
+    try { await openPath(cleanPath); } catch (err) { console.error('Failed to open file:', err); }
+  }
 </script>
+
+{#snippet editForm(propertyIri)}
+  <div class="edit-container">
+    <textarea
+      class="edit-textarea"
+      bind:value={draftValue}
+      onblur={() => handleBlur(propertyIri)}
+      onkeydown={(e) => handleKeydown(e, propertyIri)}
+      autofocus
+      rows="5"
+    ></textarea>
+    <div class="edit-actions">
+      <button
+        class="edit-save-btn"
+        onmousedown={(e) => e.preventDefault()}
+        onclick={() => saveEdit(propertyIri)}
+        disabled={saving}
+      >
+        {#if saving}
+          <span class="material-symbols-outlined spinning-small">progress_activity</span>
+        {:else}
+          <span class="material-symbols-outlined">check</span>
+        {/if}
+        Save
+      </button>
+      <button
+        class="edit-cancel-btn"
+        onmousedown={(e) => e.preventDefault()}
+        onclick={cancelEdit}
+      >
+        <span class="material-symbols-outlined">close</span>
+        Cancel
+      </button>
+    </div>
+  </div>
+{/snippet}
 
 {#snippet detailItem(detailGroup)}
   <div class="detail-item" transition:slide={{ duration: 300, easing: cubicOut }}>
@@ -231,7 +346,12 @@
       <div class="detail-name">
         {detailGroup.propertyLabel}
         {#if detailGroup.isObjectProperty}
-          <span class="detail-type">Object</span>
+          <span class="detail-type detail-type-object">
+            {#if detailGroup.rangeClassIcon}
+              <span class="material-symbols-outlined detail-type-icon">{detailGroup.rangeClassIcon}</span>
+            {/if}
+            {detailGroup.rangeClassLabel ?? 'Object'}
+          </span>
         {:else}
           <span class="detail-type">{formatDatatype(detailGroup.datatype)}</span>
         {/if}
@@ -242,14 +362,57 @@
           <span class="detail-count">{detailGroup.values.length}</span>
         {/if}
       </div>
+      {#if onSave && !detailGroup.isObjectProperty && !detailGroup.isCalculated && isStringType(detailGroup.datatype) && (detailGroup.isEmpty || detailGroup.values.length <= 1)}
+        <button
+          class="edit-btn"
+          title="Edit"
+          onclick={() => startEdit(detailGroup.property, detailGroup.values[0]?.value ?? '', 0)}
+        >
+          <span class="material-symbols-outlined">edit</span>
+        </button>
+      {/if}
     </div>
 
     {#if detailGroup.propertyComment}
       <div class="detail-comment">{detailGroup.propertyComment}</div>
     {/if}
 
-    {#if detailGroup.isEmpty}
+    {#if detailGroup.isEmpty && editingKey !== editKey(detailGroup.property, 0)}
       <div class="empty-value">—</div>
+    {:else if detailGroup.isEmpty && editingKey === editKey(detailGroup.property, 0)}
+      <div class="detail-value">
+        {@render editForm(detailGroup.property)}
+      </div>
+    {:else if detailGroup.rangeClassIri === 'foundation:File'}
+      <div class="file-grid">
+        {#each detailGroup.values as val, idx (detailGroup.property + '_' + val.value + '_' + idx)}
+          {@const mimeType = getFileMimeType(val.fileInfo)}
+          {@const cleanPath = getFileDisplayPath(val.fileInfo?.filePath)}
+          {@const fileName = val.fileInfo?.fileName || val.valueLabel || val.value}
+          {@const fileSize = val.fileInfo?.fileSize}
+          <button
+            class="file-grid-card"
+            onclick={() => val.fileInfo ? openFileFromInfo(val.fileInfo) : openEntityInspector(val.value)}
+            title={fileName}
+          >
+            <div class="file-grid-preview">
+              {#if mimeType?.startsWith('image/') && cleanPath}
+                <img src={convertFileSrc(cleanPath)} alt={fileName} class="file-grid-img" />
+              {:else if mimeType === 'application/pdf'}
+                <span class="material-symbols-outlined file-grid-icon">picture_as_pdf</span>
+              {:else}
+                <span class="material-symbols-outlined file-grid-icon">insert_drive_file</span>
+              {/if}
+            </div>
+            <div class="file-grid-info">
+              <span class="file-grid-name">{fileName}</span>
+              {#if fileSize}
+                <span class="file-grid-size">{formatFileSize(fileSize)}</span>
+              {/if}
+            </div>
+          </button>
+        {/each}
+      </div>
     {:else}
       <div class="detail-values-group">
         {#each detailGroup.values as val, idx (detailGroup.property + '_' + val.value + '_' + idx)}
@@ -315,7 +478,9 @@
                   <span class="material-symbols-outlined url-open-icon">open_in_new</span>
                 </button>
               {:else if isStringType(val.datatype)}
-                {#if (val.value ?? '').length > 50_000}
+                {#if editingKey === editKey(detailGroup.property, idx)}
+                  {@render editForm(detailGroup.property)}
+                {:else if (val.value ?? '').length > 50_000}
                   <div class="value-large">
                     <pre class="value-pre">{val.value}</pre>
                     <button class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
@@ -544,6 +709,7 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 6px;
+    gap: 4px;
   }
 
   .detail-name {
@@ -563,6 +729,16 @@
     color: var(--color-neutral);
     border-radius: 4px;
     font-weight: 600;
+  }
+
+  .detail-type-object {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+
+  .detail-type-icon {
+    font-size: 11px;
   }
 
   .detail-count {
@@ -787,6 +963,77 @@
     box-sizing: border-box;
   }
 
+  .file-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .file-grid-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: color-mix(in srgb, var(--color-white) 5%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-white) 12%, transparent);
+    border-radius: 8px;
+    padding: 8px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.15s;
+    text-align: left;
+  }
+
+  .file-grid-card:hover {
+    background: color-mix(in srgb, var(--color-white) 10%, transparent);
+    border-color: color-mix(in srgb, var(--color-white) 22%, transparent);
+    transform: translateY(-1px);
+  }
+
+  .file-grid-preview {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    border-radius: 5px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--color-white) 3%, transparent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .file-grid-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .file-grid-icon {
+    font-size: 36px;
+    color: var(--color-neutral);
+    opacity: 0.5;
+  }
+
+  .file-grid-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .file-grid-name {
+    font-size: 11px;
+    color: var(--color-neutral-active);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  .file-grid-size {
+    font-size: 10px;
+    color: var(--color-neutral);
+    opacity: 0.7;
+  }
+
   .formula-error-icon {
     font-size: 14px;
     color: var(--color-error, #ef4444);
@@ -799,5 +1046,118 @@
     font-size: 11px;
     color: var(--color-error, #ef4444);
     line-height: 1.4;
+  }
+
+  .edit-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-neutral);
+    opacity: 0;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    border-radius: 4px;
+    transition: color 0.15s, opacity 0.15s;
+    flex-shrink: 0;
+  }
+
+  .edit-btn .material-symbols-outlined {
+    font-size: 14px;
+  }
+
+  .edit-btn:hover {
+    color: var(--color-neutral-active);
+    background: color-mix(in srgb, var(--color-white) 8%, transparent);
+  }
+
+  .detail-item:hover .edit-btn {
+    opacity: 1;
+  }
+
+  .edit-container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .edit-textarea {
+    width: 100%;
+    min-height: 80px;
+    background: color-mix(in srgb, var(--color-black) 50%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
+    border-radius: 6px;
+    color: var(--color-neutral-active);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 8px;
+    resize: vertical;
+    box-sizing: border-box;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .edit-textarea:focus {
+    border-color: var(--color-interactive);
+  }
+
+  .edit-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .edit-save-btn,
+  .edit-cancel-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    transition: background 0.15s;
+  }
+
+  .edit-save-btn {
+    background: color-mix(in srgb, var(--color-interactive) 25%, transparent);
+    color: var(--color-interactive);
+  }
+
+  .edit-save-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-interactive) 40%, transparent);
+  }
+
+  .edit-save-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .edit-cancel-btn {
+    background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
+    color: var(--color-neutral);
+  }
+
+  .edit-cancel-btn:hover {
+    background: color-mix(in srgb, var(--color-neutral) 22%, transparent);
+  }
+
+  .edit-save-btn .material-symbols-outlined,
+  .edit-cancel-btn .material-symbols-outlined {
+    font-size: 14px;
+  }
+
+  .spinning-small {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 </style>
