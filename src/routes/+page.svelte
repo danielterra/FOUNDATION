@@ -64,7 +64,7 @@
       // If error is about state not managed, database is still initializing
       if (errorMsg.includes('state not managed') || errorMsg.includes('conn')) {
         console.log('+page: Database still initializing, retrying...');
-        setTimeout(() => checkSetup(), 500);
+        setTimeout(() => checkDatabaseStatus(), 500);
       } else {
         // Other errors, show setup wizard
         console.log('+page: Unexpected error, showing setup wizard');

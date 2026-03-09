@@ -62,6 +62,21 @@
     },
   });
 
+  function fixSvgDimensions(container) {
+    const svgEl = container?.querySelector('svg');
+    if (!svgEl) return;
+    const viewBox = svgEl.getAttribute('viewBox');
+    if (!viewBox) return;
+    const parts = viewBox.trim().split(/\s+/);
+    if (parts.length !== 4) return;
+    const vbWidth = parseFloat(parts[2]);
+    const vbHeight = parseFloat(parts[3]);
+    if (vbWidth > 0 && vbHeight > 0) {
+      svgEl.setAttribute('width', vbWidth);
+      svgEl.setAttribute('height', vbHeight);
+    }
+  }
+
   async function renderDiagram() {
     if (!renderContainer) return;
     renderError = null;
@@ -69,6 +84,7 @@
       const id = `mermaid-${widgetId.replace(/[^a-zA-Z0-9]/g, '_')}_${++renderCount}`;
       const { svg } = await mermaid.render(id, content);
       renderContainer.innerHTML = svg;
+      fixSvgDimensions(renderContainer);
     } catch (err) {
       renderError = err?.message ?? String(err);
       renderContainer.innerHTML = '';
@@ -81,6 +97,7 @@
       const id = `mermaid-modal-${widgetId.replace(/[^a-zA-Z0-9]/g, '_')}_${++renderCount}`;
       const { svg } = await mermaid.render(id, content);
       modalRenderContainer.innerHTML = svg;
+      fixSvgDimensions(modalRenderContainer);
     } catch {
       modalRenderContainer.innerHTML = '';
     }
@@ -217,7 +234,6 @@
       }
     }
     entityLoading = false;
-    await renderDiagram();
 
     unlistenContentUpdated = await listen('widget-content-updated', (event) => {
       if (event.payload === widgetId) {
