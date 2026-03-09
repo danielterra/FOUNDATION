@@ -326,12 +326,12 @@ fn do_retract_triples(
                     (&triple.subject, &triple.predicate, if *b { 1 } else { 0 }),
                 )?;
             }
-            Object::DateTime(dt) => {
+            Object::DateTime(rfc3339) => {
                 tx.execute(
                     "UPDATE triples
                      SET retracted = 1
-                     WHERE subject = ? AND predicate = ? AND object_datetime = ? AND retracted = 0",
-                    (&triple.subject, &triple.predicate, dt),
+                     WHERE subject = ? AND predicate = ? AND object_value = ? AND retracted = 0",
+                    (&triple.subject, &triple.predicate, rfc3339),
                 )?;
             }
         }
@@ -350,7 +350,6 @@ struct ExistingRow {
     object_integer: Option<i64>,
     object_number: Option<f64>,
     object_boolean: Option<i64>,
-    object_datetime: Option<i64>,
 }
 
 /// Fetch all active (retracted = 0) rows for a given (subject, predicate) pair.
@@ -361,7 +360,7 @@ fn fetch_existing_rows(
 ) -> rusqlite::Result<Vec<ExistingRow>> {
     let mut stmt = tx.prepare(
         "SELECT rowid, object, object_value, object_datatype, object_language,
-                object_integer, object_number, object_boolean, object_datetime
+                object_integer, object_number, object_boolean
          FROM triples
          WHERE subject = ? AND predicate = ? AND retracted = 0",
     )?;
@@ -375,7 +374,6 @@ fn fetch_existing_rows(
             object_integer: row.get(5)?,
             object_number: row.get(6)?,
             object_boolean: row.get(7)?,
-            object_datetime: row.get(8)?,
         })
     })?
     .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -396,7 +394,7 @@ fn object_matches_row(obj: &Object, row: &ExistingRow) -> bool {
         Object::Integer(i) => row.object_integer == Some(*i),
         Object::Number(n) => row.object_number == Some(*n),
         Object::Boolean(b) => row.object_boolean == Some(if *b { 1 } else { 0 }),
-        Object::DateTime(dt) => row.object_datetime == Some(*dt),
+        Object::DateTime(rfc3339) => row.object_value.as_deref() == Some(rfc3339.as_str()),
     }
 }
 
@@ -421,19 +419,18 @@ fn insert_triple(
         object_language,
         object_number,
         object_integer,
-        object_datetime,
         object_boolean,
     ) = match &triple.object {
-        Object::Iri(iri) => (Some(iri.as_str()), None, None, None, None, None, None, None),
-        Object::Blank(blank) => (Some(blank.as_str()), None, None, None, None, None, None, None),
+        Object::Iri(iri) => (Some(iri.as_str()), None, None, None, None, None, None),
+        Object::Blank(blank) => (Some(blank.as_str()), None, None, None, None, None, None),
 
         Object::Integer(i) => {
             int_str = i.to_string();
-            (None, Some(int_str.as_str()), Some("xsd:integer"), None, None, Some(*i), None, None)
+            (None, Some(int_str.as_str()), Some("xsd:integer"), None, None, Some(*i), None)
         }
         Object::Number(n) => {
             num_str = n.to_string();
-            (None, Some(num_str.as_str()), Some("xsd:decimal"), None, Some(*n), None, None, None)
+            (None, Some(num_str.as_str()), Some("xsd:decimal"), None, Some(*n), None, None)
         }
         Object::Boolean(b) => {
             bool_str = b.to_string();
@@ -444,15 +441,15 @@ fn insert_triple(
                 None,
                 None,
                 None,
-                None,
                 Some(if *b { 1 } else { 0 }),
             )
         }
-        Object::DateTime(dt) => {
-            dt_str = chrono::DateTime::from_timestamp_millis(*dt)
-                .unwrap_or_default()
+        Object::DateTime(rfc3339) => {
+            dt_str = chrono::DateTime::parse_from_rfc3339(rfc3339)
+                .unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00+00:00").unwrap())
+                .with_timezone(&chrono::Utc)
                 .to_rfc3339();
-            (None, Some(dt_str.as_str()), Some("xsd:dateTime"), None, None, None, Some(*dt), None)
+            (None, Some(dt_str.as_str()), Some("xsd:dateTime"), None, None, None, None)
         }
 
         Object::Literal { value, datatype, language } => {
@@ -478,7 +475,6 @@ fn insert_triple(
                         Some(n),
                         None,
                         None,
-                        None,
                     )
                 }
                 Some("xsd:integer") | Some("xsd:int") | Some("xsd:long") => {
@@ -500,7 +496,6 @@ fn insert_triple(
                         language.as_deref(),
                         None,
                         Some(i),
-                        None,
                         None,
                     )
                 }
@@ -528,43 +523,34 @@ fn insert_triple(
                         language.as_deref(),
                         None,
                         None,
-                        None,
                         Some(b),
                     )
                 }
                 Some("xsd:dateTime") => {
-                    let millis = chrono::DateTime::parse_from_rfc3339(value)
-                        .map(|dt| dt.timestamp_millis())
-                        .or_else(|_| value.parse::<i64>())
+                    let parsed = chrono::DateTime::parse_from_rfc3339(value)
                         .map_err(|_| rusqlite::Error::ToSqlConversionFailure(Box::new(
                             std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 format!(
                                     "Failed to parse dateTime literal '{}' for triple: \
-                                     {} {} {} - Expected RFC3339 string or Unix milliseconds (i64)",
+                                     {} {} {} - Expected RFC3339 string (e.g. '2026-03-08T00:00:00+00:00')",
                                     value, triple.subject, triple.predicate, value,
                                 ),
                             )
                         )))?;
+                    dt_str = parsed.with_timezone(&chrono::Utc).to_rfc3339();
                     (
                         None,
-                        Some(value.as_str()),
+                        Some(dt_str.as_str()),
                         datatype.as_deref(),
                         language.as_deref(),
                         None,
                         None,
-                        Some(millis),
                         None,
                     )
                 }
                 Some("xsd:date") => {
-                    let timestamp = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
-                        .map(|date| {
-                            date.and_hms_opt(0, 0, 0)
-                                .expect("midnight is always valid")
-                                .and_utc()
-                                .timestamp_millis()
-                        })
+                    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
                         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
                             std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
@@ -583,7 +569,6 @@ fn insert_triple(
                         language.as_deref(),
                         None,
                         None,
-                        Some(timestamp),
                         None,
                     )
                 }
@@ -593,7 +578,6 @@ fn insert_triple(
                         Some(value.as_str()),
                         datatype.as_deref(),
                         language.as_deref(),
-                        None,
                         None,
                         None,
                         None,
@@ -608,9 +592,9 @@ fn insert_triple(
     let result = tx.execute(
         "INSERT INTO triples (
             subject, predicate, object, object_value, object_datatype, object_language,
-            object_type, object_number, object_integer, object_datetime, object_boolean,
+            object_type, object_number, object_integer, object_boolean,
             tx, origin_id, retracted, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
         rusqlite::params![
             &triple.subject,
             &triple.predicate,
@@ -621,7 +605,6 @@ fn insert_triple(
             object_type,
             object_number,
             object_integer,
-            object_datetime,
             object_boolean,
             tx_id,
             origin_id,

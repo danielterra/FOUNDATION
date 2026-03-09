@@ -189,7 +189,7 @@ impl Individual {
                     }
                 },
                 Object::Boolean(b) => b.to_string() == value_str,
-                Object::DateTime(dt) => dt.to_string() == value_str,
+                Object::DateTime(rfc3339) => rfc3339.as_str() == value_str,
             };
             if matches {
                 let found = triple.object.clone();

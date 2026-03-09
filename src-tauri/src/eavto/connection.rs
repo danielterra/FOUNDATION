@@ -127,7 +127,124 @@ fn initialize_db_with_progress(
     Ok(conn)
 }
 
+fn drop_object_datetime_if_exists(conn: &Connection) -> Result<(), DbError> {
+    let col_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('triples') WHERE name = 'object_datetime'",
+        [],
+        |row| row.get::<_, i64>(0),
+    ).map(|c| c > 0).unwrap_or(false);
+
+    if !col_exists {
+        return Ok(());
+    }
+
+    log_backend("info", "Migrating: dropping object_datetime column from triples table");
+
+    conn.execute_batch("PRAGMA foreign_keys = OFF")?;
+    conn.execute_batch("
+        BEGIN;
+
+        DROP VIEW IF EXISTS triples_current;
+        DROP VIEW IF EXISTS entities;
+        DROP VIEW IF EXISTS ontology_classes;
+        DROP VIEW IF EXISTS ontology_properties;
+
+        CREATE TABLE triples_new (
+            subject TEXT NOT NULL,
+            predicate TEXT NOT NULL,
+            object TEXT,
+            object_value TEXT,
+            object_datatype TEXT,
+            object_language TEXT,
+            object_type TEXT NOT NULL CHECK(object_type IN ('iri', 'literal', 'blank')),
+            object_number REAL,
+            object_integer INTEGER,
+            object_boolean INTEGER,
+            tx INTEGER NOT NULL,
+            origin_id INTEGER NOT NULL,
+            retracted INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (origin_id) REFERENCES origins(id),
+            CHECK (
+                (object_type = 'iri' AND object IS NOT NULL AND object_value IS NULL) OR
+                (object_type = 'literal' AND object_value IS NOT NULL AND object_datatype IS NOT NULL AND object IS NULL) OR
+                (object_type = 'blank' AND object IS NOT NULL AND object_value IS NULL)
+            ),
+            CHECK (
+                (object_datatype IN ('xsd:decimal', 'xsd:double', 'xsd:float') AND object_number IS NOT NULL) OR
+                (object_datatype IN ('xsd:integer', 'xsd:int', 'xsd:long') AND object_integer IS NOT NULL) OR
+                (object_datatype = 'xsd:boolean' AND object_boolean IS NOT NULL) OR
+                (object_datatype NOT IN ('xsd:decimal', 'xsd:double', 'xsd:float', 'xsd:integer', 'xsd:int', 'xsd:long', 'xsd:boolean'))
+            )
+        );
+
+        INSERT INTO triples_new
+        SELECT subject, predicate, object, object_value, object_datatype, object_language,
+               object_type, object_number, object_integer, object_boolean,
+               tx, origin_id, retracted, created_at
+        FROM triples;
+
+        DROP TABLE triples;
+        ALTER TABLE triples_new RENAME TO triples;
+
+        DROP INDEX IF EXISTS idx_predicate_datetime;
+
+        CREATE INDEX IF NOT EXISTS idx_spo ON triples(subject, predicate, object, object_value, tx, origin_id);
+        CREATE INDEX IF NOT EXISTS idx_pos ON triples(predicate, object, object_value, subject, tx, origin_id);
+        CREATE INDEX IF NOT EXISTS idx_osp ON triples(object, subject, predicate, tx, origin_id) WHERE object_type = 'iri';
+        CREATE INDEX IF NOT EXISTS idx_ops ON triples(object, predicate, subject, tx, origin_id) WHERE object_type = 'iri';
+        CREATE INDEX IF NOT EXISTS idx_predicate_number ON triples(predicate, object_number, tx)
+            WHERE object_type = 'literal' AND object_datatype IN ('xsd:decimal', 'xsd:double', 'xsd:float') AND retracted = 0;
+        CREATE INDEX IF NOT EXISTS idx_predicate_integer ON triples(predicate, object_integer, tx)
+            WHERE object_type = 'literal' AND object_datatype IN ('xsd:integer', 'xsd:int', 'xsd:long') AND retracted = 0;
+        CREATE INDEX IF NOT EXISTS idx_subject_retracted ON triples(subject, retracted, tx);
+        CREATE INDEX IF NOT EXISTS idx_tx ON triples(tx);
+
+        CREATE VIEW triples_current AS
+        SELECT DISTINCT
+            subject, predicate, object, object_value, object_datatype, object_language,
+            object_number, object_integer, object_boolean,
+            FIRST_VALUE(tx) OVER (PARTITION BY subject, predicate, origin_id ORDER BY tx DESC) as tx,
+            origin_id, object_type, created_at
+        FROM triples
+        WHERE retracted = 0;
+
+        CREATE VIEW entities AS
+        SELECT DISTINCT subject
+        FROM triples
+        WHERE retracted = 0;
+
+        CREATE VIEW ontology_classes AS
+        SELECT DISTINCT subject as class_id,
+            (SELECT object_value FROM triples WHERE subject = class_id AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1) as label,
+            (SELECT object_value FROM triples WHERE subject = class_id AND predicate = 'rdfs:comment' AND retracted = 0 LIMIT 1) as comment,
+            (SELECT object FROM triples WHERE subject = class_id AND predicate = 'rdfs:subClassOf' AND retracted = 0 LIMIT 1) as parent_class
+        FROM triples
+        WHERE predicate = 'rdf:type'
+            AND object IN ('owl:Class', 'rdfs:Class')
+            AND retracted = 0;
+
+        CREATE VIEW ontology_properties AS
+        SELECT DISTINCT subject as property_id,
+            (SELECT object FROM triples WHERE subject = property_id AND predicate = 'rdf:type' AND retracted = 0 LIMIT 1) as property_type,
+            (SELECT object_value FROM triples WHERE subject = property_id AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1) as label,
+            (SELECT object FROM triples WHERE subject = property_id AND predicate = 'rdfs:domain' AND retracted = 0 LIMIT 1) as domain,
+            (SELECT object FROM triples WHERE subject = property_id AND predicate = 'rdfs:range' AND retracted = 0 LIMIT 1) as range
+        FROM triples
+        WHERE predicate = 'rdf:type'
+            AND object IN ('owl:ObjectProperty', 'owl:DatatypeProperty', 'owl:AnnotationProperty', 'rdf:Property')
+            AND retracted = 0;
+
+        COMMIT;
+    ")?;
+    conn.execute_batch("PRAGMA foreign_keys = ON")?;
+
+    log_backend("info", "Migration complete: object_datetime column removed");
+    Ok(())
+}
+
 fn run_migrations(conn: &Connection) -> Result<(), DbError> {
+    drop_object_datetime_if_exists(conn)?;
     conn.execute_batch("
         CREATE TABLE IF NOT EXISTS formula_recalc_jobs (
             id              TEXT    PRIMARY KEY,

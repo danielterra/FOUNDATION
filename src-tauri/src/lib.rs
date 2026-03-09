@@ -115,8 +115,8 @@ pub fn run() {
             // The initialize_app command will register the DbExecutor when called
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(mcp::serve(app_handle.clone()));
-            tauri::async_runtime::spawn(process_automation::scheduler::start(app_handle.clone()));
-            process_automation::trigger::register_listeners(app_handle);
+            process_automation::trigger::register_listeners(app_handle.clone());
+            process_automation::scheduler::listen_for_new_timers(app_handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

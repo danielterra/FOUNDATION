@@ -1151,11 +1151,3 @@ fn test_find_things_by_detail_date_filter_with_operators() {
     assert_eq!(things_range[0]["iri"].as_str().unwrap(), "foundation:TaskDue0308");
 }
 
-#[test]
-fn test_iso_date_to_unix_millis_str_converts_correctly() {
-    assert_eq!(iso_date_to_unix_millis_str("2026-03-08"), "1772928000000");
-    let rfc3339_result = iso_date_to_unix_millis_str("2026-03-08T00:00:00Z");
-    assert_eq!(rfc3339_result, "1772928000000");
-    assert_eq!(iso_date_to_unix_millis_str("foundation:SomeIri"), "foundation:SomeIri");
-    assert_eq!(iso_date_to_unix_millis_str("active"), "active");
-}

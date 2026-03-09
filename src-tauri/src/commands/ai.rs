@@ -51,7 +51,7 @@ pub async fn ai__save_api_key(
         credential.add_property(
             conn,
             "foundation:credentialCreatedAt",
-            vec![Object::DateTime(timestamp)],
+            vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())],
             "ai"
         ).map_err(|e| format!("Failed to set created timestamp: {}", e))?;
 

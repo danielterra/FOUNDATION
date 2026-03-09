@@ -13,7 +13,7 @@
 --
 -- Storage: RDF-native with typed columns for performance
 -- - RDF Triple columns: subject, predicate, object (IRI), object_value (literal)
--- - Typed columns: object_number, object_integer, object_datetime for range queries
+-- - Typed columns: object_number, object_integer for range queries
 -- - Full RDF compatibility: Export to Turtle/JSON-LD without transformation
 -- ============================================================================
 
@@ -58,7 +58,6 @@ CREATE TABLE IF NOT EXISTS triples (
   -- Performance optimization: typed columns (NULL if not applicable)
   object_number REAL,              -- Populated for xsd:decimal, xsd:double, xsd:float
   object_integer INTEGER,          -- Populated for xsd:integer, xsd:int, xsd:long
-  object_datetime INTEGER,         -- Populated for xsd:dateTime (Unix epoch ms)
   object_boolean INTEGER,          -- Populated for xsd:boolean (0 = false, 1 = true)
 
   -- FOUNDATION extensions: transaction metadata
@@ -86,10 +85,9 @@ CREATE TABLE IF NOT EXISTS triples (
     -- If datatype is numeric, object_number must be populated
     (object_datatype IN ('xsd:decimal', 'xsd:double', 'xsd:float') AND object_number IS NOT NULL) OR
     (object_datatype IN ('xsd:integer', 'xsd:int', 'xsd:long') AND object_integer IS NOT NULL) OR
-    (object_datatype = 'xsd:dateTime' AND object_datetime IS NOT NULL) OR
     (object_datatype = 'xsd:boolean' AND object_boolean IS NOT NULL) OR
     -- Otherwise, typed columns are NULL
-    (object_datatype NOT IN ('xsd:decimal', 'xsd:double', 'xsd:float', 'xsd:integer', 'xsd:int', 'xsd:long', 'xsd:dateTime', 'xsd:boolean'))
+    (object_datatype NOT IN ('xsd:decimal', 'xsd:double', 'xsd:float', 'xsd:integer', 'xsd:int', 'xsd:long', 'xsd:boolean'))
   )
 );
 
@@ -122,10 +120,6 @@ CREATE INDEX IF NOT EXISTS idx_predicate_number ON triples(predicate, object_num
 -- Integer range queries (e.g., age >= 18)
 CREATE INDEX IF NOT EXISTS idx_predicate_integer ON triples(predicate, object_integer, tx)
   WHERE object_type = 'literal' AND object_datatype IN ('xsd:integer', 'xsd:int', 'xsd:long') AND retracted = 0;
-
--- Temporal range queries (e.g., created_at >= X AND created_at < Y)
-CREATE INDEX IF NOT EXISTS idx_predicate_datetime ON triples(predicate, object_datetime, tx)
-  WHERE object_type = 'literal' AND object_datatype = 'xsd:dateTime' AND retracted = 0;
 
 -- Retraction queries (find active triples for a subject)
 CREATE INDEX IF NOT EXISTS idx_subject_retracted ON triples(subject, retracted, tx);
@@ -218,7 +212,7 @@ CREATE INDEX IF NOT EXISTS idx_ontology_files_modified ON ontology_files(last_mo
 CREATE VIEW IF NOT EXISTS triples_current AS
 SELECT DISTINCT
   subject, predicate, object, object_value, object_datatype, object_language,
-  object_number, object_integer, object_datetime, object_boolean,
+  object_number, object_integer, object_boolean,
   FIRST_VALUE(tx) OVER (PARTITION BY subject, predicate, origin_id ORDER BY tx DESC) as tx,
   origin_id, object_type, created_at
 FROM triples

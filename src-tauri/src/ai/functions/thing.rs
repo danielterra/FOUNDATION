@@ -297,6 +297,13 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
         });
 
         let mut properties = individual.serializable_properties(conn);
+        for (i, (_, obj)) in individual.properties.iter().enumerate() {
+            if let Object::DateTime(rfc3339) = obj {
+                if let Some(entry) = properties.get_mut(i) {
+                    entry["value"] = serde_json::json!(rfc3339);
+                }
+            }
+        }
 
         if include_retracted {
             let retracted_triples = Individual::get_retracted_properties(conn, iri)?;
@@ -307,7 +314,7 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
                     Object::Integer(i) => serde_json::json!(i),
                     Object::Number(n) => serde_json::json!(n),
                     Object::Boolean(b) => serde_json::json!(b),
-                    Object::DateTime(dt) => serde_json::json!(dt),
+                    Object::DateTime(rfc3339) => serde_json::json!(rfc3339),
                 };
                 properties.push(serde_json::json!({
                     "property": triple.predicate,
@@ -781,21 +788,6 @@ fn delete_thing_one(
 }
 
 
-/// Converts an ISO date ("YYYY-MM-DD") or ISO datetime (RFC3339) string to
-/// a Unix millisecond timestamp string, so the OWL layer always receives
-/// a numeric millisecond value for temporal comparisons.
-/// Returns the original string unchanged if it doesn't look like a date/datetime.
-fn iso_date_to_unix_millis_str(value: &str) -> String {
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(value) {
-        return dt.timestamp_millis().to_string();
-    }
-    if let Ok(date) = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d") {
-        if let Some(dt) = date.and_hms_opt(0, 0, 0) {
-            return dt.and_utc().timestamp_millis().to_string();
-        }
-    }
-    value.to_string()
-}
 
 fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
     let concept_iri = match args.get("concept_iri").and_then(|v| v.as_str()) {
@@ -845,8 +837,7 @@ fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
                 .and_then(|v| v.as_str())
                 .unwrap_or("=");
 
-            let normalized_value = iso_date_to_unix_millis_str(value);
-            detail_constraints.push((detail_iri.to_string(), normalized_value, operator.to_string()));
+            detail_constraints.push((detail_iri.to_string(), value.to_string(), operator.to_string()));
         }
 
         let constraint_refs: Vec<(&str, &str, &str)> = detail_constraints

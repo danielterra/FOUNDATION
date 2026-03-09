@@ -24,7 +24,7 @@ pub enum Object {
     Integer(i64),
     Number(f64),
     Boolean(bool),
-    DateTime(i64), // Unix epoch milliseconds
+    DateTime(String), // RFC3339 string (e.g. "2026-03-08T00:00:00+00:00")
 }
 
 impl Object {
@@ -56,7 +56,7 @@ impl Object {
             Object::Integer(i) => Some(i.to_string()),
             Object::Number(n) => Some(n.to_string()),
             Object::Boolean(b) => Some(b.to_string()),
-            Object::DateTime(dt) => Some(dt.to_string()),
+            Object::DateTime(dt) => Some(dt.clone()),
             _ => None,
         }
     }
@@ -185,8 +185,8 @@ mod tests {
         let bool_obj = Object::Boolean(true);
         assert_eq!(bool_obj.as_literal(), Some("true".to_string()));
 
-        let dt_obj = Object::DateTime(1000);
-        assert_eq!(dt_obj.as_literal(), Some("1000".to_string()));
+        let dt_obj = Object::DateTime("2026-03-08T00:00:00+00:00".to_string());
+        assert_eq!(dt_obj.as_literal(), Some("2026-03-08T00:00:00+00:00".to_string()));
 
         let iri_obj = Object::Iri("test".to_string());
         assert_eq!(iri_obj.as_literal(), None);
@@ -210,7 +210,7 @@ mod tests {
         let bool_obj = Object::Boolean(true);
         assert_eq!(bool_obj.datatype(), Some("xsd:boolean"));
 
-        let dt_obj = Object::DateTime(1000);
+        let dt_obj = Object::DateTime("2026-03-08T00:00:00+00:00".to_string());
         assert_eq!(dt_obj.datatype(), Some("xsd:dateTime"));
 
         let iri_obj = Object::Iri("test".to_string());
@@ -228,7 +228,7 @@ mod tests {
         let bool_obj = Object::Boolean(true);
         assert_eq!(bool_obj.xsd_type(), Some(XsdType::Boolean));
 
-        let dt_obj = Object::DateTime(1000);
+        let dt_obj = Object::DateTime("2026-03-08T00:00:00+00:00".to_string());
         assert_eq!(dt_obj.xsd_type(), Some(XsdType::DateTime));
 
         let lit = Object::Literal {
@@ -259,7 +259,7 @@ mod tests {
         assert!(Object::Integer(42).is_literal());
         assert!(Object::Number(3.14).is_literal());
         assert!(Object::Boolean(true).is_literal());
-        assert!(Object::DateTime(1000).is_literal());
+        assert!(Object::DateTime("2026-03-08T00:00:00+00:00".to_string()).is_literal());
         assert!(!Object::Iri("test".to_string()).is_literal());
     }
 }

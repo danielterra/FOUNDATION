@@ -293,7 +293,7 @@
           {:else}
             <div class="detail-value" class:calculated={detailGroup.isCalculated}>
               {#if val.datatype === 'xsd:dateTime'}
-                {@const date = new Date(Number(val.value))}
+                {@const date = new Date(val.value)}
                 <div class="timestamp-display">
                   <span class="value-text">
                     {date.toLocaleString('en-US', {

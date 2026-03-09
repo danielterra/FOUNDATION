@@ -15,6 +15,7 @@ dependencies = [
  "hostname",
  "image",
  "lazy_static",
+ "libc",
  "pdf-extract",
  "reqwest",
  "rusqlite",

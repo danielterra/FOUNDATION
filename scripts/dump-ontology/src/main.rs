@@ -195,7 +195,7 @@ fn write_sql(
     writeln!(w, "-- Triples")?;
     let mut stmt = conn.prepare("
         SELECT subject, predicate, object, object_value, object_datatype, object_language,
-               object_type, object_number, object_integer, object_datetime, object_boolean,
+               object_type, object_number, object_integer, object_boolean,
                origin_id
         FROM triples
         WHERE retracted = 0
@@ -216,15 +216,14 @@ fn write_sql(
         let object_type: String = row.get(6)?;
         let object_number: Option<f64> = row.get(7)?;
         let object_integer: Option<i64> = row.get(8)?;
-        let object_datetime: Option<i64> = row.get(9)?;
-        let object_boolean: Option<i64> = row.get(10)?;
-        let origin_id: i64 = row.get(11)?;
+        let object_boolean: Option<i64> = row.get(9)?;
+        let origin_id: i64 = row.get(10)?;
 
         let normalized_origin = *origin_map.get(&origin_id).unwrap_or(&origin_id);
 
         writeln!(
             w,
-            "INSERT OR IGNORE INTO triples (subject, predicate, object, object_value, object_datatype, object_language, object_type, object_number, object_integer, object_datetime, object_boolean, tx, origin_id, retracted, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 1, {}, 0, 0);",
+            "INSERT OR IGNORE INTO triples (subject, predicate, object, object_value, object_datatype, object_language, object_type, object_number, object_integer, object_boolean, tx, origin_id, retracted, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 1, {}, 0, 0);",
             sql_str(&subject),
             sql_str(&predicate),
             sql_opt_str(object.as_deref()),
@@ -234,7 +233,6 @@ fn write_sql(
             sql_str(&object_type),
             sql_opt_f64(object_number),
             sql_opt_i64(object_integer),
-            sql_opt_i64(object_datetime),
             sql_opt_i64(object_boolean),
             normalized_origin,
         )?;

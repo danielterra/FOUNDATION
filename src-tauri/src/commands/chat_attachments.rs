@@ -104,7 +104,7 @@ pub async fn chat__attach_file(
                 .map_err(|e| format!("Failed to set hasFileType: {}", e))?;
         }
 
-        ind.add_property(conn, "foundation:uploadDate", vec![Object::DateTime(timestamp)], "chat")
+        ind.add_property(conn, "foundation:uploadDate", vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "chat")
             .map_err(|e| format!("Failed to set uploadDate: {}", e))?;
 
         Ok(iri_clone)

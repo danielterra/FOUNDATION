@@ -5,8 +5,7 @@ use tauri::{AppHandle, Manager};
 use tokio::task::JoinHandle;
 
 use crate::commands::log_backend;
-use crate::eavto::query;
-use crate::owl::DbExecutor;
+use crate::owl::{DbExecutor, Individual};
 
 pub struct SchedulerState {
     pub handles: Mutex<Vec<JoinHandle<()>>>,
@@ -20,6 +19,65 @@ impl SchedulerState {
     }
 }
 
+const STATUS_PAUSED: &str = "foundation:Status_1773016842120";
+
+fn collect_timer_definitions(
+    conn: &rusqlite::Connection,
+) -> Result<Vec<(String, String)>, String> {
+    let timer_iris =
+        crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:bpmn_TimerEventDefinition")
+            .map_err(|e| e.to_string())?;
+
+    let mut timers: Vec<(String, String)> = Vec::new();
+    for timer_iri in &timer_iris {
+        let ind = match Individual::get(conn, timer_iri.as_str()).map_err(|e| e.to_string())? {
+            Some(i) => i,
+            None => continue,
+        };
+
+        let cron_expr = match ind.properties.iter()
+            .find(|(p, _)| p == "foundation:timeCycle")
+            .and_then(|(_, v)| v.as_literal())
+        {
+            Some(e) => e.to_string(),
+            None => continue,
+        };
+
+        let is_paused = ind.properties.iter()
+            .find(|(p, _)| p == "foundation:hasStatus")
+            .and_then(|(_, v)| v.as_iri())
+            .map(|iri| iri == STATUS_PAUSED)
+            .unwrap_or(false);
+        if is_paused {
+            continue;
+        }
+
+        let start_event_iri = match ind.properties.iter()
+            .find(|(p, _)| p == "foundation:timerEventOf")
+            .and_then(|(_, v)| v.as_iri())
+        {
+            Some(iri) => iri.to_string(),
+            None => continue,
+        };
+
+        let start_event = match Individual::get(conn, start_event_iri.as_str()).map_err(|e| e.to_string())? {
+            Some(i) => i,
+            None => continue,
+        };
+
+        let process_iri = match start_event.properties.iter()
+            .find(|(p, _)| p == "foundation:partOfProcess")
+            .and_then(|(_, v)| v.as_iri())
+        {
+            Some(iri) => iri.to_string(),
+            None => continue,
+        };
+
+        timers.push((process_iri, cron_expr));
+    }
+    Ok(timers)
+}
+
 /// Collects all active TimerEventDefinitions with a timeCycle, spawns one tokio task per schedule.
 pub async fn start(app: AppHandle) {
     let executor = match app.try_state::<DbExecutor>() {
@@ -27,27 +85,7 @@ pub async fn start(app: AppHandle) {
         None => return,
     };
 
-    let timer_defs = executor
-        .read(|conn| {
-            let result = query::get_by_predicate_object(conn, "rdf:type", "foundation:bpmn_TimerEventDefinition")
-                .map_err(|e| e.to_string())?;
-
-            let mut timers: Vec<(String, String)> = Vec::new();
-            for triple in &result.triples {
-                let subject = &triple.subject;
-                let cycle_result = query::get_by_entity_predicate(conn, subject, "foundation:timeCycle")
-                    .map_err(|e| e.to_string())?;
-                if let Some(cron_expr) = cycle_result.triples.first().and_then(|t| t.object.as_literal()) {
-                    let process_result = query::get_by_entity_predicate(conn, subject, "foundation:timerEventOf")
-                        .map_err(|e| e.to_string())?;
-                    if let Some(process_iri) = process_result.triples.first().and_then(|t| t.object.as_iri()) {
-                        timers.push((process_iri.to_string(), cron_expr.to_string()));
-                    }
-                }
-            }
-            Ok(timers)
-        })
-        .await;
+    let timer_defs = executor.read(collect_timer_definitions).await;
 
     let timer_defs = match timer_defs {
         Ok(v) => v,
@@ -87,6 +125,217 @@ pub async fn start(app: AppHandle) {
             }
         });
         handles.push(handle);
+    }
+}
+
+/// Registers event listeners that reload the scheduler when TimerEventDefinitions are created,
+/// modified, or deleted.
+pub fn listen_for_new_timers(app: AppHandle) {
+    use tauri::Listener;
+
+    let app_for_created = app.clone();
+    app.listen("entity-created", move |event| {
+        if let Some(entity_id) = parse_entity_id(event.payload()) {
+            let app2 = app_for_created.clone();
+            tauri::async_runtime::spawn(async move {
+                if is_timer_event_definition(&app2, &entity_id, false).await {
+                    reload(app2).await;
+                }
+            });
+        }
+    });
+
+    let app_for_updated = app.clone();
+    app.listen("entity-updated", move |event| {
+        if let Some(entity_id) = parse_entity_id(event.payload()) {
+            let app2 = app_for_updated.clone();
+            tauri::async_runtime::spawn(async move {
+                if is_timer_event_definition(&app2, &entity_id, true).await {
+                    reload(app2).await;
+                }
+            });
+        }
+    });
+}
+
+fn parse_entity_id(payload: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|v| v["entityId"].as_str().map(|s| s.to_string()))
+}
+
+async fn is_timer_event_definition(app: &AppHandle, entity_id: &str, include_retracted: bool) -> bool {
+    let executor = match app.try_state::<DbExecutor>() {
+        Some(e) => e,
+        None => return false,
+    };
+    let entity_id = entity_id.to_string();
+    executor
+        .read(move |conn| {
+            let has_timer_type = |ind: &Individual| {
+                ind.properties.iter().any(|(p, v)| {
+                    p == "rdf:type"
+                        && v.as_iri()
+                            .map(|iri| iri == "foundation:bpmn_TimerEventDefinition")
+                            .unwrap_or(false)
+                })
+            };
+
+            if let Ok(Some(ind)) = Individual::get(conn, &entity_id) {
+                if has_timer_type(&ind) {
+                    return Ok(true);
+                }
+            }
+
+            if include_retracted {
+                if let Ok(Some(ind)) = Individual::get_from_retracted(conn, &entity_id) {
+                    return Ok(has_timer_type(&ind));
+                }
+            }
+
+            Ok(false)
+        })
+        .await
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod scheduler_tests {
+    use super::collect_timer_definitions;
+    use crate::eavto::{store, Triple, Object};
+    use crate::eavto::test_helpers::setup_test_db;
+
+    fn insert_triples(conn: &mut rusqlite::Connection, triples: &[Triple]) {
+        store::assert_triples(conn, triples, "test").expect("Failed to insert triples");
+    }
+
+    #[test]
+    fn test_collect_timer_definitions_empty_db_returns_empty() {
+        let conn = setup_test_db();
+        let timers = collect_timer_definitions(&conn).unwrap();
+        assert!(timers.is_empty());
+    }
+
+    #[test]
+    fn test_collect_timer_definitions_returns_process_iri_not_start_event() {
+        let mut conn = setup_test_db();
+        insert_triples(&mut conn, &[
+            Triple::new("foundation:Timer1", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:Timer1", "foundation:timeCycle", Object::Literal {
+                value: "0 * * * * *".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:Timer1", "foundation:timerEventOf", Object::Iri("foundation:Start1".to_string())),
+            Triple::new("foundation:Start1", "foundation:partOfProcess", Object::Iri("foundation:Process1".to_string())),
+        ]);
+
+        let timers = collect_timer_definitions(&conn).unwrap();
+        assert_eq!(timers.len(), 1);
+        let (process_iri, cron_expr) = &timers[0];
+        assert_eq!(process_iri, "foundation:Process1");
+        assert_eq!(cron_expr, "0 * * * * *");
+    }
+
+    #[test]
+    fn test_collect_timer_definitions_skips_timer_without_time_cycle() {
+        let mut conn = setup_test_db();
+        insert_triples(&mut conn, &[
+            Triple::new("foundation:Timer2", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:Timer2", "foundation:timerEventOf", Object::Iri("foundation:Start2".to_string())),
+            Triple::new("foundation:Start2", "foundation:partOfProcess", Object::Iri("foundation:Process2".to_string())),
+        ]);
+
+        let timers = collect_timer_definitions(&conn).unwrap();
+        assert!(timers.is_empty());
+    }
+
+    #[test]
+    fn test_collect_timer_definitions_skips_timer_without_process_link() {
+        let mut conn = setup_test_db();
+        insert_triples(&mut conn, &[
+            Triple::new("foundation:Timer3", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:Timer3", "foundation:timeCycle", Object::Literal {
+                value: "0 * * * * *".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:Timer3", "foundation:timerEventOf", Object::Iri("foundation:Start3".to_string())),
+            // No partOfProcess on Start3
+        ]);
+
+        let timers = collect_timer_definitions(&conn).unwrap();
+        assert!(timers.is_empty());
+    }
+
+    #[test]
+    fn test_collect_timer_definitions_skips_paused_timer() {
+        let mut conn = setup_test_db();
+        insert_triples(&mut conn, &[
+            Triple::new("foundation:TimerP", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:TimerP", "foundation:timeCycle", Object::Literal {
+                value: "0 * * * * *".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:TimerP", "foundation:hasStatus", Object::Iri(super::STATUS_PAUSED.to_string())),
+            Triple::new("foundation:TimerP", "foundation:timerEventOf", Object::Iri("foundation:StartP".to_string())),
+            Triple::new("foundation:StartP", "foundation:partOfProcess", Object::Iri("foundation:ProcessP".to_string())),
+        ]);
+
+        let timers = collect_timer_definitions(&conn).unwrap();
+        assert!(timers.is_empty());
+    }
+
+    #[test]
+    fn test_collect_timer_definitions_includes_active_timer() {
+        let mut conn = setup_test_db();
+        insert_triples(&mut conn, &[
+            Triple::new("foundation:TimerAct", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:TimerAct", "foundation:timeCycle", Object::Literal {
+                value: "0 * * * * *".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:TimerAct", "foundation:hasStatus", Object::Iri("foundation:Status_1772755611667".to_string())),
+            Triple::new("foundation:TimerAct", "foundation:timerEventOf", Object::Iri("foundation:StartAct".to_string())),
+            Triple::new("foundation:StartAct", "foundation:partOfProcess", Object::Iri("foundation:ProcessAct".to_string())),
+        ]);
+
+        let timers = collect_timer_definitions(&conn).unwrap();
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].0, "foundation:ProcessAct");
+    }
+
+    #[test]
+    fn test_collect_timer_definitions_multiple_timers() {
+        let mut conn = setup_test_db();
+        insert_triples(&mut conn, &[
+            Triple::new("foundation:TimerA", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:TimerA", "foundation:timeCycle", Object::Literal {
+                value: "0 * * * * *".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:TimerA", "foundation:timerEventOf", Object::Iri("foundation:StartA".to_string())),
+            Triple::new("foundation:StartA", "foundation:partOfProcess", Object::Iri("foundation:ProcessA".to_string())),
+
+            Triple::new("foundation:TimerB", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:TimerB", "foundation:timeCycle", Object::Literal {
+                value: "0 0 * * * *".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:TimerB", "foundation:timerEventOf", Object::Iri("foundation:StartB".to_string())),
+            Triple::new("foundation:StartB", "foundation:partOfProcess", Object::Iri("foundation:ProcessB".to_string())),
+        ]);
+
+        let timers = collect_timer_definitions(&conn).unwrap();
+        assert_eq!(timers.len(), 2);
+
+        let process_iris: Vec<&str> = timers.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(process_iris.contains(&"foundation:ProcessA"));
+        assert!(process_iris.contains(&"foundation:ProcessB"));
     }
 }
 

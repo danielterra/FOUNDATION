@@ -75,7 +75,7 @@ pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor) -> Opti
 
 fn parse_timestamp(obj: &Object) -> Option<i64> {
     match obj {
-        Object::DateTime(ts) => Some(*ts),
+        Object::DateTime(rfc3339) => chrono::DateTime::parse_from_rfc3339(rfc3339).ok().map(|dt| dt.timestamp_millis()),
         _ => None,
     }
 }
@@ -715,7 +715,7 @@ pub async fn chat__create_conversation(
             .map_err(|e| format!("Failed to create conversation: {}", e))?;
 
         conv.add_property(conn, "foundation:createdAt", vec![
-            Object::DateTime(timestamp),
+            Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339()),
         ], "ai").map_err(|e| format!("Failed to set createdAt: {}", e))?;
 
         conv.add_property(conn, "foundation:hasStatus", vec![

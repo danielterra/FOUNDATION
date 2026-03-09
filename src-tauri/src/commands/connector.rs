@@ -84,7 +84,7 @@ pub async fn connector__save_credential(
         }
 
         ind.add_property(conn, "foundation:credentialCreatedAt",
-            vec![Object::DateTime(timestamp)], "connector")
+            vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "connector")
             .map_err(|e| format!("Failed to set timestamp: {}", e))?;
 
         // Link credential to connector

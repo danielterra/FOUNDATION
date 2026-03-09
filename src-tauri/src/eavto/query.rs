@@ -18,7 +18,7 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
 
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                object_type, object_number, object_integer, object_datetime, object_boolean,
+                object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE subject = ? AND retracted = 0
@@ -67,7 +67,7 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
 pub fn get_retracted_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                object_type, object_number, object_integer, object_datetime, object_boolean,
+                object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE subject = ? AND retracted = 1
@@ -85,7 +85,7 @@ pub fn get_retracted_by_entity(conn: &Connection, entity: &str) -> Result<QueryR
 pub fn get_by_object_iri(conn: &Connection, object_iri: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                object_type, object_number, object_integer, object_datetime, object_boolean,
+                object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE object = ? AND object_type = 'iri' AND retracted = 0"
@@ -102,7 +102,7 @@ pub fn get_by_object_iri(conn: &Connection, object_iri: &str) -> Result<QueryRes
 pub fn get_by_predicate(conn: &Connection, predicate: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                object_type, object_number, object_integer, object_datetime, object_boolean,
+                object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE predicate = ? AND retracted = 0
@@ -157,7 +157,7 @@ pub fn get_by_entity_predicate_internal(
         // Functional property: return only the single most recent value
         let mut stmt = conn.prepare(
             "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                    object_type, object_number, object_integer, object_datetime, object_boolean,
+                    object_type, object_number, object_integer, object_boolean,
                     tx, origin_id, retracted, created_at
              FROM triples
              WHERE subject = ? AND predicate = ? AND retracted = 0
@@ -174,7 +174,7 @@ pub fn get_by_entity_predicate_internal(
         // Non-functional property: return most recent value for each distinct object
         let mut stmt = conn.prepare(
             "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                    object_type, object_number, object_integer, object_datetime, object_boolean,
+                    object_type, object_number, object_integer, object_boolean,
                     tx, origin_id, retracted, created_at
              FROM triples
              WHERE subject = ? AND predicate = ? AND retracted = 0
@@ -234,7 +234,7 @@ pub fn get_by_predicate_object(
 
     let query = format!(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                object_type, object_number, object_integer, object_datetime, object_boolean,
+                object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
          {}
@@ -350,7 +350,7 @@ pub fn get_predicates_for_subjects(
     let predicate_phs = predicates.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                object_type, object_number, object_integer, object_datetime, object_boolean,
+                object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE subject IN ({}) AND predicate IN ({}) AND retracted = 0
@@ -595,11 +595,23 @@ pub fn find_by_class_iris_and_properties_with_options(
 
     for (i, (_, value, operator)) in properties.iter().enumerate() {
         let n = i + 1;
-        if let Ok(millis) = parse_datetime_to_millis(value) {
+        if let Some(date_filter) = normalize_date_filter(value) {
             let sql_op = validate_operator(operator)
                 .map_err(|_| format!("Invalid operator '{operator}': must be one of =, >=, <=, >, <"))?;
-            // millis and sql_op are validated — safe to interpolate
-            where_clause.push_str(&format!("\n           AND t{n}.object_datetime {sql_op} {millis}"));
+            match date_filter {
+                DateFilter::Date(date_str) => {
+                    where_clause.push_str(&format!(
+                        "\n           AND substr(t{n}.object_value, 1, 10) {sql_op} ?"
+                    ));
+                    params.push(SqlValue::Text(date_str));
+                }
+                DateFilter::DateTime(epoch) => {
+                    where_clause.push_str(&format!(
+                        "\n           AND unixepoch(t{n}.object_value) {sql_op} ?"
+                    ));
+                    params.push(SqlValue::Integer(epoch));
+                }
+            }
         } else if *value == "true" || *value == "false" {
             let bool_val: i64 = if *value == "true" { 1 } else { 0 };
             where_clause.push_str(&format!(
@@ -652,7 +664,7 @@ pub fn find_message_iris_by_conversation(
 ) -> Result<Vec<String>> {
     let sql = "
         SELECT subject FROM (
-            SELECT t_type.subject, MAX(t_sent.object_datetime) AS ts
+            SELECT t_type.subject, MAX(t_sent.object_value) AS ts
             FROM triples t_type
             INNER JOIN triples t_conv
                 ON t_type.subject = t_conv.subject
@@ -679,14 +691,29 @@ pub fn find_message_iris_by_conversation(
     Ok(iris)
 }
 
-fn parse_datetime_to_millis(value: &str) -> std::result::Result<i64, ()> {
+enum DateFilter {
+    Date(String),
+    DateTime(i64),
+}
+
+fn normalize_date_filter(value: &str) -> Option<DateFilter> {
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(value) {
-        return Ok(dt.timestamp_millis());
+        return Some(DateFilter::DateTime(dt.timestamp()));
     }
-    if let Ok(ms) = value.parse::<i64>() {
-        return Ok(ms);
+    // Treat naive datetimes (no timezone) as the system's local timezone,
+    // matching user intent when no timezone is provided.
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S") {
+        use chrono::TimeZone;
+        let epoch = chrono::Local.from_local_datetime(&ndt)
+            .single()
+            .map(|dt| dt.timestamp())
+            .unwrap_or_else(|| ndt.and_utc().timestamp());
+        return Some(DateFilter::DateTime(epoch));
     }
-    Err(())
+    if chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok() {
+        return Some(DateFilter::Date(value.to_string()));
+    }
+    None
 }
 
 fn validate_operator(op: &str) -> std::result::Result<&str, ()> {
@@ -721,7 +748,7 @@ pub fn find_entities_by_attribute_value(
 pub fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                object_type, object_number, object_integer, object_datetime, object_boolean,
+                object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE subject = ? AND tx <= ? AND retracted = 0
@@ -747,7 +774,7 @@ pub fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResu
 pub fn get_by_origin(conn: &Connection, origin_id: i64) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                object_type, object_number, object_integer, object_datetime, object_boolean,
+                object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE origin_id = ? AND retracted = 0
@@ -766,7 +793,7 @@ pub fn get_by_origin(conn: &Connection, origin_id: i64) -> Result<QueryResult> {
 pub fn get_history(conn: &Connection, entity: &str) -> Result<Vec<(i64, Vec<Triple>)>> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                object_type, object_number, object_integer, object_datetime, object_boolean,
+                object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE subject = ?
@@ -839,7 +866,7 @@ pub fn batch_load_triples_for_subjects(
     let placeholders = subjects.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                object_type, object_number, object_integer, object_datetime, object_boolean,
+                object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE subject IN ({}) AND retracted = 0
@@ -870,7 +897,7 @@ pub fn batch_load_retracted_triples_for_subjects(
     let placeholders = subjects.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
-                object_type, object_number, object_integer, object_datetime, object_boolean,
+                object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE subject IN ({}) AND retracted = 1
@@ -900,12 +927,11 @@ fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
     let object_type: String = row.get(6)?;
     let object_number: Option<f64> = row.get(7)?;
     let object_integer: Option<i64> = row.get(8)?;
-    let object_datetime: Option<i64> = row.get(9)?;
-    let object_boolean: Option<i64> = row.get(10)?;
-    let tx: i64 = row.get(11)?;
-    let origin_id: i64 = row.get(12)?;
-    let retracted: i64 = row.get(13)?;
-    let created_at: i64 = row.get(14)?;
+    let object_boolean: Option<i64> = row.get(9)?;
+    let tx: i64 = row.get(10)?;
+    let origin_id: i64 = row.get(11)?;
+    let retracted: i64 = row.get(12)?;
+    let created_at: i64 = row.get(13)?;
 
     let object = match object_type.as_str() {
         "iri" => Object::Iri(object_opt.ok_or(rusqlite::Error::InvalidQuery)?),
@@ -916,17 +942,13 @@ fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
                 Object::Integer(int)
             } else if let Some(num) = object_number {
                 Object::Number(num)
-            } else if let Some(dt) = object_datetime {
-                // xsd:date preserves the original YYYY-MM-DD string so the frontend
-                // can display it without a time component.
-                if object_datatype.as_deref() == Some("xsd:date") {
-                    Object::Literal {
-                        value: object_value.ok_or(rusqlite::Error::InvalidQuery)?,
-                        datatype: object_datatype,
-                        language: object_language,
-                    }
-                } else {
-                    Object::DateTime(dt)
+            } else if object_datatype.as_deref() == Some("xsd:dateTime") {
+                Object::DateTime(object_value.ok_or(rusqlite::Error::InvalidQuery)?)
+            } else if object_datatype.as_deref() == Some("xsd:date") {
+                Object::Literal {
+                    value: object_value.ok_or(rusqlite::Error::InvalidQuery)?,
+                    datatype: object_datatype,
+                    language: object_language,
                 }
             } else if let Some(bool_val) = object_boolean {
                 Object::Boolean(bool_val != 0)

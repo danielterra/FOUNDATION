@@ -54,6 +54,8 @@ pub async fn initialize_app(
     recover_pending_jobs(&db_path, &worker);
     app.manage(worker);
 
+    tauri::async_runtime::spawn(crate::process_automation::scheduler::start(app.clone()));
+
     let _ = app.emit("import-complete", ());
 
     Ok(())

@@ -9,7 +9,7 @@ use super::MAX_OUTPUT_TOKENS;
 
 fn parse_timestamp(obj: &Object) -> Option<i64> {
     match obj {
-        Object::DateTime(ts) => Some(*ts),
+        Object::DateTime(rfc3339) => chrono::DateTime::parse_from_rfc3339(rfc3339).ok().map(|dt| dt.timestamp_millis()),
         _ => None,
     }
 }

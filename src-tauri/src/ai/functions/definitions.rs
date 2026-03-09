@@ -346,7 +346,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "properties".to_string(),
                     param_type: "array".to_string(),
-                    description: "Filter by detail values. Requires concept_iri. Each item: {detail: 'IRI', value: 'VALUE', operator?: '='|'>='|'<='|'>'|'<'}. operator defaults to '='. For xsd:date use ISO format 'YYYY-MM-DD' (e.g. '2026-03-08'). For xsd:dateTime use ISO 8601 (e.g. '2026-03-08T00:00:00Z'). Date values are converted to Unix ms internally.".to_string(),
+                    description: "Filter by detail values. Requires concept_iri. Each item: {detail: 'IRI', value: 'VALUE', operator?: '='|'>='|'<='|'>'|'<'}. operator defaults to '='. For xsd:date use ISO format 'YYYY-MM-DD' (e.g. '2026-03-08'). For xsd:dateTime use RFC3339 (e.g. '2026-03-08T00:00:00Z' or '2026-03-08T00:00:00+00:00') or without timezone (e.g. '2026-03-08T00:00:00', assumed local timezone).".to_string(),
                     required: false,
                     schema: None,
                 },

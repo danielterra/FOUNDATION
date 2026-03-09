@@ -4,6 +4,7 @@ version = "0.9.1"
 description = "A Tauri App"
 authors = ["daniel_terra@icloud.com"]
 edition = "2021"
+default-run = "FOUNDATION"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -39,6 +40,7 @@ tiktoken-rs = "0.6"  # For accurate token counting (Claude/GPT compatible)
 base64 = "0.22.1"
 pdf-extract = "0.10.0"
 image = "0.25.9"
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.8"  # Temporary files for tests

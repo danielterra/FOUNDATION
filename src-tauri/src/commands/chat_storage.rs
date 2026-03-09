@@ -128,7 +128,7 @@ pub(super) async fn create_message(
             language: None,
         }], "ai").map_err(|e| format!("Failed to set content: {}", e))?;
 
-        msg.add_property(conn, "foundation:sentAt", vec![Object::DateTime(timestamp)], "ai")
+        msg.add_property(conn, "foundation:sentAt", vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "ai")
             .map_err(|e| format!("add_property failed: {}", e))?;
 
         msg.add_property(
@@ -391,7 +391,7 @@ pub(super) fn load_message(conn: &Connection, iri: &str) -> Result<AIConversatio
     let timestamp = ind.properties.iter()
         .find(|(k, _)| k == "foundation:sentAt")
         .and_then(|(_, v)| match v {
-            Object::DateTime(ts) => Some(*ts),
+            Object::DateTime(rfc3339) => chrono::DateTime::parse_from_rfc3339(rfc3339).ok().map(|dt| dt.timestamp_millis()),
             _ => None,
         })
         .ok_or("Missing timestamp")?;
@@ -474,7 +474,7 @@ pub async fn log_api_call(
             .map_err(|e| format!("Failed to set cacheReadTokens: {}", e))?;
 
         call.add_property(conn, "foundation:calledAt",
-            vec![Object::DateTime(timestamp)], "ai")
+            vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "ai")
             .map_err(|e| format!("Failed to set calledAt: {}", e))?;
 
         if let Some(cost) = estimate_call_cost(
