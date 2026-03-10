@@ -5,6 +5,19 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-03-10
+
+### Added
+
+- **Required field inheritance**: Concepts now automatically inherit required fields from parent concepts; `get_concepts` and `learn_things` validate against the full inherited + own set
+- **Superclass enforcement**: Creating a concept without a superclass is rejected; updating a concept to remove all superclasses is rejected; `owl:Thing` restrictions are always inherited as the implicit root
+- **Concept deletion guard**: Deleting a concept that has dependent subclasses is now rejected — subclass references must be removed first
+
+### Changed
+
+- **Property type inference**: AI tools now infer property types from the ontology when not explicitly specified
+- **Cancel AI support**: AI operations can now be cancelled mid-execution
+
 ## [0.10.0] - 2026-03-09
 
 ### Added
