@@ -62,6 +62,7 @@ pub async fn continue_conversation_after_recovery(
     app: tauri::AppHandle,
     executor: DbExecutor,
     conversation_id: String,
+    cancellation: &super::cancellation::AiCancellationState,
 ) -> Result<(), String> {
     const MAX_TOOL_LOOPS: usize = 50;
 
@@ -72,6 +73,10 @@ pub async fn continue_conversation_after_recovery(
         loop_count += 1;
         if loop_count > MAX_TOOL_LOOPS {
             return Err("Too many tool execution loops during recovery".to_string());
+        }
+
+        if cancellation.is_cancelled() {
+            break;
         }
 
         let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
@@ -169,6 +174,10 @@ pub async fn continue_conversation_after_recovery(
                 &format!("[RECOVERY] Created tool result message: {}", tool_result_msg_iri),
             );
             app.emit("chat-message-added", ()).ok();
+
+            if cancellation.is_cancelled() {
+                break;
+            }
 
             continue;
         }

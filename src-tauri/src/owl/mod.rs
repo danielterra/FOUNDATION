@@ -253,10 +253,8 @@ pub fn search_instances_rich(
             .map(|raw| {
                 raw.split('\x1E')
                     .filter_map(|entry| {
-                        let mut parts = entry.splitn(2, '\x1F');
-                        let pred = parts.next()?;
-                        let val = parts.next()?;
-                        Some(serde_json::json!({ "detail_iri": pred, "value": val }))
+                        let pred = entry.splitn(2, '\x1F').next()?;
+                        Some(serde_json::json!({ "detail_iri": pred }))
                     })
                     .collect()
             })
@@ -520,12 +518,9 @@ fn score_entity_against_tokens(
         } else {
             let comment_match = triples.iter()
                 .find(|t| t.predicate == "rdfs:comment" && t.object.as_literal().map(|v| v.to_lowercase().contains(&token_lower)).unwrap_or(false));
-            if let Some(ct) = comment_match {
+            if comment_match.is_some() {
                 token_score = 20;
-                matched_prop = Some(serde_json::json!({
-                    "detail_iri": "rdfs:comment",
-                    "value": ct.object.as_literal().unwrap_or_default(),
-                }));
+                matched_prop = Some(serde_json::json!({ "detail_iri": "rdfs:comment" }));
             } else {
                 let prop_match = triples.iter().find(|t| {
                     t.predicate != "rdfs:label"
@@ -536,10 +531,7 @@ fn score_entity_against_tokens(
                 });
                 if let Some(pm) = prop_match {
                     token_score = 10;
-                    matched_prop = Some(serde_json::json!({
-                        "detail_iri": pm.predicate,
-                        "value": pm.object.as_literal().unwrap_or_default(),
-                    }));
+                    matched_prop = Some(serde_json::json!({ "detail_iri": pm.predicate }));
                 }
             }
         }
@@ -663,10 +655,8 @@ fn enrich_from_sql_row(
         .map(|raw| {
             raw.split('\x1E')
                 .filter_map(|entry| {
-                    let mut parts = entry.splitn(2, '\x1F');
-                    let pred = parts.next()?;
-                    let val = parts.next()?;
-                    Some(serde_json::json!({ "detail_iri": pred, "value": val }))
+                    let pred = entry.splitn(2, '\x1F').next()?;
+                    Some(serde_json::json!({ "detail_iri": pred }))
                 })
                 .collect()
         })

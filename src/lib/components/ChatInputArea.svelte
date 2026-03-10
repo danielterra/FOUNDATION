@@ -12,6 +12,7 @@
 		fileInputElement = $bindable(null),
 		editingMessageIri = null,
 		onCancelEdit = null,
+		onCancelAI = null,
 	} = $props();
 
 	function openFilePicker() {
@@ -40,6 +41,11 @@
 			</div>
 			<span class="ai-status-text">{aiStatus.status} ({elapsedSeconds}s)</span>
 		</div>
+		{#if onCancelAI}
+			<button class="cancel-ai-btn" onclick={onCancelAI} title="Stop (ESC)">
+				<span class="material-symbols-outlined">stop_circle</span>
+			</button>
+		{/if}
 	</div>
 {/if}
 
@@ -89,7 +95,7 @@
 	.ai-status-indicator {
 		display: flex;
 		align-items: center;
-		justify-content: center;
+		justify-content: space-between;
 		padding: 12px 16px;
 		margin-bottom: 12px;
 		background: color-mix(in srgb, var(--color-transition) 10%, transparent);
@@ -102,6 +108,27 @@
 		display: flex;
 		align-items: center;
 		gap: 12px;
+	}
+
+	.cancel-ai-btn {
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--color-transition);
+		padding: 0;
+		display: flex;
+		align-items: center;
+		opacity: 0.6;
+		transition: opacity 0.15s;
+		flex-shrink: 0;
+	}
+
+	.cancel-ai-btn:hover {
+		opacity: 1;
+	}
+
+	.cancel-ai-btn .material-symbols-outlined {
+		font-size: 20px;
 	}
 
 	.ai-status-text {

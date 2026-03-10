@@ -1,6 +1,6 @@
 use serde_json::Value;
 use crate::eavto::Connection;
-use crate::owl::{Individual, Object};
+use crate::owl::{Individual, Object, Property, PropertyType};
 use super::ToolResult;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -15,6 +15,25 @@ fn next_iri_id() -> u64 {
             return next;
         }
     }
+}
+
+fn build_objects(conn: &Connection, detail_iri: &str, raw_values: &[Value]) -> Result<Vec<Object>, crate::owl::OwlError> {
+    let prop = Property::get(conn, detail_iri)?;
+    let is_iri = prop.as_ref().map(|p| p.property_type == PropertyType::ObjectProperty).unwrap_or(false);
+    let datatype = prop.as_ref()
+        .and_then(|p| p.ranges.first().cloned())
+        .unwrap_or_else(|| "xsd:string".to_string());
+
+    Ok(raw_values.iter()
+        .filter_map(|v| v.as_str())
+        .map(|value| {
+            if is_iri {
+                Object::Iri(value.to_string())
+            } else {
+                Object::Literal { value: value.to_string(), datatype: Some(datatype.clone()), language: None }
+            }
+        })
+        .collect())
 }
 
 pub fn remember(conn: &Connection, args: &Value) -> ToolResult {
@@ -341,33 +360,13 @@ fn create_thing_one(
                     ));
                 }
 
-                let value_type = prop_entry.get("value_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("literal");
-                let datatype = prop_entry.get("datatype")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("xsd:string");
-
                 if detail_iri == "foundation:hasStatus" {
                     if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
                         crate::owl::validate_allowed_status(conn, concept_iri, status_iri)?;
                     }
                 }
 
-                let objects: Vec<Object> = raw_values.iter()
-                    .filter_map(|v| v.as_str())
-                    .map(|value| {
-                        if value_type == "iri" {
-                            Object::Iri(value.to_string())
-                        } else {
-                            Object::Literal {
-                                value: value.to_string(),
-                                datatype: Some(datatype.to_string()),
-                                language: None,
-                            }
-                        }
-                    })
-                    .collect();
+                let objects = build_objects(conn, detail_iri, raw_values)?;
 
                 if objects.is_empty() {
                     return Err(crate::owl::OwlError::ValidationError(
@@ -520,13 +519,6 @@ fn update_thing_one(
                     ));
                 }
 
-                let is_iri = prop_entry.get("value_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("literal") == "iri";
-                let datatype = prop_entry.get("datatype")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("xsd:string");
-
                 if detail_iri == "foundation:hasStatus" {
                     if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
                         if let Some(ref concept) = concept_iri {
@@ -535,20 +527,7 @@ fn update_thing_one(
                     }
                 }
 
-                let objects: Vec<Object> = raw_values.iter()
-                    .filter_map(|v| v.as_str())
-                    .map(|value| {
-                        if is_iri {
-                            Object::Iri(value.to_string())
-                        } else {
-                            Object::Literal {
-                                value: value.to_string(),
-                                datatype: Some(datatype.to_string()),
-                                language: None,
-                            }
-                        }
-                    })
-                    .collect();
+                let objects = build_objects(conn, detail_iri, raw_values)?;
 
                 if objects.is_empty() {
                     return Err(crate::owl::OwlError::ValidationError(

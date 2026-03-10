@@ -50,40 +50,39 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     param_type: "array".to_string(),
                     description: "Parent concept IRIs. REPLACES all existing parents. Use a single-element array for single inheritance.".to_string(),
                     required: false,
-                    schema: None,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
                 Parameter {
                     name: "allowed_statuses".to_string(),
                     param_type: "array".to_string(),
                     description: "Status IRIs allowed for this concept's things. REPLACES existing values.".to_string(),
                     required: false,
-                    schema: None,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
                 Parameter {
                     name: "required_fields".to_string(),
                     param_type: "array".to_string(),
                     description: "Property IRIs required when creating a thing of this concept. REPLACES existing.".to_string(),
                     required: false,
-                    schema: None,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
                 Parameter {
                     name: "upsert_details".to_string(),
                     param_type: "array".to_string(),
                     description: concat!(
-                        "Array of property IRIs to associate with this concept (adds concept as a domain).",
-                        " Each item is a property IRI string (e.g. 'foundation:hasAge').",
+                        "Property IRIs to associate with this concept (adds concept as a domain).",
                         " The property must already exist — define it first with learn_properties.",
                         " Does NOT remove unlisted details — use remove_details.",
                     ).to_string(),
                     required: false,
-                    schema: None,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
                 Parameter {
                     name: "remove_details".to_string(),
                     param_type: "array".to_string(),
                     description: "Property IRIs to permanently remove (also retracts all existing values on every thing).".to_string(),
                     required: false,
-                    schema: None,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
             ],
         },
@@ -132,19 +131,28 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     param_type: "array".to_string(),
                     description: concat!(
                         "Upsert property values on this thing.",
-                        " Each item: {detail_iri, values: [...], value_type?: 'iri'|'literal', datatype?: 'xsd:string'|...}.",
                         " foundation:hasStatus is validated against the concept's allowedStatus list.",
                         " Does NOT remove unlisted properties — use remove_properties.",
                     ).to_string(),
                     required: false,
-                    schema: None,
+                    schema: Some(serde_json::json!({
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "detail_iri": { "type": "string", "description": "Property IRI." },
+                                "values": { "type": "array", "items": { "type": "string" }, "description": "Values to set." }
+                            },
+                            "required": ["detail_iri", "values"]
+                        }
+                    })),
                 },
                 Parameter {
                     name: "remove_properties".to_string(),
                     param_type: "array".to_string(),
                     description: "Property IRIs to clear all values of. Use forget_things to remove a single value.".to_string(),
                     required: false,
-                    schema: None,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
             ],
         },

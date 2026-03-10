@@ -484,7 +484,6 @@ fn test_search_instances_rich_matched_properties_content() {
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].matched_properties.len(), 1);
     assert_eq!(result[0].matched_properties[0]["detail_iri"], "foundation:reference");
-    assert_eq!(result[0].matched_properties[0]["value"], "REF-2024-ACME");
 }
 
 // ── property helpers ─────────────────────────────────────────────────────

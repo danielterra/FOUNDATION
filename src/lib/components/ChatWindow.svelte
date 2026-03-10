@@ -448,7 +448,18 @@
 		}
 	}
 
+	function cancelAI() {
+		if (!isLoading) return;
+		stopAIStatus();
+		invoke('chat__cancel').catch(err => console.error('Failed to cancel AI:', err));
+	}
+
 	function handleKeydown(e) {
+		if (e.key === 'Escape' && isLoading) {
+			e.preventDefault();
+			cancelAI();
+			return;
+		}
 		if (e.key === 'Enter' && !e.shiftKey) {
 			e.preventDefault();
 			sendMessage();
@@ -702,6 +713,7 @@
 					bind:fileInputElement
 					{editingMessageIri}
 					onCancelEdit={cancelEdit}
+					onCancelAI={cancelAI}
 				/>
 				{/if}
 		</div>

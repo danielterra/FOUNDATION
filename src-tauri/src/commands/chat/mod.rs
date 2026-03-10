@@ -2,8 +2,10 @@ mod tool_execution;
 mod message_utils;
 mod settings;
 mod recovery;
+mod cancellation;
 
 pub use tool_execution::execute_tools_from_message;
+pub use cancellation::AiCancellationState;
 
 use crate::owl::{Individual, Object, DbExecutor};
 use tauri::{Emitter, State};
@@ -18,6 +20,7 @@ use super::chat_storage::{create_message, load_message, ImageSource, DocumentSou
 use message_utils::{message_to_api_format, inject_datetime_context, sanitize_tool_pairs, response_content_to_blocks};
 use settings::{get_max_input_tokens, load_agent_config};
 use recovery::{delete_messages_from_timestamp, continue_conversation_after_recovery};
+use cancellation::AiCancellationState as CancellationState;
 
 pub const MAX_OUTPUT_TOKENS: u32 = 4096;
 
@@ -80,6 +83,15 @@ fn parse_timestamp(obj: &Object) -> Option<i64> {
     }
 }
 
+/// Cancel the current AI execution
+#[tauri::command]
+pub async fn chat__cancel(
+    cancellation: State<'_, CancellationState>,
+) -> Result<(), String> {
+    cancellation.cancel();
+    Ok(())
+}
+
 /// Send a message and get AI response (with automatic tool execution loop)
 #[tauri::command]
 pub async fn chat__send_and_reply(
@@ -90,8 +102,11 @@ pub async fn chat__send_and_reply(
     conversation_id: String,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
+    cancellation: State<'_, CancellationState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     const MAX_TOOL_LOOPS: usize = 50;
+
+    let mut cancel_rx = cancellation.begin();
 
     let conv_id = conversation_id.clone();
     let agent_config = executor.read(move |conn| {
@@ -191,6 +206,10 @@ pub async fn chat__send_and_reply(
             );
         }
 
+        if cancellation.is_cancelled() {
+            break;
+        }
+
         app.emit("ai-status", serde_json::json!({ "status": "Loading conversation history" })).ok();
 
         let history = load_conversation_history(&executor, &conversation_id, agent_config.max_tokens).await?;
@@ -232,8 +251,13 @@ pub async fn chat__send_and_reply(
 
         app.emit("ai-status", serde_json::json!({ "status": "Claude is thinking" })).ok();
         super::log_backend("info", "[CHAT] Calling Claude API...");
-        let api_response = assistant.generate(request).await
-            .map_err(|e| format!("Claude API error: {}", e))?;
+
+        let api_result = tokio::select! {
+            biased;
+            _ = &mut cancel_rx => break,
+            result = assistant.generate(request) => result,
+        };
+        let api_response = api_result.map_err(|e| format!("Claude API error: {}", e))?;
 
         let stop_reason = api_response.stop_reason.clone()
             .unwrap_or_else(|| "end_turn".to_string());
@@ -318,6 +342,10 @@ pub async fn chat__send_and_reply(
             );
 
             app.emit("chat-message-added", ()).ok();
+
+            if cancellation.is_cancelled() {
+                break;
+            }
 
             continue;
         }
@@ -469,7 +497,9 @@ pub async fn chat__edit_and_retry(
     conversation_id: String,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
+    cancellation: State<'_, CancellationState>,
 ) -> Result<Vec<serde_json::Value>, String> {
+    let _cancel_rx = cancellation.begin();
 
     let msg_timestamp = executor.read(move |conn| {
         let ind = Individual::get(conn, &message_iri)
@@ -538,7 +568,7 @@ pub async fn chat__edit_and_retry(
     let app_clone = app.clone();
     let executor_clone = executor.inner().clone();
     let mut response_messages = Vec::new();
-    continue_conversation_after_recovery(app_clone, executor_clone, conversation_id.clone()).await?;
+    continue_conversation_after_recovery(app_clone, executor_clone, conversation_id.clone(), &cancellation).await?;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
     let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
@@ -563,7 +593,9 @@ pub async fn chat__retry_from_message(
     conversation_id: String,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
+    cancellation: State<'_, CancellationState>,
 ) -> Result<Vec<serde_json::Value>, String> {
+    let _cancel_rx = cancellation.begin();
 
     let msg_timestamp = executor.read(move |conn| {
         let ind = Individual::get(conn, &message_iri)
@@ -600,7 +632,7 @@ pub async fn chat__retry_from_message(
 
     let app_clone = app.clone();
     let executor_clone = executor.inner().clone();
-    continue_conversation_after_recovery(app_clone, executor_clone, conversation_id.clone()).await?;
+    continue_conversation_after_recovery(app_clone, executor_clone, conversation_id.clone(), &cancellation).await?;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
     let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
@@ -623,6 +655,7 @@ pub async fn chat__retry_from_message(
 pub async fn chat__recover_pending_tools(
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
+    cancellation: State<'_, CancellationState>,
 ) -> Result<usize, String> {
     let max_tokens = get_max_input_tokens(&executor).await?;
 
@@ -693,7 +726,7 @@ pub async fn chat__recover_pending_tools(
         app.emit("chat-message-added", ()).ok();
     }
 
-    continue_conversation_after_recovery(app.clone(), executor.inner().clone(), conv_id).await?;
+    continue_conversation_after_recovery(app.clone(), executor.inner().clone(), conv_id, &cancellation).await?;
     Ok(1)
 }
 

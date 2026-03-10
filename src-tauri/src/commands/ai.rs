@@ -159,7 +159,8 @@ pub async fn ai__initialize(
     ai::initialize_ai_with_model(api_key, model_identifier, timeout_secs).await?;
 
     let executor_state = app.state::<DbExecutor>();
-    match super::chat::chat__recover_pending_tools(app.clone(), executor_state).await {
+    let cancellation_state = app.state::<super::chat::AiCancellationState>();
+    match super::chat::chat__recover_pending_tools(app.clone(), executor_state, cancellation_state).await {
         Ok(count) if count > 0 => {
             super::log_backend(
                 "info",

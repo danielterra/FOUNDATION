@@ -109,6 +109,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .manage(process_automation::scheduler::SchedulerState::new())
+        .manage(commands::AiCancellationState::new())
         .setup(|app| {
             // Setup is intentionally minimal - initialization happens via initialize_app command
             // This allows the app to start quickly and not block during build/CI
@@ -145,6 +146,7 @@ pub fn run() {
             commands::chat__get_recent_messages,
             commands::chat__get_conversation_info,
             commands::chat__send_and_reply,
+            commands::chat__cancel,
             commands::chat__recover_pending_tools,
             commands::chat__edit_and_retry,
             commands::chat__retry_from_message,

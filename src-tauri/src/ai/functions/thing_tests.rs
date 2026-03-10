@@ -50,9 +50,7 @@ fn test_update_thing_with_properties_updates_literal_property() {
         "upsert_properties": [
             {
                 "detail_iri": "foundation:priority",
-                "values": ["High"],
-                "value_type": "literal",
-                "datatype": "xsd:string"
+                "values": ["High"]
             }
         ]
     });
@@ -78,8 +76,7 @@ fn test_update_thing_with_valid_status_succeeds() {
         "upsert_properties": [
             {
                 "detail_iri": "foundation:hasStatus",
-                "values": ["foundation:ActiveStatus"],
-                "value_type": "iri"
+                "values": ["foundation:ActiveStatus"]
             }
         ]
     });
@@ -99,8 +96,7 @@ fn test_update_thing_with_invalid_status_returns_descriptive_error() {
         "upsert_properties": [
             {
                 "detail_iri": "foundation:hasStatus",
-                "values": ["foundation:InvalidStatus"],
-                "value_type": "iri"
+                "values": ["foundation:InvalidStatus"]
             }
         ]
     });
@@ -845,9 +841,7 @@ fn test_remove_before_add_in_same_operation_preserves_new_value() {
         "upsert_properties": [
             {
                 "detail_iri": "foundation:priority",
-                "values": ["High"],
-                "value_type": "literal",
-                "datatype": "xsd:string"
+                "values": ["High"]
             }
         ]
     });
@@ -965,7 +959,7 @@ fn test_create_thing_label_satisfies_rdfs_label_required_field() {
         "concept_iri": "foundation:Task",
         "label": "My Task",
         "upsert_properties": [
-            {"detail_iri": "foundation:priority", "values": ["High"], "value_type": "literal"}
+            {"detail_iri": "foundation:priority", "values": ["High"]}
         ]
     });
 
