@@ -221,7 +221,7 @@ pub async fn load_conversation_history(
                     Err(_) => {
                         // Paired tool_use unreadable — include only this message
                         failed_count += 1;
-                        if total_tokens + msg_tokens > max_tokens { break; }
+                        if !selected.is_empty() && total_tokens + msg_tokens > max_tokens { break; }
                         selected.push(msg);
                         total_tokens += msg_tokens;
                         i += 1;
@@ -229,14 +229,16 @@ pub async fn load_conversation_history(
                     }
                 };
                 let pair_tokens = msg_tokens + prev_msg.token_count.unwrap_or(0);
-                if total_tokens + pair_tokens > max_tokens { break; }
+                // Always include the first pair so we never send an empty messages array to the API,
+                // even if a large tool result pushes it over budget.
+                if !selected.is_empty() && total_tokens + pair_tokens > max_tokens { break; }
                 // Push newer first, then older — selected.reverse() restores chronological order
                 selected.push(msg);
                 selected.push(prev_msg);
                 total_tokens += pair_tokens;
                 i += 2;
             } else {
-                if total_tokens + msg_tokens > max_tokens { break; }
+                if !selected.is_empty() && total_tokens + msg_tokens > max_tokens { break; }
                 selected.push(msg);
                 total_tokens += msg_tokens;
                 i += 1;
@@ -248,7 +250,7 @@ pub async fn load_conversation_history(
             selected.len(), iris_desc.len().saturating_sub(i), failed_count,
         ));
 
-        selected.reverse(); // now chronological (oldest first)
+        selected.reverse();
         Ok::<(Vec<AIConversationMessage>, usize), String>((selected, total_tokens))
     }).await?;
 
@@ -529,22 +531,27 @@ fn estimate_call_cost(
     Some(cost)
 }
 
-fn get_tokenizer() -> &'static tiktoken_rs::CoreBPE {
+fn get_tokenizer() -> Result<&'static tiktoken_rs::CoreBPE, String> {
     static TOKENIZER: std::sync::OnceLock<tiktoken_rs::CoreBPE> = std::sync::OnceLock::new();
-    TOKENIZER.get_or_init(|| {
-        tiktoken_rs::cl100k_base().expect("Failed to load tokenizer")
-    })
+    if let Some(bpe) = TOKENIZER.get() {
+        return Ok(bpe);
+    }
+    let bpe = tiktoken_rs::cl100k_base()
+        .map_err(|e| format!("Failed to load tokenizer: {}", e))?;
+    Ok(TOKENIZER.get_or_init(|| bpe))
 }
 
 pub fn tokenize_text(text: &str) -> usize {
-    get_tokenizer().encode_with_special_tokens(text).len()
+    get_tokenizer()
+        .map(|bpe| bpe.encode_with_special_tokens(text).len())
+        .unwrap_or(0)
 }
 
 const MESSAGE_TOKEN_OVERHEAD: usize = 4;
 const TOOL_TOKEN_OVERHEAD: usize = 10;
 
 fn calculate_content_tokens(content_json: &str) -> Result<usize, String> {
-    let bpe = get_tokenizer();
+    let bpe = get_tokenizer()?;
 
     let blocks: Vec<ContentBlock> = serde_json::from_str(content_json)
         .map_err(|e| format!("Failed to parse content: {}", e))?;

@@ -306,6 +306,187 @@ fn test_search_instances_rich_respects_limit() {
     assert_eq!(result.len(), 2);
 }
 
+#[test]
+fn test_search_instances_rich_returns_classes() {
+    let mut conn = setup_test_db();
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:Vehicle", "rdf:type", Object::Iri("owl:Class".to_string())),
+        Triple::new("foundation:Vehicle", "rdfs:label", Object::Literal {
+            value: "Vehicle".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+    ], "test").unwrap();
+
+    let result = search_instances_rich(&conn, "vehicle", 10).unwrap();
+    assert!(!result.is_empty());
+    let found = result.iter().find(|r| r.id == "foundation:Vehicle").unwrap();
+    assert_eq!(found.entity_type, "class");
+}
+
+#[test]
+fn test_search_instances_rich_iri_match_scores_highest() {
+    let mut conn = setup_test_db();
+    create_individual(&mut conn, "foundation:Alice", "foundation:Person", "Alice");
+    create_individual(&mut conn, "foundation:Bob", "foundation:Person", "Bob Alice Fan");
+
+    let result = search_instances_rich(&conn, "foundation:Alice", 10).unwrap();
+    assert!(!result.is_empty());
+    assert_eq!(result[0].id, "foundation:Alice");
+}
+
+#[test]
+fn test_search_instances_rich_label_scores_higher_than_property() {
+    let mut conn = setup_test_db();
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:TaskA", "rdf:type", Object::Iri("foundation:Task".to_string())),
+        Triple::new("foundation:TaskA", "rdfs:label", Object::Literal {
+            value: "Deploy".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+        Triple::new("foundation:TaskB", "rdf:type", Object::Iri("foundation:Task".to_string())),
+        Triple::new("foundation:TaskB", "rdfs:label", Object::Literal {
+            value: "Other Task".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+        Triple::new("foundation:TaskB", "foundation:description", Object::Literal {
+            value: "deploy configuration".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+    ], "test").unwrap();
+
+    let result = search_instances_rich(&conn, "deploy", 10).unwrap();
+    assert!(result.len() >= 2);
+    assert_eq!(result[0].id, "foundation:TaskA");
+}
+
+#[test]
+fn test_search_instances_rich_label_exact_beats_starts_with_beats_contains() {
+    let mut conn = setup_test_db();
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:E1", "rdf:type", Object::Iri("foundation:Thing".to_string())),
+        Triple::new("foundation:E1", "rdfs:label", Object::Literal {
+            value: "rust".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+        Triple::new("foundation:E2", "rdf:type", Object::Iri("foundation:Thing".to_string())),
+        Triple::new("foundation:E2", "rdfs:label", Object::Literal {
+            value: "rust lang".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+        Triple::new("foundation:E3", "rdf:type", Object::Iri("foundation:Thing".to_string())),
+        Triple::new("foundation:E3", "rdfs:label", Object::Literal {
+            value: "the rust book".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+    ], "test").unwrap();
+
+    let result = search_instances_rich(&conn, "rust", 10).unwrap();
+    assert_eq!(result.len(), 3);
+    assert_eq!(result[0].id, "foundation:E1", "exact match must be first");
+    assert_eq!(result[1].id, "foundation:E2", "starts_with must be second");
+    assert_eq!(result[2].id, "foundation:E3", "contains must be last");
+}
+
+#[test]
+fn test_search_instances_rich_comment_match_works() {
+    let mut conn = setup_test_db();
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:Widget", "rdf:type", Object::Iri("foundation:Component".to_string())),
+        Triple::new("foundation:Widget", "rdfs:label", Object::Literal {
+            value: "Widget".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+        Triple::new("foundation:Widget", "rdfs:comment", Object::Literal {
+            value: "A reusable UI element for dashboards".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+    ], "test").unwrap();
+
+    let result = search_instances_rich(&conn, "dashboard", 10).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].id, "foundation:Widget");
+    let comment_prop = result[0].matched_properties.iter()
+        .find(|p| p["detail_iri"] == "rdfs:comment");
+    assert!(comment_prop.is_some(), "rdfs:comment must appear in matched_properties");
+}
+
+#[test]
+fn test_search_instances_rich_comment_beats_property() {
+    let mut conn = setup_test_db();
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:Alpha", "rdf:type", Object::Iri("foundation:Thing".to_string())),
+        Triple::new("foundation:Alpha", "rdfs:label", Object::Literal {
+            value: "Alpha".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+        Triple::new("foundation:Alpha", "rdfs:comment", Object::Literal {
+            value: "contains widget".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+        Triple::new("foundation:Beta", "rdf:type", Object::Iri("foundation:Thing".to_string())),
+        Triple::new("foundation:Beta", "rdfs:label", Object::Literal {
+            value: "Beta".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+        Triple::new("foundation:Beta", "foundation:notes", Object::Literal {
+            value: "uses widget pattern".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+    ], "test").unwrap();
+
+    let result = search_instances_rich(&conn, "widget", 10).unwrap();
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0].id, "foundation:Alpha", "comment match (score 20) must beat property match (score 10)");
+}
+
+#[test]
+fn test_search_instances_rich_iri_local_part_match() {
+    let mut conn = setup_test_db();
+    create_individual(&mut conn, "foundation:ProjectAlpha", "foundation:Project", "Some Project");
+    create_individual(&mut conn, "foundation:ProjectBeta", "foundation:Project", "Other Project");
+
+    let result = search_instances_rich(&conn, "ProjectAlpha", 10).unwrap();
+    assert!(!result.is_empty());
+    assert_eq!(result[0].id, "foundation:ProjectAlpha");
+}
+
+#[test]
+fn test_search_instances_rich_matched_properties_content() {
+    let mut conn = setup_test_db();
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:Invoice1", "rdf:type", Object::Iri("foundation:Invoice".to_string())),
+        Triple::new("foundation:Invoice1", "rdfs:label", Object::Literal {
+            value: "Invoice 001".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+        Triple::new("foundation:Invoice1", "foundation:reference", Object::Literal {
+            value: "REF-2024-ACME".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+    ], "test").unwrap();
+
+    let result = search_instances_rich(&conn, "acme", 10).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].matched_properties.len(), 1);
+    assert_eq!(result[0].matched_properties[0]["detail_iri"], "foundation:reference");
+    assert_eq!(result[0].matched_properties[0]["value"], "REF-2024-ACME");
+}
+
 // ── property helpers ─────────────────────────────────────────────────────
 
 fn lit(value: &str) -> Object {

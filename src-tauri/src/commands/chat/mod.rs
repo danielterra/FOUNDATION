@@ -206,6 +206,10 @@ pub async fn chat__send_and_reply(
         inject_datetime_context(&mut api_messages);
         sanitize_tool_pairs(&mut api_messages);
 
+        if api_messages.is_empty() {
+            return Err("Conversation history is empty — cannot send request to Claude".to_string());
+        }
+
         let blackboard_context = build_blackboard_context(&executor).await;
         let tools = crate::ai::functions::get_claude_tools();
 
@@ -437,7 +441,6 @@ pub async fn chat__get_recent_messages(
             messages_with_ts.push((timestamp, msg_json));
         }
 
-        // SQL already returned the N most recent messages in DESC order — just reverse to chronological
         let messages: Vec<serde_json::Value> = messages_with_ts
             .into_iter()
             .rev()
@@ -657,7 +660,9 @@ pub async fn chat__recover_pending_tools(
         return Ok(0);
     }
 
-    let last_msg = history.last().expect("history checked non-empty");
+    let Some(last_msg) = history.last() else {
+        return Ok(0);
+    };
 
     let has_tool_use = last_msg.content.iter()
         .any(|b| matches!(b, ContentBlock::ToolUse { .. }));

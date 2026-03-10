@@ -320,120 +320,35 @@ mod tests {
     }
 }
 
-const SCORE_LABEL_MATCH: usize = 3;
-const SCORE_COMMENT_MATCH: usize = 2;
-
-pub fn remember_concept(conn: &Connection, args: &Value) -> ToolResult {
-    super::batch::run_multi_read(conn, args, remember_concept_one)
-}
-
-fn remember_concept_one(conn: &Connection, args: &Value) -> ToolResult {
-    if args.get("iri").or_else(|| args.get("IRI")).is_some() {
-        get_concept_one(conn, args)
-    } else {
-        search_concepts_one(conn, args)
-    }
-}
-
-fn search_concepts_one(conn: &Connection, args: &Value) -> ToolResult {
-    let query_str = args.get("query")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    let limit = args.get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(100) as usize;
-
-    let offset = args.get("offset")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
-
-    match (|| {
-        let all_concept_iris = Class::find_all_iris(conn)?;
-
-        let search_tokens: Vec<String> = if query_str.is_empty() {
-            Vec::new()
-        } else {
-            query_str
-                .to_lowercase()
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect()
-        };
-
-        let mut concepts_with_scores: Vec<(Value, usize)> = Vec::new();
-        for iri in all_concept_iris {
-            if let Ok(Some(concept)) = Class::get(conn, &iri) {
-                let score = if !search_tokens.is_empty() {
-                    let label_lower = concept.label.as_ref()
-                        .map(|l| l.to_lowercase())
-                        .unwrap_or_default();
-                    let comment_lower = concept.comment.as_ref()
-                        .map(|c| c.to_lowercase())
-                        .unwrap_or_default();
-
-                    let mut match_count = 0;
-                    for token in &search_tokens {
-                        if label_lower.contains(token) {
-                            match_count += SCORE_LABEL_MATCH;
-                        } else if comment_lower.contains(token) {
-                            match_count += SCORE_COMMENT_MATCH;
-                        }
-                    }
-
-                    if match_count == 0 {
-                        continue;
-                    }
-
-                    match_count
-                } else {
-                    0
-                };
-
-                let super_classes: Vec<_> = concept.super_classes.iter()
-                    .map(|t| t.iri.clone())
-                    .collect();
-                let sub_classes: Vec<_> = concept.sub_classes.iter()
-                    .map(|t| t.iri.clone())
-                    .collect();
-                concepts_with_scores.push((serde_json::json!({
-                    "iri": concept.iri,
-                    "label": concept.label,
-                    "icon": concept.icon,
-                    "comment": concept.comment,
-                    "superClasses": super_classes,
-                    "subClasses": sub_classes,
-                }), score));
-            }
-        }
-
-        if !search_tokens.is_empty() {
-            concepts_with_scores.sort_by(|a, b| b.1.cmp(&a.1));
-        }
-
-        let concepts: Vec<_> = concepts_with_scores.into_iter().map(|(c, _)| c).collect();
-
-        let total = concepts.len();
-        let paginated: Vec<_> = concepts.into_iter().skip(offset).take(limit).collect();
-
-        Ok::<_, crate::owl::OwlError>(serde_json::json!({
-            "concepts": paginated,
-            "count": paginated.len(),
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-        }))
-    })() {
-        Ok(result) => ToolResult {
-            success: true,
-            result: Some(result),
-            error: None,
-        },
-        Err(e) => ToolResult {
+pub fn get_concepts(conn: &Connection, args: &Value) -> ToolResult {
+    let iris = match args.get("iris").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return ToolResult {
             success: false,
             result: None,
-            error: Some(e.to_string()),
+            error: Some("Missing required parameter: iris".to_string()),
         },
+    };
+
+    let mut results = Vec::new();
+    let mut errors = Vec::new();
+    for v in iris {
+        if let Some(iri) = v.as_str() {
+            let r = get_concept_one(conn, &serde_json::json!({ "iri": iri }));
+            if r.success {
+                if let Some(val) = r.result {
+                    results.push(val);
+                }
+            } else {
+                errors.push(format!("{}: {}", iri, r.error.unwrap_or_default()));
+            }
+        }
+    }
+
+    ToolResult {
+        success: errors.is_empty(),
+        result: Some(serde_json::json!({ "concepts": results })),
+        error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
     }
 }
 

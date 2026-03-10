@@ -1,6 +1,8 @@
-/// EVTO Query Functions
-///
-/// Pure functions for querying the triple store
+mod find;
+mod search;
+
+pub use find::*;
+pub use search::*;
 
 use rusqlite::{Connection, Row, types::Value as SqlValue};
 use super::triple_type::Triple;
@@ -9,11 +11,6 @@ use super::query_result_type::QueryResult;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-/// Query triples by entity (E - subject)
-///
-/// Returns current state of all predicates for the entity:
-/// - For functional properties: only the most recent value
-/// - For non-functional properties: all distinct current values (deduped by object)
 pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
 
     let mut stmt = conn.prepare(
@@ -29,13 +26,10 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
         .query_map([entity], row_to_triple)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    // Group by predicate and keep most recent value for each unique (predicate, object) pair
-    // This allows multiple values for the same predicate but deduplicates updates to the same value
     let mut seen_pairs = std::collections::HashSet::new();
     let current_triples: Vec<Triple> = all_triples
         .into_iter()
         .filter(|t| {
-            // Create a unique key for (predicate, object) pair
             let object_key = match &t.object {
                 Object::Iri(iri) => format!("iri:{}", iri),
                 Object::Literal { value, datatype, language } => {
@@ -60,10 +54,6 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
     Ok(QueryResult::new(current_triples))
 }
 
-/// Query retracted triples by entity (E - subject)
-///
-/// Returns all triples with retracted = 1 for the given entity.
-/// Used when include_retracted is true to show historical/removed facts.
 pub fn get_retracted_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
@@ -81,7 +71,6 @@ pub fn get_retracted_by_entity(conn: &Connection, entity: &str) -> Result<QueryR
     Ok(QueryResult::new(triples))
 }
 
-/// Query all active triples that reference a given IRI as their object
 pub fn get_by_object_iri(conn: &Connection, object_iri: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
@@ -98,7 +87,6 @@ pub fn get_by_object_iri(conn: &Connection, object_iri: &str) -> Result<QueryRes
     Ok(QueryResult::new(triples))
 }
 
-/// Query triples by predicate (V - value/property)
 pub fn get_by_predicate(conn: &Connection, predicate: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
@@ -116,16 +104,6 @@ pub fn get_by_predicate(conn: &Connection, predicate: &str) -> Result<QueryResul
     Ok(QueryResult::new(triples))
 }
 
-/// Query triples by subject and predicate (EV)
-///
-/// Returns current state based on property characteristics:
-/// - Functional properties (owl:FunctionalProperty): Single most recent value
-/// - Non-functional properties: Most recent value for EACH distinct object
-///
-/// Example:
-/// - `Person -> email -> value` (functional): returns 1 triple (latest email)
-/// - `Person -> sentMessage -> [msg1, msg2]` (non-functional): returns 2 triples
-///   (latest state of each message)
 pub fn get_by_entity_predicate(
     conn: &Connection,
     entity: &str,
@@ -134,10 +112,6 @@ pub fn get_by_entity_predicate(
     get_by_entity_predicate_internal(conn, entity, predicate, true)
 }
 
-/// Internal implementation with check_functional parameter
-///
-/// The `check_functional` parameter controls whether to check if the property is functional.
-/// Set to false when calling from Property::is_functional to avoid infinite recursion.
 pub fn get_by_entity_predicate_internal(
     conn: &Connection,
     entity: &str,
@@ -145,16 +119,14 @@ pub fn get_by_entity_predicate_internal(
     check_functional: bool,
 ) -> Result<QueryResult> {
 
-    // Check if property is functional (only if check_functional is true)
     let is_functional = if check_functional {
         crate::owl::Property::is_functional(conn, predicate)
-            .unwrap_or(false) // Default to non-functional if can't determine
+            .unwrap_or(false)
     } else {
-        false // Skip functional check to avoid recursion
+        false
     };
 
     if is_functional {
-        // Functional property: return only the single most recent value
         let mut stmt = conn.prepare(
             "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                     object_type, object_number, object_integer, object_boolean,
@@ -171,7 +143,6 @@ pub fn get_by_entity_predicate_internal(
 
         Ok(QueryResult::new(triples))
     } else {
-        // Non-functional property: return most recent value for each distinct object
         let mut stmt = conn.prepare(
             "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                     object_type, object_number, object_integer, object_boolean,
@@ -185,12 +156,10 @@ pub fn get_by_entity_predicate_internal(
             .query_map([entity, predicate], row_to_triple)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        // Keep only the most recent triple for each distinct object
         let mut seen_objects = std::collections::HashSet::new();
         let current_triples: Vec<Triple> = all_triples
             .into_iter()
             .filter(|t| {
-                // Create unique key for this object
                 let key = match &t.object {
                     Object::Iri(iri) => format!("iri:{}", iri),
                     Object::Blank(id) => format!("blank:{}", id),
@@ -208,13 +177,11 @@ pub fn get_by_entity_predicate_internal(
     }
 }
 
-/// Query by predicate and object (e.g., all properties with a specific domain)
 pub fn get_by_predicate_object(
     conn: &Connection,
     predicate: &str,
     object: &str,
 ) -> Result<QueryResult> {
-    // Support boolean values: "true" maps to object_boolean=1, "false" to object_boolean=0
     let (where_clause, params): (&str, Vec<&dyn rusqlite::ToSql>) = if object == "true" {
         (
             "WHERE predicate = ?1 AND object_boolean = 1 AND retracted = 0",
@@ -250,7 +217,6 @@ pub fn get_by_predicate_object(
     Ok(QueryResult::new(triples))
 }
 
-/// A single row returned by `get_backlinks_grouped_limited`.
 #[derive(Debug, Clone)]
 pub struct BacklinkRow {
     pub subject: String,
@@ -259,9 +225,6 @@ pub struct BacklinkRow {
     pub group_total: usize,
 }
 
-/// Return backlinks grouped by (predicate, source_class), loading at most `limit_per_group`
-/// entities per group (the most recently active ones).
-/// Each row carries the real total count of distinct entities in its group.
 pub fn get_backlinks_grouped_limited(
     conn: &Connection,
     object: &str,
@@ -335,9 +298,6 @@ pub fn get_backlinks_grouped_limited(
     Ok(rows)
 }
 
-/// Fetch values for specified predicates across multiple subjects in a single query.
-/// Returns Vec<(subject, predicate, object)> ordered by subject, predicate, tx DESC.
-/// Useful for batch-loading metadata (labels, icons) without N+1 queries.
 pub fn get_predicates_for_subjects(
     conn: &Connection,
     subjects: &[String],
@@ -368,9 +328,6 @@ pub fn get_predicates_for_subjects(
     Ok(triples.into_iter().map(|t| (t.subject, t.predicate, t.object)).collect())
 }
 
-/// Fetch the most recent IRI value of a given predicate for multiple subjects.
-/// Returns a HashMap from subject IRI to the first (most recent) matching IRI value.
-/// Subjects with no matching triple are omitted.
 pub fn get_first_iri_property_batch(
     conn: &Connection,
     subjects: &[String],
@@ -404,346 +361,6 @@ pub fn get_first_iri_property_batch(
     Ok(map)
 }
 
-/// Find entities by class and properties in a single query
-///
-/// This performs an efficient SQL JOIN to find entities that match a class and property
-/// constraints.
-/// Can be used with one or multiple properties.
-///
-/// Example:
-/// ```ignore
-/// // Single property
-/// let releases = find_by_class_and_properties(
-///     conn,
-///     "foundation:SoftwareRelease",
-///     &[("foundation:versionNumber", "0.1.0")]
-/// )?;
-///
-/// // Multiple properties
-/// let release = find_by_class_and_properties(
-///     conn,
-///     "foundation:SoftwareRelease",
-///     &[
-///         ("foundation:versionNumber", "0.1.0"),
-///         ("foundation:releaseOf", "foundation:FoundationProduct"),
-///     ]
-/// )?;
-/// ```
-pub fn find_by_class_and_properties(
-    conn: &Connection,
-    class_iri: &str,
-    properties: &[(&str, &str)],
-) -> Result<Vec<String>> {
-    if properties.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Build dynamic query with multiple JOINs
-    let mut query = String::from(
-        "SELECT DISTINCT t0.subject
-         FROM triples t0"
-    );
-
-    // Add JOIN for each property
-    for (i, _) in properties.iter().enumerate() {
-        let table_num = i + 1;
-        query.push_str(&format!(
-            "\n         INNER JOIN triples t{} ON t0.subject = t{}.subject",
-            table_num, table_num
-        ));
-    }
-
-    // Add WHERE clause for class
-    query.push_str(&format!(
-        "\n         WHERE t0.predicate = 'rdf:type'
-           AND t0.object = '{}'
-           AND t0.retracted = 0",
-        class_iri
-    ));
-
-    // Add WHERE clause for each property
-    for (i, (prop_iri, _)) in properties.iter().enumerate() {
-        let table_num = i + 1;
-        query.push_str(&format!(
-            "\n           AND t{}.predicate = '{}'
-           AND t{}.retracted = 0",
-            table_num, prop_iri, table_num
-        ));
-    }
-
-    // Add value matching (supports literal, IRI, and boolean)
-    for (i, (_, value)) in properties.iter().enumerate() {
-        let table_num = i + 1;
-        // Check if value is a boolean
-        if value == &"true" || value == &"false" {
-            let bool_val = if value == &"true" { 1 } else { 0 };
-            query.push_str(&format!(
-                "\n           AND (t{}.object_value = '{}' OR t{}.object = '{}'\
-                    OR t{}.object_boolean = {})",
-                table_num, value, table_num, value, table_num, bool_val
-            ));
-        } else {
-            query.push_str(&format!(
-                "\n           AND (t{}.object_value = '{}' OR t{}.object = '{}')",
-                table_num, value, table_num, value
-            ));
-        }
-    }
-
-    let mut stmt = conn.prepare(&query)?;
-    let entities: Vec<String> = stmt
-        .query_map([], |row| row.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-
-    Ok(entities)
-}
-
-/// Find entities of a class with optional date range and retraction filtering
-///
-/// Filters by `created_at` on the `rdf:type` triple.
-/// When `include_retracted` is true, retracted entities are included.
-pub fn find_entities_by_class_with_date_range(
-    conn: &Connection,
-    class_iri: &str,
-    from_millis: Option<i64>,
-    to_millis: Option<i64>,
-    include_retracted: bool,
-) -> Result<Vec<String>> {
-    let retracted_clause = if include_retracted { "" } else { " AND retracted = 0" };
-
-    let mut conditions = format!(
-        "predicate = 'rdf:type' AND object = ?1{}",
-        retracted_clause,
-    );
-
-    if from_millis.is_some() {
-        conditions.push_str(" AND created_at >= ?2");
-    }
-    if to_millis.is_some() {
-        let param_num = if from_millis.is_some() { 3 } else { 2 };
-        conditions.push_str(&format!(" AND created_at <= ?{}", param_num));
-    }
-
-    let sql = format!(
-        "SELECT DISTINCT subject FROM triples WHERE {}",
-        conditions
-    );
-
-    let mut stmt = conn.prepare(&sql)?;
-
-    let entities: Vec<String> = match (from_millis, to_millis) {
-        (Some(from), Some(to)) => stmt
-            .query_map(rusqlite::params![class_iri, from, to], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-        (Some(from), None) => stmt
-            .query_map(rusqlite::params![class_iri, from], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-        (None, Some(to)) => stmt
-            .query_map(rusqlite::params![class_iri, to], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-        (None, None) => stmt
-            .query_map(rusqlite::params![class_iri], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-    };
-
-    Ok(entities)
-}
-
-/// Find entities belonging to any of the given class IRIs with property filtering.
-///
-/// Accepts multiple class IRIs so that polymorphic queries (parent + all descendants)
-/// can be satisfied in a single SQL round-trip. The WHERE clause for the `rdf:type`
-/// triple uses `IN (?, ?, …)` bound to all provided class IRIs.
-pub fn find_by_class_iris_and_properties_with_options(
-    conn: &Connection,
-    class_iris: &[&str],
-    properties: &[(&str, &str, &str)],  // (predicate, value, operator)
-    include_retracted: bool,
-    limit: usize,
-    offset: usize,
-) -> Result<(Vec<String>, usize)> {
-    if properties.is_empty() || class_iris.is_empty() {
-        return Ok((Vec::new(), 0));
-    }
-
-    let type_retracted_filter = if include_retracted { "" } else { " AND t0.retracted = 0" };
-
-    let class_placeholders = class_iris.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-    let mut joins = String::new();
-    let mut where_clause = format!(
-        "WHERE t0.predicate = 'rdf:type' AND t0.object IN ({class_placeholders}){type_retracted_filter}"
-    );
-    let mut params: Vec<SqlValue> = class_iris.iter()
-        .map(|iri| SqlValue::Text(iri.to_string()))
-        .collect();
-
-    for (i, _) in properties.iter().enumerate() {
-        let n = i + 1;
-        joins.push_str(&format!("\n         INNER JOIN triples t{n} ON t0.subject = t{n}.subject"));
-    }
-
-    for (i, (prop_iri, _, _)) in properties.iter().enumerate() {
-        let n = i + 1;
-        let prop_retracted_filter = if include_retracted {
-            String::new()
-        } else {
-            format!(" AND t{n}.retracted = 0")
-        };
-        where_clause.push_str(&format!("\n           AND t{n}.predicate = ?{prop_retracted_filter}"));
-        params.push(SqlValue::Text(prop_iri.to_string()));
-    }
-
-    for (i, (_, value, operator)) in properties.iter().enumerate() {
-        let n = i + 1;
-        if let Some(date_filter) = normalize_date_filter(value) {
-            let sql_op = validate_operator(operator)
-                .map_err(|_| format!("Invalid operator '{operator}': must be one of =, >=, <=, >, <"))?;
-            match date_filter {
-                DateFilter::Date(date_str) => {
-                    where_clause.push_str(&format!(
-                        "\n           AND substr(t{n}.object_value, 1, 10) {sql_op} ?"
-                    ));
-                    params.push(SqlValue::Text(date_str));
-                }
-                DateFilter::DateTime(epoch) => {
-                    where_clause.push_str(&format!(
-                        "\n           AND unixepoch(t{n}.object_value) {sql_op} ?"
-                    ));
-                    params.push(SqlValue::Integer(epoch));
-                }
-            }
-        } else if *value == "true" || *value == "false" {
-            let bool_val: i64 = if *value == "true" { 1 } else { 0 };
-            where_clause.push_str(&format!(
-                "\n           AND (t{n}.object_value = ? OR t{n}.object = ? OR t{n}.object_boolean = ?)"
-            ));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Integer(bool_val));
-        } else {
-            where_clause.push_str(&format!(
-                "\n           AND (t{n}.object_value = ? OR t{n}.object = ?)"
-            ));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Text(value.to_string()));
-        }
-    }
-
-    let count_query = format!(
-        "SELECT COUNT(*) FROM (SELECT DISTINCT t0.subject FROM triples t0{joins}\n         {where_clause})"
-    );
-    let total: usize = conn.query_row(
-        &count_query,
-        rusqlite::params_from_iter(params.iter()),
-        |row| row.get::<_, i64>(0),
-    )? as usize;
-
-    let mut data_params = params;
-    data_params.push(SqlValue::Integer(limit as i64));
-    data_params.push(SqlValue::Integer(offset as i64));
-
-    let data_query = format!(
-        "SELECT DISTINCT t0.subject FROM triples t0{joins}\n         {where_clause}\n         LIMIT ? OFFSET ?"
-    );
-    let mut stmt = conn.prepare(&data_query)?;
-    let entities: Vec<String> = stmt
-        .query_map(rusqlite::params_from_iter(data_params.iter()), |row| row.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-
-    Ok((entities, total))
-}
-
-/// Returns IRIs of `foundation:AIConversationMessage` instances belonging to
-/// `conversation_iri`, ordered by `foundation:sentAt` descending (newest first).
-/// `limit = usize::MAX` means no limit (SQLite treats LIMIT -1 as unlimited).
-pub fn find_message_iris_by_conversation(
-    conn: &Connection,
-    conversation_iri: &str,
-    limit: usize,
-    offset: usize,
-) -> Result<Vec<String>> {
-    let sql = "
-        SELECT subject FROM (
-            SELECT t_type.subject, MAX(t_sent.object_value) AS ts
-            FROM triples t_type
-            INNER JOIN triples t_conv
-                ON t_type.subject = t_conv.subject
-                AND t_conv.predicate = 'foundation:partOfConversation'
-                AND (t_conv.object = ?1 OR t_conv.object_value = ?1)
-                AND t_conv.retracted = 0
-            LEFT JOIN triples t_sent
-                ON t_type.subject = t_sent.subject
-                AND t_sent.predicate = 'foundation:sentAt'
-                AND t_sent.retracted = 0
-            WHERE t_type.predicate = 'rdf:type'
-              AND t_type.object = 'foundation:AIConversationMessage'
-              AND t_type.retracted = 0
-            GROUP BY t_type.subject
-        )
-        ORDER BY ts DESC
-        LIMIT ?2 OFFSET ?3
-    ";
-    let limit_i64: i64 = limit.try_into().unwrap_or(-1);
-    let mut stmt = conn.prepare(sql)?;
-    let iris = stmt
-        .query_map(rusqlite::params![conversation_iri, limit_i64, offset as i64], |row| row.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(iris)
-}
-
-enum DateFilter {
-    Date(String),
-    DateTime(i64),
-}
-
-fn normalize_date_filter(value: &str) -> Option<DateFilter> {
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(value) {
-        return Some(DateFilter::DateTime(dt.timestamp()));
-    }
-    // Treat naive datetimes (no timezone) as the system's local timezone,
-    // matching user intent when no timezone is provided.
-    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S") {
-        use chrono::TimeZone;
-        let epoch = chrono::Local.from_local_datetime(&ndt)
-            .single()
-            .map(|dt| dt.timestamp())
-            .unwrap_or_else(|| ndt.and_utc().timestamp());
-        return Some(DateFilter::DateTime(epoch));
-    }
-    if chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok() {
-        return Some(DateFilter::Date(value.to_string()));
-    }
-    None
-}
-
-fn validate_operator(op: &str) -> std::result::Result<&str, ()> {
-    match op {
-        "=" | ">=" | "<=" | ">" | "<" => Ok(op),
-        _ => Err(()),
-    }
-}
-
-/// Find entities by attribute value (works for any property)
-#[allow(dead_code)]
-pub fn find_entities_by_attribute_value(
-    conn: &Connection,
-    attribute: &str,
-    value: &str,
-) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT subject
-         FROM triples
-         WHERE predicate = ? AND object_value = ? AND retracted = 0"
-    )?;
-
-    let entities: Vec<String> = stmt
-        .query_map([attribute, value], |row| row.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-
-    Ok(entities)
-}
-
-/// Query entity state at specific time (ET - temporal query)
 #[allow(dead_code)]
 pub fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
@@ -759,7 +376,6 @@ pub fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResu
         .query_map([entity, tx.to_string().as_str()], row_to_triple)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    // Keep only the latest value for each predicate (temporal snapshot)
     let mut seen_predicates = std::collections::HashSet::new();
     let snapshot: Vec<Triple> = triples
         .into_iter()
@@ -769,7 +385,6 @@ pub fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResu
     Ok(QueryResult::new(snapshot))
 }
 
-/// Query triples by origin (O)
 #[allow(dead_code)]
 pub fn get_by_origin(conn: &Connection, origin_id: i64) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
@@ -788,7 +403,6 @@ pub fn get_by_origin(conn: &Connection, origin_id: i64) -> Result<QueryResult> {
     Ok(QueryResult::new(triples))
 }
 
-/// Query complete history of an entity (all transactions)
 #[allow(dead_code)]
 pub fn get_history(conn: &Connection, entity: &str) -> Result<Vec<(i64, Vec<Triple>)>> {
     let mut stmt = conn.prepare(
@@ -804,7 +418,6 @@ pub fn get_history(conn: &Connection, entity: &str) -> Result<Vec<(i64, Vec<Trip
         .query_map([entity], row_to_triple)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    // Group by transaction
     let mut history: std::collections::HashMap<i64, Vec<Triple>> = std::collections::HashMap::new();
     for triple in all_triples {
         history.entry(triple.tx).or_insert_with(Vec::new).push(triple);
@@ -816,9 +429,6 @@ pub fn get_history(conn: &Connection, entity: &str) -> Result<Vec<(i64, Vec<Trip
     Ok(result)
 }
 
-/// Get the maximum tx (most recent transaction) for each of the given entity IRIs.
-/// Returns a HashMap from entity IRI to its max tx value.
-/// Entities with no active triples are omitted from the result.
 pub fn get_entities_max_tx(
     conn: &Connection,
     entity_iris: &[String],
@@ -854,8 +464,6 @@ pub fn get_entities_max_tx(
     Ok(result)
 }
 
-/// Batch-load all active triples for the given subjects in a single SQL query.
-/// Returns a map from subject IRI to its list of triples, ordered by predicate and tx DESC.
 pub fn batch_load_triples_for_subjects(
     conn: &Connection,
     subjects: &[String],
@@ -885,8 +493,6 @@ pub fn batch_load_triples_for_subjects(
     Ok(map)
 }
 
-/// Batch-load all retracted triples for the given subjects in a single SQL query.
-/// Returns a map from subject IRI to its list of retracted triples.
 pub fn batch_load_retracted_triples_for_subjects(
     conn: &Connection,
     subjects: &[String],
@@ -916,8 +522,7 @@ pub fn batch_load_retracted_triples_for_subjects(
     Ok(map)
 }
 
-/// Convert SQLite row to Triple
-fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
+pub(crate) fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
     let subject: String = row.get(0)?;
     let predicate: String = row.get(1)?;
     let object_opt: Option<String> = row.get(2)?;
@@ -937,7 +542,6 @@ fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
         "iri" => Object::Iri(object_opt.ok_or(rusqlite::Error::InvalidQuery)?),
         "blank" => Object::Blank(object_opt.ok_or(rusqlite::Error::InvalidQuery)?),
         "literal" => {
-            // Check for typed literals
             if let Some(int) = object_integer {
                 Object::Integer(int)
             } else if let Some(num) = object_number {
@@ -953,7 +557,6 @@ fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
             } else if let Some(bool_val) = object_boolean {
                 Object::Boolean(bool_val != 0)
             } else {
-                // Generic literal
                 Object::Literal {
                     value: object_value.ok_or(rusqlite::Error::InvalidQuery)?,
                     datatype: object_datatype,
@@ -992,7 +595,7 @@ mod tests {
         setup_test_data(&mut conn);
 
         let result = get_by_entity(&conn, "foundation:TestClass").unwrap();
-        assert_eq!(result.triples.len(), 2); // rdf:type and rdfs:label
+        assert_eq!(result.triples.len(), 2);
     }
 
     #[test]
@@ -1034,7 +637,7 @@ mod tests {
         let tx_id = setup_test_data(&mut conn);
 
         let result = get_at_time(&conn, "foundation:TestClass", tx_id).unwrap();
-        assert_eq!(result.triples.len(), 2); // Should have both triples at this tx
+        assert_eq!(result.triples.len(), 2);
     }
 
     #[test]
@@ -1042,7 +645,6 @@ mod tests {
         let mut conn = setup_test_db();
         let _tx1 = setup_test_data(&mut conn);
 
-        // Add new triple with same predicate (update)
         let updated_triple = vec![Triple {
             subject: "foundation:TestClass".to_string(),
             predicate: "rdfs:label".to_string(),
@@ -1058,13 +660,10 @@ mod tests {
         }];
         let tx2 = assert_triples(&mut conn, &updated_triple, "test").unwrap();
 
-        // Query at tx2 should give latest label
         let result = get_at_time(&conn, "foundation:TestClass", tx2).unwrap();
 
-        // Should only have 2 triples (latest rdfs:label + rdf:type)
         assert_eq!(result.triples.len(), 2);
 
-        // Find the label triple
         let label_triple = result.triples.iter()
             .find(|t| t.predicate == "rdfs:label")
             .expect("Should have label");
@@ -1080,7 +679,6 @@ mod tests {
         let mut conn = setup_test_db();
         setup_test_data(&mut conn);
 
-        // Origin ID 1 is "test" from setup_test_db
         let result = get_by_origin(&conn, 1).unwrap();
         assert!(result.triples.len() > 0);
     }
@@ -1090,7 +688,6 @@ mod tests {
         let mut conn = setup_test_db();
         let tx1 = setup_test_data(&mut conn);
 
-        // Add another triple in a new transaction
         let new_triple = vec![Triple {
             subject: "foundation:TestClass".to_string(),
             predicate: "rdfs:comment".to_string(),
@@ -1108,11 +705,11 @@ mod tests {
 
         let history = get_history(&conn, "foundation:TestClass").unwrap();
 
-        assert_eq!(history.len(), 2); // Two transactions
-        assert_eq!(history[0].0, tx1); // First transaction
-        assert_eq!(history[1].0, tx2); // Second transaction
-        assert_eq!(history[0].1.len(), 2); // First tx has 2 triples
-        assert_eq!(history[1].1.len(), 1); // Second tx has 1 triple
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].0, tx1);
+        assert_eq!(history[1].0, tx2);
+        assert_eq!(history[0].1.len(), 2);
+        assert_eq!(history[1].1.len(), 1);
     }
 
     #[test]
@@ -1151,13 +748,11 @@ mod tests {
     fn test_find_by_class_iris_and_properties_returns_subclass_instances() {
         let mut conn = setup_test_db();
 
-        // Parent class
         assert_triples(&mut conn, &[
             Triple { subject: "foundation:Animal".to_string(), predicate: "rdf:type".to_string(),
                 object: Object::Iri("owl:Class".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
         ], "test").unwrap();
 
-        // Subclass Dog rdfs:subClassOf Animal
         assert_triples(&mut conn, &[
             Triple { subject: "foundation:Dog".to_string(), predicate: "rdf:type".to_string(),
                 object: Object::Iri("owl:Class".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
@@ -1165,7 +760,6 @@ mod tests {
                 object: Object::Iri("foundation:Animal".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
         ], "test").unwrap();
 
-        // Instance of parent class with a name property
         assert_triples(&mut conn, &[
             Triple { subject: "foundation:Rex".to_string(), predicate: "rdf:type".to_string(),
                 object: Object::Iri("foundation:Dog".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
@@ -1174,7 +768,6 @@ mod tests {
                 tx: 0, created_at: 0, origin_id: 1, retracted: false },
         ], "test").unwrap();
 
-        // Query using both Animal and Dog class IRIs (simulating polymorphic expansion)
         let (results, total) = find_by_class_iris_and_properties_with_options(
             &conn,
             &["foundation:Animal", "foundation:Dog"],

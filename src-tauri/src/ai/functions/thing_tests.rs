@@ -196,13 +196,13 @@ fn test_search_things_returns_subclass_instances() {
         "concept_iri": "foundation:Event"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["iri"].as_str())
+        .filter_map(|t| t["id"].as_str())
         .collect();
 
     assert!(
@@ -242,18 +242,18 @@ fn test_find_things_by_detail_returns_subclass_instances() {
 
     let args = serde_json::json!({
         "concept_iri": "foundation:Event",
-        "properties": [
+        "filters": [
             {"detail": "foundation:hasStatus", "value": status_iri}
         ]
     });
 
-    let result = find_things_by_detail_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "find_things_by_detail should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["iri"].as_str())
+        .filter_map(|t| t["id"].as_str())
         .collect();
 
     assert!(
@@ -302,13 +302,13 @@ fn test_search_things_returns_instances_across_three_level_hierarchy() {
         "concept_iri": "foundation:Animal"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["iri"].as_str())
+        .filter_map(|t| t["id"].as_str())
         .collect();
 
     assert!(iris.contains(&"foundation:Animal_001"), "Results should include direct Animal instance");
@@ -329,13 +329,13 @@ fn test_search_things_returns_subclass_instances_when_parent_has_no_direct_insta
         "concept_iri": "foundation:Event"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["iri"].as_str())
+        .filter_map(|t| t["id"].as_str())
         .collect();
 
     assert!(iris.contains(&"foundation:Vacation_003"), "Results should include first Vacation instance");
@@ -362,13 +362,13 @@ fn test_search_things_filters_by_label_with_concept_iri() {
         "query": "Ingresse"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["iri"].as_str())
+        .filter_map(|t| t["id"].as_str())
         .collect();
 
     assert!(iris.contains(&"foundation:Task_S001"), "Should include matching instance");
@@ -395,13 +395,13 @@ fn test_search_things_filters_globally_without_concept_iri() {
         "query": "Ingresse"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["iri"].as_str())
+        .filter_map(|t| t["id"].as_str())
         .collect();
 
     assert!(iris.contains(&"foundation:Task_S010"), "Should include the matching Task instance");
@@ -421,13 +421,13 @@ fn test_search_things_label_match_is_case_insensitive() {
         "query": "ingresse"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["iri"].as_str())
+        .filter_map(|t| t["id"].as_str())
         .collect();
 
     assert!(iris.contains(&"foundation:Task_S020"), "Case-insensitive match should return the instance");
@@ -449,21 +449,17 @@ fn test_search_things_multi_token_query() {
         "query": "Ingresse contract"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["iri"].as_str())
+        .filter_map(|t| t["id"].as_str())
         .collect();
 
-    assert!(iris.contains(&"foundation:Task_S030"), "Full match instance should be returned");
-    assert!(iris.contains(&"foundation:Task_S031"), "Partial match instance should also be returned");
-
-    let pos_full = iris.iter().position(|&i| i == "foundation:Task_S030").unwrap();
-    let pos_partial = iris.iter().position(|&i| i == "foundation:Task_S031").unwrap();
-    assert!(pos_full < pos_partial, "Full match should be ranked higher than partial match");
+    assert!(iris.contains(&"foundation:Task_S030"), "Instance matching all tokens should be returned");
+    assert!(!iris.contains(&"foundation:Task_S031"), "Instance not matching all tokens (AND) should be excluded");
 }
 
 #[test]
@@ -487,12 +483,12 @@ fn test_search_things_matches_by_comment() {
         "query": "ingresse"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter().filter_map(|t| t["iri"].as_str()).collect();
+    let things = response["entities"].as_array().unwrap();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
     assert!(iris.contains(&"foundation:Task_comment_001"), "Task One should be returned");
     assert!(!iris.contains(&"foundation:Task_comment_002"), "Task Two should not be returned");
@@ -524,12 +520,12 @@ fn test_search_things_matches_by_property_value() {
         "query": "ingresse"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter().filter_map(|t| t["iri"].as_str()).collect();
+    let things = response["entities"].as_array().unwrap();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
     assert!(iris.contains(&"foundation:Task_prop_001"), "Task Alpha should be returned");
     assert!(!iris.contains(&"foundation:Task_prop_002"), "Task Beta should not be returned");
@@ -548,12 +544,12 @@ fn test_search_things_matched_properties_label_match() {
         "query": "ingresse"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
-    let thing = things.iter().find(|t| t["iri"].as_str() == Some("foundation:Task_label_match_001"))
+    let things = response["entities"].as_array().unwrap();
+    let thing = things.iter().find(|t| t["id"].as_str() == Some("foundation:Task_label_match_001"))
         .expect("Task should be in results");
 
     assert_eq!(thing["label"].as_str(), Some("Ingresse Contract"), "label should appear at root level");
@@ -582,12 +578,12 @@ fn test_search_things_matched_properties_property_match() {
         "query": "ingresse"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
-    let thing = things.iter().find(|t| t["iri"].as_str() == Some("foundation:Task_prop_match_001"))
+    let things = response["entities"].as_array().unwrap();
+    let thing = things.iter().find(|t| t["id"].as_str() == Some("foundation:Task_prop_match_001"))
         .expect("Task should be in results");
 
     let matched = thing["matchedProperties"].as_array().unwrap();
@@ -626,12 +622,12 @@ fn test_search_things_score_ordering() {
         "query": "ingresse"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter().filter_map(|t| t["iri"].as_str()).collect();
+    let things = response["entities"].as_array().unwrap();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
     assert_eq!(iris.len(), 3, "All three tasks should be returned");
 
@@ -657,13 +653,13 @@ fn test_search_things_include_retracted_false_excludes_retracted() {
         "include_retracted": false
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["iri"].as_str())
+        .filter_map(|t| t["id"].as_str())
         .collect();
 
     assert!(iris.contains(&"foundation:Task_101"), "Results should include the non-retracted instance");
@@ -684,13 +680,13 @@ fn test_search_things_include_retracted_true_includes_retracted() {
         "include_retracted": true
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["iri"].as_str())
+        .filter_map(|t| t["id"].as_str())
         .collect();
 
     assert!(iris.contains(&"foundation:Task_103"), "Results should include the active instance");
@@ -710,13 +706,13 @@ fn test_search_things_default_excludes_retracted() {
         "concept_iri": "foundation:Task"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["iri"].as_str())
+        .filter_map(|t| t["id"].as_str())
         .collect();
 
     assert!(iris.contains(&"foundation:Task_105"), "Results should include the active instance");
@@ -740,14 +736,13 @@ fn test_search_things_limit_restricts_results() {
         "limit": 3
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things_one should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     assert_eq!(things.len(), 3, "Should return 3 things with limit 3");
     assert_eq!(response["total"].as_u64().unwrap(), 5, "Total should be 5");
-    assert_eq!(response["count"].as_u64().unwrap(), 3, "Count should be 3");
 }
 
 #[test]
@@ -768,11 +763,11 @@ fn test_search_things_offset_skips_results() {
         "offset": 3
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things_one should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     assert_eq!(things.len(), 2, "Should return 2 things after skipping 3");
     assert_eq!(response["total"].as_u64().unwrap(), 5, "Total should be 5");
 }
@@ -793,14 +788,13 @@ fn test_search_things_default_limit_returns_all_when_under_limit() {
         "concept_iri": "foundation:Task"
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things_one should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    let things = response["things"].as_array().unwrap();
+    let things = response["entities"].as_array().unwrap();
     assert_eq!(things.len(), 3, "Should return all 3 things");
     assert_eq!(response["total"].as_u64().unwrap(), 3, "Total should be 3");
-    assert_eq!(response["count"].as_u64().unwrap(), 3, "Count should be 3");
 }
 
 #[test]
@@ -821,14 +815,13 @@ fn test_search_things_response_fields_are_correct() {
         "offset": 0
     });
 
-    let result = search_things_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "search_things_one should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
     assert_eq!(response["limit"].as_u64().unwrap(), 10, "limit field should be 10");
     assert_eq!(response["offset"].as_u64().unwrap(), 0, "offset field should be 0");
     assert_eq!(response["total"].as_u64().unwrap(), 2, "total field should be 2");
-    assert_eq!(response["count"].as_u64().unwrap(), 2, "count field should be 2");
 }
 
 #[test]
@@ -886,13 +879,13 @@ fn perf_search_things_global_query() {
 
     let args = serde_json::json!({"query": "contract"});
 
-    let _ = search_things_one(&conn, &args);
+    let _ = remember(&conn, &args);
 
     let runs = 3u32;
     let mut total = std::time::Duration::ZERO;
     for i in 0..runs {
         let start = std::time::Instant::now();
-        let result = search_things_one(&conn, &args);
+        let result = remember(&conn, &args);
         let elapsed = start.elapsed();
         total += elapsed;
         let response = result.result.unwrap();
@@ -915,13 +908,13 @@ fn perf_search_things_with_concept_iri() {
 
     let args = serde_json::json!({"concept_iri": "foundation:Contract", "query": "Ingresse"});
 
-    let _ = search_things_one(&conn, &args);
+    let _ = remember(&conn, &args);
 
     let runs = 3u32;
     let mut total = std::time::Duration::ZERO;
     for i in 0..runs {
         let start = std::time::Instant::now();
-        let result = search_things_one(&conn, &args);
+        let result = remember(&conn, &args);
         let elapsed = start.elapsed();
         total += elapsed;
         let response = result.result.unwrap();
@@ -1099,55 +1092,55 @@ fn test_find_things_by_detail_date_filter_with_operators() {
 
     let args = serde_json::json!({
         "concept_iri": "foundation:Task",
-        "properties": [
+        "filters": [
             {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": "="}
         ]
     });
-    let result = find_things_by_detail_one(&conn, &args);
+    let result = remember(&conn, &args);
     assert!(result.success, "date '=' filter should succeed: {:?}", result.error);
-    let things = result.result.unwrap()["things"].as_array().unwrap().clone();
-    let iris: Vec<&str> = things.iter().filter_map(|t| t["iri"].as_str()).collect();
+    let things = result.result.unwrap()["entities"].as_array().unwrap().clone();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
     assert_eq!(iris, vec!["foundation:TaskDue0308"], "date '=' should return only the matching task");
 
     let args_gte = serde_json::json!({
         "concept_iri": "foundation:Task",
-        "properties": [
+        "filters": [
             {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": ">="}
         ]
     });
-    let result_gte = find_things_by_detail_one(&conn, &args_gte);
+    let result_gte = remember(&conn, &args_gte);
     assert!(result_gte.success, "date '>=' filter should succeed: {:?}", result_gte.error);
-    let things_gte = result_gte.result.unwrap()["things"].as_array().unwrap().clone();
-    let iris_gte: Vec<&str> = things_gte.iter().filter_map(|t| t["iri"].as_str()).collect();
+    let things_gte = result_gte.result.unwrap()["entities"].as_array().unwrap().clone();
+    let iris_gte: Vec<&str> = things_gte.iter().filter_map(|t| t["id"].as_str()).collect();
     assert!(iris_gte.contains(&"foundation:TaskDue0308"), "'>=' should include 2026-03-08");
     assert!(iris_gte.contains(&"foundation:TaskDue0309"), "'>=' should include 2026-03-09");
     assert!(!iris_gte.contains(&"foundation:TaskDue0307"), "'>=' should exclude 2026-03-07");
 
     let args_lte = serde_json::json!({
         "concept_iri": "foundation:Task",
-        "properties": [
+        "filters": [
             {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": "<="}
         ]
     });
-    let result_lte = find_things_by_detail_one(&conn, &args_lte);
+    let result_lte = remember(&conn, &args_lte);
     assert!(result_lte.success, "date '<=' filter should succeed: {:?}", result_lte.error);
-    let things_lte = result_lte.result.unwrap()["things"].as_array().unwrap().clone();
-    let iris_lte: Vec<&str> = things_lte.iter().filter_map(|t| t["iri"].as_str()).collect();
+    let things_lte = result_lte.result.unwrap()["entities"].as_array().unwrap().clone();
+    let iris_lte: Vec<&str> = things_lte.iter().filter_map(|t| t["id"].as_str()).collect();
     assert!(iris_lte.contains(&"foundation:TaskDue0307"), "'<=' should include 2026-03-07");
     assert!(iris_lte.contains(&"foundation:TaskDue0308"), "'<=' should include 2026-03-08");
     assert!(!iris_lte.contains(&"foundation:TaskDue0309"), "'<=' should exclude 2026-03-09");
 
     let args_range = serde_json::json!({
         "concept_iri": "foundation:Task",
-        "properties": [
+        "filters": [
             {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": ">="},
             {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": "<="}
         ]
     });
-    let result_range = find_things_by_detail_one(&conn, &args_range);
+    let result_range = remember(&conn, &args_range);
     assert!(result_range.success, "date range filter should succeed: {:?}", result_range.error);
-    let things_range = result_range.result.unwrap()["things"].as_array().unwrap().clone();
+    let things_range = result_range.result.unwrap()["entities"].as_array().unwrap().clone();
     assert_eq!(things_range.len(), 1, "range >=2026-03-08 AND <=2026-03-08 should return exactly 1");
-    assert_eq!(things_range[0]["iri"].as_str().unwrap(), "foundation:TaskDue0308");
+    assert_eq!(things_range[0]["id"].as_str().unwrap(), "foundation:TaskDue0308");
 }
 

@@ -1,13 +1,8 @@
 use serde_json::Value;
 use crate::eavto::Connection;
-use crate::owl::{Class, Individual, Object};
+use crate::owl::{Individual, Object};
 use super::ToolResult;
 use std::sync::atomic::{AtomicU64, Ordering};
-
-
-const SCORE_LABEL_MATCH: usize = 3;
-const SCORE_COMMENT_MATCH: usize = 2;
-const SCORE_DETAIL_MATCH: usize = 1;
 
 static IRI_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -22,15 +17,102 @@ fn next_iri_id() -> u64 {
     }
 }
 
-pub fn remember_thing(conn: &Connection, args: &Value) -> ToolResult {
-    super::batch::run_multi_read(conn, args, remember_thing_one)
+pub fn remember(conn: &Connection, args: &Value) -> ToolResult {
+    let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    let entity_type_filter = args.get("type").and_then(|v| v.as_str());
+    let concept_iri = args.get("concept_iri").and_then(|v| v.as_str());
+    let include_retracted = args.get("include_retracted").and_then(|v| v.as_bool()).unwrap_or(false);
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+    let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+
+    let filters_owned: Option<Vec<(String, String, String)>> =
+        args.get("filters").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter().filter_map(|item| {
+                let detail = item.get("detail").and_then(|v| v.as_str())?.to_string();
+                let value = item.get("value").and_then(|v| v.as_str())?.to_string();
+                let operator = item.get("operator").and_then(|v| v.as_str()).unwrap_or("=").to_string();
+                Some((detail, value, operator))
+            }).collect()
+        });
+
+    let tokens: Vec<String> = if query_str.is_empty() {
+        Vec::new()
+    } else {
+        query_str.split_whitespace().map(|s| s.to_lowercase()).collect()
+    };
+
+    let filters_ref: Option<&[(String, String, String)]> = filters_owned.as_deref();
+
+    match crate::owl::search_rich(
+        conn,
+        &tokens,
+        entity_type_filter,
+        concept_iri,
+        filters_ref,
+        include_retracted,
+        limit,
+        offset,
+    ) {
+        Ok((results, total)) => {
+            let entities: Vec<serde_json::Value> = results.into_iter()
+                .map(|r| serde_json::json!({
+                    "id": r.id,
+                    "label": r.label,
+                    "icon": r.icon,
+                    "type": r.entity_type,
+                    "matchedProperties": r.matched_properties,
+                    "conceptType": r.concept_type,
+                    "status": r.status,
+                }))
+                .collect();
+            ToolResult {
+                success: true,
+                result: Some(serde_json::json!({
+                    "entities": entities,
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                })),
+                error: None,
+            }
+        }
+        Err(e) => ToolResult {
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+        },
+    }
 }
 
-fn remember_thing_one(conn: &Connection, args: &Value) -> ToolResult {
-    if args.get("iri").or_else(|| args.get("IRI")).is_some() {
-        get_thing_one(conn, args)
-    } else {
-        search_things_one(conn, args)
+pub fn get_things(conn: &Connection, args: &Value) -> ToolResult {
+    let iris = match args.get("iris").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: iris".to_string()),
+        },
+    };
+
+    let mut results = Vec::new();
+    let mut errors = Vec::new();
+    for v in iris {
+        if let Some(iri) = v.as_str() {
+            let r = get_thing_one(conn, &serde_json::json!({ "iri": iri }));
+            if r.success {
+                if let Some(val) = r.result {
+                    results.push(val);
+                }
+            } else {
+                errors.push(format!("{}: {}", iri, r.error.unwrap_or_default()));
+            }
+        }
+    }
+
+    ToolResult {
+        success: errors.is_empty(),
+        result: Some(serde_json::json!({ "things": results })),
+        error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
     }
 }
 
@@ -50,205 +132,6 @@ fn learn_thing_one(conn: &mut Connection, args: &Value) -> ToolResult {
     }
 }
 
-fn truncate_value(s: &str) -> String {
-    const MAX: usize = 300;
-    if s.len() <= MAX {
-        s.to_string()
-    } else {
-        let mut end = MAX;
-        while !s.is_char_boundary(end) { end -= 1; }
-        format!("{}…", &s[..end])
-    }
-}
-
-fn search_things_one(conn: &Connection, args: &Value) -> ToolResult {
-    if args.get("properties").and_then(|v| v.as_array()).is_some() {
-        return find_things_by_detail_one(conn, args);
-    }
-
-    let concept_iri_opt = args.get("concept_iri")
-        .and_then(|v| v.as_str());
-
-    let query_str = args.get("query")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    let limit = args.get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(15) as usize;
-
-    let offset = args.get("offset")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
-
-    let from_millis = args.get("from_millis").and_then(|v| v.as_i64());
-    let to_millis = args.get("to_millis").and_then(|v| v.as_i64());
-    let include_retracted = args.get("include_retracted")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let use_extended_query = from_millis.is_some() || to_millis.is_some() || include_retracted;
-
-    match (|| {
-        let thing_iris = if let Some(concept_iri) = concept_iri_opt {
-            if use_extended_query {
-                Individual::find_by_class_with_date_range(
-                    conn, concept_iri, from_millis, to_millis, include_retracted,
-                )?
-            } else {
-                Class::get_instances(conn, concept_iri)?
-            }
-        } else {
-            Individual::search(conn)?
-        };
-
-        let search_tokens: Vec<String> = if query_str.is_empty() {
-            Vec::new()
-        } else {
-            query_str
-                .to_lowercase()
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect()
-        };
-
-        let batch = Individual::batch_load_triples(conn, &thing_iris)?;
-
-        let retracted_batch = if include_retracted {
-            let no_active: Vec<String> = thing_iris.iter()
-                .filter(|iri| !batch.contains_key(iri.as_str()))
-                .cloned()
-                .collect();
-            Individual::batch_load_retracted_triples(conn, &no_active)?
-        } else {
-            std::collections::HashMap::new()
-        };
-
-        let mut things_with_scores: Vec<(Value, usize)> = Vec::new();
-        for iri in &thing_iris {
-            let triples = match batch.get(iri.as_str()) {
-                Some(t) => t,
-                None => match retracted_batch.get(iri.as_str()) {
-                    Some(t) => t,
-                    None => continue,
-                },
-            };
-
-            let label = triples.iter()
-                .find(|t| t.predicate == "rdfs:label")
-                .and_then(|t| t.object.as_literal());
-
-            let icon = triples.iter()
-                .find(|t| t.predicate == "foundation:hasIcon")
-                .and_then(|t| t.object.as_iri())
-                .and_then(|icon_iri| crate::owl::icon_iri_to_display(conn, icon_iri))
-                .or_else(|| {
-                    triples.iter()
-                        .find(|t| t.predicate == "foundation:icon")
-                        .and_then(|t| t.object.as_literal())
-                });
-
-            let comment = triples.iter()
-                .find(|t| t.predicate == "rdfs:comment")
-                .and_then(|t| t.object.as_literal());
-
-            let mut matched_properties: Vec<serde_json::Value> = Vec::new();
-
-            let score = if !search_tokens.is_empty() {
-                let label_lower = label.as_ref()
-                    .map(|l| l.to_lowercase())
-                    .unwrap_or_default();
-                let comment_lower = comment.as_ref()
-                    .map(|c| c.to_lowercase())
-                    .unwrap_or_default();
-
-                let mut match_count = 0;
-                for token in &search_tokens {
-                    if label_lower.contains(token) {
-                        match_count += SCORE_LABEL_MATCH;
-                    } else if comment_lower.contains(token) {
-                        match_count += SCORE_COMMENT_MATCH;
-                        if let Some(ref comment_val) = comment {
-                            let truncated = truncate_value(comment_val);
-                            matched_properties.push(serde_json::json!({
-                                "detail_iri": "rdfs:comment",
-                                "value": truncated,
-                                "datatype": "xsd:string",
-                            }));
-                        }
-                    } else {
-                        for triple in triples.iter().filter(|t| {
-                            t.predicate != "rdfs:label"
-                                && t.predicate != "rdfs:comment"
-                                && t.predicate != "foundation:icon"
-                                && t.predicate != "foundation:hasIcon"
-                        }) {
-                            if let Some(val_str) = triple.object.as_literal() {
-                                if val_str.to_lowercase().contains(token) {
-                                    match_count += SCORE_DETAIL_MATCH;
-                                    let mut entry = serde_json::json!({
-                                        "detail_iri": triple.predicate,
-                                        "value": truncate_value(&val_str),
-                                    });
-                                    if let Some(dt) = triple.object.datatype() {
-                                        entry["datatype"] = serde_json::json!(dt);
-                                    }
-                                    matched_properties.push(entry);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                matched_properties.dedup_by(|a, b| a["detail_iri"] == b["detail_iri"]);
-
-                if match_count == 0 {
-                    continue;
-                }
-
-                match_count
-            } else {
-                0
-            };
-
-            things_with_scores.push((serde_json::json!({
-                "iri": iri,
-                "label": label,
-                "icon": icon,
-                "matchedProperties": matched_properties,
-            }), score));
-        }
-
-        if !search_tokens.is_empty() {
-            things_with_scores.sort_by(|a, b| b.1.cmp(&a.1));
-        }
-
-        let things: Vec<_> = things_with_scores.into_iter().map(|(t, _)| t).collect();
-
-        let total = things.len();
-        let paginated: Vec<_> = things.into_iter().skip(offset).take(limit).collect();
-
-        Ok::<_, crate::owl::OwlError>(serde_json::json!({
-            "things": paginated,
-            "count": paginated.len(),
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-        }))
-    })() {
-        Ok(result) => ToolResult {
-            success: true,
-            result: Some(result),
-            error: None,
-        },
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e.to_string()),
-        },
-    }
-}
 
 fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").or_else(|| args.get("IRI")).and_then(|v| v.as_str()) {
@@ -789,97 +672,6 @@ fn delete_thing_one(
 
 
 
-fn find_things_by_detail_one(conn: &Connection, args: &Value) -> ToolResult {
-    let concept_iri = match args.get("concept_iri").and_then(|v| v.as_str()) {
-        Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: concept_iri".to_string()),
-        },
-    };
-
-    let properties = match args.get("properties").and_then(|v| v.as_array()) {
-        Some(props) => props,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: properties".to_string()),
-        },
-    };
-
-    let include_retracted = args.get("include_retracted")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let limit = args.get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(100) as usize;
-
-    let offset = args.get("offset")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
-
-    match (|| {
-        let mut detail_constraints: Vec<(String, String, String)> = Vec::new();
-        for prop in properties {
-            let detail_iri = prop.get("detail")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| crate::owl::OwlError::ValidationError(
-                    "Missing 'detail' field in constraint".to_string(),
-                ))?;
-            let value = prop.get("value")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| crate::owl::OwlError::ValidationError(
-                    "Missing 'value' field in constraint".to_string(),
-                ))?;
-            let operator = prop.get("operator")
-                .and_then(|v| v.as_str())
-                .unwrap_or("=");
-
-            detail_constraints.push((detail_iri.to_string(), value.to_string(), operator.to_string()));
-        }
-
-        let constraint_refs: Vec<(&str, &str, &str)> = detail_constraints
-            .iter()
-            .map(|(d, v, o)| (d.as_str(), v.as_str(), o.as_str()))
-            .collect();
-
-        let (paginated_iris, total) = Individual::find_by_class_and_properties_with_options(
-            conn, concept_iri, &constraint_refs, include_retracted, limit, offset,
-        )?;
-
-        let mut results = Vec::new();
-        for iri in paginated_iris {
-            if let Ok(Some(individual)) = Individual::get(conn, &iri) {
-                results.push(serde_json::json!({
-                    "iri": individual.iri,
-                    "label": individual.label,
-                    "icon": individual.icon,
-                }));
-            }
-        }
-
-        Ok::<_, crate::owl::OwlError>(serde_json::json!({
-            "things": results,
-            "count": results.len(),
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-        }))
-    })() {
-        Ok(result) => ToolResult {
-            success: true,
-            result: Some(result),
-            error: None,
-        },
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e.to_string()),
-        },
-    }
-}
 
 #[cfg(test)]
 #[path = "thing_tests.rs"]

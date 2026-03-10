@@ -210,8 +210,114 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
 
         // ----------------------------------------------------------------
-        // REMEMBER (fetch by iri, or search without iri)
+        // REMEMBER / GET
         // ----------------------------------------------------------------
+        ToolTemplate {
+            name: "remember".to_string(),
+            array_mode: false,
+            description: concat!(
+                "Search across classes and individuals. ALL query tokens must match (AND semantics).",
+                " Without query: lists entities. With concept_iri: scoped to that class.",
+                " With filters: filters by property values (requires concept_iri).",
+                " Each result includes type ('class'|'individual'), matchedProperties, conceptType, and status.",
+            ).to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "query".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Search keywords. ALL tokens must match (AND). Split by whitespace. Use 1-3 important words in English.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "type".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Filter to 'class' or 'individual' only. Omit to return both.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "concept_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Filter to instances of this class (e.g. 'foundation:Task').".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "filters".to_string(),
+                    param_type: "array".to_string(),
+                    description: "Filter by property values. Requires concept_iri. Each item: {detail: 'property_iri', value: 'VALUE', operator?: '='|'>='|'<='|'>'|'<'}. operator defaults to '='. For xsd:date use ISO 'YYYY-MM-DD'. For xsd:dateTime use RFC3339.".to_string(),
+                    required: false,
+                    schema: Some(serde_json::json!({
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "detail": { "type": "string", "description": "Property IRI to filter on." },
+                                "value": { "type": "string", "description": "Value to match." },
+                                "operator": { "type": "string", "description": "Comparison operator: '=', '>=', '<=', '>', '<'. Defaults to '='." }
+                            },
+                            "required": ["detail", "value"]
+                        }
+                    })),
+                },
+                Parameter {
+                    name: "include_retracted".to_string(),
+                    param_type: "boolean".to_string(),
+                    description: "Include deleted entities/facts. Default: false.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "limit".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Max results (default: 20).".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "offset".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Skip N results for pagination (default: 0).".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+        ToolTemplate {
+            name: "get_concepts".to_string(),
+            array_mode: false,
+            description: "Batch-fetch full concept (class) details by IRI array. Returns properties, connections, allowedStatuses, subclasses, required fields, and incoming properties for each.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iris".to_string(),
+                    param_type: "array".to_string(),
+                    description: "Array of concept IRIs to fetch (e.g. ['foundation:Task', 'foundation:Project']).".to_string(),
+                    required: true,
+                    schema: Some(serde_json::json!({
+                        "type": "array",
+                        "items": { "type": "string" }
+                    })),
+                },
+            ],
+        },
+        ToolTemplate {
+            name: "get_things".to_string(),
+            array_mode: false,
+            description: "Batch-fetch full individual (thing) details by IRI array. Returns all properties, backlinks, allowedStatuses, and requiredFields for each.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iris".to_string(),
+                    param_type: "array".to_string(),
+                    description: "Array of thing IRIs to fetch (e.g. ['foundation:Task_123', 'foundation:Task_456']).".to_string(),
+                    required: true,
+                    schema: Some(serde_json::json!({
+                        "type": "array",
+                        "items": { "type": "string" }
+                    })),
+                },
+            ],
+        },
         ToolTemplate {
             name: "remember_properties".to_string(),
             array_mode: true,
@@ -247,112 +353,6 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 },
             ],
         },
-        ToolTemplate {
-            name: "remember_concepts".to_string(),
-            array_mode: true,
-            description: "Fetch or search concepts. With 'iri': full details (properties, connections, allowedStatuses, subclasses). Without 'iri': keyword search. Always use English.".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "ID of the concept to fetch. Omit to search instead.".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "query".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Search keywords (used when no iri). ALL words must match (AND search). Use 1-3 important words in ENGLISH.".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "limit".to_string(),
-                    param_type: "integer".to_string(),
-                    description: "Max results for search (default: 100).".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "offset".to_string(),
-                    param_type: "integer".to_string(),
-                    description: "Skip N results for pagination (default: 0).".to_string(),
-                    required: false,
-                    schema: None,
-                },
-            ],
-        },
-        ToolTemplate {
-            name: "remember_things".to_string(),
-            array_mode: true,
-            description: "Fetch or search things. With 'iri': full details (all properties, connections, backlinks, allowedStatuses, requiredFields). Without 'iri': searches things by keyword, optionally filtered by concept. Each search result includes 'matchedProperties' showing which fields matched.".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "IRI of the thing to fetch. Omit to search instead.".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "concept_iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Filter search to this concept (optional, used when no iri).".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "query".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Search keywords (used when no iri). ALL words must match.".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "limit".to_string(),
-                    param_type: "integer".to_string(),
-                    description: "Max results for search (default: 15).".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "offset".to_string(),
-                    param_type: "integer".to_string(),
-                    description: "Skip N results for pagination (default: 0).".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "from_millis".to_string(),
-                    param_type: "number".to_string(),
-                    description: "Min creation timestamp in ms. Requires concept_iri.".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "to_millis".to_string(),
-                    param_type: "number".to_string(),
-                    description: "Max creation timestamp in ms. Requires concept_iri.".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "include_retracted".to_string(),
-                    param_type: "boolean".to_string(),
-                    description: "Include deleted things/facts. Default: false.".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "properties".to_string(),
-                    param_type: "array".to_string(),
-                    description: "Filter by detail values. Requires concept_iri. Each item: {detail: 'IRI', value: 'VALUE', operator?: '='|'>='|'<='|'>'|'<'}. operator defaults to '='. For xsd:date use ISO format 'YYYY-MM-DD' (e.g. '2026-03-08'). For xsd:dateTime use RFC3339 (e.g. '2026-03-08T00:00:00Z' or '2026-03-08T00:00:00+00:00') or without timezone (e.g. '2026-03-08T00:00:00', assumed local timezone).".to_string(),
-                    required: false,
-                    schema: None,
-                },
-            ],
-        },
-
         // ----------------------------------------------------------------
         // FORGET (always with iri)
         // ----------------------------------------------------------------

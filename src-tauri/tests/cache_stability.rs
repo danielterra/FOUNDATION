@@ -171,6 +171,7 @@ async fn test_cache_boundary_stable_across_turns() {
             max_tokens: Some(150),
             temperature: Some(0.0),
             system: Some(system.clone()),
+            blackboard_context: None,
             tools: None,
             supports_web_tools: false,
         };

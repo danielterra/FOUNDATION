@@ -63,7 +63,6 @@ pub struct SearchResult {
     pub id: String,
     pub label: String,
     pub icon: Option<String>,
-    #[allow(dead_code)]
     pub is_class: bool,
 }
 
@@ -209,8 +208,8 @@ pub struct RichSearchResult {
     pub status: Option<serde_json::Value>,
 }
 
-/// Search instances by label and all literal property values (case-insensitive, ranked by relevance).
-/// Returns only instances (not classes), enriched with matched properties, concept type and status.
+/// Search classes and individuals by IRI, label, comment, and literal properties.
+/// Results are ranked by relevance and enriched with concept type, icon, and status.
 pub fn search_instances_rich(
     conn: &Connection,
     query: &str,
@@ -218,97 +217,52 @@ pub fn search_instances_rich(
 ) -> Result<Vec<RichSearchResult>> {
     use crate::eavto::query;
 
-    let thing_iris = Individual::search(conn)?;
-
-    let query_lower = query.to_lowercase();
-
-    let batch = query::batch_load_triples_for_subjects(conn, &thing_iris)
+    let rows = query::search_entities(conn, query, limit)
         .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
 
-    let mut scored: Vec<(i32, RichSearchResult)> = Vec::new();
+    let mut results = Vec::with_capacity(rows.len());
 
-    for iri in &thing_iris {
-        let triples = match batch.get(iri.as_str()) {
-            Some(t) => t,
-            None => continue,
+    for row in rows {
+        let icon = row.has_icon_iri
+            .as_deref()
+            .and_then(|iri| icon_iri_to_display(conn, iri))
+            .or(row.icon_literal);
+
+        let is_class = row.type_iri.as_deref() == Some("owl:Class");
+        let entity_type = if is_class { "class" } else { "individual" }.to_string();
+
+        let concept_type = if is_class {
+            None
+        } else {
+            row.type_iri.as_deref().and_then(|type_iri| {
+                if type_iri.starts_with("owl:") || type_iri.starts_with("rdf:") || type_iri.starts_with("rdfs:") {
+                    None
+                } else {
+                    let type_thing = Thing::get(conn, type_iri);
+                    Some(serde_json::json!({
+                        "iri": type_iri,
+                        "label": type_thing.label,
+                        "icon": type_thing.icon,
+                    }))
+                }
+            })
         };
 
-        let label = triples.iter()
-            .find(|t| t.predicate == vocabulary::rdfs::LABEL)
-            .and_then(|t| t.object.as_literal())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| iri.clone());
-
-        let icon = triples.iter()
-            .find(|t| t.predicate == "foundation:hasIcon")
-            .and_then(|t| t.object.as_iri())
-            .and_then(|icon_iri| icon_iri_to_display(conn, icon_iri))
-            .or_else(|| {
-                triples.iter()
-                    .find(|t| t.predicate == "foundation:icon")
-                    .and_then(|t| t.object.as_literal())
-                    .map(|s| s.to_string())
-            });
-
-        let label_lower = label.to_lowercase();
-
-        let score: i32;
-        let mut matched_properties: Vec<serde_json::Value> = Vec::new();
-
-        if query_lower.is_empty() {
-            score = 0;
-        } else if label_lower == query_lower {
-            score = 3;
-        } else if label_lower.starts_with(&query_lower) {
-            score = 2;
-        } else if label_lower.contains(&query_lower) {
-            score = 1;
-        } else {
-            let mut prop_score = 0i32;
-            for triple in triples.iter().filter(|t| {
-                t.predicate != vocabulary::rdfs::LABEL
-                    && t.predicate != "foundation:icon"
-                    && t.predicate != "foundation:hasIcon"
-            }) {
-                if let Some(val_str) = triple.object.as_literal() {
-                    if val_str.to_lowercase().contains(&query_lower) {
-                        prop_score += 1;
-                        let mut entry = serde_json::json!({
-                            "detail_iri": triple.predicate,
-                            "value": val_str,
-                        });
-                        if let Some(dt) = triple.object.datatype() {
-                            entry["datatype"] = serde_json::json!(dt);
-                        }
-                        matched_properties.push(entry);
-                    }
-                }
-            }
-            if prop_score == 0 {
-                continue;
-            }
-            matched_properties.dedup_by(|a, b| a["detail_iri"] == b["detail_iri"]);
-            score = prop_score;
-        }
-
-        let concept_type = triples.iter()
-            .find(|t| t.predicate == vocabulary::rdf::TYPE)
-            .and_then(|t| t.object.as_iri())
-            .filter(|type_iri| {
-                !type_iri.starts_with("owl:")
-                    && !type_iri.starts_with("rdfs:")
-                    && !type_iri.starts_with("rdf:")
+        let matched_properties: Vec<serde_json::Value> = row.props_raw
+            .as_deref()
+            .map(|raw| {
+                raw.split('\x1E')
+                    .filter_map(|entry| {
+                        let mut parts = entry.splitn(2, '\x1F');
+                        let pred = parts.next()?;
+                        let val = parts.next()?;
+                        Some(serde_json::json!({ "detail_iri": pred, "value": val }))
+                    })
+                    .collect()
             })
-            .map(|type_iri| {
-                let type_thing = Thing::get(conn, type_iri);
-                serde_json::json!({
-                    "iri": type_iri,
-                    "label": type_thing.label,
-                    "icon": type_thing.icon,
-                })
-            });
+            .unwrap_or_default();
 
-        let status = get_entity_status_info(conn, iri)
+        let status = get_entity_status_info(conn, &row.subject)
             .map(|(s_iri, s_label, s_color, s_icon)| serde_json::json!({
                 "iri": s_iri,
                 "label": s_label,
@@ -316,20 +270,18 @@ pub fn search_instances_rich(
                 "color": s_color,
             }));
 
-        scored.push((score, RichSearchResult {
-            id: iri.clone(),
-            label,
+        results.push(RichSearchResult {
+            id: row.subject,
+            label: row.label,
             icon,
-            entity_type: "individual".to_string(),
+            entity_type,
             matched_properties,
             concept_type,
             status,
-        }));
+        });
     }
 
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.label.len().cmp(&b.1.label.len())));
-
-    Ok(scored.into_iter().take(limit).map(|(_, r)| r).collect())
+    Ok(results)
 }
 
 /// Returns all IRI values for a predicate on an entity
@@ -509,6 +461,439 @@ pub fn get_entity_status_info(
         }
     }
     None
+}
+
+/// Unified search across classes and individuals.
+///
+/// Path A (concept_iri or filters provided): loads candidates for that class, optionally
+/// applies multi-token AND scoring in Rust, then paginates and enriches.
+///
+/// Path B (global): uses SQL-based `search_entities` / `search_entities_scores_only` to
+/// find candidates, intersects per-token score maps for multi-token AND, then enriches the
+/// result page.
+pub fn search_rich(
+    conn: &Connection,
+    tokens: &[String],
+    entity_type_filter: Option<&str>,
+    concept_iri: Option<&str>,
+    filters: Option<&[(String, String, String)]>,
+    include_retracted: bool,
+    limit: usize,
+    offset: usize,
+) -> Result<(Vec<RichSearchResult>, usize)> {
+    if concept_iri.is_some() || filters.is_some() {
+        search_rich_structured(conn, tokens, entity_type_filter, concept_iri, filters, include_retracted, limit, offset)
+    } else {
+        search_rich_global(conn, tokens, entity_type_filter, limit, offset)
+    }
+}
+
+fn score_entity_against_tokens(
+    iri: &str,
+    triples: &[crate::eavto::Triple],
+    tokens: &[String],
+    matched_properties: &mut Vec<serde_json::Value>,
+) -> Option<i32> {
+    let label = triples.iter()
+        .find(|t| t.predicate == "rdfs:label")
+        .and_then(|t| t.object.as_literal())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    let local_part = iri.split(':').last().unwrap_or("").to_lowercase();
+
+    let mut total_score: i32 = 0;
+
+    for token in tokens {
+        let token_lower = token.to_lowercase();
+        let mut token_score: i32 = 0;
+        let mut matched_prop: Option<serde_json::Value> = None;
+
+        if iri.to_lowercase() == token_lower || local_part == token_lower {
+            token_score = 100;
+        } else if label == token_lower {
+            token_score = 50;
+        } else if label.starts_with(&token_lower) {
+            token_score = 40;
+        } else if label.contains(&token_lower) {
+            token_score = 30;
+        } else {
+            let comment_match = triples.iter()
+                .find(|t| t.predicate == "rdfs:comment" && t.object.as_literal().map(|v| v.to_lowercase().contains(&token_lower)).unwrap_or(false));
+            if let Some(ct) = comment_match {
+                token_score = 20;
+                matched_prop = Some(serde_json::json!({
+                    "detail_iri": "rdfs:comment",
+                    "value": ct.object.as_literal().unwrap_or_default(),
+                }));
+            } else {
+                let prop_match = triples.iter().find(|t| {
+                    t.predicate != "rdfs:label"
+                        && t.predicate != "rdfs:comment"
+                        && t.predicate != "foundation:icon"
+                        && t.predicate != "foundation:hasIcon"
+                        && t.object.as_literal().map(|v| v.to_lowercase().contains(&token_lower)).unwrap_or(false)
+                });
+                if let Some(pm) = prop_match {
+                    token_score = 10;
+                    matched_prop = Some(serde_json::json!({
+                        "detail_iri": pm.predicate,
+                        "value": pm.object.as_literal().unwrap_or_default(),
+                    }));
+                }
+            }
+        }
+
+        if token_score == 0 {
+            return None;
+        }
+        total_score += token_score;
+        if let Some(mp) = matched_prop {
+            matched_properties.push(mp);
+        }
+    }
+
+    Some(total_score)
+}
+
+fn enrich_from_triples(
+    conn: &Connection,
+    iri: &str,
+    triples: &[crate::eavto::Triple],
+    matched_properties: Vec<serde_json::Value>,
+) -> RichSearchResult {
+    let label = triples.iter()
+        .find(|t| t.predicate == "rdfs:label")
+        .and_then(|t| t.object.as_literal())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| iri.to_string());
+
+    let icon = triples.iter()
+        .find(|t| t.predicate == "foundation:hasIcon")
+        .and_then(|t| t.object.as_iri())
+        .and_then(|icon_iri| icon_iri_to_display(conn, icon_iri))
+        .or_else(|| {
+            triples.iter()
+                .find(|t| t.predicate == "foundation:icon")
+                .and_then(|t| t.object.as_literal())
+                .map(|s| s.to_string())
+        });
+
+    let type_iri = triples.iter()
+        .filter(|t| t.predicate == "rdf:type")
+        .filter_map(|t| t.object.as_iri())
+        .find(|iri| !iri.starts_with("owl:") && !iri.starts_with("rdf:") && !iri.starts_with("rdfs:"))
+        .or_else(|| {
+            triples.iter()
+                .find(|t| t.predicate == "rdf:type")
+                .and_then(|t| t.object.as_iri())
+        })
+        .map(|s| s.to_string());
+
+    let is_class = type_iri.as_deref() == Some("owl:Class");
+    let entity_type = if is_class { "class" } else { "individual" }.to_string();
+
+    let concept_type = if is_class {
+        None
+    } else {
+        type_iri.as_deref().and_then(|t| {
+            if t.starts_with("owl:") || t.starts_with("rdf:") || t.starts_with("rdfs:") {
+                None
+            } else {
+                let type_thing = Thing::get(conn, t);
+                Some(serde_json::json!({
+                    "iri": t,
+                    "label": type_thing.label,
+                    "icon": type_thing.icon,
+                }))
+            }
+        })
+    };
+
+    let status = get_entity_status_info(conn, iri)
+        .map(|(s_iri, s_label, s_color, s_icon)| serde_json::json!({
+            "iri": s_iri,
+            "label": s_label,
+            "icon": s_icon,
+            "color": s_color,
+        }));
+
+    RichSearchResult {
+        id: iri.to_string(),
+        label,
+        icon,
+        entity_type,
+        matched_properties,
+        concept_type,
+        status,
+    }
+}
+
+fn enrich_from_sql_row(
+    conn: &Connection,
+    row: &crate::eavto::query::EntitySearchRow,
+) -> RichSearchResult {
+    let icon = row.has_icon_iri
+        .as_deref()
+        .and_then(|iri| icon_iri_to_display(conn, iri))
+        .or_else(|| row.icon_literal.clone());
+
+    let is_class = row.type_iri.as_deref() == Some("owl:Class");
+    let entity_type = if is_class { "class" } else { "individual" }.to_string();
+
+    let concept_type = if is_class {
+        None
+    } else {
+        row.type_iri.as_deref().and_then(|t| {
+            if t.starts_with("owl:") || t.starts_with("rdf:") || t.starts_with("rdfs:") {
+                None
+            } else {
+                let type_thing = Thing::get(conn, t);
+                Some(serde_json::json!({
+                    "iri": t,
+                    "label": type_thing.label,
+                    "icon": type_thing.icon,
+                }))
+            }
+        })
+    };
+
+    let matched_properties: Vec<serde_json::Value> = row.props_raw
+        .as_deref()
+        .map(|raw| {
+            raw.split('\x1E')
+                .filter_map(|entry| {
+                    let mut parts = entry.splitn(2, '\x1F');
+                    let pred = parts.next()?;
+                    let val = parts.next()?;
+                    Some(serde_json::json!({ "detail_iri": pred, "value": val }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let status = get_entity_status_info(conn, &row.subject)
+        .map(|(s_iri, s_label, s_color, s_icon)| serde_json::json!({
+            "iri": s_iri,
+            "label": s_label,
+            "icon": s_icon,
+            "color": s_color,
+        }));
+
+    RichSearchResult {
+        id: row.subject.clone(),
+        label: row.label.clone(),
+        icon,
+        entity_type,
+        matched_properties,
+        concept_type,
+        status,
+    }
+}
+
+fn search_rich_structured(
+    conn: &Connection,
+    tokens: &[String],
+    _entity_type_filter: Option<&str>,
+    concept_iri: Option<&str>,
+    filters: Option<&[(String, String, String)]>,
+    include_retracted: bool,
+    limit: usize,
+    offset: usize,
+) -> Result<(Vec<RichSearchResult>, usize)> {
+    use crate::eavto::query;
+
+    let candidate_iris: Vec<String> = if let Some(f) = filters {
+        let concept = concept_iri.ok_or_else(|| OwlError::ValidationError(
+            "concept_iri is required when filters are provided".to_string()
+        ))?;
+        let constraint_refs: Vec<(&str, &str, &str)> = f.iter()
+            .map(|(d, v, o)| (d.as_str(), v.as_str(), o.as_str()))
+            .collect();
+        let (iris, _) = Individual::find_by_class_and_properties_with_options(
+            conn, concept, &constraint_refs, include_retracted, usize::MAX, 0,
+        )?;
+        iris
+    } else if let Some(concept) = concept_iri {
+        if include_retracted {
+            Individual::find_by_class_with_date_range(conn, concept, None, None, true)?
+        } else {
+            Class::get_instances(conn, concept)?
+        }
+    } else {
+        return Err(OwlError::InvalidOperation("structured search requires concept_iri or filters".to_string()));
+    };
+
+    let load_batch = |subjects: &[String]| -> Result<std::collections::HashMap<String, Vec<crate::eavto::Triple>>> {
+        let active = query::batch_load_triples_for_subjects(conn, subjects)
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+        if !include_retracted {
+            return Ok(active);
+        }
+        let missing: Vec<String> = subjects.iter()
+            .filter(|s| !active.contains_key(s.as_str()))
+            .cloned()
+            .collect();
+        if missing.is_empty() {
+            return Ok(active);
+        }
+        let retracted = query::batch_load_retracted_triples_for_subjects(conn, &missing)
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+        let mut combined = active;
+        combined.extend(retracted);
+        Ok(combined)
+    };
+
+    if tokens.is_empty() {
+        let total = candidate_iris.len();
+        let page: Vec<String> = candidate_iris.into_iter().skip(offset).take(limit).collect();
+        let batch = load_batch(&page)?;
+        let results: Vec<RichSearchResult> = page.iter().map(|iri| {
+            let empty = vec![];
+            let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+            enrich_from_triples(conn, iri, triples, vec![])
+        }).collect();
+        return Ok((results, total));
+    }
+
+    let batch = load_batch(&candidate_iris)?;
+
+    let mut scored: Vec<(String, i32)> = Vec::new();
+    for iri in &candidate_iris {
+        let empty = vec![];
+        let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+        let mut matched_props = vec![];
+        if let Some(score) = score_entity_against_tokens(iri, triples, tokens, &mut matched_props) {
+            scored.push((iri.clone(), score));
+        }
+    }
+    scored.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let total = scored.len();
+    let page: Vec<String> = scored.into_iter().skip(offset).take(limit).map(|(iri, _)| iri).collect();
+
+    let page_batch = load_batch(&page)?;
+
+    let results: Vec<RichSearchResult> = page.iter().map(|iri| {
+        let empty = vec![];
+        let triples = page_batch.get(iri.as_str()).unwrap_or(&empty);
+        let mut matched_props = vec![];
+        score_entity_against_tokens(iri, triples, tokens, &mut matched_props);
+        enrich_from_triples(conn, iri, triples, matched_props)
+    }).collect();
+
+    Ok((results, total))
+}
+
+fn search_rich_global(
+    conn: &Connection,
+    tokens: &[String],
+    entity_type_filter: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> Result<(Vec<RichSearchResult>, usize)> {
+    use crate::eavto::query;
+
+    if tokens.is_empty() {
+        let big_limit = offset + limit + 1000;
+        let rows = query::search_entities(conn, "", big_limit)
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+
+        let filtered: Vec<_> = rows.into_iter()
+            .filter(|r| {
+                if let Some(f) = entity_type_filter {
+                    let is_class = r.type_iri.as_deref() == Some("owl:Class");
+                    let et = if is_class { "class" } else { "individual" };
+                    et == f
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        let total = filtered.len();
+        let page: Vec<_> = filtered.into_iter().skip(offset).take(limit).collect();
+        let results = page.iter().map(|r| enrich_from_sql_row(conn, r)).collect();
+        return Ok((results, total));
+    }
+
+    if tokens.len() == 1 {
+        let big_limit = offset + limit + 10000;
+        let rows = query::search_entities(conn, &tokens[0], big_limit)
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+
+        let filtered: Vec<_> = rows.into_iter()
+            .filter(|r| {
+                if let Some(f) = entity_type_filter {
+                    let is_class = r.type_iri.as_deref() == Some("owl:Class");
+                    let et = if is_class { "class" } else { "individual" };
+                    et == f
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        let total = filtered.len();
+        let page: Vec<_> = filtered.into_iter().skip(offset).take(limit).collect();
+        let results = page.iter().map(|r| enrich_from_sql_row(conn, r)).collect();
+        return Ok((results, total));
+    }
+
+    let score_maps: Vec<std::collections::HashMap<String, i32>> = tokens.iter()
+        .map(|token| {
+            query::search_entities_scores_only(conn, token)
+                .map_err(|e| OwlError::DatabaseError(e.to_string()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let first_map = &score_maps[0];
+    let mut combined: Vec<(String, i32)> = first_map.iter()
+        .filter_map(|(subject, &score0)| {
+            let mut total_score = score0;
+            for map in &score_maps[1..] {
+                match map.get(subject) {
+                    Some(&s) => total_score += s,
+                    None => return None,
+                }
+            }
+            Some((subject.clone(), total_score))
+        })
+        .collect();
+
+    if let Some(f) = entity_type_filter {
+        let f_owned = f.to_string();
+        let page_subjects: Vec<String> = combined.iter().map(|(s, _)| s.clone()).collect();
+        if !page_subjects.is_empty() {
+            let batch = query::batch_load_triples_for_subjects(conn, &page_subjects)
+                .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+            combined.retain(|(subject, _)| {
+                let empty = vec![];
+                let triples = batch.get(subject.as_str()).unwrap_or(&empty);
+                let is_class = triples.iter()
+                    .any(|t| t.predicate == "rdf:type" && t.object.as_iri() == Some("owl:Class"));
+                let et = if is_class { "class" } else { "individual" };
+                et == f_owned.as_str()
+            });
+        }
+    }
+
+    combined.sort_by(|a, b| b.1.cmp(&a.1));
+    let total = combined.len();
+    let page_subjects: Vec<String> = combined.into_iter().skip(offset).take(limit).map(|(s, _)| s).collect();
+
+    let batch = query::batch_load_triples_for_subjects(conn, &page_subjects)
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+
+    let results: Vec<RichSearchResult> = page_subjects.iter().map(|iri| {
+        let empty = vec![];
+        let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+        let mut matched_props = vec![];
+        score_entity_against_tokens(iri, triples, tokens, &mut matched_props);
+        enrich_from_triples(conn, iri, triples, matched_props)
+    }).collect();
+
+    Ok((results, total))
 }
 
 /// Returns `(class_group, individual_group, literal_group)` from the ontology.
