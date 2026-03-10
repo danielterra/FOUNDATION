@@ -5,6 +5,31 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-03-09
+
+### Added
+
+- **Process automation**: BPMN 2.0 workflow engine with connector commands, widgets, AI agent tasks, timers, and parallel execution
+- **Properties management tools**: New `learn_properties`, `remember_properties`, and `forget_properties` AI tools for fine-grained OWL property management independent of concept definitions
+- **Inline markdown editing**: String properties in the Inspector now support inline markdown editing
+
+### Fixed
+
+- **Scheduler**: IRI navigation, startup timing, auto-reload, and Paused status now behave correctly
+- **Date/datetime conversion**: ISO date and datetime values from AI are now converted to Unix milliseconds before writing to OWL
+- **Mermaid lines in WebKit**: Explicit SVG dimensions fix broken connector lines in Safari/WebKit
+- **Property operation ordering**: `remove_properties` is now executed before `upsert_properties` in `learn_things` to avoid conflicts
+
+### Refactored
+
+- Renamed `add_details` to `upsert_details` across all AI tool definitions for clarity
+- Split `eavto/query.rs` (1502 lines) into `query/mod.rs`, `query/find.rs`, and `query/search.rs`
+- Replaced production panics (`.expect()`) with proper `Result` propagation
+
+### Docs
+
+- Added widget system, automation system, and development guides under `docs/`
+
 ## [0.9.1] - 2026-03-08
 
 ### Fixed
