@@ -16,7 +16,7 @@ pub fn blackboard_widgets_list(conn: &Connection, args: &Value) -> ToolResult {
 
     let widget_iris = match crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:WidgetDefinition") {
         Ok(iris) => iris,
-        Err(e) => return ToolResult { success: false, result: None, error: Some(e.to_string()) },
+        Err(e) => return ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
     };
 
     let mut widgets = Vec::new();
@@ -76,6 +76,7 @@ pub fn blackboard_widgets_list(conn: &Connection, args: &Value) -> ToolResult {
         success: true,
         result: Some(serde_json::json!({ "widgets": widgets })),
         error: None,
+        concept: None,
     }
 }
 
@@ -90,11 +91,13 @@ pub fn blackboard_update(
             success: false,
             result: None,
             error: Some("Operations array must not be empty".to_string()),
+            concept: None,
         },
         None => return ToolResult {
             success: false,
             result: None,
             error: Some("Arguments must be a non-empty array of operations".to_string()),
+            concept: None,
         },
     };
 
@@ -119,6 +122,7 @@ pub fn blackboard_update(
                     "Unknown operation '{}'. Use 'add', 'remove', or 'replace'.",
                     operation
                 )),
+                concept: None,
             },
         };
         if !result.success {
@@ -130,6 +134,7 @@ pub fn blackboard_update(
                     i,
                     result.error.unwrap_or_else(|| "unknown error".to_string()),
                 )),
+                concept: None,
             };
         }
         results.push(result.result);
@@ -141,6 +146,7 @@ pub fn blackboard_update(
             "operationsCompleted": results.len(),
         })),
         error: None,
+        concept: None,
     }
 }
 
@@ -158,7 +164,7 @@ fn blackboard_replace(
                 }
             }
         }
-        Err(e) => return ToolResult { success: false, result: None, error: Some(e) },
+        Err(e) => return ToolResult { success: false, result: None, error: Some(e), concept: None },
     }
 
     if args.get("widget_type").is_some() {
@@ -168,6 +174,7 @@ fn blackboard_replace(
             success: true,
             result: Some(serde_json::json!({"message": "Blackboard cleared"})),
             error: None,
+            concept: None,
         }
     }
 }
@@ -183,6 +190,7 @@ fn blackboard_add_widget_one(
             success: false,
             result: None,
             error: Some("Missing required parameter: widget_type".to_string()),
+            concept: None,
         },
     };
 
@@ -192,6 +200,7 @@ fn blackboard_add_widget_one(
             success: false,
             result: None,
             error: Some("Missing required parameter: params".to_string()),
+            concept: None,
         },
     };
 
@@ -205,6 +214,7 @@ fn blackboard_add_widget_one(
                 widget_type,
                 valid_types.iter().map(|t| t.id.as_str()).collect::<Vec<_>>().join(", ")
             )),
+            concept: None,
         };
     }
 
@@ -214,6 +224,7 @@ fn blackboard_add_widget_one(
             success: false,
             result: None,
             error: Some(format!("{} widget requires 'entity_id' in params", widget_type)),
+            concept: None,
         },
     };
 
@@ -254,14 +265,15 @@ fn blackboard_add_widget_one(
             }
 
             match serde_json::to_value(widget_obj) {
-                Ok(value) => ToolResult { success: true, result: Some(value), error: None },
-                Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()) },
+                Ok(value) => ToolResult { success: true, result: Some(value), error: None, concept: None },
+                Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
             }
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e),
+            concept: None,
         },
     }
 }
@@ -278,6 +290,7 @@ fn blackboard_remove_one(
             success: false,
             result: None,
             error: Some("Missing required parameter: widget_id".to_string()),
+            concept: None,
         },
     };
 
@@ -291,12 +304,14 @@ fn blackboard_remove_one(
                 success: true,
                 result: Some(serde_json::json!({"message": "Widget removed"})),
                 error: None,
+                concept: None,
             }
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e),
+            concept: None,
         },
     }
 }

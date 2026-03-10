@@ -84,7 +84,7 @@ impl CardinalityRestriction {
     }
 }
 
-/// Get all cardinality restrictions for a class
+/// Get all cardinality restrictions for a class, including those inherited from parent classes.
 ///
 /// This queries for owl:Restriction nodes that are part of the class definition:
 /// ```turtle
@@ -95,91 +95,100 @@ impl CardinalityRestriction {
 ///         owl:cardinality "1"^^xsd:nonNegativeInteger
 ///     ] .
 /// ```
+///
+/// Restrictions defined directly on the class take precedence over inherited ones.
+/// Cycles in the class hierarchy are handled via a visited set.
 pub fn get_class_cardinality_restrictions(
     conn: &Connection,
     class_iri: &str,
 ) -> Result<Vec<CardinalityRestriction>> {
-    let mut restrictions = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    get_class_cardinality_restrictions_inner(conn, class_iri, &mut visited)
+}
 
-    // Query for restriction nodes that this class is a subclass of
-    // These are blank nodes with rdf:type owl:Restriction
+fn get_class_cardinality_restrictions_inner(
+    conn: &Connection,
+    class_iri: &str,
+    visited: &mut std::collections::HashSet<String>,
+) -> Result<Vec<CardinalityRestriction>> {
+    if !visited.insert(class_iri.to_string()) {
+        return Ok(Vec::new());
+    }
+
+    let mut restrictions = Vec::new();
+    let mut seen_properties = std::collections::HashSet::new();
+
     let subclass_result =
         query::get_by_entity_predicate(conn, class_iri, "rdfs:subClassOf")?;
 
+    let mut parent_iris = Vec::new();
+
     for triple in &subclass_result.triples {
-        // Check if the object is a blank node (restriction)
-        // as_iri() returns both IRI and Blank nodes
-        if let Some(restriction_node) = triple.object.as_iri() {
-            // Only process blank nodes (they start with "_:")
-            if !restriction_node.starts_with("_:") {
-                continue;
-            }
+        if let Some(node) = triple.object.as_iri() {
+            if node.starts_with("_:") {
+                // Blank node — may be an owl:Restriction
+                let type_result =
+                    query::get_by_entity_predicate(conn, node, "rdf:type")?;
+                let is_restriction = type_result.triples.iter().any(|t| {
+                    t.object.as_iri().map(|iri| iri == owl::RESTRICTION).unwrap_or(false)
+                });
 
-            // Check if this blank node is an owl:Restriction
-            let type_result =
-                query::get_by_entity_predicate(conn, restriction_node, "rdf:type")?;
-            let is_restriction = type_result.triples.iter().any(|t| {
-                if let Some(type_iri) = t.object.as_iri() {
-                    type_iri == owl::RESTRICTION
-                } else {
-                    false
+                if !is_restriction {
+                    continue;
                 }
-            });
 
-            if !is_restriction {
-                continue;
-            }
+                let prop_result =
+                    query::get_by_entity_predicate(conn, node, owl::ON_PROPERTY)?;
+                let property_iri = match prop_result.triples.first().and_then(|t| t.object.as_iri()) {
+                    Some(iri) => iri.to_string(),
+                    None => continue,
+                };
 
-            // Get the property this restriction applies to
-            let prop_result =
-                query::get_by_entity_predicate(conn, restriction_node, owl::ON_PROPERTY)?;
-            let property_iri = match prop_result.triples.first().and_then(|t| t.object.as_iri()) {
-                Some(iri) => iri.to_string(),
-                None => continue,
-            };
+                let mut min = None;
+                let mut max = None;
+                let mut exact = None;
 
-            // Get cardinality constraints
-            let mut min = None;
-            let mut max = None;
-            let mut exact = None;
-
-            // Check for exact cardinality
-            let card_result =
-                query::get_by_entity_predicate(conn, restriction_node, owl::CARDINALITY)?;
-            if let Some(triple) = card_result.triples.first() {
-                // Extract integer value
-                match &triple.object {
-                    crate::eavto::Object::Integer(value) => exact = Some(*value as u32),
-                    _ => {}
+                let card_result =
+                    query::get_by_entity_predicate(conn, node, owl::CARDINALITY)?;
+                if let Some(t) = card_result.triples.first() {
+                    if let crate::eavto::Object::Integer(v) = &t.object { exact = Some(*v as u32); }
                 }
-            }
 
-            // Check for min cardinality
-            let min_result =
-                query::get_by_entity_predicate(conn, restriction_node, owl::MIN_CARDINALITY)?;
-            if let Some(triple) = min_result.triples.first() {
-                match &triple.object {
-                    crate::eavto::Object::Integer(value) => min = Some(*value as u32),
-                    _ => {}
+                let min_result =
+                    query::get_by_entity_predicate(conn, node, owl::MIN_CARDINALITY)?;
+                if let Some(t) = min_result.triples.first() {
+                    if let crate::eavto::Object::Integer(v) = &t.object { min = Some(*v as u32); }
                 }
-            }
 
-            // Check for max cardinality
-            let max_result =
-                query::get_by_entity_predicate(conn, restriction_node, owl::MAX_CARDINALITY)?;
-            if let Some(triple) = max_result.triples.first() {
-                match &triple.object {
-                    crate::eavto::Object::Integer(value) => max = Some(*value as u32),
-                    _ => {}
+                let max_result =
+                    query::get_by_entity_predicate(conn, node, owl::MAX_CARDINALITY)?;
+                if let Some(t) = max_result.triples.first() {
+                    if let crate::eavto::Object::Integer(v) = &t.object { max = Some(*v as u32); }
                 }
-            }
 
-            restrictions.push(CardinalityRestriction {
-                property_iri,
-                min,
-                max,
-                exact,
-            });
+                seen_properties.insert(property_iri.clone());
+                restrictions.push(CardinalityRestriction { property_iri, min, max, exact });
+            } else {
+                // Real parent class IRI — collect for recursive traversal
+                parent_iris.push(node.to_string());
+            }
+        }
+    }
+
+    // Classes with no explicit IRI parent implicitly inherit from owl:Thing (OWL semantics).
+    // This ensures restrictions on owl:Thing (e.g. foundation:hasStatus) are always inherited.
+    if parent_iris.is_empty() && class_iri != "owl:Thing" {
+        parent_iris.push("owl:Thing".to_string());
+    }
+
+    // Inherit restrictions from parent classes, skipping properties already defined on this class
+    for parent_iri in parent_iris {
+        let inherited = get_class_cardinality_restrictions_inner(conn, &parent_iri, visited)?;
+        for r in inherited {
+            if !seen_properties.contains(&r.property_iri) {
+                seen_properties.insert(r.property_iri.clone());
+                restrictions.push(r);
+            }
         }
     }
 
@@ -768,5 +777,135 @@ mod tests {
         let conn = setup_test_db();
         // Individual with no rdf:type — should pass without error
         assert!(validate_property_cardinality(&conn, "foundation:orphan", "foundation:name", 0).is_ok());
+    }
+
+    // ── inherited required fields ────────────────────────────────────────────
+
+    #[test]
+    fn test_child_inherits_required_fields_from_parent() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+
+        // ParentClass has required field "foundation:title"
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:ParentClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+        ], "test").unwrap();
+        set_class_required_fields(&mut conn, "foundation:ParentClass", &["foundation:title"], "test").unwrap();
+
+        // ChildClass extends ParentClass with its own required field "foundation:dueDate"
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:ChildClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:ChildClass", "rdfs:subClassOf", Object::Iri("foundation:ParentClass".to_string())),
+        ], "test").unwrap();
+        set_class_required_fields(&mut conn, "foundation:ChildClass", &["foundation:dueDate"], "test").unwrap();
+
+        let restrictions = get_class_cardinality_restrictions(&conn, "foundation:ChildClass").unwrap();
+        let props: Vec<&str> = restrictions.iter().map(|r| r.property_iri.as_str()).collect();
+
+        assert!(props.contains(&"foundation:dueDate"), "own required field must be present");
+        assert!(props.contains(&"foundation:title"), "inherited required field from parent must be present");
+        assert_eq!(restrictions.len(), 2);
+    }
+
+    #[test]
+    fn test_grandparent_required_fields_are_inherited() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:GrandParent", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Parent", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Parent", "rdfs:subClassOf", Object::Iri("foundation:GrandParent".to_string())),
+            Triple::new("foundation:Child", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Child", "rdfs:subClassOf", Object::Iri("foundation:Parent".to_string())),
+        ], "test").unwrap();
+
+        set_class_required_fields(&mut conn, "foundation:GrandParent", &["foundation:name"], "test").unwrap();
+
+        let restrictions = get_class_cardinality_restrictions(&conn, "foundation:Child").unwrap();
+        let props: Vec<&str> = restrictions.iter().map(|r| r.property_iri.as_str()).collect();
+
+        assert!(props.contains(&"foundation:name"), "grandparent required field must be inherited by grandchild");
+    }
+
+    #[test]
+    fn test_child_own_required_field_takes_precedence_over_inherited() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Base", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Derived", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Derived", "rdfs:subClassOf", Object::Iri("foundation:Base".to_string())),
+        ], "test").unwrap();
+
+        // Both parent and child define a restriction on the same property
+        set_class_required_fields(&mut conn, "foundation:Base", &["foundation:name"], "test").unwrap();
+        set_class_required_fields(&mut conn, "foundation:Derived", &["foundation:name"], "test").unwrap();
+
+        let restrictions = get_class_cardinality_restrictions(&conn, "foundation:Derived").unwrap();
+        let name_restrictions: Vec<_> = restrictions.iter()
+            .filter(|r| r.property_iri == "foundation:name")
+            .collect();
+
+        assert_eq!(name_restrictions.len(), 1, "same property must not appear twice; got {:?}", name_restrictions);
+    }
+
+    #[test]
+    fn test_class_without_explicit_parent_inherits_from_owl_thing() {
+        // Regression: classes with no rdfs:subClassOf IRI link must still inherit
+        // restrictions from owl:Thing (all OWL classes implicitly extend owl:Thing).
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+
+        // owl:Thing has a required field restriction
+        store::assert_triples(&mut conn, &[
+            Triple::new("owl:Thing", "rdf:type", Object::Iri("owl:Class".to_string())),
+        ], "test").unwrap();
+        set_class_required_fields(&mut conn, "owl:Thing", &["foundation:hasStatus"], "test").unwrap();
+
+        // MyClass has NO explicit rdfs:subClassOf IRI — only blank-node restrictions
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:MyClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+        ], "test").unwrap();
+        set_class_required_fields(&mut conn, "foundation:MyClass", &["foundation:label"], "test").unwrap();
+
+        let restrictions = get_class_cardinality_restrictions(&conn, "foundation:MyClass").unwrap();
+        let props: Vec<&str> = restrictions.iter().map(|r| r.property_iri.as_str()).collect();
+
+        assert!(props.contains(&"foundation:label"), "own required field must be present");
+        assert!(
+            props.contains(&"foundation:hasStatus"),
+            "owl:Thing required field must be inherited by classes with no explicit parent; got: {:?}",
+            props,
+        );
+    }
+
+    #[test]
+    fn test_no_required_fields_on_parent_returns_only_child_fields() {
+        use crate::eavto::{store, Triple, Object};
+        use crate::eavto::test_helpers::setup_test_db;
+
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Base", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Derived", "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new("foundation:Derived", "rdfs:subClassOf", Object::Iri("foundation:Base".to_string())),
+        ], "test").unwrap();
+
+        set_class_required_fields(&mut conn, "foundation:Derived", &["foundation:email"], "test").unwrap();
+
+        let restrictions = get_class_cardinality_restrictions(&conn, "foundation:Derived").unwrap();
+        assert_eq!(restrictions.len(), 1);
+        assert_eq!(restrictions[0].property_iri, "foundation:email");
     }
 }

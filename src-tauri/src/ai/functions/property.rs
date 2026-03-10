@@ -22,6 +22,7 @@ fn learn_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
 
@@ -36,6 +37,7 @@ fn learn_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some("Missing required parameter: label (required when creating a new property)".to_string()),
+            concept: None,
         };
     }
 
@@ -46,11 +48,13 @@ fn learn_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some(format!("Invalid property_type '{}'. Must be 'object' or 'datatype'", other)),
+            concept: None,
         },
         None if is_new => return ToolResult {
             success: false,
             result: None,
             error: Some("Missing required parameter: property_type (required when creating a new property)".to_string()),
+            concept: None,
         },
         None => existing.as_ref().map(|p| p.property_type).unwrap_or(PropertyType::ObjectProperty),
     };
@@ -103,8 +107,8 @@ fn learn_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
             },
         }))
     })() {
-        Ok(result) => ToolResult { success: true, result: Some(result), error: None },
-        Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()) },
+        Ok(result) => ToolResult { success: true, result: Some(result), error: None, concept: None },
+        Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
     }
 }
 
@@ -116,15 +120,16 @@ pub fn forget_property(conn: &mut Connection, args: &Value, app: Option<&tauri::
                 success: false,
                 result: None,
                 error: Some("Missing required parameter: iri".to_string()),
+                concept: None,
             },
         };
 
         match Property::retract(conn, iri, "ai") {
             Ok(_) => {
                 super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
-                ToolResult { success: true, result: Some(serde_json::json!({"iri": iri})), error: None }
+                ToolResult { success: true, result: Some(serde_json::json!({"iri": iri})), error: None, concept: None }
             }
-            Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()) },
+            Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
         }
     })
 }
@@ -148,6 +153,7 @@ fn get_property_one(conn: &Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
 
@@ -173,8 +179,8 @@ fn get_property_one(conn: &Connection, args: &Value) -> ToolResult {
             "formula": prop.formula,
         }))
     })() {
-        Ok(result) => ToolResult { success: true, result: Some(result), error: None },
-        Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()) },
+        Ok(result) => ToolResult { success: true, result: Some(result), error: None, concept: None },
+        Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
     }
 }
 
@@ -241,7 +247,7 @@ fn search_properties_one(conn: &Connection, args: &Value) -> ToolResult {
             "offset": offset,
         }))
     })() {
-        Ok(result) => ToolResult { success: true, result: Some(result), error: None },
-        Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()) },
+        Ok(result) => ToolResult { success: true, result: Some(result), error: None, concept: None },
+        Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
     }
 }

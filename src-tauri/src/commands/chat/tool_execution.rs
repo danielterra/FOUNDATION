@@ -58,20 +58,12 @@ pub async fn execute_tools_from_message(
 
     for block in &assistant_message.content {
         if let ContentBlock::ToolUse { id, name, input } = block {
-            let result = match execute_tool(executor, app, name, input).await {
-                Ok(content) => ContentBlock::ToolResult {
-                    tool_use_id: id.clone(),
-                    content,
-                    is_error: Some(false),
-                },
-                Err(e) => ContentBlock::ToolResult {
-                    tool_use_id: id.clone(),
-                    content: e,
-                    is_error: Some(true),
-                },
-            };
-
-            tool_results.push(result);
+            let (content, is_error) = execute_tool(executor, app, name, input).await;
+            tool_results.push(ContentBlock::ToolResult {
+                tool_use_id: id.clone(),
+                content,
+                is_error: Some(is_error),
+            });
         }
     }
 
@@ -86,27 +78,32 @@ async fn execute_tool(
     app: &tauri::AppHandle,
     name: &str,
     input: &serde_json::Value,
-) -> Result<String, String> {
+) -> (String, bool) {
     let call = ToolCall {
         name: name.to_string(),
         arguments: input.clone(),
     };
 
     let app_clone = app.clone();
-    let result_json = executor.write(move |conn| {
+    let result_json = match executor.write(move |conn| {
         let result = crate::ai::functions::execute_tool(conn, &call, Some(&app_clone));
         serde_json::to_string(&result).map_err(|e| e.to_string())
-    }).await.map_err(|e| format!("Failed to execute tool: {}", e))?;
+    }).await {
+        Ok(json) => json,
+        Err(e) => return (format!("{{\"success\":false,\"error\":\"{}\"}}", e), true),
+    };
 
-    let tool_result: crate::ai::functions::ToolResult = serde_json::from_str(&result_json)
-        .map_err(|e| format!("Failed to parse result: {}", e))?;
+    let tool_result: crate::ai::functions::ToolResult = match serde_json::from_str(&result_json) {
+        Ok(r) => r,
+        Err(e) => return (format!("{{\"success\":false,\"error\":\"{}\"}}", e), true),
+    };
 
     if tool_result.success {
         let content = tool_result.result
             .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| v.to_string()))
             .unwrap_or_default();
-        Ok(content)
+        (content, false)
     } else {
-        Err(tool_result.error.unwrap_or_else(|| "Unknown error".to_string()))
+        (result_json, true)
     }
 }

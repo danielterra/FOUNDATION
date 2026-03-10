@@ -1138,3 +1138,42 @@ fn test_find_things_by_detail_date_filter_with_operators() {
     assert_eq!(things_range[0]["id"].as_str().unwrap(), "foundation:TaskDue0308");
 }
 
+#[test]
+fn test_create_thing_with_invalid_object_property_returns_range_contexts() {
+    let mut conn = setup_test_db();
+
+    let persona_class = Class::new("foundation:Persona");
+    persona_class.assert(&mut conn, ClassType::OwlClass, "Persona", "https://example.com/persona.svg", None, "test").unwrap();
+
+    let user_story_class = Class::new("foundation:UserStory");
+    user_story_class.assert(&mut conn, ClassType::OwlClass, "User Story", "https://example.com/story.svg", None, "test").unwrap();
+
+    Property::new("foundation:userRole")
+        .assert(&mut conn, PropertyType::ObjectProperty, "user role", None, &["foundation:UserStory"], Some("foundation:Persona"), None, "test")
+        .unwrap();
+
+    let args = serde_json::json!({
+        "concept_iri": "foundation:UserStory",
+        "label": "As a user",
+        "upsert_properties": [
+            {
+                "detail_iri": "foundation:userRole",
+                "values": ["foundation:INVALID_PERSONA"]
+            }
+        ]
+    });
+
+    let result = create_thing_one(&mut conn, &args);
+    assert!(!result.success, "create_thing with invalid IRI should fail");
+
+    let range_ctx = result.result.expect("result should contain range contexts on failure");
+    let range_contexts = range_ctx["rangeContexts"].as_array().expect("should have rangeContexts");
+    assert!(!range_contexts.is_empty(), "should include range context for the failing property");
+
+    let ctx = &range_contexts[0];
+    assert_eq!(ctx["property"].as_str().unwrap(), "foundation:userRole");
+    assert_eq!(ctx["range"].as_str().unwrap(), "foundation:Persona");
+
+    assert!(result.concept.is_some(), "concept (UserStory) should be included in the error response");
+}
+

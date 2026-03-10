@@ -92,6 +92,8 @@ pub struct ToolResult {
     pub success: bool,
     pub result: Option<Value>,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concept: Option<Value>,
 }
 
 pub fn execute_tool(
@@ -126,6 +128,7 @@ pub fn execute_tool(
             success: false,
             result: None,
             error: Some(format!("Unknown tool: {}", call.name)),
+            concept: None,
         },
     }
 }
@@ -137,6 +140,7 @@ fn run_process_tool(args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult 
             success: false,
             result: None,
             error: Some("run_process requires a running Foundation app".to_string()),
+            concept: None,
         },
     };
 
@@ -146,6 +150,7 @@ fn run_process_tool(args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult 
             success: false,
             result: None,
             error: Some("process_iri is required".to_string()),
+            concept: None,
         },
     };
 
@@ -162,6 +167,7 @@ fn run_process_tool(args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult 
         success: true,
         result: Some(json!({ "message": format!("Process {} started", args["process_iri"].as_str().unwrap_or("")) })),
         error: None,
+        concept: None,
     }
 }
 
@@ -195,6 +201,7 @@ mod tests {
                     "iri": "foundation:Employee",
                     "label": "Employee",
                     "icon": "https://example.com/icon.svg",
+                    "super_concepts": ["owl:Thing"],
                     "upsert_details": ["foundation:worksAt", "foundation:reportsTo"]
                 }]
             }),
@@ -236,6 +243,7 @@ mod tests {
                     "iri": "foundation:Rectangle",
                     "label": "Rectangle",
                     "icon": "https://example.com/icon.svg",
+                    "super_concepts": ["owl:Thing"],
                     "upsert_details": ["foundation:width", "foundation:height", "foundation:area"]
                 }]
             }),
@@ -278,6 +286,7 @@ mod tests {
                     "iri": "foundation:Box",
                     "label": "Box",
                     "icon": "https://example.com/icon.svg",
+                    "super_concepts": ["owl:Thing"],
                     "upsert_details": ["foundation:boxSize"]
                 }]
             }),
@@ -334,6 +343,7 @@ mod tests {
                     "iri": "foundation:Circle",
                     "label": "Circle",
                     "icon": "https://example.com/icon.svg",
+                    "super_concepts": ["owl:Thing"],
                     "upsert_details": ["foundation:radius"]
                 }]
             }),

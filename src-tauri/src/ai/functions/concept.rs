@@ -318,6 +318,115 @@ mod tests {
         }));
         assert!(result.success, "remove_details with nonexistent property must succeed silently");
     }
+
+    #[test]
+    fn test_forget_concept_rejected_when_subclasses_exist() {
+        use crate::ai::functions::{ToolCall, execute_tool};
+
+        let mut conn = setup_test_db();
+
+        let create_parent = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:Animal",
+                    "label": "Animal",
+                    "icon": "pets",
+                    "super_concepts": ["owl:Thing"]
+                }]
+            }),
+        };
+        assert!(execute_tool(&mut conn, &create_parent, None).success);
+
+        let create_child = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:Dog",
+                    "label": "Dog",
+                    "icon": "pets",
+                    "super_concepts": ["foundation:Animal"]
+                }]
+            }),
+        };
+        assert!(execute_tool(&mut conn, &create_child, None).success);
+
+        let delete_call = ToolCall {
+            name: "forget_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{"iri": "foundation:Animal"}]
+            }),
+        };
+        let result = execute_tool(&mut conn, &delete_call, None);
+        assert!(!result.success, "deleting a concept with subclasses must be rejected");
+        let err = result.error.unwrap();
+        assert!(err.contains("foundation:Dog"), "error must mention the dependent subclass; got: {err}");
+    }
+
+    #[test]
+    fn test_forget_concept_allowed_when_no_subclasses() {
+        use crate::ai::functions::{ToolCall, execute_tool};
+
+        let mut conn = setup_test_db();
+
+        let create = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:Leaf",
+                    "label": "Leaf",
+                    "icon": "eco",
+                    "super_concepts": ["owl:Thing"]
+                }]
+            }),
+        };
+        assert!(execute_tool(&mut conn, &create, None).success);
+
+        let delete_call = ToolCall {
+            name: "forget_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{"iri": "foundation:Leaf"}]
+            }),
+        };
+        let result = execute_tool(&mut conn, &delete_call, None);
+        assert!(result.success, "deleting a leaf concept must succeed; got: {:?}", result.error);
+    }
+
+    #[test]
+    fn test_update_concept_super_concepts_empty_array_is_rejected() {
+        use crate::ai::functions::{ToolCall, execute_tool};
+
+        let mut conn = setup_test_db();
+
+        let create = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:Widget",
+                    "label": "Widget",
+                    "icon": "widgets",
+                    "super_concepts": ["owl:Thing"]
+                }]
+            }),
+        };
+        assert!(execute_tool(&mut conn, &create, None).success);
+
+        let update = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:Widget",
+                    "super_concepts": []
+                }]
+            }),
+        };
+        let result = execute_tool(&mut conn, &update, None);
+        assert!(!result.success, "setting super_concepts to empty must be rejected");
+    }
+}
+
+pub(super) fn load_concept_context(conn: &Connection, iri: &str) -> Option<Value> {
+    get_concept_one(conn, &serde_json::json!({ "iri": iri })).result
 }
 
 pub fn get_concepts(conn: &Connection, args: &Value) -> ToolResult {
@@ -327,6 +436,7 @@ pub fn get_concepts(conn: &Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some("Missing required parameter: iris".to_string()),
+            concept: None,
         },
     };
 
@@ -349,6 +459,7 @@ pub fn get_concepts(conn: &Connection, args: &Value) -> ToolResult {
         success: errors.is_empty(),
         result: Some(serde_json::json!({ "concepts": results })),
         error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
+        concept: None,
     }
 }
 
@@ -359,6 +470,7 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
 
@@ -477,11 +589,13 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -504,6 +618,7 @@ fn learn_concept_one(
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
 
@@ -535,11 +650,29 @@ fn learn_concept_one(
             Class::set_comment(conn, iri, comment, "ai")?;
         }
 
-        if let Some(super_concepts_val) = args.get("super_concepts") {
+        let super_concepts_val = args.get("super_concepts");
+
+        if is_new {
             let iris: Vec<&str> = super_concepts_val
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            if iris.is_empty() {
+                return Err(crate::owl::OwlError::ValidationError(
+                    "Missing required parameter: super_concepts (at least one superclass is required when creating a concept)".to_string()
+                ));
+            }
+            Class::set_super_classes(conn, iri, &iris, "ai")?;
+        } else if let Some(val) = super_concepts_val {
+            let iris: Vec<&str> = val
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
                 .unwrap_or_default();
+            if iris.is_empty() {
+                return Err(crate::owl::OwlError::ValidationError(
+                    "super_concepts must contain at least one superclass".to_string()
+                ));
+            }
             Class::set_super_classes(conn, iri, &iris, "ai")?;
         }
 
@@ -655,11 +788,13 @@ fn learn_concept_one(
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
+            concept: load_concept_context(conn, iri),
         },
     }
 }
@@ -682,10 +817,25 @@ fn delete_concept_one(
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
 
     match (|| {
+        if let Some(class) = Class::get(conn, iri)? {
+            let child_iris: Vec<String> = class.sub_classes.iter()
+                .map(|t| t.iri.clone())
+                .filter(|s| !s.starts_with("_:"))
+                .collect();
+            if !child_iris.is_empty() {
+                return Err(crate::owl::OwlError::ValidationError(format!(
+                    "Cannot delete concept '{}': it has {} subclass(es) that depend on it: {}. \
+                     Remove the superclass reference from each subclass first.",
+                    iri, child_iris.len(), child_iris.join(", ")
+                )));
+            }
+        }
+
         Class::retract_all(conn, iri, "ai")?;
 
         super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
@@ -699,11 +849,13 @@ fn delete_concept_one(
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
+            concept: None,
         },
     }
 }

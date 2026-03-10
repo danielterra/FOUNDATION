@@ -180,6 +180,7 @@ pub async fn execute_agent_task(
                     success: false,
                     result: None,
                     error: Some(result_json.clone()),
+                    concept: None,
                 });
 
             let content = if tool_result.success {

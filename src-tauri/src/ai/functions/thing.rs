@@ -4,6 +4,52 @@ use crate::owl::{Individual, Object, Property, PropertyType};
 use super::ToolResult;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+fn load_concept_context(conn: &Connection, concept_iri: &str) -> Option<Value> {
+    super::concept::load_concept_context(conn, concept_iri)
+}
+
+fn load_range_contexts(conn: &Connection, args: &Value) -> Option<Value> {
+    let properties = args.get("upsert_properties").and_then(|v| v.as_array())?;
+
+    let mut range_contexts: Vec<Value> = Vec::new();
+
+    for prop_entry in properties {
+        let detail_iri = match prop_entry.get("detail_iri").and_then(|v| v.as_str()) {
+            Some(iri) => iri,
+            None => continue,
+        };
+
+        let prop = match Property::get(conn, detail_iri).ok().flatten() {
+            Some(p) => p,
+            None => continue,
+        };
+
+        if prop.property_type != PropertyType::ObjectProperty {
+            continue;
+        }
+
+        let range_iri = match prop.ranges.first() {
+            Some(r) => r.clone(),
+            None => continue,
+        };
+
+        if range_iri == "owl:Thing" || range_iri.starts_with("xsd:") {
+            continue;
+        }
+
+        range_contexts.push(serde_json::json!({
+            "property": detail_iri,
+            "range": range_iri,
+        }));
+    }
+
+    if range_contexts.is_empty() {
+        None
+    } else {
+        Some(serde_json::json!({ "rangeContexts": range_contexts }))
+    }
+}
+
 static IRI_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn next_iri_id() -> u64 {
@@ -93,12 +139,14 @@ pub fn remember(conn: &Connection, args: &Value) -> ToolResult {
                     "offset": offset,
                 })),
                 error: None,
+                concept: None,
             }
         }
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
+            concept: concept_iri.and_then(|iri| load_concept_context(conn, iri)),
         },
     }
 }
@@ -110,6 +158,7 @@ pub fn get_things(conn: &Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some("Missing required parameter: iris".to_string()),
+            concept: None,
         },
     };
 
@@ -132,6 +181,7 @@ pub fn get_things(conn: &Connection, args: &Value) -> ToolResult {
         success: errors.is_empty(),
         result: Some(serde_json::json!({ "things": results })),
         error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
+        concept: None,
     }
 }
 
@@ -159,6 +209,7 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
 
@@ -275,11 +326,13 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -294,6 +347,7 @@ fn create_thing_one(
             success: false,
             result: None,
             error: Some("Missing required parameter: concept_iri".to_string()),
+            concept: None,
         },
     };
 
@@ -303,6 +357,7 @@ fn create_thing_one(
             success: false,
             result: None,
             error: Some("Missing required parameter: label".to_string()),
+            concept: load_concept_context(conn, concept_iri),
         },
     };
 
@@ -319,6 +374,7 @@ fn create_thing_one(
                     "No icon provided and concept '{}' has no icon to inherit",
                     concept_iri
                 )),
+                concept: load_concept_context(conn, concept_iri),
             },
         }
     };
@@ -415,11 +471,13 @@ fn create_thing_one(
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
-            result: None,
+            result: load_range_contexts(conn, args),
             error: Some(e.to_string()),
+            concept: load_concept_context(conn, concept_iri),
         },
     }
 }
@@ -434,8 +492,13 @@ fn update_thing_one(
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
+
+    let concept_iri_for_context = crate::owl::get_iri_property(conn, iri, "rdf:type")
+        .ok()
+        .flatten();
 
     match (|| {
         let mut updated_fields: Vec<String> = Vec::new();
@@ -561,11 +624,13 @@ fn update_thing_one(
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
-            result: None,
+            result: load_range_contexts(conn, args),
             error: Some(e.to_string()),
+            concept: concept_iri_for_context.as_deref().and_then(|c| load_concept_context(conn, c)),
         },
     }
 }
@@ -588,6 +653,7 @@ fn delete_thing_one(
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
 
@@ -640,11 +706,13 @@ fn delete_thing_one(
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
+            concept: None,
         },
     }
 }

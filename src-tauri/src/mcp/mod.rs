@@ -116,24 +116,19 @@ async fn handle_mcp(
                 ).into_response(),
             };
 
-            if func_result.success {
-                Json(json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        "content": [{
-                            "type": "text",
-                            "text": func_result.result.unwrap_or_default().to_string()
-                        }]
-                    }
-                })).into_response()
-            } else {
-                Json(error_response(
-                    id,
-                    JSONRPC_INTERNAL_ERROR,
-                    &func_result.error.unwrap_or_else(|| "Tool execution failed".to_string()),
-                )).into_response()
-            }
+            let is_error = !func_result.success;
+            let text = serde_json::to_string(&func_result).unwrap_or_default();
+            Json(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "isError": is_error,
+                    "content": [{
+                        "type": "text",
+                        "text": text
+                    }]
+                }
+            })).into_response()
         }
 
         _ => Json(error_response(id, JSONRPC_METHOD_NOT_FOUND, "Method not found")).into_response(),

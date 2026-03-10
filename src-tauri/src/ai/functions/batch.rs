@@ -28,11 +28,13 @@ pub(super) fn run_multi_read(
             success: false,
             result: None,
             error: Some("Operations array must not be empty".to_string()),
+            concept: None,
         },
         None => return ToolResult {
             success: false,
             result: None,
             error: Some("Arguments must be a non-empty array of operations".to_string()),
+            concept: None,
         },
     };
 
@@ -42,12 +44,13 @@ pub(super) fn run_multi_read(
         if !result.success {
             return ToolResult {
                 success: false,
-                result: None,
+                result: result.result,
                 error: Some(format!(
                     "Operation {} failed: {}",
                     i,
                     result.error.unwrap_or_else(|| "unknown error".to_string()),
                 )),
+                concept: result.concept,
             };
         }
         results.push(result.result);
@@ -57,6 +60,7 @@ pub(super) fn run_multi_read(
         success: true,
         result: Some(serde_json::json!({ "results": results })),
         error: None,
+        concept: None,
     }
 }
 
@@ -72,11 +76,13 @@ pub(super) fn run_atomic(
             success: false,
             result: None,
             error: Some("Operations array must not be empty".to_string()),
+            concept: None,
         },
         None => return ToolResult {
             success: false,
             result: None,
             error: Some("Arguments must be a non-empty array of operations".to_string()),
+            concept: None,
         },
     };
 
@@ -87,6 +93,7 @@ pub(super) fn run_atomic(
             success: false,
             result: None,
             error: Some(format!("Failed to start transaction: {e}")),
+            concept: None,
         };
     }
 
@@ -100,12 +107,13 @@ pub(super) fn run_atomic(
             take_events();
             return ToolResult {
                 success: false,
-                result: None,
+                result: result.result,
                 error: Some(format!(
                     "Operation {} failed: {}",
                     i,
                     result.error.unwrap_or_else(|| "unknown error".to_string()),
                 )),
+                concept: result.concept,
             };
         }
         results.push(result.result);
@@ -118,6 +126,7 @@ pub(super) fn run_atomic(
             success: false,
             result: None,
             error: Some(format!("Failed to commit transaction: {e}")),
+            concept: None,
         };
     }
 
@@ -136,5 +145,6 @@ pub(super) fn run_atomic(
             "results": results,
         })),
         error: None,
+        concept: None,
     }
 }
