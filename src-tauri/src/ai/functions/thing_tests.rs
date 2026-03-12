@@ -856,6 +856,49 @@ fn test_remove_before_add_in_same_operation_preserves_new_value() {
     assert_eq!(priority, "High", "New value must survive: remove_properties wiped it (wrong order)");
 }
 
+// Regression: Bug_1773352703259 — learn_things icon field must accept file:// URLs
+// The GUI stores file:// icons as literals on foundation:hasIcon (an ObjectProperty),
+// but the API was rejecting them because validate_value_type blocked literals on ObjectProperties.
+// fix: meta-properties (foundation:hasIcon) bypass the type-validation pipeline.
+
+#[test]
+fn test_update_thing_icon_file_url_is_accepted() {
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+    create_task(&mut conn, "foundation:Task_icon_001");
+
+    let args = serde_json::json!({
+        "iri": "foundation:Task_icon_001",
+        "icon": "file:///Users/daniel/Documents/Foundation/attachments/icon.png"
+    });
+
+    let result = update_thing_one(&mut conn, &args);
+    assert!(result.success, "update_thing with file:// icon should succeed: {:?}", result.error);
+
+    let individual = Individual::get(&conn, "foundation:Task_icon_001")
+        .unwrap().unwrap();
+    assert_eq!(
+        individual.icon.as_deref(),
+        Some("file:///Users/daniel/Documents/Foundation/attachments/icon.png"),
+        "Icon should be stored and readable as the file:// URL"
+    );
+}
+
+#[test]
+fn test_update_thing_icon_https_url_is_accepted() {
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+    create_task(&mut conn, "foundation:Task_icon_002");
+
+    let args = serde_json::json!({
+        "iri": "foundation:Task_icon_002",
+        "icon": "https://example.com/icon.png"
+    });
+
+    let result = update_thing_one(&mut conn, &args);
+    assert!(result.success, "update_thing with https:// icon should succeed: {:?}", result.error);
+}
+
 // Performance tests — run with a copy of the real DB:
 //   sqlite3 ~/Documents/Foundation/FOUNDATION.db "VACUUM INTO '/tmp/foundation_bench.db'"
 //   FOUNDATION_BENCH_DB=/tmp/foundation_bench.db cargo test --lib perf_ -- --ignored --nocapture

@@ -100,12 +100,14 @@ impl Individual {
             }
         }
 
-        Self::validate_value_type(conn, property, &values)?;
-        for value in &values {
-            Self::validate_iri_exists(conn, property, value)?;
-            Self::validate_range_type(conn, property, value)?;
-            Self::validate_one_of_constraint(conn, property, value)?;
-            Self::validate_literal_datatype(property, value)?;
+        if !is_meta_property {
+            Self::validate_value_type(conn, property, &values)?;
+            for value in &values {
+                Self::validate_iri_exists(conn, property, value)?;
+                Self::validate_range_type(conn, property, value)?;
+                Self::validate_one_of_constraint(conn, property, value)?;
+                Self::validate_literal_datatype(property, value)?;
+            }
         }
 
         crate::owl::cardinality::validate_property_cardinality(
@@ -307,6 +309,37 @@ mod tests {
         );
 
         assert!(result.is_ok(), "Should accept write to non-calculated property");
+    }
+
+    // Regression: Bug_1773352703259 — foundation:hasIcon is an ObjectProperty but must accept
+    // literal values when set to a URL (file://, https://, etc.).
+    // The meta-property bypass must cover the full validation pipeline, not just formula checks.
+    #[test]
+    fn test_add_property_has_icon_file_url_literal_is_accepted() {
+        let mut conn = setup_test_db();
+
+        let c = Class::new("foundation:Item");
+        c.assert(&mut conn, ClassType::OwlClass, "Item", "https://example.com/item.svg", None, "test").unwrap();
+
+        Property::new("foundation:hasIcon")
+            .assert(&mut conn, PropertyType::ObjectProperty, "has icon", None,
+                &[], Some("foundation:Icon"), None, "test")
+            .unwrap();
+
+        let ind = Individual::new("foundation:MyItem");
+        ind.assert(&mut conn, "foundation:Item", "My Item", "https://example.com/item.svg", "test").unwrap();
+
+        let result = ind.add_property(
+            &mut conn,
+            "foundation:hasIcon",
+            vec![Object::Literal {
+                value: "file:///path/to/icon.png".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }],
+            "test",
+        );
+        assert!(result.is_ok(), "foundation:hasIcon must accept file:// literal values: {:?}", result.err());
     }
 
     #[test]
