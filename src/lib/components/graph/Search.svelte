@@ -42,7 +42,7 @@
 
 		isSearching = true;
 		try {
-			const resultsJson = await invoke('entity__search', {
+			const resultsJson = await invoke('graph__search_entities', {
 				query: query.trim(),
 				limit: 100
 			});

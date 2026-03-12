@@ -98,13 +98,13 @@
     error = null;
 
     try {
-      const resultStr = await invoke('entity__get', { entityId });
+      const resultStr = await invoke('inspector__get_entity', { entityId });
       entityData = JSON.parse(resultStr);
 
       const conceptIri = entityData?.types?.[0]?.iri ?? null;
       if (conceptIri) {
         try {
-          const defs = await invoke('widget__list_definitions', { conceptIri });
+          const defs = await invoke('widget_blackboard__list_widget_definitions', { conceptIri });
           widgetDefinitions = defs.filter(d => d.widget_type !== 'inspector');
         } catch {
           widgetDefinitions = [];
@@ -122,7 +122,7 @@
 
   async function closeWidget() {
     try {
-      await invoke('widget__remove', { widgetId });
+      await invoke('widget_blackboard__remove_widget', { widgetId });
     } catch (err) {
       console.error('Failed to remove widget:', err);
     }
@@ -139,7 +139,7 @@
 
   async function saveProperty(propertyIri, value) {
     try {
-      await invoke('entity__update_literal', { entityId, propertyIri, value });
+      await invoke('widget_inspector__update_property', { entityId, propertyIri, value });
     } catch (err) {
       console.error('Failed to update property:', err);
     }
@@ -147,7 +147,7 @@
 
   async function openEntityInspector(entityIri) {
     try {
-      await invoke('widget__add', {
+      await invoke('widget_blackboard__add_widget', {
         widgetType: 'inspector',
         entityId: entityIri,
         position: null,
@@ -160,7 +160,7 @@
 
   async function openWidgetForEntity(widgetType) {
     try {
-      await invoke('widget__add', {
+      await invoke('widget_blackboard__add_widget', {
         widgetType,
         entityId,
         position: null,

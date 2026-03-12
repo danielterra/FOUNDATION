@@ -204,7 +204,7 @@ fn blackboard_add_widget_one(
         },
     };
 
-    let valid_types = widget::widget__list_types();
+    let valid_types = widget::blackboard__list_widget_types();
     if !valid_types.iter().any(|t| t.id == widget_type) {
         return ToolResult {
             success: false,

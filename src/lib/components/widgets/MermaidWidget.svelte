@@ -184,7 +184,7 @@
 
   async function saveContent() {
     try {
-      await invoke('widget__update_content', { widgetId, content: draftContent });
+      await invoke('widget_blackboard__update_widget_content', { widgetId, content: draftContent });
       content = draftContent;
       editMode = false;
       await renderDiagram();
@@ -200,7 +200,7 @@
 
   async function closeWidget() {
     try {
-      await invoke('widget__remove', { widgetId });
+      await invoke('widget_blackboard__remove_widget', { widgetId });
     } catch (err) {
       console.error('Failed to remove widget:', err);
     }
@@ -221,7 +221,7 @@
   onMount(async () => {
     if (entityId) {
       try {
-        const resultStr = await invoke('entity__get', { entityId });
+        const resultStr = await invoke('inspector__get_entity', { entityId });
         const data = JSON.parse(resultStr);
         entityLabel = data?.label ?? '';
         const source = data?.properties?.find(p => p.property === 'foundation:diagramSource')?.value;
@@ -246,7 +246,7 @@
       unlistenEntityUpdated = await listen('entity-updated', async (event) => {
         if (event.payload.entityId !== entityId) return;
         try {
-          const resultStr = await invoke('entity__get', { entityId });
+          const resultStr = await invoke('inspector__get_entity', { entityId });
           const data = JSON.parse(resultStr);
           const source = data?.properties?.find(p => p.property === 'foundation:diagramSource')?.value;
           if (source && source !== content) {

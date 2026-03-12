@@ -109,7 +109,7 @@
 
 	onMount(async () => {
 		try {
-			const raw = await invoke('entity__get_node_type_config');
+			const raw = await invoke('graph__get_node_type_config');
 			const configs = JSON.parse(raw);
 			const labelToKey = { 'Class Node': 'CLASS', 'Individual Node': 'INDIVIDUAL', 'Literal Node': 'LITERAL' };
 			const resolved = {};

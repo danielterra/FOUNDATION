@@ -1,5 +1,6 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
+	import { callMcpTool } from '$lib/utils/mcp';
 	import { onMount } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
@@ -194,14 +195,14 @@
 
 	async function loadConversationAgent(conversationIri) {
 		try {
-			const convStr = await invoke('entity__get', { entityId: conversationIri });
-			const conv = JSON.parse(convStr);
-			const agentIri = conv.properties?.find(p => p.property === 'foundation:handledBy')?.value;
+			const convResult = await callMcpTool('get_things', { iris: [conversationIri] });
+			const conv = convResult.result?.things?.[0];
+			const agentIri = conv?.properties?.find(p => p.property === 'foundation:handledBy')?.value;
 			if (!agentIri) { conversationAgent = null; return; }
 
-			const agentStr = await invoke('entity__get', { entityId: agentIri });
-			const agent = JSON.parse(agentStr);
-			conversationAgent = { iri: agentIri, label: agent.label, icon: agent.icon };
+			const agentResult = await callMcpTool('get_things', { iris: [agentIri] });
+			const agent = agentResult.result?.things?.[0];
+			conversationAgent = { iri: agentIri, label: agent?.label, icon: agent?.icon };
 		} catch {
 			conversationAgent = null;
 		}
@@ -210,7 +211,7 @@
 	async function openAgentInspector() {
 		if (!conversationAgent) return;
 		try {
-			await invoke('widget__add', {
+			await invoke('widget_blackboard__add_widget', {
 				widgetType: 'inspector',
 				entityId: conversationAgent.iri,
 				position: null,

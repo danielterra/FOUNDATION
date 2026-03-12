@@ -9,7 +9,7 @@
 
   async function handleSearchResult(entityId) {
     try {
-      await invoke('widget__add', {
+      await invoke('widget_blackboard__add_widget', {
         widgetType: 'inspector',
         entityId,
         position: null,

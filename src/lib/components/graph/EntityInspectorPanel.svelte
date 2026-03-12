@@ -66,7 +66,7 @@
 	async function loadEntityData() {
 		try {
 			loading = true;
-			const dataJson = await invoke('entity__get', {
+			const dataJson = await invoke('inspector__get_entity', {
 				entityId: entityId
 			});
 			const data = JSON.parse(dataJson);

@@ -15,15 +15,11 @@
 	let nextPanelId = 0;
 	let zoomLevel = $state(1);
 
-	// Handle keyboard shortcuts
 	function handleKeydown(event) {
-		// CMD+F or CTRL+F to focus search
 		if ((event.metaKey || event.ctrlKey) && event.key === 'f') {
 			event.preventDefault();
-			// TODO: Focus search
 		}
 
-		// CMD+0 or CTRL+0 to reset zoom
 		if ((event.metaKey || event.ctrlKey) && event.key === '0') {
 			event.preventDefault();
 			if (canvasComponent) {
@@ -31,7 +27,6 @@
 			}
 		}
 
-		// CMD+Plus or CTRL+Plus to zoom in
 		if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) {
 			event.preventDefault();
 			if (canvasComponent) {
@@ -39,7 +34,6 @@
 			}
 		}
 
-		// CMD+Minus or CTRL+Minus to zoom out
 		if ((event.metaKey || event.ctrlKey) && event.key === '-') {
 			event.preventDefault();
 			if (canvasComponent) {
@@ -49,32 +43,22 @@
 	}
 
 	async function openInspectorPanel(entityId, entityLabel = '', entityIcon = null) {
-		console.log('openInspectorPanel called:', entityId, entityLabel, entityIcon);
-
 		const transform = canvasComponent ? canvasComponent.getTransform() : { x: 0, y: 0, scale: 1 };
-		console.log('Canvas transform:', transform);
 
-		// Panel dimensions
 		const panelWidth = 400;
 		const panelHeight = 300;
 
-		// Calculate center of viewport in screen space
 		const screenCenterX = window.innerWidth / 2;
 		const screenCenterY = window.innerHeight / 2;
 
-		// Convert to canvas space and center the panel
 		const canvasX = (screenCenterX - transform.x) / transform.scale - panelWidth / 2;
 		const canvasY = (screenCenterY - transform.y) / transform.scale - panelHeight / 2;
 
-		console.log('New panel position:', { x: canvasX, y: canvasY });
-
-		// Carregar dados da entidade para extrair relacionamentos
 		let relationships = [];
 		try {
-			const dataJson = await invoke('entity__get', { entityId });
+			const dataJson = await invoke('inspector__get_entity', { entityId });
 			const data = JSON.parse(dataJson);
 			relationships = extractRelationships(data);
-			console.log(`Extracted ${relationships.length} relationships for ${entityLabel}:`, relationships);
 		} catch (e) {
 			console.error('Failed to extract relationships:', e);
 		}
@@ -92,11 +76,7 @@
 			}
 		];
 
-		console.log('Inspector panels after add:', inspectorPanels);
-
-		// Auto-layout se já existem painéis (mais de 1 após adicionar)
 		if (inspectorPanels.length > 1) {
-			// Usar setTimeout para garantir que o DOM atualizou
 			setTimeout(() => applyAutoLayout(), 50);
 		}
 	}
@@ -116,15 +96,12 @@
 			p.id === panelId ? { ...p, isFolded } : p
 		);
 
-		// Recalcular layout quando mudar estado fold
-		// Aumentar delay para garantir que o DOM atualizou completamente
 		if (inspectorPanels.length > 1) {
 			setTimeout(() => applyAutoLayout(), 100);
 		}
 	}
 
 	function handleSearch(entityId, entityLabel, entityIcon) {
-		console.log('handleSearch called:', entityId, entityLabel, entityIcon);
 		openInspectorPanel(entityId, entityLabel, entityIcon);
 	}
 
@@ -136,28 +113,21 @@
 	function applyAutoLayout() {
 		if (inspectorPanels.length === 0) return;
 
-		// Obter scale atual do canvas para corrigir medições
 		const transform = canvasComponent ? canvasComponent.getTransform() : { x: 0, y: 0, scale: 1 };
 		const scale = transform.scale;
 
-		// Medir dimensões reais dos painéis do DOM
 		const panelsWithDimensions = inspectorPanels.map(panel => {
-			// Buscar o elemento real do painel no DOM
 			const panelElement = document.querySelector(`[data-panel-id="${panel.id}"]`);
 
 			let width = 400;
-			let height = 80; // altura mínima para folded
+			let height = 80;
 
 			if (panelElement) {
-				// Obter dimensões reais do DOM e corrigir pelo scale do canvas
 				const rect = panelElement.getBoundingClientRect();
 				width = (rect.width / scale) || 400;
 				height = (rect.height / scale) || (panel.isFolded ? 80 : 300);
-				console.log(`📏 ${panel.entityLabel}: folded=${panel.isFolded}, measured=${Math.round(rect.height)}px, scale=${scale.toFixed(2)}, final=${Math.round(height)}px`);
 			} else {
-				// Fallback: estimativa baseada no estado
 				height = panel.isFolded ? 80 : 300;
-				console.log(`⚠️ ${panel.entityLabel}: DOM not found, using fallback=${height}px`);
 			}
 
 			return {
@@ -167,14 +137,12 @@
 			};
 		});
 
-		// Calcular layout com dagre - usa dimensões individuais de cada painel
 		const positions = calculateGraphLayout(panelsWithDimensions, {
-			rankdir: 'LR', // Left to Right
-			nodesep: 30, // Espaçamento vertical entre nós do mesmo nível
-			ranksep: 50 // Espaçamento horizontal entre níveis
+			rankdir: 'LR',
+			nodesep: 30,
+			ranksep: 50
 		});
 
-		// Atualizar posições dos painéis (mantém zoom e pan do usuário)
 		inspectorPanels = inspectorPanels.map(panel => {
 			const newPos = positions.get(panel.id);
 			return newPos ? { ...panel, position: newPos } : panel;
@@ -182,7 +150,6 @@
 	}
 
 	onMount(async () => {
-		// Check if initial setup is needed
 		try {
 			const setupComplete = await invoke('setup__check');
 			if (!setupComplete) {
@@ -196,9 +163,8 @@
 
 		checkingSetup = false;
 
-		// Load current user by default
 		try {
-			const userJson = await invoke('entity__get', {
+			const userJson = await invoke('inspector__get_entity', {
 				entityId: 'foundation:ThisUser'
 			});
 			const userData = JSON.parse(userJson);

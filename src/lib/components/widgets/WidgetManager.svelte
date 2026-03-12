@@ -48,7 +48,7 @@
 
   async function loadWidgets() {
     try {
-      const result = await invoke('widget__get_all');
+      const result = await invoke('widget_blackboard__get_widgets');
       widgets = result.map((w, index) => ({
         ...w,
         zIndex: BASE_WIDGET_Z_INDEX + index
@@ -102,7 +102,7 @@
     draggedWidget = null;
 
     if (widget) {
-      invoke('widget__update_position', {
+      invoke('widget_blackboard__update_widget_position', {
         widgetId: widget.id,
         position: widget.position
       }).catch(error => {
@@ -115,7 +115,7 @@
     widgets = widgets.map(w =>
       w.id === widgetId ? { ...w, size: { width, height } } : w
     );
-    invoke('widget__update_size', {
+    invoke('widget_blackboard__update_widget_size', {
       widgetId,
       size: { width, height }
     }).catch(error => {
@@ -156,7 +156,7 @@
 
     const unlistenEntityCreated = await listen('entity-created', async (event) => {
       try {
-        await invoke('widget__add', {
+        await invoke('widget_blackboard__add_widget', {
           widgetType: 'inspector',
           entityId: event.payload.entityId,
           position: null,

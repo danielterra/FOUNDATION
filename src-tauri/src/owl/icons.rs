@@ -23,8 +23,6 @@ pub fn icon_iri_to_display(conn: &Connection, iri: &str) -> Option<String> {
     None
 }
 
-/// Returns `(predicate, Object)` for storing an icon value.
-/// Symbol names use `foundation:hasIcon` with an IRI; URL icons use `foundation:icon` (legacy literal).
 pub fn icon_store_value(icon: &str) -> (&'static str, crate::eavto::Object) {
     use crate::eavto::Object;
     if icon.starts_with("http://")
@@ -32,7 +30,7 @@ pub fn icon_store_value(icon: &str) -> (&'static str, crate::eavto::Object) {
         || icon.starts_with("file://")
         || icon.starts_with("data:")
     {
-        ("foundation:icon", Object::Literal {
+        ("foundation:hasIcon", Object::Literal {
             value: icon.to_string(),
             datatype: Some("xsd:string".to_string()),
             language: None,
@@ -120,9 +118,7 @@ pub fn seed_icon_library(conn: &mut Connection) {
     seed_icons_batch(conn, current_version);
 }
 
-/// Migrates existing `foundation:icon` literal triples to `foundation:hasIcon` IRI references.
-/// Only migrates symbol names (skips file:// and URL-based icons).
-/// Idempotent: if already migrated, does nothing. Safe to call on every startup.
+/// Idempotent on every startup — safe to call repeatedly.
 pub fn migrate_icon_to_has_icon(conn: &mut Connection) {
     use crate::eavto::store::assert_triples;
     use crate::eavto::{Triple, Object};
@@ -134,10 +130,6 @@ pub fn migrate_icon_to_has_icon(conn: &mut Connection) {
             WHERE predicate = 'foundation:icon'
               AND object_type = 'literal'
               AND retracted = 0
-              AND object_value NOT LIKE 'http://%'
-              AND object_value NOT LIKE 'https://%'
-              AND object_value NOT LIKE 'file://%'
-              AND object_value NOT LIKE 'data:%'
         ";
         match conn.prepare(sql) {
             Ok(mut stmt) => match stmt.query_map([], |row| {
@@ -162,16 +154,26 @@ pub fn migrate_icon_to_has_icon(conn: &mut Connection) {
 
     crate::commands::log_backend(
         "info",
-        &format!("Migrating {} entities from foundation:icon → foundation:hasIcon…", rows.len()),
+        &format!("Migrating {} foundation:icon triples → foundation:hasIcon…", rows.len()),
     );
 
-    // Insert all new foundation:hasIcon IRI triples in a single transaction
     let new_triples: Vec<Triple> = rows.iter()
-        .map(|(subject, icon_name)| Triple::new(
-            subject.as_str(),
-            "foundation:hasIcon",
-            Object::Iri(icon_name_to_iri(icon_name)),
-        ))
+        .map(|(subject, value)| {
+            let obj = if value.starts_with("http://")
+                || value.starts_with("https://")
+                || value.starts_with("file://")
+                || value.starts_with("data:")
+            {
+                Object::Literal {
+                    value: value.clone(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                }
+            } else {
+                Object::Iri(icon_name_to_iri(value))
+            };
+            Triple::new(subject.as_str(), "foundation:hasIcon", obj)
+        })
         .collect();
 
     if let Err(e) = assert_triples(conn, &new_triples, "system") {
@@ -179,21 +181,16 @@ pub fn migrate_icon_to_has_icon(conn: &mut Connection) {
         return;
     }
 
-    // Bulk-retract old foundation:icon symbol literals in a single SQL update
     let retract_sql = "
         UPDATE triples SET retracted = 1
         WHERE predicate = 'foundation:icon'
           AND object_type = 'literal'
           AND retracted = 0
-          AND object_value NOT LIKE 'http://%'
-          AND object_value NOT LIKE 'https://%'
-          AND object_value NOT LIKE 'file://%'
-          AND object_value NOT LIKE 'data:%'
     ";
     match conn.execute(retract_sql, []) {
         Ok(retracted) => crate::commands::log_backend(
             "info",
-            &format!("Migration complete: {retracted} entities migrated to foundation:hasIcon."),
+            &format!("Migration complete: {retracted} triples migrated to foundation:hasIcon."),
         ),
         Err(e) => crate::commands::log_backend(
             "error",
@@ -254,30 +251,30 @@ mod tests {
     }
 
     #[test]
-    fn test_icon_store_value_https_url_uses_icon_literal() {
+    fn test_icon_store_value_https_url_uses_has_icon_literal() {
         let (pred, obj) = icon_store_value("https://example.com/icon.png");
-        assert_eq!(pred, "foundation:icon");
+        assert_eq!(pred, "foundation:hasIcon");
         assert!(matches!(obj, Object::Literal { ref value, .. } if value == "https://example.com/icon.png"));
     }
 
     #[test]
-    fn test_icon_store_value_http_url_uses_icon_literal() {
+    fn test_icon_store_value_http_url_uses_has_icon_literal() {
         let (pred, obj) = icon_store_value("http://example.com/icon.png");
-        assert_eq!(pred, "foundation:icon");
+        assert_eq!(pred, "foundation:hasIcon");
         assert!(matches!(obj, Object::Literal { ref value, .. } if value == "http://example.com/icon.png"));
     }
 
     #[test]
-    fn test_icon_store_value_file_url_uses_icon_literal() {
+    fn test_icon_store_value_file_url_uses_has_icon_literal() {
         let (pred, obj) = icon_store_value("file:///path/to/icon.png");
-        assert_eq!(pred, "foundation:icon");
+        assert_eq!(pred, "foundation:hasIcon");
         assert!(matches!(obj, Object::Literal { ref value, .. } if value == "file:///path/to/icon.png"));
     }
 
     #[test]
-    fn test_icon_store_value_data_url_uses_icon_literal() {
+    fn test_icon_store_value_data_url_uses_has_icon_literal() {
         let (pred, obj) = icon_store_value("data:image/png;base64,abc");
-        assert_eq!(pred, "foundation:icon");
+        assert_eq!(pred, "foundation:hasIcon");
         assert!(matches!(obj, Object::Literal { ref value, .. } if value == "data:image/png;base64,abc"));
     }
 
@@ -403,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn test_migrate_skips_url_icons() {
+    fn test_migrate_converts_url_literal_to_has_icon_literal() {
         let mut conn = setup_test_db();
         store::assert_triples(
             &mut conn,
@@ -422,17 +419,21 @@ mod tests {
 
         migrate_icon_to_has_icon(&mut conn);
 
-        let existing = crate::eavto::query::get_by_entity_predicate(
+        let old = crate::eavto::query::get_by_entity_predicate(
             &conn, "foundation:TestThing", "foundation:icon",
         )
         .unwrap();
-        assert_eq!(existing.triples.len(), 1, "URL icon should not be retracted");
+        assert!(old.triples.is_empty(), "old foundation:icon literal should be retracted");
 
         let new = crate::eavto::query::get_by_entity_predicate(
             &conn, "foundation:TestThing", "foundation:hasIcon",
         )
         .unwrap();
-        assert!(new.triples.is_empty(), "no hasIcon should be created for URL icons");
+        assert_eq!(new.triples.len(), 1);
+        assert!(matches!(
+            &new.triples[0].object,
+            Object::Literal { value, .. } if value == "https://example.com/icon.png"
+        ));
     }
 
     #[test]

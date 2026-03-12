@@ -176,20 +176,9 @@ fn owl_update_widget_content(
         .map_err(|e| e.to_string())
 }
 
-fn owl_clear_all_widgets(conn: &mut Connection) -> Result<(), String> {
-    let widget_iris = crate::owl::find_entities_with_property(conn, rdf::TYPE, WIDGET_CLASS)
-        .map_err(|e| e.to_string())?;
-    for iri in widget_iris {
-        Individual::retract(conn, &iri, WIDGET_ORIGIN)
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
 /// List all available widget types
-#[tauri::command]
 #[allow(non_snake_case)]
-pub fn widget__list_types() -> Vec<WidgetType> {
+pub fn blackboard__list_widget_types() -> Vec<WidgetType> {
     vec![
         WidgetType {
             id: "inspector".to_string(),
@@ -227,7 +216,7 @@ pub fn widget__list_types() -> Vec<WidgetType> {
 /// Get all widgets currently on the blackboard
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn widget__get_all(executor: State<'_, DbExecutor>) -> Result<Vec<Widget>, String> {
+pub async fn widget_blackboard__get_widgets(executor: State<'_, DbExecutor>) -> Result<Vec<Widget>, String> {
     executor.read(|conn| {
         owl_get_all_widgets(conn)
     }).await
@@ -236,7 +225,7 @@ pub async fn widget__get_all(executor: State<'_, DbExecutor>) -> Result<Vec<Widg
 /// Add a new widget to the blackboard
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn widget__add(
+pub async fn widget_blackboard__add_widget(
     app: AppHandle,
     widget_type: String,
     entity_id: String,
@@ -245,7 +234,7 @@ pub async fn widget__add(
     size: Option<Size>,
     executor: State<'_, DbExecutor>
 ) -> Result<Widget, String> {
-    let valid_types = widget__list_types();
+    let valid_types = blackboard__list_widget_types();
     if !valid_types.iter().any(|t| t.id == widget_type) {
         return Err(format!("Invalid widget type: {}. Available types: {:?}",
             widget_type,
@@ -286,7 +275,7 @@ pub async fn widget__add(
 /// Remove a widget from the blackboard
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn widget__remove(
+pub async fn widget_blackboard__remove_widget(
     app: AppHandle,
     widget_id: String,
     executor: State<'_, DbExecutor>
@@ -307,7 +296,7 @@ pub async fn widget__remove(
 /// Update widget position
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn widget__update_position(
+pub async fn widget_blackboard__update_widget_position(
     widget_id: String,
     position: Position,
     executor: State<'_, DbExecutor>
@@ -322,7 +311,7 @@ pub async fn widget__update_position(
 /// Update widget size
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn widget__update_size(
+pub async fn widget_blackboard__update_widget_size(
     widget_id: String,
     size: Size,
     executor: State<'_, DbExecutor>
@@ -337,7 +326,7 @@ pub async fn widget__update_size(
 /// Update widget content (e.g. Mermaid diagram source)
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn widget__update_content(
+pub async fn widget_blackboard__update_widget_content(
     app: AppHandle,
     widget_id: String,
     content: String,
@@ -369,7 +358,7 @@ pub async fn widget__update_content(
 /// List widget definitions from the ontology, optionally filtered by concept IRI
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn widget__list_definitions(
+pub async fn widget_blackboard__list_widget_definitions(
     concept_iri: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<WidgetDefinitionInfo>, String> {
@@ -425,22 +414,3 @@ pub async fn widget__list_definitions(
     }).await
 }
 
-/// Clear all widgets from the blackboard
-#[tauri::command]
-#[allow(non_snake_case)]
-pub async fn widget__clear_all(
-    app: AppHandle,
-    executor: State<'_, DbExecutor>
-) -> Result<(), String> {
-    app.emit("widgets-cleared", ()).ok();
-
-    let executor_clone = executor.inner().clone();
-    tokio::spawn(async move {
-        executor_clone.write(|conn| {
-            owl_clear_all_widgets(conn)?;
-            Ok("cleared".to_string())
-        }).await.ok();
-    });
-
-    Ok(())
-}

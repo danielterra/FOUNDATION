@@ -110,7 +110,7 @@ pub struct FileInfo {
 /// Search for instances by label and property values
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn entity__search(
+pub async fn graph__search_entities(
     query: String,
     limit: Option<usize>,
     executor: State<'_, DbExecutor>,
@@ -126,7 +126,7 @@ pub async fn entity__search(
 /// Get entity data with its complete neighborhood for visualization
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn entity__get(
+pub async fn inspector__get_entity(
     entity_id: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
@@ -147,7 +147,7 @@ pub async fn entity__get(
 /// The frontend uses this to map group discriminators to visual styles.
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn entity__get_node_type_config(
+pub async fn graph__get_node_type_config(
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     executor.read(move |conn| {
@@ -158,7 +158,7 @@ pub async fn entity__get_node_type_config(
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn entity__update_literal(
+pub async fn widget_inspector__update_property(
     entity_id: String,
     property_iri: String,
     value: String,

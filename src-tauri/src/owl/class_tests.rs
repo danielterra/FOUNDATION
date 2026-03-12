@@ -619,7 +619,7 @@ fn test_set_comment_replaces_existing_comment() {
 // ── set_icon ──────────────────────────────────────────────────────────────
 
 #[test]
-fn test_set_icon_url_icon_stores_as_literal() {
+fn test_set_icon_url_icon_stores_as_has_icon_literal() {
     let mut conn = setup_test_db();
     Class::new("foundation:Task").assert(
         &mut conn, ClassType::OwlClass, "Task", "https://example.com/original.svg", None, "test",
@@ -628,7 +628,7 @@ fn test_set_icon_url_icon_stores_as_literal() {
     Class::set_icon(&mut conn, "foundation:Task", "https://example.com/new.svg", "test").unwrap();
 
     let active: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM triples WHERE subject = 'foundation:Task' AND predicate = 'foundation:icon' AND retracted = 0",
+        "SELECT COUNT(*) FROM triples WHERE subject = 'foundation:Task' AND predicate = 'foundation:hasIcon' AND object_type = 'literal' AND retracted = 0",
         [],
         |row| row.get(0),
     ).unwrap();

@@ -357,14 +357,6 @@ pub async fn chat__send_and_reply(
 }
 
 #[tauri::command]
-pub async fn chat__send_message(
-    _message: String,
-    _executor: State<'_, DbExecutor>,
-) -> Result<String, String> {
-    Err("Use chat__send_and_reply instead".to_string())
-}
-
-#[tauri::command]
 pub async fn chat__get_recent_messages(
     limit: usize,
     conversation_id: String,
@@ -479,13 +471,6 @@ pub async fn chat__get_recent_messages(
     }).await?;
 
     Ok(messages)
-}
-
-#[tauri::command]
-pub async fn chat__get_conversation_info(
-    _executor: State<'_, DbExecutor>,
-) -> Result<serde_json::Value, String> {
-    Err("Not implemented in refactored version yet".to_string())
 }
 
 /// Edit a user message and re-run the conversation from that point.
@@ -651,7 +636,6 @@ pub async fn chat__retry_from_message(
     Ok(response_messages)
 }
 
-#[tauri::command]
 pub async fn chat__recover_pending_tools(
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,

@@ -38,7 +38,7 @@
 			// Reload the current node (or CurrentUser if none selected)
 			const targetNodeId = currentNodeId || 'http://foundation.local/ontology/CurrentUser';
 
-			// Use entity__get to reload the node data (same as clicking on a node)
+			// Use inspector__get_entity to reload the node data (same as clicking on a node)
 			await navigateToNode(targetNodeId);
 
 			loading = false;
@@ -133,7 +133,7 @@
 	async function navigateToNode(nodeId) {
 		try {
 			// Get entity data with full neighborhood
-			const entityJson = await invoke('entity__get', {
+			const entityJson = await invoke('inspector__get_entity', {
 				entityId: nodeId
 			});
 			const entityData = JSON.parse(entityJson);

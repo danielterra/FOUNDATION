@@ -33,11 +33,12 @@ impl Thing {
         let icon = query::get_by_entity_predicate(conn, &iri, "foundation:hasIcon")
             .ok()
             .and_then(|r| {
-                r.triples.first()
-                    .and_then(|t| t.object.as_iri())
-                    .map(|s| s.to_string())
+                r.triples.first().and_then(|t| match &t.object {
+                    crate::eavto::Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, icon_iri),
+                    crate::eavto::Object::Literal { value, .. } => Some(value.clone()),
+                    _ => None,
+                })
             })
-            .and_then(|icon_iri| crate::owl::icon_iri_to_display(conn, &icon_iri))
             .or_else(|| {
                 query::get_by_entity_predicate(conn, &iri, "foundation:icon")
                     .ok()
@@ -57,7 +58,7 @@ impl Thing {
         struct RawMetadata {
             label: Option<String>,
             icon_literal: Option<String>,
-            has_icon_iri: Option<String>,
+            has_icon: Option<crate::eavto::Object>,
         }
 
         if iris.is_empty() {
@@ -76,7 +77,7 @@ impl Thing {
             let entry = raw.entry(subject).or_insert(RawMetadata {
                 label: None,
                 icon_literal: None,
-                has_icon_iri: None,
+                has_icon: None,
             });
             match predicate.as_str() {
                 p if p == rdfs::LABEL => {
@@ -86,9 +87,7 @@ impl Thing {
                     if entry.icon_literal.is_none() { entry.icon_literal = object.as_literal(); }
                 }
                 "foundation:hasIcon" => {
-                    if entry.has_icon_iri.is_none() {
-                        entry.has_icon_iri = object.as_iri().map(|s| s.to_string());
-                    }
+                    if entry.has_icon.is_none() { entry.has_icon = Some(object); }
                 }
                 _ => {}
             }
@@ -100,8 +99,12 @@ impl Thing {
                 .and_then(|m| m.label.clone())
                 .unwrap_or_else(|| iri.clone());
             let icon = metadata
-                .and_then(|m| m.has_icon_iri.as_deref())
-                .and_then(|icon_iri| crate::owl::icon_iri_to_display(conn, icon_iri))
+                .and_then(|m| m.has_icon.as_ref())
+                .and_then(|obj| match obj {
+                    crate::eavto::Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, icon_iri),
+                    crate::eavto::Object::Literal { value, .. } => Some(value.clone()),
+                    _ => None,
+                })
                 .or_else(|| metadata.and_then(|m| m.icon_literal.clone()));
             (iri.clone(), Thing { iri: iri.clone(), label, icon })
         }).collect()

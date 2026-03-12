@@ -14,8 +14,11 @@ impl Individual {
 
         let icon = retracted.triples.iter()
             .find(|t| t.predicate == "foundation:hasIcon")
-            .and_then(|t| t.object.as_iri())
-            .and_then(|iri| crate::owl::icon_iri_to_display(conn, iri))
+            .and_then(|t| match &t.object {
+                Object::Iri(iri) => crate::owl::icon_iri_to_display(conn, iri),
+                Object::Literal { value, .. } => Some(value.clone()),
+                _ => None,
+            })
             .or_else(|| {
                 retracted.triples.iter()
                     .find(|t| t.predicate == "foundation:icon")
@@ -66,8 +69,11 @@ impl Individual {
 
         let icon = all_triples.triples.iter()
             .find(|t| t.predicate == "foundation:hasIcon")
-            .and_then(|t| t.object.as_iri())
-            .and_then(|iri| crate::owl::icon_iri_to_display(conn, iri))
+            .and_then(|t| match &t.object {
+                Object::Iri(iri) => crate::owl::icon_iri_to_display(conn, iri),
+                Object::Literal { value, .. } => Some(value.clone()),
+                _ => None,
+            })
             .or_else(|| {
                 all_triples.triples.iter()
                     .find(|t| t.predicate == "foundation:icon")

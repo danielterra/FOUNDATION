@@ -15,7 +15,7 @@
   async function loadConnector() {
     if (!entityId) return;
     try {
-      const resultStr = await invoke('entity__get', { entityId });
+      const resultStr = await invoke('inspector__get_entity', { entityId });
       const data = JSON.parse(resultStr);
       connectorLabel = data?.label ?? entityId;
     } catch {
@@ -66,7 +66,7 @@
 
   async function openCredentials() {
     try {
-      await invoke('widget__add', {
+      await invoke('widget_blackboard__add_widget', {
         widgetType: 'connector_credential',
         entityId,
         position: null,
@@ -79,7 +79,7 @@
 
   async function closeWidget() {
     try {
-      await invoke('widget__remove', { widgetId });
+      await invoke('widget_blackboard__remove_widget', { widgetId });
     } catch (err) {
       console.error('Failed to remove widget:', err);
     }
