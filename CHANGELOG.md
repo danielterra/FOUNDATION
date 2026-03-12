@@ -5,6 +5,14 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-03-12
+
+### Refactored
+
+- **Widget command namespacing**: Renamed `blackboard__*` and `inspector__update_property` Tauri commands to `widget_blackboard__*` and `widget_inspector__*` following the Rust double-underscore namespace convention
+- **Startup component**: Extracted boot screen logic from `src/routes/+page.svelte` into a dedicated `Startup.svelte` component for semantic clarity
+- **Dead code removal**: Removed unused `ai__generate` command, `process_automation` module, and Portuguese inline comments; cleaned up `console.log` debug calls from canvas page
+
 ## [0.11.0] - 2026-03-10
 
 ### Added
