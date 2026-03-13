@@ -13,6 +13,16 @@ const PRED_POSITION_Y: &str = "foundation:widgetPositionY";
 const PRED_SIZE_WIDTH: &str = "foundation:widgetSizeWidth";
 const PRED_SIZE_HEIGHT: &str = "foundation:widgetSizeHeight";
 const WIDGET_ORIGIN: &str = "widget";
+const PRED_WINDOW_STATE: &str = "foundation:widgetWindowState";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowState {
+    #[default]
+    Normal,
+    Minimized,
+    Maximized,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Widget {
@@ -22,6 +32,7 @@ pub struct Widget {
     pub content: Option<String>,
     pub position: Position,
     pub size: Size,
+    pub window_state: WindowState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +95,14 @@ fn individual_to_widget(ind: Individual) -> Option<Widget> {
     let height = prop_f64(&ind, PRED_SIZE_HEIGHT)?;
     let content = prop_str(&ind, PRED_CONTENT);
 
+    let window_state = prop_str(&ind, PRED_WINDOW_STATE)
+        .and_then(|s| match s.as_str() {
+            "minimized" => Some(WindowState::Minimized),
+            "maximized" => Some(WindowState::Maximized),
+            _ => Some(WindowState::Normal),
+        })
+        .unwrap_or_default();
+
     Some(Widget {
         id: ind.iri,
         widget_type,
@@ -91,6 +110,7 @@ fn individual_to_widget(ind: Individual) -> Option<Widget> {
         content,
         position: Position { x, y },
         size: Size { width, height },
+        window_state,
     })
 }
 
@@ -114,6 +134,13 @@ pub fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), S
         ind.add_property(conn, PRED_CONTENT, vec![str_obj(content)], WIDGET_ORIGIN)
             .map_err(|e| e.to_string())?;
     }
+    let state_str = match widget.window_state {
+        WindowState::Normal => "normal",
+        WindowState::Minimized => "minimized",
+        WindowState::Maximized => "maximized",
+    };
+    ind.add_property(conn, PRED_WINDOW_STATE, vec![str_obj(state_str)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -163,6 +190,21 @@ fn owl_update_widget_size(
     ind.add_property(conn, PRED_SIZE_WIDTH, vec![Object::Number(size.width)], WIDGET_ORIGIN)
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, PRED_SIZE_HEIGHT, vec![Object::Number(size.height)], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())
+}
+
+fn owl_update_widget_window_state(
+    conn: &mut Connection,
+    widget_id: &str,
+    state: &WindowState,
+) -> Result<(), String> {
+    let state_str = match state {
+        WindowState::Normal => "normal",
+        WindowState::Minimized => "minimized",
+        WindowState::Maximized => "maximized",
+    };
+    let ind = Individual::new(widget_id);
+    ind.add_property(conn, PRED_WINDOW_STATE, vec![str_obj(state_str)], WIDGET_ORIGIN)
         .map_err(|e| e.to_string())
 }
 
@@ -256,6 +298,7 @@ pub async fn widget_blackboard__add_widget(
         content,
         position: position.unwrap_or(Position { x: 100.0, y: 100.0 }),
         size: size.unwrap_or(default_size),
+        window_state: WindowState::Normal,
     };
 
     app.emit("widget-added", widget.clone()).ok();
@@ -318,6 +361,21 @@ pub async fn widget_blackboard__update_widget_size(
 ) -> Result<(), String> {
     executor.write(move |conn| {
         owl_update_widget_size(conn, &widget_id, &size)?;
+        Ok("updated".to_string())
+    }).await?;
+    Ok(())
+}
+
+/// Update widget window state (normal, minimized, maximized)
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_blackboard__update_widget_window_state(
+    widget_id: String,
+    window_state: WindowState,
+    executor: State<'_, DbExecutor>
+) -> Result<(), String> {
+    executor.write(move |conn| {
+        owl_update_widget_window_state(conn, &widget_id, &window_state)?;
         Ok("updated".to_string())
     }).await?;
     Ok(())

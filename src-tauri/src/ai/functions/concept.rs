@@ -423,6 +423,152 @@ mod tests {
         let result = execute_tool(&mut conn, &update, None);
         assert!(!result.success, "setting super_concepts to empty must be rejected");
     }
+
+    #[test]
+    fn test_rename_concept_migrates_all_references() {
+        use crate::ai::functions::{ToolCall, execute_tool};
+        use crate::eavto::query;
+
+        let mut conn = setup_test_db();
+
+        // Create concept with a property, a subclass, and an instance
+        let create_concept = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:OldName",
+                    "label": "Old Name",
+                    "icon": "label",
+                    "super_concepts": ["owl:Thing"]
+                }]
+            }),
+        };
+        assert!(execute_tool(&mut conn, &create_concept, None).success);
+
+        // Create a property with OldName as domain
+        crate::owl::Property::new("foundation:testProp")
+            .assert(&mut conn, crate::owl::PropertyType::DatatypeProperty, "test prop", None, &["foundation:OldName"], Some("xsd:string"), None, "test")
+            .unwrap();
+
+        // Create a property with OldName as range (incoming reference)
+        crate::owl::Property::new("foundation:refToOld")
+            .assert(&mut conn, crate::owl::PropertyType::ObjectProperty, "ref to old", None, &[], Some("foundation:OldName"), None, "test")
+            .unwrap();
+
+        // Create an instance of OldName
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Instance_1", "rdf:type", Object::Iri("foundation:OldName".to_string())),
+        ], "test").unwrap();
+
+        // Create a subclass of OldName
+        let create_sub = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:SubOfOld",
+                    "label": "Sub Of Old",
+                    "icon": "label",
+                    "super_concepts": ["foundation:OldName"]
+                }]
+            }),
+        };
+        assert!(execute_tool(&mut conn, &create_sub, None).success);
+
+        // Rename OldName to NewName
+        let rename = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:OldName",
+                    "new_iri": "foundation:NewName"
+                }]
+            }),
+        };
+        let result = execute_tool(&mut conn, &rename, None);
+        assert!(result.success, "rename must succeed; got: {:?}", result.error);
+
+        // Old IRI should no longer exist as a class
+        let old_class = crate::owl::Class::get(&conn, "foundation:OldName").unwrap();
+        assert!(old_class.is_none(), "old IRI must be gone after rename");
+
+        // New IRI should exist as a class
+        let new_class = crate::owl::Class::get(&conn, "foundation:NewName").unwrap();
+        assert!(new_class.is_some(), "new IRI must exist after rename");
+
+        // Property domain must point to new IRI
+        let prop = crate::owl::Property::get(&conn, "foundation:testProp").unwrap().unwrap();
+        assert!(prop.domains.contains(&"foundation:NewName".to_string()), "domain must be updated to new IRI");
+        assert!(!prop.domains.contains(&"foundation:OldName".to_string()), "old IRI must not remain in domain");
+
+        // Property range must point to new IRI
+        let ref_prop = crate::owl::Property::get(&conn, "foundation:refToOld").unwrap().unwrap();
+        assert!(ref_prop.ranges.contains(&"foundation:NewName".to_string()), "range must be updated to new IRI");
+
+        // Instance rdf:type must reference new IRI
+        let type_triples = query::get_by_entity_predicate(&conn, "foundation:Instance_1", "rdf:type").unwrap();
+        let has_new_type = type_triples.triples.iter().any(|t| t.object.as_iri() == Some("foundation:NewName"));
+        assert!(has_new_type, "instance type must be updated to new IRI");
+
+        // Subclass superclass must reference new IRI
+        let sub_class = crate::owl::Class::get(&conn, "foundation:SubOfOld").unwrap().unwrap();
+        assert!(
+            sub_class.super_classes.iter().any(|t| t.iri == "foundation:NewName"),
+            "subclass superclass must be updated to new IRI"
+        );
+    }
+
+    #[test]
+    fn test_rename_concept_rejects_nonexistent_source() {
+        use crate::ai::functions::{ToolCall, execute_tool};
+
+        let mut conn = setup_test_db();
+
+        let rename = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:DoesNotExist",
+                    "new_iri": "foundation:SomeTarget"
+                }]
+            }),
+        };
+        let result = execute_tool(&mut conn, &rename, None);
+        assert!(!result.success, "rename of non-existent concept must fail");
+    }
+
+    #[test]
+    fn test_rename_concept_rejects_existing_target() {
+        use crate::ai::functions::{ToolCall, execute_tool};
+
+        let mut conn = setup_test_db();
+
+        for iri in &["foundation:SourceConcept", "foundation:TargetConcept"] {
+            let create = ToolCall {
+                name: "learn_concepts".to_string(),
+                arguments: serde_json::json!({
+                    "operations": [{
+                        "iri": iri,
+                        "label": iri,
+                        "icon": "label",
+                        "super_concepts": ["owl:Thing"]
+                    }]
+                }),
+            };
+            assert!(execute_tool(&mut conn, &create, None).success);
+        }
+
+        let rename = ToolCall {
+            name: "learn_concepts".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:SourceConcept",
+                    "new_iri": "foundation:TargetConcept"
+                }]
+            }),
+        };
+        let result = execute_tool(&mut conn, &rename, None);
+        assert!(!result.success, "rename to existing IRI must fail");
+    }
 }
 
 pub(super) fn load_concept_context(conn: &Connection, iri: &str) -> Option<Value> {
@@ -612,7 +758,7 @@ fn learn_concept_one(
     conn: &mut Connection,
     args: &Value,
 ) -> ToolResult {
-    let iri = match args.get("iri").and_then(|v| v.as_str()) {
+    let orig_iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
             success: false,
@@ -623,6 +769,33 @@ fn learn_concept_one(
     };
 
     match (|| {
+        let new_iri_arg = args.get("new_iri").and_then(|v| v.as_str());
+        let iri: &str = if let Some(new_iri) = new_iri_arg {
+            if new_iri != orig_iri {
+                if Class::get(conn, orig_iri)?.is_none() {
+                    return Err(crate::owl::OwlError::ValidationError(format!(
+                        "Concept '{}' not found. Cannot rename a non-existent concept.", orig_iri
+                    )));
+                }
+                if Class::get(conn, new_iri)?.is_some() {
+                    return Err(crate::owl::OwlError::ValidationError(format!(
+                        "Concept '{}' already exists. Cannot rename to an existing IRI.", new_iri
+                    )));
+                }
+                crate::eavto::store::rename_iri(conn, orig_iri, new_iri, "ai")
+                    .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
+                super::batch::queue_event(
+                    "entity-updated",
+                    serde_json::json!({"entityId": orig_iri}),
+                );
+                new_iri
+            } else {
+                orig_iri
+            }
+        } else {
+            orig_iri
+        };
+
         let existing = Class::get(conn, iri)?;
         let is_new = existing.is_none();
 
@@ -794,7 +967,7 @@ fn learn_concept_one(
             success: false,
             result: None,
             error: Some(e.to_string()),
-            concept: load_concept_context(conn, iri),
+            concept: load_concept_context(conn, orig_iri),
         },
     }
 }

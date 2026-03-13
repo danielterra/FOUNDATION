@@ -152,6 +152,7 @@ pub fn run() {
             commands::widget_blackboard__update_widget_position,
             commands::widget_blackboard__update_widget_size,
             commands::widget_blackboard__update_widget_content,
+            commands::widget_blackboard__update_widget_window_state,
             commands::widget_blackboard__list_widget_definitions,
             commands::connector__save_credential,
             commands::connector__get_credential_summary,

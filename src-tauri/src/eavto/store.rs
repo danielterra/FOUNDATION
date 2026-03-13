@@ -652,6 +652,118 @@ fn get_or_create_origin(tx: &rusqlite::Connection, origin: &str) -> rusqlite::Re
     }
 }
 
+/// Rename an IRI throughout the store.
+///
+/// Retracts all active triples that reference `old_iri` (as subject or IRI object)
+/// and re-inserts them with `new_iri`. No-op if there are no matching triples.
+pub fn rename_iri(
+    conn: &mut Connection,
+    old_iri: &str,
+    new_iri: &str,
+    origin: &str,
+) -> Result<()> {
+    if IN_BATCH_TX.with(|f| f.get()) {
+        let sp = conn.savepoint()?;
+        do_rename_iri(&sp, old_iri, new_iri, origin)?;
+        sp.commit()?;
+    } else {
+        let tx = conn.transaction()?;
+        do_rename_iri(&tx, old_iri, new_iri, origin)?;
+        tx.commit()?;
+    }
+    Ok(())
+}
+
+struct FullRow {
+    rowid: i64,
+    subject: String,
+    predicate: String,
+    object: Option<String>,
+    object_value: Option<String>,
+    object_datatype: Option<String>,
+    object_language: Option<String>,
+    object_type: String,
+    object_number: Option<f64>,
+    object_integer: Option<i64>,
+    object_boolean: Option<i64>,
+}
+
+fn do_rename_iri(
+    tx: &rusqlite::Connection,
+    old_iri: &str,
+    new_iri: &str,
+    origin: &str,
+) -> Result<()> {
+    let mut stmt = tx.prepare(
+        "SELECT rowid, subject, predicate, object, object_value, object_datatype,
+                object_language, object_type, object_number, object_integer, object_boolean
+         FROM triples
+         WHERE (subject = ?1 OR object = ?1) AND retracted = 0"
+    )?;
+
+    let rows: Vec<FullRow> = stmt.query_map([old_iri], |row| {
+        Ok(FullRow {
+            rowid: row.get(0)?,
+            subject: row.get(1)?,
+            predicate: row.get(2)?,
+            object: row.get(3)?,
+            object_value: row.get(4)?,
+            object_datatype: row.get(5)?,
+            object_language: row.get(6)?,
+            object_type: row.get(7)?,
+            object_number: row.get(8)?,
+            object_integer: row.get(9)?,
+            object_boolean: row.get(10)?,
+        })
+    })?.collect::<rusqlite::Result<Vec<_>>>()?;
+
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let now = now_millis();
+    tx.execute(
+        "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
+        (origin, now),
+    )?;
+    let tx_id = tx.last_insert_rowid();
+    let origin_id = get_or_create_origin(tx, origin)?;
+
+    for row in &rows {
+        tx.execute("UPDATE triples SET retracted = 1 WHERE rowid = ?", [row.rowid])?;
+
+        let new_subject: &str = if row.subject == old_iri { new_iri } else { &row.subject };
+        let new_object_owned: Option<String> = row.object.as_ref().map(|o| {
+            if o == old_iri { new_iri.to_string() } else { o.clone() }
+        });
+        let new_object: Option<&str> = new_object_owned.as_deref();
+
+        tx.execute(
+            "INSERT INTO triples (subject, predicate, object, object_value, object_datatype,
+                                  object_language, object_type, object_number, object_integer,
+                                  object_boolean, tx, origin_id, retracted, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+            rusqlite::params![
+                new_subject,
+                row.predicate,
+                new_object,
+                row.object_value,
+                row.object_datatype,
+                row.object_language,
+                row.object_type,
+                row.object_number,
+                row.object_integer,
+                row.object_boolean,
+                tx_id,
+                origin_id,
+                now,
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Get current Unix time in milliseconds
 fn now_millis() -> i64 {
     std::time::SystemTime::now()

@@ -256,6 +256,7 @@ fn blackboard_add_widget_one(
         content,
         position,
         size: Size { width: WIDGET_DEFAULT_WIDTH, height: WIDGET_DEFAULT_HEIGHT },
+        window_state: widget::WindowState::Normal,
     };
 
     match widget::owl_insert_widget(conn, &widget_obj) {

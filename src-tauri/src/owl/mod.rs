@@ -694,16 +694,20 @@ fn search_rich_structured(
     use crate::eavto::query;
 
     let candidate_iris: Vec<String> = if let Some(f) = filters {
-        let concept = concept_iri.ok_or_else(|| OwlError::ValidationError(
-            "concept_iri is required when filters are provided".to_string()
-        ))?;
         let constraint_refs: Vec<(&str, &str, &str)> = f.iter()
             .map(|(d, v, o)| (d.as_str(), v.as_str(), o.as_str()))
             .collect();
-        let (iris, _) = Individual::find_by_class_and_properties_with_options(
-            conn, concept, &constraint_refs, include_retracted, usize::MAX, 0,
-        )?;
-        iris
+        if let Some(concept) = concept_iri {
+            let (iris, _) = Individual::find_by_class_and_properties_with_options(
+                conn, concept, &constraint_refs, include_retracted, usize::MAX, 0,
+            )?;
+            iris
+        } else {
+            let (iris, _) = query::find_by_properties_with_options(
+                conn, &constraint_refs, include_retracted, usize::MAX, 0,
+            ).map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+            iris
+        }
     } else if let Some(concept) = concept_iri {
         if include_retracted {
             Individual::find_by_class_with_date_range(conn, concept, None, None, true)?

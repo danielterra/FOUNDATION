@@ -4,7 +4,7 @@
   import { listen } from '@tauri-apps/api/event';
   import mermaid from 'mermaid';
 
-  let { widgetId, entityId = '' } = $props();
+  let { widgetId, entityId = '', windowState = 'normal', onWindowStateChange } = $props();
 
   const DEFAULT_DIAGRAM = `graph TD
     A[Start] --> B{Decision}
@@ -18,7 +18,7 @@
   let draftContent = $state(content);
   let renderContainer = $state(null);
   let renderError = $state(null);
-  let expanded = $state(false);
+  let expanded = $state(windowState === 'maximized');
   let modalRenderContainer = $state(null);
   let scale = $state(1);
   let translateX = $state(0);
@@ -124,6 +124,7 @@
     translateX = 0;
     translateY = 0;
     expanded = true;
+    onWindowStateChange?.('maximized');
   }
 
   function handleWheel(e) {
@@ -268,7 +269,7 @@
   });
 </script>
 
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && expanded) expanded = false; }} />
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && expanded) { expanded = false; onWindowStateChange?.('normal'); } }} />
 
 <div class="mermaid-widget">
   <div class="widget-header">
@@ -326,7 +327,7 @@
 
 {#if expanded}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div use:portal class="modal-overlay" onclick={() => (expanded = false)}>
+  <div use:portal class="modal-overlay" onclick={() => { expanded = false; onWindowStateChange?.('normal'); }}>
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div
       class="modal-panel"
@@ -342,7 +343,7 @@
           <button class="action-btn" onclick={resetView} title="Reset view">
             <span class="material-symbols-outlined">center_focus_strong</span>
           </button>
-          <button class="action-btn" onclick={() => (expanded = false)} title="Close">
+          <button class="action-btn" onclick={() => { expanded = false; onWindowStateChange?.('normal'); }} title="Close">
             <span class="material-symbols-outlined">close_fullscreen</span>
           </button>
         </div>

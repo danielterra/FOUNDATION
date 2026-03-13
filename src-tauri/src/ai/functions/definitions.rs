@@ -39,6 +39,13 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     schema: None,
                 },
                 Parameter {
+                    name: "new_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "New IRI to rename this concept to. Automatically migrates all references (domains, ranges, instance types, superclasses).".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
                     name: "comment".to_string(),
                     param_type: "string".to_string(),
                     description: "Optional description.".to_string(),
@@ -254,7 +261,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "filters".to_string(),
                     param_type: "array".to_string(),
-                    description: "Filter by property values. Requires concept_iri. Each item: {detail: 'property_iri', value: 'VALUE', operator?: '='|'>='|'<='|'>'|'<'}. operator defaults to '='. For xsd:date use ISO 'YYYY-MM-DD'. For xsd:dateTime use RFC3339.".to_string(),
+                    description: "Filter by property values. concept_iri is optional — omit to search across all classes. Each item: {detail: 'property_iri', value: 'VALUE', operator?: '='|'>='|'<='|'>'|'<'}. operator defaults to '='. For xsd:date use ISO 'YYYY-MM-DD'. For xsd:dateTime use RFC3339.".to_string(),
                     required: false,
                     schema: Some(serde_json::json!({
                         "type": "array",

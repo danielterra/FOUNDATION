@@ -1,7 +1,5 @@
 <script>
   import { onMount, onDestroy, untrack } from 'svelte';
-  import { slide } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
   import { invoke } from '@tauri-apps/api/core';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { marked } from 'marked';
@@ -10,26 +8,10 @@
   import PropertyList from './inspector/PropertyList.svelte';
   import BacklinkList from './inspector/BacklinkList.svelte';
 
-  let { entityId, widgetId, refreshKey = 0, onResize } = $props();
+  let { entityId, widgetId, refreshKey = 0, windowState = 'normal', onWindowStateChange } = $props();
 
-  let minimized = $state(false);
-  let storedHeight = $state(null);
-  let widgetEl = $state(null);
-  let headerEl = $state(null);
-
-  async function toggleMinimize() {
-    if (!minimized) {
-      storedHeight = widgetEl?.offsetHeight ?? 500;
-      const headerHeight = headerEl?.offsetHeight ?? 70;
-      const width = widgetEl?.offsetWidth ?? 320;
-      minimized = true;
-      await new Promise(r => setTimeout(r, 260));
-      onResize?.(width, headerHeight);
-    } else {
-      const width = widgetEl?.offsetWidth ?? 320;
-      onResize?.(width, storedHeight ?? 500);
-      minimized = false;
-    }
+  function toggleMinimize() {
+    onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized');
   }
 
   function sticky(node, { top = 0 } = {}) {
@@ -219,8 +201,8 @@
   });
 </script>
 
-<div class="inspector-widget" bind:this={widgetEl}>
-  <div class="widget-header" bind:this={headerEl}>
+<div class="inspector-widget" class:minimized={windowState === 'minimized'}>
+  <div class="widget-header">
     <div class="header-top">
       <div class="widget-title-wrapper">
         <div class="widget-icon-container">
@@ -260,8 +242,8 @@
           <button class="action-btn" onclick={copyEntityIri} title="Copy IRI">
             <span class="material-symbols-outlined">content_copy</span>
           </button>
-          <button class="action-btn" onclick={toggleMinimize} title={minimized ? 'Expand' : 'Minimize'}>
-            <span class="material-symbols-outlined">{minimized ? 'expand_more' : 'expand_less'}</span>
+          <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
+            <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
           </button>
           <button class="close-btn" onclick={closeWidget}>
             <span class="material-symbols-outlined">close</span>
@@ -281,8 +263,8 @@
     </div>
   </div>
 
-  {#if !minimized}
-    <div class="widget-content" transition:slide={{ duration: 250, easing: cubicOut }}>
+  <div class="content-wrapper">
+    <div class="widget-content">
     {#if loading}
       <div class="loading">
         <span class="material-symbols-outlined spinning">progress_activity</span>
@@ -425,7 +407,7 @@
       </div>
     {/if}
     </div>
-  {/if}
+  </div>
 </div>
 
 <style>
@@ -440,6 +422,21 @@
     border-radius: 12px;
     overflow: hidden;
     box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
+  }
+
+  .content-wrapper {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+  }
+
+  .inspector-widget.minimized .content-wrapper {
+    grid-template-rows: 0fr;
+  }
+
+  .content-wrapper > .widget-content {
+    min-height: 0;
   }
 
   .widget-header {
@@ -601,7 +598,6 @@
   }
 
   .widget-content {
-    flex: 1;
     overflow-y: auto;
   }
 

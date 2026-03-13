@@ -14,6 +14,7 @@
   const CHAT_PANEL_WIDTH_RATIO = 0.3;
   const CHAT_PANEL_MIN_WIDTH = 500;
   const WIDGET_FLY_DURATION = 600;
+  const MINIMIZED_HEIGHT = 70;
 
   let widgets = $state([]);
   let unlisteners = [];
@@ -23,17 +24,21 @@
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
 
-  function constrainToBounds(position, size) {
+  function constrainToBounds(position, size, displayHeight) {
     const minX = 0;
     const minY = 0;
     const chatWidth = Math.max(viewportWidth * CHAT_PANEL_WIDTH_RATIO, CHAT_PANEL_MIN_WIDTH);
     const maxX = viewportWidth - chatWidth - size.width;
-    const maxY = viewportHeight - size.height;
+    const maxY = viewportHeight - (displayHeight ?? size.height);
 
     return {
       x: Math.max(minX, Math.min(maxX, position.x)),
       y: Math.max(minY, Math.min(maxY, position.y))
     };
+  }
+
+  function displayHeight(widget) {
+    return widget.window_state === 'minimized' ? MINIMIZED_HEIGHT : widget.size.height;
   }
 
   function updateViewportSize() {
@@ -42,7 +47,7 @@
 
     widgets = widgets.map(w => ({
       ...w,
-      position: constrainToBounds(w.position, w.size)
+      position: constrainToBounds(w.position, w.size, displayHeight(w))
     }));
   }
 
@@ -90,7 +95,7 @@
 
     widgets = widgets.map(w =>
       w.id === draggedWidget.id
-        ? { ...w, position: constrainToBounds({ x: newX, y: newY }, w.size) }
+        ? { ...w, position: constrainToBounds({ x: newX, y: newY }, w.size, displayHeight(w)) }
         : w
     );
   }
@@ -123,6 +128,30 @@
     });
   }
 
+  function minimizeAll() {
+    widgets.forEach(w => {
+      if (w.window_state !== 'minimized') updateWidgetWindowState(w.id, 'minimized');
+    });
+  }
+
+  function expandAll() {
+    widgets.forEach(w => {
+      if (w.window_state !== 'normal') updateWidgetWindowState(w.id, 'normal');
+    });
+  }
+
+  function updateWidgetWindowState(widgetId, windowState) {
+    widgets = widgets.map(w =>
+      w.id === widgetId ? { ...w, window_state: windowState } : w
+    );
+    invoke('widget_blackboard__update_widget_window_state', {
+      widgetId,
+      windowState
+    }).catch(error => {
+      console.error('Failed to update widget window state:', error);
+    });
+  }
+
   onMount(async () => {
     updateViewportSize();
 
@@ -142,7 +171,7 @@
       topZIndex++;
       const newWidget = { ...event.payload, zIndex: topZIndex };
 
-      newWidget.position = constrainToBounds(newWidget.position, newWidget.size);
+      newWidget.position = constrainToBounds(newWidget.position, newWidget.size, displayHeight(newWidget));
       widgets = [...widgets, newWidget];
     });
 
@@ -185,6 +214,17 @@
 
 <svelte:window />
 
+{#if widgets.length > 0}
+  <div class="canvas-controls">
+    <button class="canvas-btn" onclick={minimizeAll} title="Minimize all">
+      <span class="material-symbols-outlined">collapse_all</span>
+    </button>
+    <button class="canvas-btn" onclick={expandAll} title="Expand all">
+      <span class="material-symbols-outlined">expand_all</span>
+    </button>
+  </div>
+{/if}
+
 {#each widgets as widget (widget.id)}
   <div
     class="widget-container"
@@ -192,7 +232,7 @@
     style:left="{widget.position.x}px"
     style:top="{widget.position.y}px"
     style:width="{widget.size.width}px"
-    style:height="{widget.size.height}px"
+    style:height="{widget.window_state === 'minimized' ? MINIMIZED_HEIGHT : widget.size.height}px"
     style:z-index={widget.zIndex}
     onmousedown={(e) => startDrag(e, widget)}
     onclick={() => bringToFront(widget.id)}
@@ -204,9 +244,9 @@
     out:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicIn }}
   >
     {#if widget.widget_type === 'inspector'}
-      <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} onResize={(w, h) => resizeWidget(widget.id, w, h)} />
+      <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {:else if widget.widget_type === 'mermaid'}
-      <MermaidWidget widgetId={widget.id} entityId={widget.entity_id} />
+      <MermaidWidget widgetId={widget.id} entityId={widget.entity_id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {:else if widget.widget_type === 'process_status'}
       <ProcessStatusWidget widgetId={widget.id} entityId={widget.entity_id} />
     {:else if widget.widget_type === 'connector_credential'}
@@ -220,7 +260,7 @@
 <style>
   .widget-container {
     position: absolute;
-    transition: box-shadow 0.2s;
+    transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s;
   }
 
   .widget-container.dragging {
@@ -234,5 +274,38 @@
 
   .widget-container.dragging :global(.widget-header) {
     cursor: grabbing;
+  }
+
+  .canvas-controls {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 50;
+    display: flex;
+    gap: 4px;
+  }
+
+  .canvas-btn {
+    background: color-mix(in srgb, var(--color-black) 80%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+    border-radius: 8px;
+    padding: 6px;
+    cursor: pointer;
+    color: var(--color-interactive);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(12px);
+    transition: all 0.15s;
+  }
+
+  .canvas-btn:hover {
+    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
+    color: var(--color-neutral-active);
+    border-color: color-mix(in srgb, var(--color-interactive) 40%, transparent);
+  }
+
+  .canvas-btn .material-symbols-outlined {
+    font-size: 18px;
   }
 </style>

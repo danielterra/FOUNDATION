@@ -798,4 +798,40 @@ mod tests {
         assert_eq!(total, 1);
         assert!(results.contains(&"foundation:TestClass".to_string()));
     }
+
+    #[test]
+    fn test_find_by_properties_without_class_constraint() {
+        let mut conn = setup_test_db();
+
+        assert_triples(&mut conn, &[
+            Triple { subject: "foundation:PersonA".to_string(), predicate: "rdf:type".to_string(),
+                object: Object::Iri("foundation:Person".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
+            Triple { subject: "foundation:PersonA".to_string(), predicate: "foundation:status".to_string(),
+                object: Object::Literal { value: "active".to_string(), datatype: Some("xsd:string".to_string()), language: None },
+                tx: 0, created_at: 0, origin_id: 1, retracted: false },
+            Triple { subject: "foundation:CompanyX".to_string(), predicate: "rdf:type".to_string(),
+                object: Object::Iri("foundation:Company".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
+            Triple { subject: "foundation:CompanyX".to_string(), predicate: "foundation:status".to_string(),
+                object: Object::Literal { value: "active".to_string(), datatype: Some("xsd:string".to_string()), language: None },
+                tx: 0, created_at: 0, origin_id: 1, retracted: false },
+            Triple { subject: "foundation:PersonB".to_string(), predicate: "rdf:type".to_string(),
+                object: Object::Iri("foundation:Person".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
+            Triple { subject: "foundation:PersonB".to_string(), predicate: "foundation:status".to_string(),
+                object: Object::Literal { value: "inactive".to_string(), datatype: Some("xsd:string".to_string()), language: None },
+                tx: 0, created_at: 0, origin_id: 1, retracted: false },
+        ], "test").unwrap();
+
+        let (results, total) = find_by_properties_with_options(
+            &conn,
+            &[("foundation:status", "active", "=")],
+            false,
+            100,
+            0,
+        ).unwrap();
+
+        assert_eq!(total, 2, "should find both active entities regardless of class");
+        assert!(results.contains(&"foundation:PersonA".to_string()));
+        assert!(results.contains(&"foundation:CompanyX".to_string()));
+        assert!(!results.contains(&"foundation:PersonB".to_string()));
+    }
 }
