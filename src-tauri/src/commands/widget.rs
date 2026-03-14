@@ -15,6 +15,15 @@ const PRED_SIZE_HEIGHT: &str = "foundation:widgetSizeHeight";
 const WIDGET_ORIGIN: &str = "widget";
 const PRED_WINDOW_STATE: &str = "foundation:widgetWindowState";
 
+const DEFAULT_POS_X: f64 = 100.0;
+const DEFAULT_POS_Y: f64 = 100.0;
+const DEFAULT_WIDTH_MERMAID: f64 = 600.0;
+const DEFAULT_HEIGHT_MERMAID: f64 = 500.0;
+const DEFAULT_WIDTH_META_PROCESS: f64 = 900.0;
+const DEFAULT_HEIGHT_META_PROCESS: f64 = 600.0;
+const DEFAULT_WIDTH_STANDARD: f64 = 400.0;
+const DEFAULT_HEIGHT_STANDARD: f64 = 600.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowState {
@@ -52,8 +61,8 @@ pub struct WidgetType {
     pub id: String,
     pub name: String,
     pub description: String,
-    /// Whether this widget renders a specific entity (true = entity-bound, false = content-only)
     pub supports_entity: bool,
+    pub default_size: Size,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,7 +227,6 @@ fn owl_update_widget_content(
         .map_err(|e| e.to_string())
 }
 
-/// List all available widget types
 #[allow(non_snake_case)]
 pub fn blackboard__list_widget_types() -> Vec<WidgetType> {
     vec![
@@ -227,35 +235,46 @@ pub fn blackboard__list_widget_types() -> Vec<WidgetType> {
             name: "Inspector".to_string(),
             description: "Display detailed information about a class or instance".to_string(),
             supports_entity: true,
+            default_size: Size { width: DEFAULT_WIDTH_STANDARD, height: DEFAULT_HEIGHT_STANDARD },
         },
         WidgetType {
             id: "mermaid".to_string(),
             name: "Mermaid Diagram".to_string(),
             description: "Display a Mermaid diagram".to_string(),
             supports_entity: false,
+            default_size: Size { width: DEFAULT_WIDTH_MERMAID, height: DEFAULT_HEIGHT_MERMAID },
         },
         WidgetType {
             id: "process_status".to_string(),
             name: "Process Status".to_string(),
             description: "Display real-time execution status of a BPMN process".to_string(),
             supports_entity: true,
+            default_size: Size { width: DEFAULT_WIDTH_STANDARD, height: DEFAULT_HEIGHT_STANDARD },
         },
         WidgetType {
             id: "connector_credential".to_string(),
             name: "Connector Credentials".to_string(),
             description: "Configure authentication credentials for an external service connector".to_string(),
             supports_entity: true,
+            default_size: Size { width: DEFAULT_WIDTH_STANDARD, height: DEFAULT_HEIGHT_STANDARD },
         },
         WidgetType {
             id: "connector_manager".to_string(),
             name: "Connector Manager".to_string(),
             description: "Export, import and manage credentials for a service connector".to_string(),
             supports_entity: true,
+            default_size: Size { width: DEFAULT_WIDTH_STANDARD, height: DEFAULT_HEIGHT_STANDARD },
+        },
+        WidgetType {
+            id: "meta_process".to_string(),
+            name: "MetaProcess".to_string(),
+            description: "Interactive flow diagram of a MetaProcess".to_string(),
+            supports_entity: true,
+            default_size: Size { width: DEFAULT_WIDTH_META_PROCESS, height: DEFAULT_HEIGHT_META_PROCESS },
         },
     ]
 }
 
-/// Get all widgets currently on the blackboard
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn widget_blackboard__get_widgets(executor: State<'_, DbExecutor>) -> Result<Vec<Widget>, String> {
@@ -264,7 +283,6 @@ pub async fn widget_blackboard__get_widgets(executor: State<'_, DbExecutor>) -> 
     }).await
 }
 
-/// Add a new widget to the blackboard
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn widget_blackboard__add_widget(
@@ -285,18 +303,15 @@ pub async fn widget_blackboard__add_widget(
     }
 
     let sanitized_entity = entity_id.replace([':', '/', '#', ' '], "_");
-    let default_size = if widget_type == "mermaid" {
-        Size { width: 600.0, height: 500.0 }
-    } else {
-        Size { width: 400.0, height: 600.0 }
-    };
+    let widget_def = valid_types.iter().find(|t| t.id == widget_type).unwrap();
+    let default_size = widget_def.default_size.clone();
 
     let widget = Widget {
         id: format!("foundation:Widget_{widget_type}_{sanitized_entity}"),
         widget_type,
         entity_id,
         content,
-        position: position.unwrap_or(Position { x: 100.0, y: 100.0 }),
+        position: position.unwrap_or(Position { x: DEFAULT_POS_X, y: DEFAULT_POS_Y }),
         size: size.unwrap_or(default_size),
         window_state: WindowState::Normal,
     };
@@ -315,7 +330,6 @@ pub async fn widget_blackboard__add_widget(
     Ok(widget)
 }
 
-/// Remove a widget from the blackboard
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn widget_blackboard__remove_widget(
@@ -336,7 +350,6 @@ pub async fn widget_blackboard__remove_widget(
     Ok(())
 }
 
-/// Update widget position
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn widget_blackboard__update_widget_position(
@@ -351,7 +364,6 @@ pub async fn widget_blackboard__update_widget_position(
     Ok(())
 }
 
-/// Update widget size
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn widget_blackboard__update_widget_size(
@@ -366,7 +378,6 @@ pub async fn widget_blackboard__update_widget_size(
     Ok(())
 }
 
-/// Update widget window state (normal, minimized, maximized)
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn widget_blackboard__update_widget_window_state(
@@ -381,7 +392,6 @@ pub async fn widget_blackboard__update_widget_window_state(
     Ok(())
 }
 
-/// Update widget content (e.g. Mermaid diagram source)
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn widget_blackboard__update_widget_content(
@@ -413,7 +423,6 @@ pub async fn widget_blackboard__update_widget_content(
     Ok(())
 }
 
-/// List widget definitions from the ontology, optionally filtered by concept IRI
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn widget_blackboard__list_widget_definitions(

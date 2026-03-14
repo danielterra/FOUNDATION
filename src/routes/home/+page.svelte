@@ -51,33 +51,40 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="main-layout">
-  <div class="top-bar">
-    <span class="logo">FOUNDATION</span>
-    <button class="search-trigger" onclick={openSearch} aria-label="Search (/)">
-      <span class="material-symbols-outlined">search</span>
-    </button>
-  </div>
-
   <Search bind:this={searchComponent} onSelectResult={handleSearchResult} />
 
-  <div class="content-area">
+  <div class="left-panel">
+    <div class="top-bar">
+      <span class="logo">FOUNDATION</span>
+      <button class="search-trigger" onclick={openSearch} aria-label="Search (/)">
+        <span class="material-symbols-outlined">search</span>
+      </button>
+    </div>
     <div class="canvas-area">
       <WidgetManager />
     </div>
+  </div>
 
-    <div class="chat-area">
-      <ChatWindow bind:isOpen={isChatOpen} />
-    </div>
+  <div class="chat-area">
+    <ChatWindow bind:isOpen={isChatOpen} />
   </div>
 </div>
 
 <style>
   .main-layout {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     width: 100vw;
     height: 100vh;
     overflow: hidden;
+  }
+
+  .left-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
   }
 
   .top-bar {
@@ -117,12 +124,6 @@
 
   .search-trigger span {
     font-size: 20px;
-  }
-
-  .content-area {
-    display: flex;
-    flex: 1;
-    overflow: hidden;
   }
 
   .canvas-area {

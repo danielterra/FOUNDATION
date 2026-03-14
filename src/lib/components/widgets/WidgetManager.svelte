@@ -9,6 +9,7 @@
   import ProcessStatusWidget from './ProcessStatusWidget.svelte';
   import ConnectorCredentialWidget from './ConnectorCredentialWidget.svelte';
   import ConnectorManagerWidget from './ConnectorManagerWidget.svelte';
+  import MetaProcessWidget from './MetaProcessWidget.svelte';
 
   const BASE_WIDGET_Z_INDEX = 100;
   const CHAT_PANEL_WIDTH_RATIO = 0.3;
@@ -253,6 +254,8 @@
       <ConnectorCredentialWidget widgetId={widget.id} entityId={widget.entity_id} />
     {:else if widget.widget_type === 'connector_manager'}
       <ConnectorManagerWidget widgetId={widget.id} entityId={widget.entity_id} />
+    {:else if widget.widget_type === 'meta_process'}
+      <MetaProcessWidget widgetId={widget.id} entityId={widget.entity_id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {/if}
   </div>
 {/each}

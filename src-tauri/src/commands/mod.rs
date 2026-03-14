@@ -10,6 +10,7 @@ mod chat_storage;
 pub mod widget;
 mod connector;
 mod connector_package;
+mod meta_process;
 
 pub use setup::*;
 pub use entity::*;
@@ -21,3 +22,4 @@ pub use chat_attachments::*;
 pub use widget::*;
 pub use connector::*;
 pub use connector_package::*;
+pub use meta_process::*;

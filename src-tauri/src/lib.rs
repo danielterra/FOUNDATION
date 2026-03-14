@@ -158,7 +158,8 @@ pub fn run() {
             commands::connector__get_credential_summary,
             commands::connector__test_auth,
             commands::connector__export_package,
-            commands::connector__import_package
+            commands::connector__import_package,
+            commands::meta_process__get_graph
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
