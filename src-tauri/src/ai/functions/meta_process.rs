@@ -1,9 +1,9 @@
 use serde_json::Value;
-use rusqlite::Connection;
+use turso::Connection;
 use crate::owl::vocabulary::{rdf, rdfs};
 use super::ToolResult;
 
-pub fn get_process(conn: &Connection, args: &Value) -> ToolResult {
+pub async fn get_process(conn: &Connection, args: &Value) -> ToolResult {
     let process_iri = match args.get("process_iri").and_then(|v| v.as_str()) {
         Some(iri) if !iri.is_empty() => iri,
         _ => return ToolResult {
@@ -14,7 +14,7 @@ pub fn get_process(conn: &Connection, args: &Value) -> ToolResult {
         },
     };
 
-    let process_label = match crate::owl::get_literal_property(conn, process_iri, rdfs::LABEL) {
+    let process_label = match crate::owl::get_literal_property(conn, process_iri, rdfs::LABEL).await {
         Ok(Some(label)) => label,
         Ok(None) => return ToolResult {
             success: false,
@@ -30,13 +30,13 @@ pub fn get_process(conn: &Connection, args: &Value) -> ToolResult {
         },
     };
 
-    let process_comment = crate::owl::get_literal_property(conn, process_iri, rdfs::COMMENT)
+    let process_comment = crate::owl::get_literal_property(conn, process_iri, rdfs::COMMENT).await
         .ok()
         .flatten();
 
-    let process_status = resolve_status_label(conn, process_iri);
+    let process_status = resolve_status_label(conn, process_iri).await;
 
-    let start_node = match crate::owl::get_iri_property(conn, process_iri, "foundation:metaStartNode") {
+    let start_node = match crate::owl::get_iri_property(conn, process_iri, "foundation:metaStartNode").await {
         Ok(Some(node)) => node,
         Ok(None) => return ToolResult {
             success: false,
@@ -66,7 +66,7 @@ pub fn get_process(conn: &Connection, args: &Value) -> ToolResult {
         }
         visited.insert(current.clone());
 
-        let type_iri = match crate::owl::get_iri_property(conn, &current, rdf::TYPE) {
+        let type_iri = match crate::owl::get_iri_property(conn, &current, rdf::TYPE).await {
             Ok(Some(t)) => t,
             Ok(None) => continue,
             Err(e) => return ToolResult {
@@ -78,13 +78,17 @@ pub fn get_process(conn: &Connection, args: &Value) -> ToolResult {
         };
         let node_type = local_name(&type_iri).to_string();
 
-        let label = crate::owl::get_literal_property(conn, &current, rdfs::LABEL)
+        let label = crate::owl::get_literal_property(conn, &current, rdfs::LABEL).await
             .ok()
             .flatten()
             .unwrap_or_else(|| current.clone());
 
-        let icon = crate::owl::Thing::get(conn, &current).icon
-            .or_else(|| crate::owl::Thing::get(conn, &type_iri).icon);
+        let icon_current = crate::owl::Thing::get(conn, &current).await.icon;
+        let icon = if icon_current.is_some() {
+            icon_current
+        } else {
+            crate::owl::Thing::get(conn, &type_iri).await.icon
+        };
 
         let mut node = serde_json::json!({
             "iri": current,
@@ -96,16 +100,16 @@ pub fn get_process(conn: &Connection, args: &Value) -> ToolResult {
             node["icon"] = Value::String(icon_val);
         }
 
-        if let Some(status) = resolve_status_label(conn, &current) {
+        if let Some(status) = resolve_status_label(conn, &current).await {
             node["status"] = Value::String(status);
         }
 
         let is_condition = matches!(node_type.as_str(), "MetaGatewayCondition" | "MetaBoundaryCondition");
         if is_condition {
-            if let Some(op) = resolve_label_via_iri(conn, &current, "foundation:conditionOperator") {
+            if let Some(op) = resolve_label_via_iri(conn, &current, "foundation:conditionOperator").await {
                 node["conditionOperator"] = Value::String(op);
             }
-            if let Ok(Some(val)) = crate::owl::get_literal_property(conn, &current, "foundation:conditionValue") {
+            if let Ok(Some(val)) = crate::owl::get_literal_property(conn, &current, "foundation:conditionValue").await {
                 node["conditionValue"] = Value::String(val);
             }
         }
@@ -115,16 +119,16 @@ pub fn get_process(conn: &Connection, args: &Value) -> ToolResult {
             "MetaStartEvent" | "MetaEndEvent" | "MetaIntermediateEvent" | "MetaBoundaryEvent"
         );
         if is_event {
-            if let Some(trigger) = resolve_label_via_iri(conn, &current, "foundation:triggerType") {
+            if let Some(trigger) = resolve_label_via_iri(conn, &current, "foundation:triggerType").await {
                 node["triggerType"] = Value::String(trigger);
             }
-            if let Ok(Some(event_type)) = crate::owl::get_literal_property(conn, &current, "foundation:eventType") {
+            if let Ok(Some(event_type)) = crate::owl::get_literal_property(conn, &current, "foundation:eventType").await {
                 node["eventType"] = Value::String(event_type);
             }
         }
 
         if node_type == "MetaSubProcess" {
-            if let Ok(Some(inv)) = crate::owl::get_iri_property(conn, &current, "foundation:invokesProcess") {
+            if let Ok(Some(inv)) = crate::owl::get_iri_property(conn, &current, "foundation:invokesProcess").await {
                 node["invokesProcess"] = Value::String(inv);
             }
         }
@@ -137,11 +141,11 @@ pub fn get_process(conn: &Connection, args: &Value) -> ToolResult {
         );
 
         let (next_prop, next_targets) = if is_gateway {
-            let targets = crate::owl::get_all_iri_properties(conn, &current, "foundation:gatewayCondition")
+            let targets = crate::owl::get_all_iri_properties(conn, &current, "foundation:gatewayCondition").await
                 .unwrap_or_default();
             ("foundation:gatewayCondition", targets)
         } else {
-            let targets = crate::owl::get_all_iri_properties(conn, &current, "foundation:nextNode")
+            let targets = crate::owl::get_all_iri_properties(conn, &current, "foundation:nextNode").await
                 .unwrap_or_default();
             ("foundation:nextNode", targets)
         };
@@ -161,7 +165,7 @@ pub fn get_process(conn: &Connection, args: &Value) -> ToolResult {
 
         let is_task = matches!(node_type.as_str(), "MetaSystemTask" | "MetaUserTask" | "MetaSubProcess");
         if is_task {
-            for bc in crate::owl::get_all_iri_properties(conn, &current, "foundation:boundaryCondition")
+            for bc in crate::owl::get_all_iri_properties(conn, &current, "foundation:boundaryCondition").await
                 .unwrap_or_default()
             {
                 edge_counter += 1;
@@ -203,11 +207,11 @@ fn local_name(iri: &str) -> &str {
         .unwrap_or(iri)
 }
 
-fn resolve_label_via_iri(conn: &Connection, subject: &str, predicate: &str) -> Option<String> {
-    let target_iri = crate::owl::get_iri_property(conn, subject, predicate).ok()??;
-    crate::owl::get_literal_property(conn, &target_iri, rdfs::LABEL).ok()?
+async fn resolve_label_via_iri(conn: &Connection, subject: &str, predicate: &str) -> Option<String> {
+    let target_iri = crate::owl::get_iri_property(conn, subject, predicate).await.ok()??;
+    crate::owl::get_literal_property(conn, &target_iri, rdfs::LABEL).await.ok()?
 }
 
-fn resolve_status_label(conn: &Connection, subject: &str) -> Option<String> {
-    resolve_label_via_iri(conn, subject, "foundation:hasStatus")
+async fn resolve_status_label(conn: &Connection, subject: &str) -> Option<String> {
+    resolve_label_via_iri(conn, subject, "foundation:hasStatus").await
 }

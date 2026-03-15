@@ -1,7 +1,7 @@
 use serde_json::Value;
 use tauri::Emitter;
 use crate::commands::widget::{self, Widget, Position, Size};
-use crate::owl::Connection;
+use turso::Connection;
 use super::ToolResult;
 
 const WIDGET_CASCADE_STEP: f64 = 50.0;
@@ -11,8 +11,8 @@ const WIDGET_DEFAULT_WIDTH: f64 = 400.0;
 const WIDGET_DEFAULT_HEIGHT: f64 = 600.0;
 
 
-pub fn blackboard_state(conn: &Connection) -> ToolResult {
-    match widget::owl_get_all_widgets(conn) {
+pub async fn blackboard_state(conn: &Connection) -> ToolResult {
+    match widget::owl_get_all_widgets(conn).await {
         Ok(widgets) => ToolResult {
             success: true,
             result: Some(serde_json::json!({ "widgets": widgets })),
@@ -23,8 +23,8 @@ pub fn blackboard_state(conn: &Connection) -> ToolResult {
     }
 }
 
-pub fn blackboard_update(
-    conn: &mut Connection,
+pub async fn blackboard_update(
+    conn: &Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
@@ -48,16 +48,16 @@ pub fn blackboard_update(
     for (i, op) in ops.iter().enumerate() {
         let operation = op.get("operation").and_then(|v| v.as_str()).unwrap_or("");
         let result = match operation {
-            "add" => blackboard_add_widget_one(conn, op, app),
+            "add" => blackboard_add_widget_one(conn, op, app).await,
             "remove" => {
                 let widget_id = op.get("params")
                     .and_then(|p| p.get("widget_id"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 let remove_args = serde_json::json!({"widget_id": widget_id});
-                blackboard_remove_one(conn, &remove_args, app)
+                blackboard_remove_one(conn, &remove_args, app).await
             }
-            "replace" => blackboard_replace(conn, op, app),
+            "replace" => blackboard_replace(conn, op, app).await,
             _ => ToolResult {
                 success: false,
                 result: None,
@@ -93,15 +93,15 @@ pub fn blackboard_update(
     }
 }
 
-fn blackboard_replace(
-    conn: &mut Connection,
+async fn blackboard_replace(
+    conn: &Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
-    match widget::owl_get_all_widgets(conn) {
+    match widget::owl_get_all_widgets(conn).await {
         Ok(widgets) => {
             for w in &widgets {
-                let _ = widget::owl_delete_widget(conn, &w.id);
+                let _ = widget::owl_delete_widget(conn, &w.id).await;
                 if let Some(app_handle) = app {
                     app_handle.emit("widget-removed", w.id.clone()).ok();
                 }
@@ -111,7 +111,7 @@ fn blackboard_replace(
     }
 
     if args.get("widget_type").is_some() {
-        blackboard_add_widget_one(conn, args, app)
+        blackboard_add_widget_one(conn, args, app).await
     } else {
         ToolResult {
             success: true,
@@ -122,8 +122,8 @@ fn blackboard_replace(
     }
 }
 
-fn blackboard_add_widget_one(
-    conn: &mut Connection,
+async fn blackboard_add_widget_one(
+    conn: &Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
@@ -171,19 +171,18 @@ fn blackboard_add_widget_one(
         },
     };
 
-    let content = params.get("content").and_then(|v| v.as_str()).map(String::from)
-        .or_else(|| {
-            if widget_type == "mermaid" {
-                crate::owl::Individual::get(conn, entity_id).ok().flatten()
-                    .and_then(|ind| ind.properties.into_iter()
-                        .find(|(p, _)| p == "foundation:diagramSource")
-                        .and_then(|(_, v)| v.as_literal()))
-            } else {
-                None
-            }
-        });
+    let content = if let Some(c) = params.get("content").and_then(|v| v.as_str()) {
+        Some(c.to_string())
+    } else if widget_type == "mermaid" {
+        crate::owl::Individual::get(conn, entity_id).await.ok().flatten()
+            .and_then(|ind| ind.properties.into_iter()
+                .find(|(p, _)| p == "foundation:diagramSource")
+                .and_then(|(_, v)| v.as_literal()))
+    } else {
+        None
+    };
 
-    let position = match widget::owl_get_all_widgets(conn) {
+    let position = match widget::owl_get_all_widgets(conn).await {
         Ok(widgets) => {
             let offset = widgets.len() as f64 * WIDGET_CASCADE_STEP;
             Position { x: WIDGET_DEFAULT_X + offset, y: WIDGET_DEFAULT_Y + offset }
@@ -202,7 +201,7 @@ fn blackboard_add_widget_one(
         window_state: widget::WindowState::Normal,
     };
 
-    match widget::owl_insert_widget(conn, &widget_obj) {
+    match widget::owl_insert_widget(conn, &widget_obj).await {
         Ok(_) => {
             if let Some(app_handle) = app {
                 app_handle.emit("widget-added", widget_obj.clone()).ok();
@@ -223,8 +222,8 @@ fn blackboard_add_widget_one(
 }
 
 
-fn blackboard_remove_one(
-    conn: &mut Connection,
+async fn blackboard_remove_one(
+    conn: &Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
@@ -238,7 +237,7 @@ fn blackboard_remove_one(
         },
     };
 
-    match widget::owl_delete_widget(conn, widget_id) {
+    match widget::owl_delete_widget(conn, widget_id).await {
         Ok(_) => {
             if let Some(app_handle) = app {
                 app_handle.emit("widget-removed", widget_id.to_string()).ok();

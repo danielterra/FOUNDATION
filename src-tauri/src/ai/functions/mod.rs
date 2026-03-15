@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use rusqlite::Connection;
+use turso::Connection;
 
 mod batch;
 mod blackboard;
@@ -98,8 +98,8 @@ pub struct ToolResult {
     pub concept: Option<Value>,
 }
 
-pub fn execute_tool(
-    conn: &mut Connection,
+pub async fn execute_tool(
+    conn: &Connection,
     call: &ToolCall,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
@@ -113,20 +113,20 @@ pub fn execute_tool(
     };
 
     match call.name.as_str() {
-        "learn_concepts" => concept::learn_concept(conn, args, app),
-        "learn_things" => thing::learn_thing(conn, args, app),
-        "learn_properties" => property::learn_property(conn, args, app),
-        "remember" => thing::remember(conn, args),
-        "get_concepts" => concept::get_concepts(conn, args),
-        "get_things" => thing::get_things(conn, args),
-        "remember_properties" => property::remember_property(conn, args),
-        "forget_concepts" => concept::delete_concept(conn, args, app),
-        "forget_things" => thing::delete_thing(conn, args, app),
-        "forget_properties" => property::forget_property(conn, args, app),
-        "get_process" => meta_process::get_process(conn, args),
-        "get_concept_graph" => concept_graph::get_concept_graph(conn, args),
-        "blackboard_state" => blackboard::blackboard_state(conn),
-        "blackboard_update" => blackboard::blackboard_update(conn, args, app),
+        "learn_concepts" => concept::learn_concept(conn, args, app).await,
+        "learn_things" => thing::learn_thing(conn, args, app).await,
+        "learn_properties" => property::learn_property(conn, args, app).await,
+        "remember" => thing::remember(conn, args).await,
+        "get_concepts" => concept::get_concepts(conn, args).await,
+        "get_things" => thing::get_things(conn, args).await,
+        "remember_properties" => property::remember_property(conn, args).await,
+        "forget_concepts" => concept::delete_concept(conn, args, app).await,
+        "forget_things" => thing::delete_thing(conn, args, app).await,
+        "forget_properties" => property::forget_property(conn, args, app).await,
+        "get_process" => meta_process::get_process(conn, args).await,
+        "get_concept_graph" => concept_graph::get_concept_graph(conn, args).await,
+        "blackboard_state" => blackboard::blackboard_state(conn).await,
+        "blackboard_update" => blackboard::blackboard_update(conn, args, app).await,
         "run_process" => run_process_tool(args, app),
         _ => ToolResult {
             success: false,
@@ -183,9 +183,9 @@ mod tests {
 
     // ---- connections via learn_properties + learn_concepts ----
 
-    #[test]
-    fn test_learn_concept_with_connections_creates_object_properties() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_learn_concept_with_connections_creates_object_properties() {
+        let conn = setup_test_db().await;
 
         let props_call = ToolCall {
             name: "learn_properties".to_string(),
@@ -196,7 +196,7 @@ mod tests {
                 ]
             }),
         };
-        assert!(execute_tool(&mut conn, &props_call, None).success);
+        assert!(execute_tool(&conn, &props_call, None).await.success);
 
         let call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -210,23 +210,23 @@ mod tests {
                 }]
             }),
         };
-        let result = execute_tool(&mut conn, &call, None);
+        let result = execute_tool(&conn, &call, None).await;
         assert!(result.success, "learn_concept with connections should succeed: {:?}", result.error);
 
-        let works_at = Property::get(&conn, "foundation:worksAt").unwrap().unwrap();
+        let works_at = Property::get(&conn, "foundation:worksAt").await.unwrap().unwrap();
         assert_eq!(works_at.property_type, PropertyType::ObjectProperty);
         assert!(works_at.domains.iter().any(|d| d == "foundation:Employee"));
 
-        let reports_to = Property::get(&conn, "foundation:reportsTo").unwrap().unwrap();
+        let reports_to = Property::get(&conn, "foundation:reportsTo").await.unwrap().unwrap();
         assert_eq!(reports_to.property_type, PropertyType::ObjectProperty);
         assert!(reports_to.ranges.iter().any(|r| r == "foundation:Employee"));
     }
 
     // ---- calculated fields via learn_properties + learn_concepts ----
 
-    #[test]
-    fn test_learn_concept_with_calculated_fields_creates_properties() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_learn_concept_with_calculated_fields_creates_properties() {
+        let conn = setup_test_db().await;
 
         let props_call = ToolCall {
             name: "learn_properties".to_string(),
@@ -238,7 +238,7 @@ mod tests {
                 ]
             }),
         };
-        assert!(execute_tool(&mut conn, &props_call, None).success);
+        assert!(execute_tool(&conn, &props_call, None).await.success);
 
         let call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -252,18 +252,18 @@ mod tests {
                 }]
             }),
         };
-        let result = execute_tool(&mut conn, &call, None);
+        let result = execute_tool(&conn, &call, None).await;
         assert!(result.success, "learn_concept with calculated fields should succeed: {:?}", result.error);
 
-        let width = Property::get(&conn, "foundation:width").unwrap().unwrap();
+        let width = Property::get(&conn, "foundation:width").await.unwrap().unwrap();
         assert_eq!(width.property_type, PropertyType::DatatypeProperty);
 
-        let area = Property::get(&conn, "foundation:area").unwrap().unwrap();
+        let area = Property::get(&conn, "foundation:area").await.unwrap().unwrap();
         assert_eq!(area.property_type, PropertyType::DatatypeProperty);
 
         let stored = crate::eavto::query::get_by_entity_predicate(
             &conn, "foundation:area", "foundation:formula"
-        ).unwrap();
+        ).await.unwrap();
         assert!(!stored.triples.is_empty(), "Formula triple should be stored");
         assert_eq!(
             stored.triples[0].object.as_literal().unwrap(),
@@ -271,9 +271,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_learn_concept_property_domain_set_to_concept() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_learn_concept_property_domain_set_to_concept() {
+        let conn = setup_test_db().await;
 
         let props_call = ToolCall {
             name: "learn_properties".to_string(),
@@ -281,7 +281,7 @@ mod tests {
                 "operations": [{"iri": "foundation:boxSize", "label": "size", "property_type": "datatype"}]
             }),
         };
-        assert!(execute_tool(&mut conn, &props_call, None).success);
+        assert!(execute_tool(&conn, &props_call, None).await.success);
 
         let call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -295,9 +295,9 @@ mod tests {
                 }]
             }),
         };
-        execute_tool(&mut conn, &call, None);
+        execute_tool(&conn, &call, None).await;
 
-        let prop = Property::get(&conn, "foundation:boxSize").unwrap().unwrap();
+        let prop = Property::get(&conn, "foundation:boxSize").await.unwrap().unwrap();
         assert!(
             prop.domains.iter().any(|d| d == "foundation:Box"),
             "Domain should be set to concept IRI, got: {:?}",
@@ -305,9 +305,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_learn_property_circular_formula_is_rejected() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_learn_property_circular_formula_is_rejected() {
+        let conn = setup_test_db().await;
 
         let call = ToolCall {
             name: "learn_properties".to_string(),
@@ -320,7 +320,7 @@ mod tests {
                 }]
             }),
         };
-        let result = execute_tool(&mut conn, &call, None);
+        let result = execute_tool(&conn, &call, None).await;
         assert!(!result.success, "Circular formula should be rejected");
         let err = result.error.unwrap();
         assert!(err.contains("Circular"), "Expected circular dependency error, got: {err}");
@@ -328,9 +328,9 @@ mod tests {
 
     // ---- learn_concept upsert: adding properties to existing concept ----
 
-    #[test]
-    fn test_update_concept_adds_calculated_fields() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_update_concept_adds_calculated_fields() {
+        let conn = setup_test_db().await;
 
         let radius_call = ToolCall {
             name: "learn_properties".to_string(),
@@ -338,7 +338,7 @@ mod tests {
                 "operations": [{"iri": "foundation:radius", "label": "radius", "property_type": "datatype"}]
             }),
         };
-        assert!(execute_tool(&mut conn, &radius_call, None).success);
+        assert!(execute_tool(&conn, &radius_call, None).await.success);
 
         let create_call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -352,7 +352,7 @@ mod tests {
                 }]
             }),
         };
-        execute_tool(&mut conn, &create_call, None);
+        execute_tool(&conn, &create_call, None).await;
 
         let circ_call = ToolCall {
             name: "learn_properties".to_string(),
@@ -365,7 +365,7 @@ mod tests {
                 }]
             }),
         };
-        assert!(execute_tool(&mut conn, &circ_call, None).success);
+        assert!(execute_tool(&conn, &circ_call, None).await.success);
 
         let update_call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -376,15 +376,15 @@ mod tests {
                 }]
             }),
         };
-        let result = execute_tool(&mut conn, &update_call, None);
+        let result = execute_tool(&conn, &update_call, None).await;
         assert!(result.success, "updating concept with new property should succeed: {:?}", result.error);
 
-        let prop = Property::get(&conn, "foundation:circumference").unwrap().unwrap();
+        let prop = Property::get(&conn, "foundation:circumference").await.unwrap().unwrap();
         assert_eq!(prop.property_type, PropertyType::DatatypeProperty);
 
         let stored = crate::eavto::query::get_by_entity_predicate(
             &conn, "foundation:circumference", "foundation:formula"
-        ).unwrap();
+        ).await.unwrap();
         assert!(!stored.triples.is_empty(), "Formula triple should be stored");
     }
 

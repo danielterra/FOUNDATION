@@ -71,40 +71,40 @@ pub async fn chat__attach_file(
     let hash_clone = hash.clone();
     let iri_clone = iri.clone();
 
-    executor.write(move |conn| {
+    executor.write(move |conn| async move {
         let ind = Individual::new(&iri_clone);
 
-        ind.assert(conn, "foundation:File", &file_name_clone, "attach_file", "chat")
+        ind.assert(&conn, "foundation:File", &file_name_clone, "attach_file", "chat").await
             .map_err(|e| format!("Failed to create File entity: {}", e))?;
 
-        ind.add_property(conn, "foundation:fileName", vec![Object::Literal {
+        ind.add_property(&conn, "foundation:fileName", vec![Object::Literal {
             value: file_name_clone.clone(),
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }], "chat").map_err(|e| format!("Failed to set fileName: {}", e))?;
+        }], "chat").await.map_err(|e| format!("Failed to set fileName: {}", e))?;
 
-        ind.add_property(conn, "foundation:filePath", vec![Object::Literal {
+        ind.add_property(&conn, "foundation:filePath", vec![Object::Literal {
             value: format!("file://{}", permanent_path_str),
             datatype: Some("xsd:anyURI".to_string()),
             language: None,
-        }], "chat").map_err(|e| format!("Failed to set filePath: {}", e))?;
+        }], "chat").await.map_err(|e| format!("Failed to set filePath: {}", e))?;
 
-        ind.add_property(conn, "foundation:fileSize", vec![Object::Integer(size)], "chat")
+        ind.add_property(&conn, "foundation:fileSize", vec![Object::Integer(size)], "chat").await
             .map_err(|e| format!("Failed to set fileSize: {}", e))?;
 
-        ind.add_property(conn, "foundation:fileHash", vec![Object::Literal {
+        ind.add_property(&conn, "foundation:fileHash", vec![Object::Literal {
             value: hash_clone,
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }], "chat").map_err(|e| format!("Failed to set fileHash: {}", e))?;
+        }], "chat").await.map_err(|e| format!("Failed to set fileHash: {}", e))?;
 
         if let Some(ref ft_iri) = file_type_iri {
-            ind.add_property(conn, "foundation:hasFileType",
-                vec![Object::Iri(ft_iri.clone())], "chat")
+            ind.add_property(&conn, "foundation:hasFileType",
+                vec![Object::Iri(ft_iri.clone())], "chat").await
                 .map_err(|e| format!("Failed to set hasFileType: {}", e))?;
         }
 
-        ind.add_property(conn, "foundation:uploadDate", vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "chat")
+        ind.add_property(&conn, "foundation:uploadDate", vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "chat").await
             .map_err(|e| format!("Failed to set uploadDate: {}", e))?;
 
         Ok(iri_clone)

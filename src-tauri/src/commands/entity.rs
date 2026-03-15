@@ -115,9 +115,9 @@ pub async fn graph__search_entities(
     limit: Option<usize>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    executor.read(move |conn| {
+    executor.read(move |conn| async move {
         let limit = limit.unwrap_or(100);
-        let results = crate::owl::search_instances_rich(conn, &query, limit)
+        let results = crate::owl::search_instances_rich(&conn, &query, limit).await
             .map_err(|e| e.to_string())?;
         serde_json::to_string(&results).map_err(|e| e.to_string())
     }).await
@@ -130,13 +130,13 @@ pub async fn inspector__get_entity(
     entity_id: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    executor.read(move |conn| {
-        let entity_type = determine_entity_type(conn, &entity_id)?;
-        let groups = owl::load_graph_node_groups(conn);
+    executor.read(move |conn| async move {
+        let entity_type = determine_entity_type(&conn, &entity_id).await?;
+        let groups = owl::load_graph_node_groups(&conn).await;
 
         let data = match entity_type {
-            EntityType::Class => get_class_data(conn, &entity_id, groups)?,
-            EntityType::Individual => get_individual_data(conn, &entity_id, groups)?,
+            EntityType::Class => get_class_data(&conn, &entity_id, groups).await?,
+            EntityType::Individual => get_individual_data(&conn, &entity_id, groups).await?,
         };
 
         serde_json::to_string(&data).map_err(|e| e.to_string())
@@ -150,8 +150,8 @@ pub async fn inspector__get_entity(
 pub async fn graph__get_node_type_config(
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    executor.read(move |conn| {
-        let configs = owl::get_graph_node_type_config(conn);
+    executor.read(move |conn| async move {
+        let configs = owl::get_graph_node_type_config(&conn).await;
         serde_json::to_string(&configs).map_err(|e| e.to_string())
     }).await
 }
@@ -166,22 +166,22 @@ pub async fn widget_inspector__update_property(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
-    executor.write(move |conn| {
+    executor.write(move |conn| async move {
         let individual = Individual::new(&entity_id_clone);
-        individual.add_property(conn, &property_iri, vec![Object::Literal {
+        individual.add_property(&conn, &property_iri, vec![Object::Literal {
             value,
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }], "user").map_err(|e| e.to_string())?;
+        }], "user").await.map_err(|e| e.to_string())?;
         Ok("updated".to_string())
     }).await?;
     app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
     Ok(())
 }
 
-fn sort_backlinks_by_recency(conn: &Connection, backlinks: &mut Vec<PropertyValue>) {
+async fn sort_backlinks_by_recency(conn: &Connection, backlinks: &mut Vec<PropertyValue>) {
     let entity_iris: Vec<String> = backlinks.iter().map(|b| b.value.clone()).collect();
-    let max_tx_map = crate::eavto::query::get_entities_max_tx(conn, &entity_iris)
+    let max_tx_map = crate::eavto::query::get_entities_max_tx(conn, &entity_iris).await
         .unwrap_or_default();
     backlinks.sort_by(|a, b| {
         let tx_a = max_tx_map.get(&a.value).copied().unwrap_or(0);
@@ -190,20 +190,20 @@ fn sort_backlinks_by_recency(conn: &Connection, backlinks: &mut Vec<PropertyValu
     });
 }
 
-fn resolve_unit_label(conn: &Connection, unit_iri: &str) -> Option<String> {
-    owl::get_literal_property(conn, unit_iri, "qudt:currencyCode")
+async fn resolve_unit_label(conn: &Connection, unit_iri: &str) -> Option<String> {
+    owl::get_literal_property(conn, unit_iri, "qudt:currencyCode").await
         .ok()
         .flatten()
-        .or_else(|| Some(crate::owl::Thing::get(conn, unit_iri).label))
+        .or_else(|| Some(crate::owl::Thing::get_sync(conn, unit_iri).label))
 }
 
-fn resolve_entity_status(conn: &Connection, properties: &[PropertyValue]) -> Option<StatusInfo> {
+async fn resolve_entity_status(conn: &Connection, properties: &[PropertyValue]) -> Option<StatusInfo> {
     for prop in properties {
         if !prop.is_object_property || prop.value.is_empty() {
             continue;
         }
-        if owl::is_instance_of(conn, &prop.value, "foundation:Status") {
-            let (icon, color) = owl::resolve_status_appearance(conn, &prop.value);
+        if owl::is_instance_of(conn, &prop.value, "foundation:Status").await {
+            let (icon, color) = owl::resolve_status_appearance(conn, &prop.value).await;
             return Some(StatusInfo {
                 iri: prop.value.clone(),
                 label: prop.value_label.clone().unwrap_or_else(|| prop.value.clone()),
@@ -215,26 +215,26 @@ fn resolve_entity_status(conn: &Connection, properties: &[PropertyValue]) -> Opt
     None
 }
 
-fn resolve_status_for_entity(conn: &Connection, entity_iri: &str) -> Option<StatusInfo> {
-    owl::get_entity_status_info(conn, entity_iri)
+async fn resolve_status_for_entity(conn: &Connection, entity_iri: &str) -> Option<StatusInfo> {
+    owl::get_entity_status_info(conn, entity_iri).await
         .map(|(iri, label, color, icon)| StatusInfo { iri, label, icon, color })
 }
 
-fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityType, String> {
-    if Class::get(conn, entity_id).map_err(|e| e.to_string())?.is_some() {
+async fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityType, String> {
+    if Class::get(conn, entity_id).await.map_err(|e| e.to_string())?.is_some() {
         return Ok(EntityType::Class);
     }
 
-    if Individual::get(conn, entity_id).map_err(|e| e.to_string())?.is_some() {
+    if Individual::get(conn, entity_id).await.map_err(|e| e.to_string())?.is_some() {
         return Ok(EntityType::Individual);
     }
 
     Err(format!("Entity {} not found or unknown type", entity_id))
 }
 
-fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Result<EntityData, String> {
+async fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Result<EntityData, String> {
     let (group_class, _group_individual, group_literal) = groups;
-    let class = Class::get(conn, class_id)
+    let class = Class::get(conn, class_id).await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Class {} not found", class_id))?;
 
@@ -298,7 +298,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
     }
 
     for (property_iri, _source_class_iri) in &class.properties {
-        let prop = Property::get(conn, property_iri)
+        let prop = Property::get(conn, property_iri).await
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("Property {} not found", property_iri))?;
 
@@ -307,7 +307,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
         if prop.property_type == crate::owl::PropertyType::ObjectProperty {
             for range_iri in &prop.ranges {
                 if !added_node_ids.contains(range_iri) {
-                    let range_thing = crate::owl::Thing::get(conn, range_iri);
+                    let range_thing = crate::owl::Thing::get(conn, range_iri).await;
                     nodes.push(GraphNode {
                         id: range_iri.clone(),
                         label: range_thing.label,
@@ -330,7 +330,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
                 let literal_node_id = format!("{}#datatype#{}", class_id, range_iri);
 
                 if !added_node_ids.contains(&literal_node_id) {
-                    let range_thing = crate::owl::Thing::get(conn, range_iri);
+                    let range_thing = crate::owl::Thing::get(conn, range_iri).await;
 
                     nodes.push(GraphNode {
                         id: literal_node_id.clone(),
@@ -408,7 +408,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
     }
 
     for (property_iri, source_class_iri) in &class.properties {
-        let prop = Property::get(conn, property_iri)
+        let prop = Property::get(conn, property_iri).await
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("Property {} not found", property_iri))?;
 
@@ -416,27 +416,26 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
         let property_comment = prop.comment;
 
         let is_object_property = prop.property_type == crate::owl::PropertyType::ObjectProperty;
-        let (value, value_label, value_icon) = prop.ranges.first()
-            .map(|range_iri| {
-                let range_thing = crate::owl::Thing::get(conn, range_iri);
-                (range_iri.clone(), range_thing.label, range_thing.icon)
-            })
-            .unwrap_or_else(|| ("owl:Thing".to_string(), "Any".to_string(), None));
+        let (value, value_label, value_icon) = if let Some(range_iri) = prop.ranges.first() {
+            let range_thing = crate::owl::Thing::get(conn, range_iri).await;
+            (range_iri.clone(), range_thing.label, range_thing.icon)
+        } else {
+            ("owl:Thing".to_string(), "Any".to_string(), None)
+        };
 
         let (source_class, source_class_label) = if source_class_iri != class_id {
-            let source_thing = crate::owl::Thing::get(conn, source_class_iri);
+            let source_thing = crate::owl::Thing::get(conn, source_class_iri).await;
             (Some(source_class_iri.clone()), Some(source_thing.label))
         } else {
             (None, None)
         };
 
         let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
-            let unit_display = owl::get_literal_property(conn, unit_iri, "qudt:symbol")
+            let unit_display = owl::get_literal_property(conn, unit_iri, "qudt:symbol").await
                 .ok()
                 .flatten()
                 .or_else(|| {
-                    let unit_thing = crate::owl::Thing::get(conn, unit_iri);
-                    Some(unit_thing.label)
+                    Some(crate::owl::Thing::get_sync(conn, unit_iri).label)
                 });
 
             (Some(unit_iri.clone()), unit_display)
@@ -471,19 +470,19 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
 
     let mut backlinks = Vec::new();
     for (source_entity, property_iri, _value_obj) in &class.backlinks {
-        let prop_result = Property::get(conn, property_iri);
+        let prop_result = Property::get(conn, property_iri).await;
         let (property_label, property_comment) = if let Ok(Some(prop)) = prop_result {
             (prop.label.unwrap_or_else(|| property_iri.clone()), prop.comment)
         } else {
             (property_iri.clone(), None)
         };
 
-        let source_thing = crate::owl::Thing::get(conn, source_entity);
+        let source_thing = crate::owl::Thing::get(conn, source_entity).await;
 
         let (source_class_iri, source_class_label) =
-            match owl::get_iri_property(conn, source_entity, "rdf:type") {
+            match owl::get_iri_property(conn, source_entity, "rdf:type").await {
                 Ok(Some(class_iri)) => {
-                    let class_thing = crate::owl::Thing::get(conn, &class_iri);
+                    let class_thing = crate::owl::Thing::get(conn, &class_iri).await;
                     (Some(class_iri), Some(class_thing.label))
                 }
                 _ => (None, None),
@@ -502,7 +501,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             unit: None,
             unit_label: None,
             datatype: None,
-            value_status: resolve_status_for_entity(conn, source_entity),
+            value_status: resolve_status_for_entity(conn, source_entity).await,
             group_total: None,
             is_calculated: false,
             formula_error: None,
@@ -514,26 +513,25 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
         });
     }
 
-    sort_backlinks_by_recency(conn, &mut backlinks);
+    sort_backlinks_by_recency(conn, &mut backlinks).await;
 
-    let status = resolve_entity_status(conn, &properties);
+    let status = resolve_entity_status(conn, &properties).await;
 
-    let required_fields = crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_id)
+    let required_fields = crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_id).await
         .unwrap_or_default()
         .into_iter()
         .filter(|r| r.is_required())
         .map(|r| r.property_iri)
         .collect();
 
-    let allowed_statuses = crate::owl::get_all_iri_properties(conn, class_id, "foundation:allowedStatus")
-        .unwrap_or_default()
-        .into_iter()
-        .map(|status_iri| {
-            let thing = crate::owl::Thing::get(conn, &status_iri);
-            let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri);
-            StatusInfo { iri: status_iri, label: thing.label, icon, color }
-        })
-        .collect();
+    let allowed_statuses_iris = crate::owl::get_all_iri_properties(conn, class_id, "foundation:allowedStatus").await
+        .unwrap_or_default();
+    let mut allowed_statuses = Vec::new();
+    for status_iri in allowed_statuses_iris {
+        let thing = crate::owl::Thing::get(conn, &status_iri).await;
+        let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri).await;
+        allowed_statuses.push(StatusInfo { iri: status_iri, label: thing.label, icon, color });
+    }
 
     Ok(EntityData {
         id: class_id.to_string(),
@@ -555,9 +553,9 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
     })
 }
 
-fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, u8)) -> Result<EntityData, String> {
+async fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, u8)) -> Result<EntityData, String> {
     let (group_class, group_individual, group_literal) = groups;
-    let individual = Individual::get(conn, individual_id)
+    let individual = Individual::get(conn, individual_id).await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Individual {} not found", individual_id))?;
 
@@ -577,15 +575,14 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
 
     let mut properties = Vec::new();
     for (property_iri, value_obj) in &individual.properties {
-        let prop_result = Property::get(conn, property_iri);
+        let prop_result = Property::get(conn, property_iri).await;
         let (property_label, property_comment, unit, unit_label, is_object_property, prop_ranges) =
             if let Ok(Some(prop)) = prop_result {
             let label = prop.label.clone().unwrap_or_else(|| property_iri.clone());
             let comment = prop.comment.clone();
 
             let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
-                let unit_display = resolve_unit_label(conn, unit_iri);
-
+                let unit_display = resolve_unit_label(conn, unit_iri).await;
                 (Some(unit_iri.clone()), unit_display)
             } else {
                 (None, None)
@@ -605,45 +602,55 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
         };
 
         let (value_label, value_icon, datatype, value_status) = if is_object_property {
-            let target_thing = crate::owl::Thing::get(conn, &value);
-            let status = resolve_status_for_entity(conn, &value);
+            let target_thing = crate::owl::Thing::get(conn, &value).await;
+            let status = resolve_status_for_entity(conn, &value).await;
             (Some(target_thing.label), target_thing.icon, None, status)
         } else {
             (None, None, value_obj.datatype().map(|s| s.to_string()), None)
         };
 
         let (range_class_iri, range_class_label, range_class_icon) = if is_object_property {
-            prop_ranges.first().map(|range_iri| {
-                let range_thing = crate::owl::Thing::get(conn, range_iri);
+            if let Some(range_iri) = prop_ranges.first() {
+                let range_thing = crate::owl::Thing::get(conn, range_iri).await;
                 (Some(range_iri.clone()), Some(range_thing.label), range_thing.icon)
-            }).unwrap_or((None, None, None))
+            } else {
+                (None, None, None)
+            }
         } else {
             (None, None, None)
         };
 
         let file_info = if range_class_iri.as_deref() == Some("foundation:File") && !value.is_empty() {
-            let file_path = owl::get_literal_property(conn, &value, "foundation:filePath").ok().flatten();
-            let file_name = owl::get_literal_property(conn, &value, "foundation:fileName").ok().flatten();
-            let file_size = owl::get_literal_property(conn, &value, "foundation:fileSize").ok().flatten()
+            let file_path = owl::get_literal_property(conn, &value, "foundation:filePath").await.ok().flatten();
+            let file_name = owl::get_literal_property(conn, &value, "foundation:fileName").await.ok().flatten();
+            let file_size = owl::get_literal_property(conn, &value, "foundation:fileSize").await.ok().flatten()
                 .and_then(|s| s.parse::<i64>().ok());
-            let file_type_iri = owl::get_iri_property(conn, &value, "foundation:hasFileType").ok().flatten();
+            let file_type_iri = owl::get_iri_property(conn, &value, "foundation:hasFileType").await.ok().flatten();
             Some(FileInfo { file_path, file_name, file_size, file_type_iri })
         } else {
             None
         };
 
-        let is_calculated = conn.query_row(
-            "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = 'foundation:formula' AND retracted = 0",
-            rusqlite::params![property_iri],
-            |row| row.get::<_, i64>(0),
-        ).unwrap_or(0) > 0;
+        let is_calculated = {
+            let mut stmt = conn.prepare(
+                "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = 'foundation:formula' AND retracted = 0",
+            ).await.map_err(|e| e.to_string())?;
+            let row = stmt.query_row(turso::params![property_iri.clone()]).await;
+            match row {
+                Ok(r) => r.get_value(0).ok()
+                    .and_then(|v| v.as_integer().copied())
+                    .unwrap_or(0) > 0,
+                Err(_) => false,
+            }
+        };
 
         let formula_error: Option<String> = if is_calculated {
-            conn.query_row(
+            let mut stmt = conn.prepare(
                 "SELECT error_message FROM formula_instance_errors WHERE instance_iri = ? AND property_iri = ?",
-                rusqlite::params![individual_id, property_iri],
-                |row| row.get(0),
-            ).ok()
+            ).await.map_err(|e| e.to_string())?;
+            stmt.query_row(turso::params![individual_id, property_iri.clone()]).await.ok()
+                .and_then(|r| r.get_value(0).ok())
+                .and_then(|v| v.as_text().cloned())
         } else {
             None
         };
@@ -686,35 +693,37 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
         let mut seen = std::collections::HashSet::new();
 
         for type_thing in &individual.types {
-            if let Ok(Some(class)) = Class::get(conn, &type_thing.iri) {
+            if let Ok(Some(class)) = Class::get(conn, &type_thing.iri).await {
                 for (prop_iri, source_class_iri) in &class.properties {
                     if filled_iris.contains(prop_iri) { continue; }
                     if !seen.insert(prop_iri.clone()) { continue; }
 
-                    let Ok(Some(prop)) = Property::get(conn, prop_iri) else { continue };
+                    let Ok(Some(prop)) = Property::get(conn, prop_iri).await else { continue };
 
                     let property_label = prop.label.unwrap_or_else(|| prop_iri.clone());
                     let property_comment = prop.comment;
                     let is_object_property = prop.property_type == crate::owl::PropertyType::ObjectProperty;
 
                     let (source_class, source_class_label) = if source_class_iri != &type_thing.iri {
-                        let source_thing = crate::owl::Thing::get(conn, source_class_iri);
+                        let source_thing = crate::owl::Thing::get(conn, source_class_iri).await;
                         (Some(source_class_iri.clone()), Some(source_thing.label))
                     } else {
                         (None, None)
                     };
 
                     let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
-                        (Some(unit_iri.clone()), resolve_unit_label(conn, unit_iri))
+                        (Some(unit_iri.clone()), resolve_unit_label(conn, unit_iri).await)
                     } else {
                         (None, None)
                     };
 
                     let (range_class_iri, range_class_label, range_class_icon) = if is_object_property {
-                        prop.ranges.first().map(|range_iri| {
-                            let range_thing = crate::owl::Thing::get(conn, range_iri);
+                        if let Some(range_iri) = prop.ranges.first() {
+                            let range_thing = crate::owl::Thing::get(conn, range_iri).await;
                             (Some(range_iri.clone()), Some(range_thing.label), range_thing.icon)
-                        }).unwrap_or((None, None, None))
+                        } else {
+                            (None, None, None)
+                        }
                     } else {
                         (None, None, None)
                     };
@@ -784,9 +793,9 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
     for prop in &properties {
         if prop.is_object_property {
             if !added_node_ids.contains(&prop.value) {
-                let related_thing = crate::owl::Thing::get(conn, &prop.value);
+                let related_thing = crate::owl::Thing::get(conn, &prop.value).await;
                 let entity_exists_flag =
-                    Individual::get(conn, &prop.value).ok().flatten().is_some();
+                    Individual::get(conn, &prop.value).await.ok().flatten().is_some();
 
                 nodes.push(GraphNode {
                     id: prop.value.clone(),
@@ -846,14 +855,14 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
             .collect()
     };
 
-    let source_things = crate::owl::Thing::get_batch(conn, &backlink_source_iris);
+    let source_things = crate::owl::Thing::get_batch(conn, &backlink_source_iris).await;
 
     let unique_class_iris: Vec<String> = individual.backlinks.iter()
         .filter_map(|b| b.source_class.clone())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
-    let class_things = crate::owl::Thing::get_batch(conn, &unique_class_iris);
+    let class_things = crate::owl::Thing::get_batch(conn, &unique_class_iris).await;
 
     let mut prop_cache: HashMap<String, (String, Option<String>)> = HashMap::new();
     {
@@ -861,7 +870,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
             .map(|b| b.predicate.clone())
             .collect();
         for prop_iri in unique_prop_iris {
-            let (label, comment) = if let Ok(Some(prop)) = Property::get(conn, &prop_iri) {
+            let (label, comment) = if let Ok(Some(prop)) = Property::get(conn, &prop_iri).await {
                 (prop.label.unwrap_or_else(|| prop_iri.clone()), prop.comment)
             } else {
                 (prop_iri.clone(), None)
@@ -872,7 +881,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
 
     let source_status_iris = crate::eavto::query::get_first_iri_property_batch(
         conn, &backlink_source_iris, "foundation:hasStatus",
-    ).unwrap_or_default();
+    ).await.unwrap_or_default();
 
     let unique_status_iris: Vec<String> = source_status_iris.values()
         .cloned()
@@ -881,9 +890,9 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
         .collect();
     let mut status_cache: HashMap<String, StatusInfo> = HashMap::new();
     for status_iri in unique_status_iris {
-        if owl::is_instance_of(conn, &status_iri, "foundation:Status") {
-            let status_thing = crate::owl::Thing::get(conn, &status_iri);
-            let (icon, color) = owl::resolve_status_appearance(conn, &status_iri);
+        if owl::is_instance_of(conn, &status_iri, "foundation:Status").await {
+            let status_thing = crate::owl::Thing::get(conn, &status_iri).await;
+            let (icon, color) = owl::resolve_status_appearance(conn, &status_iri).await;
             status_cache.insert(status_iri.clone(), StatusInfo {
                 iri: status_iri,
                 label: status_thing.label,
@@ -897,7 +906,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
         if !added_node_ids.contains(&b.subject) {
             let thing = source_things.get(&b.subject)
                 .cloned()
-                .unwrap_or_else(|| crate::owl::Thing::get(conn, &b.subject));
+                .unwrap_or_else(|| crate::owl::Thing::get_sync(conn, &b.subject));
             nodes.push(GraphNode {
                 id: b.subject.clone(),
                 label: thing.label,
@@ -928,7 +937,7 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
 
         let source_thing = source_things.get(&b.subject)
             .cloned()
-            .unwrap_or_else(|| crate::owl::Thing::get(conn, &b.subject));
+            .unwrap_or_else(|| crate::owl::Thing::get_sync(conn, &b.subject));
 
         let (source_class_iri, source_class_label) = match &b.source_class {
             Some(class_iri) => {
@@ -969,12 +978,12 @@ fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, 
         });
     }
 
-    let status = resolve_entity_status(conn, &properties);
+    let status = resolve_entity_status(conn, &properties).await;
 
     let mut required_fields: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for type_thing in &individual.types {
-        if let Ok(restrictions) = crate::owl::cardinality::get_class_cardinality_restrictions(conn, &type_thing.iri) {
+        if let Ok(restrictions) = crate::owl::cardinality::get_class_cardinality_restrictions(conn, &type_thing.iri).await {
             for r in restrictions {
                 if r.is_required() && seen.insert(r.property_iri.clone()) {
                     required_fields.push(r.property_iri);

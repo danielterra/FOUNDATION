@@ -1,95 +1,71 @@
 // ============================================================================
 // EAVTO Executor Module
 // ============================================================================
-// Provides async execution for database operations to avoid blocking the UI
+// Provides async execution for database operations.
 //
 // Architecture:
-// - Single writer thread with sequential queue for writes
-// - Each read opens its own connection (no locking — store is append-only)
-// - WAL mode allows concurrent reads and writes at the SQLite file level
-// - All operations are async to avoid blocking Tauri's event loop
+// - Writes are serialized via a Mutex to prevent concurrent write conflicts.
+// - Each read opens its own Connection (safe — store is append-only, WAL mode).
+// - All operations are natively async (no spawn_blocking needed with turso).
 // ============================================================================
 
-use rusqlite::Connection;
+use std::future::Future;
 use std::path::PathBuf;
-use tokio::sync::{mpsc, oneshot};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use turso::{Connection, Database};
 
 /// Executor for database operations.
-/// Writes are sequential (single writer thread). Reads are fully concurrent
-/// (each spawns its own connection — safe because the store is append-only).
+/// Writes are serialized via a Mutex. Reads open independent connections concurrently.
 pub struct DbExecutor {
-    write_tx: mpsc::UnboundedSender<WriteTask>,
+    db: Arc<Database>,
+    write_lock: Arc<Mutex<()>>,
     db_path: PathBuf,
 }
 
-/// A write task to be executed sequentially
-struct WriteTask {
-    operation: Box<dyn FnOnce(&mut Connection) -> Result<String, String> + Send>,
-    result_tx: oneshot::Sender<Result<String, String>>,
-}
-
 impl DbExecutor {
-    /// Create a new executor. The given `conn` becomes the dedicated write connection.
-    /// `db_path` is used by read operations to open independent connections.
-    pub fn new(conn: Connection, db_path: PathBuf) -> Self {
-        let (write_tx, mut write_rx) = mpsc::unbounded_channel::<WriteTask>();
-
-        std::thread::spawn(move || {
-            let mut write_conn = conn;
-            while let Some(task) = write_rx.blocking_recv() {
-                let result = (task.operation)(&mut write_conn);
-                let _ = task.result_tx.send(result);
-            }
-        });
-
-        Self { write_tx, db_path }
+    /// Create a new executor backed by the given database.
+    /// `db_path` is stored for reference; all connections are opened via `db.connect()`.
+    pub fn new(db: Database, db_path: PathBuf) -> Self {
+        Self {
+            db: Arc::new(db),
+            write_lock: Arc::new(Mutex::new(())),
+            db_path,
+        }
     }
 
     /// Create an executor backed by an in-memory database (for CI/test use only).
-    /// Reads always open a fresh empty in-memory DB, so only the write connection
-    /// holds state — reads will return empty results.
-    pub fn new_in_memory(conn: Connection) -> Self {
-        Self::new(conn, PathBuf::from(":memory:"))
+    pub fn new_in_memory(db: Database) -> Self {
+        Self::new(db, PathBuf::from(":memory:"))
     }
 
     /// Execute a read operation (fully concurrent — opens its own connection).
-    pub async fn read<F, R>(&self, operation: F) -> Result<R, String>
+    pub async fn read<F, Fut, R>(&self, operation: F) -> Result<R, String>
     where
-        F: FnOnce(&Connection) -> Result<R, String> + Send + 'static,
-        R: Send + 'static,
+        F: FnOnce(Connection) -> Fut,
+        Fut: Future<Output = Result<R, String>>,
     {
-        let path = self.db_path.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = Connection::open(&path).map_err(|e| e.to_string())?;
-            conn.execute_batch("PRAGMA busy_timeout=5000;").map_err(|e| e.to_string())?;
-            operation(&conn)
-        })
-        .await
-        .map_err(|e| e.to_string())?
+        let conn = self.db.connect().map_err(|e| e.to_string())?;
+        operation(conn).await
     }
 
-    /// Execute a write operation (sequential, queued).
-    pub async fn write<F>(&self, operation: F) -> Result<String, String>
+    /// Execute a write operation (serialized via Mutex).
+    pub async fn write<F, Fut>(&self, operation: F) -> Result<String, String>
     where
-        F: FnOnce(&mut Connection) -> Result<String, String> + Send + 'static,
+        F: FnOnce(Connection) -> Fut,
+        Fut: Future<Output = Result<String, String>>,
     {
-        let (result_tx, result_rx) = oneshot::channel();
-
-        let task = WriteTask {
-            operation: Box::new(operation),
-            result_tx,
-        };
-
-        self.write_tx.send(task).map_err(|e| e.to_string())?;
-        result_rx.await.map_err(|e| e.to_string())?
+        let _lock = self.write_lock.lock().await;
+        let conn = self.db.connect().map_err(|e| e.to_string())?;
+        operation(conn).await
     }
 }
 
-// Make DbExecutor cloneable so it can be shared across commands
 impl Clone for DbExecutor {
     fn clone(&self) -> Self {
         Self {
-            write_tx: self.write_tx.clone(),
+            db: self.db.clone(),
+            write_lock: self.write_lock.clone(),
             db_path: self.db_path.clone(),
         }
     }

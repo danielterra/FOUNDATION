@@ -1,5 +1,5 @@
 use serde_json::Value;
-use rusqlite::Connection;
+use turso::Connection;
 use tauri::Emitter;
 use crate::owl::Class;
 use super::ToolResult;
@@ -95,11 +95,13 @@ pub fn search_classes(conn: &Connection, args: &Value) -> ToolResult {
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -111,6 +113,7 @@ pub fn get_class(conn: &Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
 
@@ -167,11 +170,13 @@ pub fn get_class(conn: &Connection, args: &Value) -> ToolResult {
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -187,6 +192,7 @@ pub fn create_class(
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
 
@@ -196,6 +202,7 @@ pub fn create_class(
             success: false,
             result: None,
             error: Some("Missing required parameter: label".to_string()),
+            concept: None,
         },
     };
 
@@ -205,6 +212,7 @@ pub fn create_class(
             success: false,
             result: None,
             error: Some("Missing required parameter: icon".to_string()),
+            concept: None,
         },
     };
 
@@ -231,11 +239,13 @@ pub fn create_class(
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -251,6 +261,7 @@ pub fn update_class(
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
 
@@ -289,11 +300,13 @@ pub fn update_class(
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -309,6 +322,7 @@ pub fn delete_class(
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
 
@@ -325,11 +339,13 @@ pub fn delete_class(
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -342,6 +358,7 @@ pub fn get_class_hierarchy(conn: &Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some("Missing required parameter: iri".to_string()),
+            concept: None,
         },
     };
 
@@ -396,11 +413,13 @@ pub fn get_class_hierarchy(conn: &Connection, args: &Value) -> ToolResult {
             success: true,
             result: Some(result),
             error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
+            concept: None,
         },
     }
 }

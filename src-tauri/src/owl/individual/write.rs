@@ -1,25 +1,26 @@
 use super::*;
 
-pub(super) fn is_formula_property(conn: &Connection, property_iri: &str) -> Result<bool> {
-    let result = query::get_by_entity_predicate(conn, property_iri, "foundation:formula")?;
+pub(super) async fn is_formula_property(conn: &Connection, property_iri: &str) -> Result<bool> {
+    let result = query::get_by_entity_predicate(conn, property_iri, "foundation:formula").await?;
     Ok(!result.triples.is_empty())
 }
 
 impl Individual {
     /// Assert individual with required metadata (label and icon)
     /// This is the recommended way to create individuals
-    pub fn assert(
+    pub async fn assert(
         &self,
-        conn: &mut Connection,
+        conn: &Connection,
         class_iri: &str,
         label: &str,
         icon: &str,
         origin: &str
     ) -> Result<()> {
-        crate::owl::validate_icon(conn, icon)?;
+        crate::owl::validate_icon(conn, icon).await?;
 
         let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(class_iri.to_string()));
-        store::assert_triples(conn, &[triple], origin)?;
+        store::assert_triples(conn, &[triple], origin).await
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
 
         let label_obj = Object::Literal {
             value: label.to_string(),
@@ -27,11 +28,13 @@ impl Individual {
             language: None,
         };
         let label_triple = Triple::new(&self.iri, rdfs::LABEL, label_obj);
-        store::assert_triples(conn, &[label_triple], origin)?;
+        store::assert_triples(conn, &[label_triple], origin).await
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
 
         let (icon_pred, icon_obj) = crate::owl::icon_store_value(icon);
         let icon_triple = Triple::new(&self.iri, icon_pred, icon_obj);
-        store::assert_triples(conn, &[icon_triple], origin)?;
+        store::assert_triples(conn, &[icon_triple], origin).await
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
 
         Ok(())
     }
@@ -44,9 +47,9 @@ impl Individual {
     ///
     /// Always retracts all current values and asserts the full new set atomically.
     /// Pass all desired values — this is always a full replace, never an append.
-    pub fn add_property(
+    pub async fn add_property(
         &self,
-        conn: &mut Connection,
+        conn: &Connection,
         property: &str,
         values: Vec<Object>,
         origin: &str,
@@ -62,7 +65,7 @@ impl Individual {
             || property == "foundation:hasIcon";
 
         if !is_meta_property {
-            if let Ok(true) = is_formula_property(conn, property) {
+            if let Ok(true) = is_formula_property(conn, property).await {
                 return Err(OwlError::ValidationError(format!(
                     "Property '{}' is calculated via a formula and cannot be set directly",
                     property
@@ -70,7 +73,7 @@ impl Individual {
             }
         }
 
-        let types_result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
+        let types_result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE).await?;
 
         if types_result.triples.is_empty() {
             return Err(OwlError::NotFound(format!("Individual {} has no rdf:type", self.iri)));
@@ -81,7 +84,7 @@ impl Individual {
 
             for triple in &types_result.triples {
                 if let Some(class_iri) = triple.object.as_iri() {
-                    if let Ok(Some(class)) = Class::get(conn, class_iri) {
+                    if let Ok(Some(class)) = Class::get(conn, class_iri).await {
                         if class.properties.iter().any(|(prop_iri, _)| prop_iri == property) {
                             property_is_valid = true;
                             break;
@@ -101,11 +104,11 @@ impl Individual {
         }
 
         if !is_meta_property {
-            Self::validate_value_type(conn, property, &values)?;
+            Self::validate_value_type(conn, property, &values).await?;
             for value in &values {
-                Self::validate_iri_exists(conn, property, value)?;
-                Self::validate_range_type(conn, property, value)?;
-                Self::validate_one_of_constraint(conn, property, value)?;
+                Self::validate_iri_exists(conn, property, value).await?;
+                Self::validate_range_type(conn, property, value).await?;
+                Self::validate_one_of_constraint(conn, property, value).await?;
                 Self::validate_literal_datatype(property, value)?;
             }
         }
@@ -115,20 +118,22 @@ impl Individual {
             &self.iri,
             property,
             values.len()
-        )?;
+        ).await?;
 
         let triples: Vec<Triple> = values.into_iter()
             .map(|v| Triple::new(&self.iri, property, v))
             .collect();
-        store::assert_triples(conn, &triples, origin)?;
+        store::assert_triples(conn, &triples, origin).await
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
-    pub fn serializable_properties(&self, conn: &Connection) -> Vec<serde_json::Value> {
+    pub async fn serializable_properties(&self, conn: &Connection) -> Vec<serde_json::Value> {
         use crate::owl::Property;
 
-        self.properties.iter().map(|(prop_iri, value)| {
-            let unit = Property::get(conn, prop_iri).ok()
+        let mut result = Vec::new();
+        for (prop_iri, value) in &self.properties {
+            let unit = Property::get(conn, prop_iri).await.ok()
                 .flatten()
                 .and_then(|p| p.unit);
 
@@ -165,18 +170,19 @@ impl Individual {
             if let Some(unit_iri) = unit {
                 entry["unit"] = serde_json::json!(unit_iri);
             }
-            entry
-        }).collect()
+            result.push(entry);
+        }
+        result
     }
 
-    pub fn remove_property_value(
-        conn: &mut Connection,
+    pub async fn remove_property_value(
+        conn: &Connection,
         iri: &str,
         property_iri: &str,
         value_str: &str,
         origin: &str,
     ) -> Result<Option<Object>> {
-        let result = query::get_by_entity_predicate(conn, iri, property_iri)?;
+        let result = query::get_by_entity_predicate(conn, iri, property_iri).await?;
         for triple in result.triples {
             let matches = match &triple.object {
                 Object::Iri(s) => s.as_str() == value_str,
@@ -197,7 +203,7 @@ impl Individual {
                 let found = triple.object.clone();
                 store::retract_triples(
                     conn, &[Triple::new(iri, property_iri, triple.object)], origin,
-                )?;
+                ).await.map_err(|e| OwlError::DatabaseError(e.to_string()))?;
                 return Ok(Some(found));
             }
         }
@@ -205,28 +211,29 @@ impl Individual {
     }
 
     /// Returns the number of current (non-retracted) values for a property on an individual.
-    pub fn get_property_count(conn: &Connection, iri: &str, property_iri: &str) -> Result<usize> {
-        let result = query::get_by_entity_predicate(conn, iri, property_iri)?;
+    pub async fn get_property_count(conn: &Connection, iri: &str, property_iri: &str) -> Result<usize> {
+        let result = query::get_by_entity_predicate(conn, iri, property_iri).await?;
         Ok(result.triples.len())
     }
 
     /// Retracts all current values of `property_iri` on individual `iri`.
-    pub fn clear_property(
-        conn: &mut Connection,
+    pub async fn clear_property(
+        conn: &Connection,
         iri: &str,
         property_iri: &str,
         origin: &str,
     ) -> Result<()> {
-        let result = query::get_by_entity_predicate(conn, iri, property_iri)?;
+        let result = query::get_by_entity_predicate(conn, iri, property_iri).await?;
         if !result.triples.is_empty() {
-            store::retract_triples(conn, &result.triples, origin)?;
+            store::retract_triples(conn, &result.triples, origin).await
+                .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
         }
         Ok(())
     }
 
     /// Returns retracted triples for an individual, excluding metadata predicates.
-    pub fn get_retracted_properties(conn: &Connection, iri: &str) -> Result<Vec<Triple>> {
-        query::get_retracted_by_entity(conn, iri)
+    pub async fn get_retracted_properties(conn: &Connection, iri: &str) -> Result<Vec<Triple>> {
+        query::get_retracted_by_entity(conn, iri).await
             .map(|r| r.triples.into_iter().filter(|t| {
                 t.predicate != "rdfs:label"
                     && t.predicate != "rdfs:comment"
@@ -243,41 +250,49 @@ mod tests {
     use crate::eavto::test_helpers::setup_test_db;
     use crate::owl::{Class, ClassType, Property, PropertyType, vocabulary::rdf};
 
-    #[test]
-    fn test_write_to_calculated_property_is_rejected() {
-        let mut conn = setup_test_db();
-
-        let c = Class::new("foundation:Rectangle");
-        c.assert(&mut conn, ClassType::OwlClass, "Rectangle", "https://example.com/rect.svg", None, "test").unwrap();
-
-        let width_prop = Property::new("foundation:hasWidth");
-        width_prop.assert(&mut conn, PropertyType::DatatypeProperty, "has width", None,
-            &["foundation:Rectangle"], Some("xsd:integer"), Some("unit:Meter"), "test").unwrap();
-
-        let area_prop = Property::new("foundation:hasArea");
-        area_prop.assert(&mut conn, PropertyType::DatatypeProperty, "has area", None,
-            &["foundation:Rectangle"], Some("xsd:decimal"), Some("unit:SquareMeter"), "test").unwrap();
-
-        let ind = Individual::new("foundation:MyRect");
-        ind.assert(&mut conn, "foundation:Rectangle", "My Rect", "https://example.com/rect.svg", "test").unwrap();
-
+    async fn insert_formula_triple(conn: &Connection, property_iri: &str, formula: &str) {
         conn.execute(
             "INSERT INTO transactions (origin, created_at) VALUES ('test', 0)",
-            [],
-        ).unwrap();
-        let tx_id = conn.last_insert_rowid();
+            turso::params![],
+        ).await.unwrap();
+
+        let mut stmt = conn.prepare("SELECT last_insert_rowid()").await.unwrap();
+        let mut rows = stmt.query(()).await.unwrap();
+        let tx_id: i64 = *rows.next().await.unwrap().unwrap().get_value(0).unwrap().as_integer().unwrap();
+
         conn.execute(
             "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted) \
              VALUES (?, 'foundation:formula', ?, 'literal', 'xsd:string', 1, ?, 0, 0)",
-            rusqlite::params!["foundation:hasArea", "{{foundation:hasWidth}} * 2", tx_id],
-        ).unwrap();
+            turso::params![property_iri, formula, tx_id],
+        ).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_write_to_calculated_property_is_rejected() {
+        let conn = setup_test_db().await;
+
+        let c = Class::new("foundation:Rectangle");
+        c.assert(&conn, ClassType::OwlClass, "Rectangle", "https://example.com/rect.svg", None, "test").await.unwrap();
+
+        let width_prop = Property::new("foundation:hasWidth");
+        width_prop.assert(&conn, PropertyType::DatatypeProperty, "has width", None,
+            &["foundation:Rectangle"], Some("xsd:integer"), Some("unit:Meter"), "test").await.unwrap();
+
+        let area_prop = Property::new("foundation:hasArea");
+        area_prop.assert(&conn, PropertyType::DatatypeProperty, "has area", None,
+            &["foundation:Rectangle"], Some("xsd:decimal"), Some("unit:SquareMeter"), "test").await.unwrap();
+
+        let ind = Individual::new("foundation:MyRect");
+        ind.assert(&conn, "foundation:Rectangle", "My Rect", "https://example.com/rect.svg", "test").await.unwrap();
+
+        insert_formula_triple(&conn, "foundation:hasArea", "{{foundation:hasWidth}} * 2").await;
 
         let result = ind.add_property(
-            &mut conn,
+            &conn,
             "foundation:hasArea",
             vec![Object::Literal { value: "100".to_string(), datatype: Some("xsd:decimal".to_string()), language: None }],
             "test",
-        );
+        ).await;
 
         assert!(result.is_err(), "Should reject write to calculated property");
         if let Err(OwlError::ValidationError(msg)) = result {
@@ -287,26 +302,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_write_to_non_calculated_property_succeeds() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_write_to_non_calculated_property_succeeds() {
+        let conn = setup_test_db().await;
 
         let c = Class::new("foundation:Rectangle");
-        c.assert(&mut conn, ClassType::OwlClass, "Rectangle", "https://example.com/rect.svg", None, "test").unwrap();
+        c.assert(&conn, ClassType::OwlClass, "Rectangle", "https://example.com/rect.svg", None, "test").await.unwrap();
 
         let width_prop = Property::new("foundation:hasWidth");
-        width_prop.assert(&mut conn, PropertyType::DatatypeProperty, "has width", None,
-            &["foundation:Rectangle"], Some("xsd:integer"), Some("unit:Meter"), "test").unwrap();
+        width_prop.assert(&conn, PropertyType::DatatypeProperty, "has width", None,
+            &["foundation:Rectangle"], Some("xsd:integer"), Some("unit:Meter"), "test").await.unwrap();
 
         let ind = Individual::new("foundation:MyRect");
-        ind.assert(&mut conn, "foundation:Rectangle", "My Rect", "https://example.com/rect.svg", "test").unwrap();
+        ind.assert(&conn, "foundation:Rectangle", "My Rect", "https://example.com/rect.svg", "test").await.unwrap();
 
         let result = ind.add_property(
-            &mut conn,
+            &conn,
             "foundation:hasWidth",
             vec![Object::Literal { value: "5".to_string(), datatype: Some("xsd:integer".to_string()), language: None }],
             "test",
-        );
+        ).await;
 
         assert!(result.is_ok(), "Should accept write to non-calculated property");
     }
@@ -314,23 +329,24 @@ mod tests {
     // Regression: Bug_1773352703259 — foundation:hasIcon is an ObjectProperty but must accept
     // literal values when set to a URL (file://, https://, etc.).
     // The meta-property bypass must cover the full validation pipeline, not just formula checks.
-    #[test]
-    fn test_add_property_has_icon_file_url_literal_is_accepted() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_add_property_has_icon_file_url_literal_is_accepted() {
+        let conn = setup_test_db().await;
 
         let c = Class::new("foundation:Item");
-        c.assert(&mut conn, ClassType::OwlClass, "Item", "https://example.com/item.svg", None, "test").unwrap();
+        c.assert(&conn, ClassType::OwlClass, "Item", "https://example.com/item.svg", None, "test").await.unwrap();
 
         Property::new("foundation:hasIcon")
-            .assert(&mut conn, PropertyType::ObjectProperty, "has icon", None,
+            .assert(&conn, PropertyType::ObjectProperty, "has icon", None,
                 &[], Some("foundation:Icon"), None, "test")
+            .await
             .unwrap();
 
         let ind = Individual::new("foundation:MyItem");
-        ind.assert(&mut conn, "foundation:Item", "My Item", "https://example.com/item.svg", "test").unwrap();
+        ind.assert(&conn, "foundation:Item", "My Item", "https://example.com/item.svg", "test").await.unwrap();
 
         let result = ind.add_property(
-            &mut conn,
+            &conn,
             "foundation:hasIcon",
             vec![Object::Literal {
                 value: "file:///path/to/icon.png".to_string(),
@@ -338,72 +354,54 @@ mod tests {
                 language: None,
             }],
             "test",
-        );
+        ).await;
         assert!(result.is_ok(), "foundation:hasIcon must accept file:// literal values: {:?}", result.err());
     }
 
-    #[test]
-    fn test_meta_property_bypasses_formula_protection() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_meta_property_bypasses_formula_protection() {
+        let conn = setup_test_db().await;
 
         let c = Class::new("foundation:Rectangle");
-        c.assert(&mut conn, ClassType::OwlClass, "Rectangle", "https://example.com/rect.svg", None, "test").unwrap();
+        c.assert(&conn, ClassType::OwlClass, "Rectangle", "https://example.com/rect.svg", None, "test").await.unwrap();
 
         let ind = Individual::new("foundation:MyRect");
-        ind.assert(&mut conn, "foundation:Rectangle", "My Rect", "https://example.com/rect.svg", "test").unwrap();
+        ind.assert(&conn, "foundation:Rectangle", "My Rect", "https://example.com/rect.svg", "test").await.unwrap();
 
-        conn.execute(
-            "INSERT INTO transactions (origin, created_at) VALUES ('test', 0)",
-            [],
-        ).unwrap();
-        let tx_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted) \
-             VALUES (?, 'foundation:formula', ?, 'literal', 'xsd:string', 1, ?, 0, 0)",
-            rusqlite::params!["rdfs:label", "some formula", tx_id],
-        ).unwrap();
+        insert_formula_triple(&conn, "rdfs:label", "some formula").await;
 
         let result = ind.add_property(
-            &mut conn,
+            &conn,
             "rdfs:label",
             vec![Object::Literal { value: "Updated Label".to_string(), datatype: Some("xsd:string".to_string()), language: None }],
             "test",
-        );
+        ).await;
 
         assert!(result.is_ok(), "Meta properties should bypass formula protection");
     }
 
-    #[test]
-    fn test_calculated_property_error_message_is_descriptive() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_calculated_property_error_message_is_descriptive() {
+        let conn = setup_test_db().await;
 
         let c = Class::new("foundation:Rectangle");
-        c.assert(&mut conn, ClassType::OwlClass, "Rectangle", "https://example.com/rect.svg", None, "test").unwrap();
+        c.assert(&conn, ClassType::OwlClass, "Rectangle", "https://example.com/rect.svg", None, "test").await.unwrap();
 
         let area_prop = Property::new("foundation:hasArea");
-        area_prop.assert(&mut conn, PropertyType::DatatypeProperty, "has area", None,
-            &["foundation:Rectangle"], Some("xsd:decimal"), Some("unit:SquareMeter"), "test").unwrap();
+        area_prop.assert(&conn, PropertyType::DatatypeProperty, "has area", None,
+            &["foundation:Rectangle"], Some("xsd:decimal"), Some("unit:SquareMeter"), "test").await.unwrap();
 
         let ind = Individual::new("foundation:MyRect");
-        ind.assert(&mut conn, "foundation:Rectangle", "My Rect", "https://example.com/rect.svg", "test").unwrap();
+        ind.assert(&conn, "foundation:Rectangle", "My Rect", "https://example.com/rect.svg", "test").await.unwrap();
 
-        conn.execute(
-            "INSERT INTO transactions (origin, created_at) VALUES ('test', 0)",
-            [],
-        ).unwrap();
-        let tx_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted) \
-             VALUES (?, 'foundation:formula', ?, 'literal', 'xsd:string', 1, ?, 0, 0)",
-            rusqlite::params!["foundation:hasArea", "{{foundation:hasWidth}} * 2", tx_id],
-        ).unwrap();
+        insert_formula_triple(&conn, "foundation:hasArea", "{{foundation:hasWidth}} * 2").await;
 
         let result = ind.add_property(
-            &mut conn,
+            &conn,
             "foundation:hasArea",
             vec![Object::Literal { value: "100".to_string(), datatype: Some("xsd:decimal".to_string()), language: None }],
             "test",
-        );
+        ).await;
 
         if let Err(OwlError::ValidationError(msg)) = result {
             assert!(msg.contains("foundation:hasArea"), "Error should contain the property IRI");
@@ -414,9 +412,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_serializable_properties_integer() {
-        let conn = setup_test_db();
+    #[tokio::test]
+    async fn test_serializable_properties_integer() {
+        let conn = setup_test_db().await;
 
         let ind = Individual {
             iri: "foundation:Alice".to_string(),
@@ -429,15 +427,15 @@ mod tests {
             backlinks: vec![],
         };
 
-        let props = ind.serializable_properties(&conn);
+        let props = ind.serializable_properties(&conn).await;
         assert_eq!(props.len(), 1);
         assert_eq!(props[0]["property"], "foundation:age");
         assert_eq!(props[0]["value"], 30);
     }
 
-    #[test]
-    fn test_serializable_properties_number() {
-        let conn = setup_test_db();
+    #[tokio::test]
+    async fn test_serializable_properties_number() {
+        let conn = setup_test_db().await;
 
         let ind = Individual {
             iri: "foundation:Alice".to_string(),
@@ -447,13 +445,13 @@ mod tests {
             backlinks: vec![],
         };
 
-        let props = ind.serializable_properties(&conn);
+        let props = ind.serializable_properties(&conn).await;
         assert_eq!(props[0]["value"], 9.5);
     }
 
-    #[test]
-    fn test_serializable_properties_boolean() {
-        let conn = setup_test_db();
+    #[tokio::test]
+    async fn test_serializable_properties_boolean() {
+        let conn = setup_test_db().await;
 
         let ind = Individual {
             iri: "foundation:Alice".to_string(),
@@ -463,13 +461,13 @@ mod tests {
             backlinks: vec![],
         };
 
-        let props = ind.serializable_properties(&conn);
+        let props = ind.serializable_properties(&conn).await;
         assert_eq!(props[0]["value"], true);
     }
 
-    #[test]
-    fn test_serializable_properties_string_literal() {
-        let conn = setup_test_db();
+    #[tokio::test]
+    async fn test_serializable_properties_string_literal() {
+        let conn = setup_test_db().await;
 
         let ind = Individual {
             iri: "foundation:Alice".to_string(),
@@ -483,13 +481,13 @@ mod tests {
             backlinks: vec![],
         };
 
-        let props = ind.serializable_properties(&conn);
+        let props = ind.serializable_properties(&conn).await;
         assert_eq!(props[0]["value"], "Alice");
     }
 
-    #[test]
-    fn test_serializable_properties_decimal_literal_parsed_as_number() {
-        let conn = setup_test_db();
+    #[tokio::test]
+    async fn test_serializable_properties_decimal_literal_parsed_as_number() {
+        let conn = setup_test_db().await;
 
         let ind = Individual {
             iri: "foundation:Alice".to_string(),
@@ -503,13 +501,13 @@ mod tests {
             backlinks: vec![],
         };
 
-        let props = ind.serializable_properties(&conn);
+        let props = ind.serializable_properties(&conn).await;
         assert_eq!(props[0]["value"], 3.14);
     }
 
-    #[test]
-    fn test_serializable_properties_integer_literal_parsed_as_number() {
-        let conn = setup_test_db();
+    #[tokio::test]
+    async fn test_serializable_properties_integer_literal_parsed_as_number() {
+        let conn = setup_test_db().await;
 
         let ind = Individual {
             iri: "foundation:Alice".to_string(),
@@ -523,13 +521,13 @@ mod tests {
             backlinks: vec![],
         };
 
-        let props = ind.serializable_properties(&conn);
+        let props = ind.serializable_properties(&conn).await;
         assert_eq!(props[0]["value"], 99);
     }
 
-    #[test]
-    fn test_serializable_properties_iri_value() {
-        let conn = setup_test_db();
+    #[tokio::test]
+    async fn test_serializable_properties_iri_value() {
+        let conn = setup_test_db().await;
 
         let ind = Individual {
             iri: "foundation:Alice".to_string(),
@@ -539,16 +537,16 @@ mod tests {
             backlinks: vec![],
         };
 
-        let props = ind.serializable_properties(&conn);
+        let props = ind.serializable_properties(&conn).await;
         assert_eq!(props[0]["value"], "foundation:Bob");
     }
 
-    #[test]
-    fn test_serializable_properties_includes_unit_when_property_has_one() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_serializable_properties_includes_unit_when_property_has_one() {
+        let conn = setup_test_db().await;
 
         Property::new("foundation:height").assert(
-            &mut conn,
+            &conn,
             PropertyType::DatatypeProperty,
             "height",
             None,
@@ -556,7 +554,7 @@ mod tests {
             Some("xsd:decimal"),
             Some("unit:Meter"),
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         let ind = Individual {
             iri: "foundation:Alice".to_string(),
@@ -566,13 +564,13 @@ mod tests {
             backlinks: vec![],
         };
 
-        let props = ind.serializable_properties(&conn);
+        let props = ind.serializable_properties(&conn).await;
         assert_eq!(props[0]["unit"], "unit:Meter");
     }
 
-    #[test]
-    fn test_serializable_properties_no_unit_key_when_property_has_none() {
-        let conn = setup_test_db();
+    #[tokio::test]
+    async fn test_serializable_properties_no_unit_key_when_property_has_none() {
+        let conn = setup_test_db().await;
 
         let ind = Individual {
             iri: "foundation:Alice".to_string(),
@@ -586,13 +584,13 @@ mod tests {
             backlinks: vec![],
         };
 
-        let props = ind.serializable_properties(&conn);
+        let props = ind.serializable_properties(&conn).await;
         assert!(props[0].get("unit").is_none(), "No unit key when property has no unit");
     }
 
-    #[test]
-    fn test_serializable_properties_multiple() {
-        let conn = setup_test_db();
+    #[tokio::test]
+    async fn test_serializable_properties_multiple() {
+        let conn = setup_test_db().await;
 
         let ind = Individual {
             iri: "foundation:Alice".to_string(),
@@ -610,180 +608,180 @@ mod tests {
             backlinks: vec![],
         };
 
-        let props = ind.serializable_properties(&conn);
+        let props = ind.serializable_properties(&conn).await;
         assert_eq!(props.len(), 3);
     }
 
-    #[test]
-    fn test_remove_property_value_iri_happy_path() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_remove_property_value_iri_happy_path() {
+        let conn = setup_test_db().await;
 
-        store::assert_triples(&mut conn, &[
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", rdf::TYPE, Object::Iri("foundation:Person".to_string())),
             Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         let result = Individual::remove_property_value(
-            &mut conn,
+            &conn,
             "foundation:Alice",
             "foundation:knows",
             "foundation:Bob",
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         assert!(result.is_some());
         assert_eq!(result.unwrap(), Object::Iri("foundation:Bob".to_string()));
 
-        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").await.unwrap();
         assert!(after.triples.is_empty(), "Triple should have been retracted");
     }
 
-    #[test]
-    fn test_remove_property_value_integer() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_remove_property_value_integer() {
+        let conn = setup_test_db().await;
 
-        store::assert_triples(&mut conn, &[
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:age", Object::Integer(30)),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         let result = Individual::remove_property_value(
-            &mut conn,
+            &conn,
             "foundation:Alice",
             "foundation:age",
             "30",
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         assert!(result.is_some());
         assert_eq!(result.unwrap(), Object::Integer(30));
 
-        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:age").unwrap();
+        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:age").await.unwrap();
         assert!(after.triples.is_empty(), "Integer triple should have been retracted");
     }
 
-    #[test]
-    fn test_remove_property_value_string_literal() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_remove_property_value_string_literal() {
+        let conn = setup_test_db().await;
 
-        store::assert_triples(&mut conn, &[
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:nickname", Object::Literal {
                 value: "Ally".to_string(),
                 datatype: Some("xsd:string".to_string()),
                 language: None,
             }),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         let result = Individual::remove_property_value(
-            &mut conn,
+            &conn,
             "foundation:Alice",
             "foundation:nickname",
             "Ally",
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         assert!(result.is_some());
 
-        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:nickname").unwrap();
+        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:nickname").await.unwrap();
         assert!(after.triples.is_empty(), "String literal triple should have been retracted");
     }
 
-    #[test]
-    fn test_remove_property_value_nonexistent_value_returns_none() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_remove_property_value_nonexistent_value_returns_none() {
+        let conn = setup_test_db().await;
 
-        store::assert_triples(&mut conn, &[
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         let result = Individual::remove_property_value(
-            &mut conn,
+            &conn,
             "foundation:Alice",
             "foundation:knows",
             "foundation:Charlie",
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         assert!(result.is_none(), "Should return None when value does not match");
 
-        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").await.unwrap();
         assert_eq!(after.triples.len(), 1, "Existing triple should be untouched");
     }
 
-    #[test]
-    fn test_remove_property_value_no_triples_returns_none() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_remove_property_value_no_triples_returns_none() {
+        let conn = setup_test_db().await;
 
         let result = Individual::remove_property_value(
-            &mut conn,
+            &conn,
             "foundation:Alice",
             "foundation:knows",
             "foundation:Bob",
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         assert!(result.is_none(), "Should return None when property has no triples");
     }
 
-    #[test]
-    fn test_remove_property_value_boolean() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_remove_property_value_boolean() {
+        let conn = setup_test_db().await;
 
-        store::assert_triples(&mut conn, &[
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:active", Object::Boolean(true)),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         let result = Individual::remove_property_value(
-            &mut conn,
+            &conn,
             "foundation:Alice",
             "foundation:active",
             "true",
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         assert!(result.is_some());
         assert_eq!(result.unwrap(), Object::Boolean(true));
     }
 
-    #[test]
-    fn test_remove_property_value_number() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_remove_property_value_number() {
+        let conn = setup_test_db().await;
 
-        store::assert_triples(&mut conn, &[
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:score", Object::Number(9.5)),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         let result = Individual::remove_property_value(
-            &mut conn,
+            &conn,
             "foundation:Alice",
             "foundation:score",
             "9.5",
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         assert!(result.is_some());
         assert_eq!(result.unwrap(), Object::Number(9.5));
     }
 
-    #[test]
-    fn test_remove_property_value_only_removes_matching_multivalue() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_remove_property_value_only_removes_matching_multivalue() {
+        let conn = setup_test_db().await;
 
-        store::append_triples(&mut conn, &[
+        store::append_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
             Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Carol".to_string())),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         let result = Individual::remove_property_value(
-            &mut conn,
+            &conn,
             "foundation:Alice",
             "foundation:knows",
             "foundation:Bob",
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         assert!(result.is_some());
 
-        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").await.unwrap();
         assert_eq!(after.triples.len(), 1, "Only the matching value should be removed");
         assert_eq!(
             after.triples[0].object,
@@ -791,115 +789,115 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_get_property_count_returns_zero_when_no_values() {
-        let conn = setup_test_db();
-        let count = Individual::get_property_count(&conn, "foundation:Alice", "foundation:knows").unwrap();
+    #[tokio::test]
+    async fn test_get_property_count_returns_zero_when_no_values() {
+        let conn = setup_test_db().await;
+        let count = Individual::get_property_count(&conn, "foundation:Alice", "foundation:knows").await.unwrap();
         assert_eq!(count, 0);
     }
 
-    #[test]
-    fn test_get_property_count_returns_one_for_single_value() {
-        let mut conn = setup_test_db();
-        store::assert_triples(&mut conn, &[
+    #[tokio::test]
+    async fn test_get_property_count_returns_one_for_single_value() {
+        let conn = setup_test_db().await;
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
-        let count = Individual::get_property_count(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        let count = Individual::get_property_count(&conn, "foundation:Alice", "foundation:knows").await.unwrap();
         assert_eq!(count, 1);
     }
 
-    #[test]
-    fn test_get_property_count_returns_correct_count_for_multiple_values() {
-        let mut conn = setup_test_db();
-        store::append_triples(&mut conn, &[
+    #[tokio::test]
+    async fn test_get_property_count_returns_correct_count_for_multiple_values() {
+        let conn = setup_test_db().await;
+        store::append_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
             Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Carol".to_string())),
             Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Dave".to_string())),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
-        let count = Individual::get_property_count(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        let count = Individual::get_property_count(&conn, "foundation:Alice", "foundation:knows").await.unwrap();
         assert_eq!(count, 3);
     }
 
-    #[test]
-    fn test_get_property_count_excludes_retracted_values() {
-        let mut conn = setup_test_db();
-        store::assert_triples(&mut conn, &[
+    #[tokio::test]
+    async fn test_get_property_count_excludes_retracted_values() {
+        let conn = setup_test_db().await;
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
-        ], "test").unwrap();
-        Individual::remove_property_value(&mut conn, "foundation:Alice", "foundation:knows", "foundation:Bob", "test").unwrap();
+        ], "test").await.unwrap();
+        Individual::remove_property_value(&conn, "foundation:Alice", "foundation:knows", "foundation:Bob", "test").await.unwrap();
 
-        let count = Individual::get_property_count(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        let count = Individual::get_property_count(&conn, "foundation:Alice", "foundation:knows").await.unwrap();
         assert_eq!(count, 0);
     }
 
-    #[test]
-    fn test_clear_property_removes_all_values() {
-        let mut conn = setup_test_db();
-        store::append_triples(&mut conn, &[
+    #[tokio::test]
+    async fn test_clear_property_removes_all_values() {
+        let conn = setup_test_db().await;
+        store::append_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
             Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Carol".to_string())),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
-        Individual::clear_property(&mut conn, "foundation:Alice", "foundation:knows", "test").unwrap();
+        Individual::clear_property(&conn, "foundation:Alice", "foundation:knows", "test").await.unwrap();
 
-        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        let after = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").await.unwrap();
         assert!(after.triples.is_empty(), "All values should have been retracted");
     }
 
-    #[test]
-    fn test_clear_property_is_noop_when_no_values() {
-        let mut conn = setup_test_db();
-        let result = Individual::clear_property(&mut conn, "foundation:Alice", "foundation:knows", "test");
+    #[tokio::test]
+    async fn test_clear_property_is_noop_when_no_values() {
+        let conn = setup_test_db().await;
+        let result = Individual::clear_property(&conn, "foundation:Alice", "foundation:knows", "test").await;
         assert!(result.is_ok(), "clear_property on empty property should not error");
     }
 
-    #[test]
-    fn test_clear_property_preserves_other_properties() {
-        let mut conn = setup_test_db();
-        store::assert_triples(&mut conn, &[
+    #[tokio::test]
+    async fn test_clear_property_preserves_other_properties() {
+        let conn = setup_test_db().await;
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:knows", Object::Iri("foundation:Bob".to_string())),
             Triple::new("foundation:Alice", "foundation:name", Object::Literal {
                 value: "Alice".to_string(),
                 datatype: Some("xsd:string".to_string()),
                 language: None,
             }),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
-        Individual::clear_property(&mut conn, "foundation:Alice", "foundation:knows", "test").unwrap();
+        Individual::clear_property(&conn, "foundation:Alice", "foundation:knows", "test").await.unwrap();
 
-        let knows = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").unwrap();
+        let knows = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:knows").await.unwrap();
         assert!(knows.triples.is_empty(), "foundation:knows should be cleared");
 
-        let name = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:name").unwrap();
+        let name = query::get_by_entity_predicate(&conn, "foundation:Alice", "foundation:name").await.unwrap();
         assert_eq!(name.triples.len(), 1, "foundation:name must not be affected");
     }
 
-    #[test]
-    fn test_get_retracted_properties_empty_when_nothing_retracted() {
-        let conn = setup_test_db();
-        let result = Individual::get_retracted_properties(&conn, "foundation:Alice").unwrap();
+    #[tokio::test]
+    async fn test_get_retracted_properties_empty_when_nothing_retracted() {
+        let conn = setup_test_db().await;
+        let result = Individual::get_retracted_properties(&conn, "foundation:Alice").await.unwrap();
         assert!(result.is_empty());
     }
 
-    #[test]
-    fn test_get_retracted_properties_returns_retracted_triples() {
-        let mut conn = setup_test_db();
-        store::assert_triples(&mut conn, &[
+    #[tokio::test]
+    async fn test_get_retracted_properties_returns_retracted_triples() {
+        let conn = setup_test_db().await;
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:score", Object::Integer(42)),
-        ], "test").unwrap();
-        Individual::clear_property(&mut conn, "foundation:Alice", "foundation:score", "test").unwrap();
+        ], "test").await.unwrap();
+        Individual::clear_property(&conn, "foundation:Alice", "foundation:score", "test").await.unwrap();
 
-        let result = Individual::get_retracted_properties(&conn, "foundation:Alice").unwrap();
+        let result = Individual::get_retracted_properties(&conn, "foundation:Alice").await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].predicate, "foundation:score");
     }
 
-    #[test]
-    fn test_get_retracted_properties_filters_metadata_predicates() {
-        let mut conn = setup_test_db();
-        store::assert_triples(&mut conn, &[
+    #[tokio::test]
+    async fn test_get_retracted_properties_filters_metadata_predicates() {
+        let conn = setup_test_db().await;
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", "rdfs:label", Object::Literal {
                 value: "Alice".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
@@ -910,14 +908,14 @@ mod tests {
                 value: "person".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
             Triple::new("foundation:Alice", "foundation:score", Object::Integer(10)),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
-        Individual::clear_property(&mut conn, "foundation:Alice", "rdfs:label", "test").unwrap();
-        Individual::clear_property(&mut conn, "foundation:Alice", "rdfs:comment", "test").unwrap();
-        Individual::clear_property(&mut conn, "foundation:Alice", "foundation:icon", "test").unwrap();
-        Individual::clear_property(&mut conn, "foundation:Alice", "foundation:score", "test").unwrap();
+        Individual::clear_property(&conn, "foundation:Alice", "rdfs:label", "test").await.unwrap();
+        Individual::clear_property(&conn, "foundation:Alice", "rdfs:comment", "test").await.unwrap();
+        Individual::clear_property(&conn, "foundation:Alice", "foundation:icon", "test").await.unwrap();
+        Individual::clear_property(&conn, "foundation:Alice", "foundation:score", "test").await.unwrap();
 
-        let result = Individual::get_retracted_properties(&conn, "foundation:Alice").unwrap();
+        let result = Individual::get_retracted_properties(&conn, "foundation:Alice").await.unwrap();
         let predicates: Vec<&str> = result.iter().map(|t| t.predicate.as_str()).collect();
         assert!(!predicates.contains(&"rdfs:label"), "rdfs:label must be filtered");
         assert!(!predicates.contains(&"rdfs:comment"), "rdfs:comment must be filtered");

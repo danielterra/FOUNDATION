@@ -123,24 +123,24 @@ fn individual_to_widget(ind: Individual) -> Option<Widget> {
     })
 }
 
-pub fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), String> {
+pub async fn owl_insert_widget(conn: &Connection, widget: &Widget) -> Result<(), String> {
     let ind = Individual::new(&widget.id);
-    ind.assert(conn, WIDGET_CLASS, &widget.widget_type, WIDGET_ICON, WIDGET_ORIGIN)
+    ind.assert(conn, WIDGET_CLASS, &widget.widget_type, WIDGET_ICON, WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_WIDGET_TYPE, vec![str_obj(&widget.widget_type)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_WIDGET_TYPE, vec![str_obj(&widget.widget_type)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_ENTITY_ID, vec![str_obj(&widget.entity_id)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_ENTITY_ID, vec![str_obj(&widget.entity_id)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_POSITION_X, vec![Object::Number(widget.position.x)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_POSITION_X, vec![Object::Number(widget.position.x)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_POSITION_Y, vec![Object::Number(widget.position.y)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_POSITION_Y, vec![Object::Number(widget.position.y)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_SIZE_WIDTH, vec![Object::Number(widget.size.width)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_SIZE_WIDTH, vec![Object::Number(widget.size.width)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_SIZE_HEIGHT, vec![Object::Number(widget.size.height)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_SIZE_HEIGHT, vec![Object::Number(widget.size.height)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())?;
     if let Some(content) = &widget.content {
-        ind.add_property(conn, PRED_CONTENT, vec![str_obj(content)], WIDGET_ORIGIN)
+        ind.add_property(conn, PRED_CONTENT, vec![str_obj(content)], WIDGET_ORIGIN).await
             .map_err(|e| e.to_string())?;
     }
     let state_str = match widget.window_state {
@@ -148,17 +148,17 @@ pub fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), S
         WindowState::Minimized => "minimized",
         WindowState::Maximized => "maximized",
     };
-    ind.add_property(conn, PRED_WINDOW_STATE, vec![str_obj(state_str)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_WINDOW_STATE, vec![str_obj(state_str)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn owl_get_all_widgets(conn: &Connection) -> Result<Vec<Widget>, String> {
-    let widget_iris = crate::owl::find_entities_with_property(conn, rdf::TYPE, WIDGET_CLASS)
+pub async fn owl_get_all_widgets(conn: &Connection) -> Result<Vec<Widget>, String> {
+    let widget_iris = crate::owl::find_entities_with_property(conn, rdf::TYPE, WIDGET_CLASS).await
         .map_err(|e| e.to_string())?;
     let mut widgets = Vec::new();
     for iri in widget_iris {
-        if let Ok(Some(ind)) = Individual::get(conn, &iri) {
+        if let Ok(Some(ind)) = Individual::get(conn, &iri).await {
             if let Some(widget) = individual_to_widget(ind) {
                 widgets.push(widget);
             }
@@ -167,43 +167,43 @@ pub fn owl_get_all_widgets(conn: &Connection) -> Result<Vec<Widget>, String> {
     Ok(widgets)
 }
 
-pub fn owl_delete_widget(conn: &mut Connection, widget_id: &str) -> Result<(), String> {
-    let exists = Individual::get(conn, widget_id)
+pub async fn owl_delete_widget(conn: &Connection, widget_id: &str) -> Result<(), String> {
+    let exists = Individual::get(conn, widget_id).await
         .map_err(|e| e.to_string())?
         .is_some();
     if !exists {
         return Err(format!("Widget not found: {}", widget_id));
     }
-    Individual::retract(conn, widget_id, WIDGET_ORIGIN)
+    Individual::retract(conn, widget_id, WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())
 }
 
-fn owl_update_widget_position(
-    conn: &mut Connection,
+async fn owl_update_widget_position(
+    conn: &Connection,
     widget_id: &str,
     position: &Position,
 ) -> Result<(), String> {
     let ind = Individual::new(widget_id);
-    ind.add_property(conn, PRED_POSITION_X, vec![Object::Number(position.x)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_POSITION_X, vec![Object::Number(position.x)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_POSITION_Y, vec![Object::Number(position.y)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_POSITION_Y, vec![Object::Number(position.y)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())
 }
 
-fn owl_update_widget_size(
-    conn: &mut Connection,
+async fn owl_update_widget_size(
+    conn: &Connection,
     widget_id: &str,
     size: &Size,
 ) -> Result<(), String> {
     let ind = Individual::new(widget_id);
-    ind.add_property(conn, PRED_SIZE_WIDTH, vec![Object::Number(size.width)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_SIZE_WIDTH, vec![Object::Number(size.width)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_SIZE_HEIGHT, vec![Object::Number(size.height)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_SIZE_HEIGHT, vec![Object::Number(size.height)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())
 }
 
-fn owl_update_widget_window_state(
-    conn: &mut Connection,
+async fn owl_update_widget_window_state(
+    conn: &Connection,
     widget_id: &str,
     state: &WindowState,
 ) -> Result<(), String> {
@@ -213,17 +213,17 @@ fn owl_update_widget_window_state(
         WindowState::Maximized => "maximized",
     };
     let ind = Individual::new(widget_id);
-    ind.add_property(conn, PRED_WINDOW_STATE, vec![str_obj(state_str)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_WINDOW_STATE, vec![str_obj(state_str)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())
 }
 
-fn owl_update_widget_content(
-    conn: &mut Connection,
+async fn owl_update_widget_content(
+    conn: &Connection,
     widget_id: &str,
     content: &str,
 ) -> Result<(), String> {
     let ind = Individual::new(widget_id);
-    ind.add_property(conn, PRED_CONTENT, vec![str_obj(content)], WIDGET_ORIGIN)
+    ind.add_property(conn, PRED_CONTENT, vec![str_obj(content)], WIDGET_ORIGIN).await
         .map_err(|e| e.to_string())
 }
 
@@ -278,8 +278,8 @@ pub fn blackboard__list_widget_types() -> Vec<WidgetType> {
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn widget_blackboard__get_widgets(executor: State<'_, DbExecutor>) -> Result<Vec<Widget>, String> {
-    executor.read(|conn| {
-        owl_get_all_widgets(conn)
+    executor.read(|conn| async move {
+        owl_get_all_widgets(&conn).await
     }).await
 }
 
@@ -321,8 +321,8 @@ pub async fn widget_blackboard__add_widget(
     let widget_clone = widget.clone();
     let executor_clone = executor.inner().clone();
     tokio::spawn(async move {
-        executor_clone.write(move |conn| {
-            owl_insert_widget(conn, &widget_clone)?;
+        executor_clone.write(move |conn| async move {
+            owl_insert_widget(&conn, &widget_clone).await?;
             Ok(widget_clone.id.clone())
         }).await.ok();
     });
@@ -341,8 +341,8 @@ pub async fn widget_blackboard__remove_widget(
 
     let executor_clone = executor.inner().clone();
     tokio::spawn(async move {
-        executor_clone.write(move |conn| {
-            owl_delete_widget(conn, &widget_id)?;
+        executor_clone.write(move |conn| async move {
+            owl_delete_widget(&conn, &widget_id).await?;
             Ok("deleted".to_string())
         }).await.ok();
     });
@@ -357,8 +357,8 @@ pub async fn widget_blackboard__update_widget_position(
     position: Position,
     executor: State<'_, DbExecutor>
 ) -> Result<(), String> {
-    executor.write(move |conn| {
-        owl_update_widget_position(conn, &widget_id, &position)?;
+    executor.write(move |conn| async move {
+        owl_update_widget_position(&conn, &widget_id, &position).await?;
         Ok("updated".to_string())
     }).await?;
     Ok(())
@@ -371,8 +371,8 @@ pub async fn widget_blackboard__update_widget_size(
     size: Size,
     executor: State<'_, DbExecutor>
 ) -> Result<(), String> {
-    executor.write(move |conn| {
-        owl_update_widget_size(conn, &widget_id, &size)?;
+    executor.write(move |conn| async move {
+        owl_update_widget_size(&conn, &widget_id, &size).await?;
         Ok("updated".to_string())
     }).await?;
     Ok(())
@@ -385,8 +385,8 @@ pub async fn widget_blackboard__update_widget_window_state(
     window_state: WindowState,
     executor: State<'_, DbExecutor>
 ) -> Result<(), String> {
-    executor.write(move |conn| {
-        owl_update_widget_window_state(conn, &widget_id, &window_state)?;
+    executor.write(move |conn| async move {
+        owl_update_widget_window_state(&conn, &widget_id, &window_state).await?;
         Ok("updated".to_string())
     }).await?;
     Ok(())
@@ -401,9 +401,9 @@ pub async fn widget_blackboard__update_widget_content(
     executor: State<'_, DbExecutor>
 ) -> Result<(), String> {
     let widget_id_clone = widget_id.clone();
-    executor.write(move |conn| {
-        owl_update_widget_content(conn, &widget_id_clone, &content)?;
-        if let Ok(Some(ind)) = Individual::get(conn, &widget_id_clone) {
+    executor.write(move |conn| async move {
+        owl_update_widget_content(&conn, &widget_id_clone, &content).await?;
+        if let Ok(Some(ind)) = Individual::get(&conn, &widget_id_clone).await {
             let is_mermaid = ind.properties.iter()
                 .any(|(p, v)| p == PRED_WIDGET_TYPE && v.as_literal().map_or(false, |s| s == "mermaid"));
             if is_mermaid {
@@ -412,7 +412,7 @@ pub async fn widget_blackboard__update_widget_content(
                     .and_then(|(_, v)| v.as_literal())
                 {
                     Individual::new(&entity_id)
-                        .add_property(conn, "foundation:diagramSource", vec![str_obj(&content)], WIDGET_ORIGIN)
+                        .add_property(&conn, "foundation:diagramSource", vec![str_obj(&content)], WIDGET_ORIGIN).await
                         .ok();
                 }
             }
@@ -429,13 +429,13 @@ pub async fn widget_blackboard__list_widget_definitions(
     concept_iri: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<WidgetDefinitionInfo>, String> {
-    executor.read(move |conn| {
-        let widget_iris = crate::owl::find_entities_with_property(conn, rdf::TYPE, "foundation:WidgetDefinition")
+    executor.read(move |conn| async move {
+        let widget_iris = crate::owl::find_entities_with_property(&conn, rdf::TYPE, "foundation:WidgetDefinition").await
             .map_err(|e| e.to_string())?;
 
         let mut results = Vec::new();
         for iri in widget_iris {
-            let ind = match Individual::get(conn, &iri) {
+            let ind = match Individual::get(&conn, &iri).await {
                 Ok(Some(ind)) => ind,
                 _ => continue,
             };
@@ -480,4 +480,3 @@ pub async fn widget_blackboard__list_widget_definitions(
         Ok(results)
     }).await
 }
-

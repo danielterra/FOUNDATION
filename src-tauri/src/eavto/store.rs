@@ -2,83 +2,51 @@
 ///
 /// Functions for asserting and retracting triples (append-only, immutable)
 
-use rusqlite::Connection;
+use turso::{Connection, params};
 use super::triple_type::Triple;
 use super::object_type::Object;
 use crate::commands::log_backend;
 use chrono;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-std::thread_local! {
-    /// Set to true while batch_operations holds an outer transaction open.
-    /// When true, assert_triples/retract_triples use SAVEPOINTs instead of BEGIN
-    /// so that all operations participate in the same atomic transaction.
-    static IN_BATCH_TX: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+static SP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn next_sp_name() -> String {
+    format!("eavto_sp_{}", SP_COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
-/// Marks the current thread as being inside a batch transaction.
-/// Returns a guard that clears the flag on drop.
-pub fn enter_batch_transaction() -> BatchTransactionGuard {
-    IN_BATCH_TX.with(|f| f.set(true));
-    BatchTransactionGuard(())
-}
-
-pub struct BatchTransactionGuard(());
-
-impl Drop for BatchTransactionGuard {
-    fn drop(&mut self) {
-        IN_BATCH_TX.with(|f| f.set(false));
-    }
-}
-
-/// Assert triples (add new facts to the store)
+/// Assert triples (add new facts to the store).
 ///
 /// Returns the transaction ID of the assertion.
-/// If called from within batch_operations (enter_batch_transaction was called),
-/// uses a nested SAVEPOINT so all calls participate in a single atomic transaction.
-pub fn assert_triples(
-    conn: &mut Connection,
+/// Uses a SAVEPOINT, which is safe to call both inside and outside an outer transaction.
+pub async fn assert_triples(
+    conn: &Connection,
     triples: &[Triple],
     origin: &str,
 ) -> Result<i64> {
-    if IN_BATCH_TX.with(|f| f.get()) {
-        assert_triples_savepoint(conn, triples, origin)
-    } else {
-        assert_triples_begin(conn, triples, origin)
+    let sp = next_sp_name();
+    conn.execute(&format!("SAVEPOINT {}", sp), ()).await?;
+    match do_assert_triples(conn, triples, origin).await {
+        Ok(tx_id) => {
+            conn.execute(&format!("RELEASE {}", sp), ()).await?;
+            Ok(tx_id)
+        }
+        Err(e) => {
+            let _ = conn.execute(&format!("ROLLBACK TO {}", sp), ()).await;
+            Err(e)
+        }
     }
 }
 
-fn assert_triples_begin(
-    conn: &mut Connection,
-    triples: &[Triple],
-    origin: &str,
-) -> Result<i64> {
-    let tx = conn.transaction()?;
-    let tx_id = do_assert_triples(&tx, triples, origin)?;
-    tx.commit()?;
-    Ok(tx_id)
-}
-
-fn assert_triples_savepoint(
-    conn: &mut Connection,
-    triples: &[Triple],
-    origin: &str,
-) -> Result<i64> {
-    let sp = conn.savepoint()?;
-    let tx_id = do_assert_triples(&sp, triples, origin)?;
-    sp.commit()?;
-    Ok(tx_id)
-}
-
-fn do_assert_triples(
-    tx: &rusqlite::Connection,
+async fn do_assert_triples(
+    conn: &Connection,
     triples: &[Triple],
     origin: &str,
 ) -> Result<i64> {
     let now = now_millis();
 
-    // Group incoming triples by (subject, predicate), preserving order.
     let mut groups: Vec<((&str, &str), Vec<usize>)> = Vec::new();
     let mut group_index: std::collections::HashMap<(&str, &str), usize> =
         std::collections::HashMap::new();
@@ -92,12 +60,11 @@ fn do_assert_triples(
         }
     }
 
-    // Compare incoming with existing to find what actually needs to change.
     let mut rows_to_retract: Vec<i64> = Vec::new();
     let mut indices_to_insert: Vec<usize> = Vec::new();
 
     for ((subject, predicate), incoming_indices) in &groups {
-        let existing = fetch_existing_rows(tx, subject, predicate)?;
+        let existing = fetch_existing_rows(conn, subject, predicate).await?;
         let incoming: Vec<&Object> = incoming_indices.iter().map(|&i| &triples[i].object).collect();
 
         for row in &existing {
@@ -112,71 +79,22 @@ fn do_assert_triples(
         }
     }
 
-    // Nothing to do — return 0 to signal no-op without writing any rows.
     if rows_to_retract.is_empty() && indices_to_insert.is_empty() {
         return Ok(0);
     }
 
-    tx.execute(
+    conn.execute(
         "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
-        (origin, now),
-    )?;
-    let tx_id = tx.last_insert_rowid();
-    let origin_id = get_or_create_origin(tx, origin)?;
+        params![origin, now],
+    ).await?;
+    let tx_id = last_insert_rowid(conn).await?;
+    let origin_id = get_or_create_origin(conn, origin).await?;
 
     for id in &rows_to_retract {
-        tx.execute("UPDATE triples SET retracted = 1 WHERE rowid = ?", [id])?;
+        conn.execute("UPDATE triples SET retracted = 1 WHERE rowid = ?", params![id]).await?;
     }
     for &idx in &indices_to_insert {
-        insert_triple(tx, &triples[idx], tx_id, origin_id, now)?;
-    }
-
-    {
-        let mut stmt = tx.prepare(
-            "SELECT subject, predicate, object_datatype, object_number, object_integer
-             FROM triples
-             WHERE tx = ?
-             AND (
-               (object_datatype IN ('xsd:decimal', 'xsd:double', 'xsd:float')
-                AND object_number IS NULL) OR
-               (object_datatype IN ('xsd:integer', 'xsd:int', 'xsd:long')
-                AND object_integer IS NULL)
-             )"
-        )?;
-
-        let bad_triples: Vec<(String, String, String, Option<f64>, Option<i64>)> =
-            stmt.query_map([tx_id], |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-
-        if !bad_triples.is_empty() {
-            log_backend(
-                "warn",
-                &format!(
-                    "\n⚠️  FOUND {} TRIPLES WITH NUMERIC DATATYPE BUT NO TYPED COLUMN:",
-                    bad_triples.len(),
-                ),
-            );
-            for (idx, (subj, pred, dt, num, int)) in bad_triples.iter().enumerate().take(5) {
-                log_backend(
-                    "warn",
-                    &format!(
-                        "  #{}: {} {} (datatype={}, object_number={:?}, object_integer={:?})",
-                        idx + 1, subj, pred, dt, num, int,
-                    ),
-                );
-            }
-            if bad_triples.len() > 5 {
-                log_backend("warn", &format!("  ... and {} more", bad_triples.len() - 5));
-            }
-        }
+        insert_triple(conn, &triples[idx], tx_id, origin_id, now).await?;
     }
 
     Ok(tx_id)
@@ -185,37 +103,37 @@ fn do_assert_triples(
 /// Append triples without retracting existing (subject, predicate) pairs.
 ///
 /// Unlike `assert_triples`, this does NOT retract existing values for the same
-/// (subject, predicate) before inserting. Use this when you need to add triples
-/// that share a predicate with existing triples that must be preserved.
-pub fn append_triples(
-    conn: &mut Connection,
+/// (subject, predicate) before inserting.
+/// Uses a SAVEPOINT, which is safe to call both inside and outside an outer transaction.
+pub async fn append_triples(
+    conn: &Connection,
     triples: &[Triple],
     origin: &str,
 ) -> Result<i64> {
-    if IN_BATCH_TX.with(|f| f.get()) {
-        let sp = conn.savepoint()?;
-        let tx_id = do_append_triples(&sp, triples, origin)?;
-        sp.commit()?;
-        Ok(tx_id)
-    } else {
-        let tx = conn.transaction()?;
-        let tx_id = do_append_triples(&tx, triples, origin)?;
-        tx.commit()?;
-        Ok(tx_id)
+    let sp = next_sp_name();
+    conn.execute(&format!("SAVEPOINT {}", sp), ()).await?;
+    match do_append_triples(conn, triples, origin).await {
+        Ok(tx_id) => {
+            conn.execute(&format!("RELEASE {}", sp), ()).await?;
+            Ok(tx_id)
+        }
+        Err(e) => {
+            let _ = conn.execute(&format!("ROLLBACK TO {}", sp), ()).await;
+            Err(e)
+        }
     }
 }
 
-fn do_append_triples(
-    tx: &rusqlite::Connection,
+async fn do_append_triples(
+    conn: &Connection,
     triples: &[Triple],
     origin: &str,
 ) -> Result<i64> {
     let now = now_millis();
 
-    // Only insert triples whose exact (subject, predicate, object) doesn't already exist.
     let mut indices_to_insert: Vec<usize> = Vec::new();
     for (i, triple) in triples.iter().enumerate() {
-        let existing = fetch_existing_rows(tx, &triple.subject, &triple.predicate)?;
+        let existing = fetch_existing_rows(conn, &triple.subject, &triple.predicate).await?;
         if !existing.iter().any(|row| object_matches_row(&triple.object, row)) {
             indices_to_insert.push(i);
         }
@@ -225,114 +143,116 @@ fn do_append_triples(
         return Ok(0);
     }
 
-    tx.execute(
+    conn.execute(
         "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
-        (origin, now),
-    )?;
-    let tx_id = tx.last_insert_rowid();
-    let origin_id = get_or_create_origin(tx, origin)?;
+        params![origin, now],
+    ).await?;
+    let tx_id = last_insert_rowid(conn).await?;
+    let origin_id = get_or_create_origin(conn, origin).await?;
     for &idx in &indices_to_insert {
-        insert_triple(tx, &triples[idx], tx_id, origin_id, now)?;
+        insert_triple(conn, &triples[idx], tx_id, origin_id, now).await?;
     }
     Ok(tx_id)
 }
 
-/// Retract triples (mark as retracted, don't delete)
+/// Retract triples (mark as retracted, don't delete).
 ///
 /// Returns the transaction ID of the retraction.
-/// If called from within batch_operations (enter_batch_transaction was called),
-/// uses a nested SAVEPOINT so all calls participate in a single atomic transaction.
-pub fn retract_triples(
-    conn: &mut Connection,
+/// Uses a SAVEPOINT, which is safe to call both inside and outside an outer transaction.
+pub async fn retract_triples(
+    conn: &Connection,
     triples: &[Triple],
     origin: &str,
 ) -> Result<i64> {
-    if IN_BATCH_TX.with(|f| f.get()) {
-        let sp = conn.savepoint()?;
-        let tx_id = do_retract_triples(&sp, triples, origin)?;
-        sp.commit()?;
-        Ok(tx_id)
-    } else {
-        let tx = conn.transaction()?;
-        let tx_id = do_retract_triples(&tx, triples, origin)?;
-        tx.commit()?;
-        Ok(tx_id)
+    let sp = next_sp_name();
+    conn.execute(&format!("SAVEPOINT {}", sp), ()).await?;
+    match do_retract_triples(conn, triples, origin).await {
+        Ok(tx_id) => {
+            conn.execute(&format!("RELEASE {}", sp), ()).await?;
+            Ok(tx_id)
+        }
+        Err(e) => {
+            let _ = conn.execute(&format!("ROLLBACK TO {}", sp), ()).await;
+            Err(e)
+        }
     }
 }
 
-fn do_retract_triples(
-    tx: &Connection,
+async fn do_retract_triples(
+    conn: &Connection,
     triples: &[Triple],
     origin: &str,
 ) -> Result<i64> {
     let now = now_millis();
-    tx.execute(
+    conn.execute(
         "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
-        (origin, now),
-    )?;
+        params![origin, now],
+    ).await?;
 
-    let tx_id = tx.last_insert_rowid();
-    let _origin_id = get_or_create_origin(tx, origin)?;
+    let tx_id = last_insert_rowid(conn).await?;
+    let _origin_id = get_or_create_origin(conn, origin).await?;
 
-    // We need to match the exact triple (subject, predicate, AND object/object_value)
     for triple in triples {
         match &triple.object {
             Object::Iri(iri) | Object::Blank(iri) => {
-                tx.execute(
+                conn.execute(
                     "UPDATE triples
                      SET retracted = 1
                      WHERE subject = ? AND predicate = ? AND object = ? AND retracted = 0",
-                    (&triple.subject, &triple.predicate, iri),
-                )?;
+                    params![triple.subject.as_str(), triple.predicate.as_str(), iri.as_str()],
+                ).await?;
             }
             Object::Literal { value, datatype, language } => {
-                tx.execute(
+                let dt = datatype.as_deref().unwrap_or("xsd:string");
+                let lang = language.as_deref().unwrap_or("");
+                conn.execute(
                     "UPDATE triples
                      SET retracted = 1
                      WHERE subject = ? AND predicate = ? AND object_value = ?
-                       AND COALESCE(object_datatype, 'xsd:string') = COALESCE(?, 'xsd:string')
-                       AND COALESCE(object_language, '') = COALESCE(?, '')
+                       AND COALESCE(object_datatype, 'xsd:string') = ?
+                       AND COALESCE(object_language, '') = ?
                        AND retracted = 0",
-                    (
-                        &triple.subject,
-                        &triple.predicate,
-                        value,
-                        datatype.as_ref().unwrap_or(&"xsd:string".to_string()),
-                        language.as_ref().unwrap_or(&"".to_string()),
-                    ),
-                )?;
+                    params![
+                        triple.subject.as_str(),
+                        triple.predicate.as_str(),
+                        value.as_str(),
+                        dt,
+                        lang,
+                    ],
+                ).await?;
             }
             Object::Integer(i) => {
-                tx.execute(
+                conn.execute(
                     "UPDATE triples
                      SET retracted = 1
                      WHERE subject = ? AND predicate = ? AND object_integer = ? AND retracted = 0",
-                    (&triple.subject, &triple.predicate, i),
-                )?;
+                    params![triple.subject.as_str(), triple.predicate.as_str(), i],
+                ).await?;
             }
             Object::Number(n) => {
-                tx.execute(
+                conn.execute(
                     "UPDATE triples
                      SET retracted = 1
                      WHERE subject = ? AND predicate = ? AND object_number = ? AND retracted = 0",
-                    (&triple.subject, &triple.predicate, n),
-                )?;
+                    params![triple.subject.as_str(), triple.predicate.as_str(), n],
+                ).await?;
             }
             Object::Boolean(b) => {
-                tx.execute(
+                let bval: i64 = if *b { 1 } else { 0 };
+                conn.execute(
                     "UPDATE triples
                      SET retracted = 1
                      WHERE subject = ? AND predicate = ? AND object_boolean = ? AND retracted = 0",
-                    (&triple.subject, &triple.predicate, if *b { 1 } else { 0 }),
-                )?;
+                    params![triple.subject.as_str(), triple.predicate.as_str(), bval],
+                ).await?;
             }
             Object::DateTime(rfc3339) => {
-                tx.execute(
+                conn.execute(
                     "UPDATE triples
                      SET retracted = 1
                      WHERE subject = ? AND predicate = ? AND object_value = ? AND retracted = 0",
-                    (&triple.subject, &triple.predicate, rfc3339),
-                )?;
+                    params![triple.subject.as_str(), triple.predicate.as_str(), rfc3339.as_str()],
+                ).await?;
             }
         }
     }
@@ -353,31 +273,34 @@ struct ExistingRow {
 }
 
 /// Fetch all active (retracted = 0) rows for a given (subject, predicate) pair.
-fn fetch_existing_rows(
-    tx: &rusqlite::Connection,
+async fn fetch_existing_rows(
+    conn: &Connection,
     subject: &str,
     predicate: &str,
-) -> rusqlite::Result<Vec<ExistingRow>> {
-    let mut stmt = tx.prepare(
+) -> Result<Vec<ExistingRow>> {
+    let mut rows = conn.query(
         "SELECT rowid, object, object_value, object_datatype, object_language,
                 object_integer, object_number, object_boolean
          FROM triples
          WHERE subject = ? AND predicate = ? AND retracted = 0",
-    )?;
-    let rows = stmt.query_map([subject, predicate], |row| {
-        Ok(ExistingRow {
-            rowid: row.get(0)?,
-            object: row.get(1)?,
-            object_value: row.get(2)?,
-            object_datatype: row.get(3)?,
-            object_language: row.get(4)?,
-            object_integer: row.get(5)?,
-            object_number: row.get(6)?,
-            object_boolean: row.get(7)?,
-        })
-    })?
-    .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+        params![subject, predicate],
+    ).await?;
+    let mut result = Vec::new();
+
+    while let Some(row) = rows.next().await? {
+        result.push(ExistingRow {
+            rowid: row.get_value(0)?.as_integer().copied().unwrap_or(0),
+            object: opt_text(&row, 1)?,
+            object_value: opt_text(&row, 2)?,
+            object_datatype: opt_text(&row, 3)?,
+            object_language: opt_text(&row, 4)?,
+            object_integer: row.get_value(5)?.as_integer().copied(),
+            object_number: row.get_value(6)?.as_real().copied(),
+            object_boolean: row.get_value(7)?.as_integer().copied(),
+        });
+    }
+
+    Ok(result)
 }
 
 /// Returns true if an incoming `Object` is semantically identical to a DB row.
@@ -398,15 +321,14 @@ fn object_matches_row(obj: &Object, row: &ExistingRow) -> bool {
     }
 }
 
-/// Insert a single triple into the database
-fn insert_triple(
-    tx: &rusqlite::Connection,
+/// Insert a single triple into the database.
+async fn insert_triple(
+    conn: &Connection,
     triple: &Triple,
     tx_id: i64,
     origin_id: i64,
     created_at: i64,
-) -> rusqlite::Result<()> {
-    // Need to compute everything together to ensure datatype matches typed columns
+) -> Result<()> {
     let int_str;
     let num_str;
     let bool_str;
@@ -420,44 +342,43 @@ fn insert_triple(
         object_number,
         object_integer,
         object_boolean,
-    ) = match &triple.object {
-        Object::Iri(iri) => (Some(iri.as_str()), None, None, None, None, None, None),
-        Object::Blank(blank) => (Some(blank.as_str()), None, None, None, None, None, None),
+    ): (Option<&str>, Option<&str>, Option<&str>, Option<&str>, Option<f64>, Option<i64>, Option<i64>) =
+        match &triple.object {
+            Object::Iri(iri) => (Some(iri.as_str()), None, None, None, None, None, None),
+            Object::Blank(blank) => (Some(blank.as_str()), None, None, None, None, None, None),
 
-        Object::Integer(i) => {
-            int_str = i.to_string();
-            (None, Some(int_str.as_str()), Some("xsd:integer"), None, None, Some(*i), None)
-        }
-        Object::Number(n) => {
-            num_str = n.to_string();
-            (None, Some(num_str.as_str()), Some("xsd:decimal"), None, Some(*n), None, None)
-        }
-        Object::Boolean(b) => {
-            bool_str = b.to_string();
-            (
-                None,
-                Some(bool_str.as_str()),
-                Some("xsd:boolean"),
-                None,
-                None,
-                None,
-                Some(if *b { 1 } else { 0 }),
-            )
-        }
-        Object::DateTime(rfc3339) => {
-            dt_str = chrono::DateTime::parse_from_rfc3339(rfc3339)
-                .unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00+00:00").unwrap())
-                .with_timezone(&chrono::Utc)
-                .to_rfc3339();
-            (None, Some(dt_str.as_str()), Some("xsd:dateTime"), None, None, None, None)
-        }
+            Object::Integer(i) => {
+                int_str = i.to_string();
+                (None, Some(int_str.as_str()), Some("xsd:integer"), None, None, Some(*i), None)
+            }
+            Object::Number(n) => {
+                num_str = n.to_string();
+                (None, Some(num_str.as_str()), Some("xsd:decimal"), None, Some(*n), None, None)
+            }
+            Object::Boolean(b) => {
+                bool_str = b.to_string();
+                (
+                    None,
+                    Some(bool_str.as_str()),
+                    Some("xsd:boolean"),
+                    None,
+                    None,
+                    None,
+                    Some(if *b { 1 } else { 0 }),
+                )
+            }
+            Object::DateTime(rfc3339) => {
+                dt_str = chrono::DateTime::parse_from_rfc3339(rfc3339)
+                    .unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00+00:00").unwrap())
+                    .with_timezone(&chrono::Utc)
+                    .to_rfc3339();
+                (None, Some(dt_str.as_str()), Some("xsd:dateTime"), None, None, None, None)
+            }
 
-        Object::Literal { value, datatype, language } => {
-            // If parse fails, return an error (user provided invalid data)
-            match datatype.as_deref() {
-                Some("xsd:decimal") | Some("xsd:double") | Some("xsd:float") => {
-                    let n = value.parse::<f64>()
-                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+            Object::Literal { value, datatype, language } => {
+                match datatype.as_deref() {
+                    Some("xsd:decimal") | Some("xsd:double") | Some("xsd:float") => {
+                        let n = value.parse::<f64>().map_err(|e| {
                             std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 format!(
@@ -466,20 +387,19 @@ fn insert_triple(
                                     value, triple.subject, triple.predicate, value, e,
                                 ),
                             )
-                        )))?;
-                    (
-                        None,
-                        Some(value.as_str()),
-                        datatype.as_deref(),
-                        language.as_deref(),
-                        Some(n),
-                        None,
-                        None,
-                    )
-                }
-                Some("xsd:integer") | Some("xsd:int") | Some("xsd:long") => {
-                    let i = value.parse::<i64>()
-                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                        })?;
+                        (
+                            None,
+                            Some(value.as_str()),
+                            datatype.as_deref(),
+                            language.as_deref(),
+                            Some(n),
+                            None,
+                            None,
+                        )
+                    }
+                    Some("xsd:integer") | Some("xsd:int") | Some("xsd:long") => {
+                        let i = value.parse::<i64>().map_err(|e| {
                             std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 format!(
@@ -488,116 +408,111 @@ fn insert_triple(
                                     value, triple.subject, triple.predicate, value, e,
                                 ),
                             )
-                        )))?;
-                    (
-                        None,
-                        Some(value.as_str()),
-                        datatype.as_deref(),
-                        language.as_deref(),
-                        None,
-                        Some(i),
-                        None,
-                    )
-                }
-                Some("xsd:boolean") => {
-                    let b = match value.as_str() {
-                        "true" | "1" => 1,
-                        "false" | "0" => 0,
-                        _ => {
-                            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                                std::io::Error::new(
+                        })?;
+                        (
+                            None,
+                            Some(value.as_str()),
+                            datatype.as_deref(),
+                            language.as_deref(),
+                            None,
+                            Some(i),
+                            None,
+                        )
+                    }
+                    Some("xsd:boolean") => {
+                        let b: i64 = match value.as_str() {
+                            "true" | "1" => 1,
+                            "false" | "0" => 0,
+                            _ => {
+                                return Err(Box::new(std::io::Error::new(
                                     std::io::ErrorKind::InvalidData,
                                     format!(
                                         "Invalid boolean literal '{}' for triple: {} {} {} \
                                          - Expected: 'true', 'false', '1', or '0'",
                                         value, triple.subject, triple.predicate, value,
                                     ),
-                                )
-                            )));
-                        }
-                    };
-                    (
-                        None,
-                        Some(value.as_str()),
-                        datatype.as_deref(),
-                        language.as_deref(),
-                        None,
-                        None,
-                        Some(b),
-                    )
-                }
-                Some("xsd:dateTime") => {
-                    let parsed = chrono::DateTime::parse_from_rfc3339(value)
-                        .map_err(|_| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                                )));
+                            }
+                        };
+                        (
+                            None,
+                            Some(value.as_str()),
+                            datatype.as_deref(),
+                            language.as_deref(),
+                            None,
+                            None,
+                            Some(b),
+                        )
+                    }
+                    Some("xsd:dateTime") => {
+                        let parsed = chrono::DateTime::parse_from_rfc3339(value).map_err(|_| {
                             std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 format!(
                                     "Failed to parse dateTime literal '{}' for triple: \
-                                     {} {} {} - Expected RFC3339 string (e.g. '2026-03-08T00:00:00+00:00')",
+                                     {} {} {} - Expected RFC3339 string",
                                     value, triple.subject, triple.predicate, value,
                                 ),
                             )
-                        )))?;
-                    dt_str = parsed.with_timezone(&chrono::Utc).to_rfc3339();
-                    (
-                        None,
-                        Some(dt_str.as_str()),
-                        datatype.as_deref(),
-                        language.as_deref(),
-                        None,
-                        None,
-                        None,
-                    )
-                }
-                Some("xsd:date") => {
-                    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
-                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(
+                        })?;
+                        dt_str = parsed.with_timezone(&chrono::Utc).to_rfc3339();
+                        (
+                            None,
+                            Some(dt_str.as_str()),
+                            datatype.as_deref(),
+                            language.as_deref(),
+                            None,
+                            None,
+                            None,
+                        )
+                    }
+                    Some("xsd:date") => {
+                        chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|e| {
                             std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 format!(
                                     "Failed to parse date literal '{}' for triple: \
-                                     {} {} {} - Error: {} - Expected format: YYYY-MM-DD \
-                                     (e.g., '2020-11-17')",
+                                     {} {} {} - Error: {} - Expected format: YYYY-MM-DD",
                                     value, triple.subject, triple.predicate, value, e,
                                 ),
                             )
-                        )))?;
-                    (
-                        None,
-                        Some(value.as_str()),
-                        datatype.as_deref(),
-                        language.as_deref(),
-                        None,
-                        None,
-                        None,
-                    )
-                }
-                _ => {
-                    (
-                        None,
-                        Some(value.as_str()),
-                        datatype.as_deref(),
-                        language.as_deref(),
-                        None,
-                        None,
-                        None,
-                    )
+                        })?;
+                        (
+                            None,
+                            Some(value.as_str()),
+                            datatype.as_deref(),
+                            language.as_deref(),
+                            None,
+                            None,
+                            None,
+                        )
+                    }
+                    _ => {
+                        (
+                            None,
+                            Some(value.as_str()),
+                            datatype.as_deref(),
+                            language.as_deref(),
+                            None,
+                            None,
+                            None,
+                        )
+                    }
                 }
             }
-        }
-    };
+        };
 
     let object_type = triple.object.object_type();
 
-    let result = tx.execute(
+    let result = conn.execute(
         "INSERT INTO triples (
             subject, predicate, object, object_value, object_datatype, object_language,
             object_type, object_number, object_integer, object_boolean,
             tx, origin_id, retracted, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
-        rusqlite::params![
-            &triple.subject,
-            &triple.predicate,
+        params![
+            triple.subject.as_str(),
+            triple.predicate.as_str(),
             object,
             object_value,
             object_datatype,
@@ -610,7 +525,7 @@ fn insert_triple(
             origin_id,
             created_at,
         ],
-    );
+    ).await;
 
     if let Err(e) = result {
         log_backend("error", &format!("\n❌ INSERT FAILED:
@@ -630,48 +545,47 @@ fn insert_triple(
             object_integer,
             object_boolean,
             e));
-        return Err(e);
+        return Err(Box::new(e));
     }
 
     Ok(())
 }
 
-/// Get or create origin ID
-fn get_or_create_origin(tx: &rusqlite::Connection, origin: &str) -> rusqlite::Result<i64> {
-    match tx.query_row(
-        "SELECT id FROM origins WHERE name = ?",
-        [origin],
-        |row| row.get(0),
-    ) {
-        Ok(id) => Ok(id),
-        Err(rusqlite::Error::QueryReturnedNoRows) => {
-            tx.execute("INSERT INTO origins (name) VALUES (?)", [origin])?;
-            Ok(tx.last_insert_rowid())
-        }
-        Err(e) => Err(e),
+/// Get or create origin ID.
+async fn get_or_create_origin(conn: &Connection, origin: &str) -> Result<i64> {
+    let mut rows = conn.query("SELECT id FROM origins WHERE name = ?", params![origin]).await?;
+
+    if let Some(row) = rows.next().await? {
+        return Ok(row.get_value(0)?.as_integer().copied().unwrap_or(0));
     }
+
+    conn.execute("INSERT INTO origins (name) VALUES (?)", params![origin]).await?;
+    last_insert_rowid(conn).await
 }
 
 /// Rename an IRI throughout the store.
 ///
 /// Retracts all active triples that reference `old_iri` (as subject or IRI object)
 /// and re-inserts them with `new_iri`. No-op if there are no matching triples.
-pub fn rename_iri(
-    conn: &mut Connection,
+/// Uses a SAVEPOINT, which is safe to call both inside and outside an outer transaction.
+pub async fn rename_iri(
+    conn: &Connection,
     old_iri: &str,
     new_iri: &str,
     origin: &str,
 ) -> Result<()> {
-    if IN_BATCH_TX.with(|f| f.get()) {
-        let sp = conn.savepoint()?;
-        do_rename_iri(&sp, old_iri, new_iri, origin)?;
-        sp.commit()?;
-    } else {
-        let tx = conn.transaction()?;
-        do_rename_iri(&tx, old_iri, new_iri, origin)?;
-        tx.commit()?;
+    let sp = next_sp_name();
+    conn.execute(&format!("SAVEPOINT {}", sp), ()).await?;
+    match do_rename_iri(conn, old_iri, new_iri, origin).await {
+        Ok(()) => {
+            conn.execute(&format!("RELEASE {}", sp), ()).await?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute(&format!("ROLLBACK TO {}", sp), ()).await;
+            Err(e)
+        }
     }
-    Ok(())
 }
 
 struct FullRow {
@@ -688,49 +602,52 @@ struct FullRow {
     object_boolean: Option<i64>,
 }
 
-fn do_rename_iri(
-    tx: &rusqlite::Connection,
+async fn do_rename_iri(
+    conn: &Connection,
     old_iri: &str,
     new_iri: &str,
     origin: &str,
 ) -> Result<()> {
-    let mut stmt = tx.prepare(
+    let mut stmt = conn.prepare(
         "SELECT rowid, subject, predicate, object, object_value, object_datatype,
                 object_language, object_type, object_number, object_integer, object_boolean
          FROM triples
          WHERE (subject = ?1 OR object = ?1) AND retracted = 0"
-    )?;
+    ).await?;
 
-    let rows: Vec<FullRow> = stmt.query_map([old_iri], |row| {
-        Ok(FullRow {
-            rowid: row.get(0)?,
-            subject: row.get(1)?,
-            predicate: row.get(2)?,
-            object: row.get(3)?,
-            object_value: row.get(4)?,
-            object_datatype: row.get(5)?,
-            object_language: row.get(6)?,
-            object_type: row.get(7)?,
-            object_number: row.get(8)?,
-            object_integer: row.get(9)?,
-            object_boolean: row.get(10)?,
-        })
-    })?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut rows = stmt.query(params![old_iri]).await?;
+    let mut full_rows: Vec<FullRow> = Vec::new();
 
-    if rows.is_empty() {
+    while let Some(row) = rows.next().await? {
+        full_rows.push(FullRow {
+            rowid: row.get_value(0)?.as_integer().copied().unwrap_or(0),
+            subject: row.get_value(1)?.as_text().cloned().unwrap_or_default(),
+            predicate: row.get_value(2)?.as_text().cloned().unwrap_or_default(),
+            object: opt_text(&row, 3)?,
+            object_value: opt_text(&row, 4)?,
+            object_datatype: opt_text(&row, 5)?,
+            object_language: opt_text(&row, 6)?,
+            object_type: row.get_value(7)?.as_text().cloned().unwrap_or_default(),
+            object_number: row.get_value(8)?.as_real().copied(),
+            object_integer: row.get_value(9)?.as_integer().copied(),
+            object_boolean: row.get_value(10)?.as_integer().copied(),
+        });
+    }
+
+    if full_rows.is_empty() {
         return Ok(());
     }
 
     let now = now_millis();
-    tx.execute(
+    conn.execute(
         "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
-        (origin, now),
-    )?;
-    let tx_id = tx.last_insert_rowid();
-    let origin_id = get_or_create_origin(tx, origin)?;
+        params![origin, now],
+    ).await?;
+    let tx_id = last_insert_rowid(conn).await?;
+    let origin_id = get_or_create_origin(conn, origin).await?;
 
-    for row in &rows {
-        tx.execute("UPDATE triples SET retracted = 1 WHERE rowid = ?", [row.rowid])?;
+    for row in &full_rows {
+        conn.execute("UPDATE triples SET retracted = 1 WHERE rowid = ?", params![row.rowid]).await?;
 
         let new_subject: &str = if row.subject == old_iri { new_iri } else { &row.subject };
         let new_object_owned: Option<String> = row.object.as_ref().map(|o| {
@@ -738,19 +655,19 @@ fn do_rename_iri(
         });
         let new_object: Option<&str> = new_object_owned.as_deref();
 
-        tx.execute(
+        conn.execute(
             "INSERT INTO triples (subject, predicate, object, object_value, object_datatype,
                                   object_language, object_type, object_number, object_integer,
                                   object_boolean, tx, origin_id, retracted, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
-            rusqlite::params![
+            params![
                 new_subject,
-                row.predicate,
+                row.predicate.as_str(),
                 new_object,
-                row.object_value,
-                row.object_datatype,
-                row.object_language,
-                row.object_type,
+                row.object_value.as_deref(),
+                row.object_datatype.as_deref(),
+                row.object_language.as_deref(),
+                row.object_type.as_str(),
                 row.object_number,
                 row.object_integer,
                 row.object_boolean,
@@ -758,13 +675,30 @@ fn do_rename_iri(
                 origin_id,
                 now,
             ],
-        )?;
+        ).await?;
     }
 
     Ok(())
 }
 
-/// Get current Unix time in milliseconds
+/// Get the rowid of the last inserted row.
+async fn last_insert_rowid(conn: &Connection) -> Result<i64> {
+    let mut rows = conn.query("SELECT last_insert_rowid()", ()).await?;
+    let row = rows.next().await?.ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
+        "last_insert_rowid() returned no rows".into()
+    })?;
+    Ok(row.get_value(0)?.as_integer().copied().unwrap_or(0))
+}
+
+/// Extract an optional text column value from a row.
+fn opt_text(row: &turso::Row, idx: usize) -> Result<Option<String>> {
+    Ok(match row.get_value(idx)? {
+        turso::Value::Null => None,
+        v => v.as_text().cloned(),
+    })
+}
+
+/// Get current Unix time in milliseconds.
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

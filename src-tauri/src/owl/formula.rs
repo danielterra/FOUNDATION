@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use turso::Connection;
 
 /// Extract `{{...}}` references from a formula string, returning the property IRIs.
 pub fn extract_references(formula: &str) -> Vec<String> {
@@ -22,18 +22,18 @@ pub fn extract_references(formula: &str) -> Vec<String> {
 /// Validate that adding `formula` to `property_iri` would not create a dependency cycle.
 ///
 /// Uses DFS with a visited stack that preserves the full chain for error reporting.
-pub fn validate_no_cycle(
+pub async fn validate_no_cycle(
     conn: &Connection,
     property_iri: &str,
     formula: &str,
 ) -> Result<(), crate::owl::OwlError> {
     let refs = extract_references(formula);
     let mut stack: Vec<String> = vec![property_iri.to_string()];
-    dfs_cycle_check(conn, property_iri, &refs, &mut stack)?;
+    dfs_cycle_check(conn, property_iri, &refs, &mut stack).await?;
     Ok(())
 }
 
-fn dfs_cycle_check(
+async fn dfs_cycle_check(
     conn: &Connection,
     root: &str,
     deps: &[String],
@@ -51,10 +51,10 @@ fn dfs_cycle_check(
 
         stack.push(dep.clone());
 
-        let dep_formula = query_formula(conn, dep);
+        let dep_formula = query_formula(conn, dep).await;
         if let Some(f) = dep_formula {
             let sub_deps = extract_references(&f);
-            dfs_cycle_check(conn, root, &sub_deps, stack)?;
+            Box::pin(dfs_cycle_check(conn, root, &sub_deps, stack)).await?;
         }
 
         stack.pop();
@@ -62,50 +62,63 @@ fn dfs_cycle_check(
     Ok(())
 }
 
-fn query_formula(conn: &Connection, property_iri: &str) -> Option<String> {
-    conn.query_row(
-        "SELECT object_value FROM triples WHERE subject = ? AND predicate = 'foundation:formula' AND retracted = 0 LIMIT 1",
-        rusqlite::params![property_iri],
-        |row| row.get::<_, String>(0),
-    ).ok()
+async fn query_formula(conn: &Connection, property_iri: &str) -> Option<String> {
+    let mut stmt = conn.prepare(
+        "SELECT object_value FROM triples WHERE subject = ? AND predicate = 'foundation:formula' AND retracted = 0 LIMIT 1"
+    ).await.ok()?;
+    let row = stmt.query_row(turso::params![property_iri]).await.ok()?;
+    row.get_value(0).ok()?.as_text().cloned()
 }
 
 /// Evaluate a formula for a specific instance, substituting property values and computing the result.
-///
-/// Uses `rusqlite::Connection` directly (same as `crate::eavto::Connection`).
-pub fn evaluate_formula_for_instance(
+pub async fn evaluate_formula_for_instance(
     conn: &Connection,
     instance_iri: &str,
     property_iri: &str,
 ) -> Result<String, String> {
-    evaluate_formula_for_instance_raw(conn, instance_iri, property_iri)
+    evaluate_formula_for_instance_raw(conn, instance_iri, property_iri).await
 }
 
-/// Evaluate a formula for a specific instance using a raw `rusqlite::Connection`.
-///
 /// Loads the `foundation:formula` triple for `property_iri`, substitutes all `{{ref}}` tokens
 /// with the corresponding literal values from the instance, and evaluates the resulting
 /// arithmetic expression.
-pub fn evaluate_formula_for_instance_raw(
+pub async fn evaluate_formula_for_instance_raw(
     conn: &Connection,
     instance_iri: &str,
     property_iri: &str,
 ) -> Result<String, String> {
-    let formula = conn.query_row(
-        "SELECT object_value FROM triples WHERE subject = ? AND predicate = 'foundation:formula' AND retracted = 0 LIMIT 1",
-        rusqlite::params![property_iri],
-        |row| row.get::<_, String>(0),
-    ).map_err(|e| format!("Failed to load formula for {}: {}", property_iri, e))?;
+    let formula = {
+        let mut stmt = conn.prepare(
+            "SELECT object_value FROM triples WHERE subject = ? AND predicate = 'foundation:formula' AND retracted = 0 LIMIT 1"
+        ).await.map_err(|e| format!("Failed to load formula for {}: {}", property_iri, e))?;
+        let row = stmt.query_row(turso::params![property_iri]).await
+            .map_err(|e| format!("Failed to load formula for {}: {}", property_iri, e))?;
+        row.get_value(0)
+            .map_err(|e| format!("Failed to load formula for {}: {}", property_iri, e))?
+            .as_text()
+            .cloned()
+            .ok_or_else(|| format!("Failed to load formula for {}: null value", property_iri))?
+    };
 
     let refs = extract_references(&formula);
     let mut expr = formula.clone();
 
     for ref_iri in &refs {
-        let value: Option<String> = conn.query_row(
-            "SELECT object_value FROM triples WHERE subject = ? AND predicate = ? AND retracted = 0 LIMIT 1",
-            rusqlite::params![instance_iri, ref_iri],
-            |row| row.get::<_, Option<String>>(0),
-        ).unwrap_or(None);
+        let value: Option<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT object_value FROM triples WHERE subject = ? AND predicate = ? AND retracted = 0 LIMIT 1"
+            ).await.ok();
+            if let Some(mut s) = stmt.take() {
+                s.query_row(turso::params![instance_iri, ref_iri.clone()]).await.ok()
+                    .and_then(|row| row.get_value(0).ok()
+                        .and_then(|v| match v {
+                            turso::Value::Null => None,
+                            other => other.as_text().cloned(),
+                        }))
+            } else {
+                None
+            }
+        };
 
         match value {
             Some(v) => {
@@ -143,12 +156,10 @@ pub fn eval_expr(expr: &str) -> Result<f64, String> {
         return Err("Empty expression".to_string());
     }
 
-    // Try direct parse first
     if let Ok(n) = expr.parse::<f64>() {
         return Ok(n);
     }
 
-    // Find lowest-precedence operator outside parentheses (right-to-left for left-associativity)
     let bytes = expr.as_bytes();
     let mut depth = 0i32;
     let mut last_add_sub: Option<usize> = None;
@@ -194,12 +205,10 @@ pub fn eval_expr(expr: &str) -> Result<f64, String> {
         };
     }
 
-    // Unary minus
     if expr.starts_with('-') {
         return eval_expr(&expr[1..]).map(|v| -v);
     }
 
-    // Parentheses
     if expr.starts_with('(') && expr.ends_with(')') {
         return eval_expr(&expr[1..expr.len() - 1]);
     }
@@ -211,29 +220,23 @@ pub fn eval_expr(expr: &str) -> Result<f64, String> {
 ///
 /// Properties with no formula are treated as having no dependencies. If no formulas
 /// exist among the given IRIs, the original order is preserved.
-pub fn topological_sort_properties(
+pub async fn topological_sort_properties(
     conn: &Connection,
     property_iris: &[&str],
 ) -> Vec<String> {
     let iris_set: std::collections::HashSet<&str> = property_iris.iter().copied().collect();
-
-    // Build adjacency: dep -> dependents (dep must come before dependent)
-    // We want properties that are dependencies to come first.
-    // Kahn's algorithm: in-degree counts.
 
     let mut in_degree: std::collections::HashMap<String, usize> = property_iris
         .iter()
         .map(|iri| (iri.to_string(), 0))
         .collect();
 
-    // adj[dep] = list of nodes that depend on dep
     let mut adj: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
 
     for &iri in property_iris {
-        if let Some(formula) = query_formula(conn, iri) {
+        if let Some(formula) = query_formula(conn, iri).await {
             for dep in extract_references(&formula) {
                 if iris_set.contains(dep.as_str()) {
-                    // iri depends on dep → dep must come first → dep -> iri edge
                     adj.entry(dep.clone()).or_default().push(iri.to_string());
                     *in_degree.entry(iri.to_string()).or_insert(0) += 1;
                 }
@@ -247,7 +250,6 @@ pub fn topological_sort_properties(
         .map(|(iri, _)| iri.clone())
         .collect();
 
-    // Preserve original order for stable output among zero-in-degree nodes
     let order: std::collections::HashMap<&str, usize> = property_iris
         .iter()
         .enumerate()
@@ -276,7 +278,6 @@ pub fn topological_sort_properties(
         result.push(node);
     }
 
-    // If there were cycles (result shorter than input), append remaining in original order
     if result.len() < property_iris.len() {
         for &iri in property_iris {
             if !result.contains(&iri.to_string()) {
@@ -293,30 +294,35 @@ mod tests {
     use super::*;
     use crate::eavto::test_helpers::setup_test_db;
 
-    fn insert_tx(conn: &Connection) -> i64 {
+    async fn insert_tx(conn: &Connection) -> i64 {
         conn.execute(
             "INSERT INTO transactions (origin, created_at) VALUES ('test', 0)",
-            [],
+            (),
         )
+        .await
         .unwrap();
-        conn.last_insert_rowid()
+        let mut s = conn.prepare("SELECT last_insert_rowid()").await.unwrap();
+        let row = s.query_row(()).await.unwrap();
+        row.get_value(0).unwrap().as_integer().copied().unwrap_or(0)
     }
 
-    fn insert_formula(conn: &Connection, tx: i64, property_iri: &str, formula: &str) {
+    async fn insert_formula(conn: &Connection, tx: i64, property_iri: &str, formula: &str) {
         conn.execute(
             "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted) \
              VALUES (?, 'foundation:formula', ?, 'literal', 'xsd:string', 1, ?, 0, 0)",
-            rusqlite::params![property_iri, formula, tx],
+            turso::params![property_iri, formula, tx],
         )
+        .await
         .unwrap();
     }
 
-    fn insert_value(conn: &Connection, tx: i64, instance_iri: &str, predicate: &str, value: &str) {
+    async fn insert_value(conn: &Connection, tx: i64, instance_iri: &str, predicate: &str, value: &str) {
         conn.execute(
             "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted) \
              VALUES (?, ?, ?, 'literal', 'xsd:string', 1, ?, 0, 0)",
-            rusqlite::params![instance_iri, predicate, value, tx],
+            turso::params![instance_iri, predicate, value, tx],
         )
+        .await
         .unwrap();
     }
 
@@ -408,8 +414,6 @@ mod tests {
 
     #[test]
     fn test_eval_expr_negative_in_expression() {
-        // The evaluator does not support infix unary minus like "10 + -3";
-        // use parentheses to wrap the negative operand.
         let result = eval_expr("10 + (-3)").unwrap();
         assert!((result - 7.0).abs() < 1e-10);
     }
@@ -428,7 +432,6 @@ mod tests {
 
     #[test]
     fn test_eval_expr_complex() {
-        // 10*2=20, 5/1=5, 20+5-3=22
         let result = eval_expr("10 * 2 + 5 / 1 - 3").unwrap();
         assert!((result - 22.0).abs() < 1e-10);
     }
@@ -446,53 +449,48 @@ mod tests {
 
     // ── validate_no_cycle ─────────────────────────────────────────────────────
 
-    #[test]
-    fn test_validate_no_cycle_no_deps() {
-        let conn = setup_test_db();
-        assert!(validate_no_cycle(&conn, "p:A", "42").is_ok());
+    #[tokio::test]
+    async fn test_validate_no_cycle_no_deps() {
+        let conn = setup_test_db().await;
+        assert!(validate_no_cycle(&conn, "p:A", "42").await.is_ok());
     }
 
-    #[test]
-    fn test_validate_no_cycle_linear_chain_no_cycle() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        // p:A has no formula; p:B depends on p:A — no cycle
-        insert_formula(&conn, tx, "p:A", "10");
-        assert!(validate_no_cycle(&conn, "p:B", "{{p:A}} + 1").is_ok());
+    #[tokio::test]
+    async fn test_validate_no_cycle_linear_chain_no_cycle() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:A", "10").await;
+        assert!(validate_no_cycle(&conn, "p:B", "{{p:A}} + 1").await.is_ok());
     }
 
-    #[test]
-    fn test_validate_no_cycle_direct_self_reference() {
-        let conn = setup_test_db();
-        let err = validate_no_cycle(&conn, "p:A", "{{p:A}} + 1").unwrap_err();
+    #[tokio::test]
+    async fn test_validate_no_cycle_direct_self_reference() {
+        let conn = setup_test_db().await;
+        let err = validate_no_cycle(&conn, "p:A", "{{p:A}} + 1").await.unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("Circular dependency"), "unexpected error: {}", msg);
         assert!(msg.contains("p:A"), "chain should mention p:A: {}", msg);
     }
 
-    #[test]
-    fn test_validate_no_cycle_two_node_cycle() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        // p:A already has formula referencing p:B in DB
-        insert_formula(&conn, tx, "p:A", "{{p:B}}");
-        // Now try to set p:B to reference p:A → cycle: p:B → p:A → p:B
-        let err = validate_no_cycle(&conn, "p:B", "{{p:A}}").unwrap_err();
+    #[tokio::test]
+    async fn test_validate_no_cycle_two_node_cycle() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:A", "{{p:B}}").await;
+        let err = validate_no_cycle(&conn, "p:B", "{{p:A}}").await.unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("Circular dependency"), "unexpected error: {}", msg);
         assert!(msg.contains("p:B"), "chain should mention p:B: {}", msg);
         assert!(msg.contains("p:A"), "chain should mention p:A: {}", msg);
     }
 
-    #[test]
-    fn test_validate_no_cycle_long_chain_cycle() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        // p:A → p:C and p:B → p:A already in DB
-        insert_formula(&conn, tx, "p:A", "{{p:C}}");
-        insert_formula(&conn, tx, "p:B", "{{p:A}}");
-        // Now validate p:C with formula "{{p:B}}" → p:C → p:B → p:A → p:C (cycle)
-        let err = validate_no_cycle(&conn, "p:C", "{{p:B}}").unwrap_err();
+    #[tokio::test]
+    async fn test_validate_no_cycle_long_chain_cycle() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:A", "{{p:C}}").await;
+        insert_formula(&conn, tx, "p:B", "{{p:A}}").await;
+        let err = validate_no_cycle(&conn, "p:C", "{{p:B}}").await.unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("Circular dependency"), "unexpected error: {}", msg);
         assert!(msg.contains("p:A"), "chain should mention p:A: {}", msg);
@@ -500,26 +498,22 @@ mod tests {
         assert!(msg.contains("p:C"), "chain should mention p:C: {}", msg);
     }
 
-    #[test]
-    fn test_validate_no_cycle_long_chain_no_cycle() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        // p:A has no formula; p:B → p:A; p:C → p:B
-        insert_formula(&conn, tx, "p:B", "{{p:A}}");
-        insert_formula(&conn, tx, "p:C", "{{p:B}}");
-        // p:D → p:C is a new leaf — no cycle
-        assert!(validate_no_cycle(&conn, "p:D", "{{p:C}}").is_ok());
+    #[tokio::test]
+    async fn test_validate_no_cycle_long_chain_no_cycle() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:B", "{{p:A}}").await;
+        insert_formula(&conn, tx, "p:C", "{{p:B}}").await;
+        assert!(validate_no_cycle(&conn, "p:D", "{{p:C}}").await.is_ok());
     }
 
-    #[test]
-    fn test_validate_no_cycle_error_includes_full_chain() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        insert_formula(&conn, tx, "p:B", "{{p:A}}");
-        // p:A → p:B → p:A: chain must list all nodes
-        let err = validate_no_cycle(&conn, "p:A", "{{p:B}}").unwrap_err();
+    #[tokio::test]
+    async fn test_validate_no_cycle_error_includes_full_chain() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:B", "{{p:A}}").await;
+        let err = validate_no_cycle(&conn, "p:A", "{{p:B}}").await.unwrap_err();
         let msg = err.to_string();
-        // The formatted chain must contain "→" separators and all three occurrences
         assert!(msg.contains('→') || msg.contains("->"), "missing chain separator: {}", msg);
         assert!(msg.contains("p:A"), "missing p:A in chain: {}", msg);
         assert!(msg.contains("p:B"), "missing p:B in chain: {}", msg);
@@ -527,95 +521,94 @@ mod tests {
 
     // ── evaluate_formula_for_instance_raw ─────────────────────────────────────
 
-    #[test]
-    fn test_evaluate_formula_basic_multiplication() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        insert_formula(&conn, tx, "p:area", "{{p:width}} * {{p:height}}");
-        insert_value(&conn, tx, "inst:box", "p:width", "3");
-        insert_value(&conn, tx, "inst:box", "p:height", "4");
-        let result = evaluate_formula_for_instance_raw(&conn, "inst:box", "p:area").unwrap();
+    #[tokio::test]
+    async fn test_evaluate_formula_basic_multiplication() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:area", "{{p:width}} * {{p:height}}").await;
+        insert_value(&conn, tx, "inst:box", "p:width", "3").await;
+        insert_value(&conn, tx, "inst:box", "p:height", "4").await;
+        let result = evaluate_formula_for_instance_raw(&conn, "inst:box", "p:area").await.unwrap();
         assert_eq!(result, "12");
     }
 
-    #[test]
-    fn test_evaluate_formula_integer_result_no_decimal() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        insert_formula(&conn, tx, "p:sum", "{{p:a}} + {{p:b}}");
-        insert_value(&conn, tx, "inst:x", "p:a", "2");
-        insert_value(&conn, tx, "inst:x", "p:b", "3");
-        let result = evaluate_formula_for_instance_raw(&conn, "inst:x", "p:sum").unwrap();
+    #[tokio::test]
+    async fn test_evaluate_formula_integer_result_no_decimal() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:sum", "{{p:a}} + {{p:b}}").await;
+        insert_value(&conn, tx, "inst:x", "p:a", "2").await;
+        insert_value(&conn, tx, "inst:x", "p:b", "3").await;
+        let result = evaluate_formula_for_instance_raw(&conn, "inst:x", "p:sum").await.unwrap();
         assert_eq!(result, "5");
         assert!(!result.contains('.'), "integer result should not contain decimal point: {}", result);
     }
 
-    #[test]
-    fn test_evaluate_formula_float_result() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        insert_formula(&conn, tx, "p:ratio", "{{p:x}} / {{p:y}}");
-        insert_value(&conn, tx, "inst:r", "p:x", "7");
-        insert_value(&conn, tx, "inst:r", "p:y", "2");
-        let result = evaluate_formula_for_instance_raw(&conn, "inst:r", "p:ratio").unwrap();
+    #[tokio::test]
+    async fn test_evaluate_formula_float_result() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:ratio", "{{p:x}} / {{p:y}}").await;
+        insert_value(&conn, tx, "inst:r", "p:x", "7").await;
+        insert_value(&conn, tx, "inst:r", "p:y", "2").await;
+        let result = evaluate_formula_for_instance_raw(&conn, "inst:r", "p:ratio").await.unwrap();
         let parsed: f64 = result.parse().expect("result should be a valid float");
         assert!((parsed - 3.5).abs() < 1e-10, "expected 3.5, got {}", result);
     }
 
-    #[test]
-    fn test_evaluate_formula_missing_property_gives_descriptive_error() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        insert_formula(&conn, tx, "p:calc", "{{p:missing}} + 1");
-        let err = evaluate_formula_for_instance_raw(&conn, "inst:obj", "p:calc").unwrap_err();
+    #[tokio::test]
+    async fn test_evaluate_formula_missing_property_gives_descriptive_error() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:calc", "{{p:missing}} + 1").await;
+        let err = evaluate_formula_for_instance_raw(&conn, "inst:obj", "p:calc").await.unwrap_err();
         assert!(err.contains("Missing value for {{p:missing}}"), "unexpected error: {}", err);
         assert!(err.contains("inst:obj"), "error should mention instance IRI: {}", err);
     }
 
-    #[test]
-    fn test_evaluate_formula_no_formula_on_property_gives_error() {
-        let conn = setup_test_db();
-        let err = evaluate_formula_for_instance_raw(&conn, "inst:obj", "p:no_formula").unwrap_err();
+    #[tokio::test]
+    async fn test_evaluate_formula_no_formula_on_property_gives_error() {
+        let conn = setup_test_db().await;
+        let err = evaluate_formula_for_instance_raw(&conn, "inst:obj", "p:no_formula").await.unwrap_err();
         assert!(err.contains("Failed to load formula"), "unexpected error: {}", err);
     }
 
-    #[test]
-    fn test_evaluate_formula_constant_no_refs() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        insert_formula(&conn, tx, "p:const", "42");
-        let result = evaluate_formula_for_instance_raw(&conn, "inst:any", "p:const").unwrap();
+    #[tokio::test]
+    async fn test_evaluate_formula_constant_no_refs() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:const", "42").await;
+        let result = evaluate_formula_for_instance_raw(&conn, "inst:any", "p:const").await.unwrap();
         assert_eq!(result, "42");
     }
 
     // ── topological_sort_properties ───────────────────────────────────────────
 
-    #[test]
-    fn test_topological_sort_no_formulas() {
-        let conn = setup_test_db();
-        let result = topological_sort_properties(&conn, &["p:c", "p:a", "p:b"]);
+    #[tokio::test]
+    async fn test_topological_sort_no_formulas() {
+        let conn = setup_test_db().await;
+        let result = topological_sort_properties(&conn, &["p:c", "p:a", "p:b"]).await;
         assert_eq!(result, vec!["p:c", "p:a", "p:b"]);
     }
 
-    #[test]
-    fn test_topological_sort_simple_dependency() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        // p:b depends on p:a → p:a must come first
-        insert_formula(&conn, tx, "p:b", "{{p:a}}");
-        let result = topological_sort_properties(&conn, &["p:b", "p:a"]);
+    #[tokio::test]
+    async fn test_topological_sort_simple_dependency() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:b", "{{p:a}}").await;
+        let result = topological_sort_properties(&conn, &["p:b", "p:a"]).await;
         let pos_a = result.iter().position(|s| s == "p:a").unwrap();
         let pos_b = result.iter().position(|s| s == "p:b").unwrap();
         assert!(pos_a < pos_b, "p:a must come before p:b, got: {:?}", result);
     }
 
-    #[test]
-    fn test_topological_sort_chain() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        insert_formula(&conn, tx, "p:c", "{{p:b}}");
-        insert_formula(&conn, tx, "p:b", "{{p:a}}");
-        let result = topological_sort_properties(&conn, &["p:c", "p:b", "p:a"]);
+    #[tokio::test]
+    async fn test_topological_sort_chain() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:c", "{{p:b}}").await;
+        insert_formula(&conn, tx, "p:b", "{{p:a}}").await;
+        let result = topological_sort_properties(&conn, &["p:c", "p:b", "p:a"]).await;
         let pos_a = result.iter().position(|s| s == "p:a").unwrap();
         let pos_b = result.iter().position(|s| s == "p:b").unwrap();
         let pos_c = result.iter().position(|s| s == "p:c").unwrap();
@@ -623,13 +616,12 @@ mod tests {
         assert!(pos_b < pos_c, "p:b must come before p:c, got: {:?}", result);
     }
 
-    #[test]
-    fn test_topological_sort_independent_properties_preserve_order() {
-        let conn = setup_test_db();
-        let tx = insert_tx(&conn);
-        // p:y depends on p:z; p:x is independent
-        insert_formula(&conn, tx, "p:y", "{{p:z}}");
-        let result = topological_sort_properties(&conn, &["p:x", "p:y", "p:z"]);
+    #[tokio::test]
+    async fn test_topological_sort_independent_properties_preserve_order() {
+        let conn = setup_test_db().await;
+        let tx = insert_tx(&conn).await;
+        insert_formula(&conn, tx, "p:y", "{{p:z}}").await;
+        let result = topological_sort_properties(&conn, &["p:x", "p:y", "p:z"]).await;
         let pos_z = result.iter().position(|s| s == "p:z").unwrap();
         let pos_y = result.iter().position(|s| s == "p:y").unwrap();
         assert!(pos_z < pos_y, "p:z must come before p:y, got: {:?}", result);

@@ -11,14 +11,14 @@ pub async fn ai__save_api_key(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
 
-    executor.write(move |conn| {
-        let service_iri = owl::get_iri_property(conn, "foundation:LocalAIAssistant", "foundation:usesService")
+    executor.write(move |conn| async move {
+        let service_iri = owl::get_iri_property(&conn, "foundation:LocalAIAssistant", "foundation:usesService").await
             .map_err(|e| format!("Failed to get service: {}", e))?
             .ok_or_else(|| "LocalAIAssistant has no usesService".to_string())?;
 
         // Retract previous API key if one is linked to the service
-        if let Ok(Some(old_key_iri)) = owl::get_iri_property(conn, &service_iri, "foundation:apiKey") {
-            Individual::retract(conn, &old_key_iri, "ai")
+        if let Ok(Some(old_key_iri)) = owl::get_iri_property(&conn, &service_iri, "foundation:apiKey").await {
+            Individual::retract(&conn, &old_key_iri, "ai").await
                 .map_err(|e| format!("Failed to retract old credential: {}", e))?;
         }
 
@@ -27,15 +27,15 @@ pub async fn ai__save_api_key(
         let credential = Individual::new(&api_key_iri);
 
         credential.assert(
-            conn,
+            &conn,
             "foundation:APIKey",
             "Claude AI API Key",
             "vpn_key",
             "ai"
-        ).map_err(|e| format!("Failed to create APIKey: {}", e))?;
+        ).await.map_err(|e| format!("Failed to create APIKey: {}", e))?;
 
         credential.add_property(
-            conn,
+            &conn,
             "foundation:credentialValue",
             vec![Object::Literal {
                 value: api_key,
@@ -43,23 +43,23 @@ pub async fn ai__save_api_key(
                 language: None,
             }],
             "ai"
-        ).map_err(|e| format!("Failed to set credential value: {}", e))?;
+        ).await.map_err(|e| format!("Failed to set credential value: {}", e))?;
 
         credential.add_property(
-            conn,
+            &conn,
             "foundation:credentialCreatedAt",
             vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())],
             "ai"
-        ).map_err(|e| format!("Failed to set created timestamp: {}", e))?;
+        ).await.map_err(|e| format!("Failed to set created timestamp: {}", e))?;
 
         // Link the new key to the service
         let service = Individual::new(&service_iri);
         service.add_property(
-            conn,
+            &conn,
             "foundation:apiKey",
             vec![Object::Iri(api_key_iri)],
             "ai"
-        ).map_err(|e| format!("Failed to link key to service: {}", e))?;
+        ).await.map_err(|e| format!("Failed to link key to service: {}", e))?;
 
         Ok("saved".to_string())
     }).await?;
@@ -74,13 +74,13 @@ pub async fn ai__save_api_key(
 pub async fn ai__get_api_key(
     executor: State<'_, DbExecutor>,
 ) -> Result<Option<String>, String> {
-    executor.read(|conn| {
-        let service_iri = owl::get_iri_property(conn, "foundation:LocalAIAssistant", "foundation:usesService")
+    executor.read(|conn| async move {
+        let service_iri = owl::get_iri_property(&conn, "foundation:LocalAIAssistant", "foundation:usesService").await
             .ok().flatten();
 
         if let Some(service_iri) = service_iri {
-            if let Ok(Some(api_key_iri)) = owl::get_iri_property(conn, &service_iri, "foundation:apiKey") {
-                if let Ok(Some(value)) = owl::get_literal_property(conn, &api_key_iri, "foundation:credentialValue") {
+            if let Ok(Some(api_key_iri)) = owl::get_iri_property(&conn, &service_iri, "foundation:apiKey").await {
+                if let Ok(Some(value)) = owl::get_literal_property(&conn, &api_key_iri, "foundation:credentialValue").await {
                     return Ok(Some(value));
                 }
             }
@@ -98,10 +98,10 @@ pub async fn ai__initialize(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
 
-    let (model_identifier, timeout_secs) = executor.read(|conn| {
+    let (model_identifier, timeout_secs) = executor.read(|conn| async move {
         // Check user's preferred model from DefaultAIModelSetting first
         let preferred_model_iri = if let Ok(Some(setting)) =
-            Individual::get(conn, "foundation:DefaultAIModelSetting")
+            Individual::get(&conn, "foundation:DefaultAIModelSetting").await
         {
             setting.properties.iter()
                 .find(|(k, _)| k == "foundation:settingValue")
@@ -111,23 +111,25 @@ pub async fn ai__initialize(
         };
 
         let model = if let Some(ref iri) = preferred_model_iri {
-            owl::get_literal_property(conn, iri, "foundation:modelIdentifier")
+            owl::get_literal_property(&conn, iri, "foundation:modelIdentifier").await
                 .ok()
                 .flatten()
         } else {
             // Fall back to the model on LocalAIAssistant
-            let model_iri = owl::get_iri_property(conn, "foundation:LocalAIAssistant", "foundation:usesModel")
+            let model_iri = owl::get_iri_property(&conn, "foundation:LocalAIAssistant", "foundation:usesModel").await
                 .ok()
                 .flatten();
-            model_iri.and_then(|iri| {
-                owl::get_literal_property(conn, &iri, "foundation:modelIdentifier")
+            if let Some(iri) = model_iri {
+                owl::get_literal_property(&conn, &iri, "foundation:modelIdentifier").await
                     .ok()
                     .flatten()
-            })
+            } else {
+                None
+            }
         };
 
         let timeout = if let Ok(Some(setting)) =
-            Individual::get(conn, "foundation:DefaultAPIRequestTimeoutSetting")
+            Individual::get(&conn, "foundation:DefaultAPIRequestTimeoutSetting").await
         {
             setting.properties.iter()
                 .find(|(k, _)| k == "foundation:settingValue")

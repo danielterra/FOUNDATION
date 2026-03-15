@@ -16,8 +16,8 @@ fn parse_timestamp(obj: &Object) -> Option<i64> {
 
 /// Retract all messages in the conversation with sentAt >= from_timestamp (exclusive of the
 /// message at exactly from_timestamp when exclude_exact is true).
-pub fn delete_messages_from_timestamp(
-    conn: &mut Connection,
+pub async fn delete_messages_from_timestamp(
+    conn: &Connection,
     conversation_iri: &str,
     from_timestamp: i64,
     exclude_exact: bool,
@@ -26,10 +26,10 @@ pub fn delete_messages_from_timestamp(
         conn,
         "foundation:AIConversationMessage",
         &[("foundation:partOfConversation", conversation_iri)],
-    ).map_err(|e| format!("Failed to query messages: {}", e))?;
+    ).await.map_err(|e| format!("Failed to query messages: {}", e))?;
 
     for iri in message_iris {
-        let ind = match Individual::get(conn, &iri) {
+        let ind = match Individual::get(conn, &iri).await {
             Ok(Some(i)) => i,
             _ => continue,
         };
@@ -49,7 +49,7 @@ pub fn delete_messages_from_timestamp(
         };
 
         if should_delete {
-            Individual::retract(conn, &iri, "chat")
+            Individual::retract(conn, &iri, "chat").await
                 .map_err(|e| format!("Failed to retract message {}: {}", iri, e))?;
         }
     }
@@ -157,8 +157,8 @@ pub async fn continue_conversation_after_recovery(
 
         let has_tool_use = !api_response.tool_calls.is_empty();
         if stop_reason == "tool_use" || (stop_reason == "max_tokens" && has_tool_use) {
-            let assistant_msg = executor.read(move |conn| {
-                load_message(conn, &assistant_msg_iri)
+            let assistant_msg = executor.read(move |conn| async move {
+                load_message(&conn, &assistant_msg_iri).await
             }).await?;
 
             log_backend("info", "[RECOVERY] Executing tools...");

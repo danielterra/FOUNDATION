@@ -35,16 +35,16 @@ pub async fn execute_agent_task(
     let (label, description, agent_iri) = executor
         .read({
             let node_iri = node_iri.to_string();
-            move |conn| {
-                let label = get_literal_property(conn, &node_iri, "rdfs:label")
+            move |conn| async move {
+                let label = get_literal_property(&conn, &node_iri, "rdfs:label").await
                     .map_err(|e| e.to_string())?
                     .unwrap_or_else(|| node_iri.clone());
 
-                let description = get_literal_property(conn, &node_iri, "rdfs:comment")
+                let description = get_literal_property(&conn, &node_iri, "rdfs:comment").await
                     .map_err(|e| e.to_string())?
                     .unwrap_or_default();
 
-                let agent_iri = get_iri_property(conn, &node_iri, "foundation:assignedAgent")
+                let agent_iri = get_iri_property(&conn, &node_iri, "foundation:assignedAgent").await
                     .map_err(|e| e.to_string())?
                     .unwrap_or_else(|| "foundation:LocalAIAssistant".to_string());
 
@@ -56,28 +56,28 @@ pub async fn execute_agent_task(
     let (api_key, model_identifier, system_prompt, timeout_secs) = executor
         .read({
             let agent_iri = agent_iri.clone();
-            move |conn| {
-                let service_iri = get_iri_property(conn, &agent_iri, "foundation:usesService")
+            move |conn| async move {
+                let service_iri = get_iri_property(&conn, &agent_iri, "foundation:usesService").await
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("Agent {} has no usesService", agent_iri))?;
 
-                let api_key_iri = get_iri_property(conn, &service_iri, "foundation:apiKey")
+                let api_key_iri = get_iri_property(&conn, &service_iri, "foundation:apiKey").await
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| "API key not configured".to_string())?;
 
-                let api_key = get_literal_property(conn, &api_key_iri, "foundation:credentialValue")
+                let api_key = get_literal_property(&conn, &api_key_iri, "foundation:credentialValue").await
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| "API key has no value".to_string())?;
 
-                let model_iri = get_iri_property(conn, &agent_iri, "foundation:usesModel")
+                let model_iri = get_iri_property(&conn, &agent_iri, "foundation:usesModel").await
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("Agent {} has no usesModel", agent_iri))?;
 
-                let model_identifier = get_literal_property(conn, &model_iri, "foundation:modelIdentifier")
+                let model_identifier = get_literal_property(&conn, &model_iri, "foundation:modelIdentifier").await
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("Model {} has no modelIdentifier", model_iri))?;
 
-                let system_prompt = Individual::get(conn, &agent_iri)
+                let system_prompt = Individual::get(&conn, &agent_iri).await
                     .ok()
                     .flatten()
                     .and_then(|ind| {
@@ -87,7 +87,7 @@ pub async fn execute_agent_task(
                     })
                     .unwrap_or_default();
 
-                let timeout_secs = get_literal_property(conn, &agent_iri, "foundation:requestTimeout")
+                let timeout_secs = get_literal_property(&conn, &agent_iri, "foundation:requestTimeout").await
                     .ok()
                     .flatten()
                     .and_then(|v| v.parse::<u64>().ok())
@@ -168,8 +168,8 @@ pub async fn execute_agent_task(
             let tc_id = tc.id.clone();
             let app_clone = app.clone();
             let result_json = executor
-                .write(move |conn| {
-                    let r = execute_fn(conn, &call, Some(&app_clone));
+                .write(move |conn| async move {
+                    let r = execute_fn(&conn, &call, Some(&app_clone)).await;
                     serde_json::to_string(&r).map_err(|e| e.to_string())
                 })
                 .await

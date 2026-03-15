@@ -25,8 +25,8 @@ use cancellation::AiCancellationState as CancellationState;
 pub const MAX_OUTPUT_TOKENS: u32 = 4096;
 
 pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor) -> Option<String> {
-    executor.read(|conn| {
-        let widgets = crate::commands::widget::owl_get_all_widgets(conn)
+    executor.read(|conn| async move {
+        let widgets = crate::commands::widget::owl_get_all_widgets(&conn).await
             .unwrap_or_default();
 
         if widgets.is_empty() {
@@ -35,7 +35,7 @@ pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor) -> Opti
 
         let mut lines = Vec::new();
         for w in &widgets {
-            let entity_ind = crate::owl::Individual::get(conn, &w.entity_id)
+            let entity_ind = crate::owl::Individual::get(&conn, &w.entity_id).await
                 .ok()
                 .flatten();
 
@@ -54,7 +54,7 @@ pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor) -> Opti
             let concept_label = if concept_iri.is_empty() {
                 String::new()
             } else {
-                crate::owl::Individual::get(conn, &concept_iri)
+                crate::owl::Individual::get(&conn, &concept_iri).await
                     .ok()
                     .flatten()
                     .and_then(|ind| ind.properties.into_iter()
@@ -109,8 +109,8 @@ pub async fn chat__send_and_reply(
     let mut cancel_rx = cancellation.begin();
 
     let conv_id = conversation_id.clone();
-    let agent_config = executor.read(move |conn| {
-        load_agent_config(conn, &conv_id)
+    let agent_config = executor.read(move |conn| async move {
+        load_agent_config(&conn, &conv_id).await
     }).await?;
 
     if latitude.is_some() || longitude.is_some() {
@@ -184,11 +184,11 @@ pub async fn chat__send_and_reply(
 
     if !attached_file_iris.is_empty() {
         let msg_iri = user_msg_iri.clone();
-        executor.write(move |conn| {
+        executor.write(move |conn| async move {
             let msg = Individual::new(&msg_iri);
             for file_iri in attached_file_iris {
-                msg.add_property(conn, "foundation:hasAttachment",
-                    vec![Object::Iri(file_iri)], "chat")
+                msg.add_property(&conn, "foundation:hasAttachment",
+                    vec![Object::Iri(file_iri)], "chat").await
                     .map_err(|e| format!("Failed to set hasAttachment: {}", e))?;
             }
             Ok(String::new())
@@ -313,8 +313,8 @@ pub async fn chat__send_and_reply(
 
         let has_tool_use = !api_response.tool_calls.is_empty();
         if stop_reason == "tool_use" || (stop_reason == "max_tokens" && has_tool_use) {
-            let assistant_msg = executor.read(move |conn| {
-                load_message(conn, &assistant_msg_iri)
+            let assistant_msg = executor.read(move |conn| async move {
+                load_message(&conn, &assistant_msg_iri).await
             }).await?;
 
             let tool_count = assistant_msg.content.iter()
@@ -364,15 +364,14 @@ pub async fn chat__get_recent_messages(
 ) -> Result<Vec<serde_json::Value>, String> {
     let conv_id = conversation_id;
 
-    let messages = executor.read(move |conn| {
-        // Load only the N most recent message IRIs directly from SQL — no in-memory sort needed
-        let message_iris = Individual::find_messages_by_conversation(conn, &conv_id, limit, 0)
+    let messages = executor.read(move |conn| async move {
+        let message_iris = Individual::find_messages_by_conversation(&conn, &conv_id, limit, 0).await
             .map_err(|e| format!("Failed to query messages: {}", e))?;
 
         let mut messages_with_ts: Vec<(i64, serde_json::Value)> = Vec::new();
 
         for iri in message_iris {
-            let msg = Individual::get(conn, &iri)
+            let msg = Individual::get(&conn, &iri).await
                 .map_err(|e| format!("Failed to get message {}: {}", iri, e))?
                 .ok_or_else(|| format!("Message {} not found", iri))?;
 
@@ -400,55 +399,64 @@ pub async fn chat__get_recent_messages(
             let content_blocks: Vec<ContentBlock> = serde_json::from_str(&content_json)
                 .unwrap_or_else(|_| vec![ContentBlock::Text { text: content_json.clone() }]);
 
-            let attachments: Vec<serde_json::Value> = content_blocks.iter()
-                .filter_map(|block| {
-                    if let ContentBlock::FileRef { file_iri, file_name, .. } = block {
-                        let file_entity = Individual::get(conn, file_iri).ok().flatten()?;
+            let mut attachments: Vec<serde_json::Value> = Vec::new();
+            for block in &content_blocks {
+                if let ContentBlock::FileRef { file_iri, file_name, .. } = block {
+                    let file_entity = match Individual::get(&conn, file_iri).await.ok().flatten() {
+                        Some(e) => e,
+                        None => continue,
+                    };
 
-                        let file_path = file_entity.properties.iter()
-                            .find(|(k, _)| k == "foundation:filePath")
-                            .and_then(|(_, v)| match v {
-                                Object::Literal { value, .. } => {
-                                    Some(value.trim_start_matches("file://").to_string())
-                                },
-                                _ => None,
-                            })?;
+                    let file_path = match file_entity.properties.iter()
+                        .find(|(k, _)| k == "foundation:filePath")
+                        .and_then(|(_, v)| match v {
+                            Object::Literal { value, .. } => {
+                                Some(value.trim_start_matches("file://").to_string())
+                            },
+                            _ => None,
+                        })
+                    {
+                        Some(p) => p,
+                        None => continue,
+                    };
 
-                        let file_size = file_entity.properties.iter()
-                            .find(|(k, _)| k == "foundation:fileSize")
-                            .and_then(|(_, v)| match v {
-                                Object::Integer(n) => Some(*n),
-                                _ => None,
-                            })
-                            .unwrap_or(0);
+                    let file_size = file_entity.properties.iter()
+                        .find(|(k, _)| k == "foundation:fileSize")
+                        .and_then(|(_, v)| match v {
+                            Object::Integer(n) => Some(*n),
+                            _ => None,
+                        })
+                        .unwrap_or(0);
 
-                        let mime_type = file_entity.properties.iter()
-                            .find(|(k, _)| k == "foundation:hasFileType")
-                            .and_then(|(_, v)| match v {
-                                Object::Iri(iri) => Individual::get(conn, iri.as_str()).ok()
-                                    .flatten()
-                                    .and_then(|ft| ft.properties.into_iter()
-                                        .find(|(k, _)| k == "foundation:mimeType")
-                                        .and_then(|(_, v)| match v {
-                                            Object::Literal { value, .. } => Some(value),
-                                            _ => None,
-                                        })
-                                    ),
-                                _ => None,
-                            })
-                            .unwrap_or_else(|| "application/octet-stream".to_string());
-
-                        Some(serde_json::json!({
-                            "fileName": file_name,
-                            "filePath": file_path,
-                            "fileSize": file_size,
-                            "mimeType": mime_type,
-                        }))
+                    let mime_type = if let Some((_, v)) = file_entity.properties.iter()
+                        .find(|(k, _)| k == "foundation:hasFileType")
+                    {
+                        if let Object::Iri(type_iri) = v {
+                            Individual::get(&conn, type_iri.as_str()).await.ok()
+                                .flatten()
+                                .and_then(|ft| ft.properties.into_iter()
+                                    .find(|(k, _)| k == "foundation:mimeType")
+                                    .and_then(|(_, v)| match v {
+                                        Object::Literal { value, .. } => Some(value),
+                                        _ => None,
+                                    })
+                                )
+                                .unwrap_or_else(|| "application/octet-stream".to_string())
+                        } else {
+                            "application/octet-stream".to_string()
+                        }
                     } else {
-                        None
-                    }
-                })
-                .collect();
+                        "application/octet-stream".to_string()
+                    };
+
+                    attachments.push(serde_json::json!({
+                        "fileName": file_name,
+                        "filePath": file_path,
+                        "fileSize": file_size,
+                        "mimeType": mime_type,
+                    }));
+                }
+            }
 
             let msg_json = serde_json::json!({
                 "iri": iri,
@@ -486,8 +494,8 @@ pub async fn chat__edit_and_retry(
 ) -> Result<Vec<serde_json::Value>, String> {
     let _cancel_rx = cancellation.begin();
 
-    let msg_timestamp = executor.read(move |conn| {
-        let ind = Individual::get(conn, &message_iri)
+    let msg_timestamp = executor.read(move |conn| async move {
+        let ind = Individual::get(&conn, &message_iri).await
             .map_err(|e| format!("Failed to load message: {}", e))?
             .ok_or_else(|| format!("Message {} not found", message_iri))?;
 
@@ -515,14 +523,14 @@ pub async fn chat__edit_and_retry(
 
     let iri_clone = iri.clone();
     let conv_id_for_write = conversation_id.clone();
-    executor.write(move |conn| {
-        delete_messages_from_timestamp(conn, &conv_id_for_write, timestamp, true)?;
+    executor.write(move |conn| async move {
+        delete_messages_from_timestamp(&conn, &conv_id_for_write, timestamp, true).await?;
 
         let new_blocks = vec![ContentBlock::Text { text: new_content.clone() }];
         let new_content_json = serde_json::to_string(&new_blocks)
             .map_err(|e| format!("Failed to serialize content: {}", e))?;
 
-        let ind = Individual::get(conn, &iri_clone)
+        let ind = Individual::get(&conn, &iri_clone).await
             .map_err(|e| format!("Failed to reload message: {}", e))?
             .ok_or_else(|| format!("Message {} not found after delete", iri_clone))?;
 
@@ -532,18 +540,18 @@ pub async fn chat__edit_and_retry(
                     Object::Literal { value, .. } => value.clone(),
                     _ => continue,
                 };
-                Individual::remove_property_value(conn, &iri_clone, "foundation:content", &value_str, "chat")
+                Individual::remove_property_value(&conn, &iri_clone, "foundation:content", &value_str, "chat").await
                     .map_err(|e| format!("Failed to retract old content: {}", e))?;
                 break;
             }
         }
 
         let msg = Individual::new(&iri_clone);
-        msg.add_property(conn, "foundation:content", vec![Object::Literal {
+        msg.add_property(&conn, "foundation:content", vec![Object::Literal {
             value: new_content_json,
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }], "chat").map_err(|e| format!("Failed to set new content: {}", e))?;
+        }], "chat").await.map_err(|e| format!("Failed to set new content: {}", e))?;
 
         Ok(String::new())
     }).await?;
@@ -582,8 +590,8 @@ pub async fn chat__retry_from_message(
 ) -> Result<Vec<serde_json::Value>, String> {
     let _cancel_rx = cancellation.begin();
 
-    let msg_timestamp = executor.read(move |conn| {
-        let ind = Individual::get(conn, &message_iri)
+    let msg_timestamp = executor.read(move |conn| async move {
+        let ind = Individual::get(&conn, &message_iri).await
             .map_err(|e| format!("Failed to load message: {}", e))?
             .ok_or_else(|| format!("Message {} not found", message_iri))?;
 
@@ -608,8 +616,8 @@ pub async fn chat__retry_from_message(
     }).await?;
 
     let conv_id_for_write = conversation_id.clone();
-    executor.write(move |conn| {
-        delete_messages_from_timestamp(conn, &conv_id_for_write, msg_timestamp, false)?;
+    executor.write(move |conn| async move {
+        delete_messages_from_timestamp(&conn, &conv_id_for_write, msg_timestamp, false).await?;
         Ok(String::new())
     }).await?;
 
@@ -643,21 +651,18 @@ pub async fn chat__recover_pending_tools(
 ) -> Result<usize, String> {
     let max_tokens = get_max_input_tokens(&executor).await?;
 
-    // Find the most recent conversation by looking at the latest message timestamp across all
-    // conversations. Recovery only applies to the most recent one — older conversations are
-    // already settled and should not be touched.
-    let all_conversation_iris = executor.read(|conn| {
-        Individual::find_by_class_and_properties(conn, "foundation:AIConversation", &[])
+    let all_conversation_iris = executor.read(|conn| async move {
+        Individual::find_by_class_and_properties(&conn, "foundation:AIConversation", &[]).await
             .map_err(|e| format!("Failed to query conversations: {}", e))
     }).await?;
 
-    let most_recent_conv = executor.read(move |conn| {
+    let most_recent_conv = executor.read(move |conn| async move {
         let mut best: Option<(i64, String)> = None;
         for conv_iri in &all_conversation_iris {
-            let recent = Individual::find_messages_by_conversation(conn, conv_iri, 1, 0)
+            let recent = Individual::find_messages_by_conversation(&conn, conv_iri, 1, 0).await
                 .unwrap_or_default();
             if let Some(msg_iri) = recent.into_iter().next() {
-                if let Ok(msg) = load_message(conn, &msg_iri) {
+                if let Ok(msg) = load_message(&conn, &msg_iri).await {
                     if best.as_ref().map_or(true, |(ts, _)| msg.timestamp > *ts) {
                         best = Some((msg.timestamp, conv_iri.clone()));
                     }
@@ -730,23 +735,23 @@ pub async fn chat__create_conversation(
     let iri_clone = conv_iri.clone();
     let label_clone = conv_label.clone();
 
-    executor.write(move |conn| {
+    executor.write(move |conn| async move {
         let conv = Individual::new(&iri_clone);
 
-        conv.assert(conn, "foundation:AIConversation", &label_clone, "chat", "ai")
+        conv.assert(&conn, "foundation:AIConversation", &label_clone, "chat", "ai").await
             .map_err(|e| format!("Failed to create conversation: {}", e))?;
 
-        conv.add_property(conn, "foundation:createdAt", vec![
+        conv.add_property(&conn, "foundation:createdAt", vec![
             Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339()),
-        ], "ai").map_err(|e| format!("Failed to set createdAt: {}", e))?;
+        ], "ai").await.map_err(|e| format!("Failed to set createdAt: {}", e))?;
 
-        conv.add_property(conn, "foundation:hasStatus", vec![
+        conv.add_property(&conn, "foundation:hasStatus", vec![
             Object::Iri("foundation:InProgress".to_string()),
-        ], "ai").map_err(|e| format!("Failed to set conversation status: {}", e))?;
+        ], "ai").await.map_err(|e| format!("Failed to set conversation status: {}", e))?;
 
-        conv.add_property(conn, "foundation:handledBy", vec![
+        conv.add_property(&conn, "foundation:handledBy", vec![
             Object::Iri("foundation:LocalAIAssistant".to_string()),
-        ], "ai").map_err(|e| format!("Failed to set handledBy: {}", e))?;
+        ], "ai").await.map_err(|e| format!("Failed to set handledBy: {}", e))?;
 
         Ok(iri_clone)
     }).await?;
@@ -758,19 +763,19 @@ pub async fn chat__create_conversation(
 pub async fn chat__list_conversations(
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    executor.read(move |conn| {
+    executor.read(move |conn| async move {
         let iris = Individual::find_by_class_with_date_range(
-            conn,
+            &conn,
             "foundation:AIConversation",
             None,
             None,
             false,
-        ).map_err(|e| format!("Failed to query conversations: {}", e))?;
+        ).await.map_err(|e| format!("Failed to query conversations: {}", e))?;
 
         let mut conversations: Vec<(i64, serde_json::Value)> = Vec::new();
 
         for iri in iris {
-            let ind = Individual::get(conn, &iri)
+            let ind = Individual::get(&conn, &iri).await
                 .ok().flatten()
                 .unwrap_or_else(|| Individual::new(&iri));
 
@@ -808,13 +813,13 @@ pub async fn chat__rename_conversation(
     label: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
-    executor.write(move |conn| {
+    executor.write(move |conn| async move {
         let ind = Individual::new(&conversation_id);
-        ind.add_property(conn, "rdfs:label", vec![Object::Literal {
+        ind.add_property(&conn, "rdfs:label", vec![Object::Literal {
             value: label,
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }], "user")
+        }], "user").await
             .map_err(|e| format!("Failed to rename conversation: {}", e))?;
         Ok("".to_string())
     }).await.map(|_| ())

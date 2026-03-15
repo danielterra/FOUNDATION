@@ -13,17 +13,17 @@ type Result<T> = std::result::Result<T, String>;
 pub type ExecutionContext = HashMap<String, String>;
 
 /// Loads all flow nodes for a process, returning (node_iri, node_type, output_key).
-fn load_flow_nodes(
-    conn: &rusqlite::Connection,
+async fn load_flow_nodes(
+    conn: &crate::owl::Connection,
     process_iri: &str,
 ) -> Result<Vec<(String, String, Option<String>)>> {
-    let result = query::get_by_entity_predicate(conn, process_iri, "foundation:hasFlowNode")
+    let result = query::get_by_entity_predicate(conn, process_iri, "foundation:hasFlowNode").await
         .map_err(|e| e.to_string())?;
 
     let mut nodes = Vec::new();
     for triple in &result.triples {
         if let Some(node_iri) = triple.object.as_iri() {
-            let type_result = query::get_by_entity_predicate(conn, node_iri, "rdf:type")
+            let type_result = query::get_by_entity_predicate(conn, node_iri, "rdf:type").await
                 .map_err(|e| e.to_string())?;
             let node_type = type_result
                 .triples
@@ -32,7 +32,7 @@ fn load_flow_nodes(
                 .unwrap_or("foundation:bpmn_FlowNode")
                 .to_string();
 
-            let key_result = query::get_by_entity_predicate(conn, node_iri, "foundation:outputKey")
+            let key_result = query::get_by_entity_predicate(conn, node_iri, "foundation:outputKey").await
                 .map_err(|e| e.to_string())?;
             let output_key = key_result
                 .triples
@@ -59,19 +59,19 @@ const STATUS_IN_PROGRESS: &str = "foundation:InProgress";
 const STATUS_COMPLETED: &str = "foundation:Completed";
 const STATUS_FAILED: &str = "foundation:Status_1772993026091";
 
-fn create_execution_record(
-    conn: &mut rusqlite::Connection,
+async fn create_execution_record(
+    conn: &crate::owl::Connection,
     process_iri: &str,
 ) -> Result<String> {
     let exec_iri = format!("foundation:WorkflowExecution_{}", Utc::now().timestamp_millis());
     let ind = Individual::new(&exec_iri);
-    ind.assert(conn, "foundation:WorkflowExecution", &exec_iri, "play_circle", "process_automation")
+    ind.assert(conn, "foundation:WorkflowExecution", &exec_iri, "play_circle", "process_automation").await
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:executesProcess",
-        vec![Object::Iri(process_iri.to_string())], "process_automation")
+        vec![Object::Iri(process_iri.to_string())], "process_automation").await
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:hasStatus",
-        vec![Object::Iri(STATUS_IN_PROGRESS.to_string())], "process_automation")
+        vec![Object::Iri(STATUS_IN_PROGRESS.to_string())], "process_automation").await
         .map_err(|e| e.to_string())?;
     Ok(exec_iri)
 }
@@ -88,38 +88,38 @@ fn looks_like_iri(s: &str) -> bool {
     s.contains(':') && !s.contains(' ')
 }
 
-fn create_step_record(
-    conn: &mut rusqlite::Connection,
+async fn create_step_record(
+    conn: &crate::owl::Connection,
     exec_iri: &str,
     node_iri: &str,
 ) -> Result<String> {
     let step_iri = format!("foundation:StepExecution_{}", Utc::now().timestamp_millis());
     let ind = Individual::new(&step_iri);
-    ind.assert(conn, "foundation:StepExecution", &step_iri, "check_circle", "process_automation")
+    ind.assert(conn, "foundation:StepExecution", &step_iri, "check_circle", "process_automation").await
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:executesStep",
-        vec![Object::Iri(node_iri.to_string())], "process_automation")
+        vec![Object::Iri(node_iri.to_string())], "process_automation").await
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:belongsToExecution",
-        vec![Object::Iri(exec_iri.to_string())], "process_automation")
+        vec![Object::Iri(exec_iri.to_string())], "process_automation").await
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:hasStatus",
-        vec![Object::Iri(STATUS_IN_PROGRESS.to_string())], "process_automation")
+        vec![Object::Iri(STATUS_IN_PROGRESS.to_string())], "process_automation").await
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:stepStartedAt",
-        vec![lit_datetime(Utc::now().timestamp_millis())], "process_automation")
+        vec![lit_datetime(Utc::now().timestamp_millis())], "process_automation").await
         .map_err(|e| e.to_string())?;
 
     Individual::new(exec_iri)
         .add_property(conn, "foundation:hasStepExecutions",
-            vec![Object::Iri(step_iri.clone())], "process_automation")
+            vec![Object::Iri(step_iri.clone())], "process_automation").await
         .map_err(|e| e.to_string())?;
 
     Ok(step_iri)
 }
 
-fn finish_step_record(
-    conn: &mut rusqlite::Connection,
+async fn finish_step_record(
+    conn: &crate::owl::Connection,
     step_iri: &str,
     output: Option<&str>,
     error: Option<&str>,
@@ -127,38 +127,38 @@ fn finish_step_record(
     let ind = Individual::new(step_iri);
     let status = if error.is_some() { STATUS_FAILED } else { STATUS_COMPLETED };
     ind.add_property(conn, "foundation:hasStatus",
-        vec![Object::Iri(status.to_string())], "process_automation")
+        vec![Object::Iri(status.to_string())], "process_automation").await
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:stepFinishedAt",
-        vec![lit_datetime(Utc::now().timestamp_millis())], "process_automation")
+        vec![lit_datetime(Utc::now().timestamp_millis())], "process_automation").await
         .map_err(|e| e.to_string())?;
     if let Some(val) = output.filter(|v| !v.is_empty() && looks_like_iri(v)) {
         ind.add_property(conn, "foundation:outputValue",
-            vec![Object::Iri(val.to_string())], "process_automation")
+            vec![Object::Iri(val.to_string())], "process_automation").await
             .map_err(|e| e.to_string())?;
     }
     if let Some(msg) = error {
         ind.add_property(conn, "foundation:stepError",
-            vec![lit_str(msg)], "process_automation")
+            vec![lit_str(msg)], "process_automation").await
             .map_err(|e| e.to_string())?;
     }
     Ok(step_iri.to_string())
 }
 
-fn finish_execution_record(
-    conn: &mut rusqlite::Connection,
+async fn finish_execution_record(
+    conn: &crate::owl::Connection,
     exec_iri: &str,
     error: Option<&str>,
 ) -> Result<String> {
     let ind = Individual::new(exec_iri);
     let status = if error.is_some() { STATUS_FAILED } else { STATUS_COMPLETED };
     ind.add_property(conn, "foundation:hasStatus",
-        vec![Object::Iri(status.to_string())], "process_automation")
+        vec![Object::Iri(status.to_string())], "process_automation").await
         .map_err(|e| e.to_string())?;
     if let Some(msg) = error {
         ind.add_property(conn, "foundation:errorMessage",
             vec![Object::Literal { value: msg.to_string(), datatype: Some("xsd:string".to_string()), language: None }],
-            "process_automation")
+            "process_automation").await
             .map_err(|e| e.to_string())?;
     }
     Ok(exec_iri.to_string())
@@ -182,14 +182,14 @@ pub async fn run_process_with_context(
     let exec_iri = executor
         .write({
             let process_iri = process_iri.clone();
-            move |conn| create_execution_record(conn, &process_iri)
+            move |conn| async move { create_execution_record(&conn, &process_iri).await }
         })
         .await?;
 
     let nodes = executor
         .read({
             let process_iri = process_iri.clone();
-            move |conn| load_flow_nodes(conn, &process_iri)
+            move |conn| async move { load_flow_nodes(&conn, &process_iri).await }
         })
         .await?;
 
@@ -199,7 +199,7 @@ pub async fn run_process_with_context(
         .write({
             let exec_iri = exec_iri.clone();
             let error = run_result.as_ref().err().cloned();
-            move |conn| finish_execution_record(conn, &exec_iri, error.as_deref())
+            move |conn| async move { finish_execution_record(&conn, &exec_iri, error.as_deref()).await }
         })
         .await?;
 
@@ -229,7 +229,7 @@ async fn execute_nodes(
             .write({
                 let exec_iri = exec_iri.to_string();
                 let node_iri = node_iri.clone();
-                move |conn| create_step_record(conn, &exec_iri, &node_iri)
+                move |conn| async move { create_step_record(&conn, &exec_iri, &node_iri).await }
             })
             .await?;
 
@@ -262,7 +262,7 @@ async fn execute_nodes(
                 let step_iri = step_iri.clone();
                 let out = output.clone();
                 let err = step_error.clone();
-                move |conn| finish_step_record(conn, &step_iri, out.as_deref(), err.as_deref())
+                move |conn| async move { finish_step_record(&conn, &step_iri, out.as_deref(), err.as_deref()).await }
             })
             .await?;
 
@@ -289,8 +289,8 @@ async fn run_sub_process(
     let called_iri = executor
         .read({
             let node_iri = node_iri.to_string();
-            move |conn| {
-                let result = query::get_by_entity_predicate(conn, &node_iri, "foundation:calledElement")
+            move |conn| async move {
+                let result = query::get_by_entity_predicate(&conn, &node_iri, "foundation:calledElement").await
                     .map_err(|e| e.to_string())?;
                 Ok(result
                     .triples
@@ -329,8 +329,8 @@ async fn dispatch_ai_task(
     let (label, description) = executor
         .read({
             let node_iri = node_iri.to_string();
-            move |conn| {
-                let label = query::get_by_entity_predicate(conn, &node_iri, "rdfs:label")
+            move |conn| async move {
+                let label = query::get_by_entity_predicate(&conn, &node_iri, "rdfs:label").await
                     .map_err(|e| e.to_string())?
                     .triples
                     .first()
@@ -338,7 +338,7 @@ async fn dispatch_ai_task(
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| node_iri.clone());
 
-                let description = query::get_by_entity_predicate(conn, &node_iri, "rdfs:comment")
+                let description = query::get_by_entity_predicate(&conn, &node_iri, "rdfs:comment").await
                     .map_err(|e| e.to_string())?
                     .triples
                     .first()

@@ -53,11 +53,11 @@ fn extract_local_name(iri: &str) -> &str {
         .unwrap_or(iri)
 }
 
-fn get_gateway_condition_iris(
+async fn get_gateway_condition_iris(
     conn: &crate::owl::Connection,
     node_iri: &str,
 ) -> Result<Vec<String>, String> {
-    get_all_iri_properties(conn, node_iri, "foundation:gatewayCondition")
+    get_all_iri_properties(conn, node_iri, "foundation:gatewayCondition").await
         .map_err(|e| e.to_string())
 }
 
@@ -67,12 +67,12 @@ pub async fn meta_process__get_graph(
     process_iri: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    executor.read(move |conn| {
-        let process_label = get_literal_property(conn, &process_iri, rdfs::LABEL)
+    executor.read(move |conn| async move {
+        let process_label = get_literal_property(&conn, &process_iri, rdfs::LABEL).await
             .map_err(|e| e.to_string())?
             .unwrap_or_else(|| process_iri.clone());
 
-        let start_node = get_iri_property(conn, &process_iri, "foundation:metaStartNode")
+        let start_node = get_iri_property(&conn, &process_iri, "foundation:metaStartNode").await
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("No metaStartNode for {}", process_iri))?;
 
@@ -90,29 +90,29 @@ pub async fn meta_process__get_graph(
             }
             visited.insert(current.clone());
 
-            let type_iri = get_iri_property(conn, &current, rdf::TYPE)
+            let type_iri = get_iri_property(&conn, &current, rdf::TYPE).await
                 .map_err(|e| e.to_string())?
                 .unwrap_or_default();
             let node_type = extract_local_name(&type_iri).to_string();
 
-            let label = get_literal_property(conn, &current, rdfs::LABEL)
+            let label = get_literal_property(&conn, &current, rdfs::LABEL).await
                 .map_err(|e| e.to_string())?
                 .unwrap_or_else(|| current.clone());
 
-            let invokes_process = get_iri_property(conn, &current, "foundation:invokesProcess")
+            let invokes_process = get_iri_property(&conn, &current, "foundation:invokesProcess").await
                 .map_err(|e| e.to_string())?;
 
-            let (status, status_color, status_icon) = match crate::owl::get_entity_status_info(conn, &current) {
+            let (status, status_color, status_icon) = match crate::owl::get_entity_status_info(&conn, &current).await {
                 Some((_, label, color, icon)) => (Some(label), color, icon),
                 None => (None, None, None),
             };
 
             let is_condition = node_type == "MetaGatewayCondition" || node_type == "MetaBoundaryCondition";
             let condition_operator = if is_condition {
-                let op_iri = get_iri_property(conn, &current, "foundation:conditionOperator")
+                let op_iri = get_iri_property(&conn, &current, "foundation:conditionOperator").await
                     .map_err(|e| e.to_string())?;
                 if let Some(iri) = op_iri {
-                    get_literal_property(conn, &iri, rdfs::LABEL)
+                    get_literal_property(&conn, &iri, rdfs::LABEL).await
                         .map_err(|e| e.to_string())?
                 } else {
                     None
@@ -121,7 +121,7 @@ pub async fn meta_process__get_graph(
                 None
             };
             let condition_value = if is_condition {
-                get_literal_property(conn, &current, "foundation:conditionValue")
+                get_literal_property(&conn, &current, "foundation:conditionValue").await
                     .map_err(|e| e.to_string())?
             } else {
                 None
@@ -129,10 +129,10 @@ pub async fn meta_process__get_graph(
 
             let is_user_task = node_type == "MetaUserTask";
             let renders_component = if is_user_task {
-                let comp_iri = get_iri_property(conn, &current, "foundation:rendersComponent")
+                let comp_iri = get_iri_property(&conn, &current, "foundation:rendersComponent").await
                     .map_err(|e| e.to_string())?;
                 if let Some(iri) = comp_iri {
-                    get_literal_property(conn, &iri, rdfs::LABEL)
+                    get_literal_property(&conn, &iri, rdfs::LABEL).await
                         .map_err(|e| e.to_string())?
                 } else {
                     None
@@ -143,7 +143,7 @@ pub async fn meta_process__get_graph(
 
             let is_boundary = node_type == "MetaBoundaryEvent";
             let event_type = if is_boundary {
-                get_literal_property(conn, &current, "foundation:eventType")
+                get_literal_property(&conn, &current, "foundation:eventType").await
                     .map_err(|e| e.to_string())?
             } else {
                 None
@@ -154,10 +154,10 @@ pub async fn meta_process__get_graph(
                 "MetaStartEvent" | "MetaEndEvent" | "MetaIntermediateEvent"
             );
             let trigger_type = if is_event {
-                let trigger_iri = get_iri_property(conn, &current, "foundation:triggerType")
+                let trigger_iri = get_iri_property(&conn, &current, "foundation:triggerType").await
                     .map_err(|e| e.to_string())?;
                 if let Some(iri) = trigger_iri {
-                    get_literal_property(conn, &iri, rdfs::LABEL)
+                    get_literal_property(&conn, &iri, rdfs::LABEL).await
                         .map_err(|e| e.to_string())?
                 } else {
                     None
@@ -187,9 +187,9 @@ pub async fn meta_process__get_graph(
             );
 
             let next_targets: Vec<String> = if is_gateway {
-                get_gateway_condition_iris(conn, &current)?
+                get_gateway_condition_iris(&conn, &current).await?
             } else {
-                get_all_iri_properties(conn, &current, "foundation:nextNode")
+                get_all_iri_properties(&conn, &current, "foundation:nextNode").await
                     .map_err(|e| e.to_string())?
             };
 
@@ -211,7 +211,7 @@ pub async fn meta_process__get_graph(
                 "MetaSystemTask" | "MetaUserTask" | "MetaSubProcess"
             );
             if is_task {
-                let boundary_conditions = get_all_iri_properties(conn, &current, "foundation:boundaryCondition")
+                let boundary_conditions = get_all_iri_properties(&conn, &current, "foundation:boundaryCondition").await
                     .map_err(|e| e.to_string())?;
                 for bc in boundary_conditions {
                     edge_counter += 1;

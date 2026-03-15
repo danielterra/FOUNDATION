@@ -2,25 +2,25 @@ use super::learn_concept_one;
 use crate::eavto::{store, Triple, Object};
 use crate::eavto::test_helpers::setup_test_db;
 
-#[test]
-fn test_update_concept_required_fields_rejects_nonexistent_property() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_update_concept_required_fields_rejects_nonexistent_property() {
+    let conn = setup_test_db().await;
 
-    store::assert_triples(&mut conn, &[
+    store::assert_triples(&conn, &[
         Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
         Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
             value: "Test Class".to_string(),
             datatype: Some("xsd:string".to_string()),
             language: None,
         }),
-    ], "test").unwrap();
+    ], "test").await.unwrap();
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
         "required_fields": ["foundation:nonExistent"]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = learn_concept_one(&conn, &args).await;
 
     assert!(!result.success);
     let error = result.error.unwrap();
@@ -31,11 +31,11 @@ fn test_update_concept_required_fields_rejects_nonexistent_property() {
     );
 }
 
-#[test]
-fn test_update_concept_required_fields_accepts_valid_datatype_property() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_update_concept_required_fields_accepts_valid_datatype_property() {
+    let conn = setup_test_db().await;
 
-    store::assert_triples(&mut conn, &[
+    store::assert_triples(&conn, &[
         Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
         Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
             value: "Test Class".to_string(),
@@ -43,22 +43,22 @@ fn test_update_concept_required_fields_accepts_valid_datatype_property() {
             language: None,
         }),
         Triple::new("foundation:myProp", "rdf:type", Object::Iri("owl:DatatypeProperty".to_string())),
-    ], "test").unwrap();
+    ], "test").await.unwrap();
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
         "required_fields": ["foundation:myProp"]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = learn_concept_one(&conn, &args).await;
     assert!(result.success, "Expected success, got error: {:?}", result.error);
 }
 
-#[test]
-fn test_update_concept_required_fields_accepts_valid_object_property() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_update_concept_required_fields_accepts_valid_object_property() {
+    let conn = setup_test_db().await;
 
-    store::assert_triples(&mut conn, &[
+    store::assert_triples(&conn, &[
         Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
         Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
             value: "Test Class".to_string(),
@@ -66,33 +66,33 @@ fn test_update_concept_required_fields_accepts_valid_object_property() {
             language: None,
         }),
         Triple::new("foundation:myRef", "rdf:type", Object::Iri("owl:ObjectProperty".to_string())),
-    ], "test").unwrap();
+    ], "test").await.unwrap();
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
         "required_fields": ["foundation:myRef"]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = learn_concept_one(&conn, &args).await;
     assert!(result.success, "Expected success, got error: {:?}", result.error);
 }
 
-#[test]
-fn test_required_fields_can_reference_property_in_upsert_details() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_required_fields_can_reference_property_in_upsert_details() {
+    let conn = setup_test_db().await;
 
     crate::owl::Property::new("foundation:newProp")
-        .assert(&mut conn, crate::owl::PropertyType::DatatypeProperty, "new prop", None, &[], Some("xsd:string"), None, "test")
-        .unwrap();
+        .assert(&conn, crate::owl::PropertyType::DatatypeProperty, "new prop", None, &[], Some("xsd:string"), None, "test")
+        .await.unwrap();
 
-    store::assert_triples(&mut conn, &[
+    store::assert_triples(&conn, &[
         Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
         Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
             value: "Test Class".to_string(),
             datatype: Some("xsd:string".to_string()),
             language: None,
         }),
-    ], "test").unwrap();
+    ], "test").await.unwrap();
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
@@ -100,19 +100,19 @@ fn test_required_fields_can_reference_property_in_upsert_details() {
         "required_fields": ["foundation:newProp"]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = learn_concept_one(&conn, &args).await;
     assert!(result.success, "Expected success when required_field is in upsert_details, got error: {:?}", result.error);
 }
 
-#[test]
-fn test_required_fields_can_reference_connection_in_upsert_details() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_required_fields_can_reference_connection_in_upsert_details() {
+    let conn = setup_test_db().await;
 
     crate::owl::Property::new("foundation:newRef")
-        .assert(&mut conn, crate::owl::PropertyType::ObjectProperty, "new ref", None, &[], Some("foundation:TargetClass"), None, "test")
-        .unwrap();
+        .assert(&conn, crate::owl::PropertyType::ObjectProperty, "new ref", None, &[], Some("foundation:TargetClass"), None, "test")
+        .await.unwrap();
 
-    store::assert_triples(&mut conn, &[
+    store::assert_triples(&conn, &[
         Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
         Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
             value: "Test Class".to_string(),
@@ -120,7 +120,7 @@ fn test_required_fields_can_reference_connection_in_upsert_details() {
             language: None,
         }),
         Triple::new("foundation:TargetClass", "rdf:type", Object::Iri("owl:Class".to_string())),
-    ], "test").unwrap();
+    ], "test").await.unwrap();
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
@@ -128,29 +128,29 @@ fn test_required_fields_can_reference_connection_in_upsert_details() {
         "required_fields": ["foundation:newRef"]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = learn_concept_one(&conn, &args).await;
     assert!(result.success, "Expected success when required_field is a connection in upsert_details, got error: {:?}", result.error);
 }
 
-#[test]
-fn test_allowed_statuses_rejects_nonexistent_status_iri() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_allowed_statuses_rejects_nonexistent_status_iri() {
+    let conn = setup_test_db().await;
 
-    store::assert_triples(&mut conn, &[
+    store::assert_triples(&conn, &[
         Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
         Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
             value: "Test Class".to_string(),
             datatype: Some("xsd:string".to_string()),
             language: None,
         }),
-    ], "test").unwrap();
+    ], "test").await.unwrap();
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
         "allowed_statuses": ["foundation:Status_inactive"]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = learn_concept_one(&conn, &args).await;
 
     assert!(!result.success);
     let error = result.error.unwrap();
@@ -161,11 +161,11 @@ fn test_allowed_statuses_rejects_nonexistent_status_iri() {
     );
 }
 
-#[test]
-fn test_allowed_statuses_rejects_status_without_icon() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_allowed_statuses_rejects_status_without_icon() {
+    let conn = setup_test_db().await;
 
-    store::assert_triples(&mut conn, &[
+    store::assert_triples(&conn, &[
         Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
         Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
             value: "Test Class".to_string(),
@@ -177,14 +177,14 @@ fn test_allowed_statuses_rejects_status_without_icon() {
             datatype: Some("xsd:string".to_string()),
             language: None,
         }),
-    ], "test").unwrap();
+    ], "test").await.unwrap();
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
         "allowed_statuses": ["foundation:StatusNoIcon"]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = learn_concept_one(&conn, &args).await;
 
     assert!(!result.success);
     let error = result.error.unwrap();
@@ -195,11 +195,11 @@ fn test_allowed_statuses_rejects_status_without_icon() {
     );
 }
 
-#[test]
-fn test_allowed_statuses_accepts_valid_status_with_icon() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_allowed_statuses_accepts_valid_status_with_icon() {
+    let conn = setup_test_db().await;
 
-    store::assert_triples(&mut conn, &[
+    store::assert_triples(&conn, &[
         Triple::new("foundation:TestClass", "rdf:type", Object::Iri("owl:Class".to_string())),
         Triple::new("foundation:TestClass", "rdfs:label", Object::Literal {
             value: "Test Class".to_string(),
@@ -216,23 +216,23 @@ fn test_allowed_statuses_accepts_valid_status_with_icon() {
             datatype: Some("xsd:string".to_string()),
             language: None,
         }),
-    ], "test").unwrap();
+    ], "test").await.unwrap();
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
         "allowed_statuses": ["foundation:StatusWithIcon"]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = learn_concept_one(&conn, &args).await;
     assert!(result.success, "Expected success, got error: {:?}", result.error);
 }
 
 // ── remove_details ───────────────────────────────────────────────────────
 
-fn setup_two_concepts_with_shared_property(conn: &mut crate::eavto::Connection) {
+async fn setup_two_concepts_with_shared_property(conn: &crate::eavto::Connection) {
     crate::owl::Property::new("foundation:sharedProp")
         .assert(conn, crate::owl::PropertyType::DatatypeProperty, "Shared Prop", None, &[], Some("xsd:string"), None, "test")
-        .unwrap();
+        .await.unwrap();
 
     store::assert_triples(conn, &[
         Triple::new("foundation:ConceptA", "rdf:type", Object::Iri("owl:Class".to_string())),
@@ -243,80 +243,80 @@ fn setup_two_concepts_with_shared_property(conn: &mut crate::eavto::Connection) 
         Triple::new("foundation:ConceptB", "rdfs:label", Object::Literal {
             value: "Concept B".to_string(), datatype: Some("xsd:string".to_string()), language: None,
         }),
-    ], "test").unwrap();
+    ], "test").await.unwrap();
 
-    learn_concept_one(conn, &serde_json::json!({"iri": "foundation:ConceptA", "upsert_details": ["foundation:sharedProp"]}));
-    learn_concept_one(conn, &serde_json::json!({"iri": "foundation:ConceptB", "upsert_details": ["foundation:sharedProp"]}));
+    learn_concept_one(conn, &serde_json::json!({"iri": "foundation:ConceptA", "upsert_details": ["foundation:sharedProp"]})).await;
+    learn_concept_one(conn, &serde_json::json!({"iri": "foundation:ConceptB", "upsert_details": ["foundation:sharedProp"]})).await;
 }
 
-#[test]
-fn test_remove_details_with_other_domains_preserves_property() {
-    let mut conn = setup_test_db();
-    setup_two_concepts_with_shared_property(&mut conn);
+#[tokio::test]
+async fn test_remove_details_with_other_domains_preserves_property() {
+    let conn = setup_test_db().await;
+    setup_two_concepts_with_shared_property(&conn).await;
 
-    let result = learn_concept_one(&mut conn, &serde_json::json!({
+    let result = learn_concept_one(&conn, &serde_json::json!({
         "iri": "foundation:ConceptA",
         "remove_details": ["foundation:sharedProp"]
-    }));
+    })).await;
     assert!(result.success, "remove_details should succeed: {:?}", result.error);
 
-    let prop = crate::owl::Property::get(&conn, "foundation:sharedProp").unwrap();
+    let prop = crate::owl::Property::get(&conn, "foundation:sharedProp").await.unwrap();
     assert!(prop.is_some(), "property must still exist (has other domain)");
     let domains = prop.unwrap().domains;
     assert!(!domains.contains(&"foundation:ConceptA".to_string()), "ConceptA must be removed from domains");
     assert!(domains.contains(&"foundation:ConceptB".to_string()), "ConceptB domain must be preserved");
 }
 
-#[test]
-fn test_remove_details_last_domain_deletes_property() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_remove_details_last_domain_deletes_property() {
+    let conn = setup_test_db().await;
 
     crate::owl::Property::new("foundation:singleDomainProp")
-        .assert(&mut conn, crate::owl::PropertyType::DatatypeProperty, "Single Domain Prop", None, &[], Some("xsd:string"), None, "test")
-        .unwrap();
+        .assert(&conn, crate::owl::PropertyType::DatatypeProperty, "Single Domain Prop", None, &[], Some("xsd:string"), None, "test")
+        .await.unwrap();
 
-    store::assert_triples(&mut conn, &[
+    store::assert_triples(&conn, &[
         Triple::new("foundation:OnlyOwner", "rdf:type", Object::Iri("owl:Class".to_string())),
         Triple::new("foundation:OnlyOwner", "rdfs:label", Object::Literal {
             value: "Only Owner".to_string(), datatype: Some("xsd:string".to_string()), language: None,
         }),
-    ], "test").unwrap();
+    ], "test").await.unwrap();
 
-    learn_concept_one(&mut conn, &serde_json::json!({"iri": "foundation:OnlyOwner", "upsert_details": ["foundation:singleDomainProp"]}));
+    learn_concept_one(&conn, &serde_json::json!({"iri": "foundation:OnlyOwner", "upsert_details": ["foundation:singleDomainProp"]})).await;
 
-    let result = learn_concept_one(&mut conn, &serde_json::json!({
+    let result = learn_concept_one(&conn, &serde_json::json!({
         "iri": "foundation:OnlyOwner",
         "remove_details": ["foundation:singleDomainProp"]
-    }));
+    })).await;
     assert!(result.success, "remove_details should succeed: {:?}", result.error);
 
-    let prop = crate::owl::Property::get(&conn, "foundation:singleDomainProp").unwrap();
+    let prop = crate::owl::Property::get(&conn, "foundation:singleDomainProp").await.unwrap();
     assert!(prop.is_none(), "property must be deleted when it has no remaining domains");
 }
 
-#[test]
-fn test_remove_details_nonexistent_property_is_ignored() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_remove_details_nonexistent_property_is_ignored() {
+    let conn = setup_test_db().await;
 
-    store::assert_triples(&mut conn, &[
+    store::assert_triples(&conn, &[
         Triple::new("foundation:SomeConcept", "rdf:type", Object::Iri("owl:Class".to_string())),
         Triple::new("foundation:SomeConcept", "rdfs:label", Object::Literal {
             value: "Some Concept".to_string(), datatype: Some("xsd:string".to_string()), language: None,
         }),
-    ], "test").unwrap();
+    ], "test").await.unwrap();
 
-    let result = learn_concept_one(&mut conn, &serde_json::json!({
+    let result = learn_concept_one(&conn, &serde_json::json!({
         "iri": "foundation:SomeConcept",
         "remove_details": ["foundation:doesNotExist"]
-    }));
+    })).await;
     assert!(result.success, "remove_details with nonexistent property must succeed silently");
 }
 
-#[test]
-fn test_forget_concept_rejected_when_subclasses_exist() {
+#[tokio::test]
+async fn test_forget_concept_rejected_when_subclasses_exist() {
     use crate::ai::functions::{ToolCall, execute_tool};
 
-    let mut conn = setup_test_db();
+    let conn = setup_test_db().await;
 
     let create_parent = ToolCall {
         name: "learn_concepts".to_string(),
@@ -329,7 +329,7 @@ fn test_forget_concept_rejected_when_subclasses_exist() {
             }]
         }),
     };
-    assert!(execute_tool(&mut conn, &create_parent, None).success);
+    assert!(execute_tool(&conn, &create_parent, None).await.success);
 
     let create_child = ToolCall {
         name: "learn_concepts".to_string(),
@@ -342,7 +342,7 @@ fn test_forget_concept_rejected_when_subclasses_exist() {
             }]
         }),
     };
-    assert!(execute_tool(&mut conn, &create_child, None).success);
+    assert!(execute_tool(&conn, &create_child, None).await.success);
 
     let delete_call = ToolCall {
         name: "forget_concepts".to_string(),
@@ -350,17 +350,17 @@ fn test_forget_concept_rejected_when_subclasses_exist() {
             "operations": [{"iri": "foundation:Animal"}]
         }),
     };
-    let result = execute_tool(&mut conn, &delete_call, None);
+    let result = execute_tool(&conn, &delete_call, None).await;
     assert!(!result.success, "deleting a concept with subclasses must be rejected");
     let err = result.error.unwrap();
     assert!(err.contains("foundation:Dog"), "error must mention the dependent subclass; got: {err}");
 }
 
-#[test]
-fn test_forget_concept_allowed_when_no_subclasses() {
+#[tokio::test]
+async fn test_forget_concept_allowed_when_no_subclasses() {
     use crate::ai::functions::{ToolCall, execute_tool};
 
-    let mut conn = setup_test_db();
+    let conn = setup_test_db().await;
 
     let create = ToolCall {
         name: "learn_concepts".to_string(),
@@ -373,7 +373,7 @@ fn test_forget_concept_allowed_when_no_subclasses() {
             }]
         }),
     };
-    assert!(execute_tool(&mut conn, &create, None).success);
+    assert!(execute_tool(&conn, &create, None).await.success);
 
     let delete_call = ToolCall {
         name: "forget_concepts".to_string(),
@@ -381,15 +381,15 @@ fn test_forget_concept_allowed_when_no_subclasses() {
             "operations": [{"iri": "foundation:Leaf"}]
         }),
     };
-    let result = execute_tool(&mut conn, &delete_call, None);
+    let result = execute_tool(&conn, &delete_call, None).await;
     assert!(result.success, "deleting a leaf concept must succeed; got: {:?}", result.error);
 }
 
-#[test]
-fn test_update_concept_super_concepts_empty_array_is_rejected() {
+#[tokio::test]
+async fn test_update_concept_super_concepts_empty_array_is_rejected() {
     use crate::ai::functions::{ToolCall, execute_tool};
 
-    let mut conn = setup_test_db();
+    let conn = setup_test_db().await;
 
     let create = ToolCall {
         name: "learn_concepts".to_string(),
@@ -402,7 +402,7 @@ fn test_update_concept_super_concepts_empty_array_is_rejected() {
             }]
         }),
     };
-    assert!(execute_tool(&mut conn, &create, None).success);
+    assert!(execute_tool(&conn, &create, None).await.success);
 
     let update = ToolCall {
         name: "learn_concepts".to_string(),
@@ -413,16 +413,16 @@ fn test_update_concept_super_concepts_empty_array_is_rejected() {
             }]
         }),
     };
-    let result = execute_tool(&mut conn, &update, None);
+    let result = execute_tool(&conn, &update, None).await;
     assert!(!result.success, "setting super_concepts to empty must be rejected");
 }
 
-#[test]
-fn test_rename_concept_migrates_all_references() {
+#[tokio::test]
+async fn test_rename_concept_migrates_all_references() {
     use crate::ai::functions::{ToolCall, execute_tool};
     use crate::eavto::query;
 
-    let mut conn = setup_test_db();
+    let conn = setup_test_db().await;
 
     let create_concept = ToolCall {
         name: "learn_concepts".to_string(),
@@ -435,21 +435,19 @@ fn test_rename_concept_migrates_all_references() {
             }]
         }),
     };
-    assert!(execute_tool(&mut conn, &create_concept, None).success);
+    assert!(execute_tool(&conn, &create_concept, None).await.success);
 
-    // Property with OldName as domain
     crate::owl::Property::new("foundation:testProp")
-        .assert(&mut conn, crate::owl::PropertyType::DatatypeProperty, "test prop", None, &["foundation:OldName"], Some("xsd:string"), None, "test")
-        .unwrap();
+        .assert(&conn, crate::owl::PropertyType::DatatypeProperty, "test prop", None, &["foundation:OldName"], Some("xsd:string"), None, "test")
+        .await.unwrap();
 
-    // Property pointing to OldName as range
     crate::owl::Property::new("foundation:refToOld")
-        .assert(&mut conn, crate::owl::PropertyType::ObjectProperty, "ref to old", None, &[], Some("foundation:OldName"), None, "test")
-        .unwrap();
+        .assert(&conn, crate::owl::PropertyType::ObjectProperty, "ref to old", None, &[], Some("foundation:OldName"), None, "test")
+        .await.unwrap();
 
-    store::assert_triples(&mut conn, &[
+    store::assert_triples(&conn, &[
         Triple::new("foundation:Instance_1", "rdf:type", Object::Iri("foundation:OldName".to_string())),
-    ], "test").unwrap();
+    ], "test").await.unwrap();
 
     let create_sub = ToolCall {
         name: "learn_concepts".to_string(),
@@ -462,7 +460,7 @@ fn test_rename_concept_migrates_all_references() {
             }]
         }),
     };
-    assert!(execute_tool(&mut conn, &create_sub, None).success);
+    assert!(execute_tool(&conn, &create_sub, None).await.success);
 
     let rename = ToolCall {
         name: "learn_concepts".to_string(),
@@ -473,38 +471,38 @@ fn test_rename_concept_migrates_all_references() {
             }]
         }),
     };
-    let result = execute_tool(&mut conn, &rename, None);
+    let result = execute_tool(&conn, &rename, None).await;
     assert!(result.success, "rename must succeed; got: {:?}", result.error);
 
-    let old_class = crate::owl::Class::get(&conn, "foundation:OldName").unwrap();
+    let old_class = crate::owl::Class::get(&conn, "foundation:OldName").await.unwrap();
     assert!(old_class.is_none(), "old IRI must be gone after rename");
 
-    let new_class = crate::owl::Class::get(&conn, "foundation:NewName").unwrap();
+    let new_class = crate::owl::Class::get(&conn, "foundation:NewName").await.unwrap();
     assert!(new_class.is_some(), "new IRI must exist after rename");
 
-    let prop = crate::owl::Property::get(&conn, "foundation:testProp").unwrap().unwrap();
+    let prop = crate::owl::Property::get(&conn, "foundation:testProp").await.unwrap().unwrap();
     assert!(prop.domains.contains(&"foundation:NewName".to_string()), "domain must be updated to new IRI");
     assert!(!prop.domains.contains(&"foundation:OldName".to_string()), "old IRI must not remain in domain");
 
-    let ref_prop = crate::owl::Property::get(&conn, "foundation:refToOld").unwrap().unwrap();
+    let ref_prop = crate::owl::Property::get(&conn, "foundation:refToOld").await.unwrap().unwrap();
     assert!(ref_prop.ranges.contains(&"foundation:NewName".to_string()), "range must be updated to new IRI");
 
-    let type_triples = query::get_by_entity_predicate(&conn, "foundation:Instance_1", "rdf:type").unwrap();
+    let type_triples = query::get_by_entity_predicate(&conn, "foundation:Instance_1", "rdf:type").await.unwrap();
     let has_new_type = type_triples.triples.iter().any(|t| t.object.as_iri() == Some("foundation:NewName"));
     assert!(has_new_type, "instance type must be updated to new IRI");
 
-    let sub_class = crate::owl::Class::get(&conn, "foundation:SubOfOld").unwrap().unwrap();
+    let sub_class = crate::owl::Class::get(&conn, "foundation:SubOfOld").await.unwrap().unwrap();
     assert!(
         sub_class.super_classes.iter().any(|t| t.iri == "foundation:NewName"),
         "subclass superclass must be updated to new IRI"
     );
 }
 
-#[test]
-fn test_rename_concept_rejects_nonexistent_source() {
+#[tokio::test]
+async fn test_rename_concept_rejects_nonexistent_source() {
     use crate::ai::functions::{ToolCall, execute_tool};
 
-    let mut conn = setup_test_db();
+    let conn = setup_test_db().await;
 
     let rename = ToolCall {
         name: "learn_concepts".to_string(),
@@ -515,15 +513,15 @@ fn test_rename_concept_rejects_nonexistent_source() {
             }]
         }),
     };
-    let result = execute_tool(&mut conn, &rename, None);
+    let result = execute_tool(&conn, &rename, None).await;
     assert!(!result.success, "rename of non-existent concept must fail");
 }
 
-#[test]
-fn test_rename_concept_rejects_existing_target() {
+#[tokio::test]
+async fn test_rename_concept_rejects_existing_target() {
     use crate::ai::functions::{ToolCall, execute_tool};
 
-    let mut conn = setup_test_db();
+    let conn = setup_test_db().await;
 
     for iri in &["foundation:SourceConcept", "foundation:TargetConcept"] {
         let create = ToolCall {
@@ -537,7 +535,7 @@ fn test_rename_concept_rejects_existing_target() {
                 }]
             }),
         };
-        assert!(execute_tool(&mut conn, &create, None).success);
+        assert!(execute_tool(&conn, &create, None).await.success);
     }
 
     let rename = ToolCall {
@@ -549,6 +547,6 @@ fn test_rename_concept_rejects_existing_target() {
             }]
         }),
     };
-    let result = execute_tool(&mut conn, &rename, None);
+    let result = execute_tool(&conn, &rename, None).await;
     assert!(!result.success, "rename to existing IRI must fail");
 }

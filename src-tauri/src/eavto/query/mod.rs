@@ -4,15 +4,14 @@ mod search;
 pub use find::*;
 pub use search::*;
 
-use rusqlite::{Connection, Row, types::Value as SqlValue};
+use turso::{Connection, Value};
 use super::triple_type::Triple;
 use super::object_type::Object;
 use super::query_result_type::QueryResult;
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
-
+pub async fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
@@ -20,11 +19,13 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
          FROM triples
          WHERE subject = ? AND retracted = 0
          ORDER BY predicate, object, object_value, tx DESC"
-    )?;
+    ).await?;
 
-    let all_triples: Vec<Triple> = stmt
-        .query_map([entity], row_to_triple)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut rows = stmt.query(turso::params![entity]).await?;
+    let mut all_triples = Vec::new();
+    while let Some(row) = rows.next().await? {
+        all_triples.push(row_to_triple(&row)?);
+    }
 
     let mut seen_pairs = std::collections::HashSet::new();
     let current_triples: Vec<Triple> = all_triples
@@ -54,7 +55,7 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
     Ok(QueryResult::new(current_triples))
 }
 
-pub fn get_retracted_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
+pub async fn get_retracted_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
@@ -62,32 +63,36 @@ pub fn get_retracted_by_entity(conn: &Connection, entity: &str) -> Result<QueryR
          FROM triples
          WHERE subject = ? AND retracted = 1
          ORDER BY predicate, tx DESC"
-    )?;
+    ).await?;
 
-    let triples = stmt
-        .query_map([entity], row_to_triple)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut rows = stmt.query(turso::params![entity]).await?;
+    let mut triples = Vec::new();
+    while let Some(row) = rows.next().await? {
+        triples.push(row_to_triple(&row)?);
+    }
 
     Ok(QueryResult::new(triples))
 }
 
-pub fn get_by_object_iri(conn: &Connection, object_iri: &str) -> Result<QueryResult> {
+pub async fn get_by_object_iri(conn: &Connection, object_iri: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
          WHERE object = ? AND object_type = 'iri' AND retracted = 0"
-    )?;
+    ).await?;
 
-    let triples = stmt
-        .query_map([object_iri], row_to_triple)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut rows = stmt.query(turso::params![object_iri]).await?;
+    let mut triples = Vec::new();
+    while let Some(row) = rows.next().await? {
+        triples.push(row_to_triple(&row)?);
+    }
 
     Ok(QueryResult::new(triples))
 }
 
-pub fn get_by_predicate(conn: &Connection, predicate: &str) -> Result<QueryResult> {
+pub async fn get_by_predicate(conn: &Connection, predicate: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
@@ -95,24 +100,26 @@ pub fn get_by_predicate(conn: &Connection, predicate: &str) -> Result<QueryResul
          FROM triples
          WHERE predicate = ? AND retracted = 0
          ORDER BY tx DESC"
-    )?;
+    ).await?;
 
-    let triples = stmt
-        .query_map([predicate], row_to_triple)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut rows = stmt.query(turso::params![predicate]).await?;
+    let mut triples = Vec::new();
+    while let Some(row) = rows.next().await? {
+        triples.push(row_to_triple(&row)?);
+    }
 
     Ok(QueryResult::new(triples))
 }
 
-pub fn get_by_entity_predicate(
+pub async fn get_by_entity_predicate(
     conn: &Connection,
     entity: &str,
     predicate: &str,
 ) -> Result<QueryResult> {
-    get_by_entity_predicate_internal(conn, entity, predicate, true)
+    get_by_entity_predicate_internal(conn, entity, predicate, true).await
 }
 
-pub fn get_by_entity_predicate_internal(
+pub async fn get_by_entity_predicate_internal(
     conn: &Connection,
     entity: &str,
     predicate: &str,
@@ -120,7 +127,7 @@ pub fn get_by_entity_predicate_internal(
 ) -> Result<QueryResult> {
 
     let is_functional = if check_functional {
-        crate::owl::Property::is_functional(conn, predicate)
+        Box::pin(crate::owl::Property::is_functional(conn, predicate)).await
             .unwrap_or(false)
     } else {
         false
@@ -135,11 +142,13 @@ pub fn get_by_entity_predicate_internal(
              WHERE subject = ? AND predicate = ? AND retracted = 0
              ORDER BY tx DESC
              LIMIT 1"
-        )?;
+        ).await?;
 
-        let triples = stmt
-            .query_map([entity, predicate], row_to_triple)?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut rows = stmt.query(turso::params![entity, predicate]).await?;
+        let mut triples = Vec::new();
+        while let Some(row) = rows.next().await? {
+            triples.push(row_to_triple(&row)?);
+        }
 
         Ok(QueryResult::new(triples))
     } else {
@@ -150,11 +159,13 @@ pub fn get_by_entity_predicate_internal(
              FROM triples
              WHERE subject = ? AND predicate = ? AND retracted = 0
              ORDER BY object, object_value, tx DESC"
-        )?;
+        ).await?;
 
-        let all_triples: Vec<Triple> = stmt
-            .query_map([entity, predicate], row_to_triple)?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut rows = stmt.query(turso::params![entity, predicate]).await?;
+        let mut all_triples = Vec::new();
+        while let Some(row) = rows.next().await? {
+            all_triples.push(row_to_triple(&row)?);
+        }
 
         let mut seen_objects = std::collections::HashSet::new();
         let current_triples: Vec<Triple> = all_triples
@@ -177,25 +188,25 @@ pub fn get_by_entity_predicate_internal(
     }
 }
 
-pub fn get_by_predicate_object(
+pub async fn get_by_predicate_object(
     conn: &Connection,
     predicate: &str,
     object: &str,
 ) -> Result<QueryResult> {
-    let (where_clause, params): (&str, Vec<&dyn rusqlite::ToSql>) = if object == "true" {
+    let (where_clause, extra_params): (&str, Vec<Value>) = if object == "true" {
         (
-            "WHERE predicate = ?1 AND object_boolean = 1 AND retracted = 0",
-            vec![&predicate as &dyn rusqlite::ToSql],
+            "WHERE predicate = ? AND object_boolean = 1 AND retracted = 0",
+            vec![],
         )
     } else if object == "false" {
         (
-            "WHERE predicate = ?1 AND object_boolean = 0 AND retracted = 0",
-            vec![&predicate as &dyn rusqlite::ToSql],
+            "WHERE predicate = ? AND object_boolean = 0 AND retracted = 0",
+            vec![],
         )
     } else {
         (
-            "WHERE predicate = ?1 AND object = ?2 AND retracted = 0",
-            vec![&predicate as &dyn rusqlite::ToSql, &object as &dyn rusqlite::ToSql],
+            "WHERE predicate = ? AND object = ? AND retracted = 0",
+            vec![Value::Text(object.to_string())],
         )
     };
 
@@ -209,10 +220,16 @@ pub fn get_by_predicate_object(
         where_clause
     );
 
-    let mut stmt = conn.prepare(&query)?;
-    let triples = stmt
-        .query_map(params.as_slice(), row_to_triple)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut all_params = vec![Value::Text(predicate.to_string())];
+    all_params.extend(extra_params);
+
+    let mut stmt = conn.prepare(&query).await?;
+    let p = turso::params_from_iter(all_params.into_iter());
+    let mut rows = stmt.query(p).await?;
+    let mut triples = Vec::new();
+    while let Some(row) = rows.next().await? {
+        triples.push(row_to_triple(&row)?);
+    }
 
     Ok(QueryResult::new(triples))
 }
@@ -225,7 +242,7 @@ pub struct BacklinkRow {
     pub group_total: usize,
 }
 
-pub fn get_backlinks_grouped_limited(
+pub async fn get_backlinks_grouped_limited(
     conn: &Connection,
     object: &str,
     limit_per_group: usize,
@@ -264,41 +281,42 @@ pub fn get_backlinks_grouped_limited(
          ranked AS (
              SELECT
                  bwc.subject, bwc.predicate, bwc.source_class, bwc.last_tx,
-                 gc.total AS group_total,
-                 ROW_NUMBER() OVER (
-                     PARTITION BY bwc.predicate, bwc.source_class
-                     ORDER BY bwc.last_tx DESC
-                 ) AS rn
+                 gc.total AS group_total
              FROM backlinks_with_class bwc
              JOIN group_counts gc
                ON gc.predicate = bwc.predicate
               AND gc.source_class IS bwc.source_class
+             WHERE (
+                 SELECT COUNT(*) FROM backlinks_with_class bwc2
+                 WHERE bwc2.predicate = bwc.predicate
+                   AND bwc2.source_class IS bwc.source_class
+                   AND bwc2.last_tx > bwc.last_tx
+             ) < {}
          )
          SELECT subject, predicate, source_class, group_total
          FROM ranked
-         WHERE rn <= {}
          ORDER BY last_tx DESC",
         limit_per_group
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map([object], |row| {
-            let subject: String = row.get(0)?;
-            let predicate: String = row.get(1)?;
-            let source_class: Option<String> = row.get(2)?;
-            let group_total: i64 = row.get(3)?;
-            Ok(BacklinkRow {
-                subject,
-                predicate,
-                source_class,
-                group_total: group_total as usize,
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(rows)
+    let mut stmt = conn.prepare(&sql).await?;
+    let mut rows = stmt.query(turso::params![object]).await?;
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await? {
+        let subject: String = row.get_value(0)?.as_text().cloned().unwrap_or_default();
+        let predicate: String = row.get_value(1)?.as_text().cloned().unwrap_or_default();
+        let source_class: Option<String> = match row.get_value(2)? { Value::Null => None, v => v.as_text().cloned() };
+        let group_total: i64 = row.get_value(3)?.as_integer().copied().unwrap_or(0);
+        result.push(BacklinkRow {
+            subject,
+            predicate,
+            source_class,
+            group_total: group_total as usize,
+        });
+    }
+    Ok(result)
 }
 
-pub fn get_predicates_for_subjects(
+pub async fn get_predicates_for_subjects(
     conn: &Connection,
     subjects: &[String],
     predicates: &[&str],
@@ -317,18 +335,21 @@ pub fn get_predicates_for_subjects(
          ORDER BY subject, predicate, tx DESC",
         subject_phs, predicate_phs
     );
-    let mut params: Vec<SqlValue> = subjects.iter()
-        .map(|s| SqlValue::Text(s.clone()))
+    let mut params: Vec<Value> = subjects.iter()
+        .map(|s| Value::Text(s.clone()))
         .collect();
-    params.extend(predicates.iter().map(|p| SqlValue::Text(p.to_string())));
-    let mut stmt = conn.prepare(&sql)?;
-    let triples = stmt
-        .query_map(rusqlite::params_from_iter(params.iter()), row_to_triple)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    params.extend(predicates.iter().map(|p| Value::Text(p.to_string())));
+    let p = turso::params_from_iter(params.into_iter());
+    let mut stmt = conn.prepare(&sql).await?;
+    let mut rows = stmt.query(p).await?;
+    let mut triples = Vec::new();
+    while let Some(row) = rows.next().await? {
+        triples.push(row_to_triple(&row)?);
+    }
     Ok(triples.into_iter().map(|t| (t.subject, t.predicate, t.object)).collect())
 }
 
-pub fn get_first_iri_property_batch(
+pub async fn get_first_iri_property_batch(
     conn: &Connection,
     subjects: &[String],
     predicate: &str,
@@ -343,26 +364,24 @@ pub fn get_first_iri_property_batch(
          ORDER BY subject, tx DESC",
         placeholders
     );
-    let mut params: Vec<SqlValue> = subjects.iter()
-        .map(|s| SqlValue::Text(s.clone()))
+    let mut params: Vec<Value> = subjects.iter()
+        .map(|s| Value::Text(s.clone()))
         .collect();
-    params.push(SqlValue::Text(predicate.to_string()));
-    let mut stmt = conn.prepare(&sql)?;
+    params.push(Value::Text(predicate.to_string()));
+    let p = turso::params_from_iter(params.into_iter());
+    let mut stmt = conn.prepare(&sql).await?;
+    let mut rows = stmt.query(p).await?;
     let mut map = std::collections::HashMap::new();
-    let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
-        let subject: String = row.get(0)?;
-        let object: String = row.get(1)?;
-        Ok((subject, object))
-    })?;
-    for row in rows {
-        let (subject, object) = row?;
+    while let Some(row) = rows.next().await? {
+        let subject: String = row.get_value(0)?.as_text().cloned().unwrap_or_default();
+        let object: String = row.get_value(1)?.as_text().cloned().unwrap_or_default();
         map.entry(subject).or_insert(object);
     }
     Ok(map)
 }
 
 #[allow(dead_code)]
-pub fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResult> {
+pub async fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
@@ -370,11 +389,13 @@ pub fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResu
          FROM triples
          WHERE subject = ? AND tx <= ? AND retracted = 0
          ORDER BY predicate, tx DESC"
-    )?;
+    ).await?;
 
-    let triples = stmt
-        .query_map([entity, tx.to_string().as_str()], row_to_triple)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut rows = stmt.query(turso::params![entity, tx]).await?;
+    let mut triples = Vec::new();
+    while let Some(row) = rows.next().await? {
+        triples.push(row_to_triple(&row)?);
+    }
 
     let mut seen_predicates = std::collections::HashSet::new();
     let snapshot: Vec<Triple> = triples
@@ -386,7 +407,7 @@ pub fn get_at_time(conn: &Connection, entity: &str, tx: i64) -> Result<QueryResu
 }
 
 #[allow(dead_code)]
-pub fn get_by_origin(conn: &Connection, origin_id: i64) -> Result<QueryResult> {
+pub async fn get_by_origin(conn: &Connection, origin_id: i64) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
@@ -394,17 +415,19 @@ pub fn get_by_origin(conn: &Connection, origin_id: i64) -> Result<QueryResult> {
          FROM triples
          WHERE origin_id = ? AND retracted = 0
          ORDER BY tx DESC"
-    )?;
+    ).await?;
 
-    let triples = stmt
-        .query_map([origin_id], row_to_triple)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut rows = stmt.query(turso::params![origin_id]).await?;
+    let mut triples = Vec::new();
+    while let Some(row) = rows.next().await? {
+        triples.push(row_to_triple(&row)?);
+    }
 
     Ok(QueryResult::new(triples))
 }
 
 #[allow(dead_code)]
-pub fn get_history(conn: &Connection, entity: &str) -> Result<Vec<(i64, Vec<Triple>)>> {
+pub async fn get_history(conn: &Connection, entity: &str) -> Result<Vec<(i64, Vec<Triple>)>> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
@@ -412,11 +435,13 @@ pub fn get_history(conn: &Connection, entity: &str) -> Result<Vec<(i64, Vec<Trip
          FROM triples
          WHERE subject = ?
          ORDER BY tx ASC"
-    )?;
+    ).await?;
 
-    let all_triples: Vec<Triple> = stmt
-        .query_map([entity], row_to_triple)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut rows = stmt.query(turso::params![entity]).await?;
+    let mut all_triples = Vec::new();
+    while let Some(row) = rows.next().await? {
+        all_triples.push(row_to_triple(&row)?);
+    }
 
     let mut history: std::collections::HashMap<i64, Vec<Triple>> = std::collections::HashMap::new();
     for triple in all_triples {
@@ -429,7 +454,7 @@ pub fn get_history(conn: &Connection, entity: &str) -> Result<Vec<(i64, Vec<Trip
     Ok(result)
 }
 
-pub fn get_entities_max_tx(
+pub async fn get_entities_max_tx(
     conn: &Connection,
     entity_iris: &[String],
 ) -> Result<std::collections::HashMap<String, i64>> {
@@ -447,24 +472,25 @@ pub fn get_entities_max_tx(
         placeholders
     );
 
-    let params: Vec<&dyn rusqlite::ToSql> = entity_iris
+    let params: Vec<Value> = entity_iris
         .iter()
-        .map(|s| s as &dyn rusqlite::ToSql)
+        .map(|s| Value::Text(s.clone()))
         .collect();
 
-    let mut stmt = conn.prepare(&sql)?;
-    let result = stmt
-        .query_map(params.as_slice(), |row| {
-            let subject: String = row.get(0)?;
-            let max_tx: i64 = row.get(1)?;
-            Ok((subject, max_tx))
-        })?
-        .collect::<std::result::Result<std::collections::HashMap<_, _>, _>>()?;
+    let p = turso::params_from_iter(params.into_iter());
+    let mut stmt = conn.prepare(&sql).await?;
+    let mut rows = stmt.query(p).await?;
+    let mut result = std::collections::HashMap::new();
+    while let Some(row) = rows.next().await? {
+        let subject: String = row.get_value(0)?.as_text().cloned().unwrap_or_default();
+        let max_tx: i64 = row.get_value(1)?.as_integer().copied().unwrap_or(0);
+        result.insert(subject, max_tx);
+    }
 
     Ok(result)
 }
 
-pub fn batch_load_triples_for_subjects(
+pub async fn batch_load_triples_for_subjects(
     conn: &Connection,
     subjects: &[String],
 ) -> Result<std::collections::HashMap<String, Vec<Triple>>> {
@@ -481,19 +507,19 @@ pub fn batch_load_triples_for_subjects(
          ORDER BY subject, predicate, tx DESC",
         placeholders
     );
-    let params: Vec<SqlValue> = subjects.iter().map(|s| SqlValue::Text(s.clone())).collect();
-    let mut stmt = conn.prepare(&sql)?;
-    let triples = stmt
-        .query_map(rusqlite::params_from_iter(params.iter()), row_to_triple)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let params: Vec<Value> = subjects.iter().map(|s| Value::Text(s.clone())).collect();
+    let p = turso::params_from_iter(params.into_iter());
+    let mut stmt = conn.prepare(&sql).await?;
+    let mut rows = stmt.query(p).await?;
     let mut map: std::collections::HashMap<String, Vec<Triple>> = std::collections::HashMap::new();
-    for triple in triples {
+    while let Some(row) = rows.next().await? {
+        let triple = row_to_triple(&row)?;
         map.entry(triple.subject.clone()).or_default().push(triple);
     }
     Ok(map)
 }
 
-pub fn batch_load_retracted_triples_for_subjects(
+pub async fn batch_load_retracted_triples_for_subjects(
     conn: &Connection,
     subjects: &[String],
 ) -> Result<std::collections::HashMap<String, Vec<Triple>>> {
@@ -510,47 +536,47 @@ pub fn batch_load_retracted_triples_for_subjects(
          ORDER BY subject, predicate, tx DESC",
         placeholders
     );
-    let params: Vec<SqlValue> = subjects.iter().map(|s| SqlValue::Text(s.clone())).collect();
-    let mut stmt = conn.prepare(&sql)?;
-    let triples = stmt
-        .query_map(rusqlite::params_from_iter(params.iter()), row_to_triple)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let params: Vec<Value> = subjects.iter().map(|s| Value::Text(s.clone())).collect();
+    let p = turso::params_from_iter(params.into_iter());
+    let mut stmt = conn.prepare(&sql).await?;
+    let mut rows = stmt.query(p).await?;
     let mut map: std::collections::HashMap<String, Vec<Triple>> = std::collections::HashMap::new();
-    for triple in triples {
+    while let Some(row) = rows.next().await? {
+        let triple = row_to_triple(&row)?;
         map.entry(triple.subject.clone()).or_default().push(triple);
     }
     Ok(map)
 }
 
-pub(crate) fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
-    let subject: String = row.get(0)?;
-    let predicate: String = row.get(1)?;
-    let object_opt: Option<String> = row.get(2)?;
-    let object_value: Option<String> = row.get(3)?;
-    let object_datatype: Option<String> = row.get(4)?;
-    let object_language: Option<String> = row.get(5)?;
-    let object_type: String = row.get(6)?;
-    let object_number: Option<f64> = row.get(7)?;
-    let object_integer: Option<i64> = row.get(8)?;
-    let object_boolean: Option<i64> = row.get(9)?;
-    let tx: i64 = row.get(10)?;
-    let origin_id: i64 = row.get(11)?;
-    let retracted: i64 = row.get(12)?;
-    let created_at: i64 = row.get(13)?;
+pub(crate) fn row_to_triple(row: &turso::Row) -> Result<Triple> {
+    let subject: String = row.get_value(0)?.as_text().cloned().unwrap_or_default();
+    let predicate: String = row.get_value(1)?.as_text().cloned().unwrap_or_default();
+    let object_opt: Option<String> = match row.get_value(2)? { Value::Null => None, v => v.as_text().cloned() };
+    let object_value: Option<String> = match row.get_value(3)? { Value::Null => None, v => v.as_text().cloned() };
+    let object_datatype: Option<String> = match row.get_value(4)? { Value::Null => None, v => v.as_text().cloned() };
+    let object_language: Option<String> = match row.get_value(5)? { Value::Null => None, v => v.as_text().cloned() };
+    let object_type: String = row.get_value(6)?.as_text().cloned().unwrap_or_default();
+    let object_number: Option<f64> = row.get_value(7)?.as_real().copied();
+    let object_integer: Option<i64> = row.get_value(8)?.as_integer().copied();
+    let object_boolean: Option<i64> = row.get_value(9)?.as_integer().copied();
+    let tx: i64 = row.get_value(10)?.as_integer().copied().unwrap_or(0);
+    let origin_id: i64 = row.get_value(11)?.as_integer().copied().unwrap_or(0);
+    let retracted: i64 = row.get_value(12)?.as_integer().copied().unwrap_or(0);
+    let created_at: i64 = row.get_value(13)?.as_integer().copied().unwrap_or(0);
 
     let object = match object_type.as_str() {
-        "iri" => Object::Iri(object_opt.ok_or(rusqlite::Error::InvalidQuery)?),
-        "blank" => Object::Blank(object_opt.ok_or(rusqlite::Error::InvalidQuery)?),
+        "iri" => Object::Iri(object_opt.ok_or("Missing IRI object")?),
+        "blank" => Object::Blank(object_opt.ok_or("Missing blank node object")?),
         "literal" => {
             if let Some(int) = object_integer {
                 Object::Integer(int)
             } else if let Some(num) = object_number {
                 Object::Number(num)
             } else if object_datatype.as_deref() == Some("xsd:dateTime") {
-                Object::DateTime(object_value.ok_or(rusqlite::Error::InvalidQuery)?)
+                Object::DateTime(object_value.ok_or("Missing dateTime object_value")?)
             } else if object_datatype.as_deref() == Some("xsd:date") {
                 Object::Literal {
-                    value: object_value.ok_or(rusqlite::Error::InvalidQuery)?,
+                    value: object_value.ok_or("Missing date object_value")?,
                     datatype: object_datatype,
                     language: object_language,
                 }
@@ -558,7 +584,7 @@ pub(crate) fn row_to_triple(row: &Row) -> rusqlite::Result<Triple> {
                 Object::Boolean(bool_val != 0)
             } else {
                 Object::Literal {
-                    value: object_value.ok_or(rusqlite::Error::InvalidQuery)?,
+                    value: object_value.ok_or("Missing literal object_value")?,
                     datatype: object_datatype,
                     language: object_language,
                 }
@@ -584,44 +610,44 @@ mod tests {
     use crate::eavto::test_helpers::{setup_test_db, create_test_triples};
     use crate::eavto::store::assert_triples;
 
-    fn setup_test_data(conn: &mut Connection) -> i64 {
+    async fn setup_test_data(conn: &mut Connection) -> i64 {
         let triples = create_test_triples();
-        assert_triples(conn, &triples, "test").unwrap()
+        assert_triples(conn, &triples, "test").await.unwrap()
     }
 
-    #[test]
-    fn test_get_by_entity() {
-        let mut conn = setup_test_db();
-        setup_test_data(&mut conn);
+    #[tokio::test]
+    async fn test_get_by_entity() {
+        let mut conn = setup_test_db().await;
+        setup_test_data(&mut conn).await;
 
-        let result = get_by_entity(&conn, "foundation:TestClass").unwrap();
+        let result = get_by_entity(&conn, "foundation:TestClass").await.unwrap();
         assert_eq!(result.triples.len(), 2);
     }
 
-    #[test]
-    fn test_get_by_entity_nonexistent() {
-        let mut conn = setup_test_db();
-        setup_test_data(&mut conn);
+    #[tokio::test]
+    async fn test_get_by_entity_nonexistent() {
+        let mut conn = setup_test_db().await;
+        setup_test_data(&mut conn).await;
 
-        let result = get_by_entity(&conn, "foundation:NonExistent").unwrap();
+        let result = get_by_entity(&conn, "foundation:NonExistent").await.unwrap();
         assert_eq!(result.triples.len(), 0);
     }
 
-    #[test]
-    fn test_get_by_predicate() {
-        let mut conn = setup_test_db();
-        setup_test_data(&mut conn);
+    #[tokio::test]
+    async fn test_get_by_predicate() {
+        let mut conn = setup_test_db().await;
+        setup_test_data(&mut conn).await;
 
-        let result = get_by_predicate(&conn, "rdf:type").unwrap();
+        let result = get_by_predicate(&conn, "rdf:type").await.unwrap();
         assert_eq!(result.triples.len(), 1);
     }
 
-    #[test]
-    fn test_get_by_entity_predicate() {
-        let mut conn = setup_test_db();
-        setup_test_data(&mut conn);
+    #[tokio::test]
+    async fn test_get_by_entity_predicate() {
+        let mut conn = setup_test_db().await;
+        setup_test_data(&mut conn).await;
 
-        let result = get_by_entity_predicate(&conn, "foundation:TestClass", "rdfs:label").unwrap();
+        let result = get_by_entity_predicate(&conn, "foundation:TestClass", "rdfs:label").await.unwrap();
         assert_eq!(result.triples.len(), 1);
 
         let triple = &result.triples[0];
@@ -631,19 +657,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_get_at_time() {
-        let mut conn = setup_test_db();
-        let tx_id = setup_test_data(&mut conn);
+    #[tokio::test]
+    async fn test_get_at_time() {
+        let mut conn = setup_test_db().await;
+        let tx_id = setup_test_data(&mut conn).await;
 
-        let result = get_at_time(&conn, "foundation:TestClass", tx_id).unwrap();
+        let result = get_at_time(&conn, "foundation:TestClass", tx_id).await.unwrap();
         assert_eq!(result.triples.len(), 2);
     }
 
-    #[test]
-    fn test_get_at_time_temporal_snapshot() {
-        let mut conn = setup_test_db();
-        let _tx1 = setup_test_data(&mut conn);
+    #[tokio::test]
+    async fn test_get_at_time_temporal_snapshot() {
+        let mut conn = setup_test_db().await;
+        let _tx1 = setup_test_data(&mut conn).await;
 
         let updated_triple = vec![Triple {
             subject: "foundation:TestClass".to_string(),
@@ -658,9 +684,9 @@ mod tests {
             origin_id: 1,
             retracted: false,
         }];
-        let tx2 = assert_triples(&mut conn, &updated_triple, "test").unwrap();
+        let tx2 = assert_triples(&mut conn, &updated_triple, "test").await.unwrap();
 
-        let result = get_at_time(&conn, "foundation:TestClass", tx2).unwrap();
+        let result = get_at_time(&conn, "foundation:TestClass", tx2).await.unwrap();
 
         assert_eq!(result.triples.len(), 2);
 
@@ -674,19 +700,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_get_by_origin() {
-        let mut conn = setup_test_db();
-        setup_test_data(&mut conn);
+    #[tokio::test]
+    async fn test_get_by_origin() {
+        let mut conn = setup_test_db().await;
+        setup_test_data(&mut conn).await;
 
-        let result = get_by_origin(&conn, 1).unwrap();
+        let result = get_by_origin(&conn, 1).await.unwrap();
         assert!(result.triples.len() > 0);
     }
 
-    #[test]
-    fn test_get_history() {
-        let mut conn = setup_test_db();
-        let tx1 = setup_test_data(&mut conn);
+    #[tokio::test]
+    async fn test_get_history() {
+        let mut conn = setup_test_db().await;
+        let tx1 = setup_test_data(&mut conn).await;
 
         let new_triple = vec![Triple {
             subject: "foundation:TestClass".to_string(),
@@ -701,9 +727,9 @@ mod tests {
             origin_id: 1,
             retracted: false,
         }];
-        let tx2 = assert_triples(&mut conn, &new_triple, "test").unwrap();
+        let tx2 = assert_triples(&mut conn, &new_triple, "test").await.unwrap();
 
-        let history = get_history(&conn, "foundation:TestClass").unwrap();
+        let history = get_history(&conn, "foundation:TestClass").await.unwrap();
 
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].0, tx1);
@@ -712,12 +738,12 @@ mod tests {
         assert_eq!(history[1].1.len(), 1);
     }
 
-    #[test]
-    fn test_row_to_triple_with_iri() {
-        let mut conn = setup_test_db();
-        setup_test_data(&mut conn);
+    #[tokio::test]
+    async fn test_row_to_triple_with_iri() {
+        let mut conn = setup_test_db().await;
+        setup_test_data(&mut conn).await;
 
-        let result = get_by_entity(&conn, "foundation:TestClass").unwrap();
+        let result = get_by_entity(&conn, "foundation:TestClass").await.unwrap();
         let iri_triple = result.triples.iter()
             .find(|t| t.predicate == "rdf:type")
             .expect("Should have rdf:type");
@@ -728,12 +754,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_row_to_triple_with_integer() {
-        let mut conn = setup_test_db();
-        setup_test_data(&mut conn);
+    #[tokio::test]
+    async fn test_row_to_triple_with_integer() {
+        let mut conn = setup_test_db().await;
+        setup_test_data(&mut conn).await;
 
-        let result = get_by_entity(&conn, "foundation:TestProperty").unwrap();
+        let result = get_by_entity(&conn, "foundation:TestProperty").await.unwrap();
         let int_triple = result.triples.iter()
             .find(|t| t.predicate == "foundation:someValue")
             .expect("Should have foundation:someValue");
@@ -744,21 +770,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_find_by_class_iris_and_properties_returns_subclass_instances() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_find_by_class_iris_and_properties_returns_subclass_instances() {
+        let mut conn = setup_test_db().await;
 
         assert_triples(&mut conn, &[
             Triple { subject: "foundation:Animal".to_string(), predicate: "rdf:type".to_string(),
                 object: Object::Iri("owl:Class".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         assert_triples(&mut conn, &[
             Triple { subject: "foundation:Dog".to_string(), predicate: "rdf:type".to_string(),
                 object: Object::Iri("owl:Class".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
             Triple { subject: "foundation:Dog".to_string(), predicate: "rdfs:subClassOf".to_string(),
                 object: Object::Iri("foundation:Animal".to_string()), tx: 0, created_at: 0, origin_id: 1, retracted: false },
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         assert_triples(&mut conn, &[
             Triple { subject: "foundation:Rex".to_string(), predicate: "rdf:type".to_string(),
@@ -766,7 +792,7 @@ mod tests {
             Triple { subject: "foundation:Rex".to_string(), predicate: "foundation:name".to_string(),
                 object: Object::Literal { value: "Rex".to_string(), datatype: Some("xsd:string".to_string()), language: None },
                 tx: 0, created_at: 0, origin_id: 1, retracted: false },
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         let (results, total) = find_by_class_iris_and_properties_with_options(
             &conn,
@@ -775,16 +801,16 @@ mod tests {
             false,
             100,
             0,
-        ).unwrap();
+        ).await.unwrap();
 
         assert_eq!(total, 1);
         assert!(results.contains(&"foundation:Rex".to_string()));
     }
 
-    #[test]
-    fn test_find_by_class_iris_single_class_filters_by_property() {
-        let mut conn = setup_test_db();
-        setup_test_data(&mut conn);
+    #[tokio::test]
+    async fn test_find_by_class_iris_single_class_filters_by_property() {
+        let mut conn = setup_test_db().await;
+        setup_test_data(&mut conn).await;
 
         let (results, total) = find_by_class_iris_and_properties_with_options(
             &conn,
@@ -793,15 +819,15 @@ mod tests {
             false,
             100,
             0,
-        ).unwrap();
+        ).await.unwrap();
 
         assert_eq!(total, 1);
         assert!(results.contains(&"foundation:TestClass".to_string()));
     }
 
-    #[test]
-    fn test_find_by_properties_without_class_constraint() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_find_by_properties_without_class_constraint() {
+        let mut conn = setup_test_db().await;
 
         assert_triples(&mut conn, &[
             Triple { subject: "foundation:PersonA".to_string(), predicate: "rdf:type".to_string(),
@@ -819,7 +845,7 @@ mod tests {
             Triple { subject: "foundation:PersonB".to_string(), predicate: "foundation:status".to_string(),
                 object: Object::Literal { value: "inactive".to_string(), datatype: Some("xsd:string".to_string()), language: None },
                 tx: 0, created_at: 0, origin_id: 1, retracted: false },
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         let (results, total) = find_by_properties_with_options(
             &conn,
@@ -827,7 +853,7 @@ mod tests {
             false,
             100,
             0,
-        ).unwrap();
+        ).await.unwrap();
 
         assert_eq!(total, 2, "should find both active entities regardless of class");
         assert!(results.contains(&"foundation:PersonA".to_string()));

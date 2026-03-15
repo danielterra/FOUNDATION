@@ -36,8 +36,8 @@ pub async fn execute_request_task(
     let request_iri = executor
         .read({
             let node_iri = node_iri.to_string();
-            move |conn| {
-                let result = query::get_by_entity_predicate(conn, &node_iri, "foundation:requestInputRefs")
+            move |conn| async move {
+                let result = query::get_by_entity_predicate(&conn, &node_iri, "foundation:requestInputRefs").await
                     .map_err(|e| e.to_string())?;
                 Ok(result
                     .triples
@@ -52,18 +52,18 @@ pub async fn execute_request_task(
     let (url, method, body, headers_json, cred_iri) = executor
         .read({
             let request_iri = request_iri.clone();
-            move |conn| {
-                let url = get_literal_property(conn, &request_iri, "foundation:httpUrl")
+            move |conn| async move {
+                let url = get_literal_property(&conn, &request_iri, "foundation:httpUrl").await
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("HTTPRequest {} has no httpUrl", request_iri))?;
-                let method = get_literal_property(conn, &request_iri, "foundation:httpMethod")
+                let method = get_literal_property(&conn, &request_iri, "foundation:httpMethod").await
                     .map_err(|e| e.to_string())?
                     .unwrap_or_else(|| "GET".to_string());
-                let body = get_literal_property(conn, &request_iri, "foundation:httpBody")
+                let body = get_literal_property(&conn, &request_iri, "foundation:httpBody").await
                     .map_err(|e| e.to_string())?;
-                let headers_json = get_literal_property(conn, &request_iri, "foundation:httpHeaders")
+                let headers_json = get_literal_property(&conn, &request_iri, "foundation:httpHeaders").await
                     .map_err(|e| e.to_string())?;
-                let cred_iri = get_iri_property(conn, &request_iri, "foundation:usesCredential")
+                let cred_iri = get_iri_property(&conn, &request_iri, "foundation:usesCredential").await
                     .map_err(|e| e.to_string())?;
                 Ok((url, method, body, headers_json, cred_iri))
             }
@@ -121,22 +121,22 @@ pub async fn execute_request_task(
             let request_iri = request_iri.clone();
             let response_iri = response_iri.clone();
             let resp_body_clone = resp_body.clone();
-            move |conn| {
+            move |conn| async move {
                 let ind = Individual::new(&response_iri);
-                ind.assert(conn, "foundation:HTTPResponse", &response_iri, "http", "process_automation")
+                ind.assert(&conn, "foundation:HTTPResponse", &response_iri, "http", "process_automation").await
                     .map_err(|e| e.to_string())?;
-                ind.add_property(conn, "foundation:httpStatusCode",
-                    vec![Object::Integer(status_code)], "process_automation")
+                ind.add_property(&conn, "foundation:httpStatusCode",
+                    vec![Object::Integer(status_code)], "process_automation").await
                     .map_err(|e| e.to_string())?;
-                ind.add_property(conn, "foundation:httpResponseBody",
-                    vec![str_lit(resp_body_clone)], "process_automation")
+                ind.add_property(&conn, "foundation:httpResponseBody",
+                    vec![str_lit(resp_body_clone)], "process_automation").await
                     .map_err(|e| e.to_string())?;
-                ind.add_property(conn, "foundation:respondsTo",
-                    vec![Object::Iri(request_iri.clone())], "process_automation")
+                ind.add_property(&conn, "foundation:respondsTo",
+                    vec![Object::Iri(request_iri.clone())], "process_automation").await
                     .map_err(|e| e.to_string())?;
                 Individual::new(&request_iri)
-                    .add_property(conn, "foundation:hasResponse",
-                        vec![Object::Iri(response_iri.clone())], "process_automation")
+                    .add_property(&conn, "foundation:hasResponse",
+                        vec![Object::Iri(response_iri.clone())], "process_automation").await
                     .map_err(|e| e.to_string())?;
                 Ok(response_iri)
             }
@@ -156,8 +156,8 @@ async fn apply_credential(
     let (cred_type, cred_value, cred_username) = executor
         .read({
             let cred_iri = cred_iri.to_string();
-            move |conn| {
-                let type_result = query::get_by_entity_predicate(conn, &cred_iri, "rdf:type")
+            move |conn| async move {
+                let type_result = query::get_by_entity_predicate(&conn, &cred_iri, "rdf:type").await
                     .map_err(|e| e.to_string())?;
                 let cred_type = type_result
                     .triples
@@ -166,9 +166,9 @@ async fn apply_credential(
                     .map(|s| s.to_string())
                     .unwrap_or_default();
 
-                let cred_value = get_literal_property(conn, &cred_iri, "foundation:credentialValue")
+                let cred_value = get_literal_property(&conn, &cred_iri, "foundation:credentialValue").await
                     .map_err(|e| e.to_string())?;
-                let cred_username = get_literal_property(conn, &cred_iri, "foundation:credentialUsername")
+                let cred_username = get_literal_property(&conn, &cred_iri, "foundation:credentialUsername").await
                     .map_err(|e| e.to_string())?;
 
                 Ok((cred_type, cred_value, cred_username))

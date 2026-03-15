@@ -1,9 +1,8 @@
-use rusqlite::Connection;
-use rusqlite::types::Value as SqlValue;
+use turso::{Connection, Value};
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub fn find_by_class_and_properties(
+pub async fn find_by_class_and_properties(
     conn: &Connection,
     class_iri: &str,
     properties: &[(&str, &str)],
@@ -58,15 +57,17 @@ pub fn find_by_class_and_properties(
         }
     }
 
-    let mut stmt = conn.prepare(&query)?;
-    let entities: Vec<String> = stmt
-        .query_map([], |row| row.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut stmt = conn.prepare(&query).await?;
+    let mut rows = stmt.query(()).await?;
+    let mut entities = Vec::new();
+    while let Some(row) = rows.next().await? {
+        entities.push(row.get_value(0)?.as_text().cloned().unwrap_or_default());
+    }
 
     Ok(entities)
 }
 
-pub fn find_entities_by_class_with_date_range(
+pub async fn find_entities_by_class_with_date_range(
     conn: &Connection,
     class_iri: &str,
     from_millis: Option<i64>,
@@ -93,27 +94,27 @@ pub fn find_entities_by_class_with_date_range(
         conditions
     );
 
-    let mut stmt = conn.prepare(&sql)?;
+    let mut stmt = conn.prepare(&sql).await?;
 
-    let entities: Vec<String> = match (from_millis, to_millis) {
-        (Some(from), Some(to)) => stmt
-            .query_map(rusqlite::params![class_iri, from, to], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-        (Some(from), None) => stmt
-            .query_map(rusqlite::params![class_iri, from], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-        (None, Some(to)) => stmt
-            .query_map(rusqlite::params![class_iri, to], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-        (None, None) => stmt
-            .query_map(rusqlite::params![class_iri], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-    };
+    let mut params: Vec<Value> = vec![Value::Text(class_iri.to_string())];
+    if let Some(from) = from_millis {
+        params.push(Value::Integer(from));
+    }
+    if let Some(to) = to_millis {
+        params.push(Value::Integer(to));
+    }
+
+    let p = turso::params_from_iter(params.clone().into_iter());
+    let mut rows = stmt.query(p).await?;
+    let mut entities = Vec::new();
+    while let Some(row) = rows.next().await? {
+        entities.push(row.get_value(0)?.as_text().cloned().unwrap_or_default());
+    }
 
     Ok(entities)
 }
 
-pub fn find_by_class_iris_and_properties_with_options(
+pub async fn find_by_class_iris_and_properties_with_options(
     conn: &Connection,
     class_iris: &[&str],
     properties: &[(&str, &str, &str)],
@@ -132,8 +133,8 @@ pub fn find_by_class_iris_and_properties_with_options(
     let mut where_clause = format!(
         "WHERE t0.predicate = 'rdf:type' AND t0.object IN ({class_placeholders}){type_retracted_filter}"
     );
-    let mut params: Vec<SqlValue> = class_iris.iter()
-        .map(|iri| SqlValue::Text(iri.to_string()))
+    let mut params: Vec<Value> = class_iris.iter()
+        .map(|iri| Value::Text(iri.to_string()))
         .collect();
 
     for (i, _) in properties.iter().enumerate() {
@@ -149,7 +150,7 @@ pub fn find_by_class_iris_and_properties_with_options(
             format!(" AND t{n}.retracted = 0")
         };
         where_clause.push_str(&format!("\n           AND t{n}.predicate = ?{prop_retracted_filter}"));
-        params.push(SqlValue::Text(prop_iri.to_string()));
+        params.push(Value::Text(prop_iri.to_string()));
     }
 
     for (i, (_, value, operator)) in properties.iter().enumerate() {
@@ -162,13 +163,13 @@ pub fn find_by_class_iris_and_properties_with_options(
                     where_clause.push_str(&format!(
                         "\n           AND substr(t{n}.object_value, 1, 10) {sql_op} ?"
                     ));
-                    params.push(SqlValue::Text(date_str));
+                    params.push(Value::Text(date_str));
                 }
                 DateFilter::DateTime(epoch) => {
                     where_clause.push_str(&format!(
                         "\n           AND unixepoch(t{n}.object_value) {sql_op} ?"
                     ));
-                    params.push(SqlValue::Integer(epoch));
+                    params.push(Value::Integer(epoch));
                 }
             }
         } else if *value == "true" || *value == "false" {
@@ -176,44 +177,45 @@ pub fn find_by_class_iris_and_properties_with_options(
             where_clause.push_str(&format!(
                 "\n           AND (t{n}.object_value = ? OR t{n}.object = ? OR t{n}.object_boolean = ?)"
             ));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Integer(bool_val));
+            params.push(Value::Text(value.to_string()));
+            params.push(Value::Text(value.to_string()));
+            params.push(Value::Integer(bool_val));
         } else {
             where_clause.push_str(&format!(
                 "\n           AND (t{n}.object_value = ? OR t{n}.object = ?)"
             ));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Text(value.to_string()));
+            params.push(Value::Text(value.to_string()));
+            params.push(Value::Text(value.to_string()));
         }
     }
 
     let count_query = format!(
         "SELECT COUNT(*) FROM (SELECT DISTINCT t0.subject FROM triples t0{joins}\n         {where_clause})"
     );
-    let total: usize = conn.query_row(
-        &count_query,
-        rusqlite::params_from_iter(params.iter()),
-        |row| row.get::<_, i64>(0),
-    )? as usize;
+    let p = turso::params_from_iter(params.clone().into_iter());
+    let mut count_stmt = conn.prepare(&count_query).await?;
+    let count_row = count_stmt.query_row(p).await?;
+    let total: usize = count_row.get_value(0)?.as_integer().copied().unwrap_or(0) as usize;
 
     let mut data_params = params;
-    data_params.push(SqlValue::Integer(limit as i64));
-    data_params.push(SqlValue::Integer(offset as i64));
+    data_params.push(Value::Integer(limit as i64));
+    data_params.push(Value::Integer(offset as i64));
 
     let data_query = format!(
         "SELECT DISTINCT t0.subject FROM triples t0{joins}\n         {where_clause}\n         LIMIT ? OFFSET ?"
     );
-    let mut stmt = conn.prepare(&data_query)?;
-    let entities: Vec<String> = stmt
-        .query_map(rusqlite::params_from_iter(data_params.iter()), |row| row.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let p = turso::params_from_iter(data_params.into_iter());
+    let mut stmt = conn.prepare(&data_query).await?;
+    let mut rows = stmt.query(p).await?;
+    let mut entities = Vec::new();
+    while let Some(row) = rows.next().await? {
+        entities.push(row.get_value(0)?.as_text().cloned().unwrap_or_default());
+    }
 
     Ok((entities, total))
 }
 
-/// Find entities matching all given property filters, without any class restriction.
-pub fn find_by_properties_with_options(
+pub async fn find_by_properties_with_options(
     conn: &Connection,
     properties: &[(&str, &str, &str)],
     include_retracted: bool,
@@ -226,7 +228,7 @@ pub fn find_by_properties_with_options(
 
     let mut joins = String::new();
     let mut where_clause = String::new();
-    let mut params: Vec<SqlValue> = Vec::new();
+    let mut params: Vec<Value> = Vec::new();
 
     for (i, _) in properties.iter().enumerate().skip(1) {
         joins.push_str(&format!("\n         INNER JOIN triples t{i} ON t0.subject = t{i}.subject"));
@@ -240,7 +242,7 @@ pub fn find_by_properties_with_options(
         };
         let connector = if i == 0 { "WHERE" } else { "  AND" };
         where_clause.push_str(&format!("\n         {connector} t{i}.predicate = ?{retracted_filter}"));
-        params.push(SqlValue::Text(prop_iri.to_string()));
+        params.push(Value::Text(prop_iri.to_string()));
     }
 
     for (i, (_, value, operator)) in properties.iter().enumerate() {
@@ -252,13 +254,13 @@ pub fn find_by_properties_with_options(
                     where_clause.push_str(&format!(
                         "\n           AND substr(t{i}.object_value, 1, 10) {sql_op} ?"
                     ));
-                    params.push(SqlValue::Text(date_str));
+                    params.push(Value::Text(date_str));
                 }
                 DateFilter::DateTime(epoch) => {
                     where_clause.push_str(&format!(
                         "\n           AND unixepoch(t{i}.object_value) {sql_op} ?"
                     ));
-                    params.push(SqlValue::Integer(epoch));
+                    params.push(Value::Integer(epoch));
                 }
             }
         } else if *value == "true" || *value == "false" {
@@ -266,43 +268,45 @@ pub fn find_by_properties_with_options(
             where_clause.push_str(&format!(
                 "\n           AND (t{i}.object_value = ? OR t{i}.object = ? OR t{i}.object_boolean = ?)"
             ));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Integer(bool_val));
+            params.push(Value::Text(value.to_string()));
+            params.push(Value::Text(value.to_string()));
+            params.push(Value::Integer(bool_val));
         } else {
             where_clause.push_str(&format!(
                 "\n           AND (t{i}.object_value = ? OR t{i}.object = ?)"
             ));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Text(value.to_string()));
+            params.push(Value::Text(value.to_string()));
+            params.push(Value::Text(value.to_string()));
         }
     }
 
     let count_query = format!(
         "SELECT COUNT(*) FROM (SELECT DISTINCT t0.subject FROM triples t0{joins}{where_clause})"
     );
-    let total: usize = conn.query_row(
-        &count_query,
-        rusqlite::params_from_iter(params.iter()),
-        |row| row.get::<_, i64>(0),
-    )? as usize;
+    let p = turso::params_from_iter(params.clone().into_iter());
+    let mut count_stmt = conn.prepare(&count_query).await?;
+    let count_row = count_stmt.query_row(p).await?;
+    let total: usize = count_row.get_value(0)?.as_integer().copied().unwrap_or(0) as usize;
 
     let mut data_params = params;
-    data_params.push(SqlValue::Integer(limit as i64));
-    data_params.push(SqlValue::Integer(offset as i64));
+    data_params.push(Value::Integer(limit as i64));
+    data_params.push(Value::Integer(offset as i64));
 
     let data_query = format!(
         "SELECT DISTINCT t0.subject FROM triples t0{joins}{where_clause}\n         LIMIT ? OFFSET ?"
     );
-    let mut stmt = conn.prepare(&data_query)?;
-    let entities: Vec<String> = stmt
-        .query_map(rusqlite::params_from_iter(data_params.iter()), |row| row.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let p = turso::params_from_iter(data_params.into_iter());
+    let mut stmt = conn.prepare(&data_query).await?;
+    let mut rows = stmt.query(p).await?;
+    let mut entities = Vec::new();
+    while let Some(row) = rows.next().await? {
+        entities.push(row.get_value(0)?.as_text().cloned().unwrap_or_default());
+    }
 
     Ok((entities, total))
 }
 
-pub fn find_message_iris_by_conversation(
+pub async fn find_message_iris_by_conversation(
     conn: &Connection,
     conversation_iri: &str,
     limit: usize,
@@ -330,10 +334,12 @@ pub fn find_message_iris_by_conversation(
         LIMIT ?2 OFFSET ?3
     ";
     let limit_i64: i64 = limit.try_into().unwrap_or(-1);
-    let mut stmt = conn.prepare(sql)?;
-    let iris = stmt
-        .query_map(rusqlite::params![conversation_iri, limit_i64, offset as i64], |row| row.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut stmt = conn.prepare(sql).await?;
+    let mut rows = stmt.query(turso::params![conversation_iri, limit_i64, offset as i64]).await?;
+    let mut iris = Vec::new();
+    while let Some(row) = rows.next().await? {
+        iris.push(row.get_value(0)?.as_text().cloned().unwrap_or_default());
+    }
     Ok(iris)
 }
 
@@ -368,7 +374,7 @@ fn validate_operator(op: &str) -> std::result::Result<&str, ()> {
 }
 
 #[allow(dead_code)]
-pub fn find_entities_by_attribute_value(
+pub async fn find_entities_by_attribute_value(
     conn: &Connection,
     attribute: &str,
     value: &str,
@@ -377,11 +383,13 @@ pub fn find_entities_by_attribute_value(
         "SELECT DISTINCT subject
          FROM triples
          WHERE predicate = ? AND object_value = ? AND retracted = 0"
-    )?;
+    ).await?;
 
-    let entities: Vec<String> = stmt
-        .query_map([attribute, value], |row| row.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut rows = stmt.query(turso::params![attribute, value]).await?;
+    let mut entities = Vec::new();
+    while let Some(row) = rows.next().await? {
+        entities.push(row.get_value(0)?.as_text().cloned().unwrap_or_default());
+    }
 
     Ok(entities)
 }

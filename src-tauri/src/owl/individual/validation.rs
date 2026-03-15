@@ -1,14 +1,17 @@
 use super::*;
 
-fn is_subclass_of_or_equal(conn: &Connection, class_iri: &str, target: &str) -> bool {
+async fn is_subclass_of_or_equal(conn: &Connection, class_iri: &str, target: &str) -> bool {
     if class_iri == target {
         return true;
     }
-    if let Ok(result) = query::get_by_entity_predicate(conn, class_iri, rdfs::SUB_CLASS_OF) {
+    if let Ok(result) = query::get_by_entity_predicate(conn, class_iri, rdfs::SUB_CLASS_OF).await {
         for triple in &result.triples {
             if let Some(parent) = triple.object.as_iri() {
-                if parent != class_iri && is_subclass_of_or_equal(conn, parent, target) {
-                    return true;
+                if parent != class_iri {
+                    let parent_owned = parent.to_string();
+                    if Box::pin(is_subclass_of_or_equal(conn, &parent_owned, target)).await {
+                        return true;
+                    }
                 }
             }
         }
@@ -75,10 +78,10 @@ impl Individual {
     }
 
     /// Validate that the value types match the property's declared type (ObjectProperty vs DatatypeProperty)
-    pub(super) fn validate_value_type(conn: &Connection, property: &str, values: &[Object]) -> Result<()> {
+    pub(super) async fn validate_value_type(conn: &Connection, property: &str, values: &[Object]) -> Result<()> {
         use crate::owl::{Property, PropertyType};
 
-        let prop = match Property::get(conn, property)? {
+        let prop = match Property::get(conn, property).await? {
             Some(p) => p,
             None => return Ok(()),
         };
@@ -123,13 +126,13 @@ impl Individual {
     }
 
     /// Validate that an IRI value exists in the graph before referencing it
-    pub(super) fn validate_iri_exists(conn: &Connection, property: &str, value: &Object) -> Result<()> {
+    pub(super) async fn validate_iri_exists(conn: &Connection, property: &str, value: &Object) -> Result<()> {
         let value_iri = match value.as_iri() {
             Some(iri) => iri,
             None => return Ok(()),
         };
 
-        let result = query::get_by_entity(conn, value_iri)?;
+        let result = query::get_by_entity(conn, value_iri).await?;
         if result.triples.is_empty() {
             return Err(OwlError::ValidationError(format!(
                 "IRI '{}' does not exist in the graph. \
@@ -142,13 +145,13 @@ impl Individual {
     }
 
     /// Validate that an IRI value is an instance of the property's declared rdfs:range class
-    pub(super) fn validate_range_type(conn: &Connection, property: &str, value: &Object) -> Result<()> {
+    pub(super) async fn validate_range_type(conn: &Connection, property: &str, value: &Object) -> Result<()> {
         let value_iri = match value.as_iri() {
             Some(iri) => iri,
             None => return Ok(()),
         };
 
-        let range_result = query::get_by_entity_predicate(conn, property, rdfs::RANGE)?;
+        let range_result = query::get_by_entity_predicate(conn, property, rdfs::RANGE).await?;
         let range_class = match range_result.triples.first() {
             Some(triple) => match triple.object.as_iri() {
                 Some(iri) if iri != "owl:Thing" => iri.to_string(),
@@ -157,14 +160,16 @@ impl Individual {
             None => return Ok(()),
         };
 
-        let types_result = query::get_by_entity_predicate(conn, value_iri, rdf::TYPE)?;
+        let types_result = query::get_by_entity_predicate(conn, value_iri, rdf::TYPE).await?;
         let value_types: Vec<String> = types_result.triples.iter()
             .filter_map(|t| t.object.as_iri())
             .map(|s| s.to_string())
             .collect();
 
-        if value_types.iter().any(|t| is_subclass_of_or_equal(conn, t, &range_class)) {
-            return Ok(());
+        for t in &value_types {
+            if is_subclass_of_or_equal(conn, t, &range_class).await {
+                return Ok(());
+            }
         }
 
         Err(OwlError::ValidationError(format!(
@@ -177,24 +182,23 @@ impl Individual {
     }
 
     /// Validate that a value conforms to owl:oneOf constraint on the property's range
-    pub(super) fn validate_one_of_constraint(conn: &Connection, property: &str, value: &Object) -> Result<()> {
+    pub(super) async fn validate_one_of_constraint(conn: &Connection, property: &str, value: &Object) -> Result<()> {
         use crate::owl::vocabulary::{rdfs, owl};
 
-        // Only validate for IRI values (owl:oneOf only applies to object properties)
         let value_iri = match value.as_iri() {
             Some(iri) => iri,
-            None => return Ok(()), // Literals are not constrained by owl:oneOf
+            None => return Ok(()),
         };
 
-        let range_result = query::get_by_entity_predicate(conn, property, rdfs::RANGE)?;
+        let range_result = query::get_by_entity_predicate(conn, property, rdfs::RANGE).await?;
 
         if let Some(range_triple) = range_result.triples.first() {
             if let Some(range_class) = range_triple.object.as_iri() {
-                let one_of_result = query::get_by_entity_predicate(conn, range_class, owl::ONE_OF)?;
+                let one_of_result = query::get_by_entity_predicate(conn, range_class, owl::ONE_OF).await?;
 
                 if let Some(one_of_triple) = one_of_result.triples.first() {
                     if let Some(list_head) = one_of_triple.object.as_iri() {
-                        let allowed_values = Class::parse_rdf_list(conn, list_head)?;
+                        let allowed_values = Class::parse_rdf_list(conn, list_head).await?;
 
                         if !allowed_values.contains(&value_iri.to_string()) {
                             let allowed = allowed_values.join(", ");
@@ -221,24 +225,24 @@ mod tests {
     use crate::eavto::test_helpers::setup_test_db;
     use crate::owl::{Class, ClassType, Property, PropertyType, vocabulary::{rdf, owl}};
 
-    #[test]
-    fn test_owl_one_of_validation_success() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_owl_one_of_validation_success() {
+        let conn = setup_test_db().await;
 
         let task_class = Class::new("foundation:Task");
         task_class.assert(
-            &mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
-        ).unwrap();
+            &conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
+        ).await.unwrap();
 
         let priority_class = Class::new("foundation:TaskPriority");
         priority_class.assert(
-            &mut conn,
+            &conn,
             ClassType::OwlClass,
             "Task Priority",
             "https://example.com/priority.svg",
             None,
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         let high = Triple::new(
             "foundation:HighPriority",
@@ -255,7 +259,7 @@ mod tests {
             rdf::TYPE,
             Object::Iri("foundation:TaskPriority".to_string()),
         );
-        store::assert_triples(&mut conn, &[high, medium, low], "test").unwrap();
+        store::assert_triples(&conn, &[high, medium, low], "test").await.unwrap();
 
         let list3 = Triple::new(
             "_:list3",
@@ -276,21 +280,21 @@ mod tests {
         );
         let list1_rest = Triple::new("_:list1", rdf::REST, Object::Iri("_:list2".to_string()));
         store::assert_triples(
-            &mut conn,
+            &conn,
             &[list1, list1_rest, list2, list2_rest, list3, list3_rest],
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         let one_of = Triple::new(
             "foundation:TaskPriority",
             owl::ONE_OF,
             Object::Iri("_:list1".to_string()),
         );
-        store::assert_triples(&mut conn, &[one_of], "test").unwrap();
+        store::assert_triples(&conn, &[one_of], "test").await.unwrap();
 
         let priority_prop = Property::new("foundation:priority");
         priority_prop.assert(
-            &mut conn,
+            &conn,
             PropertyType::ObjectProperty,
             "priority",
             None,
@@ -298,38 +302,38 @@ mod tests {
             Some("foundation:TaskPriority"),
             None,
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         let task = Individual::new("foundation:MyTask");
-        task.assert(&mut conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").unwrap();
+        task.assert(&conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").await.unwrap();
 
         let result = task.add_property(
-            &mut conn,
+            &conn,
             "foundation:priority",
             vec![Object::Iri("foundation:HighPriority".to_string())],
             "test",
-        );
+        ).await;
         assert!(result.is_ok(), "Should accept valid enumerated value");
     }
 
-    #[test]
-    fn test_owl_one_of_validation_failure() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_owl_one_of_validation_failure() {
+        let conn = setup_test_db().await;
 
         let task_class = Class::new("foundation:Task");
         task_class.assert(
-            &mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
-        ).unwrap();
+            &conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
+        ).await.unwrap();
 
         let priority_class = Class::new("foundation:TaskPriority");
         priority_class.assert(
-            &mut conn,
+            &conn,
             ClassType::OwlClass,
             "Task Priority",
             "https://example.com/priority.svg",
             None,
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         let high = Triple::new(
             "foundation:HighPriority",
@@ -341,7 +345,7 @@ mod tests {
             rdf::TYPE,
             Object::Iri("foundation:TaskPriority".to_string()),
         );
-        store::assert_triples(&mut conn, &[high, medium], "test").unwrap();
+        store::assert_triples(&conn, &[high, medium], "test").await.unwrap();
 
         let list2 = Triple::new(
             "_:list2",
@@ -355,18 +359,18 @@ mod tests {
             Object::Iri("foundation:HighPriority".to_string()),
         );
         let list1_rest = Triple::new("_:list1", rdf::REST, Object::Iri("_:list2".to_string()));
-        store::assert_triples(&mut conn, &[list1, list1_rest, list2, list2_rest], "test").unwrap();
+        store::assert_triples(&conn, &[list1, list1_rest, list2, list2_rest], "test").await.unwrap();
 
         let one_of = Triple::new(
             "foundation:TaskPriority",
             owl::ONE_OF,
             Object::Iri("_:list1".to_string()),
         );
-        store::assert_triples(&mut conn, &[one_of], "test").unwrap();
+        store::assert_triples(&conn, &[one_of], "test").await.unwrap();
 
         let priority_prop = Property::new("foundation:priority");
         priority_prop.assert(
-            &mut conn,
+            &conn,
             PropertyType::ObjectProperty,
             "priority",
             None,
@@ -374,24 +378,24 @@ mod tests {
             Some("foundation:TaskPriority"),
             None,
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         let task = Individual::new("foundation:MyTask");
-        task.assert(&mut conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").unwrap();
+        task.assert(&conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").await.unwrap();
 
         let invalid = Triple::new(
             "foundation:LowPriority",
             rdf::TYPE,
             Object::Iri("foundation:TaskPriority".to_string()),
         );
-        store::assert_triples(&mut conn, &[invalid], "test").unwrap();
+        store::assert_triples(&conn, &[invalid], "test").await.unwrap();
 
         let result = task.add_property(
-            &mut conn,
+            &conn,
             "foundation:priority",
             vec![Object::Iri("foundation:LowPriority".to_string())],
             "test",
-        );
+        ).await;
         assert!(result.is_err(), "Should reject invalid enumerated value");
 
         if let Err(OwlError::ValidationError(msg)) = result {
@@ -402,18 +406,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_iri_existence_validation() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_iri_existence_validation() {
+        let conn = setup_test_db().await;
 
         let task_class = Class::new("foundation:Task");
         task_class.assert(
-            &mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
-        ).unwrap();
+            &conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
+        ).await.unwrap();
 
         let prop = Property::new("foundation:assignedTo");
         prop.assert(
-            &mut conn,
+            &conn,
             PropertyType::ObjectProperty,
             "assignedTo",
             None,
@@ -421,17 +425,17 @@ mod tests {
             None,
             None,
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         let task = Individual::new("foundation:MyTask");
-        task.assert(&mut conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").unwrap();
+        task.assert(&conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").await.unwrap();
 
         let result = task.add_property(
-            &mut conn,
+            &conn,
             "foundation:assignedTo",
             vec![Object::Iri("foundation:NonExistentUser".to_string())],
             "test",
-        );
+        ).await;
         assert!(result.is_err(), "Should reject reference to non-existent IRI");
         if let Err(OwlError::ValidationError(msg)) = result {
             assert!(msg.contains("foundation:NonExistentUser"));
@@ -441,46 +445,46 @@ mod tests {
         }
 
         let user = Individual::new("foundation:NonExistentUser");
-        user.assert(&mut conn, "foundation:Task", "A User", "https://example.com/person.svg", "test").unwrap();
+        user.assert(&conn, "foundation:Task", "A User", "https://example.com/person.svg", "test").await.unwrap();
 
         let result = task.add_property(
-            &mut conn,
+            &conn,
             "foundation:assignedTo",
             vec![Object::Iri("foundation:NonExistentUser".to_string())],
             "test",
-        );
+        ).await;
         assert!(result.is_ok(), "Should accept reference to existing IRI");
     }
 
-    #[test]
-    fn test_value_type_mismatch_validation() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_value_type_mismatch_validation() {
+        let conn = setup_test_db().await;
 
         let task_class = Class::new("foundation:Task");
         task_class.assert(
-            &mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
-        ).unwrap();
+            &conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test",
+        ).await.unwrap();
 
         let obj_prop = Property::new("foundation:relatedTo");
         obj_prop.assert(
-            &mut conn, PropertyType::ObjectProperty, "relatedTo",
+            &conn, PropertyType::ObjectProperty, "relatedTo",
             None, &["foundation:Task"], None, None, "test",
-        ).unwrap();
+        ).await.unwrap();
 
         let dt_prop = Property::new("foundation:title");
         dt_prop.assert(
-            &mut conn, PropertyType::DatatypeProperty, "title",
+            &conn, PropertyType::DatatypeProperty, "title",
             None, &["foundation:Task"], Some("xsd:string"), None, "test",
-        ).unwrap();
+        ).await.unwrap();
 
         let task = Individual::new("foundation:MyTask");
-        task.assert(&mut conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").unwrap();
+        task.assert(&conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").await.unwrap();
 
         let result = task.add_property(
-            &mut conn, "foundation:relatedTo",
+            &conn, "foundation:relatedTo",
             vec![Object::Literal { value: "some-string".to_string(), datatype: Some("xsd:string".to_string()), language: None }],
             "test",
-        );
+        ).await;
         assert!(result.is_err(), "Should reject literal on ObjectProperty");
         if let Err(OwlError::ValidationError(msg)) = result {
             assert!(msg.contains("ObjectProperty"), "Error should mention ObjectProperty");
@@ -489,10 +493,10 @@ mod tests {
         }
 
         let result = task.add_property(
-            &mut conn, "foundation:title",
+            &conn, "foundation:title",
             vec![Object::Iri("foundation:MyTask".to_string())],
             "test",
-        );
+        ).await;
         assert!(result.is_err(), "Should reject IRI on DatatypeProperty");
         if let Err(OwlError::ValidationError(msg)) = result {
             assert!(msg.contains("DatatypeProperty"), "Error should mention DatatypeProperty");
@@ -501,22 +505,22 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_range_type_validation_rejects_wrong_class() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_range_type_validation_rejects_wrong_class() {
+        let conn = setup_test_db().await;
 
         let bug_class = Class::new("foundation:Bug");
-        bug_class.assert(&mut conn, ClassType::OwlClass, "Bug", "https://example.com/bug.svg", None, "test").unwrap();
+        bug_class.assert(&conn, ClassType::OwlClass, "Bug", "https://example.com/bug.svg", None, "test").await.unwrap();
 
         let user_story_class = Class::new("foundation:UserStory");
-        user_story_class.assert(&mut conn, ClassType::OwlClass, "User Story", "https://example.com/story.svg", None, "test").unwrap();
+        user_story_class.assert(&conn, ClassType::OwlClass, "User Story", "https://example.com/story.svg", None, "test").await.unwrap();
 
         let product_class = Class::new("foundation:SoftwareProduct");
-        product_class.assert(&mut conn, ClassType::OwlClass, "Software Product", "https://example.com/product.svg", None, "test").unwrap();
+        product_class.assert(&conn, ClassType::OwlClass, "Software Product", "https://example.com/product.svg", None, "test").await.unwrap();
 
         let bug_of_prop = Property::new("foundation:bugOf");
         bug_of_prop.assert(
-            &mut conn,
+            &conn,
             PropertyType::ObjectProperty,
             "bug of",
             None,
@@ -524,20 +528,20 @@ mod tests {
             Some("foundation:UserStory"),
             None,
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         let bug = Individual::new("foundation:MyBug");
-        bug.assert(&mut conn, "foundation:Bug", "My Bug", "https://example.com/bug.svg", "test").unwrap();
+        bug.assert(&conn, "foundation:Bug", "My Bug", "https://example.com/bug.svg", "test").await.unwrap();
 
         let product = Individual::new("foundation:FoundationProduct");
-        product.assert(&mut conn, "foundation:SoftwareProduct", "Foundation Product", "https://example.com/product.svg", "test").unwrap();
+        product.assert(&conn, "foundation:SoftwareProduct", "Foundation Product", "https://example.com/product.svg", "test").await.unwrap();
 
         let result = bug.add_property(
-            &mut conn,
+            &conn,
             "foundation:bugOf",
             vec![Object::Iri("foundation:FoundationProduct".to_string())],
             "test",
-        );
+        ).await;
 
         assert!(result.is_err(), "Should reject value of wrong class");
         if let Err(OwlError::ValidationError(msg)) = result {
@@ -548,19 +552,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_range_type_validation_accepts_correct_class() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_range_type_validation_accepts_correct_class() {
+        let conn = setup_test_db().await;
 
         let bug_class = Class::new("foundation:Bug");
-        bug_class.assert(&mut conn, ClassType::OwlClass, "Bug", "https://example.com/bug.svg", None, "test").unwrap();
+        bug_class.assert(&conn, ClassType::OwlClass, "Bug", "https://example.com/bug.svg", None, "test").await.unwrap();
 
         let user_story_class = Class::new("foundation:UserStory");
-        user_story_class.assert(&mut conn, ClassType::OwlClass, "User Story", "https://example.com/story.svg", None, "test").unwrap();
+        user_story_class.assert(&conn, ClassType::OwlClass, "User Story", "https://example.com/story.svg", None, "test").await.unwrap();
 
         let bug_of_prop = Property::new("foundation:bugOf");
         bug_of_prop.assert(
-            &mut conn,
+            &conn,
             PropertyType::ObjectProperty,
             "bug of",
             None,
@@ -568,44 +572,44 @@ mod tests {
             Some("foundation:UserStory"),
             None,
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         let bug = Individual::new("foundation:MyBug");
-        bug.assert(&mut conn, "foundation:Bug", "My Bug", "https://example.com/bug.svg", "test").unwrap();
+        bug.assert(&conn, "foundation:Bug", "My Bug", "https://example.com/bug.svg", "test").await.unwrap();
 
         let story = Individual::new("foundation:MyStory");
-        story.assert(&mut conn, "foundation:UserStory", "My Story", "https://example.com/story.svg", "test").unwrap();
+        story.assert(&conn, "foundation:UserStory", "My Story", "https://example.com/story.svg", "test").await.unwrap();
 
         let result = bug.add_property(
-            &mut conn,
+            &conn,
             "foundation:bugOf",
             vec![Object::Iri("foundation:MyStory".to_string())],
             "test",
-        );
+        ).await;
 
         assert!(result.is_ok(), "Should accept value of correct class");
     }
 
-    #[test]
-    fn test_range_type_validation_accepts_subclass_instance() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_range_type_validation_accepts_subclass_instance() {
+        let conn = setup_test_db().await;
 
         let task_class = Class::new("foundation:Task");
-        task_class.assert(&mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test").unwrap();
+        task_class.assert(&conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test").await.unwrap();
 
         let work_item_class = Class::new("foundation:WorkItem");
-        work_item_class.assert(&mut conn, ClassType::OwlClass, "Work Item", "https://example.com/work.svg", None, "test").unwrap();
+        work_item_class.assert(&conn, ClassType::OwlClass, "Work Item", "https://example.com/work.svg", None, "test").await.unwrap();
 
-        store::assert_triples(&mut conn, &[
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Task", rdfs::SUB_CLASS_OF, Object::Iri("foundation:WorkItem".to_string())),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         let assigned_class = Class::new("foundation:Assignment");
-        assigned_class.assert(&mut conn, ClassType::OwlClass, "Assignment", "https://example.com/assign.svg", None, "test").unwrap();
+        assigned_class.assert(&conn, ClassType::OwlClass, "Assignment", "https://example.com/assign.svg", None, "test").await.unwrap();
 
         let related_prop = Property::new("foundation:relatedWorkItem");
         related_prop.assert(
-            &mut conn,
+            &conn,
             PropertyType::ObjectProperty,
             "related work item",
             None,
@@ -613,20 +617,20 @@ mod tests {
             Some("foundation:WorkItem"),
             None,
             "test",
-        ).unwrap();
+        ).await.unwrap();
 
         let assignment = Individual::new("foundation:MyAssignment");
-        assignment.assert(&mut conn, "foundation:Assignment", "My Assignment", "https://example.com/assign.svg", "test").unwrap();
+        assignment.assert(&conn, "foundation:Assignment", "My Assignment", "https://example.com/assign.svg", "test").await.unwrap();
 
         let task = Individual::new("foundation:MyTask");
-        task.assert(&mut conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").unwrap();
+        task.assert(&conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").await.unwrap();
 
         let result = assignment.add_property(
-            &mut conn,
+            &conn,
             "foundation:relatedWorkItem",
             vec![Object::Iri("foundation:MyTask".to_string())],
             "test",
-        );
+        ).await;
 
         assert!(result.is_ok(), "Should accept instance of a subclass of the declared range");
     }

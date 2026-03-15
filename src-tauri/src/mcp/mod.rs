@@ -99,8 +99,8 @@ async fn handle_mcp(
             let app = (*state.app).clone();
             let call = ToolCall { name, arguments: req["params"]["arguments"].clone() };
 
-            let result_json = match executor.write(move |conn| -> Result<String, String> {
-                let result = execute_tool(conn, &call, Some(&app));
+            let result_json = match executor.write(move |conn| async move {
+                let result = execute_tool(&conn, &call, Some(&app)).await;
                 serde_json::to_string(&result).map_err(|e| e.to_string())
             }).await {
                 Ok(json) => json,

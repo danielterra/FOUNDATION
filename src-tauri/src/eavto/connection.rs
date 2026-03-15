@@ -1,4 +1,4 @@
-use rusqlite::{Connection, Result};
+use turso::{Builder, Connection, Database};
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::fmt;
@@ -7,7 +7,7 @@ use crate::commands::log_backend;
 
 #[derive(Debug)]
 pub enum DbError {
-    ConnectionError(rusqlite::Error),
+    ConnectionError(turso::Error),
     SchemaError(String),
     IoError(std::io::Error),
 }
@@ -32,8 +32,8 @@ impl Error for DbError {
     }
 }
 
-impl From<rusqlite::Error> for DbError {
-    fn from(err: rusqlite::Error) -> Self {
+impl From<turso::Error> for DbError {
+    fn from(err: turso::Error) -> Self {
         DbError::ConnectionError(err)
     }
 }
@@ -67,72 +67,150 @@ pub fn get_db_path() -> Result<PathBuf, DbError> {
 const SCHEMA_SQL: &str = include_str!("../../../db/schema.sql");
 const ONTOLOGY_SQL: &str = include_str!("../../../core-ontology/ontology.sql");
 
-fn create_schema(conn: &Connection) -> Result<(), DbError> {
+/// Split SQL text into individual statements, respecting single-quoted string literals.
+/// Semicolons inside string literals are not treated as statement separators.
+fn split_sql_statements(sql: &str) -> Vec<String> {
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let mut chars = sql.chars().peekable();
+    let mut in_string = false;
+
+    while let Some(c) = chars.next() {
+        if in_string {
+            current.push(c);
+            if c == '\'' {
+                if chars.peek() == Some(&'\'') {
+                    current.push(chars.next().unwrap());
+                } else {
+                    in_string = false;
+                }
+            }
+        } else if c == '\'' {
+            in_string = true;
+            current.push(c);
+        } else if c == ';' {
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() {
+                statements.push(trimmed);
+            }
+            current = String::new();
+        } else {
+            current.push(c);
+        }
+    }
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        statements.push(trimmed);
+    }
+    statements
+}
+
+/// Execute multiple SQL statements, respecting string literals and skipping PRAGMAs.
+async fn execute_batch(conn: &Connection, sql: &str) -> Result<(), DbError> {
+    for stmt in split_sql_statements(sql) {
+        let first_meaningful = stmt.lines()
+            .map(|l| l.trim())
+            .find(|l| !l.is_empty() && !l.starts_with("--"));
+        match first_meaningful {
+            None => continue,
+            Some(line) if line.to_ascii_uppercase().starts_with("PRAGMA") => continue,
+            Some(_) => {}
+        }
+        conn.execute(&stmt, ()).await
+            .map_err(|e| DbError::SchemaError(format!("{}: {}", e, stmt.chars().take(80).collect::<String>())))?;
+    }
+    Ok(())
+}
+
+async fn create_schema(conn: &Connection) -> Result<(), DbError> {
     log_backend("info", "Creating schema");
-    conn.execute_batch(SCHEMA_SQL)?;
+    execute_batch(conn, SCHEMA_SQL).await?;
     log_backend("info", "Schema created");
     Ok(())
 }
 
-fn import_ontology_sql(conn: &Connection) -> Result<(), DbError> {
+async fn import_ontology_sql(conn: &Connection) -> Result<(), DbError> {
     log_backend("info", "Importing core ontology from SQL");
-    conn.execute_batch(ONTOLOGY_SQL)
+    execute_batch(conn, ONTOLOGY_SQL).await
         .map_err(|e| DbError::SchemaError(format!("Ontology import failed: {}", e)))?;
     log_backend("info", "Core ontology imported");
     Ok(())
 }
 
 #[allow(dead_code)]
-pub fn initialize_db(db_path: &Path) -> Result<Connection, DbError> {
-    initialize_db_with_progress(db_path, None)
+pub async fn initialize_db(db_path: &Path) -> Result<Database, DbError> {
+    initialize_db_with_progress(db_path, None).await
 }
 
-fn initialize_db_with_progress(
+async fn initialize_db_with_progress(
     db_path: &Path,
     app: Option<&tauri::AppHandle>,
-) -> Result<Connection, DbError> {
+) -> Result<Database, DbError> {
     use tauri::Emitter;
 
     let needs_initialization = !db_path.exists();
 
     log_backend("info", &format!("Using database: {:?}", db_path));
-    let conn = Connection::open(db_path)?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+
+    let path_str = db_path.to_str()
+        .ok_or_else(|| DbError::IoError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Database path is not valid UTF-8"
+        )))?;
+
+    let db = Builder::new_local(path_str)
+        .build()
+        .await
+        .map_err(DbError::ConnectionError)?;
+
+    let conn = db.connect().map_err(DbError::ConnectionError)?;
+
+    // PRAGMA journal_mode returns a row — use query() to consume it safely.
+    conn.query("PRAGMA journal_mode=WAL", ()).await.map_err(DbError::ConnectionError)?;
+    conn.execute("PRAGMA synchronous=NORMAL", ()).await?;
 
     if needs_initialization {
         log_backend("info", "Initializing new database");
 
-        create_schema(&conn)?;
-        import_ontology_sql(&conn)?;
+        create_schema(&conn).await?;
+        import_ontology_sql(&conn).await?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock is before Unix epoch")
+            .as_millis() as i64;
 
         conn.execute(
             "UPDATE metadata SET value = 'true', updated_at = ? WHERE key = 'ontology_imported'",
-            [std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system clock is before Unix epoch")
-                .as_millis() as i64],
-        )?;
+            turso::params![now],
+        ).await?;
 
         log_backend("info", "Database initialization complete");
     } else {
         log_backend("info", "Database exists, skipping ontology import");
     }
 
-    run_migrations(&conn)?;
+    run_migrations(&conn).await?;
 
     if let Some(handle) = app {
         let _ = handle.emit("import-complete", ());
     }
 
-    Ok(conn)
+    Ok(db)
 }
 
-fn drop_object_datetime_if_exists(conn: &Connection) -> Result<(), DbError> {
-    let col_exists: bool = conn.query_row(
-        "SELECT COUNT(*) FROM pragma_table_info('triples') WHERE name = 'object_datetime'",
-        [],
-        |row| row.get::<_, i64>(0),
-    ).map(|c| c > 0).unwrap_or(false);
+async fn drop_object_datetime_if_exists(conn: &Connection) -> Result<(), DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT COUNT(*) FROM pragma_table_info('triples') WHERE name = 'object_datetime'"
+    ).await?;
+
+    let col_exists = match stmt.query_row(()).await {
+        Ok(row) => row.get_value(0)
+            .ok()
+            .and_then(|v| v.as_integer().copied())
+            .unwrap_or(0) > 0,
+        Err(_) => false,
+    };
 
     if !col_exists {
         return Ok(());
@@ -140,8 +218,9 @@ fn drop_object_datetime_if_exists(conn: &Connection) -> Result<(), DbError> {
 
     log_backend("info", "Migrating: dropping object_datetime column from triples table");
 
-    conn.execute_batch("PRAGMA foreign_keys = OFF")?;
-    conn.execute_batch("
+    conn.execute("PRAGMA foreign_keys = OFF", ()).await?;
+
+    let migration_sql = "
         BEGIN;
 
         DROP VIEW IF EXISTS triples_current;
@@ -236,16 +315,18 @@ fn drop_object_datetime_if_exists(conn: &Connection) -> Result<(), DbError> {
             AND retracted = 0;
 
         COMMIT;
-    ")?;
-    conn.execute_batch("PRAGMA foreign_keys = ON")?;
+    ";
+
+    execute_batch(conn, migration_sql).await?;
+    conn.execute("PRAGMA foreign_keys = ON", ()).await?;
 
     log_backend("info", "Migration complete: object_datetime column removed");
     Ok(())
 }
 
-fn run_migrations(conn: &Connection) -> Result<(), DbError> {
-    drop_object_datetime_if_exists(conn)?;
-    conn.execute_batch("
+async fn run_migrations(conn: &Connection) -> Result<(), DbError> {
+    drop_object_datetime_if_exists(conn).await?;
+    execute_batch(conn, "
         CREATE TABLE IF NOT EXISTS formula_recalc_jobs (
             id              TEXT    PRIMARY KEY,
             property_iri    TEXT    NOT NULL,
@@ -267,37 +348,26 @@ fn run_migrations(conn: &Connection) -> Result<(), DbError> {
             created_at      INTEGER NOT NULL,
             PRIMARY KEY (instance_iri, property_iri)
         );
-    ")?;
+    ").await?;
     Ok(())
 }
 
-pub fn initialize_with_progress(app: tauri::AppHandle) -> Result<(Connection, PathBuf), DbError> {
+pub async fn initialize_with_progress(app: tauri::AppHandle) -> Result<(Database, PathBuf), DbError> {
     let db_path = get_db_path()?;
-    let conn = initialize_db_with_progress(&db_path, Some(&app))?;
-    Ok((conn, db_path))
+    let db = initialize_db_with_progress(&db_path, Some(&app)).await?;
+    Ok((db, db_path))
 }
 
 #[allow(dead_code)]
-pub fn get_connection() -> Result<Connection, DbError> {
+pub async fn get_connection() -> Result<Database, DbError> {
     let db_path = get_db_path()?;
-    initialize_db(&db_path)
+    initialize_db(&db_path).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
-
-    #[test]
-    fn test_db_error_from_rusqlite() {
-        let rusqlite_err = rusqlite::Error::InvalidQuery;
-        let db_err: DbError = rusqlite_err.into();
-
-        match db_err {
-            DbError::ConnectionError(_) => {},
-            _ => panic!("Expected ConnectionError"),
-        }
-    }
 
     #[test]
     fn test_db_error_from_io() {
@@ -310,58 +380,77 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_create_schema() {
-        let conn = Connection::open_in_memory().expect("Failed to create in-memory db");
-        let result = create_schema(&conn);
+    #[tokio::test]
+    async fn test_create_schema() {
+        let db = Builder::new_local(":memory:")
+            .build()
+            .await
+            .expect("Failed to create in-memory db");
+        let conn = db.connect().expect("Failed to connect");
+        let result = create_schema(&conn).await;
 
         assert!(result.is_ok());
 
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
-            [],
-            |row| row.get(0)
-        ).expect("Failed to query tables");
+        let mut stmt = conn.prepare(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+        ).await.expect("Failed to prepare");
+
+        let row = stmt.query_row(()).await.expect("Failed to query");
+        let count = row.get_value(0)
+            .expect("Failed to get value")
+            .as_integer()
+            .copied()
+            .unwrap_or(0);
 
         assert!(count > 0, "Schema should create tables");
     }
 
-    #[test]
-    fn test_initialize_db_creates_new_database() {
+    #[tokio::test]
+    async fn test_initialize_db_creates_new_database() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let db_path = temp_dir.path().join("test.db");
 
         assert!(!db_path.exists(), "Database should not exist initially");
 
-        let result = initialize_db(&db_path);
+        let result = initialize_db(&db_path).await;
 
-        assert!(result.is_ok(), "Database initialization should succeed");
+        assert!(result.is_ok(), "Database initialization should succeed: {:?}", result.err());
         assert!(db_path.exists(), "Database file should be created");
 
-        let conn = Connection::open(&db_path).expect("Should open created database");
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
-            [],
-            |row| row.get(0)
-        ).expect("Failed to query tables");
+        let db = result.unwrap();
+        let conn = db.connect().expect("Should connect to created database");
+
+        let mut stmt = conn.prepare(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+        ).await.expect("Failed to prepare");
+
+        let row = stmt.query_row(()).await.expect("Failed to query");
+        let count = row.get_value(0)
+            .expect("Failed to get value")
+            .as_integer()
+            .copied()
+            .unwrap_or(0);
 
         assert!(count > 0, "Initialized database should have tables");
     }
 
-    #[test]
-    fn test_initialize_db_reuses_existing_database() {
+    #[tokio::test]
+    async fn test_initialize_db_reuses_existing_database() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let db_path = temp_dir.path().join("existing.db");
 
         {
-            let conn = Connection::open(&db_path).expect("Failed to create initial db");
-            conn.execute_batch(SCHEMA_SQL).expect("Failed to create schema");
+            let db = Builder::new_local(db_path.to_str().unwrap())
+                .build()
+                .await
+                .expect("Failed to create initial db");
+            let conn = db.connect().expect("Failed to connect");
+            execute_batch(&conn, SCHEMA_SQL).await.expect("Failed to create schema");
         }
 
         assert!(db_path.exists(), "Database should exist");
 
-        let result = initialize_db(&db_path);
-
+        let result = initialize_db(&db_path).await;
         assert!(result.is_ok(), "Should reuse existing database");
     }
 

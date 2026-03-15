@@ -3,53 +3,79 @@ use crate::eavto::test_helpers::{
     setup_test_db, create_test_triples, assert_triple_exists, get_active_triple_count,
 };
 
-#[test]
-fn test_assert_triples_basic() {
-    let mut conn = setup_test_db();
+async fn query_count(conn: &Connection, sql: &str) -> i64 {
+    let mut stmt = conn.prepare(sql).await.expect("prepare failed");
+    let row = stmt.query_row(()).await.expect("query failed");
+    row.get_value(0).unwrap().as_integer().copied().unwrap_or(0)
+}
+
+async fn query_count_param(conn: &Connection, sql: &str, param: &str) -> i64 {
+    let mut stmt = conn.prepare(sql).await.expect("prepare failed");
+    let row = stmt.query_row(turso::params![param]).await.expect("query failed");
+    row.get_value(0).unwrap().as_integer().copied().unwrap_or(0)
+}
+
+async fn query_bool(conn: &Connection, sql: &str) -> bool {
+    query_count(conn, sql).await > 0
+}
+
+async fn query_bool_param(conn: &Connection, sql: &str, param: &str) -> bool {
+    query_count_param(conn, sql, param).await > 0
+}
+
+async fn query_string(conn: &Connection, sql: &str) -> String {
+    let mut stmt = conn.prepare(sql).await.expect("prepare failed");
+    let row = stmt.query_row(()).await.expect("query failed");
+    row.get_value(0).unwrap().as_text().map_or("", |v| v).to_string()
+}
+
+#[tokio::test]
+async fn test_assert_triples_basic() {
+    let conn = setup_test_db().await;
     let triples = create_test_triples();
 
-    let tx_id = assert_triples(&mut conn, &triples, "test_origin")
+    let tx_id = assert_triples(&conn, &triples, "test_origin")
+        .await
         .expect("Failed to assert triples");
 
     assert!(tx_id > 0);
-    assert_eq!(get_active_triple_count(&conn), 3);
+    assert_eq!(get_active_triple_count(&conn).await, 3);
 }
 
-#[test]
-fn test_assert_triples_creates_transaction() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_assert_triples_creates_transaction() {
+    let conn = setup_test_db().await;
     let triples = create_test_triples();
 
-    let tx_id = assert_triples(&mut conn, &triples, "test_origin").unwrap();
+    let tx_id = assert_triples(&conn, &triples, "test_origin").await.unwrap();
 
-    let tx_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM transactions WHERE tx = ?", [tx_id], |row| row.get(0))
-        .unwrap();
+    let tx_count = query_count_param(
+        &conn,
+        "SELECT COUNT(*) FROM transactions WHERE tx = ?",
+        &tx_id.to_string(),
+    ).await;
 
     assert_eq!(tx_count, 1);
 }
 
-#[test]
-fn test_assert_triples_creates_origin() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_assert_triples_creates_origin() {
+    let conn = setup_test_db().await;
     let triples = create_test_triples();
 
-    assert_triples(&mut conn, &triples, "new_origin").unwrap();
+    assert_triples(&conn, &triples, "new_origin").await.unwrap();
 
-    let origin_exists: bool = conn
-        .query_row(
-            "SELECT COUNT(*) > 0 FROM origins WHERE name = 'new_origin'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
+    let origin_exists = query_bool(
+        &conn,
+        "SELECT COUNT(*) > 0 FROM origins WHERE name = 'new_origin'",
+    ).await;
 
     assert!(origin_exists);
 }
 
-#[test]
-fn test_assert_triples_with_different_object_types() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_assert_triples_with_different_object_types() {
+    let conn = setup_test_db().await;
 
     let triples = vec![
         Triple {
@@ -90,47 +116,44 @@ fn test_assert_triples_with_different_object_types() {
         },
     ];
 
-    assert_triples(&mut conn, &triples, "test").unwrap();
+    assert_triples(&conn, &triples, "test").await.unwrap();
 
-    assert_triple_exists(&conn, "test:Subject1", "test:hasIri");
-    assert_triple_exists(&conn, "test:Subject2", "test:hasInteger");
-    assert_triple_exists(&conn, "test:Subject3", "test:hasNumber");
-    assert_triple_exists(&conn, "test:Subject4", "test:hasBoolean");
+    assert_triple_exists(&conn, "test:Subject1", "test:hasIri").await;
+    assert_triple_exists(&conn, "test:Subject2", "test:hasInteger").await;
+    assert_triple_exists(&conn, "test:Subject3", "test:hasNumber").await;
+    assert_triple_exists(&conn, "test:Subject4", "test:hasBoolean").await;
 }
 
-#[test]
-fn test_retract_triples() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_retract_triples() {
+    let conn = setup_test_db().await;
     let triples = create_test_triples();
 
-    // Assert triples first
-    assert_triples(&mut conn, &triples, "test").unwrap();
-    assert_eq!(get_active_triple_count(&conn), 3);
+    assert_triples(&conn, &triples, "test").await.unwrap();
+    assert_eq!(get_active_triple_count(&conn).await, 3);
 
-    // Retract one triple
     let to_retract = vec![triples[0].clone()];
-    let retract_tx_id = retract_triples(&mut conn, &to_retract, "test").unwrap();
+    let retract_tx_id = retract_triples(&conn, &to_retract, "test").await.unwrap();
 
     assert!(retract_tx_id > 0);
-    assert_eq!(get_active_triple_count(&conn), 2); // One should be retracted
+    assert_eq!(get_active_triple_count(&conn).await, 2);
 }
 
-#[test]
-fn test_retract_triples_multiple() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_retract_triples_multiple() {
+    let conn = setup_test_db().await;
     let triples = create_test_triples();
 
-    assert_triples(&mut conn, &triples, "test").unwrap();
-    assert_eq!(get_active_triple_count(&conn), 3);
+    assert_triples(&conn, &triples, "test").await.unwrap();
+    assert_eq!(get_active_triple_count(&conn).await, 3);
 
-    // Retract all triples
-    retract_triples(&mut conn, &triples, "test").unwrap();
-    assert_eq!(get_active_triple_count(&conn), 0);
+    retract_triples(&conn, &triples, "test").await.unwrap();
+    assert_eq!(get_active_triple_count(&conn).await, 0);
 }
 
-#[test]
-fn test_retract_nonexistent_triple_does_not_error() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_retract_nonexistent_triple_does_not_error() {
+    let conn = setup_test_db().await;
 
     let triples = vec![Triple {
         subject: "nonexistent:Subject".to_string(),
@@ -142,46 +165,21 @@ fn test_retract_nonexistent_triple_does_not_error() {
         retracted: false,
     }];
 
-    // Should not error even though triple doesn't exist
-    let result = retract_triples(&mut conn, &triples, "test");
+    let result = retract_triples(&conn, &triples, "test").await;
     assert!(result.is_ok());
 }
 
-#[test]
-fn test_get_or_create_origin_existing() {
-    let mut conn = setup_test_db();
-    let tx = conn.transaction().unwrap();
-
-    // Origin "test" should already exist from setup_test_db
-    let id1 = get_or_create_origin(&tx, "test").unwrap();
-    let id2 = get_or_create_origin(&tx, "test").unwrap();
-
-    assert_eq!(id1, id2); // Should return same ID
-}
-
-#[test]
-fn test_get_or_create_origin_new() {
-    let mut conn = setup_test_db();
-    let tx = conn.transaction().unwrap();
-
-    let id = get_or_create_origin(&tx, "brand_new_origin").unwrap();
-    assert!(id > 0);
-}
-
-#[test]
-fn test_now_millis() {
+#[tokio::test]
+async fn test_now_millis() {
     let ts = now_millis();
     assert!(ts > 0);
-
-    // Should be a reasonable timestamp (after 2020)
-    assert!(ts > 1577836800000); // Jan 1, 2020 in milliseconds
+    assert!(ts > 1577836800000);
 }
 
-#[test]
-fn test_assert_replaces_old_values() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_assert_replaces_old_values() {
+    let conn = setup_test_db().await;
 
-    // Add first email
     let email1 = vec![Triple {
         subject: "test:Person1".to_string(),
         predicate: "test:email".to_string(),
@@ -195,9 +193,8 @@ fn test_assert_replaces_old_values() {
         origin_id: 1,
         retracted: false,
     }];
-    assert_triples(&mut conn, &email1, "test").unwrap();
+    assert_triples(&conn, &email1, "test").await.unwrap();
 
-    // Add second email
     let email2 = vec![Triple {
         subject: "test:Person1".to_string(),
         predicate: "test:email".to_string(),
@@ -211,39 +208,33 @@ fn test_assert_replaces_old_values() {
         origin_id: 1,
         retracted: false,
     }];
-    assert_triples(&mut conn, &email2, "test").unwrap();
+    assert_triples(&conn, &email2, "test").await.unwrap();
 
-    // Should have only 1 active email (the latest one)
-    let active: i64 = conn.query_row(
+    let active = query_count(
+        &conn,
         "SELECT COUNT(*) FROM triples \
          WHERE subject = 'test:Person1' AND predicate = 'test:email' AND retracted = 0",
-        [],
-        |row| row.get(0)
-    ).unwrap();
+    ).await;
     assert_eq!(active, 1);
 
-    // Should have 2 total emails in history (1 retracted + 1 active)
-    let total: i64 = conn.query_row(
+    let total = query_count(
+        &conn,
         "SELECT COUNT(*) FROM triples \
          WHERE subject = 'test:Person1' AND predicate = 'test:email'",
-        [],
-        |row| row.get(0)
-    ).unwrap();
+    ).await;
     assert_eq!(total, 2);
 
-    // Verify the active one is the latest
-    let active_value: String = conn.query_row(
+    let active_value = query_string(
+        &conn,
         "SELECT object_value FROM triples \
          WHERE subject = 'test:Person1' AND predicate = 'test:email' AND retracted = 0",
-        [],
-        |row| row.get(0)
-    ).unwrap();
+    ).await;
     assert_eq!(active_value, "john@work.com");
 }
 
-#[test]
-fn test_assert_same_value_twice_is_noop() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_assert_same_value_twice_is_noop() {
+    let conn = setup_test_db().await;
 
     let triple = vec![Triple {
         subject: "test:Thing".to_string(),
@@ -259,59 +250,53 @@ fn test_assert_same_value_twice_is_noop() {
         retracted: false,
     }];
 
-    assert_triples(&mut conn, &triple, "test").unwrap();
-    let total_before: i64 = conn
-        .query_row("SELECT COUNT(*) FROM triples", [], |r| r.get(0))
-        .unwrap();
+    assert_triples(&conn, &triple, "test").await.unwrap();
+    let total_before = query_count(&conn, "SELECT COUNT(*) FROM triples").await;
 
-    let tx_id = assert_triples(&mut conn, &triple, "test").unwrap();
+    let tx_id = assert_triples(&conn, &triple, "test").await.unwrap();
     assert_eq!(tx_id, 0, "second assert with same value must be a no-op");
 
-    let total_after: i64 = conn
-        .query_row("SELECT COUNT(*) FROM triples", [], |r| r.get(0))
-        .unwrap();
+    let total_after = query_count(&conn, "SELECT COUNT(*) FROM triples").await;
     assert_eq!(total_before, total_after, "no new rows should be written on no-op");
 
-    let tx_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
-        .unwrap();
+    let tx_count = query_count(&conn, "SELECT COUNT(*) FROM transactions").await;
     assert_eq!(tx_count, 1, "no new transaction record should be created on no-op");
 }
 
-#[test]
-fn test_assert_different_value_does_retract_and_insert() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_assert_different_value_does_retract_and_insert() {
+    let conn = setup_test_db().await;
 
-    assert_triples(&mut conn, &[Triple {
+    assert_triples(&conn, &[Triple {
         subject: "test:Thing".to_string(),
         predicate: "rdfs:label".to_string(),
         object: Object::Literal { value: "Old".to_string(), datatype: Some("xsd:string".to_string()), language: None },
         tx: 0, created_at: 0, origin_id: 1, retracted: false,
-    }], "test").unwrap();
+    }], "test").await.unwrap();
 
-    let tx_id = assert_triples(&mut conn, &[Triple {
+    let tx_id = assert_triples(&conn, &[Triple {
         subject: "test:Thing".to_string(),
         predicate: "rdfs:label".to_string(),
         object: Object::Literal { value: "New".to_string(), datatype: Some("xsd:string".to_string()), language: None },
         tx: 0, created_at: 0, origin_id: 1, retracted: false,
-    }], "test").unwrap();
+    }], "test").await.unwrap();
 
     assert!(tx_id > 0, "changing a value must create a real transaction");
-    let active: i64 = conn.query_row(
+    let active = query_count(
+        &conn,
         "SELECT COUNT(*) FROM triples WHERE subject='test:Thing' AND retracted=0",
-        [], |r| r.get(0),
-    ).unwrap();
+    ).await;
     assert_eq!(active, 1);
-    let active_value: String = conn.query_row(
+    let active_value = query_string(
+        &conn,
         "SELECT object_value FROM triples WHERE subject='test:Thing' AND retracted=0",
-        [], |r| r.get(0),
-    ).unwrap();
+    ).await;
     assert_eq!(active_value, "New");
 }
 
-#[test]
-fn test_append_same_value_twice_is_noop() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_append_same_value_twice_is_noop() {
+    let conn = setup_test_db().await;
 
     let triple = vec![Triple {
         subject: "test:Thing".to_string(),
@@ -324,23 +309,19 @@ fn test_append_same_value_twice_is_noop() {
         tx: 0, created_at: 0, origin_id: 1, retracted: false,
     }];
 
-    append_triples(&mut conn, &triple, "test").unwrap();
-    let total_before: i64 = conn
-        .query_row("SELECT COUNT(*) FROM triples", [], |r| r.get(0))
-        .unwrap();
+    append_triples(&conn, &triple, "test").await.unwrap();
+    let total_before = query_count(&conn, "SELECT COUNT(*) FROM triples").await;
 
-    let tx_id = append_triples(&mut conn, &triple, "test").unwrap();
+    let tx_id = append_triples(&conn, &triple, "test").await.unwrap();
     assert_eq!(tx_id, 0, "second append with same value must be a no-op");
 
-    let total_after: i64 = conn
-        .query_row("SELECT COUNT(*) FROM triples", [], |r| r.get(0))
-        .unwrap();
+    let total_after = query_count(&conn, "SELECT COUNT(*) FROM triples").await;
     assert_eq!(total_before, total_after, "no new rows should be written on no-op");
 }
 
-#[test]
-fn test_assert_iri_same_value_is_noop() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_assert_iri_same_value_is_noop() {
+    let conn = setup_test_db().await;
 
     let triple = vec![Triple {
         subject: "test:Thing".to_string(),
@@ -349,14 +330,14 @@ fn test_assert_iri_same_value_is_noop() {
         tx: 0, created_at: 0, origin_id: 1, retracted: false,
     }];
 
-    assert_triples(&mut conn, &triple, "test").unwrap();
-    let tx_id = assert_triples(&mut conn, &triple, "test").unwrap();
+    assert_triples(&conn, &triple, "test").await.unwrap();
+    let tx_id = assert_triples(&conn, &triple, "test").await.unwrap();
     assert_eq!(tx_id, 0);
 }
 
-#[test]
-fn test_assert_multivalue_partial_overlap_only_changes_diff() {
-    let mut conn = setup_test_db();
+#[tokio::test]
+async fn test_assert_multivalue_partial_overlap_only_changes_diff() {
+    let conn = setup_test_db().await;
 
     let mk = |v: &str| Triple {
         subject: "test:Thing".to_string(),
@@ -365,69 +346,23 @@ fn test_assert_multivalue_partial_overlap_only_changes_diff() {
         tx: 0, created_at: 0, origin_id: 1, retracted: false,
     };
 
-    // Start with [A, B]
-    append_triples(&mut conn, &[mk("A"), mk("B")], "test").unwrap();
+    append_triples(&conn, &[mk("A"), mk("B")], "test").await.unwrap();
+    assert_triples(&conn, &[mk("A"), mk("C")], "test").await.unwrap();
 
-    // Assert [A, C] — B should be retracted, C inserted, A unchanged
-    assert_triples(&mut conn, &[mk("A"), mk("C")], "test").unwrap();
-
-    let active: Vec<String> = {
-        let mut stmt = conn.prepare(
-            "SELECT object_value FROM triples WHERE subject='test:Thing' AND predicate='foundation:tag' AND retracted=0 ORDER BY object_value"
-        ).unwrap();
-        stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
-    };
+    let mut stmt = conn.prepare(
+        "SELECT object_value FROM triples WHERE subject='test:Thing' AND predicate='foundation:tag' AND retracted=0 ORDER BY object_value"
+    ).await.unwrap();
+    let mut rows = stmt.query(()).await.unwrap();
+    let mut active = Vec::new();
+    while let Some(row) = rows.next().await.unwrap() {
+        let v = row.get_value(0).unwrap().as_text().map_or("", |v| v).to_string();
+        active.push(v);
+    }
     assert_eq!(active, vec!["A", "C"]);
 
-    // A should have only 1 row total (not retracted + reinserted)
-    let a_rows: i64 = conn.query_row(
+    let a_rows = query_count(
+        &conn,
         "SELECT COUNT(*) FROM triples WHERE subject='test:Thing' AND predicate='foundation:tag' AND object_value='A'",
-        [], |r| r.get(0),
-    ).unwrap();
+    ).await;
     assert_eq!(a_rows, 1, "unchanged value A must not be duplicated");
-}
-
-#[test]
-fn test_assert_triples_uses_savepoint_in_batch() {
-    let mut conn = setup_test_db();
-
-    // Set the batch flag and start a raw outer transaction (as batch_operations does)
-    let _guard = enter_batch_transaction();
-    conn.execute_batch("BEGIN").unwrap();
-
-    let triples = vec![Triple {
-        subject: "test:ThingA".to_string(),
-        predicate: "test:name".to_string(),
-        object: Object::Literal {
-            value: "Thing A".to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        },
-        tx: 0,
-        created_at: 1000,
-        origin_id: 1,
-        retracted: false,
-    }];
-
-    // assert_triples should use SAVEPOINT (not BEGIN) because IN_BATCH_TX is true
-    assert_triples(&mut conn, &triples, "test").unwrap();
-
-    // Triple is visible within the outer transaction
-    let count_in_tx: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM triples WHERE subject = 'test:ThingA' AND retracted = 0",
-        [],
-        |row| row.get(0),
-    ).unwrap();
-    assert_eq!(count_in_tx, 1);
-
-    // Rollback the outer transaction — all changes including the savepoint disappear
-    conn.execute_batch("ROLLBACK").unwrap();
-    drop(_guard);
-
-    let count_after_rollback: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM triples WHERE subject = 'test:ThingA' AND retracted = 0",
-        [],
-        |row| row.get(0),
-    ).unwrap();
-    assert_eq!(count_after_rollback, 0, "Triple must be rolled back atomically");
 }

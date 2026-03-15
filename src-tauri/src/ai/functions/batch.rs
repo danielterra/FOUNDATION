@@ -1,26 +1,32 @@
-use std::cell::RefCell;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::Value;
-use rusqlite::Connection;
+use turso::Connection;
 use tauri::Emitter;
-use crate::eavto::enter_batch_transaction;
 use super::ToolResult;
 
-thread_local! {
-    static PENDING_EVENTS: RefCell<Vec<(String, Value)>> = const { RefCell::new(Vec::new()) };
-}
+static BATCH_SP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+static PENDING_EVENTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
 
 pub(super) fn queue_event(name: &str, payload: Value) {
-    PENDING_EVENTS.with(|e| e.borrow_mut().push((name.to_string(), payload)));
+    if let Ok(mut events) = PENDING_EVENTS.lock() {
+        events.push((name.to_string(), payload));
+    }
 }
 
 fn take_events() -> Vec<(String, Value)> {
-    PENDING_EVENTS.with(|e| e.borrow_mut().drain(..).collect())
+    PENDING_EVENTS.lock().map(|mut e| e.drain(..).collect()).unwrap_or_default()
 }
 
-pub(super) fn run_multi_read(
+pub type AsyncOpFn = for<'a> fn(&'a Connection, &'a Value) -> Pin<Box<dyn Future<Output = ToolResult> + Send + 'a>>;
+
+pub(super) async fn run_multi_read(
     conn: &Connection,
     args: &Value,
-    exec_one: impl Fn(&Connection, &Value) -> ToolResult,
+    exec_one: AsyncOpFn,
 ) -> ToolResult {
     let ops = match args.as_array() {
         Some(ops) if !ops.is_empty() => ops.clone(),
@@ -40,7 +46,7 @@ pub(super) fn run_multi_read(
 
     let mut results = Vec::new();
     for (i, op) in ops.iter().enumerate() {
-        let result = exec_one(conn, op);
+        let result = exec_one(conn, op).await;
         if !result.success {
             return ToolResult {
                 success: false,
@@ -64,11 +70,11 @@ pub(super) fn run_multi_read(
     }
 }
 
-pub(super) fn run_atomic(
-    conn: &mut Connection,
+pub(super) async fn run_atomic(
+    conn: &Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
-    exec_one: impl Fn(&mut Connection, &Value) -> ToolResult,
+    exec_one: AsyncOpFn,
 ) -> ToolResult {
     let ops = match args.as_array() {
         Some(ops) if !ops.is_empty() => ops.clone(),
@@ -88,7 +94,9 @@ pub(super) fn run_atomic(
 
     take_events();
 
-    if let Err(e) = conn.execute_batch("BEGIN") {
+    let sp = format!("batch_{}", BATCH_SP_COUNTER.fetch_add(1, Ordering::Relaxed));
+
+    if let Err(e) = conn.execute(&format!("SAVEPOINT {sp}"), ()).await {
         return ToolResult {
             success: false,
             result: None,
@@ -97,13 +105,13 @@ pub(super) fn run_atomic(
         };
     }
 
-    let _guard = enter_batch_transaction();
     let mut results = Vec::new();
 
     for (i, op) in ops.iter().enumerate() {
-        let result = exec_one(conn, op);
+        let result = exec_one(conn, op).await;
         if !result.success {
-            conn.execute_batch("ROLLBACK").ok();
+            let _ = conn.execute(&format!("ROLLBACK TO {sp}"), ()).await;
+            let _ = conn.execute(&format!("RELEASE {sp}"), ()).await;
             take_events();
             return ToolResult {
                 success: false,
@@ -119,8 +127,9 @@ pub(super) fn run_atomic(
         results.push(result.result);
     }
 
-    if let Err(e) = conn.execute_batch("COMMIT") {
-        conn.execute_batch("ROLLBACK").ok();
+    if let Err(e) = conn.execute(&format!("RELEASE {sp}"), ()).await {
+        let _ = conn.execute(&format!("ROLLBACK TO {sp}"), ()).await;
+        let _ = conn.execute(&format!("RELEASE {sp}"), ()).await;
         take_events();
         return ToolResult {
             success: false,

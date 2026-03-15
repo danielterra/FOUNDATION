@@ -28,8 +28,8 @@ pub struct CapabilityJson {
     pub endpoint_path: Option<String>,
 }
 
-fn read_literal(conn: &rusqlite::Connection, iri: &str, predicate: &str) -> Option<String> {
-    crate::owl::get_literal_property(conn, iri, predicate).ok().flatten()
+async fn read_literal(conn: &turso::Connection, iri: &str, predicate: &str) -> Option<String> {
+    crate::owl::get_literal_property(conn, iri, predicate).await.ok().flatten()
 }
 
 /// Export a connector and its capabilities as a portable JSON package.
@@ -40,27 +40,27 @@ pub async fn connector__export_package(
     author: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<ConnectorPackageJson, String> {
-    executor.read(move |conn| {
-        let label = read_literal(conn, &connector_iri, "rdfs:label")
+    executor.read(move |conn| async move {
+        let label = read_literal(&conn, &connector_iri, "rdfs:label").await
             .unwrap_or_else(|| connector_iri.clone());
-        let comment = read_literal(conn, &connector_iri, "rdfs:comment");
-        let base_url = read_literal(conn, &connector_iri, "foundation:baseUrl");
-        let auth_type = read_literal(conn, &connector_iri, "foundation:authType");
-        let api_spec_url = read_literal(conn, &connector_iri, "foundation:apiSpecUrl");
-        let connector_version = read_literal(conn, &connector_iri, "foundation:connectorVersion");
+        let comment = read_literal(&conn, &connector_iri, "rdfs:comment").await;
+        let base_url = read_literal(&conn, &connector_iri, "foundation:baseUrl").await;
+        let auth_type = read_literal(&conn, &connector_iri, "foundation:authType").await;
+        let api_spec_url = read_literal(&conn, &connector_iri, "foundation:apiSpecUrl").await;
+        let connector_version = read_literal(&conn, &connector_iri, "foundation:connectorVersion").await;
 
         // Load all ConnectorCapability instances linked to this connector
-        let cap_triples = query::get_by_predicate_object(conn, "foundation:partOfConnector", &connector_iri)
+        let cap_triples = query::get_by_predicate_object(&conn, "foundation:partOfConnector", &connector_iri).await
             .map_err(|e| e.to_string())?;
 
         let mut capabilities = Vec::new();
         for triple in &cap_triples.triples {
             let cap_iri = &triple.subject;
-            let cap_label = read_literal(conn, cap_iri, "rdfs:label")
+            let cap_label = read_literal(&conn, cap_iri, "rdfs:label").await
                 .unwrap_or_else(|| cap_iri.clone());
-            let cap_comment = read_literal(conn, cap_iri, "rdfs:comment");
-            let http_method = read_literal(conn, cap_iri, "foundation:httpMethod");
-            let endpoint_path = read_literal(conn, cap_iri, "foundation:endpointPath");
+            let cap_comment = read_literal(&conn, cap_iri, "rdfs:comment").await;
+            let http_method = read_literal(&conn, cap_iri, "foundation:httpMethod").await;
+            let endpoint_path = read_literal(&conn, cap_iri, "foundation:endpointPath").await;
 
             capabilities.push(CapabilityJson {
                 iri: cap_iri.clone(),
@@ -96,7 +96,7 @@ pub async fn connector__import_package(
 ) -> Result<String, String> {
     let timestamp = chrono::Utc::now().timestamp_millis();
 
-    executor.write(move |conn| {
+    executor.write(move |conn| async move {
         let connector_iri = if package.connector_iri.starts_with("foundation:") {
             package.connector_iri.clone()
         } else {
@@ -104,7 +104,7 @@ pub async fn connector__import_package(
         };
 
         let ind = Individual::new(&connector_iri);
-        ind.assert(conn, "foundation:ExternalServiceConnector", &package.label, "api", "connector")
+        ind.assert(&conn, "foundation:ExternalServiceConnector", &package.label, "api", "connector").await
             .map_err(|e| format!("Failed to create connector: {}", e))?;
 
         let str_lit = |v: String| Object::Literal {
@@ -114,23 +114,23 @@ pub async fn connector__import_package(
         };
 
         if let Some(comment) = package.comment {
-            ind.add_property(conn, "rdfs:comment", vec![str_lit(comment)], "connector")
+            ind.add_property(&conn, "rdfs:comment", vec![str_lit(comment)], "connector").await
                 .map_err(|e| format!("Failed to set comment: {}", e))?;
         }
         if let Some(url) = package.base_url {
-            ind.add_property(conn, "foundation:baseUrl", vec![str_lit(url)], "connector")
+            ind.add_property(&conn, "foundation:baseUrl", vec![str_lit(url)], "connector").await
                 .map_err(|e| format!("Failed to set baseUrl: {}", e))?;
         }
         if let Some(auth) = package.auth_type {
-            ind.add_property(conn, "foundation:authType", vec![str_lit(auth)], "connector")
+            ind.add_property(&conn, "foundation:authType", vec![str_lit(auth)], "connector").await
                 .map_err(|e| format!("Failed to set authType: {}", e))?;
         }
         if let Some(spec) = package.api_spec_url {
-            ind.add_property(conn, "foundation:apiSpecUrl", vec![str_lit(spec)], "connector")
+            ind.add_property(&conn, "foundation:apiSpecUrl", vec![str_lit(spec)], "connector").await
                 .map_err(|e| format!("Failed to set apiSpecUrl: {}", e))?;
         }
         if let Some(ver) = package.connector_version {
-            ind.add_property(conn, "foundation:connectorVersion", vec![str_lit(ver)], "connector")
+            ind.add_property(&conn, "foundation:connectorVersion", vec![str_lit(ver)], "connector").await
                 .map_err(|e| format!("Failed to set connectorVersion: {}", e))?;
         }
 
@@ -138,23 +138,23 @@ pub async fn connector__import_package(
             let cap_iri = format!("foundation:ConnectorCapability_{}_{}", timestamp, cap.iri.replace([':', '/'], "_"));
             let cap_ind = Individual::new(&cap_iri);
 
-            cap_ind.assert(conn, "foundation:ConnectorCapability", &cap.label, "bolt", "connector")
+            cap_ind.assert(&conn, "foundation:ConnectorCapability", &cap.label, "bolt", "connector").await
                 .map_err(|e| format!("Failed to create capability: {}", e))?;
 
             if let Some(comment) = cap.comment {
-                cap_ind.add_property(conn, "rdfs:comment", vec![str_lit(comment)], "connector")
+                cap_ind.add_property(&conn, "rdfs:comment", vec![str_lit(comment)], "connector").await
                     .map_err(|e| format!("Failed to set capability comment: {}", e))?;
             }
             if let Some(method) = cap.http_method {
-                cap_ind.add_property(conn, "foundation:httpMethod", vec![str_lit(method)], "connector")
+                cap_ind.add_property(&conn, "foundation:httpMethod", vec![str_lit(method)], "connector").await
                     .map_err(|e| format!("Failed to set httpMethod: {}", e))?;
             }
             if let Some(path) = cap.endpoint_path {
-                cap_ind.add_property(conn, "foundation:endpointPath", vec![str_lit(path)], "connector")
+                cap_ind.add_property(&conn, "foundation:endpointPath", vec![str_lit(path)], "connector").await
                     .map_err(|e| format!("Failed to set endpointPath: {}", e))?;
             }
-            cap_ind.add_property(conn, "foundation:partOfConnector",
-                vec![Object::Iri(connector_iri.clone())], "connector")
+            cap_ind.add_property(&conn, "foundation:partOfConnector",
+                vec![Object::Iri(connector_iri.clone())], "connector").await
                 .map_err(|e| format!("Failed to link capability: {}", e))?;
         }
 

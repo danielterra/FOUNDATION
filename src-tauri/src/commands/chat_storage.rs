@@ -105,79 +105,79 @@ pub(super) async fn create_message(
     let model_opt = model.map(|s| s.to_string());
     let stop_reason_opt = stop_reason.map(|s| s.to_string());
 
-    executor.write(move |conn| {
+    executor.write(move |conn| async move {
         let msg = Individual::new(&msg_iri_clone);
 
         msg.assert(
-            conn,
+            &conn,
             "foundation:AIConversationMessage",
             &format!("{} message", role_str),
             "chat",
             "ai"
-        ).map_err(|e| format!("Failed to create message: {}", e))?;
+        ).await.map_err(|e| format!("Failed to create message: {}", e))?;
 
-        msg.add_property(conn, "foundation:role", vec![Object::Literal {
+        msg.add_property(&conn, "foundation:role", vec![Object::Literal {
             value: role_str.clone(),
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }], "ai").map_err(|e| format!("Failed to set role: {}", e))?;
+        }], "ai").await.map_err(|e| format!("Failed to set role: {}", e))?;
 
-        msg.add_property(conn, "foundation:content", vec![Object::Literal {
+        msg.add_property(&conn, "foundation:content", vec![Object::Literal {
             value: content_str,
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }], "ai").map_err(|e| format!("Failed to set content: {}", e))?;
+        }], "ai").await.map_err(|e| format!("Failed to set content: {}", e))?;
 
-        msg.add_property(conn, "foundation:sentAt", vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "ai")
+        msg.add_property(&conn, "foundation:sentAt", vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "ai").await
             .map_err(|e| format!("add_property failed: {}", e))?;
 
         msg.add_property(
-            conn, "foundation:partOfConversation", vec![Object::Iri(conversation_iri)], "ai",
-        ).map_err(|e| format!("Property error: {}", e))?;
+            &conn, "foundation:partOfConversation", vec![Object::Iri(conversation_iri)], "ai",
+        ).await.map_err(|e| format!("Property error: {}", e))?;
 
         msg.add_property(
-            conn, "foundation:tokenCount", vec![Object::Integer(token_count as i64)], "ai",
-        ).map_err(|e| format!("Property error: {}", e))?;
+            &conn, "foundation:tokenCount", vec![Object::Integer(token_count as i64)], "ai",
+        ).await.map_err(|e| format!("Property error: {}", e))?;
 
         if role_str == "user" {
-            msg.add_property(conn, "foundation:sender",
-                vec![Object::Iri("foundation:ThisUser".to_string())], "ai")
+            msg.add_property(&conn, "foundation:sender",
+                vec![Object::Iri("foundation:ThisUser".to_string())], "ai").await
                 .map_err(|e| format!("Property error: {}", e))?;
-            msg.add_property(conn, "foundation:receiver",
-                vec![Object::Iri("foundation:LocalAIAssistant".to_string())], "ai")
+            msg.add_property(&conn, "foundation:receiver",
+                vec![Object::Iri("foundation:LocalAIAssistant".to_string())], "ai").await
                 .map_err(|e| format!("Property error: {}", e))?;
         } else {
-            msg.add_property(conn, "foundation:sender",
-                vec![Object::Iri("foundation:LocalAIAssistant".to_string())], "ai")
+            msg.add_property(&conn, "foundation:sender",
+                vec![Object::Iri("foundation:LocalAIAssistant".to_string())], "ai").await
                 .map_err(|e| format!("Property error: {}", e))?;
-            msg.add_property(conn, "foundation:receiver",
-                vec![Object::Iri("foundation:ThisUser".to_string())], "ai")
+            msg.add_property(&conn, "foundation:receiver",
+                vec![Object::Iri("foundation:ThisUser".to_string())], "ai").await
                 .map_err(|e| format!("Property error: {}", e))?;
         }
 
         if let Some(model_str) = model_opt {
-            msg.add_property(conn, "foundation:model", vec![Object::Literal {
+            msg.add_property(&conn, "foundation:model", vec![Object::Literal {
                 value: model_str,
                 datatype: Some("xsd:string".to_string()),
                 language: None,
-            }], "ai").map_err(|e| format!("Failed to set model: {}", e))?;
+            }], "ai").await.map_err(|e| format!("Failed to set model: {}", e))?;
         }
 
         if let Some(stop_str) = stop_reason_opt {
-            msg.add_property(conn, "foundation:stopReason", vec![Object::Literal {
+            msg.add_property(&conn, "foundation:stopReason", vec![Object::Literal {
                 value: stop_str,
                 datatype: Some("xsd:string".to_string()),
                 language: None,
-            }], "ai").map_err(|e| format!("Failed to set stopReason: {}", e))?;
+            }], "ai").await.map_err(|e| format!("Failed to set stopReason: {}", e))?;
         }
 
         if let Some((input, output)) = tokens {
             msg.add_property(
-                conn, "foundation:inputTokens", vec![Object::Integer(input as i64)], "ai",
-            ).map_err(|e| format!("Property error: {}", e))?;
+                &conn, "foundation:inputTokens", vec![Object::Integer(input as i64)], "ai",
+            ).await.map_err(|e| format!("Property error: {}", e))?;
             msg.add_property(
-                conn, "foundation:outputTokens", vec![Object::Integer(output as i64)], "ai",
-            ).map_err(|e| format!("Property error: {}", e))?;
+                &conn, "foundation:outputTokens", vec![Object::Integer(output as i64)], "ai",
+            ).await.map_err(|e| format!("Property error: {}", e))?;
         }
 
         Ok(msg_iri_clone)
@@ -195,9 +195,9 @@ pub async fn load_conversation_history(
     ));
 
     let conversation_id = conversation_id.to_string();
-    let selected = executor.read(move |conn| {
+    let selected = executor.read(move |conn| async move {
         // Load IRIs ordered newest-first — light query, no message content yet
-        let iris_desc = Individual::find_messages_by_conversation(conn, &conversation_id, usize::MAX, 0)
+        let iris_desc = Individual::find_messages_by_conversation(&conn, &conversation_id, usize::MAX, 0).await
             .map_err(|e| format!("Failed to query messages: {}", e))?;
 
         let mut selected: Vec<AIConversationMessage> = Vec::new();
@@ -206,7 +206,7 @@ pub async fn load_conversation_history(
         let mut i = 0;
 
         while i < iris_desc.len() {
-            let msg = match load_message(conn, &iris_desc[i]) {
+            let msg = match load_message(&conn, &iris_desc[i]).await {
                 Ok(m) => m,
                 Err(_) => { failed_count += 1; i += 1; continue; }
             };
@@ -216,7 +216,7 @@ pub async fn load_conversation_history(
                 .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
 
             if has_tool_results && i + 1 < iris_desc.len() {
-                let prev_msg = match load_message(conn, &iris_desc[i + 1]) {
+                let prev_msg = match load_message(&conn, &iris_desc[i + 1]).await {
                     Ok(m) => m,
                     Err(_) => {
                         // Paired tool_use unreadable — include only this message
@@ -375,8 +375,8 @@ pub async fn load_conversation_history(
 }
 
 /// Load a single message from the database
-pub(super) fn load_message(conn: &Connection, iri: &str) -> Result<AIConversationMessage, String> {
-    let ind = Individual::get(conn, iri)
+pub(super) async fn load_message(conn: &Connection, iri: &str) -> Result<AIConversationMessage, String> {
+    let ind = Individual::get(conn, iri).await
         .map_err(|e| format!("Failed to load message: {}", e))?
         .ok_or_else(|| format!("Message {} not found", iri))?;
 
@@ -447,43 +447,43 @@ pub async fn log_api_call(
     let iri = format!("foundation:AIAPICall_{}", timestamp);
     let model = model.to_string();
 
-    executor.write(move |conn| {
+    executor.write(move |conn| async move {
         let call = Individual::new(&iri);
 
-        call.assert(conn, "foundation:AIAPICall", "AI API Call", "api", "ai")
+        call.assert(&conn, "foundation:AIAPICall", "AI API Call", "api", "ai").await
             .map_err(|e| format!("Failed to create AIAPICall: {}", e))?;
 
-        call.add_property(conn, "foundation:model", vec![Object::Literal {
+        call.add_property(&conn, "foundation:model", vec![Object::Literal {
             value: model.clone(),
             datatype: Some("xsd:string".to_string()),
             language: None,
-        }], "ai").map_err(|e| format!("Failed to set model: {}", e))?;
+        }], "ai").await.map_err(|e| format!("Failed to set model: {}", e))?;
 
-        call.add_property(conn, "foundation:inputTokens",
-            vec![Object::Integer(input_tokens as i64)], "ai")
+        call.add_property(&conn, "foundation:inputTokens",
+            vec![Object::Integer(input_tokens as i64)], "ai").await
             .map_err(|e| format!("Failed to set inputTokens: {}", e))?;
 
-        call.add_property(conn, "foundation:outputTokens",
-            vec![Object::Integer(output_tokens as i64)], "ai")
+        call.add_property(&conn, "foundation:outputTokens",
+            vec![Object::Integer(output_tokens as i64)], "ai").await
             .map_err(|e| format!("Failed to set outputTokens: {}", e))?;
 
-        call.add_property(conn, "foundation:cacheCreationTokens",
-            vec![Object::Integer(cache_creation_tokens as i64)], "ai")
+        call.add_property(&conn, "foundation:cacheCreationTokens",
+            vec![Object::Integer(cache_creation_tokens as i64)], "ai").await
             .map_err(|e| format!("Failed to set cacheCreationTokens: {}", e))?;
 
-        call.add_property(conn, "foundation:cacheReadTokens",
-            vec![Object::Integer(cache_read_tokens as i64)], "ai")
+        call.add_property(&conn, "foundation:cacheReadTokens",
+            vec![Object::Integer(cache_read_tokens as i64)], "ai").await
             .map_err(|e| format!("Failed to set cacheReadTokens: {}", e))?;
 
-        call.add_property(conn, "foundation:calledAt",
-            vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "ai")
+        call.add_property(&conn, "foundation:calledAt",
+            vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "ai").await
             .map_err(|e| format!("Failed to set calledAt: {}", e))?;
 
         if let Some(cost) = estimate_call_cost(
-            conn, &model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-        ) {
-            call.add_property(conn, "foundation:estimatedCost",
-                vec![Object::Number(cost)], "ai")
+            &conn, &model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+        ).await {
+            call.add_property(&conn, "foundation:estimatedCost",
+                vec![Object::Number(cost)], "ai").await
                 .map_err(|e| format!("Failed to set estimatedCost: {}", e))?;
         }
 
@@ -491,7 +491,7 @@ pub async fn log_api_call(
     }).await.map(|_| ())
 }
 
-fn estimate_call_cost(
+async fn estimate_call_cost(
     conn: &crate::eavto::Connection,
     model_identifier: &str,
     input_tokens: u32,
@@ -503,10 +503,10 @@ fn estimate_call_cost(
         conn,
         "foundation:AIModel",
         &[("foundation:modelIdentifier", model_identifier)],
-    ).ok()?;
+    ).await.ok()?;
 
     let model_iri = model_iris.into_iter().next()?;
-    let model_ind = Individual::get(conn, &model_iri).ok().flatten()?;
+    let model_ind = Individual::get(conn, &model_iri).await.ok().flatten()?;
 
     let get_price = |prop: &str| -> Option<f64> {
         model_ind.properties.iter()

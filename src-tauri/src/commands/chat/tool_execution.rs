@@ -19,19 +19,17 @@ pub async fn execute_tools_from_message(
         return Err("No tool use blocks found in message".to_string());
     }
 
-    // Guard against storing duplicate tool_results for the same tool_use_id.
-    // This can happen when the recovery path re-executes tools that already ran.
     let conv_id_check = conversation_id.to_string();
     let ids_to_check = tool_use_ids;
-    let existing_iri = executor.read(move |conn| {
+    let existing_iri = executor.read(move |conn| async move {
         let message_iris = Individual::find_by_class_and_properties(
-            conn,
+            &conn,
             "foundation:AIConversationMessage",
             &[("foundation:partOfConversation", &conv_id_check)],
-        ).map_err(|e| format!("Failed to query messages: {}", e))?;
+        ).await.map_err(|e| format!("Failed to query messages: {}", e))?;
 
         for iri in message_iris {
-            if let Ok(msg) = load_message(conn, &iri) {
+            if let Ok(msg) = load_message(&conn, &iri).await {
                 let is_duplicate = msg.content.iter().any(|b| {
                     if let ContentBlock::ToolResult { tool_use_id, .. } = b {
                         ids_to_check.contains(tool_use_id)
@@ -85,8 +83,8 @@ async fn execute_tool(
     };
 
     let app_clone = app.clone();
-    let result_json = match executor.write(move |conn| {
-        let result = crate::ai::functions::execute_tool(conn, &call, Some(&app_clone));
+    let result_json = match executor.write(move |conn| async move {
+        let result = crate::ai::functions::execute_tool(&conn, &call, Some(&app_clone)).await;
         serde_json::to_string(&result).map_err(|e| e.to_string())
     }).await {
         Ok(json) => json,

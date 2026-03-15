@@ -1,9 +1,9 @@
 use super::*;
 
 impl Individual {
-    pub fn get_from_retracted(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
+    pub async fn get_from_retracted(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
         let iri = iri.into();
-        let retracted = query::get_retracted_by_entity(conn, &iri)?;
+        let retracted = query::get_retracted_by_entity(conn, &iri).await?;
         if retracted.triples.is_empty() {
             return Ok(None);
         }
@@ -12,18 +12,28 @@ impl Individual {
             .find(|t| t.predicate == rdfs::LABEL)
             .and_then(|t| t.object.as_literal());
 
-        let icon = retracted.triples.iter()
+        let icon_iri_opt = retracted.triples.iter()
             .find(|t| t.predicate == "foundation:hasIcon")
             .and_then(|t| match &t.object {
-                Object::Iri(iri) => crate::owl::icon_iri_to_display(conn, iri),
-                Object::Literal { value, .. } => Some(value.clone()),
+                Object::Iri(iri) => Some(iri.clone()),
                 _ => None,
-            })
-            .or_else(|| {
-                retracted.triples.iter()
-                    .find(|t| t.predicate == "foundation:icon")
-                    .and_then(|t| t.object.as_literal())
             });
+
+        let icon = if let Some(icon_iri) = icon_iri_opt {
+            crate::owl::icon_iri_to_display(conn, &icon_iri).await
+        } else {
+            retracted.triples.iter()
+                .find(|t| t.predicate == "foundation:hasIcon")
+                .and_then(|t| match &t.object {
+                    Object::Literal { value, .. } => Some(value.clone()),
+                    _ => None,
+                })
+        }
+        .or_else(|| {
+            retracted.triples.iter()
+                .find(|t| t.predicate == "foundation:icon")
+                .and_then(|t| t.object.as_literal())
+        });
 
         let comment = retracted.triples.iter()
             .find(|t| t.predicate == rdfs::COMMENT)
@@ -55,10 +65,10 @@ impl Individual {
         }))
     }
 
-    pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
+    pub async fn get(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
         let iri = iri.into();
 
-        let all_triples = query::get_by_entity(conn, &iri)?;
+        let all_triples = query::get_by_entity(conn, &iri).await?;
         if all_triples.triples.is_empty() {
             return Ok(None);
         }
@@ -67,28 +77,39 @@ impl Individual {
             .find(|t| t.predicate == rdfs::LABEL)
             .and_then(|t| t.object.as_literal());
 
-        let icon = all_triples.triples.iter()
+        let icon_iri_opt = all_triples.triples.iter()
             .find(|t| t.predicate == "foundation:hasIcon")
             .and_then(|t| match &t.object {
-                Object::Iri(iri) => crate::owl::icon_iri_to_display(conn, iri),
-                Object::Literal { value, .. } => Some(value.clone()),
+                Object::Iri(iri) => Some(iri.clone()),
                 _ => None,
-            })
-            .or_else(|| {
-                all_triples.triples.iter()
-                    .find(|t| t.predicate == "foundation:icon")
-                    .and_then(|t| t.object.as_literal())
             });
+
+        let icon = if let Some(icon_iri) = icon_iri_opt {
+            crate::owl::icon_iri_to_display(conn, &icon_iri).await
+        } else {
+            all_triples.triples.iter()
+                .find(|t| t.predicate == "foundation:hasIcon")
+                .and_then(|t| match &t.object {
+                    Object::Literal { value, .. } => Some(value.clone()),
+                    _ => None,
+                })
+        }
+        .or_else(|| {
+            all_triples.triples.iter()
+                .find(|t| t.predicate == "foundation:icon")
+                .and_then(|t| t.object.as_literal())
+        });
 
         let comment = all_triples.triples.iter()
             .find(|t| t.predicate == rdfs::COMMENT)
             .and_then(|t| t.object.as_literal());
 
-        let types: Vec<Thing> = all_triples.triples.iter()
-            .filter(|t| t.predicate == rdf::TYPE)
-            .filter_map(|t| t.object.as_iri())
-            .map(|type_iri| Thing::get(conn, type_iri))
-            .collect();
+        let mut types: Vec<Thing> = Vec::new();
+        for t in all_triples.triples.iter().filter(|t| t.predicate == rdf::TYPE) {
+            if let Some(type_iri) = t.object.as_iri() {
+                types.push(Thing::get(conn, type_iri.to_string()).await);
+            }
+        }
 
         let prop_triples: Vec<_> = all_triples.triples.into_iter()
             .filter(|t| {
@@ -105,7 +126,7 @@ impl Individual {
             .collect();
 
         const BACKLINK_LIMIT_PER_GROUP: usize = 15;
-        let backlinks = query::get_backlinks_grouped_limited(conn, &iri, BACKLINK_LIMIT_PER_GROUP)?;
+        let backlinks = query::get_backlinks_grouped_limited(conn, &iri, BACKLINK_LIMIT_PER_GROUP).await?;
 
         Ok(Some(Self {
             iri: iri.clone(),
@@ -120,17 +141,18 @@ impl Individual {
     }
 
     /// Retract all triples for the given entity IRI, including references to it from other entities
-    pub fn retract(conn: &mut Connection, iri: &str, origin: &str) -> Result<()> {
-        let mut triples = query::get_by_entity(conn, iri)?.triples;
-        triples.extend(query::get_by_object_iri(conn, iri)?.triples);
+    pub async fn retract(conn: &Connection, iri: &str, origin: &str) -> Result<()> {
+        let mut triples = query::get_by_entity(conn, iri).await?.triples;
+        triples.extend(query::get_by_object_iri(conn, iri).await?.triples);
         if !triples.is_empty() {
-            store::retract_triples(conn, &triples, origin)?;
+            store::retract_triples(conn, &triples, origin).await
+                .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
         }
         Ok(())
     }
 
-    pub fn search(conn: &Connection) -> Result<Vec<String>> {
-        let result = query::get_by_predicate(conn, rdf::TYPE)?;
+    pub async fn search(conn: &Connection) -> Result<Vec<String>> {
+        let result = query::get_by_predicate(conn, rdf::TYPE).await?;
         let mut seen = std::collections::HashSet::new();
         let iris = result.triples.into_iter()
             .filter_map(|t| {
@@ -153,20 +175,20 @@ impl Individual {
     }
 
     /// Batch-loads active triples for a list of individual IRIs in a single query.
-    pub fn batch_load_triples(
+    pub async fn batch_load_triples(
         conn: &Connection,
         iris: &[String],
     ) -> Result<std::collections::HashMap<String, Vec<Triple>>> {
-        query::batch_load_triples_for_subjects(conn, iris)
+        query::batch_load_triples_for_subjects(conn, iris).await
             .map_err(|e| OwlError::DatabaseError(e.to_string()))
     }
 
     /// Batch-loads retracted triples for a list of individual IRIs in a single query.
-    pub fn batch_load_retracted_triples(
+    pub async fn batch_load_retracted_triples(
         conn: &Connection,
         iris: &[String],
     ) -> Result<std::collections::HashMap<String, Vec<Triple>>> {
-        query::batch_load_retracted_triples_for_subjects(conn, iris)
+        query::batch_load_retracted_triples_for_subjects(conn, iris).await
             .map_err(|e| OwlError::DatabaseError(e.to_string()))
     }
 }
@@ -177,31 +199,31 @@ mod tests {
     use crate::eavto::test_helpers::setup_test_db;
     use crate::owl::vocabulary::rdf;
 
-    #[test]
-    fn test_get_from_retracted_returns_none_when_nothing_retracted() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_get_from_retracted_returns_none_when_nothing_retracted() {
+        let conn = setup_test_db().await;
 
-        store::assert_triples(&mut conn, &[
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", rdf::TYPE, Object::Iri("foundation:Person".to_string())),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
-        let result = Individual::get_from_retracted(&conn, "foundation:Alice").unwrap();
+        let result = Individual::get_from_retracted(&conn, "foundation:Alice").await.unwrap();
         assert!(result.is_none(), "No retracted triples → should return None");
     }
 
-    #[test]
-    fn test_get_from_retracted_returns_none_for_unknown_iri() {
-        let conn = setup_test_db();
+    #[tokio::test]
+    async fn test_get_from_retracted_returns_none_for_unknown_iri() {
+        let conn = setup_test_db().await;
 
-        let result = Individual::get_from_retracted(&conn, "foundation:Unknown").unwrap();
+        let result = Individual::get_from_retracted(&conn, "foundation:Unknown").await.unwrap();
         assert!(result.is_none());
     }
 
-    #[test]
-    fn test_get_from_retracted_finds_deleted_individual() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_get_from_retracted_finds_deleted_individual() {
+        let conn = setup_test_db().await;
 
-        store::assert_triples(&mut conn, &[
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", rdf::TYPE, Object::Iri("foundation:Person".to_string())),
             Triple::new("foundation:Alice", rdfs::LABEL, Object::Literal {
                 value: "Alice".to_string(),
@@ -209,11 +231,11 @@ mod tests {
                 language: None,
             }),
             Triple::new("foundation:Alice", "foundation:age", Object::Integer(30)),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
-        Individual::retract(&mut conn, "foundation:Alice", "test").unwrap();
+        Individual::retract(&conn, "foundation:Alice", "test").await.unwrap();
 
-        let result = Individual::get_from_retracted(&conn, "foundation:Alice").unwrap();
+        let result = Individual::get_from_retracted(&conn, "foundation:Alice").await.unwrap();
         assert!(result.is_some(), "Should find retracted individual");
 
         let ind = result.unwrap();
@@ -222,11 +244,11 @@ mod tests {
         assert!(ind.properties.iter().any(|(p, _)| p == "foundation:age"));
     }
 
-    #[test]
-    fn test_get_from_retracted_extracts_label_and_comment() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_get_from_retracted_extracts_label_and_comment() {
+        let conn = setup_test_db().await;
 
-        store::assert_triples(&mut conn, &[
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Bob", rdf::TYPE, Object::Iri("foundation:Person".to_string())),
             Triple::new("foundation:Bob", rdfs::LABEL, Object::Literal {
                 value: "Bob Smith".to_string(),
@@ -238,20 +260,20 @@ mod tests {
                 datatype: Some("xsd:string".to_string()),
                 language: None,
             }),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
-        Individual::retract(&mut conn, "foundation:Bob", "test").unwrap();
+        Individual::retract(&conn, "foundation:Bob", "test").await.unwrap();
 
-        let ind = Individual::get_from_retracted(&conn, "foundation:Bob").unwrap().unwrap();
+        let ind = Individual::get_from_retracted(&conn, "foundation:Bob").await.unwrap().unwrap();
         assert_eq!(ind.label, Some("Bob Smith".to_string()));
         assert_eq!(ind.comment, Some("A test person".to_string()));
     }
 
-    #[test]
-    fn test_get_from_retracted_excludes_label_and_comment_from_properties() {
-        let mut conn = setup_test_db();
+    #[tokio::test]
+    async fn test_get_from_retracted_excludes_label_and_comment_from_properties() {
+        let conn = setup_test_db().await;
 
-        store::assert_triples(&mut conn, &[
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Bob", rdf::TYPE, Object::Iri("foundation:Person".to_string())),
             Triple::new("foundation:Bob", rdfs::LABEL, Object::Literal {
                 value: "Bob".to_string(),
@@ -264,68 +286,68 @@ mod tests {
                 language: None,
             }),
             Triple::new("foundation:Bob", "foundation:score", Object::Integer(42)),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
-        Individual::retract(&mut conn, "foundation:Bob", "test").unwrap();
+        Individual::retract(&conn, "foundation:Bob", "test").await.unwrap();
 
-        let ind = Individual::get_from_retracted(&conn, "foundation:Bob").unwrap().unwrap();
+        let ind = Individual::get_from_retracted(&conn, "foundation:Bob").await.unwrap().unwrap();
         assert!(!ind.properties.iter().any(|(p, _)| p == rdfs::LABEL));
         assert!(!ind.properties.iter().any(|(p, _)| p == rdfs::COMMENT));
         assert!(ind.properties.iter().any(|(p, _)| p == "foundation:score"));
     }
 
-    #[test]
-    fn test_batch_load_triples_returns_empty_for_empty_input() {
-        let conn = setup_test_db();
-        let result = Individual::batch_load_triples(&conn, &[]).unwrap();
+    #[tokio::test]
+    async fn test_batch_load_triples_returns_empty_for_empty_input() {
+        let conn = setup_test_db().await;
+        let result = Individual::batch_load_triples(&conn, &[]).await.unwrap();
         assert!(result.is_empty());
     }
 
-    #[test]
-    fn test_batch_load_triples_returns_triples_for_known_iris() {
-        let mut conn = setup_test_db();
-        store::assert_triples(&mut conn, &[
+    #[tokio::test]
+    async fn test_batch_load_triples_returns_triples_for_known_iris() {
+        let conn = setup_test_db().await;
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:score", Object::Integer(1)),
             Triple::new("foundation:Bob", "foundation:score", Object::Integer(2)),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         let iris = vec!["foundation:Alice".to_string(), "foundation:Bob".to_string()];
-        let result = Individual::batch_load_triples(&conn, &iris).unwrap();
+        let result = Individual::batch_load_triples(&conn, &iris).await.unwrap();
 
         assert!(result.contains_key("foundation:Alice"), "Alice should be in batch result");
         assert!(result.contains_key("foundation:Bob"), "Bob should be in batch result");
     }
 
-    #[test]
-    fn test_batch_load_triples_omits_unknown_iris() {
-        let conn = setup_test_db();
+    #[tokio::test]
+    async fn test_batch_load_triples_omits_unknown_iris() {
+        let conn = setup_test_db().await;
         let iris = vec!["foundation:Ghost".to_string()];
-        let result = Individual::batch_load_triples(&conn, &iris).unwrap();
+        let result = Individual::batch_load_triples(&conn, &iris).await.unwrap();
         assert!(!result.contains_key("foundation:Ghost"), "Unknown IRI must not appear in result");
     }
 
-    #[test]
-    fn test_batch_load_retracted_triples_empty_for_active_individuals() {
-        let mut conn = setup_test_db();
-        store::assert_triples(&mut conn, &[
+    #[tokio::test]
+    async fn test_batch_load_retracted_triples_empty_for_active_individuals() {
+        let conn = setup_test_db().await;
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", "foundation:score", Object::Integer(1)),
-        ], "test").unwrap();
+        ], "test").await.unwrap();
 
         let iris = vec!["foundation:Alice".to_string()];
-        let result = Individual::batch_load_retracted_triples(&conn, &iris).unwrap();
+        let result = Individual::batch_load_retracted_triples(&conn, &iris).await.unwrap();
         assert!(!result.contains_key("foundation:Alice"), "Active individual must not appear in retracted batch");
     }
 
-    #[test]
-    fn test_batch_load_retracted_triples_returns_retracted_individuals() {
-        let mut conn = setup_test_db();
-        store::assert_triples(&mut conn, &[
+    #[tokio::test]
+    async fn test_batch_load_retracted_triples_returns_retracted_individuals() {
+        let conn = setup_test_db().await;
+        store::assert_triples(&conn, &[
             Triple::new("foundation:Alice", rdf::TYPE, Object::Iri("foundation:Person".to_string())),
-        ], "test").unwrap();
-        Individual::retract(&mut conn, "foundation:Alice", "test").unwrap();
+        ], "test").await.unwrap();
+        Individual::retract(&conn, "foundation:Alice", "test").await.unwrap();
 
         let iris = vec!["foundation:Alice".to_string()];
-        let result = Individual::batch_load_retracted_triples(&conn, &iris).unwrap();
+        let result = Individual::batch_load_retracted_triples(&conn, &iris).await.unwrap();
         assert!(result.contains_key("foundation:Alice"), "Retracted individual should appear in retracted batch");
     }
 }

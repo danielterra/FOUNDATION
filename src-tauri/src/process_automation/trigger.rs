@@ -29,8 +29,8 @@ async fn fire_processes_for_event(app: &AppHandle, event_key: &str) -> Result<()
     let event_key = event_key.to_string();
 
     let process_iris = executor
-        .read(move |conn| {
-            find_processes_for_event_key(conn, &event_key)
+        .read(move |conn| async move {
+            find_processes_for_event_key(&conn, &event_key).await
         })
         .await?;
 
@@ -45,13 +45,12 @@ async fn fire_processes_for_event(app: &AppHandle, event_key: &str) -> Result<()
 
 /// Queries all bpmn_Process IRIs whose StartEvent has a MessageEventDefinition
 /// with eventType pointing to an InternalEventType whose eventKey matches.
-fn find_processes_for_event_key(
-    conn: &rusqlite::Connection,
+async fn find_processes_for_event_key(
+    conn: &crate::owl::Connection,
     event_key: &str,
 ) -> Result<Vec<String>, String> {
-    // Find InternalEventType IRIs with matching eventKey
     let event_type_iris: Vec<String> = {
-        let result = query::get_by_predicate(conn, "foundation:eventKey")
+        let result = query::get_by_predicate(conn, "foundation:eventKey").await
             .map_err(|e| e.to_string())?;
         result
             .triples
@@ -70,9 +69,8 @@ fn find_processes_for_event_key(
         return Ok(Vec::new());
     }
 
-    // Find MessageEventDefinitions whose eventType matches one of those IRIs
     let msg_event_def_iris: Vec<String> = {
-        let result = query::get_by_predicate(conn, "foundation:eventType")
+        let result = query::get_by_predicate(conn, "foundation:eventType").await
             .map_err(|e| e.to_string())?;
         result
             .triples
@@ -91,9 +89,8 @@ fn find_processes_for_event_key(
         return Ok(Vec::new());
     }
 
-    // Find StartEvents linked via messageEventOf
     let start_event_iris: Vec<String> = {
-        let result = query::get_by_predicate(conn, "foundation:messageEventOf")
+        let result = query::get_by_predicate(conn, "foundation:messageEventOf").await
             .map_err(|e| e.to_string())?;
         result
             .triples
@@ -107,8 +104,7 @@ fn find_processes_for_event_key(
         return Ok(Vec::new());
     }
 
-    // Find processes that contain those StartEvents (via hasFlowNode backlink)
-    let result = query::get_by_predicate(conn, "foundation:hasFlowNode")
+    let result = query::get_by_predicate(conn, "foundation:hasFlowNode").await
         .map_err(|e| e.to_string())?;
 
     let process_iris: Vec<String> = result

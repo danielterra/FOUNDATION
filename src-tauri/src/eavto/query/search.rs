@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use turso::{Connection, named_params};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -12,13 +12,13 @@ pub struct EntitySearchRow {
     pub props_raw: Option<String>,
 }
 
-pub fn search_entities(
+pub async fn search_entities(
     conn: &Connection,
     query: &str,
     limit: usize,
 ) -> Result<Vec<EntitySearchRow>> {
     if query.is_empty() {
-        return search_entities_all(conn, limit);
+        return search_entities_all(conn, limit).await;
     }
 
     let q_lower = query.to_lowercase();
@@ -136,28 +136,30 @@ pub fn search_entities(
     ";
 
     let limit_i64 = limit as i64;
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(
-        rusqlite::named_params! {
-            ":q_exact": query,
-            ":q_lower": q_lower,
-            ":q_like": q_like,
-            ":q_start": q_start,
-            ":limit": limit_i64,
-        },
-        |row| Ok(EntitySearchRow {
-            subject: row.get(0)?,
-            label: row.get(1)?,
-            type_iri: row.get(2)?,
-            has_icon_iri: row.get(3)?,
-            icon_literal: row.get(4)?,
-            props_raw: row.get(5)?,
-        }),
-    )?.collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut stmt = conn.prepare(sql).await?;
+    let mut rows_iter = stmt.query(named_params! {
+        ":q_exact": query,
+        ":q_lower": q_lower,
+        ":q_like": q_like,
+        ":q_start": q_start,
+        ":limit": limit_i64,
+    }).await?;
+
+    let mut rows = Vec::new();
+    while let Some(row) = rows_iter.next().await? {
+        rows.push(EntitySearchRow {
+            subject: row.get_value(0)?.as_text().cloned().unwrap_or_default(),
+            label: row.get_value(1)?.as_text().cloned().unwrap_or_default(),
+            type_iri: match row.get_value(2)? { turso::Value::Null => None, v => v.as_text().cloned() },
+            has_icon_iri: match row.get_value(3)? { turso::Value::Null => None, v => v.as_text().cloned() },
+            icon_literal: match row.get_value(4)? { turso::Value::Null => None, v => v.as_text().cloned() },
+            props_raw: match row.get_value(5)? { turso::Value::Null => None, v => v.as_text().cloned() },
+        });
+    }
     Ok(rows)
 }
 
-pub fn search_entities_scores_only(
+pub async fn search_entities_scores_only(
     conn: &Connection,
     token: &str,
 ) -> Result<std::collections::HashMap<String, i32>> {
@@ -205,25 +207,25 @@ pub fn search_entities_scores_only(
     GROUP BY subject
     ";
 
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(
-        rusqlite::named_params! {
-            ":q_exact": token,
-            ":q_lower": q_lower,
-            ":q_like": q_like,
-            ":q_start": q_start,
-        },
-        |row| {
-            let subject: String = row.get(0)?;
-            let score: i32 = row.get(1)?;
-            Ok((subject, score))
-        },
-    )?.collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut stmt = conn.prepare(sql).await?;
+    let mut rows_iter = stmt.query(named_params! {
+        ":q_exact": token,
+        ":q_lower": q_lower,
+        ":q_like": q_like,
+        ":q_start": q_start,
+    }).await?;
 
-    Ok(rows.into_iter().collect())
+    let mut map = std::collections::HashMap::new();
+    while let Some(row) = rows_iter.next().await? {
+        let subject: String = row.get_value(0)?.as_text().cloned().unwrap_or_default();
+        let score: i32 = row.get_value(1)?.as_integer().copied().unwrap_or(0) as i32;
+        map.insert(subject, score);
+    }
+
+    Ok(map)
 }
 
-pub(super) fn search_entities_all(conn: &Connection, limit: usize) -> Result<Vec<EntitySearchRow>> {
+pub(super) async fn search_entities_all(conn: &Connection, limit: usize) -> Result<Vec<EntitySearchRow>> {
     let sql = "
     WITH
     labels AS (
@@ -266,17 +268,19 @@ pub(super) fn search_entities_all(conn: &Connection, limit: usize) -> Result<Vec
     ";
 
     let limit_i64 = limit as i64;
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(
-        rusqlite::named_params! { ":limit": limit_i64 },
-        |row| Ok(EntitySearchRow {
-            subject: row.get(0)?,
-            label: row.get(1)?,
-            type_iri: row.get(2)?,
-            has_icon_iri: row.get(3)?,
-            icon_literal: row.get(4)?,
-            props_raw: row.get(5)?,
-        }),
-    )?.collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut stmt = conn.prepare(sql).await?;
+    let mut rows_iter = stmt.query(named_params! { ":limit": limit_i64 }).await?;
+
+    let mut rows = Vec::new();
+    while let Some(row) = rows_iter.next().await? {
+        rows.push(EntitySearchRow {
+            subject: row.get_value(0)?.as_text().cloned().unwrap_or_default(),
+            label: row.get_value(1)?.as_text().cloned().unwrap_or_default(),
+            type_iri: match row.get_value(2)? { turso::Value::Null => None, v => v.as_text().cloned() },
+            has_icon_iri: match row.get_value(3)? { turso::Value::Null => None, v => v.as_text().cloned() },
+            icon_literal: match row.get_value(4)? { turso::Value::Null => None, v => v.as_text().cloned() },
+            props_raw: None,
+        });
+    }
     Ok(rows)
 }

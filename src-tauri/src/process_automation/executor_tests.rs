@@ -58,28 +58,28 @@ fn test_interpolate_key_with_url_context() {
 
 // ── load_flow_nodes ───────────────────────────────────────────────────────────
 
-fn insert_triples(conn: &mut rusqlite::Connection, triples: &[Triple]) {
-    store::assert_triples(conn, triples, "test").expect("Failed to insert triples");
+async fn insert_triples(conn: &crate::owl::Connection, triples: &[Triple]) {
+    store::assert_triples(conn, triples, "test").await.expect("Failed to insert triples");
 }
 
-#[test]
-fn test_load_flow_nodes_empty_process_returns_empty() {
-    let conn = setup_test_db();
-    let result = load_flow_nodes(&conn, "foundation:Process_Empty").unwrap();
+#[tokio::test]
+async fn test_load_flow_nodes_empty_process_returns_empty() {
+    let conn = setup_test_db().await;
+    let result = load_flow_nodes(&conn, "foundation:Process_Empty").await.unwrap();
     assert!(result.is_empty());
 }
 
-#[test]
-fn test_load_flow_nodes_returns_nodes_with_types() {
-    let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
+#[tokio::test]
+async fn test_load_flow_nodes_returns_nodes_with_types() {
+    let conn = setup_test_db().await;
+    insert_triples(&conn, &[
         Triple::new("foundation:Proc1", "foundation:hasFlowNode", Object::Iri("foundation:Start1".to_string())),
         Triple::new("foundation:Proc1", "foundation:hasFlowNode", Object::Iri("foundation:End1".to_string())),
         Triple::new("foundation:Start1", "rdf:type", Object::Iri("foundation:bpmn_StartEvent".to_string())),
         Triple::new("foundation:End1",   "rdf:type", Object::Iri("foundation:bpmn_EndEvent".to_string())),
-    ]);
+    ]).await;
 
-    let nodes = load_flow_nodes(&conn, "foundation:Proc1").unwrap();
+    let nodes = load_flow_nodes(&conn, "foundation:Proc1").await.unwrap();
     assert_eq!(nodes.len(), 2);
 
     let types: Vec<&str> = nodes.iter().map(|(_, t, _)| t.as_str()).collect();
@@ -87,10 +87,10 @@ fn test_load_flow_nodes_returns_nodes_with_types() {
     assert!(types.contains(&"foundation:bpmn_EndEvent"));
 }
 
-#[test]
-fn test_load_flow_nodes_includes_output_key() {
-    let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
+#[tokio::test]
+async fn test_load_flow_nodes_includes_output_key() {
+    let conn = setup_test_db().await;
+    insert_triples(&conn, &[
         Triple::new("foundation:Proc2", "foundation:hasFlowNode", Object::Iri("foundation:Task1".to_string())),
         Triple::new("foundation:Task1", "rdf:type", Object::Iri("foundation:bpmn_AgentTask".to_string())),
         Triple::new("foundation:Task1", "foundation:outputKey", Object::Literal {
@@ -98,9 +98,9 @@ fn test_load_flow_nodes_includes_output_key() {
             datatype: Some("xsd:string".to_string()),
             language: None,
         }),
-    ]);
+    ]).await;
 
-    let nodes = load_flow_nodes(&conn, "foundation:Proc2").unwrap();
+    let nodes = load_flow_nodes(&conn, "foundation:Proc2").await.unwrap();
     assert_eq!(nodes.len(), 1);
     let (iri, node_type, output_key) = &nodes[0];
     assert_eq!(iri, "foundation:Task1");
@@ -108,44 +108,43 @@ fn test_load_flow_nodes_includes_output_key() {
     assert_eq!(output_key.as_deref(), Some("taskResult"));
 }
 
-#[test]
-fn test_load_flow_nodes_missing_output_key_is_none() {
-    let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
+#[tokio::test]
+async fn test_load_flow_nodes_missing_output_key_is_none() {
+    let conn = setup_test_db().await;
+    insert_triples(&conn, &[
         Triple::new("foundation:Proc3", "foundation:hasFlowNode", Object::Iri("foundation:Start3".to_string())),
         Triple::new("foundation:Start3", "rdf:type", Object::Iri("foundation:bpmn_StartEvent".to_string())),
-    ]);
+    ]).await;
 
-    let nodes = load_flow_nodes(&conn, "foundation:Proc3").unwrap();
+    let nodes = load_flow_nodes(&conn, "foundation:Proc3").await.unwrap();
     assert_eq!(nodes.len(), 1);
     assert!(nodes[0].2.is_none());
 }
 
-#[test]
-fn test_load_flow_nodes_missing_type_defaults_to_flow_node() {
-    let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
+#[tokio::test]
+async fn test_load_flow_nodes_missing_type_defaults_to_flow_node() {
+    let conn = setup_test_db().await;
+    insert_triples(&conn, &[
         Triple::new("foundation:Proc4", "foundation:hasFlowNode", Object::Iri("foundation:Node4".to_string())),
-        // No rdf:type for Node4
-    ]);
+    ]).await;
 
-    let nodes = load_flow_nodes(&conn, "foundation:Proc4").unwrap();
+    let nodes = load_flow_nodes(&conn, "foundation:Proc4").await.unwrap();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].1, "foundation:bpmn_FlowNode");
 }
 
-#[test]
-fn test_load_flow_nodes_multiple_nodes_all_returned() {
-    let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
+#[tokio::test]
+async fn test_load_flow_nodes_multiple_nodes_all_returned() {
+    let conn = setup_test_db().await;
+    insert_triples(&conn, &[
         Triple::new("foundation:Proc5", "foundation:hasFlowNode", Object::Iri("foundation:S5".to_string())),
         Triple::new("foundation:Proc5", "foundation:hasFlowNode", Object::Iri("foundation:T5".to_string())),
         Triple::new("foundation:Proc5", "foundation:hasFlowNode", Object::Iri("foundation:E5".to_string())),
         Triple::new("foundation:S5", "rdf:type", Object::Iri("foundation:bpmn_StartEvent".to_string())),
         Triple::new("foundation:T5", "rdf:type", Object::Iri("foundation:bpmn_AgentTask".to_string())),
         Triple::new("foundation:E5", "rdf:type", Object::Iri("foundation:bpmn_EndEvent".to_string())),
-    ]);
+    ]).await;
 
-    let nodes = load_flow_nodes(&conn, "foundation:Proc5").unwrap();
+    let nodes = load_flow_nodes(&conn, "foundation:Proc5").await.unwrap();
     assert_eq!(nodes.len(), 3);
 }

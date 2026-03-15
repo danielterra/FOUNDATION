@@ -1,14 +1,16 @@
+use std::pin::Pin;
+use std::future::Future;
 use serde_json::Value;
-use crate::eavto::Connection;
+use turso::Connection;
 use crate::owl::{Individual, Object, Property, PropertyType};
 use super::ToolResult;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-fn load_concept_context(conn: &Connection, concept_iri: &str) -> Option<Value> {
-    super::concept::load_concept_context(conn, concept_iri)
+async fn load_concept_context(conn: &Connection, concept_iri: &str) -> Option<Value> {
+    super::concept::load_concept_context(conn, concept_iri).await
 }
 
-fn load_range_contexts(conn: &Connection, args: &Value) -> Option<Value> {
+async fn load_range_contexts(conn: &Connection, args: &Value) -> Option<Value> {
     let properties = args.get("upsert_properties").and_then(|v| v.as_array())?;
 
     let mut range_contexts: Vec<Value> = Vec::new();
@@ -19,7 +21,7 @@ fn load_range_contexts(conn: &Connection, args: &Value) -> Option<Value> {
             None => continue,
         };
 
-        let prop = match Property::get(conn, detail_iri).ok().flatten() {
+        let prop = match Property::get(conn, detail_iri).await.ok().flatten() {
             Some(p) => p,
             None => continue,
         };
@@ -63,8 +65,8 @@ fn next_iri_id() -> u64 {
     }
 }
 
-fn build_objects(conn: &Connection, detail_iri: &str, raw_values: &[Value]) -> Result<Vec<Object>, crate::owl::OwlError> {
-    let prop = Property::get(conn, detail_iri)?;
+async fn build_objects(conn: &Connection, detail_iri: &str, raw_values: &[Value]) -> Result<Vec<Object>, crate::owl::OwlError> {
+    let prop = Property::get(conn, detail_iri).await?;
     let is_iri = prop.as_ref().map(|p| p.property_type == PropertyType::ObjectProperty).unwrap_or(false);
     let datatype = prop.as_ref()
         .and_then(|p| p.ranges.first().cloned())
@@ -82,7 +84,7 @@ fn build_objects(conn: &Connection, detail_iri: &str, raw_values: &[Value]) -> R
         .collect())
 }
 
-pub fn remember(conn: &Connection, args: &Value) -> ToolResult {
+pub async fn remember(conn: &Connection, args: &Value) -> ToolResult {
     let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let entity_type_filter = args.get("type").and_then(|v| v.as_str());
     let concept_iri = args.get("concept_iri").and_then(|v| v.as_str());
@@ -117,7 +119,7 @@ pub fn remember(conn: &Connection, args: &Value) -> ToolResult {
         include_retracted,
         limit,
         offset,
-    ) {
+    ).await {
         Ok((results, total)) => {
             let entities: Vec<serde_json::Value> = results.into_iter()
                 .map(|r| serde_json::json!({
@@ -142,16 +144,23 @@ pub fn remember(conn: &Connection, args: &Value) -> ToolResult {
                 concept: None,
             }
         }
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e.to_string()),
-            concept: concept_iri.and_then(|iri| load_concept_context(conn, iri)),
-        },
+        Err(e) => {
+            let concept = if let Some(iri) = concept_iri {
+                load_concept_context(conn, iri).await
+            } else {
+                None
+            };
+            ToolResult {
+                success: false,
+                result: None,
+                error: Some(e.to_string()),
+                concept,
+            }
+        }
     }
 }
 
-pub fn get_things(conn: &Connection, args: &Value) -> ToolResult {
+pub async fn get_things(conn: &Connection, args: &Value) -> ToolResult {
     let iris = match args.get("iris").and_then(|v| v.as_array()) {
         Some(arr) => arr,
         None => return ToolResult {
@@ -166,7 +175,7 @@ pub fn get_things(conn: &Connection, args: &Value) -> ToolResult {
     let mut errors = Vec::new();
     for v in iris {
         if let Some(iri) = v.as_str() {
-            let r = get_thing_one(conn, &serde_json::json!({ "iri": iri }));
+            let r = get_thing_one(conn, &serde_json::json!({ "iri": iri })).await;
             if r.success {
                 if let Some(val) = r.result {
                     results.push(val);
@@ -185,24 +194,28 @@ pub fn get_things(conn: &Connection, args: &Value) -> ToolResult {
     }
 }
 
-pub fn learn_thing(
-    conn: &mut Connection,
+pub async fn learn_thing(
+    conn: &Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
-    super::batch::run_atomic(conn, args, app, learn_thing_one)
+    super::batch::run_atomic(conn, args, app, learn_thing_one).await
 }
 
-fn learn_thing_one(conn: &mut Connection, args: &Value) -> ToolResult {
-    if args.get("iri").is_some() {
-        update_thing_one(conn, args)
-    } else {
-        create_thing_one(conn, args)
-    }
+fn learn_thing_one<'a>(
+    conn: &'a Connection,
+    args: &'a Value,
+) -> Pin<Box<dyn Future<Output = ToolResult> + Send + 'a>> {
+    Box::pin(async move {
+        if args.get("iri").is_some() {
+            update_thing_one(conn, args).await
+        } else {
+            create_thing_one(conn, args).await
+        }
+    })
 }
 
-
-fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
+async fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").or_else(|| args.get("IRI")).and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
@@ -217,8 +230,8 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    match (|| {
-        let individual = Individual::get(conn, iri)?
+    match (async {
+        let individual = Individual::get(conn, iri).await?
             .ok_or_else(|| crate::owl::OwlError::NotFound(iri.to_string()))?;
 
         let mut concept_counts: std::collections::HashMap<String, usize> =
@@ -232,24 +245,22 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
             }
         }
 
-        let mut backlinks: Vec<serde_json::Value> = concept_counts
-            .into_iter()
-            .map(|(concept_iri, count)| {
-                let concept_label = crate::owl::Thing::get(conn, &concept_iri).label;
-                serde_json::json!({
-                    "concept": concept_iri,
-                    "conceptLabel": concept_label,
-                    "count": count,
-                })
-            })
-            .collect();
+        let mut backlinks: Vec<serde_json::Value> = Vec::new();
+        for (concept_iri, count) in concept_counts {
+            let concept_label = crate::owl::Thing::get(conn, &concept_iri).await.label;
+            backlinks.push(serde_json::json!({
+                "concept": concept_iri,
+                "conceptLabel": concept_label,
+                "count": count,
+            }));
+        }
         backlinks.sort_by(|a, b| {
             let ca = a["count"].as_u64().unwrap_or(0);
             let cb = b["count"].as_u64().unwrap_or(0);
             cb.cmp(&ca)
         });
 
-        let mut properties = individual.serializable_properties(conn);
+        let mut properties = individual.serializable_properties(conn).await;
         for (i, (_, obj)) in individual.properties.iter().enumerate() {
             if let Object::DateTime(rfc3339) = obj {
                 if let Some(entry) = properties.get_mut(i) {
@@ -259,7 +270,7 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
         }
 
         if include_retracted {
-            let retracted_triples = Individual::get_retracted_properties(conn, iri)?;
+            let retracted_triples = Individual::get_retracted_properties(conn, iri).await?;
             for triple in &retracted_triples {
                 let value: serde_json::Value = match &triple.object {
                     Object::Iri(s) | Object::Blank(s) => serde_json::json!(s),
@@ -287,10 +298,10 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
         let mut seen_required = std::collections::HashSet::new();
 
         for class_iri in &class_iris {
-            let status_iris = crate::owl::get_all_iri_properties(conn, class_iri, "foundation:allowedStatus")?;
+            let status_iris = crate::owl::get_all_iri_properties(conn, class_iri, "foundation:allowedStatus").await?;
             for status_iri in status_iris {
-                let thing = crate::owl::Thing::get(conn, &status_iri);
-                let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri);
+                let thing = crate::owl::Thing::get(conn, &status_iri).await;
+                let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri).await;
                 allowed_statuses.push(serde_json::json!({
                     "iri": status_iri,
                     "label": thing.label,
@@ -299,7 +310,7 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
                 }));
             }
 
-            let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_iri)?;
+            let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_iri).await?;
             for r in restrictions {
                 if r.is_required() && seen_required.insert(r.property_iri.clone()) {
                     required_fields.push(r.property_iri);
@@ -321,7 +332,7 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
             "allowedStatuses": allowed_statuses,
             "requiredFields": required_fields,
         }))
-    })() {
+    }).await {
         Ok(result) => ToolResult {
             success: true,
             result: Some(result),
@@ -337,8 +348,8 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
     }
 }
 
-fn create_thing_one(
-    conn: &mut Connection,
+async fn create_thing_one(
+    conn: &Connection,
     args: &Value,
 ) -> ToolResult {
     let concept_iri = match args.get("concept_iri").and_then(|v| v.as_str()) {
@@ -357,14 +368,14 @@ fn create_thing_one(
             success: false,
             result: None,
             error: Some("Missing required parameter: label".to_string()),
-            concept: load_concept_context(conn, concept_iri),
+            concept: load_concept_context(conn, concept_iri).await,
         },
     };
 
     let icon = if let Some(icon_str) = args.get("icon").and_then(|v| v.as_str()) {
         icon_str.to_string()
     } else {
-        let concept_thing = crate::owl::Thing::get(conn, concept_iri);
+        let concept_thing = crate::owl::Thing::get(conn, concept_iri).await;
         match concept_thing.icon {
             Some(icon) => icon,
             None => return ToolResult {
@@ -374,7 +385,7 @@ fn create_thing_one(
                     "No icon provided and concept '{}' has no icon to inherit",
                     concept_iri
                 )),
-                concept: load_concept_context(conn, concept_iri),
+                concept: load_concept_context(conn, concept_iri).await,
             },
         }
     };
@@ -384,16 +395,16 @@ fn create_thing_one(
     let concept_name = concept_iri.split(':').last().unwrap_or("Thing");
     let generated_iri = format!("foundation:{}_{}", concept_name, next_iri_id());
 
-    match (|| {
+    match (async {
         let individual = Individual::new(&generated_iri);
-        individual.assert(conn, concept_iri, label, &icon, "ai")?;
+        individual.assert(conn, concept_iri, label, &icon, "ai").await?;
 
         if let Some(comment_text) = comment {
             individual.add_property(conn, "rdfs:comment", vec![Object::Literal {
                 value: comment_text.to_string(),
                 datatype: Some("xsd:string".to_string()),
                 language: None,
-            }], "ai")?;
+            }], "ai").await?;
         }
 
         if let Some(properties) = args.get("upsert_properties").and_then(|v| v.as_array()) {
@@ -418,11 +429,11 @@ fn create_thing_one(
 
                 if detail_iri == "foundation:hasStatus" {
                     if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
-                        crate::owl::validate_allowed_status(conn, concept_iri, status_iri)?;
+                        crate::owl::validate_allowed_status(conn, concept_iri, status_iri).await?;
                     }
                 }
 
-                let objects = build_objects(conn, detail_iri, raw_values)?;
+                let objects = build_objects(conn, detail_iri, raw_values).await?;
 
                 if objects.is_empty() {
                     return Err(crate::owl::OwlError::ValidationError(
@@ -430,11 +441,11 @@ fn create_thing_one(
                     ));
                 }
 
-                individual.add_property(conn, detail_iri, objects, "ai")?;
+                individual.add_property(conn, detail_iri, objects, "ai").await?;
             }
         }
 
-        let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, concept_iri)?;
+        let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, concept_iri).await?;
         let required: Vec<&str> = restrictions.iter()
             .filter(|r| r.is_required())
             .map(|r| r.property_iri.as_str())
@@ -447,7 +458,6 @@ fn create_thing_one(
                     .map(|s| s.to_string())
                     .collect())
                 .unwrap_or_default();
-            // label is always required for creation and is stored as rdfs:label
             provided.insert("rdfs:label".to_string());
             for prop_iri in &required {
                 if !provided.contains(*prop_iri) {
@@ -464,7 +474,7 @@ fn create_thing_one(
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "iri": generated_iri,
         }))
-    })() {
+    }).await {
         Ok(result) => ToolResult {
             success: true,
             result: Some(result),
@@ -473,15 +483,15 @@ fn create_thing_one(
         },
         Err(e) => ToolResult {
             success: false,
-            result: load_range_contexts(conn, args),
+            result: load_range_contexts(conn, args).await,
             error: Some(e.to_string()),
-            concept: load_concept_context(conn, concept_iri),
+            concept: load_concept_context(conn, concept_iri).await,
         },
     }
 }
 
-fn update_thing_one(
-    conn: &mut Connection,
+async fn update_thing_one(
+    conn: &Connection,
     args: &Value,
 ) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
@@ -494,26 +504,26 @@ fn update_thing_one(
         },
     };
 
-    let concept_iri_for_context = crate::owl::get_iri_property(conn, iri, "rdf:type")
+    let concept_iri_for_context = crate::owl::get_iri_property(conn, iri, "rdf:type").await
         .ok()
         .flatten();
 
-    match (|| {
+    match (async {
         let mut updated_fields: Vec<String> = Vec::new();
 
         let individual = Individual::new(iri);
 
         if let Some(concept_iri) = args.get("concept_iri").and_then(|v| v.as_str()) {
-            let has_type = crate::owl::get_iri_property(conn, iri, "rdf:type")
+            let has_type = crate::owl::get_iri_property(conn, iri, "rdf:type").await
                 .ok().flatten().is_some();
             if !has_type {
-                let existing_label = crate::owl::get_literal_property(conn, iri, "rdfs:label")
+                let existing_label = crate::owl::get_literal_property(conn, iri, "rdfs:label").await
                     .ok().flatten();
                 let label = args.get("label").and_then(|v| v.as_str())
                     .or_else(|| existing_label.as_deref())
                     .unwrap_or("Unknown");
                 let icon = args.get("icon").and_then(|v| v.as_str()).unwrap_or("category");
-                individual.assert(conn, concept_iri, label, icon, "ai")?;
+                individual.assert(conn, concept_iri, label, icon, "ai").await?;
                 updated_fields.push("rdf:type".to_string());
             }
         }
@@ -523,14 +533,14 @@ fn update_thing_one(
                 value: label.to_string(),
                 datatype: Some("xsd:string".to_string()),
                 language: None,
-            }], "ai")?;
+            }], "ai").await?;
             updated_fields.push("label".to_string());
         }
 
         if let Some(icon) = args.get("icon").and_then(|v| v.as_str()) {
-            crate::owl::validate_icon(conn, icon)?;
+            crate::owl::validate_icon(conn, icon).await?;
             let (icon_pred, icon_obj) = crate::owl::icon_store_value(icon);
-            individual.add_property(conn, icon_pred, vec![icon_obj], "ai")?;
+            individual.add_property(conn, icon_pred, vec![icon_obj], "ai").await?;
             updated_fields.push("icon".to_string());
         }
 
@@ -539,14 +549,14 @@ fn update_thing_one(
                 value: comment.to_string(),
                 datatype: Some("xsd:string".to_string()),
                 language: None,
-            }], "ai")?;
+            }], "ai").await?;
             updated_fields.push("comment".to_string());
         }
 
         if let Some(remove_props) = args.get("remove_properties").and_then(|v| v.as_array()) {
             for item in remove_props {
                 if let Some(detail_iri) = item.as_str() {
-                    Individual::clear_property(conn, iri, detail_iri, "ai")?;
+                    Individual::clear_property(conn, iri, detail_iri, "ai").await?;
                     updated_fields.push(format!("-{}", detail_iri));
                 }
             }
@@ -555,7 +565,7 @@ fn update_thing_one(
         let mut referenced_iris: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         if let Some(properties) = args.get("upsert_properties").and_then(|v| v.as_array()) {
-            let concept_iri = if let Ok(Some(c)) = crate::owl::get_iri_property(conn, iri, "rdf:type") {
+            let concept_iri = if let Ok(Some(c)) = crate::owl::get_iri_property(conn, iri, "rdf:type").await {
                 Some(c)
             } else {
                 None
@@ -583,12 +593,12 @@ fn update_thing_one(
                 if detail_iri == "foundation:hasStatus" {
                     if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
                         if let Some(ref concept) = concept_iri {
-                            crate::owl::validate_allowed_status(conn, concept, status_iri)?;
+                            crate::owl::validate_allowed_status(conn, concept, status_iri).await?;
                         }
                     }
                 }
 
-                let objects = build_objects(conn, detail_iri, raw_values)?;
+                let objects = build_objects(conn, detail_iri, raw_values).await?;
 
                 if objects.is_empty() {
                     return Err(crate::owl::OwlError::ValidationError(
@@ -602,7 +612,7 @@ fn update_thing_one(
                     }
                 }
 
-                individual.add_property(conn, detail_iri, objects, "ai")?;
+                individual.add_property(conn, detail_iri, objects, "ai").await?;
                 updated_fields.push(detail_iri.to_string());
             }
         }
@@ -615,96 +625,103 @@ fn update_thing_one(
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "updatedFields": updated_fields,
         }))
-    })() {
+    }).await {
         Ok(result) => ToolResult {
             success: true,
             result: Some(result),
             error: None,
             concept: None,
         },
-        Err(e) => ToolResult {
-            success: false,
-            result: load_range_contexts(conn, args),
-            error: Some(e.to_string()),
-            concept: concept_iri_for_context.as_deref().and_then(|c| load_concept_context(conn, c)),
+        Err(e) => {
+            let concept_ctx = if let Some(ref c) = concept_iri_for_context {
+                load_concept_context(conn, c).await
+            } else {
+                None
+            };
+            ToolResult {
+                success: false,
+                result: load_range_contexts(conn, args).await,
+                error: Some(e.to_string()),
+                concept: concept_ctx,
+            }
         },
     }
 }
 
-pub fn delete_thing(
-    conn: &mut Connection,
+pub async fn delete_thing(
+    conn: &Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
-    super::batch::run_atomic(conn, args, app, delete_thing_one)
+    super::batch::run_atomic(conn, args, app, delete_thing_one).await
 }
 
-fn delete_thing_one(
-    conn: &mut Connection,
-    args: &Value,
-) -> ToolResult {
-    let iri = match args.get("iri").and_then(|v| v.as_str()) {
-        Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: iri".to_string()),
-            concept: None,
-        },
-    };
+fn delete_thing_one<'a>(
+    conn: &'a Connection,
+    args: &'a Value,
+) -> Pin<Box<dyn Future<Output = ToolResult> + Send + 'a>> {
+    Box::pin(async move {
+        let iri = match args.get("iri").and_then(|v| v.as_str()) {
+            Some(iri) => iri,
+            None => return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: iri".to_string()),
+                concept: None,
+            },
+        };
 
-    let detail_iri = args.get("detail_iri").and_then(|v| v.as_str());
-    let value = args.get("value").and_then(|v| v.as_str());
+        let detail_iri = args.get("detail_iri").and_then(|v| v.as_str());
+        let value = args.get("value").and_then(|v| v.as_str());
 
-    match (|| {
-        match (detail_iri, value) {
-            (Some(detail), Some(val)) => {
-                let current_count = Individual::get_property_count(conn, iri, detail)?;
-                crate::owl::cardinality::validate_property_cardinality(
-                    conn, iri, detail, current_count.saturating_sub(1),
-                )?;
-                match Individual::remove_property_value(conn, iri, detail, val, "ai")? {
-                    Some(removed) => {
-                        super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
-                        if let Object::Iri(ref_iri) = removed {
-                            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": ref_iri}));
+        match (async {
+            match (detail_iri, value) {
+                (Some(detail), Some(val)) => {
+                    let current_count = Individual::get_property_count(conn, iri, detail).await?;
+                    crate::owl::cardinality::validate_property_cardinality(
+                        conn, iri, detail, current_count.saturating_sub(1),
+                    ).await?;
+                    match Individual::remove_property_value(conn, iri, detail, val, "ai").await? {
+                        Some(removed) => {
+                            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+                            if let Object::Iri(ref_iri) = removed {
+                                super::batch::queue_event("entity-updated", serde_json::json!({"entityId": ref_iri}));
+                            }
+                            Ok::<_, crate::owl::OwlError>(serde_json::json!({}))
                         }
-                        Ok::<_, crate::owl::OwlError>(serde_json::json!({}))
+                        None => Ok(serde_json::json!({
+                            "success": false,
+                            "message": "Value not found",
+                        }))
                     }
-                    None => Ok(serde_json::json!({
-                        "success": false,
-                        "message": "Value not found",
-                    }))
+                }
+                (Some(detail), None) => {
+                    Individual::clear_property(conn, iri, detail, "ai").await?;
+                    super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+                    Ok::<_, crate::owl::OwlError>(serde_json::json!({}))
+                }
+                _ => {
+                    Individual::retract(conn, iri, "ai").await?;
+                    super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+                    Ok::<_, crate::owl::OwlError>(serde_json::json!({}))
                 }
             }
-            (Some(detail), None) => {
-                Individual::clear_property(conn, iri, detail, "ai")?;
-                super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
-                Ok::<_, crate::owl::OwlError>(serde_json::json!({}))
-            }
-            _ => {
-                Individual::retract(conn, iri, "ai")?;
-                super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
-                Ok::<_, crate::owl::OwlError>(serde_json::json!({}))
-            }
+        }).await {
+            Ok(result) => ToolResult {
+                success: true,
+                result: Some(result),
+                error: None,
+                concept: None,
+            },
+            Err(e) => ToolResult {
+                success: false,
+                result: None,
+                error: Some(e.to_string()),
+                concept: None,
+            },
         }
-    })() {
-        Ok(result) => ToolResult {
-            success: true,
-            result: Some(result),
-            error: None,
-            concept: None,
-        },
-        Err(e) => ToolResult {
-            success: false,
-            result: None,
-            error: Some(e.to_string()),
-            concept: None,
-        },
-    }
+    })
 }
-
-
 
 
 #[cfg(test)]
