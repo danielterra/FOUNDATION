@@ -19,16 +19,42 @@ const STATUS_BADGE_HEIGHT = 30
 
 const RANKSEP = 100
 
+function findBackEdges(nodes, edges) {
+  const adj = new Map(nodes.map(n => [n.id, []]))
+  for (const e of edges) {
+    adj.get(e.source)?.push(e.target)
+  }
+  const visited = new Set()
+  const inStack = new Set()
+  const backEdges = new Set()
+  function dfs(id) {
+    visited.add(id)
+    inStack.add(id)
+    for (const neighbor of (adj.get(id) ?? [])) {
+      if (!visited.has(neighbor)) dfs(neighbor)
+      else if (inStack.has(neighbor)) backEdges.add(`${id}->${neighbor}`)
+    }
+    inStack.delete(id)
+  }
+  for (const { id } of nodes) {
+    if (!visited.has(id)) dfs(id)
+  }
+  return backEdges
+}
+
 export function applyDagreLayout(nodes, edges, direction = 'LR') {
+  const backEdges = findBackEdges(nodes, edges)
+  const layoutEdges = edges.filter(e => !backEdges.has(`${e.source}->${e.target}`))
+
   const g = new dagre.graphlib.Graph()
-  g.setGraph({ rankdir: direction, ranksep: RANKSEP, nodesep: 20, marginx: 40, marginy: 40 })
+  g.setGraph({ rankdir: direction, ranksep: RANKSEP, nodesep: 35, marginx: 40, marginy: 40 })
   g.setDefaultEdgeLabel(() => ({}))
 
   for (const node of nodes) {
     const size = NODE_SIZES[node.data?.nodeType] ?? { width: 170, height: 55 }
     g.setNode(node.id, { width: size.width, height: size.height + STATUS_BADGE_HEIGHT })
   }
-  for (const edge of edges) {
+  for (const edge of layoutEdges) {
     g.setEdge(edge.source, edge.target)
   }
 

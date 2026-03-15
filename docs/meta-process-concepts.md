@@ -33,6 +33,42 @@ Tasks take input and produce output without branching. All branching is external
 
 ---
 
+## SystemTask vs UserTask Design Rule
+
+**Use `MetaUserTask` whenever a UIComponent is rendered for the user — even for passive observation.**
+
+- **No UI rendered** → `MetaSystemTask` (fully invisible to the user)
+- **Any UI rendered** → `MetaUserTask` (user sees something, even if no action is required)
+
+A `MetaSystemTask` must be completely transparent to the user. If the task shows anything — a widget, a toast, a status indicator — model it as `MetaUserTask` and set `foundation:rendersComponent` to the UIComponent being shown. This ensures the process graph explicitly links rendered components to the tasks that surface them, even when the user's only action is to notice the UI appeared.
+
+---
+
+## Post-UserTask Pattern
+
+**A `MetaUserTask` must never connect directly to another task or loop back to a previous node.** It must always be followed by one or more `MetaIntermediateEvent` nodes — one per possible exit — that route onward.
+
+Each exit event represents a distinct way the user can leave the task:
+
+| Exit type | Trigger type |
+|---|---|
+| User closes, presses Escape, clicks Stop | `User Action` |
+| System completes, timer fires, signal arrives | `System Signal` |
+
+```
+Use Widget
+  → Widget Closed   (User Action) → Home
+  → Widget Minimized (User Action) → Home
+
+Observe AI Processing Status
+  → AI Finished        (System Signal) → Home
+  → Processing Cancelled (User Action)  → Home
+```
+
+This pattern ensures every UserTask has explicit exits and the process graph remains a valid flow.
+
+---
+
 ## Data Contracts: `inputConcept` and `outputConcept`
 
 Every `MetaFlowNode` has typed data contracts defined via:
@@ -178,9 +214,7 @@ A controlled vocabulary of what can initiate a `MetaStartEvent` or `MetaIntermed
 
 ## `foundation:MetaSystemTask`
 
-A task performed entirely by the system, without user interaction. It may read data, write to the database, start background services, or render a UIComponent.
-
-When a `foundation:MetaSystemTask` renders something visible to the user, that is described in the task's description — there is no separate concept for rendering.
+A task performed **entirely by the system**, with nothing rendered for the user. It may read data, write to the database, start background services, or call external APIs — but it must not make anything visible to the user. Any UI visibility makes it a `MetaUserTask` instead (see [SystemTask vs UserTask Design Rule](#systemtask-vs-usertask-design-rule)).
 
 **Required:** `foundation:should` postconditions describing the verifiable output.
 
@@ -188,18 +222,23 @@ When a `foundation:MetaSystemTask` renders something visible to the user, that i
 - `Initialize System` — starts logging, plugins, and services
 - `Create Database` — initializes the SQLite schema on first run
 - `Queue Pending Calculations` — enqueues interrupted formula jobs from the previous session
-- `Show Inspector Widget` — renders the Inspector UIComponent in response to an entity creation event
 
 ---
 
 ## `foundation:MetaUserTask`
 
-A task where the **user performs an action**. The system may present a UIComponent to support that action, but the task is only complete when the user provides input or makes a decision.
+A task where **something is shown to the user** — whether the user actively interacts with it or simply observes it. This includes UI forms requiring input, widgets or panels the user reads, progress toasts, and status indicators.
 
-**Required:** `foundation:should` postconditions + `foundation:instructions` describing how to achieve the expected outcomes.
+Set `foundation:rendersComponent` to the UIComponent being shown. This is the mechanism that links the process graph to the UI layer.
+
+A `MetaUserTask` must always be followed by `MetaIntermediateEvent` nodes (see [Post-UserTask Pattern](#post-usertask-pattern)).
+
+**Required:** `foundation:should` postconditions + `foundation:instructions` + `foundation:rendersComponent`.
 
 **Examples:**
 - `User completes Setup Wizard` — first-run onboarding, user fills in their name, email, and AI preferences
+- `Observe AI Processing Status` — user sees "Claude is thinking (Ns)" with a live timer; can press Escape to cancel
+- `Open Inspector Widget` — inspector widget animates onto the canvas; user sees the new entity's data
 
 ---
 
@@ -330,8 +369,8 @@ Rendered as a red pill node showing `{operator} {value}`.
 |---|---|
 | `foundation:MetaProcess` | `foundation:Process` |
 | `foundation:MetaSubProcess` | A `foundation:Process` invoked by another via `foundation:invokesProcess` |
-| `foundation:MetaSystemTask` | A step executed by the Rust backend or Svelte frontend |
-| `foundation:MetaUserTask` | A UI form or wizard step awaiting user input |
+| `foundation:MetaSystemTask` | A step executed entirely by the system with no UI rendered |
+| `foundation:MetaUserTask` | Any step where a UIComponent is shown to the user (active or passive) |
 | `foundation:MetaIntermediateEvent` | A Tauri event (`entity-created`, `ai-status`, etc.) |
 | `foundation:MetaStartEvent` | The trigger that instantiates a Process |
 | `foundation:MetaEndEvent` | The terminal state of a Process instance |
