@@ -17,6 +17,7 @@
   import NodeGatewayCondition from './meta-process/NodeGatewayCondition.svelte'
   import NodeGatewayInclusive from './meta-process/NodeGatewayInclusive.svelte'
   import NodeBoundaryEvent from './meta-process/NodeBoundaryEvent.svelte'
+  import NodeBoundaryCondition from './meta-process/NodeBoundaryCondition.svelte'
 
   let { widgetId, entityId, windowState = 'normal', onWindowStateChange } = $props()
 
@@ -33,6 +34,7 @@
     MetaGatewayCondition:    NodeGatewayCondition,
     MetaInclusiveGateway:    NodeGatewayInclusive,
     MetaBoundaryEvent:       NodeBoundaryEvent,
+    MetaBoundaryCondition:   NodeBoundaryCondition,
   }
 
 
@@ -106,6 +108,10 @@
     }
   }
 
+  function toggleMinimize() {
+    onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized')
+  }
+
   function openExpanded() {
     expanded = true
     onWindowStateChange?.('maximized')
@@ -134,7 +140,7 @@
 
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape' && expanded) closeExpanded() }} />
 
-<div class="meta-process-widget">
+<div class="meta-process-widget" class:minimized={windowState === 'minimized'}>
   <div class="widget-header">
     <div class="header-left">
       <span class="material-symbols-outlined header-icon">schema</span>
@@ -144,34 +150,41 @@
       <button class="action-btn" onclick={openExpanded} title="Expand">
         <span class="material-symbols-outlined">open_in_full</span>
       </button>
+      <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
+        <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
+      </button>
       <button class="close-btn" onclick={closeWidget}>
         <span class="material-symbols-outlined">close</span>
       </button>
     </div>
   </div>
 
-  <div class="widget-content">
-    {#if loading}
-      <div class="loading">
-        <span class="material-symbols-outlined spinning">progress_activity</span>
-      </div>
-    {:else if error}
-      <div class="error-state">
-        <span class="material-symbols-outlined">error</span>
-        <p>{error}</p>
-      </div>
-    {:else}
-      <SvelteFlow
-        {nodes}
-        {edges}
-        {nodeTypes}
-        fitView
-        onnodeclick={handleNodeClick}
-      >
-        <Controls />
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.08)" />
-      </SvelteFlow>
-    {/if}
+  <div class="content-wrapper">
+    <div class="widget-content">
+      {#if loading}
+        <div class="loading">
+          <span class="material-symbols-outlined spinning">progress_activity</span>
+        </div>
+      {:else if error}
+        <div class="error-state">
+          <span class="material-symbols-outlined">error</span>
+          <p>{error}</p>
+        </div>
+      {:else}
+        <SvelteFlow
+          {nodes}
+          {edges}
+          {nodeTypes}
+          fitView
+          panOnScroll
+          zoomOnScroll={false}
+          onnodeclick={handleNodeClick}
+        >
+          <Controls />
+          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.08)" />
+        </SvelteFlow>
+      {/if}
+    </div>
   </div>
 </div>
 
@@ -198,6 +211,8 @@
             {edges}
             {nodeTypes}
             fitView
+            panOnScroll
+            zoomOnScroll={false}
             onnodeclick={handleNodeClick}
           >
             <Controls />
@@ -303,8 +318,25 @@
     font-size: 20px;
   }
 
-  .widget-content {
+  .content-wrapper {
     flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+  }
+
+  .minimized .content-wrapper {
+    grid-template-rows: 0fr;
+  }
+
+  .content-wrapper > .widget-content {
+    min-height: 0;
+  }
+
+  .widget-content {
+    height: 100%;
     overflow: hidden;
     position: relative;
   }

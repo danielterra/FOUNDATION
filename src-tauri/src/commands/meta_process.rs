@@ -109,7 +109,7 @@ pub async fn meta_process__get_graph(
                 }
             };
 
-            let is_condition = node_type == "MetaGatewayCondition";
+            let is_condition = node_type == "MetaGatewayCondition" || node_type == "MetaBoundaryCondition";
             let condition_operator = if is_condition {
                 let op_iri = get_iri_property(conn, &current, "foundation:conditionOperator")
                     .map_err(|e| e.to_string())?;
@@ -211,18 +211,18 @@ pub async fn meta_process__get_graph(
                 "MetaSystemTask" | "MetaUserTask" | "MetaSubProcess"
             );
             if is_task {
-                let boundary_events = get_all_iri_properties(conn, &current, "foundation:hasBoundaryEvent")
+                let boundary_conditions = get_all_iri_properties(conn, &current, "foundation:boundaryCondition")
                     .map_err(|e| e.to_string())?;
-                for be in boundary_events {
+                for bc in boundary_conditions {
                     edge_counter += 1;
                     edges.push(GraphEdge {
                         id: format!("e{}", edge_counter),
                         source: current.clone(),
-                        target: be.clone(),
+                        target: bc.clone(),
                         label: None,
                     });
-                    if !visited.contains(&be) {
-                        queue.push_back(be);
+                    if !visited.contains(&bc) {
+                        queue.push_back(bc);
                     }
                 }
             }
