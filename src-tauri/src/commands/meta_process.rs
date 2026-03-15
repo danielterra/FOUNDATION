@@ -13,6 +13,10 @@ pub struct GraphNode {
     pub invokes_process: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition_operator: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition_value: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,23 +43,12 @@ fn extract_local_name(iri: &str) -> &str {
         .unwrap_or(iri)
 }
 
-fn resolve_gateway_edges(
+fn get_gateway_condition_iris(
     conn: &crate::owl::Connection,
     node_iri: &str,
-) -> Result<Vec<(String, Option<String>)>, String> {
-    let condition_iris = get_all_iri_properties(conn, node_iri, "foundation:gatewayCondition")
-        .map_err(|e| e.to_string())?;
-    let mut edges = Vec::new();
-    for cond_iri in condition_iris {
-        let target = get_iri_property(conn, &cond_iri, "foundation:nextNode")
-            .map_err(|e| e.to_string())?;
-        let label = get_literal_property(conn, &cond_iri, "foundation:conditionExpression")
-            .map_err(|e| e.to_string())?;
-        if let Some(target) = target {
-            edges.push((target, label));
-        }
-    }
-    Ok(edges)
+) -> Result<Vec<String>, String> {
+    get_all_iri_properties(conn, node_iri, "foundation:gatewayCondition")
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -110,12 +103,28 @@ pub async fn meta_process__get_graph(
                 }
             };
 
+            let is_condition = node_type == "MetaGatewayCondition";
+            let condition_operator = if is_condition {
+                get_literal_property(conn, &current, "foundation:conditionOperator")
+                    .map_err(|e| e.to_string())?
+            } else {
+                None
+            };
+            let condition_value = if is_condition {
+                get_literal_property(conn, &current, "foundation:conditionValue")
+                    .map_err(|e| e.to_string())?
+            } else {
+                None
+            };
+
             nodes.push(GraphNode {
                 id: current.clone(),
                 node_type: node_type.clone(),
                 label,
                 invokes_process,
                 status,
+                condition_operator,
+                condition_value,
             });
 
             let is_gateway = matches!(
@@ -123,23 +132,20 @@ pub async fn meta_process__get_graph(
                 "MetaExclusiveGateway" | "MetaParallelGateway" | "MetaEventBasedGateway"
             );
 
-            let next_edges: Vec<(String, Option<String>)> = if is_gateway {
-                resolve_gateway_edges(conn, &current)?
+            let next_targets: Vec<String> = if is_gateway {
+                get_gateway_condition_iris(conn, &current)?
             } else {
                 get_all_iri_properties(conn, &current, "foundation:nextNode")
                     .map_err(|e| e.to_string())?
-                    .into_iter()
-                    .map(|t| (t, None))
-                    .collect()
             };
 
-            for (target, label) in next_edges {
+            for target in next_targets {
                 edge_counter += 1;
                 edges.push(GraphEdge {
                     id: format!("e{}", edge_counter),
                     source: current.clone(),
                     target: target.clone(),
-                    label,
+                    label: None,
                 });
                 if !visited.contains(&target) {
                     queue.push_back(target);

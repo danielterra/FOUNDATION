@@ -14,19 +14,21 @@
   import NodeGatewayParallel from './meta-process/NodeGatewayParallel.svelte'
   import NodeGatewayEventBased from './meta-process/NodeGatewayEventBased.svelte'
   import NodeIntermediateEvent from './meta-process/NodeIntermediateEvent.svelte'
+  import NodeGatewayCondition from './meta-process/NodeGatewayCondition.svelte'
 
   let { widgetId, entityId, windowState = 'normal', onWindowStateChange } = $props()
 
   const nodeTypes = {
-    MetaStartEvent:        NodeStartEvent,
-    MetaEndEvent:          NodeEndEvent,
-    MetaSystemTask:        NodeSystemTask,
-    MetaUserTask:          NodeUserTask,
-    MetaSubProcess:        NodeSubProcess,
-    MetaExclusiveGateway:  NodeGatewayExclusive,
-    MetaParallelGateway:   NodeGatewayParallel,
-    MetaEventBasedGateway: NodeGatewayEventBased,
-    MetaIntermediateEvent: NodeIntermediateEvent,
+    MetaStartEvent:          NodeStartEvent,
+    MetaEndEvent:            NodeEndEvent,
+    MetaSystemTask:          NodeSystemTask,
+    MetaUserTask:            NodeUserTask,
+    MetaSubProcess:          NodeSubProcess,
+    MetaExclusiveGateway:    NodeGatewayExclusive,
+    MetaParallelGateway:     NodeGatewayParallel,
+    MetaEventBasedGateway:   NodeGatewayEventBased,
+    MetaIntermediateEvent:   NodeIntermediateEvent,
+    MetaGatewayCondition:    NodeGatewayCondition,
   }
 
 
@@ -58,7 +60,7 @@
       const flowNodes = data.nodes.map(n => ({
         id: n.id,
         type: n.type,
-        data: { label: n.label, nodeType: n.type, invokesProcess: n.invokes_process ?? null, status: n.status ?? null },
+        data: { label: n.label, nodeType: n.type, invokesProcess: n.invokes_process ?? null, status: n.status ?? null, conditionOperator: n.condition_operator ?? null, conditionValue: n.condition_value ?? null },
         position: { x: 0, y: 0 },
       }))
 
