@@ -44,6 +44,16 @@
   let loading = $state(true)
   let error = $state(null)
   let expanded = $state(windowState === 'maximized')
+  let hoveredNodeId = $state(null)
+
+  const displayEdges = $derived(
+    hoveredNodeId === null
+      ? edges
+      : edges.map(e => {
+          const connected = e.source === hoveredNodeId || e.target === hoveredNodeId
+          return { ...e, class: connected ? 'edge-highlighted' : undefined }
+        })
+  )
   let watchedIris = new Set()
   let unlisten = null
 
@@ -173,12 +183,14 @@
       {:else}
         <SvelteFlow
           {nodes}
-          {edges}
+          edges={displayEdges}
           {nodeTypes}
           fitView
           panOnScroll
           zoomOnScroll={false}
           onnodeclick={handleNodeClick}
+          onnodepointerenter={({ node }) => hoveredNodeId = node.id}
+          onnodepointerleave={() => hoveredNodeId = null}
         >
           <Controls />
           <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.08)" />
@@ -208,12 +220,14 @@
         {#if !loading && !error}
           <SvelteFlow
             {nodes}
-            {edges}
+            edges={displayEdges}
             {nodeTypes}
             fitView
             panOnScroll
             zoomOnScroll={false}
             onnodeclick={handleNodeClick}
+            onnodepointerenter={({ node }) => hoveredNodeId = node.id}
+            onnodepointerleave={() => hoveredNodeId = null}
           >
             <Controls />
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.08)" />
@@ -427,4 +441,11 @@
   :global(.svelte-flow .svelte-flow__node) {
     font-family: var(--font-title, sans-serif);
   }
+
+  :global(.svelte-flow__edge.edge-highlighted .svelte-flow__edge-path) {
+    stroke: #3b82f6 !important;
+    stroke-width: 2.5px !important;
+    opacity: 1 !important;
+  }
+
 </style>

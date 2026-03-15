@@ -121,7 +121,7 @@ pub fn execute_tool(
         "forget_concepts" => concept::delete_concept(conn, args, app),
         "forget_things" => thing::delete_thing(conn, args, app),
         "forget_properties" => property::forget_property(conn, args, app),
-        "blackboard_widgets_list" => blackboard::blackboard_widgets_list(conn, args),
+        "blackboard_state" => blackboard::blackboard_state(conn),
         "blackboard_update" => blackboard::blackboard_update(conn, args, app),
         "run_process" => run_process_tool(args, app),
         _ => ToolResult {

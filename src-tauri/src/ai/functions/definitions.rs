@@ -450,18 +450,14 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         // BLACKBOARD
         // ----------------------------------------------------------------
         ToolTemplate {
-            name: "blackboard_widgets_list".to_string(),
+            name: "blackboard_state".to_string(),
             array_mode: false,
-            description: "List available widget types and required params. Call before blackboard_update. Pass concept_iri to filter to widgets for a specific entity type.".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "concept_iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Filter to widgets that can render this concept (e.g. 'foundation:Task').".to_string(),
-                    required: false,
-                    schema: None,
-                },
-            ],
+            description: concat!(
+                "Returns the widgets currently open on the user's blackboard.",
+                " Use before blackboard_update to avoid duplicating existing widgets.",
+                " Widget types and their supported concepts are discoverable via remember(concept_iri: 'foundation:WidgetDefinition').",
+            ).to_string(),
+            parameters: vec![],
         },
 
         ToolTemplate {
@@ -473,6 +469,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 " 'remove': remove a widget (params.widget_id required).",
                 " 'replace': clear all widgets; optionally add new ones if widget_type+params provided.",
                 " Widgets are live — no need to call after learn_things changes; entities update automatically.",
+                " Widget type IDs: 'inspector' (any entity), 'meta_process' (MetaProcess), 'mermaid' (MermaidDiagram), 'process_status' (MetaProcess), 'connector_credential' (ExternalServiceConnector), 'connector_manager' (ExternalServiceConnector).",
             ).to_string(),
             parameters: vec![
                 Parameter {
@@ -485,14 +482,14 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "widget_type".to_string(),
                     param_type: "string".to_string(),
-                    description: "Widget type for 'add'/'replace'. See blackboard_widgets_list.".to_string(),
+                    description: "Widget type ID for 'add'/'replace' (e.g. 'inspector', 'meta_process').".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "params".to_string(),
                     param_type: "object".to_string(),
-                    description: "Widget-specific params for 'add'/'replace', or {widget_id} for 'remove'. See blackboard_widgets_list.".to_string(),
+                    description: "Widget params for 'add'/'replace' (entity_id required), or {widget_id} for 'remove'.".to_string(),
                     required: false,
                     schema: None,
                 },

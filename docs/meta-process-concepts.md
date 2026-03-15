@@ -33,27 +33,29 @@ Tasks take input and produce output without branching. All branching is external
 
 ---
 
-## Data Contracts: `metaInput` and `metaOutput`
+## Data Contracts: `inputConcept` and `outputConcept`
 
 Every `MetaFlowNode` has typed data contracts defined via:
 
-- **`foundation:metaInput`** — the `MetaEventConcept` the node expects to receive
-- **`foundation:metaOutput`** — the `MetaEventConcept` the node produces
+- **`foundation:inputConcept`** — the ontology class this node expects to receive
+- **`foundation:outputConcept`** — the ontology class this node produces
 
-These properties apply to all node types, including gateways and events, because every node receives something and passes something on. This is the design-level specification of the data flowing through the graph.
+These point directly to OWL class IRIs (e.g. `foundation:MCPRequest`, `foundation:MetaProcess`) — no wrapper instance needed. These properties apply to all node types, including gateways and events, because every node receives something and passes something on. This is the design-level specification of the data flowing through the graph.
 
 ---
 
 ## Verifiable Postconditions: `should`
 
-`foundation:should` is a required property on `foundation:MetaAbstractTask` (inherited by all task types).
+`foundation:should` is a required property on `foundation:MetaAbstractTask` (inherited by all task types). It points to a `foundation:MetaShould` instance — a structured behavioral contract that captures both dimensions:
 
-It expresses **what the task must produce as a result**, written as plain-language verifiable conditions — similar to Gherkin "Then" clauses. There are no internal conditions inside a task; a task takes input and must produce output that conforms to these `should` conditions.
+- **`outcome`** — what the task produces, as a verifiable postcondition (the *what*)
+- **`benefit`** — why the task exists, the value it delivers (the *why*)
+
+There are no internal conditions inside a task; a task takes input and must produce output that conforms to the `outcome`. The `benefit` gives future readers (and AI) the motivation behind the task, not just its mechanics.
 
 **Examples:**
-- `"SQLite schema exists and is up to date"`
-- `"Background worker is running and processing the queue"`
-- `"All formula jobs from previous session are enqueued"`
+- outcome: `"SQLite database file exists and all schema tables are structurally valid"` / benefit: `"Provides the persistent storage layer that all Foundation data depends on"`
+- outcome: `"MCP server is running and all tools are discoverable"` / benefit: `"Exposes Foundation's knowledge tools to AI assistants"`
 
 ---
 
@@ -83,8 +85,13 @@ MetaFlowNode
 │   └── MetaInclusiveGateway
 ├── MetaParallelGateway          ← uses nextNode directly (no conditions)
 ├── MetaGatewayCondition         ← condition node between a gateway and its target
-└── MetaBoundaryEvent            ← exception catch node attached to a task
+├── MetaBoundaryEvent            ← exception event node attached to a task (event type only)
+└── MetaBoundaryCondition        ← routing logic for a boundary catch (mirrors MetaGatewayCondition)
 ```
+
+**Supporting concepts (not flow nodes):**
+- `MetaShould` — behavioral contract attached to a task via `should` (outcome + benefit)
+- `MetaGatewayConditionOperator` — controlled vocabulary of condition operators
 
 ---
 
@@ -158,15 +165,14 @@ A controlled vocabulary of what can initiate a `MetaStartEvent` or `MetaIntermed
 
 ---
 
-## `foundation:MetaEventConcept`
+## Data flow types
 
-A typed signal flowing through the process graph. Used as the value of `metaInput` and `metaOutput` on `MetaFlowNode`.
-
-Represents the data contract at the design level — what kind of information a node receives and produces. This is always a concept class (an OWL class from the ontology), never a raw primitive.
+`inputConcept` and `outputConcept` point directly to OWL class IRIs from the ontology — no wrapper needed. Use any existing concept that represents the data flowing through that node.
 
 **Examples:**
-- `MCPToolRequest` — the payload arriving at the MCP event-based gateway
-- Entity IRIs returned from a search sub-process
+- `foundation:MCPRequest` — the payload arriving at the MCP event-based gateway
+- `foundation:MCPResponse` — the result produced by each MCP tool task
+- `foundation:MetaProcess` — an entity IRI returned from a process lookup
 
 ---
 
@@ -290,13 +296,10 @@ The Rust backend resolves the operator IRI to its `rdfs:label` before sending it
 
 ## `foundation:MetaBoundaryEvent`
 
-An exception or interruption catch node **attached to a task** via `foundation:hasBoundaryEvent`. It fires when a specific condition arises *during* the execution of its host task — the task does not complete normally.
-
-Errors are always modelled as `MetaBoundaryEvent`, never as internal branches inside a task. A task has exactly one success output concept; failures are caught externally.
+An exception event node **attached to a task** via `foundation:boundaryCondition` (as a `MetaBoundaryCondition`). Responsible only for describing the *type* of exception — the routing logic lives in `MetaBoundaryCondition`.
 
 Properties:
 - `eventType` — the kind of exception: `error`, `timer`, `signal`, or `message`
-- `nextNode` — the flow node to route to when this boundary event fires
 
 Rendered as a dashed-border pill node. The icon changes by event type:
 - `error` → error icon (red)
@@ -304,7 +307,20 @@ Rendered as a dashed-border pill node. The icon changes by event type:
 - `signal` → cell tower icon
 - `message` → mail icon
 
-**Example:** An `error` boundary event on a `SystemTask: Execute Tool` catches failures and routes to an error handler instead of crashing the process.
+---
+
+## `foundation:MetaBoundaryCondition`
+
+A condition node that sits **between a task and its boundary handler**, attached to the task via `foundation:boundaryCondition`. Mirrors `MetaGatewayCondition` — holds the condition that triggers the catch and routes to the handler.
+
+Properties:
+- `conditionOperator` — a `MetaGatewayConditionOperator` instance (e.g. `throws`)
+- `conditionValue` — the error or signal being caught (e.g. `entity_not_found`)
+- `nextNode` — the handler task or end event to route to when this condition fires
+
+Rendered as a red pill node showing `{operator} {value}`.
+
+**Example:** A `MetaBoundaryCondition` on `Execute blackboard_update` with `throws entity_not_found` routes to `Return MCP Error Response`.
 
 ---
 
@@ -324,7 +340,10 @@ Rendered as a dashed-border pill node. The icon changes by event type:
 | `foundation:MetaParallelGateway` | A `tokio::spawn` or concurrent execution split |
 | `foundation:MetaEventBasedGateway` | A listener waiting for the first matching event |
 | `foundation:MetaGatewayCondition` | A named branch condition with operator and value |
-| `foundation:MetaBoundaryEvent` | A `catch` block or timeout handler on a task |
+| `foundation:MetaBoundaryEvent` | A `catch` block or timeout handler on a task (event type only) |
+| `foundation:MetaBoundaryCondition` | The routing logic for a boundary catch (condition + target) |
+| `foundation:MetaShould` | The behavioral contract of a task (outcome + benefit) |
 | `foundation:MetaEventTrigger` | The kind of real-world trigger initiating a start/intermediate event |
-| `foundation:MetaEventConcept` | The typed data contract flowing through graph edges |
+| `foundation:inputConcept` | The OWL class a node consumes as input |
+| `foundation:outputConcept` | The OWL class a node produces as output |
 | `foundation:invokesProcess` | The `foundation:MetaProcess` a sub-process node delegates to |

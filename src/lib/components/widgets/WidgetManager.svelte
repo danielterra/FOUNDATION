@@ -16,11 +16,15 @@
   const CHAT_PANEL_MIN_WIDTH = 500;
   const WIDGET_FLY_DURATION = 600;
   const MINIMIZED_HEIGHT = 70;
+  const MIN_WIDGET_WIDTH = 200;
+  const MIN_WIDGET_HEIGHT = 100;
 
   let widgets = $state([]);
   let unlisteners = [];
   let draggedWidget = $state(null);
   let dragOffset = $state({ x: 0, y: 0 });
+  let resizingWidget = $state(null);
+  let resizeStart = $state({ mouseX: 0, mouseY: 0, width: 0, height: 0 });
   let topZIndex = $state(BASE_WIDGET_Z_INDEX);
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
@@ -74,6 +78,37 @@
     );
   }
 
+  function startResize(event, widget) {
+    resizingWidget = widget;
+    resizeStart = {
+      mouseX: event.clientX,
+      mouseY: event.clientY,
+      width: widget.size.width,
+      height: widget.size.height
+    };
+    bringToFront(widget.id);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function onResize(event) {
+    if (!resizingWidget) return;
+    const dx = event.clientX - resizeStart.mouseX;
+    const dy = event.clientY - resizeStart.mouseY;
+    const newWidth = Math.max(MIN_WIDGET_WIDTH, resizeStart.width + dx);
+    const newHeight = Math.max(MIN_WIDGET_HEIGHT, resizeStart.height + dy);
+    widgets = widgets.map(w =>
+      w.id === resizingWidget.id ? { ...w, size: { width: newWidth, height: newHeight } } : w
+    );
+  }
+
+  function stopResize() {
+    if (!resizingWidget) return;
+    const widget = widgets.find(w => w.id === resizingWidget.id);
+    resizingWidget = null;
+    if (widget) resizeWidget(widget.id, widget.size.width, widget.size.height);
+  }
+
   function startDrag(event, widget) {
     if (!event.target.closest('.widget-header')) return;
     if (event.target.closest('.close-btn')) return;
@@ -89,6 +124,7 @@
   }
 
   function onDrag(event) {
+    if (resizingWidget) { onResize(event); return; }
     if (!draggedWidget) return;
 
     const newX = event.clientX - dragOffset.x;
@@ -102,6 +138,7 @@
   }
 
   function stopDrag() {
+    if (resizingWidget) { stopResize(); return; }
     if (!draggedWidget) return;
 
     const widget = widgets.find(w => w.id === draggedWidget.id);
@@ -230,6 +267,7 @@
   <div
     class="widget-container"
     class:dragging={draggedWidget?.id === widget.id}
+    class:resizing={resizingWidget?.id === widget.id}
     style:left="{widget.position.x}px"
     style:top="{widget.position.y}px"
     style:width="{widget.size.width}px"
@@ -244,6 +282,10 @@
     in:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicOut }}
     out:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicIn }}
   >
+    {#if widget.window_state !== 'minimized'}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="resize-handle" onmousedown={(e) => startResize(e, widget)}></div>
+    {/if}
     {#if widget.widget_type === 'inspector'}
       <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {:else if widget.widget_type === 'mermaid'}
@@ -266,9 +308,41 @@
     transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s;
   }
 
+  .widget-container.dragging,
+  .widget-container.resizing {
+    transition: none;
+  }
+
   .widget-container.dragging {
     cursor: grabbing;
     box-shadow: 0 12px 48px color-mix(in srgb, var(--color-black) 60%, transparent);
+  }
+
+  .resize-handle {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 18px;
+    height: 18px;
+    cursor: nwse-resize;
+    z-index: 10;
+  }
+
+  .resize-handle::after {
+    content: '';
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0 0 9px 9px;
+    border-color: transparent transparent color-mix(in srgb, var(--color-white) 25%, transparent) transparent;
+    transition: border-color 0.15s;
+  }
+
+  .resize-handle:hover::after {
+    border-color: transparent transparent color-mix(in srgb, var(--color-interactive) 70%, transparent) transparent;
   }
 
   .widget-container :global(.widget-header) {

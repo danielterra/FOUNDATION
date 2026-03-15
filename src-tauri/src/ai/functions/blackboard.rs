@@ -11,72 +11,15 @@ const WIDGET_DEFAULT_WIDTH: f64 = 400.0;
 const WIDGET_DEFAULT_HEIGHT: f64 = 600.0;
 
 
-pub fn blackboard_widgets_list(conn: &Connection, args: &Value) -> ToolResult {
-    let concept_iri_filter = args.get("concept_iri").and_then(|v| v.as_str());
-
-    let widget_iris = match crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:WidgetDefinition") {
-        Ok(iris) => iris,
-        Err(e) => return ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
-    };
-
-    let mut widgets = Vec::new();
-    for iri in widget_iris {
-        let ind = match crate::owl::Individual::get(conn, &iri) {
-            Ok(Some(ind)) => ind,
-            _ => continue,
-        };
-
-        if let Some(filter_iri) = concept_iri_filter {
-            let supports_entity = ind.properties.iter()
-                .find(|(p, _)| p == "foundation:widgetDefSupportsEntity")
-                .and_then(|(_, v)| v.as_literal())
-                .map(|s| s == "true")
-                .unwrap_or(false);
-
-            if !supports_entity {
-                continue;
-            }
-
-            let supported_concepts: Vec<String> = ind.properties.iter()
-                .filter(|(p, _)| p == "foundation:widgetDefSupportedConcepts")
-                .filter_map(|(_, v)| v.as_iri().map(String::from))
-                .collect();
-
-            if !supported_concepts.is_empty() && !supported_concepts.iter().any(|c| c == filter_iri) {
-                continue;
-            }
-        }
-
-        let id = ind.properties.iter()
-            .find(|(p, _)| p == "foundation:widgetDefId")
-            .and_then(|(_, v)| v.as_literal())
-            .unwrap_or_default();
-
-        let description = ind.properties.iter()
-            .find(|(p, _)| p == "foundation:widgetDefDescription")
-            .and_then(|(_, v)| v.as_literal())
-            .unwrap_or_default();
-
-        let params_str = ind.properties.iter()
-            .find(|(p, _)| p == "foundation:widgetDefParams")
-            .and_then(|(_, v)| v.as_literal())
-            .unwrap_or_default();
-
-        let params: serde_json::Value = serde_json::from_str(&params_str)
-            .unwrap_or(serde_json::json!({}));
-
-        widgets.push(serde_json::json!({
-            "type": id,
-            "description": description,
-            "params": params,
-        }));
-    }
-
-    ToolResult {
-        success: true,
-        result: Some(serde_json::json!({ "widgets": widgets })),
-        error: None,
-        concept: None,
+pub fn blackboard_state(conn: &Connection) -> ToolResult {
+    match widget::owl_get_all_widgets(conn) {
+        Ok(widgets) => ToolResult {
+            success: true,
+            result: Some(serde_json::json!({ "widgets": widgets })),
+            error: None,
+            concept: None,
+        },
+        Err(e) => ToolResult { success: false, result: None, error: Some(e), concept: None },
     }
 }
 
