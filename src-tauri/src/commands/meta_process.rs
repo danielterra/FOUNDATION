@@ -19,6 +19,10 @@ pub struct GraphNode {
     pub condition_value: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renders_component: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,8 +111,14 @@ pub async fn meta_process__get_graph(
 
             let is_condition = node_type == "MetaGatewayCondition";
             let condition_operator = if is_condition {
-                get_literal_property(conn, &current, "foundation:conditionOperator")
-                    .map_err(|e| e.to_string())?
+                let op_iri = get_iri_property(conn, &current, "foundation:conditionOperator")
+                    .map_err(|e| e.to_string())?;
+                if let Some(iri) = op_iri {
+                    get_literal_property(conn, &iri, rdfs::LABEL)
+                        .map_err(|e| e.to_string())?
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -119,10 +129,41 @@ pub async fn meta_process__get_graph(
                 None
             };
 
+            let is_user_task = node_type == "MetaUserTask";
+            let renders_component = if is_user_task {
+                let comp_iri = get_iri_property(conn, &current, "foundation:rendersComponent")
+                    .map_err(|e| e.to_string())?;
+                if let Some(iri) = comp_iri {
+                    get_literal_property(conn, &iri, rdfs::LABEL)
+                        .map_err(|e| e.to_string())?
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             let is_boundary = node_type == "MetaBoundaryEvent";
             let event_type = if is_boundary {
                 get_literal_property(conn, &current, "foundation:eventType")
                     .map_err(|e| e.to_string())?
+            } else {
+                None
+            };
+
+            let is_event = matches!(
+                node_type.as_str(),
+                "MetaStartEvent" | "MetaEndEvent" | "MetaIntermediateEvent"
+            );
+            let trigger_type = if is_event {
+                let trigger_iri = get_iri_property(conn, &current, "foundation:triggerType")
+                    .map_err(|e| e.to_string())?;
+                if let Some(iri) = trigger_iri {
+                    get_literal_property(conn, &iri, rdfs::LABEL)
+                        .map_err(|e| e.to_string())?
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -136,6 +177,8 @@ pub async fn meta_process__get_graph(
                 condition_operator,
                 condition_value,
                 event_type,
+                trigger_type,
+                renders_component,
             });
 
             let is_gateway = matches!(

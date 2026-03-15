@@ -2,11 +2,20 @@
   import { Handle, Position } from '@xyflow/svelte'
   import StatusBadge from './StatusBadge.svelte'
   let { data } = $props()
+
+  const TRIGGER_ICONS = {
+    'App Launch':    'rocket_launch',
+    'HTTP Request':  'http',
+    'CRON Schedule': 'schedule',
+    'System Signal': 'cell_tower',
+    'User Action':   'touch_app',
+  }
+  const icon = $derived(TRIGGER_ICONS[data.triggerType] ?? 'play_circle')
 </script>
 
 <div class="node-wrap">
   <div class="node start-event">
-    <span class="material-symbols-outlined icon">play_circle</span>
+    <span class="material-symbols-outlined icon">{icon}</span>
     <span class="label">{data.label}</span>
   </div>
   <StatusBadge status={data.status} />

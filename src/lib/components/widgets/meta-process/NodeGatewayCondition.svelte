@@ -7,7 +7,8 @@
 <div class="node-wrap">
   <div class="node gateway-condition">
     <span class="material-symbols-outlined icon">fork_right</span>
-    <span class="label">{data.conditionOperator ?? ''} {data.conditionValue ?? ''}</span>
+    <span class="operator">{data.conditionOperator ?? ''}</span>
+    <span class="value">{data.conditionValue ?? ''}</span>
   </div>
   <StatusBadge status={data.status} />
 </div>
@@ -37,9 +38,15 @@
   .icon {
     font-size: 14px;
   }
-  .label {
+  .operator {
+    font-size: 10px;
+    font-weight: 500;
+    color: #a16207;
+    line-height: 1.3;
+  }
+  .value {
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
     line-height: 1.3;
   }
 </style>
