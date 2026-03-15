@@ -462,9 +462,7 @@ fn create_thing_one(
         super::batch::queue_event("entity-created", serde_json::json!({"entityId": generated_iri.clone()}));
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
-            "success": true,
             "iri": generated_iri,
-            "message": format!("Thing {} created successfully with IRI: {}", label, generated_iri),
         }))
     })() {
         Ok(result) => ToolResult {
@@ -615,8 +613,6 @@ fn update_thing_one(
         }
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
-            "success": true,
-            "message": format!("Thing {} updated successfully", iri),
             "updatedFields": updated_fields,
         }))
     })() {
@@ -673,10 +669,7 @@ fn delete_thing_one(
                         if let Object::Iri(ref_iri) = removed {
                             super::batch::queue_event("entity-updated", serde_json::json!({"entityId": ref_iri}));
                         }
-                        Ok::<_, crate::owl::OwlError>(serde_json::json!({
-                            "success": true,
-                            "message": format!("Value removed from {} on {}", detail, iri),
-                        }))
+                        Ok::<_, crate::owl::OwlError>(serde_json::json!({}))
                     }
                     None => Ok(serde_json::json!({
                         "success": false,
@@ -687,18 +680,12 @@ fn delete_thing_one(
             (Some(detail), None) => {
                 Individual::clear_property(conn, iri, detail, "ai")?;
                 super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
-                Ok::<_, crate::owl::OwlError>(serde_json::json!({
-                    "success": true,
-                    "message": format!("All values of {} removed from {}", detail, iri),
-                }))
+                Ok::<_, crate::owl::OwlError>(serde_json::json!({}))
             }
             _ => {
                 Individual::retract(conn, iri, "ai")?;
                 super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
-                Ok::<_, crate::owl::OwlError>(serde_json::json!({
-                    "success": true,
-                    "message": format!("Thing {} deleted successfully", iri),
-                }))
+                Ok::<_, crate::owl::OwlError>(serde_json::json!({}))
             }
         }
     })() {

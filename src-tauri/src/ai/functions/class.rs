@@ -59,7 +59,7 @@ pub fn search_classes(conn: &Connection, args: &Value) -> ToolResult {
 
                     match_count
                 } else {
-                    0 // No query, all classes have equal score
+                    0
                 };
 
                 classes_with_scores.push((serde_json::json!({
@@ -224,9 +224,7 @@ pub fn create_class(
         }
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
-            "success": true,
             "iri": iri,
-            "message": format!("Class {} created successfully", label),
         }))
     })() {
         Ok(result) => ToolResult {
@@ -284,8 +282,6 @@ pub fn update_class(
         }
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
-            "success": true,
-            "message": format!("Class {} updated successfully", iri),
             "updatedFields": updated_fields,
         }))
     })() {
@@ -323,10 +319,7 @@ pub fn delete_class(
             app_handle.emit("entity-updated", serde_json::json!({"entityId": iri})).ok();
         }
 
-        Ok::<_, crate::owl::OwlError>(serde_json::json!({
-            "success": true,
-            "message": format!("Class {} deleted successfully", iri),
-        }))
+        Ok::<_, crate::owl::OwlError>(serde_json::json!({}))
     })() {
         Ok(result) => ToolResult {
             success: true,

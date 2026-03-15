@@ -98,13 +98,7 @@ fn learn_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
         }
 
         Ok::<_, crate::owl::OwlError>(json!({
-            "success": true,
             "iri": iri,
-            "message": if is_new {
-                format!("Property {} created successfully", iri)
-            } else {
-                format!("Property {} updated successfully", iri)
-            },
         }))
     })() {
         Ok(result) => ToolResult { success: true, result: Some(result), error: None, concept: None },

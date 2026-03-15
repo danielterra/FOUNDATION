@@ -9,7 +9,7 @@
     <span class="material-symbols-outlined icon">merge</span>
     <span class="label">{data.label}</span>
   </div>
-  <StatusBadge status={data.status} />
+  <StatusBadge status={data.status} statusColor={data.statusColor} statusIcon={data.statusIcon} />
 </div>
 <Handle type="target" position={Position.Left} />
 <Handle type="source" position={Position.Right} />

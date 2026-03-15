@@ -14,6 +14,10 @@ pub struct GraphNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub condition_operator: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub condition_value: Option<String>,
@@ -98,15 +102,9 @@ pub async fn meta_process__get_graph(
             let invokes_process = get_iri_property(conn, &current, "foundation:invokesProcess")
                 .map_err(|e| e.to_string())?;
 
-            let status = {
-                let status_iri = get_iri_property(conn, &current, "foundation:hasStatus")
-                    .map_err(|e| e.to_string())?;
-                if let Some(iri) = status_iri {
-                    get_literal_property(conn, &iri, rdfs::LABEL)
-                        .map_err(|e| e.to_string())?
-                } else {
-                    None
-                }
+            let (status, status_color, status_icon) = match crate::owl::get_entity_status_info(conn, &current) {
+                Some((_, label, color, icon)) => (Some(label), color, icon),
+                None => (None, None, None),
             };
 
             let is_condition = node_type == "MetaGatewayCondition" || node_type == "MetaBoundaryCondition";
@@ -174,6 +172,8 @@ pub async fn meta_process__get_graph(
                 label,
                 invokes_process,
                 status,
+                status_color,
+                status_icon,
                 condition_operator,
                 condition_value,
                 event_type,

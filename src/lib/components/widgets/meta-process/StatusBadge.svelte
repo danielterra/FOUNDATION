@@ -1,24 +1,8 @@
 <script>
-  let { status } = $props()
+  let { status, statusColor, statusIcon } = $props()
 
-  const STATUS_COLORS = {
-    'Completed':   '#4caf50',
-    'Active':      '#1E88E5',
-    'In Progress': '#FB8C00',
-    'Planned':     '#9e9e9e',
-    'Blocked':     '#ef5350',
-  }
-
-  const STATUS_ICONS = {
-    'Completed':   'check_circle',
-    'Active':      'play_circle',
-    'In Progress': 'pending',
-    'Planned':     'schedule',
-    'Blocked':     'block',
-  }
-
-  const color = $derived(STATUS_COLORS[status] ?? '#9e9e9e')
-  const icon  = $derived(STATUS_ICONS[status]  ?? 'radio_button_unchecked')
+  const color = $derived(statusColor ?? '#9e9e9e')
+  const icon  = $derived(statusIcon  ?? 'radio_button_unchecked')
 </script>
 
 {#if status}

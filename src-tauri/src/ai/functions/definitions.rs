@@ -429,6 +429,58 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
 
         // ----------------------------------------------------------------
+        // META PROCESS / CONCEPT GRAPH
+        // ----------------------------------------------------------------
+        ToolTemplate {
+            name: "get_concept_graph".to_string(),
+            array_mode: false,
+            description: concat!(
+                "Traverses the ontology graph bidirectionally from a root concept class up to max_depth levels.",
+                " Outbound: follows properties where the concept is the domain to their range classes.",
+                " Inbound: follows properties where the concept is the range to their domain classes.",
+                " Returns rootConcept (IRI), depthReached (integer),",
+                " graphNodes (all encountered concepts with IRI, label, icon),",
+                " and graphEdges (all traversed relationships with property IRI, propertyLabel, source, target).",
+            ).to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "concept_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the root OWL class to start traversal from (e.g. 'foundation:Task').".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "max_depth".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Maximum traversal depth. Defaults to 2, capped at 5.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "get_process".to_string(),
+            array_mode: false,
+            description: concat!(
+                "Traverses a MetaProcess flow graph and returns the full structure in one call.",
+                " Follows nextNode, gatewayCondition, and boundaryCondition edges from the start event without depth limit.",
+                " Returns processDetails (label, comment, status), graphNodes (all flow nodes with type, label, and relevant properties),",
+                " and graphEdges (all connections with property IRI, source, and target).",
+            ).to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "process_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the MetaProcess instance to traverse (e.g. 'foundation:MetaProcess_123').".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
+        // ----------------------------------------------------------------
         // PROCESS AUTOMATION
         // ----------------------------------------------------------------
         ToolTemplate {

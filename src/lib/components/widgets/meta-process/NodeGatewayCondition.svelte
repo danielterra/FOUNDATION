@@ -10,7 +10,7 @@
     <span class="operator">{data.conditionOperator ?? ''}</span>
     <span class="value">{data.conditionValue ?? ''}</span>
   </div>
-  <StatusBadge status={data.status} />
+  <StatusBadge status={data.status} statusColor={data.statusColor} statusIcon={data.statusIcon} />
 </div>
 <Handle type="target" position={Position.Left} />
 <Handle type="source" position={Position.Right} />

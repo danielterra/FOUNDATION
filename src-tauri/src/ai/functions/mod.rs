@@ -5,7 +5,9 @@ use rusqlite::Connection;
 mod batch;
 mod blackboard;
 mod concept;
+mod concept_graph;
 mod definitions;
+mod meta_process;
 mod property;
 mod thing;
 
@@ -121,6 +123,8 @@ pub fn execute_tool(
         "forget_concepts" => concept::delete_concept(conn, args, app),
         "forget_things" => thing::delete_thing(conn, args, app),
         "forget_properties" => property::forget_property(conn, args, app),
+        "get_process" => meta_process::get_process(conn, args),
+        "get_concept_graph" => concept_graph::get_concept_graph(conn, args),
         "blackboard_state" => blackboard::blackboard_state(conn),
         "blackboard_update" => blackboard::blackboard_update(conn, args, app),
         "run_process" => run_process_tool(args, app),
@@ -165,7 +169,7 @@ fn run_process_tool(args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult 
 
     ToolResult {
         success: true,
-        result: Some(json!({ "message": format!("Process {} started", args["process_iri"].as_str().unwrap_or("")) })),
+        result: None,
         error: None,
         concept: None,
     }

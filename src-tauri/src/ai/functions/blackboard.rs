@@ -115,7 +115,7 @@ fn blackboard_replace(
     } else {
         ToolResult {
             success: true,
-            result: Some(serde_json::json!({"message": "Blackboard cleared"})),
+            result: None,
             error: None,
             concept: None,
         }
@@ -246,7 +246,7 @@ fn blackboard_remove_one(
 
             ToolResult {
                 success: true,
-                result: Some(serde_json::json!({"message": "Widget removed"})),
+                result: None,
                 error: None,
                 concept: None,
             }
