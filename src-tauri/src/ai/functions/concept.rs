@@ -349,6 +349,10 @@ fn learn_concept_one(
                     prop.domains.push(iri.to_string());
                     let domains: Vec<&str> = prop.domains.iter().map(|s| s.as_str()).collect();
                     prop.assert(conn, prop.property_type, prop.label.as_deref().unwrap_or(""), None, &domains, prop.ranges.first().map(|s| s.as_str()), prop.unit.as_deref(), "ai")?;
+
+                    if prop.formula.is_some() {
+                        super::batch::queue_formula_recalc(prop_iri.to_string());
+                    }
                 }
 
                 super::batch::queue_event("entity-updated", serde_json::json!({"entityId": prop_iri}));

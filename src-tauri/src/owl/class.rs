@@ -2,6 +2,8 @@ use crate::eavto::Connection;
 use crate::eavto::{store, query, Triple, Object};
 use crate::owl::{Result, Thing, vocabulary::{rdf, rdfs, owl}};
 
+const CLASS_INSTANCE_LIMIT: usize = 50;
+
 #[derive(Debug, Clone)]
 pub struct Class {
     pub iri: String,
@@ -13,6 +15,7 @@ pub struct Class {
     pub sub_classes: Vec<Thing>,
     pub properties: Vec<(String, String)>, // (property_iri, source_class_iri)
     pub backlinks: Vec<(String, String, Object)>, // (source_entity, property_iri, value)
+    pub backlink_total: usize,
     pub one_of_values: Vec<String>, // owl:oneOf enumerated individuals
 }
 
@@ -29,6 +32,7 @@ impl Class {
             sub_classes: Vec::new(),
             properties: Vec::new(),
             backlinks: Vec::new(),
+            backlink_total: 0,
             one_of_values: Vec::new(),
         }
     }
@@ -117,11 +121,22 @@ impl Class {
 
         let properties = Self::get_properties(conn, &iri)?;
 
-        let backlinks_result = query::get_by_predicate_object(conn, rdf::TYPE, &iri)?;
-        let backlinks: Vec<(String, String, Object)> = backlinks_result.triples.iter()
-            .map(|t| {
-                (t.subject.clone(), rdf::TYPE.to_string(), Object::Iri(iri.clone()))
-            })
+        let backlink_total: usize = conn.query_row(
+            "SELECT COUNT(DISTINCT subject) FROM triples WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0",
+            rusqlite::params![&iri],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        let mut instance_stmt = conn.prepare(
+            "SELECT DISTINCT subject FROM triples WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0 ORDER BY tx DESC LIMIT ?"
+        ).map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
+        let instance_iris: Vec<String> = instance_stmt
+            .query_map(rusqlite::params![&iri, CLASS_INSTANCE_LIMIT as i64], |row| row.get(0))
+            .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let backlinks: Vec<(String, String, Object)> = instance_iris.into_iter()
+            .map(|subject| (subject, rdf::TYPE.to_string(), Object::Iri(iri.clone())))
             .collect();
 
         let one_of_result = query::get_by_entity_predicate(conn, &iri, owl::ONE_OF)?;
@@ -145,6 +160,7 @@ impl Class {
             sub_classes,
             properties,
             backlinks,
+            backlink_total,
             one_of_values,
         }))
     }

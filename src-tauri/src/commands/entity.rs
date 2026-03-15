@@ -469,41 +469,66 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
         });
     }
 
+    let instance_iris: Vec<String> = class.backlinks.iter()
+        .map(|(s, _, _)| s.clone())
+        .collect();
+
+    let source_things = crate::owl::Thing::get_batch(conn, &instance_iris);
+
+    let source_status_iris = crate::eavto::query::get_first_iri_property_batch(
+        conn, &instance_iris, "foundation:hasStatus",
+    ).unwrap_or_default();
+
+    let unique_status_iris: Vec<String> = source_status_iris.values()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut status_cache: HashMap<String, StatusInfo> = HashMap::new();
+    for status_iri in unique_status_iris {
+        if owl::is_instance_of(conn, &status_iri, "foundation:Status") {
+            let status_thing = crate::owl::Thing::get(conn, &status_iri);
+            let (icon, color) = owl::resolve_status_appearance(conn, &status_iri);
+            status_cache.insert(status_iri.clone(), StatusInfo {
+                iri: status_iri,
+                label: status_thing.label,
+                icon,
+                color,
+            });
+        }
+    }
+
+    let group_total = if class.backlink_total > class.backlinks.len() {
+        Some(class.backlink_total)
+    } else {
+        None
+    };
+
     let mut backlinks = Vec::new();
-    for (source_entity, property_iri, _value_obj) in &class.backlinks {
-        let prop_result = Property::get(conn, property_iri);
-        let (property_label, property_comment) = if let Ok(Some(prop)) = prop_result {
-            (prop.label.unwrap_or_else(|| property_iri.clone()), prop.comment)
-        } else {
-            (property_iri.clone(), None)
-        };
+    for (source_entity, property_iri, _) in &class.backlinks {
+        let source_thing = source_things.get(source_entity)
+            .cloned()
+            .unwrap_or_else(|| crate::owl::Thing::get(conn, source_entity));
 
-        let source_thing = crate::owl::Thing::get(conn, source_entity);
-
-        let (source_class_iri, source_class_label) =
-            match owl::get_iri_property(conn, source_entity, "rdf:type") {
-                Ok(Some(class_iri)) => {
-                    let class_thing = crate::owl::Thing::get(conn, &class_iri);
-                    (Some(class_iri), Some(class_thing.label))
-                }
-                _ => (None, None),
-            };
+        let value_status = source_status_iris.get(source_entity)
+            .and_then(|s| status_cache.get(s))
+            .cloned();
 
         backlinks.push(PropertyValue {
             property: property_iri.clone(),
-            property_label,
-            property_comment,
+            property_label: "type of".to_string(),
+            property_comment: None,
             value: source_entity.clone(),
             value_label: Some(source_thing.label),
             value_icon: source_thing.icon,
             is_object_property: true,
-            source_class: source_class_iri,
-            source_class_label,
+            source_class: Some(class_id.to_string()),
+            source_class_label: None,
             unit: None,
             unit_label: None,
             datatype: None,
-            value_status: resolve_status_for_entity(conn, source_entity),
-            group_total: None,
+            value_status,
+            group_total,
             is_calculated: false,
             formula_error: None,
             is_empty: false,

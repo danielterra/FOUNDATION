@@ -90,6 +90,7 @@ fn learn_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
                 datatype: Some("xsd:string".to_string()),
                 language: None,
             })], "ai")?;
+            super::batch::queue_formula_recalc(iri.to_string());
         }
 
         super::batch::queue_event("entity-updated", json!({"entityId": iri}));

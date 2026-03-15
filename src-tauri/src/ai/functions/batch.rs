@@ -7,14 +7,33 @@ use super::ToolResult;
 
 thread_local! {
     static PENDING_EVENTS: RefCell<Vec<(String, Value)>> = const { RefCell::new(Vec::new()) };
+    static PENDING_PROPERTY_RECALC: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static PENDING_INSTANCE_RECALC: RefCell<Vec<(String, String)>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 pub(super) fn queue_event(name: &str, payload: Value) {
     PENDING_EVENTS.with(|e| e.borrow_mut().push((name.to_string(), payload)));
 }
 
+pub(super) fn queue_formula_recalc(property_iri: String) {
+    PENDING_PROPERTY_RECALC.with(|q| q.borrow_mut().push(property_iri));
+}
+
+pub(super) fn queue_instance_recalc(instance_iri: String, changed_property_iri: String) {
+    PENDING_INSTANCE_RECALC.with(|q| q.borrow_mut().push((instance_iri, changed_property_iri)));
+}
+
 fn take_events() -> Vec<(String, Value)> {
     PENDING_EVENTS.with(|e| e.borrow_mut().drain(..).collect())
+}
+
+fn take_property_recalcs() -> Vec<String> {
+    PENDING_PROPERTY_RECALC.with(|q| q.borrow_mut().drain(..).collect())
+}
+
+fn take_instance_recalcs() -> Vec<(String, String)> {
+    PENDING_INSTANCE_RECALC.with(|q| q.borrow_mut().drain(..).collect())
 }
 
 pub(super) fn run_multi_read(
@@ -134,8 +153,12 @@ pub(super) fn run_atomic(
         for (name, payload) in take_events() {
             app_handle.emit(&name, payload).ok();
         }
+
+        dispatch_formula_recalcs(conn, app_handle);
     } else {
         take_events();
+        take_property_recalcs();
+        take_instance_recalcs();
     }
 
     ToolResult {
@@ -146,5 +169,36 @@ pub(super) fn run_atomic(
         })),
         error: None,
         concept: None,
+    }
+}
+
+fn dispatch_formula_recalcs(conn: &Connection, app: &tauri::AppHandle) {
+    use crate::owl::formula_worker::{FormulaWorker, WorkerCommand};
+    use tauri::Manager;
+
+    let worker = match app.try_state::<FormulaWorker>() {
+        Some(w) => w,
+        None => {
+            take_property_recalcs();
+            take_instance_recalcs();
+            return;
+        }
+    };
+
+    for property_iri in take_property_recalcs() {
+        if let Some(job_id) =
+            crate::owl::formula_worker::cancel_and_create_property_job(conn, &property_iri)
+        {
+            let _ = worker.sender.try_send(WorkerCommand::Enqueue { job_id });
+        }
+    }
+
+    for (instance_iri, changed_property_iri) in take_instance_recalcs() {
+        let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
+            conn, &instance_iri, &changed_property_iri,
+        );
+        for job_id in job_ids {
+            let _ = worker.sender.try_send(WorkerCommand::Enqueue { job_id });
+        }
     }
 }

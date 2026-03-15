@@ -447,7 +447,6 @@ fn create_thing_one(
                     .map(|s| s.to_string())
                     .collect())
                 .unwrap_or_default();
-            // label is always required for creation and is stored as rdfs:label
             provided.insert("rdfs:label".to_string());
             for prop_iri in &required {
                 if !provided.contains(*prop_iri) {
@@ -604,6 +603,7 @@ fn update_thing_one(
 
                 individual.add_property(conn, detail_iri, objects, "ai")?;
                 updated_fields.push(detail_iri.to_string());
+                super::batch::queue_instance_recalc(iri.to_string(), detail_iri.to_string());
             }
         }
 

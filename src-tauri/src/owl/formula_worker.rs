@@ -54,6 +54,7 @@ struct JobRecord {
     class_label: String,
     processed: i64,
     last_offset: i64,
+    instance_iri: Option<String>,
 }
 
 async fn process_job(app: &tauri::AppHandle, db_path: &PathBuf, job_id: &str) {
@@ -75,33 +76,33 @@ async fn process_job(app: &tauri::AppHandle, db_path: &PathBuf, job_id: &str) {
         return;
     }
 
-    let total: i64 = conn.query_row(
-        "SELECT COUNT(DISTINCT subject) FROM triples WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0",
-        rusqlite::params![job.class_iri],
-        |row| row.get(0),
-    ).unwrap_or(0);
+    let class_iri = if job.class_iri.is_empty() {
+        fetch_domain(&conn, &job.property_iri)
+    } else {
+        job.class_iri.clone()
+    };
+
+    let instance_iris: Vec<String> = if let Some(ref inst) = job.instance_iri {
+        vec![inst.clone()]
+    } else {
+        query_class_instances(&conn, &class_iri, job.last_offset)
+    };
+
+    let total: i64 = if job.instance_iri.is_some() {
+        1
+    } else {
+        conn.query_row(
+            "SELECT COUNT(DISTINCT subject) FROM triples \
+             WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0",
+            rusqlite::params![class_iri],
+            |row| row.get(0),
+        ).unwrap_or(0)
+    };
 
     let _ = conn.execute(
         "UPDATE formula_recalc_jobs SET total = ?, updated_at = ? WHERE id = ?",
         rusqlite::params![total, now_millis(), job_id],
     );
-
-    let mut stmt = match conn.prepare(
-        "SELECT DISTINCT subject FROM triples
-         WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0
-         ORDER BY subject
-         LIMIT -1 OFFSET ?"
-    ) {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    let instance_iris: Vec<String> = match stmt.query_map(
-        rusqlite::params![job.class_iri, job.last_offset],
-        |row| row.get(0),
-    ) {
-        Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
-        Err(_) => return,
-    };
 
     let mut processed = job.processed;
     let mut last_offset = job.last_offset;
@@ -126,6 +127,9 @@ async fn process_job(app: &tauri::AppHandle, db_path: &PathBuf, job_id: &str) {
         match evaluate_formula_for_instance(&conn, instance_iri, &job.property_iri) {
             Ok(value) => {
                 store_calculated_value(&conn, instance_iri, &job.property_iri, &value, now_millis());
+                if job.instance_iri.is_some() {
+                    app.emit("entity-updated", serde_json::json!({"entityId": instance_iri})).ok();
+                }
             }
             Err(msg) => {
                 let now = now_millis();
@@ -153,7 +157,7 @@ async fn process_job(app: &tauri::AppHandle, db_path: &PathBuf, job_id: &str) {
                 job_id: job_id.to_string(),
                 property_iri: job.property_iri.clone(),
                 property_label: job.property_label.clone(),
-                class_iri: job.class_iri.clone(),
+                class_iri: class_iri.clone(),
                 class_label: job.class_label.clone(),
                 percent: pct,
                 status: "running".to_string(),
@@ -172,7 +176,7 @@ async fn process_job(app: &tauri::AppHandle, db_path: &PathBuf, job_id: &str) {
         job_id: job_id.to_string(),
         property_iri: job.property_iri.clone(),
         property_label: job.property_label.clone(),
-        class_iri: job.class_iri.clone(),
+        class_iri: class_iri.clone(),
         class_label: job.class_label.clone(),
         percent: last_pct,
         status: final_status.to_string(),
@@ -182,7 +186,8 @@ async fn process_job(app: &tauri::AppHandle, db_path: &PathBuf, job_id: &str) {
 
 fn load_job(conn: &Connection, job_id: &str) -> Option<JobRecord> {
     conn.query_row(
-        "SELECT property_iri, property_label, class_iri, class_label, processed, last_offset, status
+        "SELECT property_iri, property_label, class_iri, class_label, \
+                processed, last_offset, status, instance_iri \
          FROM formula_recalc_jobs WHERE id = ?",
         rusqlite::params![job_id],
         |row| {
@@ -195,11 +200,13 @@ fn load_job(conn: &Connection, job_id: &str) -> Option<JobRecord> {
                 row.get::<_, i64>(4)?,
                 row.get::<_, i64>(5)?,
                 status,
+                row.get::<_, Option<String>>(7)?,
             ))
         },
     )
     .ok()
-    .and_then(|(property_iri, property_label, class_iri, class_label, processed, last_offset, status)| {
+    .and_then(|(property_iri, property_label, class_iri, class_label,
+                processed, last_offset, status, instance_iri)| {
         if status != "pending" {
             return None;
         }
@@ -210,6 +217,7 @@ fn load_job(conn: &Connection, job_id: &str) -> Option<JobRecord> {
             class_label,
             processed,
             last_offset,
+            instance_iri,
         })
     })
 }
@@ -251,6 +259,59 @@ fn store_calculated_value(
     );
 }
 
+fn fetch_label(conn: &Connection, iri: &str) -> String {
+    conn.query_row(
+        "SELECT COALESCE(object_value, '') FROM triples \
+         WHERE subject = ? AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1",
+        rusqlite::params![iri],
+        |row| row.get(0),
+    ).unwrap_or_default()
+}
+
+fn fetch_domain(conn: &Connection, iri: &str) -> String {
+    conn.query_row(
+        "SELECT COALESCE(object, '') FROM triples \
+         WHERE subject = ? AND predicate = 'rdfs:domain' AND retracted = 0 LIMIT 1",
+        rusqlite::params![iri],
+        |row| row.get(0),
+    ).unwrap_or_default()
+}
+
+fn query_class_instances(conn: &Connection, class_iri: &str, offset: i64) -> Vec<String> {
+    conn.prepare(
+        "SELECT DISTINCT subject FROM triples
+         WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0
+         ORDER BY subject
+         LIMIT -1 OFFSET ?",
+    )
+    .map(|mut stmt| {
+        stmt.query_map(rusqlite::params![class_iri, offset], |row| row.get::<_, String>(0))
+            .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    })
+    .unwrap_or_default()
+}
+
+fn query_formula_properties_by_reference(
+    conn: &Connection,
+    placeholder: &str,
+) -> Vec<(String, String)> {
+    conn.prepare(
+        "SELECT subject, object_value FROM triples
+         WHERE predicate = 'foundation:formula' AND retracted = 0",
+    )
+    .map(|mut stmt| {
+        stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map(|rows| {
+                rows.filter_map(|r| r.ok())
+                    .filter(|(_, formula)| formula.contains(placeholder))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    })
+    .unwrap_or_default()
+}
+
 fn cancel_jobs_for_property(db_path: &PathBuf, property_iri: &str) {
     if let Ok(conn) = Connection::open(db_path) {
         let _ = conn.execute(
@@ -259,6 +320,78 @@ fn cancel_jobs_for_property(db_path: &PathBuf, property_iri: &str) {
             rusqlite::params![now_millis(), property_iri],
         );
     }
+}
+
+pub fn cancel_and_create_property_job(
+    conn: &Connection,
+    property_iri: &str,
+) -> Option<String> {
+    let _ = conn.execute(
+        "UPDATE formula_recalc_jobs SET status = 'cancelled', updated_at = ?
+         WHERE property_iri = ? AND instance_iri IS NULL AND status IN ('pending', 'running')",
+        rusqlite::params![now_millis(), property_iri],
+    );
+
+    let property_label = fetch_label(conn, property_iri);
+    let class_iri = fetch_domain(conn, property_iri);
+    let class_label = if class_iri.is_empty() {
+        String::new()
+    } else {
+        fetch_label(conn, &class_iri)
+    };
+
+    let now = now_millis();
+    let job_id = format!("job_{}_{}", now, property_iri.replace(':', "_"));
+    let result = conn.execute(
+        "INSERT INTO formula_recalc_jobs
+         (id, property_iri, property_label, class_iri, class_label, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
+        rusqlite::params![
+            job_id, property_iri, property_label, class_iri, class_label, now, now,
+        ],
+    );
+
+    result.ok().map(|_| job_id)
+}
+
+pub fn create_instance_recalc_jobs(
+    conn: &Connection,
+    instance_iri: &str,
+    changed_property_iri: &str,
+) -> Vec<String> {
+    let placeholder = format!("{{{{{}}}}}", changed_property_iri);
+    let formula_rows = query_formula_properties_by_reference(conn, &placeholder);
+
+    let now = now_millis();
+    let mut job_ids = Vec::new();
+
+    for (formula_prop_iri, _) in formula_rows {
+        let property_label = fetch_label(conn, &formula_prop_iri);
+        let class_iri = fetch_domain(conn, &formula_prop_iri);
+        let class_label = if class_iri.is_empty() {
+            String::new()
+        } else {
+            fetch_label(conn, &class_iri)
+        };
+
+        let job_id = format!("job_{}_{}", now, formula_prop_iri.replace(':', "_"));
+        let ok = conn.execute(
+            "INSERT INTO formula_recalc_jobs
+             (id, property_iri, property_label, class_iri, class_label,
+              instance_iri, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            rusqlite::params![
+                job_id, formula_prop_iri, property_label, class_iri, class_label,
+                instance_iri, now, now,
+            ],
+        ).is_ok();
+
+        if ok {
+            job_ids.push(job_id);
+        }
+    }
+
+    job_ids
 }
 
 #[cfg(test)]
@@ -280,7 +413,8 @@ mod tests {
                 last_offset     INTEGER NOT NULL DEFAULT 0,
                 error_message   TEXT,
                 created_at      INTEGER NOT NULL,
-                updated_at      INTEGER NOT NULL
+                updated_at      INTEGER NOT NULL,
+                instance_iri    TEXT
             );
             CREATE TABLE formula_instance_errors (
                 instance_iri    TEXT NOT NULL,
@@ -319,8 +453,6 @@ mod tests {
             rusqlite::params![id, property_iri, class_iri, status],
         ).unwrap();
     }
-
-    // ── load_job ─────────────────────────────────────────────────────────────
 
     #[test]
     fn test_load_job_returns_none_when_not_found() {
@@ -366,8 +498,6 @@ mod tests {
 
         assert!(load_job(&conn, "job1").is_none());
     }
-
-    // ── store_calculated_value ────────────────────────────────────────────────
 
     #[test]
     fn test_store_calculated_value_inserts_new_triple() {
@@ -435,8 +565,6 @@ mod tests {
         ).unwrap();
         assert_eq!(count, 0);
     }
-
-    // ── now_millis ────────────────────────────────────────────────────────────
 
     #[test]
     fn test_now_millis_is_positive() {

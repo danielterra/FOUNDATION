@@ -268,6 +268,16 @@ fn run_migrations(conn: &Connection) -> Result<(), DbError> {
             PRIMARY KEY (instance_iri, property_iri)
         );
     ")?;
+
+    let has_instance_iri: bool = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('formula_recalc_jobs') WHERE name = 'instance_iri'",
+        [],
+        |row| row.get::<_, i64>(0),
+    ).unwrap_or(0) > 0;
+    if !has_instance_iri {
+        conn.execute_batch("ALTER TABLE formula_recalc_jobs ADD COLUMN instance_iri TEXT")?;
+    }
+
     Ok(())
 }
 
