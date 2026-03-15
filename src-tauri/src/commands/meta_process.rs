@@ -17,6 +17,8 @@ pub struct GraphNode {
     pub condition_operator: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub condition_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +119,14 @@ pub async fn meta_process__get_graph(
                 None
             };
 
+            let is_boundary = node_type == "MetaBoundaryEvent";
+            let event_type = if is_boundary {
+                get_literal_property(conn, &current, "foundation:eventType")
+                    .map_err(|e| e.to_string())?
+            } else {
+                None
+            };
+
             nodes.push(GraphNode {
                 id: current.clone(),
                 node_type: node_type.clone(),
@@ -125,11 +135,12 @@ pub async fn meta_process__get_graph(
                 status,
                 condition_operator,
                 condition_value,
+                event_type,
             });
 
             let is_gateway = matches!(
                 node_type.as_str(),
-                "MetaExclusiveGateway" | "MetaParallelGateway" | "MetaEventBasedGateway"
+                "MetaExclusiveGateway" | "MetaEventBasedGateway" | "MetaInclusiveGateway"
             );
 
             let next_targets: Vec<String> = if is_gateway {
@@ -149,6 +160,27 @@ pub async fn meta_process__get_graph(
                 });
                 if !visited.contains(&target) {
                     queue.push_back(target);
+                }
+            }
+
+            let is_task = matches!(
+                node_type.as_str(),
+                "MetaSystemTask" | "MetaUserTask" | "MetaSubProcess"
+            );
+            if is_task {
+                let boundary_events = get_all_iri_properties(conn, &current, "foundation:hasBoundaryEvent")
+                    .map_err(|e| e.to_string())?;
+                for be in boundary_events {
+                    edge_counter += 1;
+                    edges.push(GraphEdge {
+                        id: format!("e{}", edge_counter),
+                        source: current.clone(),
+                        target: be.clone(),
+                        label: None,
+                    });
+                    if !visited.contains(&be) {
+                        queue.push_back(be);
+                    }
                 }
             }
         }

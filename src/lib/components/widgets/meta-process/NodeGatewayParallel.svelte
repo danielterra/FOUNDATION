@@ -6,8 +6,7 @@
 
 <div class="node-wrap">
   <div class="node gateway-parallel">
-    <span class="material-symbols-outlined icon">call_split</span>
-    <span class="label">{data.label}</span>
+    <span class="material-symbols-outlined icon">add</span>
   </div>
   <StatusBadge status={data.status} />
 </div>
@@ -20,14 +19,11 @@
   }
   .node {
     display: flex;
-    flex-direction: row;
     align-items: center;
     justify-content: center;
-    gap: 2px;
-    padding: 8px 14px;
-    border-radius: 6px;
-    min-width: 120px;
-    text-align: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
     cursor: pointer;
   }
   .gateway-parallel {
@@ -36,11 +32,6 @@
     color: #ce93d8;
   }
   .icon {
-    font-size: 14px;
-  }
-  .label {
-    font-size: 11px;
-    font-weight: 500;
-    line-height: 1.3;
+    font-size: 22px;
   }
 </style>

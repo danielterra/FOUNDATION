@@ -8,9 +8,11 @@ const NODE_SIZES = {
   MetaUserTask:            { width: 180, height: 55 },
   MetaSubProcess:          { width: 190, height: 60 },
   MetaExclusiveGateway:    { width: 120, height: 80 },
-  MetaParallelGateway:     { width: 140, height: 80 },
+  MetaParallelGateway:     { width: 44,  height: 44 },
   MetaEventBasedGateway:   { width: 90,  height: 90 },
   MetaGatewayCondition:    { width: 140, height: 44 },
+  MetaInclusiveGateway:    { width: 120, height: 55 },
+  MetaBoundaryEvent:       { width: 150, height: 50 },
 }
 
 const STATUS_BADGE_HEIGHT = 30

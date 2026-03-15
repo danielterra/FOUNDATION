@@ -2,11 +2,20 @@
   import { Handle, Position } from '@xyflow/svelte'
   import StatusBadge from './StatusBadge.svelte'
   let { data } = $props()
+
+  const ICONS = {
+    error:   'error',
+    timer:   'schedule',
+    signal:  'cell_tower',
+    message: 'mail',
+  }
+
+  const icon = $derived(ICONS[data.eventType] ?? 'warning')
 </script>
 
 <div class="node-wrap">
-  <div class="node gateway-event-based">
-    <span class="material-symbols-outlined icon">sensors</span>
+  <div class="node boundary-event">
+    <span class="material-symbols-outlined icon">{icon}</span>
     <span class="label">{data.label}</span>
   </div>
   <StatusBadge status={data.status} />
@@ -23,24 +32,24 @@
     flex-direction: row;
     align-items: center;
     justify-content: center;
-    gap: 2px;
-    padding: 8px 14px;
-    border-radius: 6px;
-    min-width: 110px;
+    gap: 4px;
+    padding: 6px 12px;
+    border-radius: 50px;
+    min-width: 120px;
     text-align: center;
     cursor: pointer;
   }
-  .gateway-event-based {
-    background: #1a1a2e;
-    border: 2px solid #7B68EE;
-    color: #b0a8ff;
+  .boundary-event {
+    background: #1c0f0f;
+    border: 2px dashed #EF5350;
+    color: #ef9a9a;
   }
   .icon {
-    font-size: 14px;
+    font-size: 15px;
   }
   .label {
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 500;
     line-height: 1.3;
   }
 </style>
