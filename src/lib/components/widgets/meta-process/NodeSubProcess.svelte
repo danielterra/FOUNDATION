@@ -6,10 +6,8 @@
 
 <div class="node-wrap">
   <div class="node sub-process">
+    <span class="material-symbols-outlined icon">account_tree</span>
     <span class="label">{data.label}</span>
-    {#if data.invokesProcess}
-      <span class="open-hint">⊞ open</span>
-    {/if}
   </div>
   <StatusBadge status={data.status} />
 </div>
@@ -22,7 +20,7 @@
   }
   .node {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
     gap: 2px;
@@ -39,14 +37,12 @@
     border: 2px solid #00ACC1;
     color: #80deea;
   }
+  .icon {
+    font-size: 16px;
+  }
   .label {
     font-size: 12px;
     font-weight: 500;
     line-height: 1.3;
-  }
-  .open-hint {
-    font-size: 9px;
-    opacity: 0.5;
-    margin-top: 2px;
   }
 </style>

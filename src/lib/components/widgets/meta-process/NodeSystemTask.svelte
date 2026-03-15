@@ -6,6 +6,7 @@
 
 <div class="node-wrap">
   <div class="node system-task">
+    <span class="material-symbols-outlined icon">memory</span>
     <span class="label">{data.label}</span>
   </div>
   <StatusBadge status={data.status} />
@@ -19,7 +20,7 @@
   }
   .node {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
     gap: 2px;
@@ -33,6 +34,9 @@
     background: #0d2744;
     border: 2px solid #1E88E5;
     color: #90caf9;
+  }
+  .icon {
+    font-size: 16px;
   }
   .label {
     font-size: 12px;

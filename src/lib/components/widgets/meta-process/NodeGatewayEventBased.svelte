@@ -6,9 +6,8 @@
 
 <div class="node-wrap">
   <div class="node gateway-event-based">
-    <div class="inner-ring">
-      <span class="label">{data.label}</span>
-    </div>
+    <span class="material-symbols-outlined icon">bolt</span>
+    <span class="label">{data.label}</span>
   </div>
   <StatusBadge status={data.status} />
 </div>
@@ -21,30 +20,27 @@
   }
   .node {
     display: flex;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
-    width: 90px;
-    height: 90px;
-    border-radius: 50%;
+    gap: 2px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    min-width: 110px;
+    text-align: center;
     cursor: pointer;
+  }
+  .gateway-event-based {
     background: #1a1a2e;
     border: 2px solid #7B68EE;
+    color: #b0a8ff;
   }
-  .inner-ring {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 74px;
-    height: 74px;
-    border-radius: 50%;
-    border: 2px solid #7B68EE;
-    text-align: center;
-    padding: 6px;
+  .icon {
+    font-size: 14px;
   }
   .label {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
-    color: #b0a8ff;
     line-height: 1.3;
   }
 </style>

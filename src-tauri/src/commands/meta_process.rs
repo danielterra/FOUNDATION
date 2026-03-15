@@ -39,24 +39,23 @@ fn extract_local_name(iri: &str) -> &str {
         .unwrap_or(iri)
 }
 
-/// Build a map of target_iri -> edge_label for a gateway node by reading its hasCondition instances.
-fn build_condition_labels(
+fn resolve_gateway_edges(
     conn: &crate::owl::Connection,
     node_iri: &str,
-) -> Result<std::collections::HashMap<String, String>, String> {
-    let mut map = std::collections::HashMap::new();
-    let condition_iris = get_all_iri_properties(conn, node_iri, "foundation:hasCondition")
+) -> Result<Vec<(String, Option<String>)>, String> {
+    let condition_iris = get_all_iri_properties(conn, node_iri, "foundation:gatewayCondition")
         .map_err(|e| e.to_string())?;
+    let mut edges = Vec::new();
     for cond_iri in condition_iris {
-        let target = get_iri_property(conn, &cond_iri, "foundation:conditionTarget")
+        let target = get_iri_property(conn, &cond_iri, "foundation:nextNode")
             .map_err(|e| e.to_string())?;
-        let label = get_literal_property(conn, &cond_iri, rdfs::LABEL)
+        let label = get_literal_property(conn, &cond_iri, "foundation:conditionExpression")
             .map_err(|e| e.to_string())?;
-        if let (Some(target), Some(label)) = (target, label) {
-            map.insert(target, label);
+        if let Some(target) = target {
+            edges.push((target, label));
         }
     }
-    Ok(map)
+    Ok(edges)
 }
 
 #[tauri::command]
@@ -119,24 +118,28 @@ pub async fn meta_process__get_graph(
                 status,
             });
 
-            let is_gateway = node_type == "MetaExclusiveGateway" || node_type == "MetaParallelGateway";
-            let condition_labels = if is_gateway {
-                build_condition_labels(conn, &current)?
+            let is_gateway = matches!(
+                node_type.as_str(),
+                "MetaExclusiveGateway" | "MetaParallelGateway" | "MetaEventBasedGateway"
+            );
+
+            let next_edges: Vec<(String, Option<String>)> = if is_gateway {
+                resolve_gateway_edges(conn, &current)?
             } else {
-                std::collections::HashMap::new()
+                get_all_iri_properties(conn, &current, "foundation:nextNode")
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .map(|t| (t, None))
+                    .collect()
             };
 
-            let next_nodes = get_all_iri_properties(conn, &current, "foundation:nextNode")
-                .map_err(|e| e.to_string())?;
-
-            for target in next_nodes {
+            for (target, label) in next_edges {
                 edge_counter += 1;
-                let edge_label = condition_labels.get(&target).cloned();
                 edges.push(GraphEdge {
                     id: format!("e{}", edge_counter),
                     source: current.clone(),
                     target: target.clone(),
-                    label: edge_label,
+                    label,
                 });
                 if !visited.contains(&target) {
                     queue.push_back(target);

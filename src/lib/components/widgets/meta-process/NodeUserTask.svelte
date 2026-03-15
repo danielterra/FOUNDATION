@@ -6,6 +6,7 @@
 
 <div class="node-wrap">
   <div class="node user-task">
+    <span class="material-symbols-outlined icon">person</span>
     <span class="label">{data.label}</span>
   </div>
   <StatusBadge status={data.status} />
@@ -19,7 +20,7 @@
   }
   .node {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
     gap: 2px;
@@ -33,6 +34,9 @@
     background: #3a1f00;
     border: 2px solid #FB8C00;
     color: #ffcc80;
+  }
+  .icon {
+    font-size: 16px;
   }
   .label {
     font-size: 12px;

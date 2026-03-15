@@ -6,6 +6,7 @@
 
 <div class="node-wrap">
   <div class="node start-event">
+    <span class="material-symbols-outlined icon">play_circle</span>
     <span class="label">{data.label}</span>
   </div>
   <StatusBadge status={data.status} />
@@ -19,7 +20,7 @@
   }
   .node {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
     gap: 2px;
@@ -33,6 +34,9 @@
     background: #1b3a1c;
     border: 2px solid #43A047;
     color: #a5d6a7;
+  }
+  .icon {
+    font-size: 16px;
   }
   .label {
     font-size: 12px;
