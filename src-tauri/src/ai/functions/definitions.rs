@@ -15,7 +15,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "learn_concepts".to_string(),
             array_mode: true,
-            description: "Create or update a concept (a class of things). Without 'iri' creates; with existing 'iri' updates. Use English labels.".to_string(),
+            description: "Use when defining or modifying an ontology class. Search with remember first to avoid duplicates. Without 'iri' creates; with existing 'iri' updates.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -96,7 +96,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "learn_things".to_string(),
             array_mode: true,
-            description: "Create or update a thing (instance of a concept). Without 'iri' creates; with 'iri' updates. Search first with remember_things to avoid duplicates.".to_string(),
+            description: "Use when storing a new instance of a concept or updating an existing one. Search with remember first to avoid duplicates.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -167,10 +167,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "learn_properties".to_string(),
             array_mode: true,
-            description: concat!(
-                "Create or update an OWL property (reusable across multiple concepts).",
-                " Domains are managed exclusively via learn_concepts upsert_details.",
-            ).to_string(),
+            description: "Use when a property is shared across multiple concept domains. Domains are managed exclusively via learn_concepts upsert_details.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -230,12 +227,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "remember".to_string(),
             array_mode: false,
-            description: concat!(
-                "Search across classes and individuals. ALL query tokens must match (AND semantics).",
-                " Without query: lists entities. With concept_iri: scoped to that class.",
-                " With filters: filters by property values (requires concept_iri).",
-                " Each result includes type ('class'|'individual'), matchedProperties, conceptType, and status.",
-            ).to_string(),
+            description: "Use when searching for classes or instances by label, type, or property value. ALL query tokens must match (AND). Each result includes type, matchedProperties, conceptType, and status.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "query".to_string(),
@@ -302,7 +294,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "get_concepts".to_string(),
             array_mode: false,
-            description: "Batch-fetch full concept (class) details by IRI array. Returns properties, connections, allowedStatuses, subclasses, required fields, and incoming properties for each.".to_string(),
+            description: "Use when you have concept IRIs and need their full schema — properties, subclasses, allowed statuses, and incoming properties.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iris".to_string(),
@@ -319,7 +311,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "get_things".to_string(),
             array_mode: false,
-            description: "Batch-fetch full individual (thing) details by IRI array. Returns all properties, backlinks, allowedStatuses, and requiredFields for each.".to_string(),
+            description: "Use when you have thing IRIs and need their full details — all property values, backlinks, and allowed statuses.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iris".to_string(),
@@ -336,7 +328,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "remember_properties".to_string(),
             array_mode: true,
-            description: "Fetch or search OWL properties. With 'iri': full details (type, domains, ranges, unit, formula). Without 'iri': keyword search across all properties.".to_string(),
+            description: "Use when searching for existing OWL properties or loading full property details by IRI.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -374,7 +366,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "forget_concepts".to_string(),
             array_mode: true,
-            description: "Forget a concept definition (does not delete the things that belong to it).".to_string(),
+            description: "Use to remove a concept definition. Does not delete its instances.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -388,7 +380,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "forget_properties".to_string(),
             array_mode: true,
-            description: "Permanently remove an OWL property definition and all its triples.".to_string(),
+            description: "Use to permanently remove an OWL property and all its asserted values.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -402,7 +394,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "forget_things".to_string(),
             array_mode: true,
-            description: "Forget a thing or remove a detail value. iri only: forgets thing. + detail_iri: removes all values of that detail. + value: removes that specific value only.".to_string(),
+            description: "Use to delete a thing or remove specific property values from it.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
@@ -434,14 +426,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "get_concept_graph".to_string(),
             array_mode: false,
-            description: concat!(
-                "Traverses the ontology graph bidirectionally from a root concept class up to max_depth levels.",
-                " Outbound: follows properties where the concept is the domain to their range classes.",
-                " Inbound: follows properties where the concept is the range to their domain classes.",
-                " Returns rootConcept (IRI), depthReached (integer),",
-                " graphNodes (all encountered concepts with IRI, label, icon),",
-                " and graphEdges (all traversed relationships with property IRI, propertyLabel, source, target).",
-            ).to_string(),
+            description: "Use when exploring how a concept class connects to others — which classes link to it and which it links to via object properties. Prefer over get_concepts when you need the relationship graph, not just the schema.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "concept_iri".to_string(),
@@ -463,12 +448,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "get_process".to_string(),
             array_mode: false,
-            description: concat!(
-                "Traverses a MetaProcess flow graph and returns the full structure in one call.",
-                " Follows nextNode, gatewayCondition, and boundaryCondition edges from the start event without depth limit.",
-                " Returns processDetails (label, comment, status), graphNodes (all flow nodes with type, label, and relevant properties),",
-                " and graphEdges (all connections with property IRI, source, and target).",
-            ).to_string(),
+            description: "Use when you need the complete flow graph of a MetaProcess — all nodes and edges from start to end, including gateways, conditions, and boundary events.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "process_iri".to_string(),
@@ -486,7 +466,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "run_process".to_string(),
             array_mode: false,
-            description: "Trigger a BPMN process by IRI. The process runs asynchronously in the background. Returns immediately with confirmation.".to_string(),
+            description: "Use to start a BPMN process asynchronously. Returns immediately; execution happens in the background.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "process_iri".to_string(),
@@ -516,11 +496,8 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             name: "blackboard_update".to_string(),
             array_mode: true,
             description: concat!(
-                "Update the blackboard.",
-                " 'add': add a widget (needs widget_type + params).",
-                " 'remove': remove a widget (params.widget_id required).",
-                " 'replace': clear all widgets; optionally add new ones if widget_type+params provided.",
-                " Widgets are live — no need to call after learn_things changes; entities update automatically.",
+                "Use to add, remove, or replace widgets on the user's blackboard. Call blackboard_state first to avoid duplicates.",
+                " Widgets are live — no need to refresh after learn_things changes.",
                 " Widget type IDs: 'inspector' (any entity), 'meta_process' (MetaProcess), 'mermaid' (MermaidDiagram), 'process_status' (MetaProcess), 'connector_credential' (ExternalServiceConnector), 'connector_manager' (ExternalServiceConnector).",
             ).to_string(),
             parameters: vec![
