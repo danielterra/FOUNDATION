@@ -1,4 +1,4 @@
-use super::learn_concept_one;
+use super::{learn_concept_one, delete_concept_one};
 use crate::eavto::{store, Triple, Object};
 use crate::eavto::test_helpers::setup_test_db;
 
@@ -383,6 +383,58 @@ fn test_forget_concept_allowed_when_no_subclasses() {
     };
     let result = execute_tool(&mut conn, &delete_call, None);
     assert!(result.success, "deleting a leaf concept must succeed; got: {:?}", result.error);
+}
+
+#[test]
+fn test_forget_concept_cascades_deletes_instances() {
+    let mut conn = setup_test_db();
+
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:Widget", "rdf:type", Object::Iri("owl:Class".to_string())),
+        Triple::new("foundation:Widget", "rdfs:label", Object::Literal {
+            value: "Widget".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+        }),
+        Triple::new("foundation:Widget_1", "rdf:type", Object::Iri("foundation:Widget".to_string())),
+        Triple::new("foundation:Widget_1", "rdfs:label", Object::Literal {
+            value: "First Widget".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+        }),
+        Triple::new("foundation:Widget_2", "rdf:type", Object::Iri("foundation:Widget".to_string())),
+        Triple::new("foundation:Widget_2", "rdfs:label", Object::Literal {
+            value: "Second Widget".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+        }),
+    ], "test").unwrap();
+
+    let result = delete_concept_one(&mut conn, &serde_json::json!({"iri": "foundation:Widget"}));
+    assert!(result.success, "cascade delete must succeed; got: {:?}", result.error);
+
+    let deleted = result.result.unwrap();
+    assert_eq!(deleted["deleted_instances"], 2, "must report 2 deleted instances");
+
+    let class = crate::owl::Class::get(&conn, "foundation:Widget").unwrap();
+    assert!(class.is_none(), "concept must be gone after deletion");
+
+    let inst1 = crate::owl::Individual::get(&conn, "foundation:Widget_1").unwrap();
+    assert!(inst1.is_none(), "instance 1 must be deleted");
+    let inst2 = crate::owl::Individual::get(&conn, "foundation:Widget_2").unwrap();
+    assert!(inst2.is_none(), "instance 2 must be deleted");
+}
+
+#[test]
+fn test_forget_concept_no_instances_returns_zero_deleted() {
+    let mut conn = setup_test_db();
+
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:EmptyConcept", "rdf:type", Object::Iri("owl:Class".to_string())),
+        Triple::new("foundation:EmptyConcept", "rdfs:label", Object::Literal {
+            value: "Empty Concept".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+        }),
+    ], "test").unwrap();
+
+    let result = delete_concept_one(&mut conn, &serde_json::json!({"iri": "foundation:EmptyConcept"}));
+    assert!(result.success, "deleting concept with no instances must succeed; got: {:?}", result.error);
+
+    let deleted = result.result.unwrap();
+    assert_eq!(deleted["deleted_instances"], 0, "must report 0 deleted instances");
 }
 
 #[test]

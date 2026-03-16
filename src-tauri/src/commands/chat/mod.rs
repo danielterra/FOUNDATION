@@ -803,6 +803,27 @@ pub async fn chat__list_conversations(
 }
 
 #[tauri::command]
+pub async fn chat__get_conversation_agent(
+    conversation_id: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<serde_json::Value, String> {
+    executor.read(move |conn| {
+        let agent_iri = crate::owl::get_iri_property(conn, &conversation_id, "foundation:handledBy")
+            .map_err(|e| format!("Failed to get agent: {}", e))?
+            .ok_or_else(|| format!("Conversation {} has no handledBy agent", conversation_id))?;
+
+        let label = crate::owl::get_literal_property(conn, &agent_iri, "rdfs:label")
+            .ok()
+            .flatten();
+        let icon = crate::owl::get_literal_property(conn, &agent_iri, "foundation:icon")
+            .ok()
+            .flatten();
+
+        Ok::<_, String>(serde_json::json!({ "iri": agent_iri, "label": label, "icon": icon }))
+    }).await
+}
+
+#[tauri::command]
 pub async fn chat__rename_conversation(
     conversation_id: String,
     label: String,

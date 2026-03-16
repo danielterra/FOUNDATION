@@ -625,10 +625,10 @@ fn test_find_entities_with_property_empty_when_no_match() {
 }
 
 #[test]
-fn test_validate_allowed_status_passes_when_no_restriction() {
+fn test_validate_allowed_status_fails_when_no_statuses_configured() {
     let conn = setup_test_db();
-    // No allowedStatus triples → any status is accepted
-    validate_allowed_status(&conn, "foundation:Task", "foundation:Active").unwrap();
+    let result = validate_allowed_status(&conn, "foundation:Task", "foundation:Active");
+    assert!(result.is_err(), "concept with no allowedStatus must return an error");
 }
 
 #[test]

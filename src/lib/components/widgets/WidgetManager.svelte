@@ -12,12 +12,11 @@
   import MetaProcessWidget from './MetaProcessWidget.svelte';
 
   const BASE_WIDGET_Z_INDEX = 100;
-  const CHAT_PANEL_WIDTH_RATIO = 0.3;
-  const CHAT_PANEL_MIN_WIDTH = 500;
   const WIDGET_FLY_DURATION = 600;
   const MINIMIZED_HEIGHT = 70;
   const MIN_WIDGET_WIDTH = 200;
   const MIN_WIDGET_HEIGHT = 100;
+  const TOP_BAR_HEIGHT = 44;
 
   let widgets = $state([]);
   let unlisteners = [];
@@ -29,11 +28,17 @@
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
 
+  function constrainSize(size) {
+    return {
+      width: Math.min(size.width, Math.max(MIN_WIDGET_WIDTH, viewportWidth)),
+      height: Math.min(size.height, Math.max(MIN_WIDGET_HEIGHT, viewportHeight))
+    };
+  }
+
   function constrainToBounds(position, size, displayHeight) {
     const minX = 0;
-    const minY = 0;
-    const chatWidth = Math.max(viewportWidth * CHAT_PANEL_WIDTH_RATIO, CHAT_PANEL_MIN_WIDTH);
-    const maxX = viewportWidth - chatWidth - size.width;
+    const minY = TOP_BAR_HEIGHT;
+    const maxX = viewportWidth - size.width;
     const maxY = viewportHeight - (displayHeight ?? size.height);
 
     return {
@@ -50,10 +55,20 @@
     viewportWidth = window.innerWidth;
     viewportHeight = window.innerHeight;
 
-    widgets = widgets.map(w => ({
-      ...w,
-      position: constrainToBounds(w.position, w.size, displayHeight(w))
-    }));
+    widgets = widgets.map(w => {
+      const constrainedSize = constrainSize(w.size);
+      if (constrainedSize.width !== w.size.width || constrainedSize.height !== w.size.height) {
+        invoke('widget_blackboard__update_widget_size', {
+          widgetId: w.id,
+          size: constrainedSize
+        }).catch(error => console.error('Failed to update widget size:', error));
+      }
+      return {
+        ...w,
+        size: constrainedSize,
+        position: constrainToBounds(w.position, constrainedSize, displayHeight(w))
+      };
+    });
   }
 
   async function loadWidgets() {
@@ -166,13 +181,13 @@
     });
   }
 
-  function minimizeAll() {
+  export function minimizeAll() {
     widgets.forEach(w => {
       if (w.window_state !== 'minimized') updateWidgetWindowState(w.id, 'minimized');
     });
   }
 
-  function expandAll() {
+  export function expandAll() {
     widgets.forEach(w => {
       if (w.window_state !== 'normal') updateWidgetWindowState(w.id, 'normal');
     });
@@ -221,20 +236,7 @@
       widgets = [];
     });
 
-    const unlistenEntityCreated = await listen('entity-created', async (event) => {
-      try {
-        await invoke('widget_blackboard__add_widget', {
-          widgetType: 'inspector',
-          entityId: event.payload.entityId,
-          position: null,
-          size: null
-        });
-      } catch (error) {
-        console.error('Failed to open inspector for new entity:', error);
-      }
-    });
-
-    unlisteners = [unlistenAdded, unlistenRemoved, unlistenCleared, unlistenEntityCreated];
+    unlisteners = [unlistenAdded, unlistenRemoved, unlistenCleared];
 
     document.addEventListener('mousemove', onDrag);
     document.addEventListener('mouseup', stopDrag);
@@ -252,16 +254,6 @@
 
 <svelte:window />
 
-{#if widgets.length > 0}
-  <div class="canvas-controls">
-    <button class="canvas-btn" onclick={minimizeAll} title="Minimize all">
-      <span class="material-symbols-outlined">collapse_all</span>
-    </button>
-    <button class="canvas-btn" onclick={expandAll} title="Expand all">
-      <span class="material-symbols-outlined">expand_all</span>
-    </button>
-  </div>
-{/if}
 
 {#each widgets as widget (widget.id)}
   <div
@@ -353,36 +345,4 @@
     cursor: grabbing;
   }
 
-  .canvas-controls {
-    position: absolute;
-    top: 12px;
-    left: 12px;
-    z-index: 50;
-    display: flex;
-    gap: 4px;
-  }
-
-  .canvas-btn {
-    background: color-mix(in srgb, var(--color-black) 80%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-    border-radius: 8px;
-    padding: 6px;
-    cursor: pointer;
-    color: var(--color-interactive);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    backdrop-filter: blur(12px);
-    transition: all 0.15s;
-  }
-
-  .canvas-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
-    color: var(--color-neutral-active);
-    border-color: color-mix(in srgb, var(--color-interactive) 40%, transparent);
-  }
-
-  .canvas-btn .material-symbols-outlined {
-    font-size: 18px;
-  }
 </style>

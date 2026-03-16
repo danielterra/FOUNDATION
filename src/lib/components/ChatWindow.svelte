@@ -1,6 +1,5 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
-	import { callMcpTool } from '$lib/utils/mcp';
 	import { onMount } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
@@ -195,14 +194,8 @@
 
 	async function loadConversationAgent(conversationIri) {
 		try {
-			const convResult = await callMcpTool('get_things', { iris: [conversationIri] });
-			const conv = convResult.result?.things?.[0];
-			const agentIri = conv?.properties?.find(p => p.property === 'foundation:handledBy')?.value;
-			if (!agentIri) { conversationAgent = null; return; }
-
-			const agentResult = await callMcpTool('get_things', { iris: [agentIri] });
-			const agent = agentResult.result?.things?.[0];
-			conversationAgent = { iri: agentIri, label: agent?.label, icon: agent?.icon };
+			const agent = await invoke('chat__get_conversation_agent', { conversationId: conversationIri });
+			conversationAgent = { iri: agent.iri, label: agent.label, icon: agent.icon };
 		} catch {
 			conversationAgent = null;
 		}
@@ -613,9 +606,7 @@
 
 </script>
 
-<!-- Chat panel (always visible when isOpen is true) -->
-{#if isOpen}
-	<div class="chat-panel">
+<div class="chat-panel">
 		<div class="chat-header">
 			<div class="chat-header-left">
 				<button class="agent-avatar" onclick={openAgentInspector} title={conversationAgent ? `Open ${conversationAgent.label} in Inspector` : 'AI Assistant'}>
@@ -719,7 +710,6 @@
 				{/if}
 		</div>
 	</div>
-{/if}
 
 <style>
 	/* Chat Panel - Fixed Right Side */
@@ -728,8 +718,8 @@
 		height: 100%;
 		display: flex;
 		flex-direction: column;
-		background: color-mix(in srgb, var(--color-black) 40%, transparent);
-		backdrop-filter: blur(10px);
+		background: color-mix(in srgb, var(--color-black) 50%, transparent);
+		backdrop-filter: blur(5px);
 	}
 
 	.chat-header {

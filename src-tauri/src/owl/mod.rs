@@ -381,7 +381,7 @@ pub fn find_entities_with_property(
 }
 
 /// Validates that `status_iri` is in the `foundation:allowedStatus` list of `concept_iri`.
-/// If the concept has no `allowedStatus` triples, any status is accepted.
+/// Returns an error if the concept has no configured statuses, or if the status is not allowed.
 pub fn validate_allowed_status(
     conn: &Connection,
     concept_iri: &str,
@@ -390,16 +390,32 @@ pub fn validate_allowed_status(
     use crate::eavto::query;
     let result = query::get_by_entity_predicate(conn, concept_iri, "foundation:allowedStatus")?;
     if result.triples.is_empty() {
-        return Ok(());
-    }
-    let allowed: Vec<&str> = result.triples.iter()
-        .filter_map(|t| t.object.as_iri())
-        .collect();
-    if !allowed.contains(&status_iri) {
-        let allowed_list = allowed.join(", ");
+        let concept_label = get_literal_property(conn, concept_iri, "rdfs:label")?
+            .unwrap_or_else(|| concept_iri.to_string());
         return Err(OwlError::ValidationError(format!(
-            "Status '{}' is not allowed for concept '{}'. Allowed statuses: {}",
-            status_iri, concept_iri, allowed_list
+            "Concept '{}' has no statuses configured. Every concept must have at least one allowed status. Use learn_concepts to add allowedStatuses to '{}'.",
+            concept_label, concept_iri
+        )));
+    }
+    let allowed_iris: Vec<String> = result.triples.iter()
+        .filter_map(|t| t.object.as_iri())
+        .map(|s| s.to_string())
+        .collect();
+    if !allowed_iris.iter().any(|s| s == status_iri) {
+        let allowed_labels: Vec<String> = allowed_iris.iter()
+            .map(|iri| {
+                get_literal_property(conn, iri, "rdfs:label")
+                    .ok()
+                    .flatten()
+                    .map(|label| format!("{} ({})", label, iri))
+                    .unwrap_or_else(|| iri.clone())
+            })
+            .collect();
+        let concept_label = get_literal_property(conn, concept_iri, "rdfs:label")?
+            .unwrap_or_else(|| concept_iri.to_string());
+        return Err(OwlError::ValidationError(format!(
+            "Status '{}' is not allowed for concept '{}'. Accepted statuses: {}",
+            status_iri, concept_label, allowed_labels.join(", ")
         )));
     }
     Ok(())

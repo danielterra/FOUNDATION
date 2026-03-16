@@ -366,7 +366,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "forget_concepts".to_string(),
             array_mode: true,
-            description: "Use to remove a concept definition. Does not delete its instances.".to_string(),
+            description: "Use to remove a concept definition and all its instances. Returns the number of deleted instances.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),

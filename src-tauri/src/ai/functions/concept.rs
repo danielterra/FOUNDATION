@@ -444,11 +444,26 @@ fn delete_concept_one(
             }
         }
 
+        let instance_iris: Vec<String> = {
+            let result = crate::eavto::query::get_by_predicate_object(conn, "rdf:type", iri)
+                .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
+            result.triples.into_iter().map(|t| t.subject).collect()
+        };
+
+        let deleted_instances = instance_iris.len();
+        for instance_iri in &instance_iris {
+            crate::owl::Individual::retract(conn, instance_iri, "ai")?;
+            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": instance_iri}));
+        }
+
         Class::retract_all(conn, iri, "ai")?;
 
         super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
 
-        Ok::<_, crate::owl::OwlError>(serde_json::json!({}))
+        Ok::<_, crate::owl::OwlError>(serde_json::json!({
+            "deleted_instances": deleted_instances,
+            "message": format!("Concept '{}' deleted with {} instance(s).", iri, deleted_instances),
+        }))
     })() {
         Ok(result) => ToolResult {
             success: true,
