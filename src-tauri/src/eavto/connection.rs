@@ -283,6 +283,8 @@ fn run_migrations(conn: &Connection) -> Result<(), DbError> {
         conn.execute_batch("ALTER TABLE formula_recalc_jobs ADD COLUMN instance_iri TEXT")?;
     }
 
+    crate::search::ensure_access_table(conn).map_err(DbError::ConnectionError)?;
+
     Ok(())
 }
 

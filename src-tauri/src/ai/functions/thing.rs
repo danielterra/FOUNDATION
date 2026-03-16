@@ -166,6 +166,7 @@ pub fn get_things(conn: &Connection, args: &Value) -> ToolResult {
     let mut errors = Vec::new();
     for v in iris {
         if let Some(iri) = v.as_str() {
+            crate::search::track_access(conn, iri);
             let r = get_thing_one(conn, &serde_json::json!({ "iri": iri }));
             if r.success {
                 if let Some(val) = r.result {

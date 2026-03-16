@@ -133,6 +133,7 @@ pub async fn inspector__get_entity(
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     executor.read(move |conn| {
+        crate::search::track_access(conn, &entity_id);
         let entity_type = determine_entity_type(conn, &entity_id)?;
         let groups = owl::load_graph_node_groups(conn);
 

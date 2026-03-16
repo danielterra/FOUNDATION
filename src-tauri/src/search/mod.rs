@@ -3,10 +3,11 @@ use std::sync::Mutex;
 
 use rusqlite::Connection;
 use tantivy::{
+    DocId, Score, SegmentReader,
     Index, IndexWriter, IndexReader, ReloadPolicy, TantivyDocument,
     collector::TopDocs,
     query::QueryParser,
-    schema::{Field, Schema, Value, STRING, STORED, TEXT},
+    schema::{Field, Schema, Value, STRING, STORED, TEXT, FAST},
     Term,
 };
 
@@ -22,19 +23,49 @@ struct SearchIndex {
     f_label: Field,
     f_comment: Field,
     f_props: Field,
+    f_boost: Field,
 }
 
 lazy_static::lazy_static! {
     static ref SEARCH_INDEX: Mutex<Option<SearchIndex>> = Mutex::new(None);
 }
 
-fn build_schema() -> (Schema, Field, Field, Field, Field) {
+fn build_schema() -> (Schema, Field, Field, Field, Field, Field) {
     let mut b = Schema::builder();
     let f_iri     = b.add_text_field("iri",     STRING | STORED);
     let f_label   = b.add_text_field("label",   TEXT   | STORED);
     let f_comment = b.add_text_field("comment", TEXT);
     let f_props   = b.add_text_field("props",   TEXT);
-    (b.build(), f_iri, f_label, f_comment, f_props)
+    let f_boost   = b.add_u64_field("boost",    FAST   | STORED);
+    (b.build(), f_iri, f_label, f_comment, f_props, f_boost)
+}
+
+pub fn ensure_access_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS entity_access_count (
+            iri   TEXT PRIMARY KEY,
+            count INTEGER NOT NULL DEFAULT 0
+        );"
+    )
+}
+
+pub fn track_access(conn: &Connection, iri: &str) {
+    let _ = conn.execute(
+        "INSERT INTO entity_access_count (iri, count) VALUES (?1, 1)
+         ON CONFLICT(iri) DO UPDATE SET count = count + 1",
+        [iri],
+    );
+    reindex_subjects(conn, &[iri.to_string()]);
+}
+
+fn get_access_count(conn: &Connection, iri: &str) -> u64 {
+    conn.query_row(
+        "SELECT count FROM entity_access_count WHERE iri = ?1",
+        [iri],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|c| c as u64)
+    .unwrap_or(0)
 }
 
 pub fn init(index_dir: &Path, conn: &Connection) {
@@ -57,7 +88,7 @@ pub fn init(index_dir: &Path, conn: &Connection) {
 }
 
 fn do_init(index_dir: &Path, conn: &Connection) -> Result<SearchIndex, Box<dyn std::error::Error>> {
-    let (schema, f_iri, f_label, f_comment, f_props) = build_schema();
+    let (schema, f_iri, f_label, f_comment, f_props, f_boost) = build_schema();
 
     let (index, needs_rebuild) = if index_dir.exists() {
         match Index::open_in_dir(index_dir) {
@@ -79,7 +110,9 @@ fn do_init(index_dir: &Path, conn: &Connection) -> Result<SearchIndex, Box<dyn s
         .reload_policy(ReloadPolicy::OnCommitWithDelay)
         .try_into()?;
 
-    let mut idx = SearchIndex { index, writer, reader, f_iri, f_label, f_comment, f_props };
+    let mut idx = SearchIndex {
+        index, writer, reader, f_iri, f_label, f_comment, f_props, f_boost,
+    };
 
     if needs_rebuild {
         do_full_rebuild(&mut idx, conn)?;
@@ -88,7 +121,10 @@ fn do_init(index_dir: &Path, conn: &Connection) -> Result<SearchIndex, Box<dyn s
     Ok(idx)
 }
 
-fn do_full_rebuild(idx: &mut SearchIndex, conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+fn do_full_rebuild(
+    idx: &mut SearchIndex,
+    conn: &Connection,
+) -> Result<(), Box<dyn std::error::Error>> {
     log_backend("info", "Building search index from scratch...");
 
     let mut stmt = conn.prepare(
@@ -153,6 +189,8 @@ fn build_document(idx: &SearchIndex, conn: &Connection, subject: &str) -> Option
         return None;
     }
 
+    let access_count = get_access_count(conn, subject);
+
     let mut doc = TantivyDocument::default();
     doc.add_text(idx.f_iri, subject);
     doc.add_text(idx.f_label, &label);
@@ -162,6 +200,7 @@ fn build_document(idx: &SearchIndex, conn: &Connection, subject: &str) -> Option
     if !props.is_empty() {
         doc.add_text(idx.f_props, &props.join(" "));
     }
+    doc.add_u64(idx.f_boost, access_count);
     Some(doc)
 }
 
@@ -220,7 +259,6 @@ pub fn search(query: &str, limit: usize) -> Vec<String> {
     parser.set_field_boost(idx.f_label, 3.0);
     parser.set_field_boost(idx.f_comment, 1.5);
 
-    // Sanitize query: escape special chars that could cause parse errors
     let safe_query = sanitize_query(query);
 
     let parsed = match parser.parse_query(&safe_query) {
@@ -231,7 +269,19 @@ pub fn search(query: &str, limit: usize) -> Vec<String> {
         },
     };
 
-    let top_docs = match searcher.search(&parsed, &TopDocs::with_limit(limit)) {
+    let top_docs_collector = TopDocs::with_limit(limit).tweak_score(
+        move |seg_reader: &SegmentReader| {
+            let boost_col = seg_reader.fast_fields().u64("boost").ok();
+            move |doc: DocId, score: Score| {
+                let count = boost_col.as_ref()
+                    .and_then(|col| col.first(doc))
+                    .unwrap_or(0);
+                score * (1.0 + (count as f32).ln_1p() * 0.3)
+            }
+        }
+    );
+
+    let top_docs = match searcher.search(&parsed, &top_docs_collector) {
         Ok(docs) => docs,
         Err(_) => return vec![],
     };
@@ -248,11 +298,11 @@ pub fn search(query: &str, limit: usize) -> Vec<String> {
 }
 
 fn sanitize_query(query: &str) -> String {
-    // Escape Tantivy special characters to prevent parse errors on arbitrary input
-    let special = [':', '/', '\\', '(', ')', '[', ']', '{', '}', '!', '^', '"', '~', '*', '?', '+', '-'];
+    let special = [
+        ':', '/', '\\', '(', ')', '[', ']', '{', '}', '!', '^', '"', '~', '*', '?', '+', '-',
+    ];
     let has_special = query.chars().any(|c| special.contains(&c));
     if has_special {
-        // Wrap each token in quotes for literal phrase search
         query
             .split_whitespace()
             .map(|t| {
