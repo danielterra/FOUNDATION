@@ -14,6 +14,7 @@ const PRED_SIZE_WIDTH: &str = "foundation:widgetSizeWidth";
 const PRED_SIZE_HEIGHT: &str = "foundation:widgetSizeHeight";
 const WIDGET_ORIGIN: &str = "widget";
 const PRED_WINDOW_STATE: &str = "foundation:widgetWindowState";
+const PRED_CONVERSATION: &str = "foundation:partOfConversation";
 
 const DEFAULT_POS_X: f64 = 100.0;
 const DEFAULT_POS_Y: f64 = 100.0;
@@ -42,6 +43,7 @@ pub struct Widget {
     pub position: Position,
     pub size: Size,
     pub window_state: WindowState,
+    pub conversation_iri: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +97,12 @@ fn prop_f64(ind: &Individual, pred: &str) -> Option<f64> {
         })
 }
 
+fn prop_iri(ind: &Individual, pred: &str) -> Option<String> {
+    ind.properties.iter()
+        .find(|(p, _)| p == pred)
+        .and_then(|(_, v)| v.as_iri().map(String::from))
+}
+
 fn individual_to_widget(ind: Individual) -> Option<Widget> {
     let widget_type = prop_str(&ind, PRED_WIDGET_TYPE)?;
     let entity_id = prop_str(&ind, PRED_ENTITY_ID)?;
@@ -103,6 +111,7 @@ fn individual_to_widget(ind: Individual) -> Option<Widget> {
     let width = prop_f64(&ind, PRED_SIZE_WIDTH)?;
     let height = prop_f64(&ind, PRED_SIZE_HEIGHT)?;
     let content = prop_str(&ind, PRED_CONTENT);
+    let conversation_iri = prop_iri(&ind, PRED_CONVERSATION);
 
     let window_state = prop_str(&ind, PRED_WINDOW_STATE)
         .and_then(|s| match s.as_str() {
@@ -120,6 +129,7 @@ fn individual_to_widget(ind: Individual) -> Option<Widget> {
         position: Position { x, y },
         size: Size { width, height },
         window_state,
+        conversation_iri,
     })
 }
 
@@ -150,6 +160,10 @@ pub fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), S
     };
     ind.add_property(conn, PRED_WINDOW_STATE, vec![str_obj(state_str)], WIDGET_ORIGIN)
         .map_err(|e| e.to_string())?;
+    if let Some(conv_iri) = &widget.conversation_iri {
+        ind.add_property(conn, PRED_CONVERSATION, vec![Object::Iri(conv_iri.clone())], WIDGET_ORIGIN)
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -165,6 +179,12 @@ pub fn owl_get_all_widgets(conn: &Connection) -> Result<Vec<Widget>, String> {
         }
     }
     Ok(widgets)
+}
+
+pub fn owl_get_widgets_for_conversation(conn: &Connection, conversation_iri: &str) -> Result<Vec<Widget>, String> {
+    Ok(owl_get_all_widgets(conn)?.into_iter()
+        .filter(|w| w.conversation_iri.as_deref() == Some(conversation_iri))
+        .collect())
 }
 
 pub fn owl_delete_widget(conn: &mut Connection, widget_id: &str) -> Result<(), String> {
@@ -277,9 +297,12 @@ pub fn blackboard__list_widget_types() -> Vec<WidgetType> {
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn widget_blackboard__get_widgets(executor: State<'_, DbExecutor>) -> Result<Vec<Widget>, String> {
-    executor.read(|conn| {
-        owl_get_all_widgets(conn)
+pub async fn widget_blackboard__get_widgets(
+    conversation_id: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<Vec<Widget>, String> {
+    executor.read(move |conn| {
+        owl_get_widgets_for_conversation(conn, &conversation_id)
     }).await
 }
 
@@ -292,6 +315,7 @@ pub async fn widget_blackboard__add_widget(
     content: Option<String>,
     position: Option<Position>,
     size: Option<Size>,
+    conversation_id: Option<String>,
     executor: State<'_, DbExecutor>
 ) -> Result<Widget, String> {
     let valid_types = blackboard__list_widget_types();
@@ -303,17 +327,21 @@ pub async fn widget_blackboard__add_widget(
     }
 
     let sanitized_entity = entity_id.replace([':', '/', '#', ' '], "_");
-    let widget_def = valid_types.iter().find(|t| t.id == widget_type).unwrap();
+    let conv_suffix = conversation_id.as_deref()
+        .map(|c| format!("_{}", c.replace([':', '/', '#', ' '], "_")))
+        .unwrap_or_default();
+    let widget_def = valid_types.iter().find(|t| t.id == widget_type).expect("type validated above");
     let default_size = widget_def.default_size.clone();
 
     let widget = Widget {
-        id: format!("foundation:Widget_{widget_type}_{sanitized_entity}"),
+        id: format!("foundation:Widget_{widget_type}_{sanitized_entity}{conv_suffix}"),
         widget_type,
         entity_id,
         content,
         position: position.unwrap_or(Position { x: DEFAULT_POS_X, y: DEFAULT_POS_Y }),
         size: size.unwrap_or(default_size),
         window_state: WindowState::Normal,
+        conversation_iri: conversation_id,
     };
 
     app.emit("widget-added", widget.clone()).ok();

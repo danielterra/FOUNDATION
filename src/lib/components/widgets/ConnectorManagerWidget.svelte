@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
 
-  let { widgetId, entityId = '' } = $props();
+  let { widgetId, entityId = '', conversationIri = null } = $props();
 
   let connectorLabel = $state('');
   let exporting = $state(false);
@@ -71,6 +71,7 @@
         entityId,
         position: null,
         size: null,
+        conversationId: conversationIri,
       });
     } catch (err) {
       message = { ok: false, text: String(err) };

@@ -7,6 +7,7 @@
   let isChatOpen = $state(true);
   let searchComponent = $state();
   let widgetManager = $state();
+  let activeConversationIri = $state(null);
 
   async function handleSearchResult(entityId) {
     try {
@@ -14,7 +15,8 @@
         widgetType: 'inspector',
         entityId,
         position: null,
-        size: null
+        size: null,
+        conversationId: activeConversationIri
       });
     } catch (e) {
       console.error('Failed to open inspector:', e);
@@ -73,11 +75,11 @@
   </div>
 
   <div class="canvas-area">
-    <WidgetManager bind:this={widgetManager} />
+    <WidgetManager bind:this={widgetManager} {activeConversationIri} />
   </div>
 
   <div class="chat-overlay" class:hidden={!isChatOpen}>
-    <ChatWindow />
+    <ChatWindow bind:activeConversationIri />
   </div>
 </div>
 

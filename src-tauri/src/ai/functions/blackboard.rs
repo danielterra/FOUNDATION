@@ -11,8 +11,13 @@ const WIDGET_DEFAULT_WIDTH: f64 = 400.0;
 const WIDGET_DEFAULT_HEIGHT: f64 = 600.0;
 
 
-pub fn blackboard_state(conn: &Connection) -> ToolResult {
-    match widget::owl_get_all_widgets(conn) {
+pub fn blackboard_state(conn: &Connection, conversation_id: Option<&str>) -> ToolResult {
+    let result = if let Some(conv_id) = conversation_id {
+        widget::owl_get_widgets_for_conversation(conn, conv_id)
+    } else {
+        widget::owl_get_all_widgets(conn)
+    };
+    match result {
         Ok(widgets) => ToolResult {
             success: true,
             result: Some(serde_json::json!({ "widgets": widgets })),
@@ -27,6 +32,7 @@ pub fn blackboard_update(
     conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
+    conversation_id: Option<&str>,
 ) -> ToolResult {
     let ops = match args.as_array() {
         Some(ops) if !ops.is_empty() => ops.clone(),
@@ -48,7 +54,7 @@ pub fn blackboard_update(
     for (i, op) in ops.iter().enumerate() {
         let operation = op.get("operation").and_then(|v| v.as_str()).unwrap_or("");
         let result = match operation {
-            "add" => blackboard_add_widget_one(conn, op, app),
+            "add" => blackboard_add_widget_one(conn, op, app, conversation_id),
             "remove" => {
                 let widget_id = op.get("params")
                     .and_then(|p| p.get("widget_id"))
@@ -57,7 +63,7 @@ pub fn blackboard_update(
                 let remove_args = serde_json::json!({"widget_id": widget_id});
                 blackboard_remove_one(conn, &remove_args, app)
             }
-            "replace" => blackboard_replace(conn, op, app),
+            "replace" => blackboard_replace(conn, op, app, conversation_id),
             _ => ToolResult {
                 success: false,
                 result: None,
@@ -97,8 +103,14 @@ fn blackboard_replace(
     conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
+    conversation_id: Option<&str>,
 ) -> ToolResult {
-    match widget::owl_get_all_widgets(conn) {
+    let widgets_result = if let Some(conv_id) = conversation_id {
+        widget::owl_get_widgets_for_conversation(conn, conv_id)
+    } else {
+        widget::owl_get_all_widgets(conn)
+    };
+    match widgets_result {
         Ok(widgets) => {
             for w in &widgets {
                 let _ = widget::owl_delete_widget(conn, &w.id);
@@ -111,7 +123,7 @@ fn blackboard_replace(
     }
 
     if args.get("widget_type").is_some() {
-        blackboard_add_widget_one(conn, args, app)
+        blackboard_add_widget_one(conn, args, app, conversation_id)
     } else {
         ToolResult {
             success: true,
@@ -126,6 +138,7 @@ fn blackboard_add_widget_one(
     conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
+    conversation_id: Option<&str>,
 ) -> ToolResult {
     let widget_type = match args.get("widget_type").and_then(|v| v.as_str()) {
         Some(t) => t.to_lowercase(),
@@ -183,23 +196,27 @@ fn blackboard_add_widget_one(
             }
         });
 
-    let position = match widget::owl_get_all_widgets(conn) {
-        Ok(widgets) => {
-            let offset = widgets.len() as f64 * WIDGET_CASCADE_STEP;
-            Position { x: WIDGET_DEFAULT_X + offset, y: WIDGET_DEFAULT_Y + offset }
-        },
-        Err(_) => Position { x: WIDGET_DEFAULT_X, y: WIDGET_DEFAULT_Y },
+    let existing = if let Some(conv_id) = conversation_id {
+        widget::owl_get_widgets_for_conversation(conn, conv_id).unwrap_or_default()
+    } else {
+        widget::owl_get_all_widgets(conn).unwrap_or_default()
     };
+    let offset = existing.len() as f64 * WIDGET_CASCADE_STEP;
+    let position = Position { x: WIDGET_DEFAULT_X + offset, y: WIDGET_DEFAULT_Y + offset };
 
     let sanitized_entity = entity_id.replace([':', '/', '#', ' '], "_");
+    let conv_suffix = conversation_id
+        .map(|c| format!("_{}", c.replace([':', '/', '#', ' '], "_")))
+        .unwrap_or_default();
     let widget_obj = Widget {
-        id: format!("foundation:Widget_{widget_type}_{sanitized_entity}"),
+        id: format!("foundation:Widget_{widget_type}_{sanitized_entity}{conv_suffix}"),
         widget_type: widget_type.to_string(),
         entity_id: entity_id.to_string(),
         content,
         position,
         size: Size { width: WIDGET_DEFAULT_WIDTH, height: WIDGET_DEFAULT_HEIGHT },
         window_state: widget::WindowState::Normal,
+        conversation_iri: conversation_id.map(String::from),
     };
 
     match widget::owl_insert_widget(conn, &widget_obj) {

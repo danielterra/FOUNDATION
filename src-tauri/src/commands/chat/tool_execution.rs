@@ -58,7 +58,7 @@ pub async fn execute_tools_from_message(
 
     for block in &assistant_message.content {
         if let ContentBlock::ToolUse { id, name, input } = block {
-            let (content, is_error) = execute_tool(executor, app, name, input).await;
+            let (content, is_error) = execute_tool(executor, app, conversation_id, name, input).await;
             tool_results.push(ContentBlock::ToolResult {
                 tool_use_id: id.clone(),
                 content,
@@ -76,6 +76,7 @@ pub async fn execute_tools_from_message(
 async fn execute_tool(
     executor: &DbExecutor,
     app: &tauri::AppHandle,
+    conversation_id: &str,
     name: &str,
     input: &serde_json::Value,
 ) -> (String, bool) {
@@ -85,8 +86,9 @@ async fn execute_tool(
     };
 
     let app_clone = app.clone();
+    let conv_id = conversation_id.to_string();
     let result_json = match executor.write(move |conn| {
-        let result = crate::ai::functions::execute_tool(conn, &call, Some(&app_clone));
+        let result = crate::ai::functions::execute_tool(conn, &call, Some(&app_clone), Some(&conv_id));
         serde_json::to_string(&result).map_err(|e| e.to_string())
     }).await {
         Ok(json) => json,

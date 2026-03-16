@@ -11,6 +11,8 @@
   import ConnectorManagerWidget from './ConnectorManagerWidget.svelte';
   import MetaProcessWidget from './MetaProcessWidget.svelte';
 
+  let { activeConversationIri = null } = $props();
+
   const BASE_WIDGET_Z_INDEX = 100;
   const WIDGET_FLY_DURATION = 600;
   const MINIMIZED_HEIGHT = 70;
@@ -71,9 +73,13 @@
     });
   }
 
-  async function loadWidgets() {
+  async function loadWidgets(conversationIri) {
+    if (!conversationIri) {
+      widgets = [];
+      return;
+    }
     try {
-      const result = await invoke('widget_blackboard__get_widgets');
+      const result = await invoke('widget_blackboard__get_widgets', { conversationId: conversationIri });
       widgets = result.map((w, index) => ({
         ...w,
         zIndex: BASE_WIDGET_Z_INDEX + index
@@ -85,6 +91,10 @@
       console.error('Failed to load widgets:', error);
     }
   }
+
+  $effect(() => {
+    loadWidgets(activeConversationIri);
+  });
 
   function bringToFront(widgetId) {
     topZIndex++;
@@ -208,21 +218,22 @@
   onMount(async () => {
     updateViewportSize();
 
-    await loadWidgets();
-
     const unlistenAdded = await listen('widget-added', (event) => {
+      const w = event.payload;
+      if (w.conversation_iri !== activeConversationIri) return;
+
       // If widget already exists (e.g. duplicate entity-created event), bring it to front
-      const existingIdx = widgets.findIndex(w => w.id === event.payload.id);
+      const existingIdx = widgets.findIndex(existing => existing.id === w.id);
       if (existingIdx >= 0) {
-        bringToFront(event.payload.id);
-        widgets = widgets.map(w =>
-          w.id === event.payload.id ? { ...w, refreshKey: (w.refreshKey ?? 0) + 1 } : w
+        bringToFront(w.id);
+        widgets = widgets.map(existing =>
+          existing.id === w.id ? { ...existing, refreshKey: (existing.refreshKey ?? 0) + 1 } : existing
         );
         return;
       }
 
       topZIndex++;
-      const newWidget = { ...event.payload, zIndex: topZIndex };
+      const newWidget = { ...w, zIndex: topZIndex };
 
       newWidget.position = constrainToBounds(newWidget.position, newWidget.size, displayHeight(newWidget));
       widgets = [...widgets, newWidget];
@@ -279,7 +290,7 @@
       <div class="resize-handle" onmousedown={(e) => startResize(e, widget)}></div>
     {/if}
     {#if widget.widget_type === 'inspector'}
-      <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
+      <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} conversationIri={activeConversationIri} />
     {:else if widget.widget_type === 'mermaid'}
       <MermaidWidget widgetId={widget.id} entityId={widget.entity_id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {:else if widget.widget_type === 'process_status'}
@@ -287,9 +298,9 @@
     {:else if widget.widget_type === 'connector_credential'}
       <ConnectorCredentialWidget widgetId={widget.id} entityId={widget.entity_id} />
     {:else if widget.widget_type === 'connector_manager'}
-      <ConnectorManagerWidget widgetId={widget.id} entityId={widget.entity_id} />
+      <ConnectorManagerWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} />
     {:else if widget.widget_type === 'meta_process'}
-      <MetaProcessWidget widgetId={widget.id} entityId={widget.entity_id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
+      <MetaProcessWidget widgetId={widget.id} entityId={widget.entity_id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} conversationIri={activeConversationIri} />
     {/if}
   </div>
 {/each}

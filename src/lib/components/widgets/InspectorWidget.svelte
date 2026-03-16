@@ -8,7 +8,7 @@
   import PropertyList from './inspector/PropertyList.svelte';
   import BacklinkList from './inspector/BacklinkList.svelte';
 
-  let { entityId, widgetId, refreshKey = 0, windowState = 'normal', onWindowStateChange } = $props();
+  let { entityId, widgetId, refreshKey = 0, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props();
 
   function toggleMinimize() {
     onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized');
@@ -133,7 +133,8 @@
         widgetType: 'inspector',
         entityId: entityIri,
         position: null,
-        size: null
+        size: null,
+        conversationId: conversationIri
       });
     } catch (err) {
       console.error('Failed to open inspector:', err);
@@ -146,7 +147,8 @@
         widgetType,
         entityId,
         position: null,
-        size: null
+        size: null,
+        conversationId: conversationIri
       });
     } catch (err) {
       console.error(`Failed to open ${widgetType} widget:`, err);

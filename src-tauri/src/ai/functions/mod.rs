@@ -102,6 +102,7 @@ pub fn execute_tool(
     conn: &mut Connection,
     call: &ToolCall,
     app: Option<&tauri::AppHandle>,
+    conversation_id: Option<&str>,
 ) -> ToolResult {
     let is_array_mode = get_available_tools()
         .iter()
@@ -125,8 +126,8 @@ pub fn execute_tool(
         "forget_properties" => property::forget_property(conn, args, app),
         "get_process" => meta_process::get_process(conn, args),
         "get_concept_graph" => concept_graph::get_concept_graph(conn, args),
-        "blackboard_state" => blackboard::blackboard_state(conn),
-        "blackboard_update" => blackboard::blackboard_update(conn, args, app),
+        "blackboard_state" => blackboard::blackboard_state(conn, conversation_id),
+        "blackboard_update" => blackboard::blackboard_update(conn, args, app, conversation_id),
         "run_process" => run_process_tool(args, app),
         _ => ToolResult {
             success: false,
@@ -196,7 +197,7 @@ mod tests {
                 ]
             }),
         };
-        assert!(execute_tool(&mut conn, &props_call, None).success);
+        assert!(execute_tool(&mut conn, &props_call, None, None).success);
 
         let call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -210,7 +211,7 @@ mod tests {
                 }]
             }),
         };
-        let result = execute_tool(&mut conn, &call, None);
+        let result = execute_tool(&mut conn, &call, None, None);
         assert!(result.success, "learn_concept with connections should succeed: {:?}", result.error);
 
         let works_at = Property::get(&conn, "foundation:worksAt").unwrap().unwrap();
@@ -238,7 +239,7 @@ mod tests {
                 ]
             }),
         };
-        assert!(execute_tool(&mut conn, &props_call, None).success);
+        assert!(execute_tool(&mut conn, &props_call, None, None).success);
 
         let call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -252,7 +253,7 @@ mod tests {
                 }]
             }),
         };
-        let result = execute_tool(&mut conn, &call, None);
+        let result = execute_tool(&mut conn, &call, None, None);
         assert!(result.success, "learn_concept with calculated fields should succeed: {:?}", result.error);
 
         let width = Property::get(&conn, "foundation:width").unwrap().unwrap();
@@ -281,7 +282,7 @@ mod tests {
                 "operations": [{"iri": "foundation:boxSize", "label": "size", "property_type": "datatype"}]
             }),
         };
-        assert!(execute_tool(&mut conn, &props_call, None).success);
+        assert!(execute_tool(&mut conn, &props_call, None, None).success);
 
         let call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -295,7 +296,7 @@ mod tests {
                 }]
             }),
         };
-        execute_tool(&mut conn, &call, None);
+        execute_tool(&mut conn, &call, None, None);
 
         let prop = Property::get(&conn, "foundation:boxSize").unwrap().unwrap();
         assert!(
@@ -320,7 +321,7 @@ mod tests {
                 }]
             }),
         };
-        let result = execute_tool(&mut conn, &call, None);
+        let result = execute_tool(&mut conn, &call, None, None);
         assert!(!result.success, "Circular formula should be rejected");
         let err = result.error.unwrap();
         assert!(err.contains("Circular"), "Expected circular dependency error, got: {err}");
@@ -338,7 +339,7 @@ mod tests {
                 "operations": [{"iri": "foundation:radius", "label": "radius", "property_type": "datatype"}]
             }),
         };
-        assert!(execute_tool(&mut conn, &radius_call, None).success);
+        assert!(execute_tool(&mut conn, &radius_call, None, None).success);
 
         let create_call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -352,7 +353,7 @@ mod tests {
                 }]
             }),
         };
-        execute_tool(&mut conn, &create_call, None);
+        execute_tool(&mut conn, &create_call, None, None);
 
         let circ_call = ToolCall {
             name: "learn_properties".to_string(),
@@ -365,7 +366,7 @@ mod tests {
                 }]
             }),
         };
-        assert!(execute_tool(&mut conn, &circ_call, None).success);
+        assert!(execute_tool(&mut conn, &circ_call, None, None).success);
 
         let update_call = ToolCall {
             name: "learn_concepts".to_string(),
@@ -376,7 +377,7 @@ mod tests {
                 }]
             }),
         };
-        let result = execute_tool(&mut conn, &update_call, None);
+        let result = execute_tool(&mut conn, &update_call, None, None);
         assert!(result.success, "updating concept with new property should succeed: {:?}", result.error);
 
         let prop = Property::get(&conn, "foundation:circumference").unwrap().unwrap();

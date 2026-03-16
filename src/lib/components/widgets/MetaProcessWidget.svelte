@@ -19,7 +19,7 @@
   import NodeBoundaryEvent from './meta-process/NodeBoundaryEvent.svelte'
   import NodeBoundaryCondition from './meta-process/NodeBoundaryCondition.svelte'
 
-  let { widgetId, entityId, windowState = 'normal', onWindowStateChange } = $props()
+  let { widgetId, entityId, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props()
 
   const nodeTypes = {
     MetaStartEvent:          NodeStartEvent,
@@ -107,6 +107,7 @@
         entityId: node.data.invokesProcess,
         position: null,
         size: null,
+        conversationId: conversationIri,
       }).catch(e => console.error('Failed to open sub-process widget:', e))
     } else {
       await invoke('widget_blackboard__add_widget', {
@@ -114,6 +115,7 @@
         entityId: node.id,
         position: null,
         size: null,
+        conversationId: conversationIri,
       }).catch(e => console.error('Failed to open inspector:', e))
     }
   }

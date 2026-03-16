@@ -64,7 +64,7 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
             .find(|(k, _)| k == "foundation:settingValue")
             .and_then(|(_, v)| v.as_literal())
             .and_then(|v| v.parse::<u64>().ok()))
-        .unwrap_or(180);
+        .unwrap_or(900);
 
     Ok(AgentConfig {
         api_key,

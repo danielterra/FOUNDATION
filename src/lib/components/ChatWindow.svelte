@@ -10,7 +10,7 @@
 	import ConversationBar from './ConversationBar.svelte';
 
 	// Props
-	let { isOpen = $bindable(false) } = $props();
+	let { isOpen = $bindable(false), activeConversationIri = $bindable(null) } = $props();
 
 	// State
 	let messages = $state([]);
@@ -34,7 +34,6 @@
 	let errorMessage = $state(null);
 	let editingMessageIri = $state(null);
 	let editingMessageText = $state('');
-	let activeConversationIri = $state(null);
 	let conversations = $state([]);
 	let conversationAgent = $state(null);
 
@@ -208,7 +207,8 @@
 				widgetType: 'inspector',
 				entityId: conversationAgent.iri,
 				position: null,
-				size: null
+				size: null,
+				conversationId: activeConversationIri
 			});
 		} catch (err) {
 			console.error('Failed to open agent inspector:', err);

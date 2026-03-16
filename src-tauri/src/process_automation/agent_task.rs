@@ -169,7 +169,7 @@ pub async fn execute_agent_task(
             let app_clone = app.clone();
             let result_json = executor
                 .write(move |conn| {
-                    let r = execute_fn(conn, &call, Some(&app_clone));
+                    let r = execute_fn(conn, &call, Some(&app_clone), None);
                     serde_json::to_string(&r).map_err(|e| e.to_string())
                 })
                 .await
