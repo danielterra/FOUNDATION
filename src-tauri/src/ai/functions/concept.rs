@@ -135,6 +135,25 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
                 .collect()
         };
 
+        let concept_properties: Vec<serde_json::Value> = concept.concept_properties.iter()
+            .map(|(predicate, value_obj)| {
+                let label = crate::owl::get_literal_property(conn, predicate, "rdfs:label")
+                    .ok()
+                    .flatten();
+                let value = if value_obj.is_iri() {
+                    value_obj.as_iri().unwrap_or("").to_string()
+                } else {
+                    value_obj.as_literal().unwrap_or_default()
+                };
+                serde_json::json!({
+                    "property": predicate,
+                    "label": label,
+                    "value": value,
+                    "isObjectProperty": value_obj.is_iri(),
+                })
+            })
+            .collect();
+
         let mut response = serde_json::json!({
             "iri": concept.iri,
             "label": concept.label,
@@ -160,6 +179,7 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
             "allowedStatuses": allowed_statuses,
             "requiredFields": required_fields,
             "incomingProperties": incoming_properties,
+            "conceptProperties": concept_properties,
         });
 
         if !allowed_values.is_empty() {

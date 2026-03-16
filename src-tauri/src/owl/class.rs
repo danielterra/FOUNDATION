@@ -17,6 +17,7 @@ pub struct Class {
     pub backlinks: Vec<(String, String, Object)>, // (source_entity, property_iri, value)
     pub backlink_total: usize,
     pub one_of_values: Vec<String>, // owl:oneOf enumerated individuals
+    pub concept_properties: Vec<(String, Object)>, // non-structural literal/IRI triples on this class IRI
 }
 
 impl Class {
@@ -34,6 +35,7 @@ impl Class {
             backlinks: Vec::new(),
             backlink_total: 0,
             one_of_values: Vec::new(),
+            concept_properties: Vec::new(),
         }
     }
 
@@ -150,6 +152,18 @@ impl Class {
             Vec::new()
         };
 
+        const SKIP: &[&str] = &[
+            rdf::TYPE, rdfs::LABEL, rdfs::COMMENT, rdfs::SUB_CLASS_OF,
+            "foundation:hasIcon", "foundation:icon", "foundation:allowedStatus", owl::ONE_OF,
+        ];
+
+        let all_triples_result = query::get_by_entity(conn, &iri)?;
+        let concept_properties: Vec<(String, Object)> = all_triples_result.triples
+            .into_iter()
+            .filter(|t| !SKIP.contains(&t.predicate.as_str()) && !matches!(t.object, Object::Blank(_)))
+            .map(|t| (t.predicate, t.object))
+            .collect();
+
         Ok(Some(Self {
             iri,
             label,
@@ -162,6 +176,7 @@ impl Class {
             backlinks,
             backlink_total,
             one_of_values,
+            concept_properties,
         }))
     }
 
