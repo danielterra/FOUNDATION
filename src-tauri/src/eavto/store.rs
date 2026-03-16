@@ -42,11 +42,16 @@ pub fn assert_triples(
     triples: &[Triple],
     origin: &str,
 ) -> Result<i64> {
-    if IN_BATCH_TX.with(|f| f.get()) {
-        assert_triples_savepoint(conn, triples, origin)
+    let tx_id = if IN_BATCH_TX.with(|f| f.get()) {
+        assert_triples_savepoint(conn, triples, origin)?
     } else {
-        assert_triples_begin(conn, triples, origin)
+        assert_triples_begin(conn, triples, origin)?
+    };
+    if tx_id != 0 {
+        let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
+        crate::search::reindex_subjects(conn, &subjects);
     }
+    Ok(tx_id)
 }
 
 fn assert_triples_begin(
@@ -192,17 +197,22 @@ pub fn append_triples(
     triples: &[Triple],
     origin: &str,
 ) -> Result<i64> {
-    if IN_BATCH_TX.with(|f| f.get()) {
+    let tx_id = if IN_BATCH_TX.with(|f| f.get()) {
         let sp = conn.savepoint()?;
         let tx_id = do_append_triples(&sp, triples, origin)?;
         sp.commit()?;
-        Ok(tx_id)
+        tx_id
     } else {
         let tx = conn.transaction()?;
         let tx_id = do_append_triples(&tx, triples, origin)?;
         tx.commit()?;
-        Ok(tx_id)
+        tx_id
+    };
+    if tx_id != 0 {
+        let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
+        crate::search::reindex_subjects(conn, &subjects);
     }
+    Ok(tx_id)
 }
 
 fn do_append_triples(
@@ -247,17 +257,22 @@ pub fn retract_triples(
     triples: &[Triple],
     origin: &str,
 ) -> Result<i64> {
-    if IN_BATCH_TX.with(|f| f.get()) {
+    let tx_id = if IN_BATCH_TX.with(|f| f.get()) {
         let sp = conn.savepoint()?;
         let tx_id = do_retract_triples(&sp, triples, origin)?;
         sp.commit()?;
-        Ok(tx_id)
+        tx_id
     } else {
         let tx = conn.transaction()?;
         let tx_id = do_retract_triples(&tx, triples, origin)?;
         tx.commit()?;
-        Ok(tx_id)
+        tx_id
+    };
+    if tx_id != 0 {
+        let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
+        crate::search::reindex_subjects(conn, &subjects);
     }
+    Ok(tx_id)
 }
 
 fn do_retract_triples(
@@ -671,6 +686,7 @@ pub fn rename_iri(
         do_rename_iri(&tx, old_iri, new_iri, origin)?;
         tx.commit()?;
     }
+    crate::search::reindex_subjects(conn, &[old_iri.to_string(), new_iri.to_string()]);
     Ok(())
 }
 

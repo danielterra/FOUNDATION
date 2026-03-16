@@ -120,6 +120,11 @@ fn initialize_db_with_progress(
 
     run_migrations(&conn)?;
 
+    let search_dir = db_path.parent()
+        .map(|p| p.join("search"))
+        .unwrap_or_else(|| std::path::PathBuf::from("search"));
+    crate::search::init(&search_dir, &conn);
+
     if let Some(handle) = app {
         let _ = handle.emit("import-complete", ());
     }

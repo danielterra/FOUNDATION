@@ -6,6 +6,7 @@ mod eavto;
 pub mod owl;
 pub mod ai;
 mod mcp;
+pub mod search;
 pub mod process_automation;
 
 #[derive(serde::Serialize)]

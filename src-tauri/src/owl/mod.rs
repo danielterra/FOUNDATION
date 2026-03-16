@@ -215,70 +215,12 @@ pub fn search_instances_rich(
     query: &str,
     limit: usize,
 ) -> Result<Vec<RichSearchResult>> {
-    use crate::eavto::query;
+    let tokens: Vec<String> = query
+        .split_whitespace()
+        .map(|s| s.to_lowercase())
+        .collect();
 
-    let rows = query::search_entities(conn, query, limit)
-        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
-
-    let mut results = Vec::with_capacity(rows.len());
-
-    for row in rows {
-        let icon = row.has_icon_iri
-            .as_deref()
-            .and_then(|iri| icon_iri_to_display(conn, iri))
-            .or(row.icon_literal);
-
-        let is_class = row.type_iri.as_deref() == Some("owl:Class");
-        let entity_type = if is_class { "class" } else { "individual" }.to_string();
-
-        let concept_type = if is_class {
-            None
-        } else {
-            row.type_iri.as_deref().and_then(|type_iri| {
-                if type_iri.starts_with("owl:") || type_iri.starts_with("rdf:") || type_iri.starts_with("rdfs:") {
-                    None
-                } else {
-                    let type_thing = Thing::get(conn, type_iri);
-                    Some(serde_json::json!({
-                        "iri": type_iri,
-                        "label": type_thing.label,
-                        "icon": type_thing.icon,
-                    }))
-                }
-            })
-        };
-
-        let matched_properties: Vec<serde_json::Value> = row.props_raw
-            .as_deref()
-            .map(|raw| {
-                raw.split('\x1E')
-                    .filter_map(|entry| {
-                        let pred = entry.splitn(2, '\x1F').next()?;
-                        Some(serde_json::json!({ "detail_iri": pred }))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let status = get_entity_status_info(conn, &row.subject)
-            .map(|(s_iri, s_label, s_color, s_icon)| serde_json::json!({
-                "iri": s_iri,
-                "label": s_label,
-                "icon": s_icon,
-                "color": s_color,
-            }));
-
-        results.push(RichSearchResult {
-            id: row.subject,
-            label: row.label,
-            icon,
-            entity_type,
-            matched_properties,
-            concept_type,
-            status,
-        });
-    }
-
+    let (results, _total) = search_rich(conn, &tokens, None, None, None, false, limit, 0)?;
     Ok(results)
 }
 
@@ -804,21 +746,14 @@ fn search_rich_global(
 ) -> Result<(Vec<RichSearchResult>, usize)> {
     use crate::eavto::query;
 
+    // Empty query: list all entities ordered by label length (existing behaviour)
     if tokens.is_empty() {
         let big_limit = offset + limit + 1000;
         let rows = query::search_entities(conn, "", big_limit)
             .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
 
         let filtered: Vec<_> = rows.into_iter()
-            .filter(|r| {
-                if let Some(f) = entity_type_filter {
-                    let is_class = r.type_iri.as_deref() == Some("owl:Class");
-                    let et = if is_class { "class" } else { "individual" };
-                    et == f
-                } else {
-                    true
-                }
-            })
+            .filter(|r| entity_type_matches(r.type_iri.as_deref(), entity_type_filter))
             .collect();
 
         let total = filtered.len();
@@ -827,83 +762,103 @@ fn search_rich_global(
         return Ok((results, total));
     }
 
-    if tokens.len() == 1 {
-        let big_limit = offset + limit + 10000;
-        let rows = query::search_entities(conn, &tokens[0], big_limit)
-            .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+    // Non-empty query: use Tantivy for BM25-ranked results
+    let query_str = tokens.join(" ");
+    // Generous pool to absorb entity_type_filter attrition and still fill the requested page
+    const TANTIVY_FETCH_MULTIPLIER: usize = 20;
+    let fetch_limit = (offset + limit + 1) * TANTIVY_FETCH_MULTIPLIER;
+    let iris = crate::search::search(&query_str, fetch_limit);
 
-        let filtered: Vec<_> = rows.into_iter()
-            .filter(|r| {
-                if let Some(f) = entity_type_filter {
-                    let is_class = r.type_iri.as_deref() == Some("owl:Class");
-                    let et = if is_class { "class" } else { "individual" };
-                    et == f
-                } else {
-                    true
-                }
-            })
-            .collect();
-
-        let total = filtered.len();
-        let page: Vec<_> = filtered.into_iter().skip(offset).take(limit).collect();
-        let results = page.iter().map(|r| enrich_from_sql_row(conn, r)).collect();
-        return Ok((results, total));
+    if iris.is_empty() {
+        return Ok((vec![], 0));
     }
 
-    let score_maps: Vec<std::collections::HashMap<String, i32>> = tokens.iter()
-        .map(|token| {
-            query::search_entities_scores_only(conn, token)
-                .map_err(|e| OwlError::DatabaseError(e.to_string()))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    // Batch-load triples for all candidates (needed for enrichment and type filtering)
+    let batch = query::batch_load_triples_for_subjects(conn, &iris)
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
 
-    let first_map = &score_maps[0];
-    let mut combined: Vec<(String, i32)> = first_map.iter()
-        .filter_map(|(subject, &score0)| {
-            let mut total_score = score0;
-            for map in &score_maps[1..] {
-                match map.get(subject) {
-                    Some(&s) => total_score += s,
-                    None => return None,
-                }
+    // Filter by entity type if requested (Tantivy result order is preserved)
+    let filtered: Vec<&String> = iris.iter()
+        .filter(|iri| {
+            if entity_type_filter.is_none() {
+                return true;
             }
-            Some((subject.clone(), total_score))
+            let empty = vec![];
+            let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+            let type_iri = triples.iter()
+                .find(|t| t.predicate == "rdf:type")
+                .and_then(|t| t.object.as_iri());
+            entity_type_matches(type_iri, entity_type_filter)
         })
         .collect();
 
-    if let Some(f) = entity_type_filter {
-        let f_owned = f.to_string();
-        let page_subjects: Vec<String> = combined.iter().map(|(s, _)| s.clone()).collect();
-        if !page_subjects.is_empty() {
-            let batch = query::batch_load_triples_for_subjects(conn, &page_subjects)
-                .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
-            combined.retain(|(subject, _)| {
-                let empty = vec![];
-                let triples = batch.get(subject.as_str()).unwrap_or(&empty);
-                let is_class = triples.iter()
-                    .any(|t| t.predicate == "rdf:type" && t.object.as_iri() == Some("owl:Class"));
-                let et = if is_class { "class" } else { "individual" };
-                et == f_owned.as_str()
-            });
-        }
-    }
+    let total = filtered.len();
+    let page: Vec<&String> = filtered.into_iter().skip(offset).take(limit).collect();
 
-    combined.sort_by(|a, b| b.1.cmp(&a.1));
-    let total = combined.len();
-    let page_subjects: Vec<String> = combined.into_iter().skip(offset).take(limit).map(|(s, _)| s).collect();
-
-    let batch = query::batch_load_triples_for_subjects(conn, &page_subjects)
-        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
-
-    let results: Vec<RichSearchResult> = page_subjects.iter().map(|iri| {
+    let results: Vec<RichSearchResult> = page.iter().map(|iri| {
         let empty = vec![];
         let triples = batch.get(iri.as_str()).unwrap_or(&empty);
-        let mut matched_props = vec![];
-        score_entity_against_tokens(iri, triples, tokens, &mut matched_props);
+        let matched_props = matched_properties_for_tokens(iri, triples, tokens);
         enrich_from_triples(conn, iri, triples, matched_props)
     }).collect();
 
     Ok((results, total))
+}
+
+/// Finds which properties in the triples contain at least one of the query tokens.
+/// Used to populate matchedProperties in Tantivy search results.
+fn matched_properties_for_tokens(
+    iri: &str,
+    triples: &[crate::eavto::Triple],
+    tokens: &[String],
+) -> Vec<serde_json::Value> {
+    let local_part = iri.split(':').last().unwrap_or("").to_lowercase();
+    let label = triples.iter()
+        .find(|t| t.predicate == "rdfs:label")
+        .and_then(|t| t.object.as_literal())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    let mut matched: Vec<serde_json::Value> = Vec::new();
+
+    for token in tokens {
+        let tok = token.to_lowercase();
+
+        // IRI or label match: no specific property to report
+        if iri.to_lowercase().contains(&tok) || local_part.contains(&tok) || label.contains(&tok) {
+            continue;
+        }
+
+        // Find which non-label property matches this token
+        let prop_match = triples.iter().find(|t| {
+            t.predicate != "rdfs:label"
+                && t.predicate != "foundation:icon"
+                && t.predicate != "foundation:hasIcon"
+                && t.object.as_literal()
+                    .map(|v| v.to_lowercase().contains(&tok))
+                    .unwrap_or(false)
+        });
+
+        if let Some(pm) = prop_match {
+            let entry = serde_json::json!({ "detail_iri": pm.predicate });
+            if !matched.iter().any(|e| e == &entry) {
+                matched.push(entry);
+            }
+        }
+    }
+
+    matched
+}
+
+fn entity_type_matches(type_iri: Option<&str>, filter: Option<&str>) -> bool {
+    match filter {
+        None => true,
+        Some(f) => {
+            let is_class = type_iri == Some("owl:Class");
+            let et = if is_class { "class" } else { "individual" };
+            et == f
+        }
+    }
 }
 
 /// Returns `(class_group, individual_group, literal_group)` from the ontology.
