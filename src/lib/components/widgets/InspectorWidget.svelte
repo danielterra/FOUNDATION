@@ -279,12 +279,12 @@
 
   <div class="content-wrapper">
     <div class="widget-content">
-    {#if loading}
+    {#if loading && !entityData}
       <div class="loading">
         <span class="material-symbols-outlined spinning">progress_activity</span>
         <p>Loading...</p>
       </div>
-    {:else if error}
+    {:else if error && !entityData}
       <div class="error">
         <span class="material-symbols-outlined">error</span>
         <p>{error}</p>
