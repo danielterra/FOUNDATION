@@ -1,0 +1,10 @@
+[package]
+name = "verify-code-iris"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+dirs = "5.0"
+regex = "1"
+walkdir = "2"

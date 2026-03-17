@@ -56,11 +56,12 @@ Prepend a new entry at the top of `CHANGELOG.md` (after the header), following K
 
 Only include sections that have content. Derive entries from the commit list.
 
-### Step 3.5 — Dump and Verify Ontology
+### Step 3.5 — Verify, Dump, and Verify Ontology
 
-1. `cargo run --manifest-path scripts/dump-ontology/Cargo.toml`
-2. `cargo run --manifest-path scripts/verify-ontology/Cargo.toml` — must pass with zero differences
-3. Include `core-ontology/ontology.sql` in the `git add` on Step 7
+1. `cargo run --manifest-path scripts/verify-code-iris/Cargo.toml` — must pass with zero missing IRIs; if it fails, create missing entities via MCP before proceeding
+2. `cargo run --manifest-path scripts/dump-ontology/Cargo.toml`
+3. `cargo run --manifest-path scripts/verify-ontology/Cargo.toml` — must pass with zero differences
+4. Include `core-ontology/ontology.sql` in the `git add` on Step 7
 
 ### Step 4 — Create SoftwareRelease individual via MCP
 

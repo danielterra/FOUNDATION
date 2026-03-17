@@ -59,12 +59,15 @@ fn bootstrap_registry(conn: &Connection) -> Result<(), rusqlite::Error> {
             JOIN origins o ON t.origin_id = o.id
             WHERE t.retracted = 0
               AND t.predicate = 'rdf:type'
-              AND (o.name LIKE 'foundation:ontology:%' OR o.name = 'core')
+              AND (o.name LIKE 'foundation:ontology:%' OR o.name = 'core' OR o.name = 'setup')
               AND t.object NOT IN (
                 'owl:Class', 'rdfs:Class', 'owl:ObjectProperty', 'owl:DatatypeProperty',
                 'owl:AnnotationProperty', 'rdf:Property', 'owl:Ontology', 'owl:NamedIndividual'
               )
-              AND t.subject NOT LIKE '_:%';
+              AND t.subject NOT LIKE '_:%'
+              AND t.subject NOT IN ('foundation:ThisFoundationInstance', 'foundation:ThisUser',
+                'foundation:ThisComputer', 'foundation:ThisMemory',
+                'foundation:ThisOperatingSystem', 'foundation:ThisProcessor');
 
             COMMIT;
         ")?;
