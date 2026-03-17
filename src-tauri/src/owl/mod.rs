@@ -210,17 +210,46 @@ pub struct RichSearchResult {
 
 /// Search classes and individuals by IRI, label, comment, and literal properties.
 /// Results are ranked by relevance and enriched with concept type, icon, and status.
+/// If `query` is a single `prefix:localname` token, load that entity directly from the DB.
+/// Returns `None` if the pattern doesn't match or the entity doesn't exist.
+pub fn try_iri_direct_lookup(conn: &Connection, query: &str) -> Option<RichSearchResult> {
+    let trimmed = query.trim();
+    if trimmed.contains(' ') {
+        return None;
+    }
+    let colon = trimmed.find(':')?;
+    if colon == 0 || colon == trimmed.len() - 1 {
+        return None;
+    }
+    let iris = vec![trimmed.to_string()];
+    let batch = crate::eavto::query::batch_load_triples_for_subjects(conn, &iris).ok()?;
+    let triples = batch.get(trimmed)?;
+    if triples.is_empty() {
+        return None;
+    }
+    Some(enrich_from_triples(conn, trimmed, triples, vec![]))
+}
+
 pub fn search_instances_rich(
     conn: &Connection,
     query: &str,
     limit: usize,
 ) -> Result<Vec<RichSearchResult>> {
+    let iri_hit = try_iri_direct_lookup(conn, query);
+
     let tokens: Vec<String> = query
         .split_whitespace()
         .map(|s| s.to_lowercase())
         .collect();
 
-    let (results, _total) = search_rich(conn, &tokens, None, None, None, false, limit, 0)?;
+    let (mut results, _total) = search_rich(conn, &tokens, None, None, None, false, limit, 0)?;
+
+    if let Some(hit) = iri_hit {
+        results.retain(|r| r.id != hit.id);
+        results.insert(0, hit);
+        results.truncate(limit);
+    }
+
     Ok(results)
 }
 

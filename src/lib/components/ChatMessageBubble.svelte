@@ -254,6 +254,16 @@
 		{#if !message.isThinking}
 			<div class="message-bubble-footer">
 				<span class="message-time">{formatTime(message.sentAt)}</span>
+				{#if message.role === 'assistant' && message.input_tokens != null}
+					<span class="token-pill" title="Input tokens">
+						<span class="material-symbols-outlined token-pill-icon">arrow_upward</span>{(message.input_tokens / 1000).toFixed(1)}k
+					</span>
+				{/if}
+				{#if message.role === 'assistant' && message.output_tokens != null}
+					<span class="token-pill" title="Output tokens">
+						<span class="material-symbols-outlined token-pill-icon">arrow_downward</span>{message.output_tokens.toLocaleString()}
+					</span>
+				{/if}
 			</div>
 			<div class="message-action-bar">
 				<button class="action-btn" onclick={copyMessage} title="Copy message">
@@ -470,6 +480,8 @@
 	.message-bubble-footer {
 		display: flex;
 		justify-content: flex-end;
+		align-items: center;
+		gap: 8px;
 		margin-top: 2px;
 	}
 
@@ -477,6 +489,26 @@
 		font-size: 10px;
 		color: var(--color-neutral-disabled);
 		opacity: 0.7;
+		line-height: 1;
+	}
+
+	.token-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		font-size: 9px;
+		font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+		color: var(--color-neutral-disabled);
+		background: color-mix(in srgb, var(--color-white) 6%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+		border-radius: 10px;
+		padding: 1px 6px;
+		line-height: 1.6;
+		opacity: 0.7;
+	}
+
+	.token-pill-icon {
+		font-size: 10px;
 		line-height: 1;
 	}
 

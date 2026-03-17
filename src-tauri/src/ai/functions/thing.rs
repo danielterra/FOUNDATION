@@ -100,6 +100,12 @@ pub fn remember(conn: &Connection, args: &Value) -> ToolResult {
             }).collect()
         });
 
+    let iri_hit = if !query_str.is_empty() && filters_owned.is_none() {
+        crate::owl::try_iri_direct_lookup(conn, query_str)
+    } else {
+        None
+    };
+
     let tokens: Vec<String> = if query_str.is_empty() {
         Vec::new()
     } else {
@@ -118,7 +124,17 @@ pub fn remember(conn: &Connection, args: &Value) -> ToolResult {
         limit,
         offset,
     ) {
-        Ok((results, total)) => {
+        Ok((mut results, mut total)) => {
+            if let Some(hit) = iri_hit {
+                if !results.iter().any(|r| r.id == hit.id) {
+                    total += 1;
+                    results.insert(0, hit);
+                    results.truncate(limit);
+                } else if let Some(pos) = results.iter().position(|r| r.id == hit.id) {
+                    let hit = results.remove(pos);
+                    results.insert(0, hit);
+                }
+            }
             let entities: Vec<serde_json::Value> = results.into_iter()
                 .map(|r| serde_json::json!({
                     "id": r.id,
@@ -275,6 +291,19 @@ fn get_thing_one(conn: &Connection, args: &Value) -> ToolResult {
                     "value": value,
                     "retracted": true,
                 }));
+            }
+        }
+
+        // Truncate large content fields to prevent bloating tool results in conversation history
+        const CONTENT_MAX: usize = 500;
+        for prop in &mut properties {
+            if prop.get("property").and_then(|p| p.as_str()) == Some("foundation:content") {
+                if let Some(value) = prop.get("value").and_then(|v| v.as_str()) {
+                    if value.len() > CONTENT_MAX {
+                        let truncated = format!("{}…[{} chars total]", &value[..CONTENT_MAX], value.len());
+                        prop["value"] = serde_json::json!(truncated);
+                    }
+                }
             }
         }
 

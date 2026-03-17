@@ -1,13 +1,14 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
 	import { onMount } from 'svelte';
-	import { fly } from 'svelte/transition';
-	import { cubicOut } from 'svelte/easing';
 	import Card from './Card.svelte';
-	import ChatMessageBubble from './ChatMessageBubble.svelte';
 	import ChatAttachmentPreview from './ChatAttachmentPreview.svelte';
 	import ChatInputArea from './ChatInputArea.svelte';
 	import ConversationBar from './ConversationBar.svelte';
+	import ChatHeader from './ChatHeader.svelte';
+	import ChatApiKeySetup from './ChatApiKeySetup.svelte';
+	import ChatErrorBanner from './ChatErrorBanner.svelte';
+	import ChatMessageList from './ChatMessageList.svelte';
 
 	// Props
 	let { isOpen = $bindable(false), activeConversationIri = $bindable(null) } = $props();
@@ -36,6 +37,12 @@
 	let editingMessageText = $state('');
 	let conversations = $state([]);
 	let conversationAgent = $state(null);
+	let cameraStream = null;
+	let cameraVideoEl = null;
+	let capturedFrames = [];
+	let captureTimer = null;
+	let captureStarted = false;
+	let inactivityTimer = null;
 
 	$effect(() => {
 		if (activeConversationIri) {
@@ -45,14 +52,11 @@
 		}
 	});
 
-	// Load recent messages on mount and request location
 	onMount(async () => {
 		requestLocation();
 
-		// Listen for database events and message updates
 		const { listen } = await import('@tauri-apps/api/event');
 
-		// Function to initialize app (API key + messages)
 		const initializeApp = async () => {
 			try {
 				const storedKey = await invoke('ai__get_api_key');
@@ -68,37 +72,34 @@
 			}
 			await loadConversations();
 			if (conversations.length > 0) {
-				activeConversationIri = conversations[0].iri;
+				const saved = localStorage.getItem('activeConversationIri');
+				const exists = saved && conversations.some(c => c.iri === saved);
+				activeConversationIri = exists ? saved : conversations[0].iri;
+				inputText = localStorage.getItem(`draft_${activeConversationIri}`) ?? '';
 			}
 			await loadMessages();
 		};
 
-		// Listen for import-complete in case database is still initializing
 		const unlistenImport = await listen('import-complete', async () => {
 			await initializeApp();
 		});
 
-		// Try to initialize immediately (database should already be initialized)
 		await initializeApp();
 
-		// Listen for new messages
 		const unlistenMessages = await listen('chat-message-added', async () => {
 			await loadMessages();
 		});
 
-		// Listen for AI processing started (from recovery)
 		const unlistenAIProcessing = await listen('ai-processing-started', () => {
 			startAIStatus('Claude is thinking');
 		});
 
-		// Listen for AI status updates
 		const unlistenAIStatus = await listen('ai-status', (event) => {
 			if (event.payload && event.payload.status) {
 				startAIStatus(event.payload.status);
 			}
 		});
 
-		// Listen for AI errors (e.g. recovery failures)
 		const unlistenAIError = await listen('ai-error', (event) => {
 			stopAIStatus();
 			if (event.payload && event.payload.message) {
@@ -106,14 +107,12 @@
 			}
 		});
 
-		// Listen for diagram node clicks from MermaidWidget
 		function handleChatInject(e) {
 			inputText += (inputText ? ' ' : '') + e.detail.text;
 			textareaElement?.focus();
 		}
 		document.addEventListener('chat-inject', handleChatInject);
 
-		// Cleanup listeners on unmount
 		return () => {
 			unlistenImport();
 			unlistenMessages();
@@ -136,19 +135,17 @@
 
 	function autoResizeTextarea() {
 		if (!textareaElement) return;
-
-		// Reset height to auto to get the correct scrollHeight
 		textareaElement.style.height = 'auto';
-
-		// Set new height based on scrollHeight, with max of 15 lines (~300px)
 		const newHeight = Math.min(textareaElement.scrollHeight, 300);
 		textareaElement.style.height = newHeight + 'px';
 	}
 
-	// Watch for input text changes to auto-resize
 	$effect(() => {
-		inputText; // Track inputText changes
+		inputText;
 		autoResizeTextarea();
+		if (activeConversationIri) {
+			localStorage.setItem(`draft_${activeConversationIri}`, inputText);
+		}
 	});
 
 	async function initializeAI(key) {
@@ -227,6 +224,7 @@
 		try {
 			const conv = await invoke('chat__create_conversation', { label: null });
 			activeConversationIri = conv.iri;
+			localStorage.setItem('activeConversationIri', conv.iri);
 			messages = [];
 			messageLimit = 50;
 			hasMoreMessages = true;
@@ -239,6 +237,8 @@
 
 	async function switchConversation(iri) {
 		activeConversationIri = iri;
+		localStorage.setItem('activeConversationIri', iri);
+		inputText = localStorage.getItem(`draft_${iri}`) ?? '';
 		messages = [];
 		messageLimit = 50;
 		hasMoreMessages = true;
@@ -252,10 +252,7 @@
 				limit: messageLimit,
 				conversationId: activeConversationIri
 			});
-
-			// Check if we got fewer messages than requested (means we've loaded all)
 			hasMoreMessages = msgs.length === messageLimit;
-
 			messages = msgs;
 			scrollToBottom();
 		} catch (err) {
@@ -272,19 +269,15 @@
 		const previousScrollHeight = chatContainer?.scrollHeight || 0;
 
 		try {
-			// Increase limit to load 50 more messages
 			messageLimit += 50;
 
 			const msgs = await invoke('chat__get_recent_messages', {
 				limit: messageLimit,
 				conversationId: activeConversationIri
 			});
-			// Check if we got fewer messages than requested (means we've loaded all)
 			hasMoreMessages = msgs.length === messageLimit;
-
 			messages = msgs;
 
-			// Maintain scroll position
 			setTimeout(() => {
 				if (chatContainer) {
 					const newScrollHeight = chatContainer.scrollHeight;
@@ -300,8 +293,6 @@
 
 	function handleScroll() {
 		if (!chatContainer || isLoadingMore) return;
-
-		// If scrolled to top (with small threshold), load more
 		if (chatContainer.scrollTop < 100) {
 			loadMoreMessages();
 		}
@@ -315,12 +306,10 @@
 		};
 		elapsedSeconds = 0;
 
-		// Clear any existing interval
 		if (elapsedInterval) {
 			clearInterval(elapsedInterval);
 		}
 
-		// Start counting
 		elapsedInterval = setInterval(() => {
 			if (aiStatus) {
 				elapsedSeconds = Math.floor((Date.now() - aiStatus.startTime) / 1000);
@@ -409,22 +398,22 @@
 		inputText = '';
 		pendingAttachments = [];
 
-		// Reset textarea height after clearing input
 		if (textareaElement) {
 			textareaElement.style.height = 'auto';
 		}
 
-		// Start AI status
 		startAIStatus('Claude is thinking');
 
-		// Send user message and get AI reply with location and attachments
-		// Don't await - let it run in background so UI updates immediately via events
+		const cameraImages = selectEvenly(capturedFrames, 4);
+		stopCapturing(false);
+
 		invoke('chat__send_and_reply', {
 			content,
 			latitude: userLocation?.latitude ?? null,
 			longitude: userLocation?.longitude ?? null,
 			attachmentIris: attachmentIris.length > 0 ? attachmentIris : null,
-			conversationId: activeConversationIri
+			conversationId: activeConversationIri,
+			cameraImages: cameraImages.length > 0 ? cameraImages : null,
 		}).then(() => {
 			stopAIStatus();
 		}).catch(err => {
@@ -531,19 +520,16 @@
 			await attachFile(file);
 		}
 
-		// Clear the input
 		fileInputElement.value = '';
 	}
 
 	async function attachFile(file) {
 		try {
-			// Check file size (30 MB limit)
 			if (file.size > 30 * 1024 * 1024) {
 				alert(`File ${file.name} is too large. Maximum size is 30 MB.`);
 				return;
 			}
 
-			// Only allow images and PDFs
 			const isImage = file.type.startsWith('image/');
 			const isPDF = file.type === 'application/pdf';
 
@@ -555,7 +541,6 @@
 				return;
 			}
 
-			// Import Tauri modules
 			let tempDir, join, writeFile;
 			try {
 				const pathModule = await import('@tauri-apps/api/path');
@@ -569,23 +554,19 @@
 				return;
 			}
 
-			// Save file to temporary directory
 			const tempPath = await tempDir();
 			const timestamp = Date.now();
 			const filePath = await join(tempPath, `${timestamp}_${file.name}`);
 
-			// Read file as ArrayBuffer and write using Tauri FS
 			const arrayBuffer = await file.arrayBuffer();
 			await writeFile(filePath, new Uint8Array(arrayBuffer));
 
-			// Call backend to save and register attachment
 			const attachmentIri = await invoke('chat__attach_file', {
 				filePath,
 				fileName: file.name,
 				mimeType: file.type
 			});
 
-			// Add to pending attachments
 			pendingAttachments = [...pendingAttachments, {
 				iri: attachmentIri,
 				fileName: file.name,
@@ -604,115 +585,136 @@
 		pendingAttachments = pendingAttachments.filter(a => a.iri !== iri);
 	}
 
+	async function initCamera() {
+		if (cameraStream) return;
+		try {
+			cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+			cameraVideoEl = document.createElement('video');
+			cameraVideoEl.srcObject = cameraStream;
+			cameraVideoEl.muted = true;
+			cameraVideoEl.autoplay = true;
+			await cameraVideoEl.play();
+		} catch {
+			cameraStream = null;
+			cameraVideoEl = null;
+		}
+	}
+
+	function captureFrame() {
+		if (!cameraVideoEl || cameraVideoEl.readyState < 2) return null;
+		try {
+			const canvas = document.createElement('canvas');
+			canvas.width = 320;
+			canvas.height = 240;
+			canvas.getContext('2d').drawImage(cameraVideoEl, 0, 0, 320, 240);
+			return canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+		} catch {
+			return null;
+		}
+	}
+
+	function startCapturing() {
+		captureStarted = true;
+		initCamera().then(() => {
+			if (!captureStarted) return;
+			captureTimer = setInterval(() => {
+				if (capturedFrames.length >= 60) return;
+				const frame = captureFrame();
+				if (frame) capturedFrames.push(frame);
+			}, 1000);
+		});
+	}
+
+	function stopCapturing(keepFrames) {
+		captureStarted = false;
+		clearInterval(captureTimer);
+		captureTimer = null;
+		clearTimeout(inactivityTimer);
+		inactivityTimer = null;
+		if (!keepFrames) capturedFrames = [];
+		if (cameraStream) {
+			cameraStream.getTracks().forEach(t => t.stop());
+			cameraStream = null;
+			cameraVideoEl = null;
+		}
+	}
+
+	function resetCaptureInactivityTimer() {
+		clearTimeout(inactivityTimer);
+		inactivityTimer = setTimeout(() => stopCapturing(true), 3000);
+	}
+
+	function selectEvenly(arr, n) {
+		if (arr.length === 0) return [];
+		if (arr.length <= n) return arr;
+		const result = [];
+		for (let i = 0; i < n; i++) {
+			result.push(arr[Math.round(i * (arr.length - 1) / (n - 1))]);
+		}
+		return result;
+	}
+
+	$effect(() => {
+		if (inputText.length > 0) {
+			if (!captureStarted) startCapturing();
+			resetCaptureInactivityTimer();
+		} else {
+			stopCapturing(false);
+		}
+	});
+
 </script>
 
 <div class="chat-panel">
-		<div class="chat-header">
-			<div class="chat-header-left">
-				<button class="agent-avatar" onclick={openAgentInspector} title={conversationAgent ? `Open ${conversationAgent.label} in Inspector` : 'AI Assistant'}>
-					<span class="material-symbols-outlined">{conversationAgent?.icon || 'smart_toy'}</span>
-				</button>
-				<span class="agent-name">{conversationAgent?.label || 'AI Assistant'}</span>
-			</div>
-			<div class="chat-header-right">
-				<button class="header-action-btn" onclick={createConversation} title="New conversation">
-					<span class="material-symbols-outlined">add</span>
-				</button>
-				<button class="header-action-btn" onclick={downloadChat} title="Download chat">
-					<span class="material-symbols-outlined">download</span>
-				</button>
-			</div>
-		</div>
-		<ConversationBar bind:conversations bind:activeConversationIri onSwitch={switchConversation} />
-		<div class="chat-content">
-				<!-- API Key Input -->
-				{#if showApiKeyInput}
-					<div class="api-key-setup">
-						<h3>Setup Claude API</h3>
-						<p>Enter your Anthropic API key to enable AI chat:</p>
-						<input
-							type="password"
-							bind:value={apiKey}
-							placeholder="sk-ant-..."
-							onkeydown={(e) => e.key === 'Enter' && saveApiKey()}
-						/>
-						<button onclick={saveApiKey} disabled={!apiKey.trim()}>
-							Save API Key
-						</button>
-						<small>Your API key is securely stored in your local ontology database</small>
-					</div>
-				{:else}
-					<!-- Error Banner -->
-					{#if errorMessage}
-						<div class="error-banner">
-							<span class="material-symbols-outlined">error</span>
-							<span class="error-text">{errorMessage}</span>
-							<button class="error-dismiss" onclick={dismissError} aria-label="Dismiss error">
-								<span class="material-symbols-outlined">close</span>
-							</button>
-						</div>
-					{/if}
+	<ChatHeader
+		{conversationAgent}
+		onOpenAgentInspector={openAgentInspector}
+		onNewConversation={createConversation}
+		onDownloadChat={downloadChat}
+	/>
+	<ConversationBar bind:conversations bind:activeConversationIri onSwitch={switchConversation} />
+	<div class="chat-content">
+		{#if showApiKeyInput}
+			<ChatApiKeySetup bind:apiKey onSave={saveApiKey} />
+		{:else}
+			<ChatErrorBanner {errorMessage} onDismiss={dismissError} />
 
-					<!-- Messages -->
-				<div class="chat-messages" bind:this={chatContainer} onscroll={handleScroll}>
-					{#if isLoadingMore}
-						<div class="loading-more">
-							<span class="material-symbols-outlined spinning">refresh</span>
-							<span>Loading more messages...</span>
-						</div>
-					{/if}
-					{#if isLoadingMessages}
-						<div class="empty-state">
-							<span class="material-symbols-outlined spinning">progress_activity</span>
-							<p>Loading messages...</p>
-						</div>
-					{:else if messages.length === 0}
-						<div class="empty-state">
-							<span class="material-symbols-outlined">chat_bubble</span>
-							<p>Start a conversation with the AI assistant</p>
-						</div>
-					{:else}
-						{#each messages as message (message.iri)}
-							{#if shouldDisplayMessage(message)}
-								<div in:fly={{ y: 80, duration: 380, easing: cubicOut }}>
-									<ChatMessageBubble
-										{message}
-										{messages}
-										onEdit={editMessage}
-										onRetry={retryMessage}
-									/>
-								</div>
-							{/if}
-						{/each}
-					{/if}
-				</div>
+			<ChatMessageList
+				{messages}
+				{isLoadingMessages}
+				{isLoadingMore}
+				bind:chatContainer
+				onScroll={handleScroll}
+				{shouldDisplayMessage}
+				onEdit={editMessage}
+				onRetry={retryMessage}
+			/>
 
 			<ChatAttachmentPreview
-					pendingAttachments={pendingAttachments}
-					onRemove={removeAttachment}
-				/>
+				pendingAttachments={pendingAttachments}
+				onRemove={removeAttachment}
+			/>
 
-				<ChatInputArea
-					bind:inputText
-					{isLoading}
-					hasPendingAttachments={pendingAttachments.length > 0}
-					{aiStatus}
-					{elapsedSeconds}
-					onSend={sendMessage}
-					onKeydown={handleKeydown}
-					onFileSelect={handleFileSelect}
-					bind:textareaElement
-					bind:fileInputElement
-					{editingMessageIri}
-					onCancelEdit={cancelEdit}
-					onCancelAI={cancelAI}
-				/>
-				{/if}
-		</div>
+			<ChatInputArea
+				bind:inputText
+				{isLoading}
+				hasPendingAttachments={pendingAttachments.length > 0}
+				{aiStatus}
+				{elapsedSeconds}
+				onSend={sendMessage}
+				onKeydown={handleKeydown}
+				onFileSelect={handleFileSelect}
+				bind:textareaElement
+				bind:fileInputElement
+				{editingMessageIri}
+				onCancelEdit={cancelEdit}
+				onCancelAI={cancelAI}
+			/>
+		{/if}
 	</div>
+</div>
 
 <style>
-	/* Chat Panel - Fixed Right Side */
 	.chat-panel {
 		width: 100%;
 		height: 100%;
@@ -722,280 +724,11 @@
 		backdrop-filter: blur(5px);
 	}
 
-	.chat-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 10px 14px;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-		flex-shrink: 0;
-		gap: 8px;
-	}
-
-	.chat-header-left {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		min-width: 0;
-		flex: 1;
-	}
-
-	.agent-avatar {
-		width: 36px;
-		height: 36px;
-		border-radius: 50%;
-		background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
-		color: var(--color-interactive);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		transition: all 0.2s;
-	}
-
-	.agent-avatar:hover {
-		background: color-mix(in srgb, var(--color-interactive) 28%, transparent);
-		border-color: var(--color-interactive);
-	}
-
-	.agent-avatar .material-symbols-outlined {
-		font-size: 18px;
-	}
-
-	.agent-name {
-		font-size: 14px;
-		font-weight: 600;
-		color: var(--color-neutral-active);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.chat-header-right {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		flex-shrink: 0;
-	}
-
-	.header-action-btn {
-		width: 32px;
-		height: 32px;
-		border-radius: 6px;
-		background: transparent;
-		border: none;
-		color: var(--color-neutral);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: all 0.15s;
-	}
-
-	.header-action-btn:hover {
-		background: color-mix(in srgb, var(--color-white) 10%, transparent);
-		color: var(--color-neutral-active);
-	}
-
-	.header-action-btn .material-symbols-outlined {
-		font-size: 18px;
-	}
-
 	.chat-content {
 		flex: 1;
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
 		padding: 16px 24px;
-	}
-
-	/* Messages */
-	.chat-messages {
-		flex: 1;
-		overflow-y: auto;
-		overflow-x: hidden;
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		margin-bottom: 12px;
-		min-height: 0;
-	}
-
-	.empty-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		height: 100%;
-		color: var(--color-neutral);
-		gap: 12px;
-	}
-
-	.empty-state .material-symbols-outlined {
-		font-size: 48px;
-		opacity: 0.3;
-	}
-
-	/* Error Banner */
-	.error-banner {
-		display: flex;
-		align-items: flex-start;
-		gap: 10px;
-		padding: 12px 14px;
-		background: color-mix(in srgb, var(--color-danger) 15%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
-		border-radius: 8px;
-		margin-bottom: 12px;
-		flex-shrink: 0;
-	}
-
-	.error-banner .material-symbols-outlined {
-		font-size: 18px;
-		color: var(--color-danger-hover);
-		flex-shrink: 0;
-		margin-top: 1px;
-	}
-
-	.error-text {
-		flex: 1;
-		font-size: 13px;
-		color: var(--color-danger-active);
-		line-height: 1.4;
-		word-break: break-word;
-	}
-
-	.error-dismiss {
-		background: none;
-		border: none;
-		cursor: pointer;
-		color: var(--color-danger-hover);
-		padding: 0;
-		display: flex;
-		align-items: center;
-		flex-shrink: 0;
-		opacity: 0.7;
-		transition: opacity 0.15s;
-	}
-
-	.error-dismiss:hover {
-		opacity: 1;
-	}
-
-	.error-dismiss .material-symbols-outlined {
-		font-size: 16px;
-		margin-top: 0;
-	}
-
-	/* Loading more indicator */
-	.loading-more {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 8px;
-		padding: 12px;
-		color: var(--color-neutral);
-		font-size: 13px;
-		background: color-mix(in srgb, var(--color-white) 5%, transparent);
-		border-radius: 8px;
-		margin-bottom: 12px;
-	}
-
-	.loading-more .material-symbols-outlined {
-		font-size: 18px;
-	}
-
-	.spinning {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	/* Scrollbar */
-	.chat-messages::-webkit-scrollbar {
-		width: 6px;
-	}
-
-	.chat-messages::-webkit-scrollbar-track {
-		background: transparent;
-	}
-
-	.chat-messages::-webkit-scrollbar-thumb {
-		background: color-mix(in srgb, var(--color-white) 20%, transparent);
-		border-radius: 3px;
-	}
-
-	.chat-messages::-webkit-scrollbar-thumb:hover {
-		background: color-mix(in srgb, var(--color-white) 30%, transparent);
-	}
-
-	/* API Key Setup */
-	.api-key-setup {
-		display: flex;
-		flex-direction: column;
-		gap: 16px;
-		padding: 20px;
-	}
-
-	.api-key-setup h3 {
-		margin: 0;
-		color: var(--color-neutral-active);
-		font-size: 18px;
-	}
-
-	.api-key-setup p {
-		margin: 0;
-		color: var(--color-neutral);
-		font-size: 14px;
-	}
-
-	.api-key-setup input {
-		padding: 12px 16px;
-		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-		border-radius: 8px;
-		background: color-mix(in srgb, var(--color-white) 5%, transparent);
-		color: var(--color-neutral-active);
-		font-family: inherit;
-		font-size: 14px;
-	}
-
-	.api-key-setup input:focus {
-		outline: none;
-		border-color: var(--color-interactive);
-	}
-
-	.api-key-setup button {
-		padding: 12px 24px;
-		border: none;
-		border-radius: 8px;
-		background: var(--color-interactive);
-		color: var(--color-neutral-on-interactive);
-		font-size: 14px;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all 0.2s;
-	}
-
-	.api-key-setup button:hover:not(:disabled) {
-		background: var(--color-interactive-hover);
-	}
-
-	.api-key-setup button:disabled {
-		background: var(--color-neutral-disabled);
-		cursor: not-allowed;
-		opacity: 0.5;
-	}
-
-	.api-key-setup small {
-		color: var(--color-neutral-disabled);
-		font-size: 12px;
 	}
 </style>

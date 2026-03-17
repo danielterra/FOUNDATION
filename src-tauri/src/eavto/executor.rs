@@ -20,6 +20,8 @@ use tokio::sync::{mpsc, oneshot};
 pub struct DbExecutor {
     write_tx: mpsc::UnboundedSender<WriteTask>,
     db_path: PathBuf,
+    /// Sends IRI objects written by each transaction so callers can emit entity-updated events.
+    notify_tx: Option<mpsc::UnboundedSender<Vec<String>>>,
 }
 
 /// A write task to be executed sequentially
@@ -32,17 +34,34 @@ impl DbExecutor {
     /// Create a new executor. The given `conn` becomes the dedicated write connection.
     /// `db_path` is used by read operations to open independent connections.
     pub fn new(conn: Connection, db_path: PathBuf) -> Self {
+        Self::new_with_notify(conn, db_path, None)
+    }
+
+    /// Like `new`, but also sends written IRI objects to `notify_tx` after each write.
+    /// The receiver can use these to emit `entity-updated` events for the linked entities.
+    pub fn new_with_notify(
+        conn: Connection,
+        db_path: PathBuf,
+        notify_tx: Option<mpsc::UnboundedSender<Vec<String>>>,
+    ) -> Self {
         let (write_tx, mut write_rx) = mpsc::unbounded_channel::<WriteTask>();
+        let notify_tx_thread = notify_tx.clone();
 
         std::thread::spawn(move || {
             let mut write_conn = conn;
             while let Some(task) = write_rx.blocking_recv() {
                 let result = (task.operation)(&mut write_conn);
+                if let Some(ref tx) = notify_tx_thread {
+                    let iris = crate::eavto::store::drain_written_iri_objects();
+                    if !iris.is_empty() {
+                        let _ = tx.send(iris);
+                    }
+                }
                 let _ = task.result_tx.send(result);
             }
         });
 
-        Self { write_tx, db_path }
+        Self { write_tx, db_path, notify_tx }
     }
 
     /// Create an executor backed by an in-memory database (for CI/test use only).
@@ -91,6 +110,7 @@ impl Clone for DbExecutor {
         Self {
             write_tx: self.write_tx.clone(),
             db_path: self.db_path.clone(),
+            notify_tx: self.notify_tx.clone(),
         }
     }
 }

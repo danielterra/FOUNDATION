@@ -36,6 +36,13 @@
       };
       return fileTypeToMime[hasFileType.value];
     }
+
+    const fileName = getFileName();
+    if (fileName) {
+      const ext = fileName.split('.').pop()?.toLowerCase();
+      const extToMime = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf' };
+      if (ext && extToMime[ext]) return extToMime[ext];
+    }
     return null;
   }
 

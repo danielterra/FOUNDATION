@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub enum ContentBlock {
     Text { text: String },
     Image { source: ImageSource },
+    CameraRef { file_path: String, token_estimate: usize },
     Document { source: DocumentSource },
     FileRef { file_iri: String, file_name: String, token_estimate: usize },
     ToolUse { id: String, name: String, input: serde_json::Value },
@@ -569,7 +570,9 @@ fn calculate_content_tokens(content_json: &str) -> Result<usize, String> {
             ContentBlock::ToolResult { content, .. } => {
                 bpe.encode_with_special_tokens(content).len() + TOOL_TOKEN_OVERHEAD
             },
-            ContentBlock::Image { .. } | ContentBlock::Document { .. } => 0,
+            ContentBlock::Image { .. } => 0,
+            ContentBlock::CameraRef { token_estimate, .. } => *token_estimate,
+            ContentBlock::Document { .. } => 0,
             ContentBlock::FileRef { token_estimate, .. } => *token_estimate,
         };
     }

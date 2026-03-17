@@ -74,6 +74,7 @@
   let error = $state(null);
   let widgetDefinitions = $state([]);
   let unlistenEntityUpdated = $state(null);
+  let unlistenEntityReferenced = $state(null);
 
   async function loadEntity() {
     loading = true;
@@ -194,11 +195,22 @@
         }
       }
     });
+
+    // entity-referenced fires when a write creates a link TO an entity (new backlink).
+    // Only reload if this inspector is showing the exact entity that gained a new backlink.
+    unlistenEntityReferenced = await listen('entity-referenced', (event) => {
+      if (event.payload.entityId === entityId) {
+        loadEntity();
+      }
+    });
   });
 
   onDestroy(() => {
     if (unlistenEntityUpdated) {
       unlistenEntityUpdated();
+    }
+    if (unlistenEntityReferenced) {
+      unlistenEntityReferenced();
     }
   });
 </script>

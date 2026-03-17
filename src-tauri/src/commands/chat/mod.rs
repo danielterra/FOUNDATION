@@ -9,13 +9,14 @@ pub use cancellation::AiCancellationState;
 
 use crate::owl::{Individual, Object, DbExecutor};
 use tauri::{Emitter, State};
+use base64::Engine as _;
 use super::chat_attachments::PENDING_ATTACHMENTS;
 
 pub use super::chat_storage::{
     ContentBlock,
     create_user_message, create_assistant_message, load_conversation_history,
 };
-use super::chat_storage::{create_message, load_message, ImageSource, DocumentSource};
+use super::chat_storage::{create_message, load_message};
 
 use message_utils::{message_to_api_format, inject_datetime_context, sanitize_tool_pairs, response_content_to_blocks};
 use settings::{get_max_input_tokens, load_agent_config};
@@ -100,6 +101,7 @@ pub async fn chat__send_and_reply(
     longitude: Option<f64>,
     attachment_iris: Option<Vec<String>>,
     conversation_id: String,
+    camera_images: Option<Vec<String>>,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
     cancellation: State<'_, CancellationState>,
@@ -125,52 +127,63 @@ pub async fn chat__send_and_reply(
 
     let mut response_messages = Vec::new();
 
-    let mut attached_file_iris: Vec<String> = Vec::new();
+    // (mime_type, base64_data) — injected into API for current turn only, never stored in DB
+    let mut attachment_binaries: Vec<(String, String)> = Vec::new();
+    // (file_iri, file_name) — files without a foundation:aiSummary, AI is asked to save one
+    let mut files_needing_summary: Vec<(String, String)> = Vec::new();
+    // (file_iri, file_name, file_path) — camera frames pending File entity creation
+    let mut camera_file_data: Vec<(String, String, String)> = Vec::new();
+    // IRIs of existing File entities to link via hasAttachment (regular attachments)
+    let mut existing_file_iris: Vec<String> = Vec::new();
 
-    let user_msg_iri = if let Some(ref iris) = attachment_iris {
+    let user_msg_iri = if attachment_iris.is_some() || camera_images.is_some() {
         let mut blocks: Vec<ContentBlock> = Vec::new();
-        {
+
+        if let Some(ref frames) = camera_images {
+            let capture_ts = chrono::Utc::now().timestamp_millis();
+            for (i, frame_data) in frames.iter().enumerate() {
+                let raw = base64::engine::general_purpose::STANDARD.decode(frame_data).unwrap_or_default();
+                let token_estimate = super::chat_attachments::estimate_image_tokens(&raw);
+                let file_path = super::chat_attachments::save_camera_frame(frame_data, i).await
+                    .unwrap_or_default();
+                let file_iri = format!("foundation:File_{}", capture_ts + i as i64);
+                let file_name = format!("camera_frame_{}.jpg", i + 1);
+                files_needing_summary.push((file_iri.clone(), file_name.clone()));
+                camera_file_data.push((file_iri, file_name, file_path.clone()));
+                blocks.push(ContentBlock::CameraRef { file_path, token_estimate });
+            }
+        }
+
+        if let Some(ref iris) = attachment_iris {
             let mut store = PENDING_ATTACHMENTS.lock().await;
             for iri in iris {
                 if let Some(att) = store.remove(iri) {
-                    attached_file_iris.push(att.file_iri.clone());
-                    if att.mime_type.starts_with("image/") {
-                        blocks.push(ContentBlock::Image {
-                            source: ImageSource {
-                                source_type: "base64".to_string(),
-                                media_type: att.mime_type,
-                                data: att.data,
-                            },
-                        });
-                        blocks.push(ContentBlock::FileRef {
-                            file_iri: att.file_iri,
-                            file_name: att.file_name,
-                            token_estimate: att.token_estimate,
-                        });
-                    } else if att.mime_type == "application/pdf" {
-                        blocks.push(ContentBlock::Document {
-                            source: DocumentSource {
-                                source_type: "base64".to_string(),
-                                media_type: att.mime_type,
-                                data: att.data,
-                            },
-                        });
-                        blocks.push(ContentBlock::FileRef {
-                            file_iri: att.file_iri,
-                            file_name: att.file_name,
-                            token_estimate: att.token_estimate,
-                        });
-                    } else {
-                        super::log_backend(
-                            "warn",
-                            &format!("[CHAT] Unsupported MIME type: {}", att.mime_type),
-                        );
+                    existing_file_iris.push(att.file_iri.clone());
+                    if att.mime_type.starts_with("image/") || att.mime_type == "application/pdf" {
+                        attachment_binaries.push((att.mime_type.clone(), att.data.clone()));
+                    }
+                    let file_iri = att.file_iri.clone();
+                    let file_name = att.file_name.clone();
+                    blocks.push(ContentBlock::FileRef {
+                        file_iri: att.file_iri,
+                        file_name: att.file_name,
+                        token_estimate: att.token_estimate,
+                    });
+                    let iri_for_check = file_iri.clone();
+                    let has_summary = executor.read(move |conn| {
+                        crate::owl::get_literal_property(conn, &iri_for_check, "foundation:aiSummary")
+                            .map(|v| v.is_some())
+                            .map_err(|e| e.to_string())
+                    }).await.unwrap_or(false);
+                    if !has_summary {
+                        files_needing_summary.push((file_iri, file_name));
                     }
                 } else {
                     super::log_backend("warn", &format!("[CHAT] Attachment not found: {}", iri));
                 }
             }
         }
+
         if !content.is_empty() {
             blocks.push(ContentBlock::Text { text: content.clone() });
         }
@@ -182,15 +195,33 @@ pub async fn chat__send_and_reply(
     };
     super::log_backend("info", &format!("[CHAT] Created user message: {}", user_msg_iri));
 
-    if !attached_file_iris.is_empty() {
+    if !camera_file_data.is_empty() || !existing_file_iris.is_empty() {
         let msg_iri = user_msg_iri.clone();
         executor.write(move |conn| {
-            let msg = Individual::new(&msg_iri);
-            for file_iri in attached_file_iris {
-                msg.add_property(conn, "foundation:hasAttachment",
-                    vec![Object::Iri(file_iri)], "chat")
-                    .map_err(|e| format!("Failed to set hasAttachment: {}", e))?;
+            let mut all_attachment_iris: Vec<String> = existing_file_iris;
+            for (file_iri, file_name, file_path) in camera_file_data {
+                let ind = Individual::new(&file_iri);
+                ind.assert(conn, "foundation:File", &file_name, "photo_camera", "chat")
+                    .map_err(|e| format!("Failed to create camera File entity: {}", e))?;
+                ind.add_property(conn, "foundation:fileName", vec![Object::Literal {
+                    value: file_name,
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                }], "chat").map_err(|e| format!("Failed to set fileName: {}", e))?;
+                if !file_path.is_empty() {
+                    ind.add_property(conn, "foundation:filePath", vec![Object::Literal {
+                        value: format!("file://{}", file_path),
+                        datatype: Some("xsd:anyURI".to_string()),
+                        language: None,
+                    }], "chat").map_err(|e| format!("Failed to set filePath: {}", e))?;
+                }
+                all_attachment_iris.push(file_iri);
             }
+            let msg = Individual::new(&msg_iri);
+            msg.add_property(conn, "foundation:hasAttachment",
+                all_attachment_iris.into_iter().map(Object::Iri).collect(),
+                "chat")
+                .map_err(|e| format!("Failed to set hasAttachment: {}", e))?;
             Ok(String::new())
         }).await?;
     }
@@ -222,6 +253,15 @@ pub async fn chat__send_and_reply(
             .map(message_to_api_format)
             .collect();
 
+        if loop_count == 1 {
+            message_utils::inject_attachments_for_current_turn(
+                &mut api_messages,
+                camera_images.as_deref(),
+                &attachment_binaries,
+                &files_needing_summary,
+            );
+        }
+
         inject_datetime_context(&mut api_messages);
         sanitize_tool_pairs(&mut api_messages);
 
@@ -232,11 +272,22 @@ pub async fn chat__send_and_reply(
         let blackboard_context = build_blackboard_context(&executor).await;
         let tools = crate::ai::functions::get_claude_tools();
 
+        let system_prompt = if let Some(ref frames) = camera_images {
+            format!(
+                "{}\n\n[Camera Vision] {} webcam snapshot{} of the user were captured during the typing of this message and are included as image blocks at the start of the user's message, in chronological order. Use them to read the evolution of the user's facial expression, posture, and emotional energy over the course of composing the message, and calibrate your tone and depth of response accordingly. Do not mention the camera or the images to the user unless they explicitly ask.",
+                agent_config.system_prompt,
+                frames.len(),
+                if frames.len() == 1 { "" } else { "s" }
+            )
+        } else {
+            agent_config.system_prompt.clone()
+        };
+
         let request = crate::ai::GenerateRequest {
             messages: api_messages,
             max_tokens: Some(MAX_OUTPUT_TOKENS),
             temperature: Some(0.3),
-            system: Some(agent_config.system_prompt.clone()),
+            system: Some(system_prompt),
             blackboard_context,
             tools: Some(tools),
             supports_web_tools: agent_config.supports_web_tools,
@@ -270,6 +321,10 @@ pub async fn chat__send_and_reply(
             &api_response.content,
             &api_response.tool_calls,
         )?;
+        let content_blocks = message_utils::extract_and_save_file_summaries(
+            content_blocks,
+            &executor,
+        ).await;
         let content_json = serde_json::to_string(&content_blocks)
             .map_err(|e| format!("Failed to serialize content: {}", e))?;
 
@@ -450,12 +505,22 @@ pub async fn chat__get_recent_messages(
                 })
                 .collect();
 
+            let input_tokens = msg.properties.iter()
+                .find(|(k, _)| k == "foundation:inputTokens")
+                .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
+
+            let output_tokens = msg.properties.iter()
+                .find(|(k, _)| k == "foundation:outputTokens")
+                .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
+
             let msg_json = serde_json::json!({
                 "iri": iri,
                 "role": role,
                 "content": content_blocks,
                 "timestamp": timestamp,
                 "attachments": attachments,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
             });
 
             messages_with_ts.push((timestamp, msg_json));

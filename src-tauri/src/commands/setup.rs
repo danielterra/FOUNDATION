@@ -47,8 +47,23 @@ pub async fn initialize_app(
         super::log_backend("info", &stats_msg);
     }
 
-    let executor = DbExecutor::new(conn, db_path.clone());
+    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
+    let executor = DbExecutor::new_with_notify(conn, db_path.clone(), Some(notify_tx));
     app.manage(executor);
+
+    let app_for_notify = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(iris) = notify_rx.recv().await {
+            let mut seen = std::collections::HashSet::new();
+            for iri in iris {
+                if seen.insert(iri.clone()) {
+                    // entity-referenced: a write created a link pointing TO this IRI (new backlink).
+                    // Used only to detect new backlinks on the exact entity being inspected.
+                    app_for_notify.emit("entity-referenced", serde_json::json!({ "entityId": iri })).ok();
+                }
+            }
+        }
+    });
 
     let worker = FormulaWorker::spawn(app.clone(), db_path.clone());
     recover_pending_jobs(&db_path, &worker);

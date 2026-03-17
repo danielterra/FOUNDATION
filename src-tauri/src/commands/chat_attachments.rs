@@ -125,9 +125,28 @@ pub async fn chat__attach_file(
     Ok(iri)
 }
 
+pub async fn save_camera_frame(base64_data: &str, index: usize) -> Result<String, String> {
+    let raw = base64::engine::general_purpose::STANDARD.decode(base64_data)
+        .map_err(|e| format!("Failed to decode camera frame: {}", e))?;
+
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let attachments_dir = dirs::document_dir()
+        .ok_or("Could not find documents directory")?
+        .join("Foundation")
+        .join("attachments");
+    tokio::fs::create_dir_all(&attachments_dir).await
+        .map_err(|e| format!("Failed to create attachments directory: {}", e))?;
+
+    let path = attachments_dir.join(format!("camera_{}_{}.jpg", timestamp, index));
+    tokio::fs::write(&path, &raw).await
+        .map_err(|e| format!("Failed to write camera frame: {}", e))?;
+
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// Claude scales images to fit within a 1568×1568 bounding box, then divides them
 /// into 512×512 tiles. Each tile costs 170 tokens plus 85 base overhead per image.
-fn estimate_image_tokens(raw: &[u8]) -> usize {
+pub fn estimate_image_tokens(raw: &[u8]) -> usize {
     let cursor = std::io::Cursor::new(raw);
     let (width, height) = match image::ImageReader::new(cursor)
         .with_guessed_format()

@@ -15,6 +15,16 @@ std::thread_local! {
     /// When true, assert_triples/retract_triples use SAVEPOINTs instead of BEGIN
     /// so that all operations participate in the same atomic transaction.
     static IN_BATCH_TX: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+
+    /// Accumulates IRI objects written during assert_triples on the write thread.
+    /// Drained by DbExecutor after each write to emit entity-updated notifications.
+    static WRITTEN_IRI_OBJECTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Returns all IRI objects accumulated since the last drain, removing them from the buffer.
+/// Only meaningful when called from the write thread.
+pub fn drain_written_iri_objects() -> Vec<String> {
+    WRITTEN_IRI_OBJECTS.with(|v| std::mem::take(&mut *v.borrow_mut()))
 }
 
 /// Marks the current thread as being inside a batch transaction.
@@ -50,8 +60,24 @@ pub fn assert_triples(
     if tx_id != 0 {
         let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
         crate::search::reindex_subjects(conn, &subjects);
+
+        WRITTEN_IRI_OBJECTS.with(|v| {
+            let mut buf = v.borrow_mut();
+            for triple in triples {
+                if let Object::Iri(iri) = &triple.object {
+                    if !is_vocabulary_iri(iri) {
+                        buf.push(iri.clone());
+                    }
+                }
+            }
+        });
     }
     Ok(tx_id)
+}
+
+fn is_vocabulary_iri(iri: &str) -> bool {
+    iri.starts_with("rdf:") || iri.starts_with("rdfs:") || iri.starts_with("owl:") ||
+    iri.starts_with("xsd:") || iri.starts_with("unit:") || iri.starts_with("currency:")
 }
 
 fn assert_triples_begin(
@@ -461,7 +487,7 @@ fn insert_triple(
         }
         Object::DateTime(rfc3339) => {
             dt_str = chrono::DateTime::parse_from_rfc3339(rfc3339)
-                .unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00+00:00").unwrap())
+                .unwrap_or(chrono::DateTime::UNIX_EPOCH.into())
                 .with_timezone(&chrono::Utc)
                 .to_rfc3339();
             (None, Some(dt_str.as_str()), Some("xsd:dateTime"), None, None, None, None)
