@@ -107,7 +107,7 @@ pub(super) fn run_atomic(
 
     take_events();
 
-    if let Err(e) = conn.execute_batch("BEGIN") {
+    if let Err(e) = conn.execute_batch("BEGIN IMMEDIATE") {
         return ToolResult {
             success: false,
             result: None,

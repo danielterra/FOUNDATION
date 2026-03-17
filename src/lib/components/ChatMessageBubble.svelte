@@ -3,6 +3,9 @@
 	import { openPath } from '@tauri-apps/plugin-opener';
 	import { marked } from 'marked';
 
+	const MIN_CHIP_OPACITY = 0.35;
+	const FALLBACK_ENTITY_SCORE = 0.5;
+
 	marked.setOptions({
 		breaks: true,
 		gfm: true,
@@ -35,7 +38,7 @@
 		return String(content);
 	}
 
-	let { message, messages, onEdit = null, onRetry = null } = $props();
+	let { message, messages, onEdit = null, onRetry = null, onEntityClick = null } = $props();
 
 	let copySuccess = $state(false);
 	let copyTimeout = null;
@@ -146,6 +149,22 @@
 	class="message {message.role === 'user' ? 'user' : 'ai'} {message.isThinking ? 'thinking' : ''}"
 >
 	<div class="message-content">
+		{#if message.role === 'user' && message.subconscious_entities?.length > 0}
+			<div class="subconscious-chips">
+				{#each message.subconscious_entities as entity}
+					<button
+						class="subconscious-chip {entity.is_open_loop ? 'open-loop' : ''}"
+						style="--score-opacity: {Math.max(MIN_CHIP_OPACITY, Math.min(1, entity.score ?? FALLBACK_ENTITY_SCORE))}"
+						onclick={() => onEntityClick?.(entity.iri)}
+						title="{entity.type_label}: {entity.label}"
+					>
+						<span class="material-symbols-outlined chip-icon">{entity.icon ?? 'circle'}</span>
+						<span class="chip-label">{entity.label}</span>
+						<span class="chip-type">{entity.type_label}</span>
+					</button>
+				{/each}
+			</div>
+		{/if}
 		<div class="message-bubble">
 		{#if message.isThinking}
 			<div class="thinking-indicator">
@@ -674,4 +693,61 @@
 	.tool-chip-json :global(.json-number)  { color: #b5cea8; }
 	.tool-chip-json :global(.json-boolean) { color: #569cd6; }
 	.tool-chip-json :global(.json-null)    { color: #569cd6; }
+
+	.subconscious-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		justify-content: flex-end;
+		padding: 0 2px 2px;
+	}
+
+	.subconscious-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 2px 7px 2px 4px;
+		border-radius: 12px;
+		border: 1px solid color-mix(in srgb, var(--color-interactive) calc(var(--score-opacity) * 40%), transparent);
+		background: color-mix(in srgb, var(--color-interactive) calc(var(--score-opacity) * 10%), transparent);
+		color: color-mix(in srgb, var(--color-interactive) calc(var(--score-opacity) * 100%), var(--color-neutral-disabled));
+		cursor: pointer;
+		transition: background 0.15s, border-color 0.15s;
+		font-size: 10px;
+		line-height: 1.4;
+		max-width: 180px;
+	}
+
+	.subconscious-chip:hover {
+		background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
+		border-color: color-mix(in srgb, var(--color-interactive) 60%, transparent);
+	}
+
+	.subconscious-chip.open-loop {
+		border-color: color-mix(in srgb, var(--color-warning, #FF9800) 50%, transparent);
+		background: color-mix(in srgb, var(--color-warning, #FF9800) 8%, transparent);
+		color: color-mix(in srgb, var(--color-warning, #FF9800) 90%, var(--color-neutral-disabled));
+	}
+
+	.subconscious-chip.open-loop:hover {
+		background: color-mix(in srgb, var(--color-warning, #FF9800) 16%, transparent);
+	}
+
+	.chip-icon {
+		font-size: 11px;
+		flex-shrink: 0;
+	}
+
+	.chip-label {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-weight: 500;
+	}
+
+	.chip-type {
+		opacity: 0.65;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
 </style>

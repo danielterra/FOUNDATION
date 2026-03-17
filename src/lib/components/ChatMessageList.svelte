@@ -11,7 +11,8 @@
 		onScroll,
 		shouldDisplayMessage,
 		onEdit,
-		onRetry
+		onRetry,
+		onEntityClick = null
 	} = $props();
 </script>
 
@@ -41,6 +42,7 @@
 						{messages}
 						onEdit={onEdit}
 						onRetry={onRetry}
+						onEntityClick={onEntityClick}
 					/>
 				</div>
 			{/if}

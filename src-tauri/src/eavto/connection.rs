@@ -98,6 +98,7 @@ fn initialize_db_with_progress(
     log_backend("info", &format!("Using database: {:?}", db_path));
     let conn = Connection::open(db_path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+    conn.busy_timeout(std::time::Duration::from_secs(30)).map_err(|e| DbError::ConnectionError(e))?;
 
     if needs_initialization {
         log_backend("info", "Initializing new database");

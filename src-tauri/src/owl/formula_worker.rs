@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::Emitter;
@@ -27,17 +26,17 @@ pub struct FormulaProgressEvent {
 }
 
 impl FormulaWorker {
-    pub fn spawn(app: tauri::AppHandle, db_path: PathBuf) -> Self {
+    pub fn spawn(app: tauri::AppHandle, executor: crate::owl::DbExecutor) -> Self {
         let (tx, mut rx) = mpsc::channel::<WorkerCommand>(64);
 
         tauri::async_runtime::spawn(async move {
             while let Some(cmd) = rx.recv().await {
                 match cmd {
                     WorkerCommand::Enqueue { job_id } => {
-                        process_job(&app, &db_path, &job_id).await;
+                        process_job(&app, &executor, &job_id).await;
                     }
                     WorkerCommand::Cancel { property_iri } => {
-                        cancel_jobs_for_property(&db_path, &property_iri);
+                        cancel_jobs_for_property(&executor, &property_iri).await;
                     }
                 }
             }
@@ -57,27 +56,29 @@ struct JobRecord {
     instance_iri: Option<String>,
 }
 
-async fn process_job(app: &tauri::AppHandle, db_path: &PathBuf, job_id: &str) {
-    let conn = match Connection::open(db_path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    let _ = conn.execute_batch("PRAGMA busy_timeout=5000;");
-
-    let job = match load_job(&conn, job_id) {
-        Some(j) => j,
-        None => return,
+async fn process_job(app: &tauri::AppHandle, executor: &crate::owl::DbExecutor, job_id: &str) {
+    let job_id_owned = job_id.to_string();
+    let job = match executor.read(move |conn| {
+        Ok(load_job(conn, &job_id_owned))
+    }).await {
+        Ok(Some(j)) => j,
+        _ => return,
     };
 
-    if conn.execute(
-        "UPDATE formula_recalc_jobs SET status = 'running', updated_at = ? WHERE id = ?",
-        rusqlite::params![now_millis(), job_id],
-    ).is_err() {
+    let job_id_owned = job_id.to_string();
+    if executor.write(move |conn| {
+        conn.execute(
+            "UPDATE formula_recalc_jobs SET status = 'running', updated_at = ? WHERE id = ?",
+            rusqlite::params![now_millis(), job_id_owned],
+        ).map(|_| String::new()).map_err(|e| e.to_string())
+    }).await.is_err() {
         return;
     }
 
+    let prop_iri = job.property_iri.clone();
     let class_iri = if job.class_iri.is_empty() {
-        fetch_domain(&conn, &job.property_iri)
+        let prop = prop_iri.clone();
+        executor.read(move |conn| Ok(fetch_domain(conn, &prop))).await.unwrap_or_default()
     } else {
         job.class_iri.clone()
     };
@@ -85,24 +86,32 @@ async fn process_job(app: &tauri::AppHandle, db_path: &PathBuf, job_id: &str) {
     let instance_iris: Vec<String> = if let Some(ref inst) = job.instance_iri {
         vec![inst.clone()]
     } else {
-        query_class_instances(&conn, &class_iri, job.last_offset)
+        let ci = class_iri.clone();
+        let offset = job.last_offset;
+        executor.read(move |conn| Ok(query_class_instances(conn, &ci, offset))).await.unwrap_or_default()
     };
 
     let total: i64 = if job.instance_iri.is_some() {
         1
     } else {
-        conn.query_row(
-            "SELECT COUNT(DISTINCT subject) FROM triples \
-             WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0",
-            rusqlite::params![class_iri],
-            |row| row.get(0),
-        ).unwrap_or(0)
+        let ci = class_iri.clone();
+        executor.read(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(DISTINCT subject) FROM triples \
+                 WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0",
+                rusqlite::params![ci],
+                |row| row.get(0),
+            ).map_err(|e| e.to_string())
+        }).await.unwrap_or(0)
     };
 
-    let _ = conn.execute(
-        "UPDATE formula_recalc_jobs SET total = ?, updated_at = ? WHERE id = ?",
-        rusqlite::params![total, now_millis(), job_id],
-    );
+    let job_id_owned = job_id.to_string();
+    let _ = executor.write(move |conn| {
+        conn.execute(
+            "UPDATE formula_recalc_jobs SET total = ?, updated_at = ? WHERE id = ?",
+            rusqlite::params![total, now_millis(), job_id_owned],
+        ).map(|_| String::new()).map_err(|e| e.to_string())
+    }).await;
 
     let mut processed = job.processed;
     let mut last_offset = job.last_offset;
@@ -110,12 +119,20 @@ async fn process_job(app: &tauri::AppHandle, db_path: &PathBuf, job_id: &str) {
     let mut cancelled = false;
 
     for instance_iri in &instance_iris {
-        let current_status: String = match conn.query_row(
-            "SELECT status FROM formula_recalc_jobs WHERE id = ?",
-            rusqlite::params![job_id],
-            |row| row.get(0),
-        ) {
-            Ok(s) => s,
+        let instance = instance_iri.clone();
+        let prop = job.property_iri.clone();
+        let job_id_owned = job_id.to_string();
+
+        let (current_status, eval_result) = match executor.read(move |conn| {
+            let status: String = conn.query_row(
+                "SELECT status FROM formula_recalc_jobs WHERE id = ?",
+                rusqlite::params![job_id_owned],
+                |row| row.get(0),
+            ).map_err(|e| e.to_string())?;
+            let eval = evaluate_formula_for_instance(conn, &instance, &prop);
+            Ok((status, eval))
+        }).await {
+            Ok(pair) => pair,
             Err(_) => break,
         };
 
@@ -124,31 +141,44 @@ async fn process_job(app: &tauri::AppHandle, db_path: &PathBuf, job_id: &str) {
             break;
         }
 
-        match evaluate_formula_for_instance(&conn, instance_iri, &job.property_iri) {
+        match eval_result {
             Ok(value) => {
-                store_calculated_value(&conn, instance_iri, &job.property_iri, &value, now_millis());
+                let inst = instance_iri.clone();
+                let prop = job.property_iri.clone();
+                let now = now_millis();
+                let _ = executor.write(move |conn| {
+                    store_calculated_value(conn, &inst, &prop, &value, now);
+                    Ok(String::new())
+                }).await;
                 if job.instance_iri.is_some() {
                     app.emit("entity-updated", serde_json::json!({"entityId": instance_iri})).ok();
                 }
             }
             Err(msg) => {
+                let inst = instance_iri.clone();
+                let prop = job.property_iri.clone();
                 let now = now_millis();
-                let _ = conn.execute(
-                    "INSERT INTO formula_instance_errors (instance_iri, property_iri, error_message, created_at)
-                     VALUES (?, ?, ?, ?)
-                     ON CONFLICT(instance_iri, property_iri) DO UPDATE SET error_message = excluded.error_message, created_at = excluded.created_at",
-                    rusqlite::params![instance_iri, job.property_iri, msg, now],
-                );
+                let _ = executor.write(move |conn| {
+                    conn.execute(
+                        "INSERT INTO formula_instance_errors (instance_iri, property_iri, error_message, created_at)
+                         VALUES (?, ?, ?, ?)
+                         ON CONFLICT(instance_iri, property_iri) DO UPDATE SET error_message = excluded.error_message, created_at = excluded.created_at",
+                        rusqlite::params![inst, prop, msg, now],
+                    ).map(|_| String::new()).map_err(|e| e.to_string())
+                }).await;
             }
         }
 
         processed += 1;
         last_offset += 1;
 
-        let _ = conn.execute(
-            "UPDATE formula_recalc_jobs SET processed = ?, last_offset = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![processed, last_offset, now_millis(), job_id],
-        );
+        let job_id_owned = job_id.to_string();
+        let _ = executor.write(move |conn| {
+            conn.execute(
+                "UPDATE formula_recalc_jobs SET processed = ?, last_offset = ?, updated_at = ? WHERE id = ?",
+                rusqlite::params![processed, last_offset, now_millis(), job_id_owned],
+            ).map(|_| String::new()).map_err(|e| e.to_string())
+        }).await;
 
         let pct = (processed * 100 / total.max(1)) as u32;
         if pct != last_pct {
@@ -167,10 +197,14 @@ async fn process_job(app: &tauri::AppHandle, db_path: &PathBuf, job_id: &str) {
     }
 
     let final_status = if cancelled { "cancelled" } else { "completed" };
-    let _ = conn.execute(
-        "UPDATE formula_recalc_jobs SET status = ?, updated_at = ? WHERE id = ?",
-        rusqlite::params![final_status, now_millis(), job_id],
-    );
+    let job_id_owned = job_id.to_string();
+    let fs = final_status.to_string();
+    let _ = executor.write(move |conn| {
+        conn.execute(
+            "UPDATE formula_recalc_jobs SET status = ?, updated_at = ? WHERE id = ?",
+            rusqlite::params![fs, now_millis(), job_id_owned],
+        ).map(|_| String::new()).map_err(|e| e.to_string())
+    }).await;
 
     let event = FormulaProgressEvent {
         job_id: job_id.to_string(),
@@ -312,14 +346,14 @@ fn query_formula_properties_by_reference(
     .unwrap_or_default()
 }
 
-fn cancel_jobs_for_property(db_path: &PathBuf, property_iri: &str) {
-    if let Ok(conn) = Connection::open(db_path) {
-        let _ = conn.execute(
-            "UPDATE formula_recalc_jobs SET status = 'cancelled', updated_at = ?
-             WHERE property_iri = ? AND status IN ('pending', 'running')",
-            rusqlite::params![now_millis(), property_iri],
-        );
-    }
+async fn cancel_jobs_for_property(executor: &crate::owl::DbExecutor, property_iri: &str) {
+    let prop = property_iri.to_string();
+    let _ = executor.write(move |conn| {
+        conn.execute(
+            "UPDATE formula_recalc_jobs SET status = 'cancelled', updated_at = ? WHERE property_iri = ? AND status IN ('pending', 'running')",
+            rusqlite::params![now_millis(), prop],
+        ).map(|_| String::new()).map_err(|e| e.to_string())
+    }).await;
 }
 
 pub fn cancel_and_create_property_job(
@@ -522,7 +556,6 @@ mod tests {
     #[test]
     fn test_store_calculated_value_retracts_existing_before_insert() {
         let conn = setup_test_db();
-        // Insert an existing value
         conn.execute(
             "INSERT INTO triples (subject, predicate, object_value, object_type, origin_id, tx, created_at, retracted)
              VALUES ('foundation:Instance1', 'foundation:score', 'old', 'literal', 1, 0, 0, 0)",
@@ -549,7 +582,6 @@ mod tests {
     #[test]
     fn test_store_calculated_value_clears_formula_errors() {
         let conn = setup_test_db();
-        // Insert an existing error
         conn.execute(
             "INSERT INTO formula_instance_errors (instance_iri, property_iri, error_message, created_at)
              VALUES ('foundation:Instance1', 'foundation:score', 'previous error', 0)",

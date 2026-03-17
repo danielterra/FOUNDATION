@@ -85,7 +85,7 @@ fn assert_triples_begin(
     triples: &[Triple],
     origin: &str,
 ) -> Result<i64> {
-    let tx = conn.transaction()?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let tx_id = do_assert_triples(&tx, triples, origin)?;
     tx.commit()?;
     Ok(tx_id)
@@ -229,7 +229,7 @@ pub fn append_triples(
         sp.commit()?;
         tx_id
     } else {
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let tx_id = do_append_triples(&tx, triples, origin)?;
         tx.commit()?;
         tx_id
@@ -289,7 +289,7 @@ pub fn retract_triples(
         sp.commit()?;
         tx_id
     } else {
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let tx_id = do_retract_triples(&tx, triples, origin)?;
         tx.commit()?;
         tx_id
@@ -708,7 +708,7 @@ pub fn rename_iri(
         do_rename_iri(&sp, old_iri, new_iri, origin)?;
         sp.commit()?;
     } else {
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         do_rename_iri(&tx, old_iri, new_iri, origin)?;
         tx.commit()?;
     }

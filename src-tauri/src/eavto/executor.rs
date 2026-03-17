@@ -80,7 +80,7 @@ impl DbExecutor {
         let path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
             let conn = Connection::open(&path).map_err(|e| e.to_string())?;
-            conn.execute_batch("PRAGMA busy_timeout=5000;").map_err(|e| e.to_string())?;
+            conn.busy_timeout(std::time::Duration::from_secs(30)).map_err(|e| e.to_string())?;
             operation(&conn)
         })
         .await

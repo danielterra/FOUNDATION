@@ -197,6 +197,19 @@
 		}
 	}
 
+	async function openEntityInspector(entityIri) {
+		try {
+			await invoke('widget_blackboard__add_widget', {
+				widgetType: 'inspector',
+				entityId: entityIri,
+				position: null,
+				size: null,
+				conversationId: activeConversationIri
+			});
+		} catch (_err) {
+		}
+	}
+
 	async function openAgentInspector() {
 		if (!conversationAgent) return;
 		try {
@@ -394,6 +407,8 @@
 		}
 
 		const attachmentIris = pendingAttachments.map(a => a.iri);
+		const cameraImages = selectEvenly(capturedFrames, 4);
+		stopCapturing(false);
 
 		inputText = '';
 		pendingAttachments = [];
@@ -403,9 +418,6 @@
 		}
 
 		startAIStatus('Claude is thinking');
-
-		const cameraImages = selectEvenly(capturedFrames, 4);
-		stopCapturing(false);
 
 		invoke('chat__send_and_reply', {
 			content,
@@ -688,6 +700,7 @@
 				{shouldDisplayMessage}
 				onEdit={editMessage}
 				onRetry={retryMessage}
+				onEntityClick={openEntityInspector}
 			/>
 
 			<ChatAttachmentPreview

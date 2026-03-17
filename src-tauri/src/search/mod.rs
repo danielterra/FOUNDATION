@@ -259,6 +259,13 @@ pub fn reindex_subjects(conn: &Connection, subjects: &[String]) {
 }
 
 pub fn search(query: &str, concept_iri: Option<&str>, limit: usize) -> Vec<String> {
+    search_with_scores(query, concept_iri, limit)
+        .into_iter()
+        .map(|(iri, _)| iri)
+        .collect()
+}
+
+pub fn search_with_scores(query: &str, concept_iri: Option<&str>, limit: usize) -> Vec<(String, f32)> {
     if query.trim().is_empty() {
         return vec![];
     }
@@ -322,11 +329,12 @@ pub fn search(query: &str, concept_iri: Option<&str>, limit: usize) -> Vec<Strin
 
     top_docs
         .into_iter()
-        .filter_map(|(_score, addr)| {
+        .filter_map(|(score, addr)| {
             let doc: TantivyDocument = searcher.doc(addr).ok()?;
-            doc.get_first(idx.f_iri)
+            let iri = doc.get_first(idx.f_iri)
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(|s| s.to_string())?;
+            Some((iri, score))
         })
         .collect()
 }

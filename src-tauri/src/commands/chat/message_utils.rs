@@ -175,6 +175,32 @@ pub fn inject_attachments_for_current_turn(
     }
 }
 
+/// Append subconscious context as a text block to the last user message.
+/// Keeps the system prompt fully static (cacheable) while surfacing dynamic memory context.
+pub fn inject_subconscious_context(messages: &mut Vec<ChatMessage>, context: &str) {
+    let target = messages.iter_mut().rev().find(|msg| {
+        if msg.role != "user" { return false; }
+        match &msg.content {
+            MessageContent::ContentBlocks(blocks) =>
+                !blocks.iter().any(|b| matches!(b, ApiContentBlock::ToolResult { .. })),
+            MessageContent::Text(_) => true,
+        }
+    });
+
+    let Some(msg) = target else { return };
+
+    let block = ApiContentBlock::Text { text: context.to_string() };
+    match &mut msg.content {
+        MessageContent::ContentBlocks(ref mut blocks) => blocks.push(block),
+        MessageContent::Text(text) => {
+            msg.content = MessageContent::ContentBlocks(vec![
+                ApiContentBlock::Text { text: text.clone() },
+                block,
+            ]);
+        }
+    }
+}
+
 /// Prepend current date/time as a text block to the last user message in the list.
 /// This keeps the system prompt fully static (cacheable) while still giving Claude
 /// temporal context on every request. No-op if the list is empty.

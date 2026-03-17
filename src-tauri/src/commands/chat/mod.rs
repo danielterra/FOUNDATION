@@ -3,11 +3,13 @@ mod message_utils;
 mod settings;
 mod recovery;
 mod cancellation;
+mod subconscious;
 
 pub use tool_execution::execute_tools_from_message;
 pub use cancellation::AiCancellationState;
 
 use crate::owl::{Individual, Object, DbExecutor};
+use rusqlite::OptionalExtension;
 use tauri::{Emitter, State};
 use base64::Engine as _;
 use super::chat_attachments::PENDING_ATTACHMENTS;
@@ -228,6 +230,28 @@ pub async fn chat__send_and_reply(
 
     app.emit("chat-message-added", ()).ok();
 
+    let content_for_subconscious = content.clone();
+    let subconscious_entities = executor.read(move |conn| {
+        Ok(subconscious::run_subconscious(&content_for_subconscious, conn))
+    }).await.unwrap_or_default();
+
+    if !subconscious_entities.is_empty() {
+        let msg_iri_sc = user_msg_iri.clone();
+        let entities_json = serde_json::to_string(&subconscious_entities)
+            .unwrap_or_else(|_| "[]".to_string());
+        executor.write(move |conn| {
+            let msg = Individual::new(&msg_iri_sc);
+            msg.add_property(conn, "foundation:subconsciousContext", vec![Object::Literal {
+                value: entities_json,
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }], "chat").map_err(|e| format!("Failed to set subconsciousContext: {}", e))?;
+            Ok(String::new())
+        }).await.ok();
+    }
+
+    let subconscious_context = subconscious::format_context(&subconscious_entities);
+
     let mut loop_count = 0;
     loop {
         loop_count += 1;
@@ -260,6 +284,9 @@ pub async fn chat__send_and_reply(
                 &attachment_binaries,
                 &files_needing_summary,
             );
+            if let Some(ref ctx) = subconscious_context {
+                message_utils::inject_subconscious_context(&mut api_messages, ctx);
+            }
         }
 
         inject_datetime_context(&mut api_messages);
@@ -513,6 +540,14 @@ pub async fn chat__get_recent_messages(
                 .find(|(k, _)| k == "foundation:outputTokens")
                 .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
 
+            let subconscious_entities: Vec<subconscious::SubconsciousEntity> = msg.properties.iter()
+                .find(|(k, _)| k == "foundation:subconsciousContext")
+                .and_then(|(_, v)| match v {
+                    Object::Literal { value, .. } => serde_json::from_str(value).ok(),
+                    _ => None,
+                })
+                .unwrap_or_default();
+
             let msg_json = serde_json::json!({
                 "iri": iri,
                 "role": role,
@@ -521,6 +556,7 @@ pub async fn chat__get_recent_messages(
                 "attachments": attachments,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
+                "subconscious_entities": subconscious_entities,
             });
 
             messages_with_ts.push((timestamp, msg_json));
@@ -706,39 +742,50 @@ pub async fn chat__recover_pending_tools(
     executor: State<'_, DbExecutor>,
     cancellation: State<'_, CancellationState>,
 ) -> Result<usize, String> {
+    super::log_backend("info", "[RECOVERY] Checking for pending tool executions...");
     let max_tokens = get_max_input_tokens(&executor).await?;
 
-    // Find the most recent conversation by looking at the latest message timestamp across all
-    // conversations. Recovery only applies to the most recent one — older conversations are
-    // already settled and should not be touched.
-    let all_conversation_iris = executor.read(|conn| {
-        Individual::find_by_class_and_properties(conn, "foundation:AIConversation", &[])
-            .map_err(|e| format!("Failed to query conversations: {}", e))
-    }).await?;
-
-    let most_recent_conv = executor.read(move |conn| {
-        let mut best: Option<(i64, String)> = None;
-        for conv_iri in &all_conversation_iris {
-            let recent = Individual::find_messages_by_conversation(conn, conv_iri, 1, 0)
-                .unwrap_or_default();
-            if let Some(msg_iri) = recent.into_iter().next() {
-                if let Ok(msg) = load_message(conn, &msg_iri) {
-                    if best.as_ref().map_or(true, |(ts, _)| msg.timestamp > *ts) {
-                        best = Some((msg.timestamp, conv_iri.clone()));
-                    }
-                }
-            }
-        }
-        Ok::<Option<String>, String>(best.map(|(_, iri)| iri))
+    // Find the most recent conversation by picking the conversation that contains the
+    // single most-recent AIConversationMessage across all conversations.
+    let most_recent_conv = executor.read(|conn| {
+        conn.query_row(
+            "SELECT t_conv.object
+             FROM triples t_type
+             INNER JOIN triples t_conv
+                 ON t_type.subject = t_conv.subject
+                 AND t_conv.predicate = 'foundation:partOfConversation'
+                 AND t_conv.retracted = 0
+             LEFT JOIN triples t_sent
+                 ON t_type.subject = t_sent.subject
+                 AND t_sent.predicate = 'foundation:sentAt'
+                 AND t_sent.retracted = 0
+             WHERE t_type.predicate = 'rdf:type'
+               AND t_type.object = 'foundation:AIConversationMessage'
+               AND t_type.retracted = 0
+             ORDER BY t_sent.object_value DESC
+             LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| format!("Failed to find most recent conversation: {}", e))
     }).await?;
 
     let Some(conv_id) = most_recent_conv else {
+        super::log_backend("info", "[RECOVERY] No conversations found, skipping");
         return Ok(0);
     };
 
+    super::log_backend("info", &format!("[RECOVERY] Most recent conversation: {}", conv_id));
+
     let history = load_conversation_history(&executor, &conv_id, max_tokens).await?;
 
+    super::log_backend("info", &format!(
+        "[RECOVERY] Loaded {} messages from history", history.len()
+    ));
+
     if history.is_empty() {
+        super::log_backend("info", "[RECOVERY] History is empty, skipping");
         return Ok(0);
     }
 
@@ -749,10 +796,18 @@ pub async fn chat__recover_pending_tools(
     let has_tool_use = last_msg.content.iter()
         .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
 
+    super::log_backend("info", &format!(
+        "[RECOVERY] Last message: role={}, has_tool_use={}, content_blocks={}",
+        last_msg.role, has_tool_use, last_msg.content.len()
+    ));
+
     let needs_recovery = (last_msg.role == "assistant" && has_tool_use)
         || last_msg.role == "user";
 
     if !needs_recovery {
+        super::log_backend("info", &format!(
+            "[RECOVERY] No recovery needed (role={}, has_tool_use={})", last_msg.role, has_tool_use
+        ));
         return Ok(0);
     }
 

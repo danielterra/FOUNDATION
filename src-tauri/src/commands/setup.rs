@@ -49,6 +49,8 @@ pub async fn initialize_app(
 
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
     let executor = DbExecutor::new_with_notify(conn, db_path.clone(), Some(notify_tx));
+    let executor_for_worker = executor.clone();
+    let executor_for_recover = executor.clone();
     app.manage(executor);
 
     let app_for_notify = app.clone();
@@ -65,8 +67,8 @@ pub async fn initialize_app(
         }
     });
 
-    let worker = FormulaWorker::spawn(app.clone(), db_path.clone());
-    recover_pending_jobs(&db_path, &worker);
+    let worker = FormulaWorker::spawn(app.clone(), executor_for_worker);
+    recover_pending_jobs(&executor_for_recover, &worker).await;
     app.manage(worker);
 
     tauri::async_runtime::spawn(crate::process_automation::scheduler::start(app.clone()));
@@ -76,39 +78,37 @@ pub async fn initialize_app(
     Ok(())
 }
 
-fn recover_pending_jobs(
-    db_path: &std::path::PathBuf,
+async fn recover_pending_jobs(
+    executor: &crate::owl::DbExecutor,
     worker: &FormulaWorker,
 ) {
     use crate::owl::formula_worker::WorkerCommand;
-
-    let conn = match rusqlite::Connection::open(db_path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
 
-    let _ = conn.execute(
-        "UPDATE formula_recalc_jobs SET status = 'pending', updated_at = ? WHERE status = 'running'",
-        rusqlite::params![now],
-    );
+    let _ = executor.write(move |conn| {
+        conn.execute(
+            "UPDATE formula_recalc_jobs SET status = 'pending', updated_at = ? WHERE status = 'running'",
+            rusqlite::params![now],
+        ).map(|_| String::new()).map_err(|e| e.to_string())
+    }).await;
 
-    let job_ids: Vec<String> = {
+    let job_ids: Vec<String> = executor.read(|conn| {
         let mut stmt = match conn.prepare(
             "SELECT id FROM formula_recalc_jobs WHERE status = 'pending' ORDER BY created_at",
         ) {
             Ok(s) => s,
-            Err(_) => return,
+            Err(_) => return Ok(vec![]),
         };
-        let Ok(rows) = stmt.query_map([], |row| row.get(0)) else {
-            return;
+        let rows = match stmt.query_map([], |row| row.get(0)) {
+            Ok(r) => r,
+            Err(_) => return Ok(vec![]),
         };
-        rows.filter_map(|r| r.ok()).collect()
-    };
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }).await.unwrap_or_default();
 
     for job_id in job_ids {
         let _ = worker.sender.try_send(WorkerCommand::Enqueue { job_id });
