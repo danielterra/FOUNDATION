@@ -5,6 +5,43 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-03-17
+
+### Added
+
+- **Generic inspector auto-refresh**: Inspector now automatically reloads when new backlinks or properties are added to the viewed entity — works for any entity, not just chat messages
+- **Multi-attachment fix**: All camera frames are now correctly linked via `hasAttachment`; previously only the last frame was persisted due to `add_property` overwrite behavior
+- **Camera frame summaries**: AI summaries for camera frames now focus on emotional/body state in 1-3 words; environment description only on the first frame
+- **Tantivy concept-filtered search**: BooleanQuery with concept field allows concept-scoped full-text search
+- **Usage-based relevance boost**: Tantivy search results boosted by entity access frequency via fast field
+- **Per-conversation blackboard**: Widgets scoped to active conversation via blackboard state
+- **Concept properties in Inspector/MCP**: `get_concepts` and Inspector now expose concept-level properties
+- **Cascade delete on forget_concepts**: Deleting a concept now removes all its instances
+- **Formula auto-recalculation**: Formula properties recomputed automatically on `learn_properties` and `learn_things`
+- **`get_concept_graph` and `get_process` MCP tools**: Dynamic node status in process graphs
+- **Widget resize handle**: Drag-to-resize for blackboard widgets
+- **MetaBoundaryCondition, HTTP response events, pan gestures**: Extended process modelling and canvas interaction
+- **MetaProcess graph enrichment**: Trigger types, `renders_component`, and expressive node icons
+- **InclusiveGateway and BoundaryEvent node types**: Extended BPMN-style flow support
+- **MetaProcess widget**: BPMN flow diagram with status badges
+- **Widget window state persistence**: Widget position and size persist across sessions
+
+### Fixed
+
+- **Camera frame image preview**: Generic file icon shown instead of thumbnail; fixed by adding filename extension fallback for MIME detection
+- **Inspector backlink state**: Backlink groups no longer collapse when inspector reloads
+- **Spurious inspector reload**: Opening a backlink in a second inspector no longer reloads the first
+- **Inspector auto-refresh on new backlinks**: Dedicated `entity-referenced` event prevents cascade reloads from access counters and unrelated writes
+- **Minimized inspector header padding**: Tightened padding and action gap
+- **`file://` icons in `learn_things`**: Extended meta-property bypass to allow file-protocol icon URIs
+
+### Refactored
+
+- **`PropertyList.svelte`**: Extracted `FileGrid.svelte` and `PropertyEditForm.svelte` to reduce file size
+- **`ChatWindow.svelte`**: Extracted `ChatHeader`, `ChatApiKeySetup`, `ChatErrorBanner`, `ChatMessageList` components
+- **MCP tool descriptions**: Rewritten to lead with when-to-use guidance
+- **Tantivy BM25 full-text index**: Replaced SQL `LIKE` search
+
 ## [0.11.1] - 2026-03-12
 
 ### Refactored
