@@ -6,8 +6,8 @@ use tantivy::{
     DocId, Score, SegmentReader,
     Index, IndexWriter, IndexReader, ReloadPolicy, TantivyDocument,
     collector::TopDocs,
-    query::QueryParser,
-    schema::{Field, Schema, Value, STRING, STORED, TEXT, FAST},
+    query::{BooleanQuery, Occur, Query, QueryParser, TermQuery},
+    schema::{Field, IndexRecordOption, Schema, Value, STRING, STORED, TEXT, FAST},
     Term,
 };
 
@@ -23,6 +23,7 @@ struct SearchIndex {
     f_label: Field,
     f_comment: Field,
     f_props: Field,
+    f_concept: Field,
     f_boost: Field,
 }
 
@@ -30,14 +31,15 @@ lazy_static::lazy_static! {
     static ref SEARCH_INDEX: Mutex<Option<SearchIndex>> = Mutex::new(None);
 }
 
-fn build_schema() -> (Schema, Field, Field, Field, Field, Field) {
+fn build_schema() -> (Schema, Field, Field, Field, Field, Field, Field) {
     let mut b = Schema::builder();
     let f_iri     = b.add_text_field("iri",     STRING | STORED);
     let f_label   = b.add_text_field("label",   TEXT   | STORED);
     let f_comment = b.add_text_field("comment", TEXT);
     let f_props   = b.add_text_field("props",   TEXT);
+    let f_concept = b.add_text_field("concept", STRING);
     let f_boost   = b.add_u64_field("boost",    FAST   | STORED);
-    (b.build(), f_iri, f_label, f_comment, f_props, f_boost)
+    (b.build(), f_iri, f_label, f_comment, f_props, f_concept, f_boost)
 }
 
 pub fn ensure_access_table(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -68,6 +70,20 @@ fn get_access_count(conn: &Connection, iri: &str) -> u64 {
     .unwrap_or(0)
 }
 
+fn get_concept_iri(conn: &Connection, subject: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT object FROM triples
+         WHERE subject = ?1 AND retracted = 0 AND predicate = 'rdf:type'
+           AND object NOT LIKE 'owl:%'
+           AND object NOT LIKE 'rdf:%'
+           AND object NOT LIKE 'rdfs:%'
+         LIMIT 1",
+        [subject],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
 pub fn init(index_dir: &Path, conn: &Connection) {
     let mut guard = match SEARCH_INDEX.lock() {
         Ok(g) => g,
@@ -88,16 +104,18 @@ pub fn init(index_dir: &Path, conn: &Connection) {
 }
 
 fn do_init(index_dir: &Path, conn: &Connection) -> Result<SearchIndex, Box<dyn std::error::Error>> {
-    let (schema, f_iri, f_label, f_comment, f_props, f_boost) = build_schema();
+    let (schema, f_iri, f_label, f_comment, f_props, f_concept, f_boost) = build_schema();
 
     let (index, needs_rebuild) = if index_dir.exists() {
-        match Index::open_in_dir(index_dir) {
-            Ok(idx) => (idx, false),
-            Err(_) => {
-                std::fs::remove_dir_all(index_dir)?;
-                std::fs::create_dir_all(index_dir)?;
-                (Index::create_in_dir(index_dir, schema)?, true)
-            }
+        let stale = Index::open_in_dir(index_dir)
+            .map(|existing| existing.schema() != schema)
+            .unwrap_or(true);
+        if stale {
+            std::fs::remove_dir_all(index_dir)?;
+            std::fs::create_dir_all(index_dir)?;
+            (Index::create_in_dir(index_dir, schema)?, true)
+        } else {
+            (Index::open_in_dir(index_dir)?, false)
         }
     } else {
         std::fs::create_dir_all(index_dir)?;
@@ -111,7 +129,7 @@ fn do_init(index_dir: &Path, conn: &Connection) -> Result<SearchIndex, Box<dyn s
         .try_into()?;
 
     let mut idx = SearchIndex {
-        index, writer, reader, f_iri, f_label, f_comment, f_props, f_boost,
+        index, writer, reader, f_iri, f_label, f_comment, f_props, f_concept, f_boost,
     };
 
     if needs_rebuild {
@@ -190,6 +208,7 @@ fn build_document(idx: &SearchIndex, conn: &Connection, subject: &str) -> Option
     }
 
     let access_count = get_access_count(conn, subject);
+    let concept = get_concept_iri(conn, subject);
 
     let mut doc = TantivyDocument::default();
     doc.add_text(idx.f_iri, subject);
@@ -199,6 +218,9 @@ fn build_document(idx: &SearchIndex, conn: &Connection, subject: &str) -> Option
     }
     if !props.is_empty() {
         doc.add_text(idx.f_props, &props.join(" "));
+    }
+    if let Some(c) = concept {
+        doc.add_text(idx.f_concept, &c);
     }
     doc.add_u64(idx.f_boost, access_count);
     Some(doc)
@@ -236,7 +258,7 @@ pub fn reindex_subjects(conn: &Connection, subjects: &[String]) {
     }
 }
 
-pub fn search(query: &str, limit: usize) -> Vec<String> {
+pub fn search(query: &str, concept_iri: Option<&str>, limit: usize) -> Vec<String> {
     if query.trim().is_empty() {
         return vec![];
     }
@@ -261,12 +283,24 @@ pub fn search(query: &str, limit: usize) -> Vec<String> {
 
     let safe_query = sanitize_query(query);
 
-    let parsed = match parser.parse_query(&safe_query) {
+    let text_query: Box<dyn Query> = match parser.parse_query(&safe_query) {
         Ok(q) => q,
         Err(_) => match parser.parse_query(&format!("\"{}\"", query.replace('"', ""))) {
             Ok(q) => q,
             Err(_) => return vec![],
         },
+    };
+
+    let final_query: Box<dyn Query> = match concept_iri {
+        Some(concept) => {
+            let term = Term::from_field_text(idx.f_concept, concept);
+            let concept_filter = TermQuery::new(term, IndexRecordOption::Basic);
+            Box::new(BooleanQuery::new(vec![
+                (Occur::Must, text_query),
+                (Occur::Must, Box::new(concept_filter)),
+            ]))
+        }
+        None => text_query,
     };
 
     let top_docs_collector = TopDocs::with_limit(limit).tweak_score(
@@ -281,7 +315,7 @@ pub fn search(query: &str, limit: usize) -> Vec<String> {
         }
     );
 
-    let top_docs = match searcher.search(&parsed, &top_docs_collector) {
+    let top_docs = match searcher.search(final_query.as_ref(), &top_docs_collector) {
         Ok(docs) => docs,
         Err(_) => return vec![],
     };

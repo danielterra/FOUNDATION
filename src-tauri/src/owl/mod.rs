@@ -437,10 +437,10 @@ pub fn search_rich(
     limit: usize,
     offset: usize,
 ) -> Result<(Vec<RichSearchResult>, usize)> {
-    if concept_iri.is_some() || filters.is_some() {
+    if filters.is_some() || include_retracted {
         search_rich_structured(conn, tokens, entity_type_filter, concept_iri, filters, include_retracted, limit, offset)
     } else {
-        search_rich_global(conn, tokens, entity_type_filter, limit, offset)
+        search_rich_global(conn, tokens, entity_type_filter, concept_iri, limit, offset)
     }
 }
 
@@ -741,43 +741,52 @@ fn search_rich_global(
     conn: &Connection,
     tokens: &[String],
     entity_type_filter: Option<&str>,
+    concept_iri: Option<&str>,
     limit: usize,
     offset: usize,
 ) -> Result<(Vec<RichSearchResult>, usize)> {
     use crate::eavto::query;
 
-    // Empty query: list all entities ordered by label length (existing behaviour)
     if tokens.is_empty() {
+        if let Some(concept) = concept_iri {
+            let all_iris = Class::get_instances(conn, concept)?;
+            let total = all_iris.len();
+            let page: Vec<String> = all_iris.into_iter().skip(offset).take(limit).collect();
+            let batch = query::batch_load_triples_for_subjects(conn, &page)
+                .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+            let results: Vec<RichSearchResult> = page.iter().map(|iri| {
+                let empty = vec![];
+                let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+                enrich_from_triples(conn, iri, triples, vec![])
+            }).collect();
+            return Ok((results, total));
+        }
+
         let big_limit = offset + limit + 1000;
         let rows = query::search_entities(conn, "", big_limit)
             .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
-
         let filtered: Vec<_> = rows.into_iter()
             .filter(|r| entity_type_matches(r.type_iri.as_deref(), entity_type_filter))
             .collect();
-
         let total = filtered.len();
         let page: Vec<_> = filtered.into_iter().skip(offset).take(limit).collect();
         let results = page.iter().map(|r| enrich_from_sql_row(conn, r)).collect();
         return Ok((results, total));
     }
 
-    // Non-empty query: use Tantivy for BM25-ranked results
+    // Non-empty query: Tantivy BM25 + usage boost + optional concept filter (internal)
     let query_str = tokens.join(" ");
-    // Generous pool to absorb entity_type_filter attrition and still fill the requested page
     const TANTIVY_FETCH_MULTIPLIER: usize = 20;
     let fetch_limit = (offset + limit + 1) * TANTIVY_FETCH_MULTIPLIER;
-    let iris = crate::search::search(&query_str, fetch_limit);
+    let iris = crate::search::search(&query_str, concept_iri, fetch_limit);
 
     if iris.is_empty() {
         return Ok((vec![], 0));
     }
 
-    // Batch-load triples for all candidates (needed for enrichment and type filtering)
     let batch = query::batch_load_triples_for_subjects(conn, &iris)
         .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
 
-    // Filter by entity type if requested (Tantivy result order is preserved)
     let filtered: Vec<&String> = iris.iter()
         .filter(|iri| {
             if entity_type_filter.is_none() {
