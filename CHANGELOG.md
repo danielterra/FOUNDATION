@@ -5,6 +5,18 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-03-17
+
+### Added
+
+- **`verify-code-iris` script**: Scans all Rust source files for hardcoded `foundation:*` IRIs and validates each against the live database before the ontology dump — catches missing core entities at release time
+- **9 missing OWL properties**: Created `allowedStatus`, `calledElement`, `credentialUsername`, `email`, `endpointPath`, `eventKey`, `hasCredential`, `messageEventOf`, `requestTimeout` as proper ontology properties
+
+### Changed
+
+- **`dump-ontology`**: `bootstrap_registry` now includes entities with `setup` origin (in addition to `foundation:ontology:*` and `core`), and explicitly excludes installation-specific IRIs (`ThisUser`, `ThisFoundationInstance`, etc.) from seeding
+- **Release skill**: Updated to 10 numbered steps; Step 4 runs `verify-code-iris` before dumping ontology
+
 ## [0.12.0] - 2026-03-17
 
 ### Added
