@@ -437,6 +437,14 @@
     grid-template-rows: 0fr;
   }
 
+  .inspector-widget.minimized .header-top {
+    padding: 8px 12px;
+  }
+
+  .inspector-widget.minimized .header-actions {
+    gap: 2px;
+  }
+
   .content-wrapper > .widget-content {
     min-height: 0;
   }
