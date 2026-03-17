@@ -56,14 +56,14 @@ Prepend a new entry at the top of `CHANGELOG.md` (after the header), following K
 
 Only include sections that have content. Derive entries from the commit list.
 
-### Step 3.5 — Verify, Dump, and Verify Ontology
+### Step 4 — Verify, Dump, and Verify Ontology
 
 1. `cargo run --manifest-path scripts/verify-code-iris/Cargo.toml` — must pass with zero missing IRIs; if it fails, create missing entities via MCP before proceeding
 2. `cargo run --manifest-path scripts/dump-ontology/Cargo.toml`
 3. `cargo run --manifest-path scripts/verify-ontology/Cargo.toml` — must pass with zero differences
-4. Include `core-ontology/ontology.sql` in the `git add` on Step 7
+4. Include `core-ontology/ontology.sql` in the `git add` on Step 8
 
-### Step 4 — Create SoftwareRelease individual via MCP
+### Step 5 — Create SoftwareRelease individual via MCP
 
 Use `learn_thing` to create the release individual, then `learn_thing_detail` to add each property:
 
@@ -83,7 +83,7 @@ learn_thing_detail(iri: "foundation:FoundationRelease_X_Y_Z", detail: "foundatio
 
 Use today's date from the system context (`currentDate`).
 
-### Step 5 — Query features from Foundation
+### Step 6 — Query features from Foundation
 
 Start from the product to get only features actually linked to it:
 
@@ -96,7 +96,7 @@ Start from the product to get only features actually linked to it:
    - `foundation:Completed` → `` `[finalizado]` ``
    - `foundation:InProgress` → `` `[em desenvolvimento]` ``
 
-### Step 6 — Update README.md
+### Step 7 — Update README.md
 
 - Update `**Version X.Y.Z**` line
 - Update download badge URLs to the new version
@@ -113,7 +113,7 @@ Start from the product to get only features actually linked to it:
 
 One entry per feature, single sentence, status tag at the end.
 
-### Step 7 — Commit (all files in one amend-friendly commit)
+### Step 8 — Commit (all files in one amend-friendly commit)
 
 Stage all changed files **by name** (never `git add -A`):
 ```
@@ -125,7 +125,7 @@ Commit with:
 chore: release vX.Y.Z
 ```
 
-### Step 8 — Tag and push
+### Step 9 — Tag and push
 
 ```bash
 git tag vX.Y.Z
@@ -133,7 +133,7 @@ git push
 git push origin vX.Y.Z
 ```
 
-### Step 9 — GitHub Release
+### Step 10 — GitHub Release
 
 ```bash
 gh release create vX.Y.Z --title "FOUNDATION vX.Y.Z" --notes "..."
