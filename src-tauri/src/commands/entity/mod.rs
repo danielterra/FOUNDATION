@@ -98,6 +98,10 @@ pub struct PropertyValue {
     pub range_class_icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_info: Option<FileInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_count: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,12 +119,24 @@ pub struct FileInfo {
 pub async fn graph__search_entities(
     query: String,
     limit: Option<usize>,
+    type_iri: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     executor.read(move |conn| {
         let limit = limit.unwrap_or(100);
-        let results = crate::owl::search_instances_rich(conn, &query, limit)
-            .map_err(|e| e.to_string())?;
+        let results = if let Some(ref class_iri) = type_iri {
+            let tokens: Vec<String> = query
+                .split_whitespace()
+                .map(|s| s.to_lowercase())
+                .collect();
+            let (results, _) = crate::owl::search_rich(
+                conn, &tokens, None, Some(class_iri.as_str()), None, false, limit, 0,
+            ).map_err(|e| e.to_string())?;
+            results
+        } else {
+            crate::owl::search_instances_rich(conn, &query, limit)
+                .map_err(|e| e.to_string())?
+        };
         serde_json::to_string(&results).map_err(|e| e.to_string())
     }).await
 }
@@ -165,6 +181,7 @@ pub async fn widget_inspector__update_property(
     entity_id: String,
     property_iri: String,
     value: String,
+    datatype: Option<String>,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
@@ -173,9 +190,34 @@ pub async fn widget_inspector__update_property(
         let individual = Individual::new(&entity_id_clone);
         individual.add_property(conn, &property_iri, vec![Object::Literal {
             value,
-            datatype: Some("xsd:string".to_string()),
+            datatype: Some(datatype.unwrap_or_else(|| "xsd:string".to_string())),
             language: None,
         }], "user").map_err(|e| e.to_string())?;
+        Ok("updated".to_string())
+    }).await?;
+    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__set_references(
+    entity_id: String,
+    property_iri: String,
+    iris: Vec<String>,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let entity_id_clone = entity_id.clone();
+    executor.write(move |conn| {
+        Individual::clear_property(conn, &entity_id_clone, &property_iri, "user")
+            .map_err(|e| e.to_string())?;
+        if !iris.is_empty() {
+            let individual = Individual::new(&entity_id_clone);
+            let values: Vec<owl::Object> = iris.into_iter().map(owl::Object::Iri).collect();
+            individual.add_property(conn, &property_iri, values, "user")
+                .map_err(|e| e.to_string())?;
+        }
         Ok("updated".to_string())
     }).await?;
     app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
@@ -400,6 +442,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             range_class_label: None,
             range_class_icon: None,
             file_info: None,
+            min_count: None,
+            max_count: None,
         });
     }
 
@@ -426,6 +470,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             range_class_label: None,
             range_class_icon: None,
             file_info: None,
+            min_count: None,
+            max_count: None,
         });
     }
 
@@ -488,6 +534,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             range_class_label: None,
             range_class_icon: None,
             file_info: None,
+            min_count: None,
+            max_count: None,
         });
     }
 
@@ -533,6 +581,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             range_class_label: None,
             range_class_icon: None,
             file_info: None,
+            min_count: None,
+            max_count: None,
         });
     }
 
@@ -603,6 +653,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             range_class_label: None,
             range_class_icon: None,
             file_info: None,
+            min_count: None,
+            max_count: None,
         });
     }
 

@@ -132,6 +132,7 @@ pub fn run() {
             commands::graph__search_entities,
             commands::graph__get_node_type_config,
             commands::widget_inspector__update_property,
+            commands::widget_inspector__set_references,
             commands::widget_inspector__update_status,
             commands::shortcuts__get_all,
             commands::log_frontend,

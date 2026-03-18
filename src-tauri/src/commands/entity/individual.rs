@@ -118,6 +118,8 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             range_class_label,
             range_class_icon,
             file_info,
+            min_count: None,
+            max_count: None,
         });
     }
 
@@ -189,8 +191,37 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         range_class_label,
                         range_class_icon,
                         file_info: None,
+                        min_count: None,
+                        max_count: None,
                     });
                 }
+            }
+        }
+    }
+
+    {
+        let mut card_map: HashMap<String, (Option<u32>, Option<u32>)> = HashMap::new();
+        for type_thing in &individual.types {
+            if let Ok(restrictions) = crate::owl::cardinality::get_class_cardinality_restrictions(
+                conn, &type_thing.iri,
+            ) {
+                for r in restrictions {
+                    let entry = card_map.entry(r.property_iri).or_insert((None, None));
+                    let min = r.exact.or(r.min);
+                    let max = r.exact.or(r.max);
+                    if let Some(m) = min {
+                        entry.0 = Some(entry.0.map_or(m, |e: u32| e.max(m)));
+                    }
+                    if let Some(m) = max {
+                        entry.1 = Some(entry.1.map_or(m, |e: u32| e.min(m)));
+                    }
+                }
+            }
+        }
+        for prop in &mut properties {
+            if let Some(&(min, max)) = card_map.get(&prop.property) {
+                prop.min_count = min;
+                prop.max_count = max;
             }
         }
     }
@@ -413,6 +444,8 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             range_class_label: None,
             range_class_icon: None,
             file_info: None,
+            min_count: None,
+            max_count: None,
         });
     }
 

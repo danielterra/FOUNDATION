@@ -139,11 +139,21 @@
     }
   }
 
-  async function saveProperty(propertyIri, value) {
+  async function saveProperty(propertyIri, value, datatype = null) {
     try {
-      await invoke('widget_inspector__update_property', { entityId, propertyIri, value });
+      await invoke('widget_inspector__update_property', {
+        entityId, propertyIri, value, datatype,
+      });
     } catch (err) {
       console.error('Failed to update property:', err);
+    }
+  }
+
+  async function saveReferences(propertyIri, iris) {
+    try {
+      await invoke('widget_inspector__set_references', { entityId, propertyIri, iris });
+    } catch (err) {
+      console.error('Failed to update references:', err);
     }
   }
 
@@ -484,6 +494,7 @@
           isClass={entityData.isClass}
           {openEntityInspector}
           onSave={entityData.isClass ? null : saveProperty}
+          onSaveReference={entityData.isClass ? null : saveReferences}
         />
 
         <BacklinkList backlinks={entityData.backlinks} {openEntityInspector} />

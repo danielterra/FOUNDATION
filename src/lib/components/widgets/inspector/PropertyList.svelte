@@ -6,36 +6,65 @@
   import MarkdownValue from './MarkdownValue.svelte';
   import FileGrid from './FileGrid.svelte';
   import PropertyEditForm from './PropertyEditForm.svelte';
+  import ReferenceSelect from './ReferenceSelect.svelte';
 
-  let { properties, requiredFields = [], isClass = false, openEntityInspector, onSave } = $props();
+  let {
+    properties, requiredFields = [], isClass = false,
+    openEntityInspector, onSave, onSaveReference,
+  } = $props();
 
   let editingKey = $state(null);
   let draftValue = $state('');
+  let editingDatatype = $state(null);
   let saving = $state(false);
+  let editingRefKey = $state(null);
+  let savingRef = $state(false);
 
   function editKey(propertyIri, valueIdx) {
     return `${propertyIri}::${valueIdx}`;
   }
 
-  function startEdit(propertyIri, currentValue, valueIdx) {
+  function startEdit(propertyIri, currentValue, valueIdx, datatype = null) {
     editingKey = editKey(propertyIri, valueIdx);
-    draftValue = currentValue ?? '';
+    editingDatatype = datatype;
+    draftValue = toInputValue(currentValue ?? '', datatype);
   }
 
   function cancelEdit() {
     editingKey = null;
     draftValue = '';
+    editingDatatype = null;
   }
 
   async function saveEdit(propertyIri) {
     if (!onSave || saving) return;
     saving = true;
     try {
-      await onSave(propertyIri, draftValue);
+      await onSave(propertyIri, fromInputValue(draftValue, editingDatatype), editingDatatype);
     } finally {
       saving = false;
       editingKey = null;
       draftValue = '';
+      editingDatatype = null;
+    }
+  }
+
+  function startRefEdit(propertyIri) {
+    editingRefKey = propertyIri;
+  }
+
+  function cancelRefEdit() {
+    editingRefKey = null;
+  }
+
+  async function saveRefEdit(propertyIri, iris) {
+    if (!onSaveReference || savingRef) return;
+    savingRef = true;
+    try {
+      await onSaveReference(propertyIri, iris);
+    } finally {
+      savingRef = false;
+      editingRefKey = null;
     }
   }
 
@@ -112,6 +141,8 @@
           rangeClassIcon: prop.rangeClassIcon,
           isCalculated: prop.isCalculated ?? false,
           isEmpty: prop.isEmpty ?? false,
+          minCount: prop.minCount ?? null,
+          maxCount: prop.maxCount ?? null,
           values: []
         };
       }
@@ -178,6 +209,31 @@
 
   function isStringType(datatype) {
     return !datatype || datatype === 'xsd:string' || datatype === 'rdf:langString';
+  }
+
+  function isDateType(datatype) {
+    return datatype === 'xsd:date' || datatype === 'xsd:dateTime';
+  }
+
+  function toInputValue(value, datatype) {
+    if (!value) return '';
+    if (datatype === 'xsd:date') return value;
+    if (datatype === 'xsd:dateTime') {
+      const d = new Date(isNaN(Number(value)) ? value : Number(value));
+      if (isNaN(d.getTime())) return '';
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}` +
+             `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    return value;
+  }
+
+  function fromInputValue(value, datatype) {
+    if (!value) return '';
+    if (datatype === 'xsd:dateTime') {
+      return new Date(value).toISOString();
+    }
+    return value;
   }
 
   async function openUrl_(url) {
@@ -261,6 +317,44 @@
   }
 </script>
 
+{#snippet dateEditor(propertyIri, inputType)}
+  <div class="date-edit-container">
+    <input
+      class="date-input"
+      type={inputType}
+      bind:value={draftValue}
+      onkeydown={(e) => {
+        if (e.key === 'Escape') cancelEdit();
+        else if (e.key === 'Enter') saveEdit(propertyIri);
+      }}
+      autofocus
+    />
+    <div class="edit-actions">
+      <button
+        class="edit-save-btn"
+        onmousedown={(e) => e.preventDefault()}
+        onclick={() => saveEdit(propertyIri)}
+        disabled={saving}
+      >
+        {#if saving}
+          <span class="material-symbols-outlined spinning-small">progress_activity</span>
+        {:else}
+          <span class="material-symbols-outlined">check</span>
+        {/if}
+        Save
+      </button>
+      <button
+        class="edit-cancel-btn"
+        onmousedown={(e) => e.preventDefault()}
+        onclick={cancelEdit}
+      >
+        <span class="material-symbols-outlined">close</span>
+        Cancel
+      </button>
+    </div>
+  </div>
+{/snippet}
+
 {#snippet detailItem(detailGroup)}
   <div class="detail-item" transition:slide={{ duration: 300, easing: cubicOut }}>
     <div class="detail-header">
@@ -283,11 +377,19 @@
           <span class="detail-count">{detailGroup.values.length}</span>
         {/if}
       </div>
-      {#if onSave && !detailGroup.isObjectProperty && !detailGroup.isCalculated && isStringType(detailGroup.datatype) && (detailGroup.isEmpty || detailGroup.values.length <= 1)}
+      {#if onSave && !detailGroup.isObjectProperty && !detailGroup.isCalculated && (isStringType(detailGroup.datatype) || isDateType(detailGroup.datatype)) && (detailGroup.isEmpty || detailGroup.values.length <= 1)}
         <button
           class="edit-btn"
           title="Edit"
-          onclick={() => startEdit(detailGroup.property, detailGroup.values[0]?.value ?? '', 0)}
+          onclick={() => startEdit(detailGroup.property, detailGroup.values[0]?.value ?? '', 0, detailGroup.datatype ?? null)}
+        >
+          <span class="material-symbols-outlined">edit</span>
+        </button>
+      {:else if onSaveReference && detailGroup.isObjectProperty && !detailGroup.isCalculated}
+        <button
+          class="edit-btn"
+          title="Edit"
+          onclick={() => startRefEdit(detailGroup.property)}
         >
           <span class="material-symbols-outlined">edit</span>
         </button>
@@ -298,17 +400,37 @@
       <div class="detail-comment">{detailGroup.propertyComment}</div>
     {/if}
 
-    {#if detailGroup.isEmpty && editingKey !== editKey(detailGroup.property, 0)}
+    {#if editingRefKey === detailGroup.property}
+      <ReferenceSelect
+        propertyIri={detailGroup.property}
+        rangeClassIri={detailGroup.rangeClassIri}
+        rangeClassLabel={detailGroup.rangeClassLabel}
+        currentValues={detailGroup.values.map(v => ({
+          iri: v.value,
+          label: v.valueLabel ?? v.value,
+          icon: v.valueIcon ?? null,
+        }))}
+        minCount={detailGroup.minCount}
+        maxCount={detailGroup.maxCount}
+        saving={savingRef}
+        onsave={saveRefEdit}
+        oncancel={cancelRefEdit}
+      />
+    {:else if detailGroup.isEmpty && editingKey !== editKey(detailGroup.property, 0)}
       <div class="empty-value">—</div>
     {:else if detailGroup.isEmpty && editingKey === editKey(detailGroup.property, 0)}
       <div class="detail-value">
-        <PropertyEditForm
-          propertyIri={detailGroup.property}
-          bind:draftValue
-          {saving}
-          onsave={saveEdit}
-          oncancel={cancelEdit}
-        />
+        {#if isDateType(editingDatatype)}
+          {@render dateEditor(detailGroup.property, editingDatatype === 'xsd:dateTime' ? 'datetime-local' : 'date')}
+        {:else}
+          <PropertyEditForm
+            propertyIri={detailGroup.property}
+            bind:draftValue
+            {saving}
+            onsave={saveEdit}
+            oncancel={cancelEdit}
+          />
+        {/if}
       </div>
     {:else if detailGroup.rangeClassIri === 'foundation:File'}
       <FileGrid values={detailGroup.values} {openEntityInspector} />
@@ -355,22 +477,30 @@
           {:else}
             <div class="detail-value" class:calculated={detailGroup.isCalculated}>
               {#if val.datatype === 'xsd:dateTime'}
-                {@const date = new Date(val.value)}
-                <div class="timestamp-display">
-                  <span class="value-text">
-                    {date.toLocaleString('en-US', {
-                      year: 'numeric', month: 'short', day: 'numeric',
-                      hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true
-                    })}
-                  </span>
-                  <span class="timestamp-relative">{formatDate(date.getTime())}</span>
-                </div>
+                {#if editingKey === editKey(detailGroup.property, idx)}
+                  {@render dateEditor(detailGroup.property, 'datetime-local')}
+                {:else}
+                  {@const date = new Date(val.value)}
+                  <div class="timestamp-display">
+                    <span class="value-text">
+                      {date.toLocaleString('en-US', {
+                        year: 'numeric', month: 'short', day: 'numeric',
+                        hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true
+                      })}
+                    </span>
+                    <span class="timestamp-relative">{formatDate(date.getTime())}</span>
+                  </div>
+                {/if}
               {:else if val.datatype === 'xsd:date'}
-                {@const [y, m, d] = val.value.split('-').map(Number)}
-                {@const date = new Date(y, m - 1, d)}
-                <span class="value-text">
-                  {date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
-                </span>
+                {#if editingKey === editKey(detailGroup.property, idx)}
+                  {@render dateEditor(detailGroup.property, 'date')}
+                {:else}
+                  {@const [y, m, d] = val.value.split('-').map(Number)}
+                  {@const date = new Date(y, m - 1, d)}
+                  <span class="value-text">
+                    {date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                  </span>
+                {/if}
               {:else if isUrl(val.datatype)}
                 <button class="url-value" onclick={() => openUrl_(val.value)} title={val.value}>
                   <span class="value-text">{val.valueLabel || val.value}</span>
@@ -907,5 +1037,87 @@
 
   .detail-item:hover .edit-btn {
     opacity: 1;
+  }
+
+  .date-edit-container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .date-input {
+    background: color-mix(in srgb, var(--color-black) 50%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
+    border-radius: 6px;
+    color: var(--color-neutral-active);
+    font-family: var(--font-body);
+    font-size: 13px;
+    padding: 6px 8px;
+    outline: none;
+    transition: border-color 0.15s;
+    color-scheme: dark;
+  }
+
+  .date-input:focus {
+    border-color: var(--color-interactive);
+  }
+
+  .edit-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .edit-save-btn,
+  .edit-cancel-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    transition: background 0.15s;
+  }
+
+  .edit-save-btn {
+    background: color-mix(in srgb, var(--color-interactive) 25%, transparent);
+    color: var(--color-interactive);
+  }
+
+  .edit-save-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-interactive) 40%, transparent);
+  }
+
+  .edit-save-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .edit-cancel-btn {
+    background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
+    color: var(--color-neutral);
+  }
+
+  .edit-cancel-btn:hover {
+    background: color-mix(in srgb, var(--color-neutral) 22%, transparent);
+  }
+
+  .edit-save-btn .material-symbols-outlined,
+  .edit-cancel-btn .material-symbols-outlined {
+    font-size: 14px;
+  }
+
+  .spinning-small {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 </style>
