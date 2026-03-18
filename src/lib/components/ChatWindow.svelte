@@ -37,6 +37,7 @@
 	let editingMessageText = $state('');
 	let conversations = $state([]);
 	let conversationAgent = $state(null);
+	let loadMessagesVersion = 0;
 	let cameraStream = null;
 	let cameraVideoEl = null;
 	let capturedFrames = [];
@@ -250,6 +251,7 @@
 
 	async function switchConversation(iri) {
 		activeConversationIri = iri;
+		loadMessagesVersion++;
 		localStorage.setItem('activeConversationIri', iri);
 		inputText = localStorage.getItem(`draft_${iri}`) ?? '';
 		messages = [];
@@ -258,20 +260,32 @@
 		await loadMessages();
 	}
 
+	async function handleDeleteConversation(iri) {
+		if (activeConversationIri !== iri) return;
+		if (conversations.length > 0) {
+			await switchConversation(conversations[0].iri);
+		} else {
+			await createConversation();
+		}
+	}
+
 	async function loadMessages() {
 		if (!activeConversationIri) return;
+		const version = ++loadMessagesVersion;
 		try {
 			const msgs = await invoke('chat__get_recent_messages', {
 				limit: messageLimit,
 				conversationId: activeConversationIri
 			});
+			if (version !== loadMessagesVersion) return;
 			hasMoreMessages = msgs.length === messageLimit;
 			messages = msgs;
 			scrollToBottom();
 		} catch (err) {
+			if (version !== loadMessagesVersion) return;
 			console.error('Failed to load messages:', err);
 		} finally {
-			isLoadingMessages = false;
+			if (version === loadMessagesVersion) isLoadingMessages = false;
 		}
 	}
 
@@ -684,7 +698,7 @@
 		onNewConversation={createConversation}
 		onDownloadChat={downloadChat}
 	/>
-	<ConversationBar bind:conversations bind:activeConversationIri onSwitch={switchConversation} />
+	<ConversationBar bind:conversations bind:activeConversationIri onSwitch={switchConversation} onDelete={handleDeleteConversation} />
 	<div class="chat-content">
 		{#if showApiKeyInput}
 			<ChatApiKeySetup bind:apiKey onSave={saveApiKey} />

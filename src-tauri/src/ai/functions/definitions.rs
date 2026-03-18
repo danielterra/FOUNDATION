@@ -10,17 +10,17 @@ pub fn get_claude_tools() -> Vec<crate::ai::providers::ClaudeTool> {
 pub fn get_available_tools() -> Vec<ToolTemplate> {
     vec![
         // ----------------------------------------------------------------
-        // LEARN (create or update)
+        // WRITE TOOLS (create / modify)
         // ----------------------------------------------------------------
         ToolTemplate {
-            name: "learn_concepts".to_string(),
+            name: "define_class".to_string(),
             array_mode: true,
-            description: "Use when defining or modifying an ontology class. Search with remember first to avoid duplicates. Without 'iri' creates; with existing 'iri' updates.".to_string(),
+            description: "Define or update an OWL class. Creates if new, updates if IRI exists.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "IRI for this concept (e.g. 'foundation:Project'). Required.".to_string(),
+                    description: "Class IRI (e.g. 'foundation:Project')".to_string(),
                     required: true,
                     schema: None,
                 },
@@ -41,7 +41,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "new_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "New IRI to rename this concept to. Automatically migrates all references (domains, ranges, instance types, superclasses).".to_string(),
+                    description: "Rename this class to a new IRI. Migrates all references.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -53,111 +53,48 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     schema: None,
                 },
                 Parameter {
-                    name: "super_concepts".to_string(),
+                    name: "super_classes".to_string(),
                     param_type: "array".to_string(),
-                    description: "Parent concept IRIs. REPLACES all existing parents. Use a single-element array for single inheritance.".to_string(),
+                    description: "Parent class IRIs. REPLACES all existing. Required when creating.".to_string(),
                     required: false,
                     schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
                 Parameter {
                     name: "allowed_statuses".to_string(),
                     param_type: "array".to_string(),
-                    description: "Status IRIs allowed for this concept's things. REPLACES existing values.".to_string(),
+                    description: "Status IRIs allowed for this class's individuals. REPLACES existing.".to_string(),
                     required: false,
                     schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
                 Parameter {
-                    name: "required_fields".to_string(),
+                    name: "property_restrictions".to_string(),
                     param_type: "array".to_string(),
-                    description: "Property IRIs required when creating a thing of this concept. REPLACES existing.".to_string(),
-                    required: false,
-                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
-                },
-                Parameter {
-                    name: "upsert_details".to_string(),
-                    param_type: "array".to_string(),
-                    description: concat!(
-                        "Property IRIs to associate with this concept (adds concept as a domain).",
-                        " The property must already exist — define it first with learn_properties.",
-                        " Does NOT remove unlisted details — use remove_details.",
-                    ).to_string(),
-                    required: false,
-                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
-                },
-                Parameter {
-                    name: "remove_details".to_string(),
-                    param_type: "array".to_string(),
-                    description: "Property IRIs to permanently remove (also retracts all existing values on every thing).".to_string(),
-                    required: false,
-                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
-                },
-            ],
-        },
-        ToolTemplate {
-            name: "learn_things".to_string(),
-            array_mode: true,
-            description: "Use when storing a new instance of a concept or updating an existing one. Search with remember first to avoid duplicates.".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "IRI of an existing thing to update. Omit to create a new thing.".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "concept_iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Concept this thing belongs to. Required when creating (no iri).".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "label".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Name of this thing. Required when creating (no iri).".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "icon".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Material icon name or image URL. Inherits from concept if omitted.".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "comment".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Optional description.".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "upsert_properties".to_string(),
-                    param_type: "array".to_string(),
-                    description: concat!(
-                        "Upsert property values on this thing.",
-                        " foundation:hasStatus is validated against the concept's allowedStatus list.",
-                        " Does NOT remove unlisted properties — use remove_properties.",
-                    ).to_string(),
+                    description: "Cardinality constraints. Each: {property_iri, cardinality_min?, cardinality_max?}. REPLACES existing restrictions.".to_string(),
                     required: false,
                     schema: Some(serde_json::json!({
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "detail_iri": { "type": "string", "description": "Property IRI." },
-                                "values": { "type": "array", "items": { "type": "string" }, "description": "Values to set." }
+                                "property_iri": { "type": "string" },
+                                "cardinality_min": { "type": "integer" },
+                                "cardinality_max": { "type": "integer" }
                             },
-                            "required": ["detail_iri", "values"]
+                            "required": ["property_iri"]
                         }
                     })),
                 },
                 Parameter {
+                    name: "add_properties".to_string(),
+                    param_type: "array".to_string(),
+                    description: "Property IRIs to associate with this class (adds class as domain). Property must already exist via define_property. Does NOT remove unlisted.".to_string(),
+                    required: false,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
+                },
+                Parameter {
                     name: "remove_properties".to_string(),
                     param_type: "array".to_string(),
-                    description: "Property IRIs to clear all values of. Use forget_things to remove a single value.".to_string(),
+                    description: "Property IRIs to permanently dissociate from this class.".to_string(),
                     required: false,
                     schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
@@ -165,37 +102,44 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
 
         ToolTemplate {
-            name: "learn_properties".to_string(),
+            name: "define_property".to_string(),
             array_mode: true,
-            description: "Use when a property is shared across multiple concept domains. Domains are managed exclusively via learn_concepts upsert_details.".to_string(),
+            description: "Define or update an OWL property (ObjectProperty or DatatypeProperty).".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "IRI of the property (e.g. 'foundation:partOfProcess'). Required.".to_string(),
+                    description: "Property IRI (e.g. 'foundation:hasStatus')".to_string(),
                     required: true,
                     schema: None,
                 },
                 Parameter {
                     name: "label".to_string(),
                     param_type: "string".to_string(),
-                    description: "Display name. Required when creating a new property.".to_string(),
+                    description: "English name. Required when creating.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "property_type".to_string(),
                     param_type: "string".to_string(),
-                    description: "'object' (links to another thing) or 'datatype' (stores a literal value). Required when creating.".to_string(),
+                    description: "'object' (links to another individual) or 'datatype' (literal value). Required when creating.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "range".to_string(),
                     param_type: "string".to_string(),
-                    description: "For 'object': target class IRI. For 'datatype': xsd type (e.g. 'xsd:string', 'xsd:integer'). Omit to keep existing.".to_string(),
+                    description: "For 'object': target class IRI. For 'datatype': xsd type. Omit to keep existing.".to_string(),
                     required: false,
                     schema: None,
+                },
+                Parameter {
+                    name: "domains".to_string(),
+                    param_type: "array".to_string(),
+                    description: "Class IRIs where this property appears. REPLACES existing domains if provided.".to_string(),
+                    required: false,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
                 Parameter {
                     name: "comment".to_string(),
@@ -207,62 +151,269 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "unit".to_string(),
                     param_type: "string".to_string(),
-                    description: "QUDT unit IRI. Required for numeric ranges (e.g. 'unit:Second', 'unit:Meter'). Omit to keep existing.".to_string(),
+                    description: "QUDT unit IRI for numeric properties (e.g. 'unit:Second').".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "formula".to_string(),
                     param_type: "string".to_string(),
-                    description: "Calculated formula using {{property_iri}} syntax. Datatype properties only. Circular dependencies are rejected.".to_string(),
+                    description: "Calculated formula using {{property_iri}} syntax. DatatypeProperty only. Circular dependencies are rejected.".to_string(),
                     required: false,
                     schema: None,
                 },
             ],
         },
 
-        // ----------------------------------------------------------------
-        // REMEMBER / GET
-        // ----------------------------------------------------------------
         ToolTemplate {
-            name: "remember".to_string(),
-            array_mode: false,
-            description: "Use when searching for classes or instances by label, type, or property value. ALL query tokens must match (AND). Each result includes type, matchedProperties, conceptType, and status.".to_string(),
+            name: "assert_individual".to_string(),
+            array_mode: true,
+            description: "Create a new individual (instance) of a class.".to_string(),
             parameters: vec![
                 Parameter {
-                    name: "query".to_string(),
+                    name: "class_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "Search keywords. ALL tokens must match (AND). Split by whitespace. Use 1-3 important words in English.".to_string(),
+                    description: "Class this individual belongs to (e.g. 'foundation:Task')".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "label".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Name of this individual.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "icon".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Material icon name or image URL. Inherits from class if omitted.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
-                    name: "type".to_string(),
+                    name: "comment".to_string(),
                     param_type: "string".to_string(),
-                    description: "Filter to 'class' or 'individual' only. Omit to return both.".to_string(),
+                    description: "Optional description.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
-                    name: "concept_iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Filter to instances of this class (e.g. 'foundation:Task').".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "filters".to_string(),
+                    name: "properties".to_string(),
                     param_type: "array".to_string(),
-                    description: "Filter by property values. concept_iri is optional — omit to search across all classes. Each item: {detail: 'property_iri', value: 'VALUE', operator?: '='|'>='|'<='|'>'|'<'}. operator defaults to '='. For xsd:date use ISO 'YYYY-MM-DD'. For xsd:dateTime use RFC3339.".to_string(),
+                    description: "Initial property values. Each: {property_iri, values[]}. foundation:hasStatus is validated.".to_string(),
                     required: false,
                     schema: Some(serde_json::json!({
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "detail": { "type": "string", "description": "Property IRI to filter on." },
-                                "value": { "type": "string", "description": "Value to match." },
-                                "operator": { "type": "string", "description": "Comparison operator: '=', '>=', '<=', '>', '<'. Defaults to '='." }
+                                "property_iri": { "type": "string" },
+                                "values": { "type": "array", "items": { "type": "string" } }
+                            },
+                            "required": ["property_iri", "values"]
+                        }
+                    })),
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "add_property_values".to_string(),
+            array_mode: true,
+            description: "Append values to an individual's property (does NOT replace existing values).".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Individual IRI".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "property_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Property to add values to".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "values".to_string(),
+                    param_type: "array".to_string(),
+                    description: "Values to append".to_string(),
+                    required: true,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "replace_property_values".to_string(),
+            array_mode: true,
+            description: "Replace ALL values of an individual's property with the given values.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Individual IRI".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "property_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Property to replace values of".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "values".to_string(),
+                    param_type: "array".to_string(),
+                    description: "New values (replaces all existing)".to_string(),
+                    required: true,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "remove_property_values".to_string(),
+            array_mode: true,
+            description: "Remove specific values from an individual's property.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Individual IRI".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "property_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Property to remove values from".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "values".to_string(),
+                    param_type: "array".to_string(),
+                    description: "Specific values to remove".to_string(),
+                    required: true,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "clear_property".to_string(),
+            array_mode: true,
+            description: "Remove ALL values of a property from an individual.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Individual IRI".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "property_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Property to clear all values of".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "retract_individual".to_string(),
+            array_mode: true,
+            description: "Permanently delete an individual and all its property values.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the individual to delete".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "retract_class".to_string(),
+            array_mode: true,
+            description: "Permanently remove a class definition and all its instances.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the class to retract".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "retract_property".to_string(),
+            array_mode: true,
+            description: "Permanently remove a property definition and all its asserted values.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the property to retract".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
+        // ----------------------------------------------------------------
+        // READ TOOLS
+        // ----------------------------------------------------------------
+        ToolTemplate {
+            name: "search".to_string(),
+            array_mode: false,
+            description: "Search for classes or individuals by label, type, or property value. ALL query tokens must match (AND).".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "query".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Search keywords. ALL tokens must match. Use 1-3 important English words.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "type".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Filter to 'class' or 'individual'. Omit to return both.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "concept_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Filter to individuals of this class (e.g. 'foundation:Task').".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "filters".to_string(),
+                    param_type: "array".to_string(),
+                    description: "Property filters. Each: {detail, value, operator?}. operator: '='|'>='|'<='|'>'|'<' (default '='). ISO date for xsd:date, RFC3339 for xsd:dateTime.".to_string(),
+                    required: false,
+                    schema: Some(serde_json::json!({
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "detail": { "type": "string" },
+                                "value": { "type": "string" },
+                                "operator": { "type": "string" }
                             },
                             "required": ["detail", "value"]
                         }
@@ -271,7 +422,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "include_retracted".to_string(),
                     param_type: "boolean".to_string(),
-                    description: "Include deleted entities/facts. Default: false.".to_string(),
+                    description: "Include deleted entities. Default: false.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -285,55 +436,52 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "offset".to_string(),
                     param_type: "integer".to_string(),
-                    description: "Skip N results for pagination (default: 0).".to_string(),
+                    description: "Skip N results (default: 0).".to_string(),
                     required: false,
                     schema: None,
                 },
             ],
         },
+
         ToolTemplate {
-            name: "get_concepts".to_string(),
+            name: "describe_class".to_string(),
             array_mode: false,
-            description: "Use when you have concept IRIs and need their full schema — properties, subclasses, allowed statuses, and incoming properties.".to_string(),
+            description: "Fetch full schema for one or more classes: properties, subclasses, restrictions, allowed statuses.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iris".to_string(),
                     param_type: "array".to_string(),
-                    description: "Array of concept IRIs to fetch (e.g. ['foundation:Task', 'foundation:Project']).".to_string(),
+                    description: "Class IRIs to fetch (e.g. ['foundation:Task', 'foundation:Project'])".to_string(),
                     required: true,
-                    schema: Some(serde_json::json!({
-                        "type": "array",
-                        "items": { "type": "string" }
-                    })),
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
             ],
         },
+
         ToolTemplate {
-            name: "get_things".to_string(),
+            name: "describe_individual".to_string(),
             array_mode: false,
-            description: "Use when you have thing IRIs and need their full details — all property values, backlinks, and allowed statuses.".to_string(),
+            description: "Fetch full details for one or more individuals: all property values, backlinks, and allowed statuses.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iris".to_string(),
                     param_type: "array".to_string(),
-                    description: "Array of thing IRIs to fetch (e.g. ['foundation:Task_123', 'foundation:Task_456']).".to_string(),
+                    description: "Individual IRIs to fetch".to_string(),
                     required: true,
-                    schema: Some(serde_json::json!({
-                        "type": "array",
-                        "items": { "type": "string" }
-                    })),
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
             ],
         },
+
         ToolTemplate {
-            name: "remember_properties".to_string(),
+            name: "describe_property".to_string(),
             array_mode: true,
-            description: "Use when searching for existing OWL properties or loading full property details by IRI.".to_string(),
+            description: "Fetch full details for a property by IRI, or search by keywords.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "IRI of the property to fetch. Omit to search instead.".to_string(),
+                    description: "Property IRI. Omit to search instead.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -347,73 +495,14 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "limit".to_string(),
                     param_type: "integer".to_string(),
-                    description: "Max results for search (default: 50).".to_string(),
+                    description: "Max search results (default: 50).".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "offset".to_string(),
                     param_type: "integer".to_string(),
-                    description: "Skip N results for pagination (default: 0).".to_string(),
-                    required: false,
-                    schema: None,
-                },
-            ],
-        },
-        // ----------------------------------------------------------------
-        // FORGET (always with iri)
-        // ----------------------------------------------------------------
-        ToolTemplate {
-            name: "forget_concepts".to_string(),
-            array_mode: true,
-            description: "Use to remove a concept definition and all its instances. Returns the number of deleted instances.".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "IRI of the concept to forget.".to_string(),
-                    required: true,
-                    schema: None,
-                },
-            ],
-        },
-        ToolTemplate {
-            name: "forget_properties".to_string(),
-            array_mode: true,
-            description: "Use to permanently remove an OWL property and all its asserted values.".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "IRI of the property to forget.".to_string(),
-                    required: true,
-                    schema: None,
-                },
-            ],
-        },
-        ToolTemplate {
-            name: "forget_things".to_string(),
-            array_mode: true,
-            description: "Use to delete a thing or remove specific property values from it.".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "IRI of the thing.".to_string(),
-                    required: true,
-                    schema: None,
-                },
-                Parameter {
-                    name: "detail_iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Detail to remove. If omitted, the entire thing is forgotten.".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "value".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Specific value to remove. If omitted, all values of detail_iri are removed.".to_string(),
+                    description: "Skip N results (default: 0).".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -421,24 +510,24 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
 
         // ----------------------------------------------------------------
-        // META PROCESS / CONCEPT GRAPH
+        // GRAPH / PROCESS TOOLS
         // ----------------------------------------------------------------
         ToolTemplate {
-            name: "get_concept_graph".to_string(),
+            name: "class_graph".to_string(),
             array_mode: false,
-            description: "Use when exploring how a concept class connects to others — which classes link to it and which it links to via object properties. Prefer over get_concepts when you need the relationship graph, not just the schema.".to_string(),
+            description: "Explore how a class connects to others via object properties. Prefer over describe_class when you need the relationship graph.".to_string(),
             parameters: vec![
                 Parameter {
-                    name: "concept_iri".to_string(),
+                    name: "class_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "IRI of the root OWL class to start traversal from (e.g. 'foundation:Task').".to_string(),
+                    description: "IRI of the root OWL class (e.g. 'foundation:Task')".to_string(),
                     required: true,
                     schema: None,
                 },
                 Parameter {
                     name: "max_depth".to_string(),
                     param_type: "integer".to_string(),
-                    description: "Maximum traversal depth. Defaults to 2, capped at 5.".to_string(),
+                    description: "Max traversal depth. Default: 2, max: 5.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -453,16 +542,13 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "process_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "IRI of the MetaProcess instance to traverse (e.g. 'foundation:MetaProcess_123').".to_string(),
+                    description: "IRI of the MetaProcess instance".to_string(),
                     required: true,
                     schema: None,
                 },
             ],
         },
 
-        // ----------------------------------------------------------------
-        // PROCESS AUTOMATION
-        // ----------------------------------------------------------------
         ToolTemplate {
             name: "run_process".to_string(),
             array_mode: false,
@@ -471,7 +557,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "process_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "IRI of the bpmn_Process to execute (e.g. 'foundation:bpmn_Process_123').".to_string(),
+                    description: "IRI of the Automation process to execute".to_string(),
                     required: true,
                     schema: None,
                 },
@@ -487,7 +573,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             description: concat!(
                 "Returns the widgets currently open on the user's blackboard.",
                 " Use before blackboard_update to avoid duplicating existing widgets.",
-                " Widget types and their supported concepts are discoverable via remember(concept_iri: 'foundation:WidgetDefinition').",
+                " Widget types and their supported concepts are discoverable via search(concept_iri: 'foundation:WidgetDefinition').",
             ).to_string(),
             parameters: vec![],
         },
@@ -497,28 +583,28 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             array_mode: true,
             description: concat!(
                 "Use to add, remove, or replace widgets on the user's blackboard. Call blackboard_state first to avoid duplicates.",
-                " Widgets are live — no need to refresh after learn_things changes.",
+                " Widgets are live — no need to refresh after assert_individual changes.",
                 " Widget type IDs: 'inspector' (any entity), 'meta_process' (MetaProcess), 'mermaid' (MermaidDiagram), 'process_status' (MetaProcess), 'connector_credential' (ExternalServiceConnector), 'connector_manager' (ExternalServiceConnector).",
             ).to_string(),
             parameters: vec![
                 Parameter {
                     name: "operation".to_string(),
                     param_type: "string".to_string(),
-                    description: "'add', 'remove', or 'replace'.".to_string(),
+                    description: "'add', 'remove', or 'replace'".to_string(),
                     required: true,
                     schema: None,
                 },
                 Parameter {
                     name: "widget_type".to_string(),
                     param_type: "string".to_string(),
-                    description: "Widget type ID for 'add'/'replace' (e.g. 'inspector', 'meta_process').".to_string(),
+                    description: "Widget type ID".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "params".to_string(),
                     param_type: "object".to_string(),
-                    description: "Widget params for 'add'/'replace' (entity_id required), or {widget_id} for 'remove'.".to_string(),
+                    description: "Widget params".to_string(),
                     required: false,
                     schema: None,
                 },

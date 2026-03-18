@@ -7,15 +7,15 @@ use super::ToolResult;
 #[path = "property_tests.rs"]
 mod tests;
 
-pub fn learn_property(
+pub fn define_property(
     conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
-    super::batch::run_atomic(conn, args, app, learn_property_one)
+    super::batch::run_atomic(conn, args, app, define_property_one)
 }
 
-fn learn_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
+fn define_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
@@ -59,9 +59,12 @@ fn learn_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
         None => existing.as_ref().map(|p| p.property_type).unwrap_or(PropertyType::ObjectProperty),
     };
 
-    let domain_strings: Vec<String> = existing.as_ref()
-        .map(|p| p.domains.clone())
-        .unwrap_or_default();
+    // domains[]: if provided, REPLACES existing domains; otherwise preserve existing
+    let domain_strings: Vec<String> = if let Some(arr) = args.get("domains").and_then(|v| v.as_array()) {
+        arr.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect()
+    } else {
+        existing.as_ref().map(|p| p.domains.clone()).unwrap_or_default()
+    };
     let domains: Vec<&str> = domain_strings.iter().map(|s| s.as_str()).collect();
 
     let range = args.get("range").and_then(|v| v.as_str())
@@ -107,7 +110,7 @@ fn learn_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
     }
 }
 
-pub fn forget_property(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult {
+pub fn retract_property(conn: &mut Connection, args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult {
     super::batch::run_atomic(conn, args, app, |conn, op| {
         let iri = match op.get("iri").and_then(|v| v.as_str()) {
             Some(iri) => iri,
@@ -129,11 +132,11 @@ pub fn forget_property(conn: &mut Connection, args: &Value, app: Option<&tauri::
     })
 }
 
-pub fn remember_property(conn: &Connection, args: &Value) -> ToolResult {
-    super::batch::run_multi_read(conn, args, remember_property_one)
+pub fn describe_property(conn: &Connection, args: &Value) -> ToolResult {
+    super::batch::run_multi_read(conn, args, describe_property_one)
 }
 
-fn remember_property_one(conn: &Connection, args: &Value) -> ToolResult {
+fn describe_property_one(conn: &Connection, args: &Value) -> ToolResult {
     if args.get("iri").is_some() {
         get_property_one(conn, args)
     } else {

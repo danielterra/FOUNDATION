@@ -1,4 +1,4 @@
-use super::{learn_concept_one, delete_concept_one};
+use super::{define_class_one, retract_class_one};
 use crate::eavto::{store, Triple, Object};
 use crate::eavto::test_helpers::setup_test_db;
 
@@ -17,10 +17,10 @@ fn test_update_concept_required_fields_rejects_nonexistent_property() {
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
-        "required_fields": ["foundation:nonExistent"]
+        "property_restrictions": [{"property_iri": "foundation:nonExistent", "cardinality_min": 1}]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = define_class_one(&mut conn, &args);
 
     assert!(!result.success);
     let error = result.error.unwrap();
@@ -47,10 +47,10 @@ fn test_update_concept_required_fields_accepts_valid_datatype_property() {
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
-        "required_fields": ["foundation:myProp"]
+        "property_restrictions": [{"property_iri": "foundation:myProp", "cardinality_min": 1}]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = define_class_one(&mut conn, &args);
     assert!(result.success, "Expected success, got error: {:?}", result.error);
 }
 
@@ -70,10 +70,10 @@ fn test_update_concept_required_fields_accepts_valid_object_property() {
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
-        "required_fields": ["foundation:myRef"]
+        "property_restrictions": [{"property_iri": "foundation:myRef", "cardinality_min": 1}]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = define_class_one(&mut conn, &args);
     assert!(result.success, "Expected success, got error: {:?}", result.error);
 }
 
@@ -96,12 +96,12 @@ fn test_required_fields_can_reference_property_in_upsert_details() {
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
-        "upsert_details": ["foundation:newProp"],
-        "required_fields": ["foundation:newProp"]
+        "add_properties": ["foundation:newProp"],
+        "property_restrictions": [{"property_iri": "foundation:newProp", "cardinality_min": 1}]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
-    assert!(result.success, "Expected success when required_field is in upsert_details, got error: {:?}", result.error);
+    let result = define_class_one(&mut conn, &args);
+    assert!(result.success, "Expected success when property_restriction is in add_properties, got error: {:?}", result.error);
 }
 
 #[test]
@@ -124,12 +124,12 @@ fn test_required_fields_can_reference_connection_in_upsert_details() {
 
     let args = serde_json::json!({
         "iri": "foundation:TestClass",
-        "upsert_details": ["foundation:newRef"],
-        "required_fields": ["foundation:newRef"]
+        "add_properties": ["foundation:newRef"],
+        "property_restrictions": [{"property_iri": "foundation:newRef", "cardinality_min": 1}]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
-    assert!(result.success, "Expected success when required_field is a connection in upsert_details, got error: {:?}", result.error);
+    let result = define_class_one(&mut conn, &args);
+    assert!(result.success, "Expected success when property_restriction is a connection in add_properties, got error: {:?}", result.error);
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn test_allowed_statuses_rejects_nonexistent_status_iri() {
         "allowed_statuses": ["foundation:Status_inactive"]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = define_class_one(&mut conn, &args);
 
     assert!(!result.success);
     let error = result.error.unwrap();
@@ -184,7 +184,7 @@ fn test_allowed_statuses_rejects_status_without_icon() {
         "allowed_statuses": ["foundation:StatusNoIcon"]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = define_class_one(&mut conn, &args);
 
     assert!(!result.success);
     let error = result.error.unwrap();
@@ -223,11 +223,11 @@ fn test_allowed_statuses_accepts_valid_status_with_icon() {
         "allowed_statuses": ["foundation:StatusWithIcon"]
     });
 
-    let result = learn_concept_one(&mut conn, &args);
+    let result = define_class_one(&mut conn, &args);
     assert!(result.success, "Expected success, got error: {:?}", result.error);
 }
 
-// ── remove_details ───────────────────────────────────────────────────────
+// ── remove_properties ────────────────────────────────────────────────────
 
 fn setup_two_concepts_with_shared_property(conn: &mut crate::eavto::Connection) {
     crate::owl::Property::new("foundation:sharedProp")
@@ -245,8 +245,8 @@ fn setup_two_concepts_with_shared_property(conn: &mut crate::eavto::Connection) 
         }),
     ], "test").unwrap();
 
-    learn_concept_one(conn, &serde_json::json!({"iri": "foundation:ConceptA", "upsert_details": ["foundation:sharedProp"]}));
-    learn_concept_one(conn, &serde_json::json!({"iri": "foundation:ConceptB", "upsert_details": ["foundation:sharedProp"]}));
+    define_class_one(conn, &serde_json::json!({"iri": "foundation:ConceptA", "add_properties": ["foundation:sharedProp"]}));
+    define_class_one(conn, &serde_json::json!({"iri": "foundation:ConceptB", "add_properties": ["foundation:sharedProp"]}));
 }
 
 #[test]
@@ -254,11 +254,11 @@ fn test_remove_details_with_other_domains_preserves_property() {
     let mut conn = setup_test_db();
     setup_two_concepts_with_shared_property(&mut conn);
 
-    let result = learn_concept_one(&mut conn, &serde_json::json!({
+    let result = define_class_one(&mut conn, &serde_json::json!({
         "iri": "foundation:ConceptA",
-        "remove_details": ["foundation:sharedProp"]
+        "remove_properties": ["foundation:sharedProp"]
     }));
-    assert!(result.success, "remove_details should succeed: {:?}", result.error);
+    assert!(result.success, "remove_properties should succeed: {:?}", result.error);
 
     let prop = crate::owl::Property::get(&conn, "foundation:sharedProp").unwrap();
     assert!(prop.is_some(), "property must still exist (has other domain)");
@@ -282,13 +282,13 @@ fn test_remove_details_last_domain_deletes_property() {
         }),
     ], "test").unwrap();
 
-    learn_concept_one(&mut conn, &serde_json::json!({"iri": "foundation:OnlyOwner", "upsert_details": ["foundation:singleDomainProp"]}));
+    define_class_one(&mut conn, &serde_json::json!({"iri": "foundation:OnlyOwner", "add_properties": ["foundation:singleDomainProp"]}));
 
-    let result = learn_concept_one(&mut conn, &serde_json::json!({
+    let result = define_class_one(&mut conn, &serde_json::json!({
         "iri": "foundation:OnlyOwner",
-        "remove_details": ["foundation:singleDomainProp"]
+        "remove_properties": ["foundation:singleDomainProp"]
     }));
-    assert!(result.success, "remove_details should succeed: {:?}", result.error);
+    assert!(result.success, "remove_properties should succeed: {:?}", result.error);
 
     let prop = crate::owl::Property::get(&conn, "foundation:singleDomainProp").unwrap();
     assert!(prop.is_none(), "property must be deleted when it has no remaining domains");
@@ -305,11 +305,11 @@ fn test_remove_details_nonexistent_property_is_ignored() {
         }),
     ], "test").unwrap();
 
-    let result = learn_concept_one(&mut conn, &serde_json::json!({
+    let result = define_class_one(&mut conn, &serde_json::json!({
         "iri": "foundation:SomeConcept",
-        "remove_details": ["foundation:doesNotExist"]
+        "remove_properties": ["foundation:doesNotExist"]
     }));
-    assert!(result.success, "remove_details with nonexistent property must succeed silently");
+    assert!(result.success, "remove_properties with nonexistent property must succeed silently");
 }
 
 #[test]
@@ -319,39 +319,39 @@ fn test_forget_concept_rejected_when_subclasses_exist() {
     let mut conn = setup_test_db();
 
     let create_parent = ToolCall {
-        name: "learn_concepts".to_string(),
+        name: "define_class".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:Animal",
                 "label": "Animal",
                 "icon": "pets",
-                "super_concepts": ["owl:Thing"]
+                "super_classes": ["owl:Thing"]
             }]
         }),
     };
-    assert!(execute_tool(&mut conn, &create_parent, None).success);
+    assert!(execute_tool(&mut conn, &create_parent, None, None).success);
 
     let create_child = ToolCall {
-        name: "learn_concepts".to_string(),
+        name: "define_class".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:Dog",
                 "label": "Dog",
                 "icon": "pets",
-                "super_concepts": ["foundation:Animal"]
+                "super_classes": ["foundation:Animal"]
             }]
         }),
     };
-    assert!(execute_tool(&mut conn, &create_child, None).success);
+    assert!(execute_tool(&mut conn, &create_child, None, None).success);
 
     let delete_call = ToolCall {
-        name: "forget_concepts".to_string(),
+        name: "retract_class".to_string(),
         arguments: serde_json::json!({
             "operations": [{"iri": "foundation:Animal"}]
         }),
     };
-    let result = execute_tool(&mut conn, &delete_call, None);
-    assert!(!result.success, "deleting a concept with subclasses must be rejected");
+    let result = execute_tool(&mut conn, &delete_call, None, None);
+    assert!(!result.success, "retracting a class with subclasses must be rejected");
     let err = result.error.unwrap();
     assert!(err.contains("foundation:Dog"), "error must mention the dependent subclass; got: {err}");
 }
@@ -363,26 +363,26 @@ fn test_forget_concept_allowed_when_no_subclasses() {
     let mut conn = setup_test_db();
 
     let create = ToolCall {
-        name: "learn_concepts".to_string(),
+        name: "define_class".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:Leaf",
                 "label": "Leaf",
                 "icon": "eco",
-                "super_concepts": ["owl:Thing"]
+                "super_classes": ["owl:Thing"]
             }]
         }),
     };
-    assert!(execute_tool(&mut conn, &create, None).success);
+    assert!(execute_tool(&mut conn, &create, None, None).success);
 
     let delete_call = ToolCall {
-        name: "forget_concepts".to_string(),
+        name: "retract_class".to_string(),
         arguments: serde_json::json!({
             "operations": [{"iri": "foundation:Leaf"}]
         }),
     };
-    let result = execute_tool(&mut conn, &delete_call, None);
-    assert!(result.success, "deleting a leaf concept must succeed; got: {:?}", result.error);
+    let result = execute_tool(&mut conn, &delete_call, None, None);
+    assert!(result.success, "retracting a leaf class must succeed; got: {:?}", result.error);
 }
 
 #[test]
@@ -404,14 +404,14 @@ fn test_forget_concept_cascades_deletes_instances() {
         }),
     ], "test").unwrap();
 
-    let result = delete_concept_one(&mut conn, &serde_json::json!({"iri": "foundation:Widget"}));
-    assert!(result.success, "cascade delete must succeed; got: {:?}", result.error);
+    let result = retract_class_one(&mut conn, &serde_json::json!({"iri": "foundation:Widget"}));
+    assert!(result.success, "cascade retract must succeed; got: {:?}", result.error);
 
     let deleted = result.result.unwrap();
     assert_eq!(deleted["deleted_instances"], 2, "must report 2 deleted instances");
 
     let class = crate::owl::Class::get(&conn, "foundation:Widget").unwrap();
-    assert!(class.is_none(), "concept must be gone after deletion");
+    assert!(class.is_none(), "class must be gone after retraction");
 
     let inst1 = crate::owl::Individual::get(&conn, "foundation:Widget_1").unwrap();
     assert!(inst1.is_none(), "instance 1 must be deleted");
@@ -430,8 +430,8 @@ fn test_forget_concept_no_instances_returns_zero_deleted() {
         }),
     ], "test").unwrap();
 
-    let result = delete_concept_one(&mut conn, &serde_json::json!({"iri": "foundation:EmptyConcept"}));
-    assert!(result.success, "deleting concept with no instances must succeed; got: {:?}", result.error);
+    let result = retract_class_one(&mut conn, &serde_json::json!({"iri": "foundation:EmptyConcept"}));
+    assert!(result.success, "retracting class with no instances must succeed; got: {:?}", result.error);
 
     let deleted = result.result.unwrap();
     assert_eq!(deleted["deleted_instances"], 0, "must report 0 deleted instances");
@@ -444,29 +444,29 @@ fn test_update_concept_super_concepts_empty_array_is_rejected() {
     let mut conn = setup_test_db();
 
     let create = ToolCall {
-        name: "learn_concepts".to_string(),
+        name: "define_class".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:Widget",
                 "label": "Widget",
                 "icon": "widgets",
-                "super_concepts": ["owl:Thing"]
+                "super_classes": ["owl:Thing"]
             }]
         }),
     };
-    assert!(execute_tool(&mut conn, &create, None).success);
+    assert!(execute_tool(&mut conn, &create, None, None).success);
 
     let update = ToolCall {
-        name: "learn_concepts".to_string(),
+        name: "define_class".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:Widget",
-                "super_concepts": []
+                "super_classes": []
             }]
         }),
     };
-    let result = execute_tool(&mut conn, &update, None);
-    assert!(!result.success, "setting super_concepts to empty must be rejected");
+    let result = execute_tool(&mut conn, &update, None, None);
+    assert!(!result.success, "setting super_classes to empty must be rejected");
 }
 
 #[test]
@@ -477,17 +477,17 @@ fn test_rename_concept_migrates_all_references() {
     let mut conn = setup_test_db();
 
     let create_concept = ToolCall {
-        name: "learn_concepts".to_string(),
+        name: "define_class".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:OldName",
                 "label": "Old Name",
                 "icon": "label",
-                "super_concepts": ["owl:Thing"]
+                "super_classes": ["owl:Thing"]
             }]
         }),
     };
-    assert!(execute_tool(&mut conn, &create_concept, None).success);
+    assert!(execute_tool(&mut conn, &create_concept, None, None).success);
 
     // Property with OldName as domain
     crate::owl::Property::new("foundation:testProp")
@@ -504,20 +504,20 @@ fn test_rename_concept_migrates_all_references() {
     ], "test").unwrap();
 
     let create_sub = ToolCall {
-        name: "learn_concepts".to_string(),
+        name: "define_class".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:SubOfOld",
                 "label": "Sub Of Old",
                 "icon": "label",
-                "super_concepts": ["foundation:OldName"]
+                "super_classes": ["foundation:OldName"]
             }]
         }),
     };
-    assert!(execute_tool(&mut conn, &create_sub, None).success);
+    assert!(execute_tool(&mut conn, &create_sub, None, None).success);
 
     let rename = ToolCall {
-        name: "learn_concepts".to_string(),
+        name: "define_class".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:OldName",
@@ -525,7 +525,7 @@ fn test_rename_concept_migrates_all_references() {
             }]
         }),
     };
-    let result = execute_tool(&mut conn, &rename, None);
+    let result = execute_tool(&mut conn, &rename, None, None);
     assert!(result.success, "rename must succeed; got: {:?}", result.error);
 
     let old_class = crate::owl::Class::get(&conn, "foundation:OldName").unwrap();
@@ -559,7 +559,7 @@ fn test_rename_concept_rejects_nonexistent_source() {
     let mut conn = setup_test_db();
 
     let rename = ToolCall {
-        name: "learn_concepts".to_string(),
+        name: "define_class".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:DoesNotExist",
@@ -567,8 +567,8 @@ fn test_rename_concept_rejects_nonexistent_source() {
             }]
         }),
     };
-    let result = execute_tool(&mut conn, &rename, None);
-    assert!(!result.success, "rename of non-existent concept must fail");
+    let result = execute_tool(&mut conn, &rename, None, None);
+    assert!(!result.success, "rename of non-existent class must fail");
 }
 
 #[test]
@@ -579,21 +579,21 @@ fn test_rename_concept_rejects_existing_target() {
 
     for iri in &["foundation:SourceConcept", "foundation:TargetConcept"] {
         let create = ToolCall {
-            name: "learn_concepts".to_string(),
+            name: "define_class".to_string(),
             arguments: serde_json::json!({
                 "operations": [{
                     "iri": iri,
                     "label": iri,
                     "icon": "label",
-                    "super_concepts": ["owl:Thing"]
+                    "super_classes": ["owl:Thing"]
                 }]
             }),
         };
-        assert!(execute_tool(&mut conn, &create, None).success);
+        assert!(execute_tool(&mut conn, &create, None, None).success);
     }
 
     let rename = ToolCall {
-        name: "learn_concepts".to_string(),
+        name: "define_class".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:SourceConcept",
@@ -601,6 +601,6 @@ fn test_rename_concept_rejects_existing_target() {
             }]
         }),
     };
-    let result = execute_tool(&mut conn, &rename, None);
+    let result = execute_tool(&mut conn, &rename, None, None);
     assert!(!result.success, "rename to existing IRI must fail");
 }

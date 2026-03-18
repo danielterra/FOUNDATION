@@ -13,14 +13,14 @@ fn setup_classes(conn: &mut Connection) {
         .assert(conn, ClassType::OwlClass, "Event", ICON, None, "test").unwrap();
 }
 
-// ── learn_properties ─────────────────────────────────────────────────────────
+// ── define_property ──────────────────────────────────────────────────────────
 
 #[test]
-fn test_learn_property_creates_object_property() {
+fn test_define_property_creates_object_property() {
     let mut conn = setup_test_db();
 
     let result = execute_tool(&mut conn, &ToolCall {
-        name: "learn_properties".to_string(),
+        name: "define_property".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:belongsTo",
@@ -29,8 +29,8 @@ fn test_learn_property_creates_object_property() {
                 "range": "foundation:Process"
             }]
         }),
-    }, None);
-    assert!(result.success, "learn_properties should create property: {:?}", result.error);
+    }, None, None);
+    assert!(result.success, "define_property should create property: {:?}", result.error);
 
     let prop = crate::owl::Property::get(&conn, "foundation:belongsTo").unwrap().unwrap();
     assert_eq!(prop.property_type, crate::owl::PropertyType::ObjectProperty);
@@ -38,11 +38,11 @@ fn test_learn_property_creates_object_property() {
 }
 
 #[test]
-fn test_learn_property_creates_datatype_property() {
+fn test_define_property_creates_datatype_property() {
     let mut conn = setup_test_db();
 
     let result = execute_tool(&mut conn, &ToolCall {
-        name: "learn_properties".to_string(),
+        name: "define_property".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:taskName",
@@ -51,76 +51,76 @@ fn test_learn_property_creates_datatype_property() {
                 "range": "xsd:string"
             }]
         }),
-    }, None);
-    assert!(result.success, "learn_properties should create datatype property: {:?}", result.error);
+    }, None, None);
+    assert!(result.success, "define_property should create datatype property: {:?}", result.error);
 
     let prop = crate::owl::Property::get(&conn, "foundation:taskName").unwrap().unwrap();
     assert_eq!(prop.property_type, crate::owl::PropertyType::DatatypeProperty);
 }
 
 #[test]
-fn test_learn_property_does_not_change_domains() {
+fn test_define_property_does_not_change_domains() {
     let mut conn = setup_test_db();
     setup_classes(&mut conn);
 
     execute_tool(&mut conn, &ToolCall {
-        name: "learn_properties".to_string(),
+        name: "define_property".to_string(),
         arguments: serde_json::json!({
             "operations": [{"iri": "foundation:stableProp", "label": "Stable Prop", "property_type": "object"}]
         }),
-    }, None);
+    }, None, None);
 
     execute_tool(&mut conn, &ToolCall {
-        name: "learn_concepts".to_string(),
+        name: "define_class".to_string(),
         arguments: serde_json::json!({
-            "operations": [{"iri": "foundation:Task", "upsert_details": ["foundation:stableProp"]}]
+            "operations": [{"iri": "foundation:Task", "add_properties": ["foundation:stableProp"]}]
         }),
-    }, None);
+    }, None, None);
 
     let result = execute_tool(&mut conn, &ToolCall {
-        name: "learn_properties".to_string(),
+        name: "define_property".to_string(),
         arguments: serde_json::json!({
             "operations": [{"iri": "foundation:stableProp", "comment": "Updated comment"}]
         }),
-    }, None);
-    assert!(result.success, "update via learn_properties should succeed: {:?}", result.error);
+    }, None, None);
+    assert!(result.success, "update via define_property should succeed: {:?}", result.error);
 
     let prop = crate::owl::Property::get(&conn, "foundation:stableProp").unwrap().unwrap();
-    assert!(prop.domains.contains(&"foundation:Task".to_string()), "domain must not be removed by learn_properties");
+    assert!(prop.domains.contains(&"foundation:Task".to_string()), "domain must not be removed by define_property");
 }
 
 #[test]
-fn test_learn_property_requires_label_for_new() {
+fn test_define_property_requires_label_for_new() {
     let mut conn = setup_test_db();
     let result = execute_tool(&mut conn, &ToolCall {
-        name: "learn_properties".to_string(),
+        name: "define_property".to_string(),
         arguments: serde_json::json!({
             "operations": [{"iri": "foundation:noLabel", "property_type": "object"}]
         }),
-    }, None);
+    }, None, None);
     assert!(!result.success, "should fail without label");
 }
 
 #[test]
-fn test_learn_property_requires_property_type_for_new() {
+fn test_define_property_requires_property_type_for_new() {
     let mut conn = setup_test_db();
     let result = execute_tool(&mut conn, &ToolCall {
-        name: "learn_properties".to_string(),
+        name: "define_property".to_string(),
         arguments: serde_json::json!({
             "operations": [{"iri": "foundation:noType", "label": "No Type"}]
         }),
-    }, None);
+    }, None, None);
     assert!(!result.success, "should fail without property_type");
 }
 
-// ── remember_properties ──────────────────────────────────────────────────────
+// ── describe_property ────────────────────────────────────────────────────────
 
 #[test]
-fn test_remember_property_by_iri() {
+fn test_describe_property_by_iri() {
     let mut conn = setup_test_db();
 
     execute_tool(&mut conn, &ToolCall {
-        name: "learn_properties".to_string(),
+        name: "define_property".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:fetchMe",
@@ -129,24 +129,24 @@ fn test_remember_property_by_iri() {
                 "range": "foundation:Process"
             }]
         }),
-    }, None);
+    }, None, None);
 
     let result = execute_tool(&mut conn, &ToolCall {
-        name: "remember_properties".to_string(),
+        name: "describe_property".to_string(),
         arguments: serde_json::json!({"operations": [{"iri": "foundation:fetchMe"}]}),
-    }, None);
-    assert!(result.success, "remember_property by iri should succeed: {:?}", result.error);
+    }, None, None);
+    assert!(result.success, "describe_property by iri should succeed: {:?}", result.error);
     let data = result.result.unwrap();
     assert_eq!(data["results"][0]["iri"].as_str().unwrap(), "foundation:fetchMe");
     assert_eq!(data["results"][0]["property_type"].as_str().unwrap(), "object");
 }
 
 #[test]
-fn test_remember_property_search_by_label() {
+fn test_describe_property_search_by_label() {
     let mut conn = setup_test_db();
 
     execute_tool(&mut conn, &ToolCall {
-        name: "learn_properties".to_string(),
+        name: "define_property".to_string(),
         arguments: serde_json::json!({
             "operations": [{
                 "iri": "foundation:uniqueNameProp",
@@ -155,12 +155,12 @@ fn test_remember_property_search_by_label() {
                 "range": "xsd:string"
             }]
         }),
-    }, None);
+    }, None, None);
 
     let result = execute_tool(&mut conn, &ToolCall {
-        name: "remember_properties".to_string(),
+        name: "describe_property".to_string(),
         arguments: serde_json::json!({"operations": [{"query": "UniqueSearchLabel"}]}),
-    }, None);
+    }, None, None);
     assert!(result.success, "search should succeed: {:?}", result.error);
     let props = result.result.unwrap();
     let found = props["results"][0]["properties"].as_array().unwrap();
@@ -169,11 +169,11 @@ fn test_remember_property_search_by_label() {
 }
 
 #[test]
-fn test_remember_property_not_found_returns_error() {
+fn test_describe_property_not_found_returns_error() {
     let mut conn = setup_test_db();
     let result = execute_tool(&mut conn, &ToolCall {
-        name: "remember_properties".to_string(),
+        name: "describe_property".to_string(),
         arguments: serde_json::json!({"operations": [{"iri": "foundation:doesNotExist"}]}),
-    }, None);
+    }, None, None);
     assert!(!result.success, "should fail for unknown property IRI");
 }

@@ -20,8 +20,8 @@ use tokio::sync::{mpsc, oneshot};
 pub struct DbExecutor {
     write_tx: mpsc::UnboundedSender<WriteTask>,
     db_path: PathBuf,
-    /// Sends IRI objects written by each transaction so callers can emit entity-updated events.
-    notify_tx: Option<mpsc::UnboundedSender<Vec<String>>>,
+    /// Sends (subjects, iri_objects) written by each transaction so callers can emit events.
+    notify_tx: Option<mpsc::UnboundedSender<(Vec<String>, Vec<String>)>>,
 }
 
 /// A write task to be executed sequentially
@@ -37,12 +37,12 @@ impl DbExecutor {
         Self::new_with_notify(conn, db_path, None)
     }
 
-    /// Like `new`, but also sends written IRI objects to `notify_tx` after each write.
-    /// The receiver can use these to emit `entity-updated` events for the linked entities.
+    /// Like `new`, but also sends (subjects, iri_objects) to `notify_tx` after each write.
+    /// The receiver emits `entity-updated` for subjects and `entity-referenced` for iri_objects.
     pub fn new_with_notify(
         conn: Connection,
         db_path: PathBuf,
-        notify_tx: Option<mpsc::UnboundedSender<Vec<String>>>,
+        notify_tx: Option<mpsc::UnboundedSender<(Vec<String>, Vec<String>)>>,
     ) -> Self {
         let (write_tx, mut write_rx) = mpsc::unbounded_channel::<WriteTask>();
         let notify_tx_thread = notify_tx.clone();
@@ -52,9 +52,10 @@ impl DbExecutor {
             while let Some(task) = write_rx.blocking_recv() {
                 let result = (task.operation)(&mut write_conn);
                 if let Some(ref tx) = notify_tx_thread {
-                    let iris = crate::eavto::store::drain_written_iri_objects();
-                    if !iris.is_empty() {
-                        let _ = tx.send(iris);
+                    let subjects = crate::eavto::store::drain_written_subjects();
+                    let iri_objects = crate::eavto::store::drain_written_iri_objects();
+                    if !subjects.is_empty() || !iri_objects.is_empty() {
+                        let _ = tx.send((subjects, iri_objects));
                     }
                 }
                 let _ = task.result_tx.send(result);

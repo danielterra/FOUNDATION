@@ -9,10 +9,10 @@ mod tests {
 }
 
 pub(super) fn load_concept_context(conn: &Connection, iri: &str) -> Option<Value> {
-    get_concept_one(conn, &serde_json::json!({ "iri": iri })).result
+    describe_class_one(conn, &serde_json::json!({ "iri": iri })).result
 }
 
-pub fn get_concepts(conn: &Connection, args: &Value) -> ToolResult {
+pub fn describe_class(conn: &Connection, args: &Value) -> ToolResult {
     let iris = match args.get("iris").and_then(|v| v.as_array()) {
         Some(arr) => arr,
         None => return ToolResult {
@@ -27,7 +27,7 @@ pub fn get_concepts(conn: &Connection, args: &Value) -> ToolResult {
     let mut errors = Vec::new();
     for v in iris {
         if let Some(iri) = v.as_str() {
-            let r = get_concept_one(conn, &serde_json::json!({ "iri": iri }));
+            let r = describe_class_one(conn, &serde_json::json!({ "iri": iri }));
             if r.success {
                 if let Some(val) = r.result {
                     results.push(val);
@@ -46,7 +46,7 @@ pub fn get_concepts(conn: &Connection, args: &Value) -> ToolResult {
     }
 }
 
-fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
+fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").or_else(|| args.get("IRI")).and_then(|v| v.as_str()) {
         Some(iri) => iri,
         None => return ToolResult {
@@ -154,6 +154,8 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
             })
             .collect();
 
+        let applicable_automations = super::find_automations_for_types(conn, &[iri.to_string()]);
+
         let mut response = serde_json::json!({
             "iri": concept.iri,
             "label": concept.label,
@@ -185,6 +187,9 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
         if !allowed_values.is_empty() {
             response["allowedValues"] = serde_json::json!(allowed_values);
         }
+        if !applicable_automations.is_empty() {
+            response["applicableAutomations"] = serde_json::json!(applicable_automations);
+        }
 
         Ok::<_, crate::owl::OwlError>(response)
     })() {
@@ -203,15 +208,15 @@ fn get_concept_one(conn: &Connection, args: &Value) -> ToolResult {
     }
 }
 
-pub fn learn_concept(
+pub fn define_class(
     conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
-    super::batch::run_atomic(conn, args, app, learn_concept_one)
+    super::batch::run_atomic(conn, args, app, define_class_one)
 }
 
-fn learn_concept_one(
+fn define_class_one(
     conn: &mut Connection,
     args: &Value,
 ) -> ToolResult {
@@ -231,12 +236,12 @@ fn learn_concept_one(
             if new_iri != orig_iri {
                 if Class::get(conn, orig_iri)?.is_none() {
                     return Err(crate::owl::OwlError::ValidationError(format!(
-                        "Concept '{}' not found. Cannot rename a non-existent concept.", orig_iri
+                        "Class '{}' not found. Cannot rename a non-existent class.", orig_iri
                     )));
                 }
                 if Class::get(conn, new_iri)?.is_some() {
                     return Err(crate::owl::OwlError::ValidationError(format!(
-                        "Concept '{}' already exists. Cannot rename to an existing IRI.", new_iri
+                        "Class '{}' already exists. Cannot rename to an existing IRI.", new_iri
                     )));
                 }
                 crate::eavto::store::rename_iri(conn, orig_iri, new_iri, "ai")
@@ -265,12 +270,12 @@ fn learn_concept_one(
             let label = label_arg
                 .or_else(|| existing.as_ref().and_then(|c| c.label.as_deref()))
                 .ok_or_else(|| crate::owl::OwlError::ValidationError(
-                    "Missing required parameter: label (required when creating a new concept)".to_string()
+                    "Missing required parameter: label (required when creating a new class)".to_string()
                 ))?;
             let icon = icon_arg
                 .or_else(|| existing.as_ref().and_then(|c| c.icon.as_deref()))
                 .ok_or_else(|| crate::owl::OwlError::ValidationError(
-                    "Missing required parameter: icon (required when creating a new concept)".to_string()
+                    "Missing required parameter: icon (required when creating a new class)".to_string()
                 ))?;
             let concept = Class::new(iri);
             concept.assert(conn, crate::owl::ClassType::OwlClass, label, icon, None, "ai")?;
@@ -280,27 +285,27 @@ fn learn_concept_one(
             Class::set_comment(conn, iri, comment, "ai")?;
         }
 
-        let super_concepts_val = args.get("super_concepts");
+        let super_classes_val = args.get("super_classes");
 
         if is_new {
-            let iris: Vec<&str> = super_concepts_val
+            let iris: Vec<&str> = super_classes_val
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
                 .unwrap_or_default();
             if iris.is_empty() {
                 return Err(crate::owl::OwlError::ValidationError(
-                    "Missing required parameter: super_concepts (at least one superclass is required when creating a concept)".to_string()
+                    "Missing required parameter: super_classes (at least one superclass is required when creating a class)".to_string()
                 ));
             }
             Class::set_super_classes(conn, iri, &iris, "ai")?;
-        } else if let Some(val) = super_concepts_val {
+        } else if let Some(val) = super_classes_val {
             let iris: Vec<&str> = val
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
                 .unwrap_or_default();
             if iris.is_empty() {
                 return Err(crate::owl::OwlError::ValidationError(
-                    "super_concepts must contain at least one superclass".to_string()
+                    "super_classes must contain at least one superclass".to_string()
                 ));
             }
             Class::set_super_classes(conn, iri, &iris, "ai")?;
@@ -315,7 +320,7 @@ fn learn_concept_one(
                 let individual = crate::owl::Individual::get(conn, *status_iri)?;
                 if individual.is_none() {
                     return Err(crate::owl::OwlError::ValidationError(format!(
-                        "Status '{}' does not exist. Use remember_concepts to query existing Status instances before setting allowedStatuses.",
+                        "Status '{}' does not exist. Use search to query existing Status instances before setting allowedStatuses.",
                         status_iri
                     )));
                 }
@@ -333,8 +338,8 @@ fn learn_concept_one(
             )?;
         }
 
-        if let Some(remove_details) = args.get("remove_details").and_then(|v| v.as_array()) {
-            for item in remove_details {
+        if let Some(remove_properties) = args.get("remove_properties").and_then(|v| v.as_array()) {
+            for item in remove_properties {
                 if let Some(prop_iri) = item.as_str() {
                     let mut prop = match crate::owl::Property::get(conn, prop_iri)? {
                         Some(p) => p,
@@ -352,17 +357,17 @@ fn learn_concept_one(
             }
         }
 
-        if let Some(details) = args.get("upsert_details").and_then(|v| v.as_array()) {
+        if let Some(details) = args.get("add_properties").and_then(|v| v.as_array()) {
             for detail in details {
                 let prop_iri = detail.as_str()
                     .or_else(|| detail.get("iri").and_then(|v| v.as_str()))
                     .ok_or_else(|| crate::owl::OwlError::ValidationError(
-                        "Each upsert_details item must be a property IRI string".to_string()
+                        "Each add_properties item must be a property IRI string".to_string()
                     ))?;
 
                 let mut prop = crate::owl::Property::get(conn, prop_iri)?
                     .ok_or_else(|| crate::owl::OwlError::ValidationError(
-                        format!("Property '{}' not found. Define it first with learn_properties.", prop_iri)
+                        format!("Property '{}' not found. Define it first with define_property.", prop_iri)
                     ))?;
 
                 if !prop.domains.contains(&iri.to_string()) {
@@ -380,13 +385,23 @@ fn learn_concept_one(
             }
         }
 
-        if let Some(required_fields) = args.get("required_fields").and_then(|v| v.as_array()) {
-            let prop_iris: Vec<&str> = required_fields.iter()
-                .filter_map(|v| v.as_str())
-                .collect();
+        if let Some(property_restrictions) = args.get("property_restrictions").and_then(|v| v.as_array()) {
+            struct RestrictionEntry {
+                prop_iri: String,
+                min: Option<u32>,
+                max: Option<u32>,
+            }
 
-            for prop_iri in &prop_iris {
-                let prop = crate::owl::Property::get(conn, *prop_iri)?;
+            let mut entries: Vec<RestrictionEntry> = Vec::new();
+
+            for entry in property_restrictions {
+                let prop_iri = entry.get("property_iri")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| crate::owl::OwlError::ValidationError(
+                        "Each property_restrictions entry must have 'property_iri'".to_string()
+                    ))?;
+
+                let prop = crate::owl::Property::get(conn, prop_iri)?;
                 let is_valid = prop.map(|p| matches!(
                     p.property_type,
                     crate::owl::PropertyType::ObjectProperty | crate::owl::PropertyType::DatatypeProperty
@@ -397,9 +412,23 @@ fn learn_concept_one(
                         prop_iri
                     )));
                 }
+
+                entries.push(RestrictionEntry {
+                    prop_iri: prop_iri.to_string(),
+                    min: entry.get("cardinality_min").and_then(|v| v.as_u64()).map(|v| v as u32),
+                    max: entry.get("cardinality_max").and_then(|v| v.as_u64()).map(|v| v as u32),
+                });
             }
 
-            crate::owl::cardinality::set_class_required_fields(conn, iri, &prop_iris, "ai")?;
+            let restrictions: Vec<crate::owl::cardinality::PropertyRestriction<'_>> = entries.iter()
+                .map(|e| crate::owl::cardinality::PropertyRestriction {
+                    property_iri: e.prop_iri.as_str(),
+                    min: e.min,
+                    max: e.max,
+                })
+                .collect();
+
+            crate::owl::cardinality::set_class_cardinality_restrictions(conn, iri, &restrictions, "ai")?;
         }
 
         if is_new {
@@ -427,15 +456,15 @@ fn learn_concept_one(
     }
 }
 
-pub fn delete_concept(
+pub fn retract_class(
     conn: &mut Connection,
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
-    super::batch::run_atomic(conn, args, app, delete_concept_one)
+    super::batch::run_atomic(conn, args, app, retract_class_one)
 }
 
-fn delete_concept_one(
+fn retract_class_one(
     conn: &mut Connection,
     args: &Value,
 ) -> ToolResult {
@@ -457,7 +486,7 @@ fn delete_concept_one(
                 .collect();
             if !child_iris.is_empty() {
                 return Err(crate::owl::OwlError::ValidationError(format!(
-                    "Cannot delete concept '{}': it has {} subclass(es) that depend on it: {}. \
+                    "Cannot retract class '{}': it has {} subclass(es) that depend on it: {}. \
                      Remove the superclass reference from each subclass first.",
                     iri, child_iris.len(), child_iris.join(", ")
                 )));
@@ -482,7 +511,7 @@ fn delete_concept_one(
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "deleted_instances": deleted_instances,
-            "message": format!("Concept '{}' deleted with {} instance(s).", iri, deleted_instances),
+            "message": format!("Class '{}' retracted with {} instance(s).", iri, deleted_instances),
         }))
     })() {
         Ok(result) => ToolResult {

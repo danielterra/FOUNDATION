@@ -16,9 +16,19 @@ std::thread_local! {
     /// so that all operations participate in the same atomic transaction.
     static IN_BATCH_TX: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 
-    /// Accumulates IRI objects written during assert_triples on the write thread.
+    /// Accumulates subjects written during assert_triples on the write thread.
     /// Drained by DbExecutor after each write to emit entity-updated notifications.
+    static WRITTEN_SUBJECTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+
+    /// Accumulates IRI objects written during assert_triples on the write thread.
+    /// Drained by DbExecutor after each write to emit entity-referenced notifications.
     static WRITTEN_IRI_OBJECTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Returns all subjects accumulated since the last drain, removing them from the buffer.
+/// Only meaningful when called from the write thread.
+pub fn drain_written_subjects() -> Vec<String> {
+    WRITTEN_SUBJECTS.with(|v| std::mem::take(&mut *v.borrow_mut()))
 }
 
 /// Returns all IRI objects accumulated since the last drain, removing them from the buffer.
@@ -59,8 +69,17 @@ pub fn assert_triples(
     };
     if tx_id != 0 {
         let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
+        #[cfg(not(test))]
         crate::search::reindex_subjects(conn, &subjects);
 
+        WRITTEN_SUBJECTS.with(|v| {
+            let mut buf = v.borrow_mut();
+            for triple in triples {
+                if !is_vocabulary_iri(&triple.subject) {
+                    buf.push(triple.subject.clone());
+                }
+            }
+        });
         WRITTEN_IRI_OBJECTS.with(|v| {
             let mut buf = v.borrow_mut();
             for triple in triples {
@@ -236,6 +255,7 @@ pub fn append_triples(
     };
     if tx_id != 0 {
         let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
+        #[cfg(not(test))]
         crate::search::reindex_subjects(conn, &subjects);
     }
     Ok(tx_id)
@@ -296,6 +316,7 @@ pub fn retract_triples(
     };
     if tx_id != 0 {
         let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
+        #[cfg(not(test))]
         crate::search::reindex_subjects(conn, &subjects);
     }
     Ok(tx_id)
@@ -712,6 +733,7 @@ pub fn rename_iri(
         do_rename_iri(&tx, old_iri, new_iri, origin)?;
         tx.commit()?;
     }
+    #[cfg(not(test))]
     crate::search::reindex_subjects(conn, &[old_iri.to_string(), new_iri.to_string()]);
     Ok(())
 }

@@ -10,6 +10,7 @@
   import ConnectorCredentialWidget from './ConnectorCredentialWidget.svelte';
   import ConnectorManagerWidget from './ConnectorManagerWidget.svelte';
   import MetaProcessWidget from './MetaProcessWidget.svelte';
+  import AutomationWidget from './AutomationWidget.svelte';
 
   let { activeConversationIri = null } = $props();
 
@@ -301,6 +302,8 @@
       <ConnectorManagerWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} />
     {:else if widget.widget_type === 'meta_process'}
       <MetaProcessWidget widgetId={widget.id} entityId={widget.entity_id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} conversationIri={activeConversationIri} />
+    {:else if widget.widget_type === 'automation'}
+      <AutomationWidget widgetId={widget.id} entityId={widget.entity_id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} conversationIri={activeConversationIri} />
     {/if}
   </div>
 {/each}

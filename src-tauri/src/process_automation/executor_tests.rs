@@ -75,16 +75,16 @@ fn test_load_flow_nodes_returns_nodes_with_types() {
     insert_triples(&mut conn, &[
         Triple::new("foundation:Proc1", "foundation:hasFlowNode", Object::Iri("foundation:Start1".to_string())),
         Triple::new("foundation:Proc1", "foundation:hasFlowNode", Object::Iri("foundation:End1".to_string())),
-        Triple::new("foundation:Start1", "rdf:type", Object::Iri("foundation:bpmn_StartEvent".to_string())),
-        Triple::new("foundation:End1",   "rdf:type", Object::Iri("foundation:bpmn_EndEvent".to_string())),
+        Triple::new("foundation:Start1", "rdf:type", Object::Iri("foundation:automation_StartEvent".to_string())),
+        Triple::new("foundation:End1",   "rdf:type", Object::Iri("foundation:automation_EndEvent".to_string())),
     ]);
 
     let nodes = load_flow_nodes(&conn, "foundation:Proc1").unwrap();
     assert_eq!(nodes.len(), 2);
 
     let types: Vec<&str> = nodes.iter().map(|(_, t, _)| t.as_str()).collect();
-    assert!(types.contains(&"foundation:bpmn_StartEvent"));
-    assert!(types.contains(&"foundation:bpmn_EndEvent"));
+    assert!(types.contains(&"foundation:automation_StartEvent"));
+    assert!(types.contains(&"foundation:automation_EndEvent"));
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn test_load_flow_nodes_includes_output_key() {
     let mut conn = setup_test_db();
     insert_triples(&mut conn, &[
         Triple::new("foundation:Proc2", "foundation:hasFlowNode", Object::Iri("foundation:Task1".to_string())),
-        Triple::new("foundation:Task1", "rdf:type", Object::Iri("foundation:bpmn_AgentTask".to_string())),
+        Triple::new("foundation:Task1", "rdf:type", Object::Iri("foundation:automation_AgentTask".to_string())),
         Triple::new("foundation:Task1", "foundation:outputKey", Object::Literal {
             value: "taskResult".to_string(),
             datatype: Some("xsd:string".to_string()),
@@ -104,7 +104,7 @@ fn test_load_flow_nodes_includes_output_key() {
     assert_eq!(nodes.len(), 1);
     let (iri, node_type, output_key) = &nodes[0];
     assert_eq!(iri, "foundation:Task1");
-    assert_eq!(node_type, "foundation:bpmn_AgentTask");
+    assert_eq!(node_type, "foundation:automation_AgentTask");
     assert_eq!(output_key.as_deref(), Some("taskResult"));
 }
 
@@ -113,7 +113,7 @@ fn test_load_flow_nodes_missing_output_key_is_none() {
     let mut conn = setup_test_db();
     insert_triples(&mut conn, &[
         Triple::new("foundation:Proc3", "foundation:hasFlowNode", Object::Iri("foundation:Start3".to_string())),
-        Triple::new("foundation:Start3", "rdf:type", Object::Iri("foundation:bpmn_StartEvent".to_string())),
+        Triple::new("foundation:Start3", "rdf:type", Object::Iri("foundation:automation_StartEvent".to_string())),
     ]);
 
     let nodes = load_flow_nodes(&conn, "foundation:Proc3").unwrap();
@@ -131,7 +131,7 @@ fn test_load_flow_nodes_missing_type_defaults_to_flow_node() {
 
     let nodes = load_flow_nodes(&conn, "foundation:Proc4").unwrap();
     assert_eq!(nodes.len(), 1);
-    assert_eq!(nodes[0].1, "foundation:bpmn_FlowNode");
+    assert_eq!(nodes[0].1, "foundation:automation_FlowNode");
 }
 
 #[test]
@@ -141,9 +141,9 @@ fn test_load_flow_nodes_multiple_nodes_all_returned() {
         Triple::new("foundation:Proc5", "foundation:hasFlowNode", Object::Iri("foundation:S5".to_string())),
         Triple::new("foundation:Proc5", "foundation:hasFlowNode", Object::Iri("foundation:T5".to_string())),
         Triple::new("foundation:Proc5", "foundation:hasFlowNode", Object::Iri("foundation:E5".to_string())),
-        Triple::new("foundation:S5", "rdf:type", Object::Iri("foundation:bpmn_StartEvent".to_string())),
-        Triple::new("foundation:T5", "rdf:type", Object::Iri("foundation:bpmn_AgentTask".to_string())),
-        Triple::new("foundation:E5", "rdf:type", Object::Iri("foundation:bpmn_EndEvent".to_string())),
+        Triple::new("foundation:S5", "rdf:type", Object::Iri("foundation:automation_StartEvent".to_string())),
+        Triple::new("foundation:T5", "rdf:type", Object::Iri("foundation:automation_AgentTask".to_string())),
+        Triple::new("foundation:E5", "rdf:type", Object::Iri("foundation:automation_EndEvent".to_string())),
     ]);
 
     let nodes = load_flow_nodes(&conn, "foundation:Proc5").unwrap();

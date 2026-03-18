@@ -35,7 +35,7 @@ async fn fire_processes_for_event(app: &AppHandle, event_key: &str) -> Result<()
         .await?;
 
     for process_iri in process_iris {
-        if let Err(e) = super::executor::run_process(app, &process_iri).await {
+        if let Err(e) = super::executor::run_process(app, &process_iri, None).await {
             log_backend("error", &format!("[trigger] Error running process {}: {}", process_iri, e));
         }
     }
@@ -43,7 +43,7 @@ async fn fire_processes_for_event(app: &AppHandle, event_key: &str) -> Result<()
     Ok(())
 }
 
-/// Queries all bpmn_Process IRIs whose StartEvent has a MessageEventDefinition
+/// Queries all Automation process IRIs whose StartEvent has a MessageEventDefinition
 /// with eventType pointing to an InternalEventType whose eventKey matches.
 fn find_processes_for_event_key(
     conn: &rusqlite::Connection,

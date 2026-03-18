@@ -6,12 +6,12 @@ use super::ToolResult;
 const MAX_DEPTH_CAP: usize = 5;
 
 pub fn get_concept_graph(conn: &Connection, args: &Value) -> ToolResult {
-    let concept_iri = match args.get("concept_iri").and_then(|v| v.as_str()) {
+    let concept_iri = match args.get("class_iri").or_else(|| args.get("concept_iri")).and_then(|v| v.as_str()) {
         Some(iri) if !iri.is_empty() => iri,
         _ => return ToolResult {
             success: false,
             result: None,
-            error: Some("Missing required parameter: concept_iri".to_string()),
+            error: Some("Missing required parameter: class_iri".to_string()),
             concept: None,
         },
     };
@@ -202,7 +202,7 @@ mod tests {
         let conn = setup_test_db();
         let result = get_concept_graph(&conn, &serde_json::json!({}));
         assert!(!result.success);
-        assert!(result.error.as_deref().unwrap_or("").contains("concept_iri"));
+        assert!(result.error.as_deref().unwrap_or("").contains("class_iri"));
     }
 
     // ── entity not found ─────────────────────────────────────────────────────

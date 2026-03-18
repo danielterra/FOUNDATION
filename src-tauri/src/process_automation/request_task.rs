@@ -24,7 +24,7 @@ fn interpolate(template: &str, ctx: &ExecutionContext) -> String {
     result
 }
 
-/// Executes a bpmn_RequestTask node: reads its linked HTTPRequest, performs the HTTP call,
+/// Executes an automation_RequestTask node: reads its linked HTTPRequest, performs the HTTP call,
 /// persists an HTTPResponse, and returns the response body.
 pub async fn execute_request_task(
     app: &AppHandle,

@@ -109,6 +109,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(process_automation::scheduler::SchedulerState::new())
         .manage(commands::AiCancellationState::new())
         .setup(|app| {
@@ -147,6 +148,7 @@ pub fn run() {
             commands::chat__create_conversation,
             commands::chat__list_conversations,
             commands::chat__rename_conversation,
+            commands::chat__delete_conversation,
             commands::chat__get_conversation_agent,
             commands::widget_blackboard__get_widgets,
             commands::widget_blackboard__add_widget,
@@ -161,7 +163,10 @@ pub fn run() {
             commands::connector__test_auth,
             commands::connector__export_package,
             commands::connector__import_package,
-            commands::meta_process__get_graph
+            commands::meta_process__get_graph,
+            commands::automation__get_graph,
+            commands::automation__run,
+            commands::automation__find_for_types
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use chrono::Utc;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::log_backend;
 use crate::eavto::query;
@@ -29,7 +29,7 @@ fn load_flow_nodes(
                 .triples
                 .first()
                 .and_then(|t| t.object.as_iri())
-                .unwrap_or("foundation:bpmn_FlowNode")
+                .unwrap_or("foundation:automation_FlowNode")
                 .to_string();
 
             let key_result = query::get_by_entity_predicate(conn, node_iri, "foundation:outputKey")
@@ -55,6 +55,12 @@ fn interpolate(template: &str, ctx: &ExecutionContext) -> String {
     result
 }
 
+/// Normalises a full type IRI to the bare task kind, stripping the `automation_` prefix.
+fn normalize_node_type(full_type: &str) -> &str {
+    let local = full_type.rsplit_once(':').map(|(_, l)| l).unwrap_or(full_type);
+    local.strip_prefix("automation_").unwrap_or(local)
+}
+
 const STATUS_IN_PROGRESS: &str = "foundation:InProgress";
 const STATUS_COMPLETED: &str = "foundation:Completed";
 const STATUS_FAILED: &str = "foundation:Status_1772993026091";
@@ -77,7 +83,9 @@ fn create_execution_record(
 }
 
 fn lit_datetime(ms: i64) -> Object {
-    Object::Literal { value: ms.to_string(), datatype: Some("xsd:dateTime".to_string()), language: None }
+    let dt = chrono::DateTime::from_timestamp_millis(ms)
+        .unwrap_or_else(chrono::Utc::now);
+    Object::Literal { value: dt.to_rfc3339(), datatype: Some("xsd:dateTime".to_string()), language: None }
 }
 
 fn lit_str(v: &str) -> Object {
@@ -92,10 +100,11 @@ fn create_step_record(
     conn: &mut rusqlite::Connection,
     exec_iri: &str,
     node_iri: &str,
+    node_label: &str,
 ) -> Result<String> {
     let step_iri = format!("foundation:StepExecution_{}", Utc::now().timestamp_millis());
     let ind = Individual::new(&step_iri);
-    ind.assert(conn, "foundation:StepExecution", &step_iri, "check_circle", "process_automation")
+    ind.assert(conn, "foundation:StepExecution", node_label, "check_circle", "process_automation")
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:executesStep",
         vec![Object::Iri(node_iri.to_string())], "process_automation")
@@ -111,7 +120,7 @@ fn create_step_record(
         .map_err(|e| e.to_string())?;
 
     Individual::new(exec_iri)
-        .add_property(conn, "foundation:hasStepExecutions",
+        .append_property(conn, "foundation:hasStepExecutions",
             vec![Object::Iri(step_iri.clone())], "process_automation")
         .map_err(|e| e.to_string())?;
 
@@ -132,10 +141,19 @@ fn finish_step_record(
     ind.add_property(conn, "foundation:stepFinishedAt",
         vec![lit_datetime(Utc::now().timestamp_millis())], "process_automation")
         .map_err(|e| e.to_string())?;
-    if let Some(val) = output.filter(|v| !v.is_empty() && looks_like_iri(v)) {
-        ind.add_property(conn, "foundation:outputValue",
-            vec![Object::Iri(val.to_string())], "process_automation")
-            .map_err(|e| e.to_string())?;
+    if let Some(val) = output.filter(|v| !v.is_empty()) {
+        if looks_like_iri(val) {
+            ind.add_property(conn, "foundation:outputValue",
+                vec![Object::Iri(val.to_string())], "process_automation")
+                .map_err(|e| e.to_string())?;
+        } else {
+            let comment_triple = crate::eavto::Triple::new(
+                step_iri, "rdfs:comment",
+                Object::Literal { value: val.to_string(), datatype: Some("xsd:string".to_string()), language: None },
+            );
+            crate::eavto::store::assert_triples(conn, &[comment_triple], "process_automation")
+                .map_err(|e| e.to_string())?;
+        }
     }
     if let Some(msg) = error {
         ind.add_property(conn, "foundation:stepError",
@@ -165,8 +183,11 @@ fn finish_execution_record(
 }
 
 /// Runs a BPMN process from the start, threading outputs through an ExecutionContext.
-pub async fn run_process(app: &AppHandle, process_iri: &str) -> Result<()> {
+pub async fn run_process(app: &AppHandle, process_iri: &str, input_iri: Option<String>) -> Result<()> {
     let mut ctx = ExecutionContext::new();
+    if let Some(iri) = input_iri {
+        ctx.insert("inputIRIs".to_string(), iri);
+    }
     run_process_with_context(app, process_iri, &mut ctx).await
 }
 
@@ -179,12 +200,27 @@ pub async fn run_process_with_context(
     let process_iri = process_iri.to_string();
     let executor = app.state::<DbExecutor>();
 
+    let triggered_by = ctx.get("inputIRIs").cloned();
     let exec_iri = executor
         .write({
             let process_iri = process_iri.clone();
-            move |conn| create_execution_record(conn, &process_iri)
+            move |conn| {
+                let exec_iri = create_execution_record(conn, &process_iri)?;
+                if let Some(iri) = triggered_by {
+                    Individual::new(&exec_iri)
+                        .add_property(conn, "foundation:triggeredBy",
+                            vec![Object::Iri(iri)], "process_automation")
+                        .map_err(|e| e.to_string())?;
+                }
+                Ok(exec_iri)
+            }
         })
         .await?;
+
+    app.emit("automation-execution-started", serde_json::json!({
+        "processIri": process_iri,
+        "executionIri": exec_iri,
+    })).ok();
 
     let nodes = executor
         .read({
@@ -203,6 +239,14 @@ pub async fn run_process_with_context(
         })
         .await?;
 
+    let finished_status = if run_result.is_ok() { "completed" } else { "failed" };
+    app.emit("automation-execution-finished", serde_json::json!({
+        "processIri": process_iri,
+        "executionIri": exec_iri,
+        "status": finished_status,
+        "error": run_result.as_ref().err().map(|e| e.as_str()),
+    })).ok();
+
     run_result
 }
 
@@ -216,34 +260,74 @@ async fn execute_nodes(
     let executor = app.state::<DbExecutor>();
 
     for (node_iri, node_type, output_key) in nodes {
-        if node_type == "foundation:bpmn_StartEvent" {
+        let kind = normalize_node_type(&node_type);
+
+        if kind == "StartEvent" {
             continue;
         }
 
-        if node_type == "foundation:bpmn_EndEvent" {
+        if kind == "EndEvent" {
             log_backend("info", &format!("[executor] Process {} reached EndEvent {}", process_iri, node_iri));
             continue;
         }
+
+        let node_label = executor
+            .read({
+                let node_iri = node_iri.clone();
+                move |conn| {
+                    Ok(query::get_by_entity_predicate(conn, &node_iri, "rdfs:label")
+                        .ok()
+                        .and_then(|r| r.triples.into_iter().next())
+                        .and_then(|t| t.object.as_literal().map(|s| s.to_string()))
+                        .unwrap_or_else(|| node_iri.clone()))
+                }
+            })
+            .await
+            .unwrap_or_else(|_| node_iri.clone());
 
         let step_iri = executor
             .write({
                 let exec_iri = exec_iri.to_string();
                 let node_iri = node_iri.clone();
-                move |conn| create_step_record(conn, &exec_iri, &node_iri)
+                let node_label = node_label.clone();
+                move |conn| create_step_record(conn, &exec_iri, &node_iri, &node_label)
             })
             .await?;
 
-        let step_result = match node_type.as_str() {
-            "foundation:bpmn_RequestTask" => {
+        app.emit("automation-step-progress", serde_json::json!({
+            "executionIri": exec_iri,
+            "stepIri": step_iri,
+            "nodeIri": node_iri,
+            "nodeLabel": node_label,
+            "status": "started",
+        })).ok();
+
+        if !ctx.is_empty() {
+            let step = step_iri.clone();
+            let ctx_json = serde_json::to_string(ctx).unwrap_or_default();
+            executor.write(move |conn| {
+                let triple = crate::eavto::Triple::new(
+                    &step,
+                    "foundation:inputContext",
+                    Object::Literal { value: ctx_json, datatype: Some("xsd:string".to_string()), language: None },
+                );
+                crate::eavto::store::assert_triples(conn, &[triple], "process_automation")
+                    .map(|_| String::new())
+                    .map_err(|e| e.to_string())
+            }).await.ok();
+        }
+
+        let step_result = match kind {
+            "RequestTask" => {
                 super::request_task::execute_request_task(app, &node_iri, ctx).await
             }
-            "foundation:bpmn_ServiceTask" | "foundation:bpmn_ScriptTask" => {
+            "ServiceTask" | "ScriptTask" => {
                 dispatch_ai_task(app, process_iri, &node_iri, &node_type, ctx).await
             }
-            "foundation:bpmn_AgentTask" => {
-                super::agent_task::execute_agent_task(app, &node_iri, ctx).await
+            "AgentTask" => {
+                super::agent_task::execute_agent_task(app, &node_iri, ctx, &step_iri).await
             }
-            "foundation:bpmn_SubProcess" => {
+            "SubProcess" => {
                 run_sub_process(app, process_iri, &node_iri, ctx).await.map(|_| String::new())
             }
             _ => {
@@ -266,9 +350,25 @@ async fn execute_nodes(
             })
             .await?;
 
-        if let Some(e) = step_error {
-            return Err(e);
+        if let Some(ref e) = step_error {
+            app.emit("automation-step-progress", serde_json::json!({
+                "executionIri": exec_iri,
+                "stepIri": step_iri,
+                "nodeIri": node_iri,
+                "nodeLabel": node_label,
+                "status": "failed",
+                "error": e,
+            })).ok();
+            return Err(e.clone());
         }
+
+        app.emit("automation-step-progress", serde_json::json!({
+            "executionIri": exec_iri,
+            "stepIri": step_iri,
+            "nodeIri": node_iri,
+            "nodeLabel": node_label,
+            "status": "completed",
+        })).ok();
 
         if let (Some(key), Some(value)) = (output_key, output) {
             ctx.insert(key, value);

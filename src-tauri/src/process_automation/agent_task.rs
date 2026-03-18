@@ -1,9 +1,9 @@
 use tauri::{AppHandle, Manager};
 
 use crate::ai::{AIAssistant, GenerateRequest, ChatMessage};
-use crate::ai::providers::{MessageContent, ContentBlock};
+use crate::ai::providers::{MessageContent, ContentBlock, ClaudeTool};
 use crate::ai::functions::{get_claude_tools, ToolCall as FunctionToolCall, execute_tool as execute_fn};
-use crate::owl::{DbExecutor, get_literal_property, get_iri_property, Individual};
+use crate::owl::{DbExecutor, get_literal_property, get_iri_property, get_all_iri_properties, Individual, Object};
 
 use super::executor::ExecutionContext;
 
@@ -14,6 +14,32 @@ const DEFAULT_MAX_TOKENS: u32 = 4096;
 const DEFAULT_TEMPERATURE: f32 = 0.3;
 const DEFAULT_TIMEOUT_SECS: u64 = 180;
 
+fn task_complete_tool() -> ClaudeTool {
+    ClaudeTool {
+        name: "task_complete".to_string(),
+        description: "Signal explicit completion of this AgentTask. Call this to end the task with a typed outcome. If you do not call this, the task will time out as a failure.".to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "success": {
+                    "type": "boolean",
+                    "description": "true if the task succeeded, false if it failed."
+                },
+                "output_iris": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "IRIs produced by this task, passed as inputIRIs to the next step. Can be empty."
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Optional message summarising the outcome or failure reason."
+                }
+            },
+            "required": ["success"]
+        }),
+    }
+}
+
 fn interpolate(template: &str, ctx: &ExecutionContext) -> String {
     let mut result = template.to_string();
     for (key, value) in ctx {
@@ -22,17 +48,98 @@ fn interpolate(template: &str, ctx: &ExecutionContext) -> String {
     result
 }
 
-/// Executes a bpmn_AgentTask node headlessly.
+fn content_to_json(content: &MessageContent) -> String {
+    match content {
+        MessageContent::ContentBlocks(blocks) => {
+            serde_json::to_string(blocks).unwrap_or_default()
+        }
+        MessageContent::Text(text) => {
+            serde_json::to_string(&serde_json::json!([{"type": "text", "text": text}]))
+                .unwrap_or_default()
+        }
+    }
+}
+
+async fn persist_conversation(
+    executor: &DbExecutor,
+    step_iri: &str,
+    task_label: &str,
+    model: &str,
+    messages: &[ChatMessage],
+) {
+    let base_ms = chrono::Utc::now().timestamp_millis();
+    let conv_iri = format!("foundation:AIConversation_{}", base_ms);
+    let conv_label = format!("{} — Execution", task_label);
+
+    let step = step_iri.to_string();
+    let conv = conv_iri.clone();
+    let label = conv_label.clone();
+    executor.write(move |conn| {
+        let ind = Individual::new(&conv);
+        ind.assert(conn, "foundation:AIConversation", &label, "smart_toy", "process_automation")
+            .map_err(|e| e.to_string())?;
+        let link = crate::eavto::Triple::new(
+            &step,
+            "foundation:hasConversation",
+            Object::Iri(conv.clone()),
+        );
+        crate::eavto::store::assert_triples(conn, &[link], "process_automation")
+            .map_err(|e| e.to_string())?;
+        Ok(conv)
+    }).await.ok();
+
+    for (i, msg) in messages.iter().enumerate() {
+        let msg_iri = format!("foundation:AIConversationMessage_{}", base_ms + 1 + i as i64);
+        let role = msg.role.clone();
+        let content_json = content_to_json(&msg.content);
+        let conv_iri_for_msg = conv_iri.clone();
+        let model_str = model.to_string();
+
+        executor.write(move |conn| {
+            let ind = Individual::new(&msg_iri);
+            ind.assert(conn, "foundation:AIConversationMessage", &role, "chat", "process_automation")
+                .map_err(|e| e.to_string())?;
+
+            let mut triples = vec![
+                crate::eavto::Triple::new(
+                    &msg_iri, "foundation:role",
+                    Object::Literal { value: role.clone(), datatype: Some("xsd:string".to_string()), language: None },
+                ),
+                crate::eavto::Triple::new(
+                    &msg_iri, "foundation:content",
+                    Object::Literal { value: content_json, datatype: Some("xsd:string".to_string()), language: None },
+                ),
+                crate::eavto::Triple::new(
+                    &msg_iri, "foundation:partOfConversation",
+                    Object::Iri(conv_iri_for_msg),
+                ),
+            ];
+            if role == "assistant" && !model_str.is_empty() {
+                triples.push(crate::eavto::Triple::new(
+                    &msg_iri, "foundation:model",
+                    Object::Literal { value: model_str, datatype: Some("xsd:string".to_string()), language: None },
+                ));
+            }
+
+            crate::eavto::store::assert_triples(conn, &triples, "process_automation")
+                .map_err(|e| e.to_string())?;
+            Ok(msg_iri)
+        }).await.ok();
+    }
+}
+
+/// Executes an automation_AgentTask node headlessly.
 /// Reads the assignedAgent's API key and model, builds a prompt,
 /// runs the agentic tool loop until end_turn, and returns the final text output.
 pub async fn execute_agent_task(
     app: &AppHandle,
     node_iri: &str,
     ctx: &ExecutionContext,
+    step_iri: &str,
 ) -> Result<String> {
     let executor = app.state::<DbExecutor>();
 
-    let (label, description, agent_iri) = executor
+    let (label, description, agent_iri, allowed_tool_names) = executor
         .read({
             let node_iri = node_iri.to_string();
             move |conn| {
@@ -48,7 +155,13 @@ pub async fn execute_agent_task(
                     .map_err(|e| e.to_string())?
                     .unwrap_or_else(|| "foundation:LocalAIAssistant".to_string());
 
-                Ok((label, description, agent_iri))
+                let tool_iris = get_all_iri_properties(conn, &node_iri, "foundation:allowedTools")
+                    .unwrap_or_default();
+                let allowed_tool_names: Vec<String> = tool_iris.iter()
+                    .filter_map(|iri| get_literal_property(conn, iri, "rdfs:label").ok().flatten())
+                    .collect();
+
+                Ok((label, description, agent_iri, allowed_tool_names))
             }
         })
         .await?;
@@ -99,9 +212,71 @@ pub async fn execute_agent_task(
         .await?;
 
     let resolved_description = interpolate(&description, ctx);
+
+    let ctx_section = if ctx.is_empty() {
+        String::new()
+    } else {
+        let ctx_snapshot: Vec<(String, String)> = ctx.iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        let entity_blocks = executor.read(move |conn| {
+            let mut blocks = Vec::new();
+            for (key, value) in &ctx_snapshot {
+                if !value.contains(':') || value.contains(' ') {
+                    continue;
+                }
+                if let Ok(Some(individual)) = Individual::get(conn, value) {
+                    let type_labels: Vec<&str> = individual.types.iter()
+                        .map(|t| t.label.as_str())
+                        .collect();
+                    let props: Vec<String> = individual.properties.iter()
+                        .filter(|(k, _)| k != "rdf:type" && k != "foundation:hasStatus")
+                        .map(|(k, v)| {
+                            let val = match v {
+                                Object::Iri(s) => s.clone(),
+                                Object::Literal { value, .. } => value.clone(),
+                                Object::Integer(i) => i.to_string(),
+                                Object::Number(n) => n.to_string(),
+                                Object::Boolean(b) => b.to_string(),
+                                Object::DateTime(s) => s.clone(),
+                                Object::Blank(s) => s.clone(),
+                            };
+                            format!("  {}: {}", k, val)
+                        })
+                        .collect();
+                    let status_iri = individual.properties.iter()
+                        .find(|(k, _)| k == "foundation:hasStatus")
+                        .and_then(|(_, v)| if let Object::Iri(s) = v { Some(s.as_str()) } else { None });
+                    let status_line = status_iri
+                        .map(|s| format!("\n  status: {}", s))
+                        .unwrap_or_default();
+                    let comment_line = individual.comment.as_deref()
+                        .map(|c| format!("\n  description: {}", c))
+                        .unwrap_or_default();
+                    blocks.push(format!(
+                        "**{}** = `{}` ({})\n  label: {}{}{}\n{}",
+                        key, individual.iri,
+                        type_labels.join(", "),
+                        individual.label.as_deref().unwrap_or(&individual.iri),
+                        status_line,
+                        comment_line,
+                        props.join("\n")
+                    ));
+                } else {
+                    blocks.push(format!("**{}** = `{}`", key, value));
+                }
+            }
+            Ok::<_, String>(blocks)
+        }).await.unwrap_or_default();
+
+        format!("\n\n## Input Data\n{}", entity_blocks.join("\n\n"))
+    };
+
     let task_prompt = format!(
-        "You are executing the automation task: **{}**\n\n{}\n\nComplete this task and respond with the result.",
+        "You are executing the automation task: **{}**{}\n\n## Instructions\n{}\n\nComplete this task and respond with the result.",
         label,
+        ctx_section,
         resolved_description
     );
 
@@ -112,7 +287,16 @@ pub async fn execute_agent_task(
         ]),
     }];
 
-    let tools = get_claude_tools();
+    let mut tools: Vec<ClaudeTool> = if allowed_tool_names.is_empty() {
+        get_claude_tools()
+    } else {
+        crate::ai::functions::get_available_tools()
+            .into_iter()
+            .filter(|t| allowed_tool_names.contains(&t.name))
+            .map(|t| t.to_claude_tool())
+            .collect()
+    };
+    tools.push(task_complete_tool());
     let provider = crate::ai::providers::ClaudeProvider::with_model(
         api_key.clone(),
         model_identifier.clone(),
@@ -121,8 +305,9 @@ pub async fn execute_agent_task(
     let assistant = AIAssistant::new(Box::new(provider));
 
     let mut last_text = String::new();
+    let mut task_completion: Option<Result<Vec<String>>> = None;
 
-    for _ in 0..MAX_TOOL_LOOPS {
+    'outer: for _ in 0..MAX_TOOL_LOOPS {
         let request = GenerateRequest {
             messages: messages.clone(),
             max_tokens: Some(DEFAULT_MAX_TOKENS),
@@ -161,6 +346,32 @@ pub async fn execute_agent_task(
 
         let mut result_blocks: Vec<ContentBlock> = Vec::new();
         for tc in &response.tool_calls {
+            if tc.name == "task_complete" {
+                let success = tc.input.get("success").and_then(|v| v.as_bool()).unwrap_or(true);
+                let output_iris: Vec<String> = tc.input.get("output_iris")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default();
+                let message = tc.input.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                result_blocks.push(ContentBlock::ToolResult {
+                    tool_use_id: tc.id.clone(),
+                    content: "Task completion acknowledged.".to_string(),
+                    is_error: Some(false),
+                });
+                messages.push(ChatMessage {
+                    role: "user".to_string(),
+                    content: MessageContent::ContentBlocks(result_blocks),
+                });
+
+                task_completion = Some(if success {
+                    Ok(output_iris)
+                } else {
+                    Err(if message.is_empty() { "Agent task marked as failed via task_complete".to_string() } else { message })
+                });
+                break 'outer;
+            }
+
             let call = FunctionToolCall {
                 name: tc.name.clone(),
                 arguments: tc.input.clone(),
@@ -198,11 +409,22 @@ pub async fn execute_agent_task(
             });
         }
 
-        messages.push(ChatMessage {
-            role: "user".to_string(),
-            content: MessageContent::ContentBlocks(result_blocks),
-        });
+        if task_completion.is_none() {
+            messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: MessageContent::ContentBlocks(result_blocks),
+            });
+        }
     }
 
-    Ok(last_text)
+    persist_conversation(&executor, step_iri, &label, &model_identifier, &messages).await;
+
+    match task_completion {
+        Some(Ok(output_iris)) => {
+            let first = output_iris.first().cloned().unwrap_or_default();
+            Ok(first)
+        }
+        Some(Err(e)) => Err(e),
+        None => Ok(last_text),
+    }
 }

@@ -72,7 +72,7 @@ WHERE t_time.predicate = 'foundation:sentAt' AND t_time.retracted = 0
 ORDER BY t_time.object_datetime DESC
 LIMIT 20;"
 
--- View messages from a specific conversation (look up the conversation IRI first via remember_things)
+-- View messages from a specific conversation (look up the conversation IRI first via search)
 sqlite3 ~/Documents/Foundation/FOUNDATION.db "
 SELECT datetime(t_time.object_datetime / 1000, 'unixepoch', 'localtime') as time,
        t_role.object_value as role,
@@ -139,7 +139,7 @@ LIMIT 20;"
 
 ## Foundation MCP Tools
 
-Current tools (7 total): `learn_things`, `learn_concepts`, `remember_things`, `remember_concepts`, `forget_things`, `forget_concepts`, `blackboard_update`
+Current tools (19 total): `define_class`, `define_property`, `assert_individual`, `add_property_values`, `replace_property_values`, `remove_property_values`, `clear_property`, `retract_individual`, `retract_class`, `retract_property`, `search`, `describe_class`, `describe_individual`, `describe_property`, `class_graph`, `get_process`, `run_process`, `blackboard_state`, `blackboard_update`
 
 - **ALWAYS use MCP tools** to interact with Foundation data
 - **NEVER access the database directly** via SQL INSERT/UPDATE/DELETE — always go through MCP tools
@@ -150,8 +150,8 @@ Current tools (7 total): `learn_things`, `learn_concepts`, `remember_things`, `r
 **⚠️ CRITICAL RULE: NEVER deduce or guess IRIs — ALWAYS look them up using MCP tools.**
 
 - IRIs like `foundation:Planned`, `foundation:Active`, etc. do NOT necessarily exist — never assume
-- To find things by property value: `remember_things(concept_iri: "foundation:Status", properties: [{detail: "rdfs:label", value: "<label>"}])`
-- To find any thing by label or property: use `remember_things` with a `properties` filter
+- To find individuals by property value: `search(concept_iri: "foundation:Status", filters: [{detail: "rdfs:label", value: "<label>"}])`
+- To find any individual by label or property: use `search` with a `filters` parameter
 - **NEVER use SQL SELECT to find IRIs** — use the appropriate MCP tool instead
 - **NEVER hardcode an IRI without first confirming it exists via MCP**
 
@@ -233,12 +233,17 @@ When creating instruction documents in the `todo/` folder:
 ### Simplicity Principle
 - **Avoid redundant functions**: If a function can be replaced by simple calls to other functions, it is not necessary
 - **Removed/merged tools** (no longer exist as separate tools):
-  - `learn_thing` / `learn_thing_detail` → merged into `learn_things`
-  - `learn_concept` → renamed to `learn_concepts`
-  - `learn_connection_type` → merged into `learn_concepts` (use `connections` parameter)
-  - `remember_thing` / `remember_things_by_details` → merged into `remember_things`
-  - `remember_concept` → renamed to `remember_concepts`
-  - `remember_connection_types`: Concepts already return connections via `remember_concepts`
+  - `learn_thing` / `learn_thing_detail` / `learn_things` → replaced by `assert_individual`, `add_property_values`, `replace_property_values`
+  - `learn_concept` / `learn_concepts` → renamed to `define_class`
+  - `learn_connection_type` / `learn_properties` → renamed to `define_property`
+  - `remember_thing` / `remember_things` / `remember` → renamed to `search`
+  - `remember_concept` / `remember_concepts` / `get_concepts` → renamed to `describe_class`
+  - `remember_properties` → renamed to `describe_property`
+  - `forget_things` → split into `retract_individual`, `remove_property_values`, `clear_property`
+  - `forget_concepts` → renamed to `retract_class`
+  - `forget_properties` → renamed to `retract_property`
+  - `get_things` → renamed to `describe_individual`
+  - `get_concept_graph` → renamed to `class_graph`
   - `remember_concept_tree`: For deep hierarchies, call `remember_concepts` recursively
 
 ## Communication
@@ -250,10 +255,10 @@ When creating instruction documents in the `todo/` folder:
 
 **⚠️ CRITICAL RULE: ALWAYS use MCP tools to create or modify ontology classes and properties. NEVER edit TTL files directly.**
 
-- Classes → `learn_concepts`
-- Properties (connections) → `learn_concepts` with a `connections` parameter (no separate tool for this)
-- Calculated fields → `learn_concepts` with a `calculated_fields` parameter
-- Instances → `learn_things`
+- Classes → `define_class`
+- Properties → `define_property`
+- Calculated fields → `define_property` with a `formula` parameter
+- Individuals → `assert_individual`
 - Always invoke the `/new-ontology` skill to guide the process
 
 ## Ontology Design Principles

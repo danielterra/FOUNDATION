@@ -292,6 +292,13 @@ pub fn blackboard__list_widget_types() -> Vec<WidgetType> {
             supports_entity: true,
             default_size: Size { width: DEFAULT_WIDTH_META_PROCESS, height: DEFAULT_HEIGHT_META_PROCESS },
         },
+        WidgetType {
+            id: "automation".to_string(),
+            name: "Automation".to_string(),
+            description: "Interactive flow diagram of an Automation".to_string(),
+            supports_entity: true,
+            default_size: Size { width: DEFAULT_WIDTH_META_PROCESS, height: DEFAULT_HEIGHT_META_PROCESS },
+        },
     ]
 }
 

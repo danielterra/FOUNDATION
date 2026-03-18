@@ -887,6 +887,29 @@ pub async fn chat__list_conversations(
             false,
         ).map_err(|e| format!("Failed to query conversations: {}", e))?;
 
+        let last_msg_map: std::collections::HashMap<String, i64> = {
+            let mut stmt = conn.prepare(
+                "SELECT tp.object, MAX(ts.object_value) \
+                 FROM triples tp \
+                 JOIN triples ts ON ts.subject = tp.subject \
+                   AND ts.predicate = 'foundation:sentAt' \
+                   AND ts.retracted = 0 \
+                 WHERE tp.predicate = 'foundation:partOfConversation' \
+                   AND tp.retracted = 0 \
+                 GROUP BY tp.object"
+            ).map_err(|e| format!("Failed to prepare last-message query: {}", e))?;
+            let rows: Vec<(String, String)> = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| format!("Failed to query last messages: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+            rows.into_iter().filter_map(|(iri, rfc3339)| {
+                chrono::DateTime::parse_from_rfc3339(&rfc3339).ok()
+                    .map(|dt| (iri, dt.timestamp_millis()))
+            }).collect()
+        };
+
         let mut conversations: Vec<(i64, serde_json::Value)> = Vec::new();
 
         for iri in iris {
@@ -910,7 +933,8 @@ pub async fn chat__list_conversations(
                 }
             });
 
-            conversations.push((started_at, serde_json::json!({
+            let sort_key = last_msg_map.get(&iri).copied().unwrap_or(started_at);
+            conversations.push((sort_key, serde_json::json!({
                 "iri": iri,
                 "label": label,
                 "startedAt": started_at,
@@ -920,6 +944,30 @@ pub async fn chat__list_conversations(
         conversations.sort_by(|a, b| b.0.cmp(&a.0));
         Ok(conversations.into_iter().map(|(_, v)| v).collect())
     }).await
+}
+
+#[tauri::command]
+pub async fn chat__delete_conversation(
+    conversation_id: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    executor.write(move |conn| {
+        let message_iris = Individual::find_by_class_and_properties(
+            conn,
+            "foundation:AIConversationMessage",
+            &[("foundation:partOfConversation", conversation_id.as_str())],
+        ).map_err(|e| format!("Failed to query messages: {}", e))?;
+
+        for iri in message_iris {
+            Individual::retract(conn, &iri, "user")
+                .map_err(|e| format!("Failed to retract message {}: {}", iri, e))?;
+        }
+
+        Individual::retract(conn, &conversation_id, "user")
+            .map_err(|e| format!("Failed to retract conversation: {}", e))?;
+
+        Ok("".to_string())
+    }).await.map(|_| ())
 }
 
 #[tauri::command]

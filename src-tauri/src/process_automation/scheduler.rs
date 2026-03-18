@@ -25,7 +25,7 @@ fn collect_timer_definitions(
     conn: &rusqlite::Connection,
 ) -> Result<Vec<(String, String)>, String> {
     let timer_iris =
-        crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:bpmn_TimerEventDefinition")
+        crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:automation_TimerEventDefinition")
             .map_err(|e| e.to_string())?;
 
     let mut timers: Vec<(String, String)> = Vec::new();
@@ -119,7 +119,7 @@ pub async fn start(app: AppHandle) {
                 let now = chrono::Utc::now();
                 let delay = (next - now).to_std().unwrap_or_default();
                 tokio::time::sleep(delay).await;
-                if let Err(e) = super::executor::run_process(&app_clone, &process_iri).await {
+                if let Err(e) = super::executor::run_process(&app_clone, &process_iri, None).await {
                     log_backend("error", &format!("[scheduler] Error running process {}: {}", process_iri, e));
                 }
             }
@@ -176,7 +176,7 @@ async fn is_timer_event_definition(app: &AppHandle, entity_id: &str, include_ret
                 ind.properties.iter().any(|(p, v)| {
                     p == "rdf:type"
                         && v.as_iri()
-                            .map(|iri| iri == "foundation:bpmn_TimerEventDefinition")
+                            .map(|iri| iri == "foundation:automation_TimerEventDefinition")
                             .unwrap_or(false)
                 })
             };
@@ -220,7 +220,7 @@ mod scheduler_tests {
     fn test_collect_timer_definitions_returns_process_iri_not_start_event() {
         let mut conn = setup_test_db();
         insert_triples(&mut conn, &[
-            Triple::new("foundation:Timer1", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:Timer1", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
             Triple::new("foundation:Timer1", "foundation:timeCycle", Object::Literal {
                 value: "0 * * * * *".to_string(),
                 datatype: Some("xsd:string".to_string()),
@@ -241,7 +241,7 @@ mod scheduler_tests {
     fn test_collect_timer_definitions_skips_timer_without_time_cycle() {
         let mut conn = setup_test_db();
         insert_triples(&mut conn, &[
-            Triple::new("foundation:Timer2", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:Timer2", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
             Triple::new("foundation:Timer2", "foundation:timerEventOf", Object::Iri("foundation:Start2".to_string())),
             Triple::new("foundation:Start2", "foundation:partOfProcess", Object::Iri("foundation:Process2".to_string())),
         ]);
@@ -254,7 +254,7 @@ mod scheduler_tests {
     fn test_collect_timer_definitions_skips_timer_without_process_link() {
         let mut conn = setup_test_db();
         insert_triples(&mut conn, &[
-            Triple::new("foundation:Timer3", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:Timer3", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
             Triple::new("foundation:Timer3", "foundation:timeCycle", Object::Literal {
                 value: "0 * * * * *".to_string(),
                 datatype: Some("xsd:string".to_string()),
@@ -272,7 +272,7 @@ mod scheduler_tests {
     fn test_collect_timer_definitions_skips_paused_timer() {
         let mut conn = setup_test_db();
         insert_triples(&mut conn, &[
-            Triple::new("foundation:TimerP", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:TimerP", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
             Triple::new("foundation:TimerP", "foundation:timeCycle", Object::Literal {
                 value: "0 * * * * *".to_string(),
                 datatype: Some("xsd:string".to_string()),
@@ -291,7 +291,7 @@ mod scheduler_tests {
     fn test_collect_timer_definitions_includes_active_timer() {
         let mut conn = setup_test_db();
         insert_triples(&mut conn, &[
-            Triple::new("foundation:TimerAct", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:TimerAct", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
             Triple::new("foundation:TimerAct", "foundation:timeCycle", Object::Literal {
                 value: "0 * * * * *".to_string(),
                 datatype: Some("xsd:string".to_string()),
@@ -311,7 +311,7 @@ mod scheduler_tests {
     fn test_collect_timer_definitions_multiple_timers() {
         let mut conn = setup_test_db();
         insert_triples(&mut conn, &[
-            Triple::new("foundation:TimerA", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:TimerA", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
             Triple::new("foundation:TimerA", "foundation:timeCycle", Object::Literal {
                 value: "0 * * * * *".to_string(),
                 datatype: Some("xsd:string".to_string()),
@@ -320,7 +320,7 @@ mod scheduler_tests {
             Triple::new("foundation:TimerA", "foundation:timerEventOf", Object::Iri("foundation:StartA".to_string())),
             Triple::new("foundation:StartA", "foundation:partOfProcess", Object::Iri("foundation:ProcessA".to_string())),
 
-            Triple::new("foundation:TimerB", "rdf:type", Object::Iri("foundation:bpmn_TimerEventDefinition".to_string())),
+            Triple::new("foundation:TimerB", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
             Triple::new("foundation:TimerB", "foundation:timeCycle", Object::Literal {
                 value: "0 0 * * * *".to_string(),
                 datatype: Some("xsd:string".to_string()),

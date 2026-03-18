@@ -98,6 +98,40 @@ pub struct ToolResult {
     pub concept: Option<Value>,
 }
 
+pub fn find_automations_for_types(conn: &Connection, type_iris: &[String]) -> Vec<serde_json::Value> {
+    let mut results = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for type_iri in type_iris {
+        let mut stmt = match conn.prepare(
+            "SELECT DISTINCT t.subject FROM triples t
+             WHERE t.predicate = 'foundation:inputClass'
+               AND t.object = ?1
+               AND t.retracted = 0"
+        ) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let iris: Vec<String> = stmt
+            .query_map([type_iri], |row| row.get(0))
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
+        for iri in iris {
+            if seen.contains(&iri) { continue; }
+            let rdf_type = crate::owl::get_iri_property(conn, &iri, "rdf:type")
+                .ok()
+                .flatten();
+            if rdf_type.as_deref() != Some("foundation:Automation") { continue; }
+            let label = crate::owl::get_literal_property(conn, &iri, "rdfs:label")
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| iri.clone());
+            seen.insert(iri.clone());
+            results.push(serde_json::json!({"iri": iri, "label": label}));
+        }
+    }
+    results
+}
+
 pub fn execute_tool(
     conn: &mut Connection,
     call: &ToolCall,
@@ -114,18 +148,22 @@ pub fn execute_tool(
     };
 
     match call.name.as_str() {
-        "learn_concepts" => concept::learn_concept(conn, args, app),
-        "learn_things" => thing::learn_thing(conn, args, app),
-        "learn_properties" => property::learn_property(conn, args, app),
-        "remember" => thing::remember(conn, args),
-        "get_concepts" => concept::get_concepts(conn, args),
-        "get_things" => thing::get_things(conn, args),
-        "remember_properties" => property::remember_property(conn, args),
-        "forget_concepts" => concept::delete_concept(conn, args, app),
-        "forget_things" => thing::delete_thing(conn, args, app),
-        "forget_properties" => property::forget_property(conn, args, app),
+        "define_class" => concept::define_class(conn, args, app),
+        "define_property" => property::define_property(conn, args, app),
+        "assert_individual" => thing::assert_individual(conn, args, app),
+        "add_property_values" => thing::add_property_values(conn, args, app),
+        "replace_property_values" => thing::replace_property_values(conn, args, app),
+        "remove_property_values" => thing::remove_property_values(conn, args, app),
+        "clear_property" => thing::clear_property(conn, args, app),
+        "retract_individual" => thing::retract_individual(conn, args, app),
+        "retract_class" => concept::retract_class(conn, args, app),
+        "retract_property" => property::retract_property(conn, args, app),
+        "search" => thing::search(conn, args),
+        "describe_class" => concept::describe_class(conn, args),
+        "describe_individual" => thing::describe_individual(conn, args),
+        "describe_property" => property::describe_property(conn, args),
+        "class_graph" => concept_graph::get_concept_graph(conn, args),
         "get_process" => meta_process::get_process(conn, args),
-        "get_concept_graph" => concept_graph::get_concept_graph(conn, args),
         "blackboard_state" => blackboard::blackboard_state(conn, conversation_id),
         "blackboard_update" => blackboard::blackboard_update(conn, args, app, conversation_id),
         "run_process" => run_process_tool(args, app),
@@ -160,7 +198,7 @@ fn run_process_tool(args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult 
     };
 
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = crate::process_automation::executor::run_process(&app, &process_iri).await {
+        if let Err(e) = crate::process_automation::executor::run_process(&app, &process_iri, None).await {
             crate::commands::log_backend(
                 "error",
                 &format!("[run_process] Error running {}: {}", process_iri, e),
@@ -182,14 +220,14 @@ mod tests {
     use crate::eavto::test_helpers::setup_test_db;
     use crate::owl::{Property, PropertyType};
 
-    // ---- connections via learn_properties + learn_concepts ----
+    // ---- connections via define_property + define_class ----
 
     #[test]
     fn test_learn_concept_with_connections_creates_object_properties() {
         let mut conn = setup_test_db();
 
         let props_call = ToolCall {
-            name: "learn_properties".to_string(),
+            name: "define_property".to_string(),
             arguments: serde_json::json!({
                 "operations": [
                     {"iri": "foundation:worksAt", "label": "works at", "property_type": "object"},
@@ -200,19 +238,19 @@ mod tests {
         assert!(execute_tool(&mut conn, &props_call, None, None).success);
 
         let call = ToolCall {
-            name: "learn_concepts".to_string(),
+            name: "define_class".to_string(),
             arguments: serde_json::json!({
                 "operations": [{
                     "iri": "foundation:Employee",
                     "label": "Employee",
                     "icon": "https://example.com/icon.svg",
-                    "super_concepts": ["owl:Thing"],
-                    "upsert_details": ["foundation:worksAt", "foundation:reportsTo"]
+                    "super_classes": ["owl:Thing"],
+                    "add_properties": ["foundation:worksAt", "foundation:reportsTo"]
                 }]
             }),
         };
         let result = execute_tool(&mut conn, &call, None, None);
-        assert!(result.success, "learn_concept with connections should succeed: {:?}", result.error);
+        assert!(result.success, "define_class with connections should succeed: {:?}", result.error);
 
         let works_at = Property::get(&conn, "foundation:worksAt").unwrap().unwrap();
         assert_eq!(works_at.property_type, PropertyType::ObjectProperty);
@@ -223,14 +261,14 @@ mod tests {
         assert!(reports_to.ranges.iter().any(|r| r == "foundation:Employee"));
     }
 
-    // ---- calculated fields via learn_properties + learn_concepts ----
+    // ---- calculated fields via define_property + define_class ----
 
     #[test]
     fn test_learn_concept_with_calculated_fields_creates_properties() {
         let mut conn = setup_test_db();
 
         let props_call = ToolCall {
-            name: "learn_properties".to_string(),
+            name: "define_property".to_string(),
             arguments: serde_json::json!({
                 "operations": [
                     {"iri": "foundation:width", "label": "width", "property_type": "datatype"},
@@ -242,19 +280,19 @@ mod tests {
         assert!(execute_tool(&mut conn, &props_call, None, None).success);
 
         let call = ToolCall {
-            name: "learn_concepts".to_string(),
+            name: "define_class".to_string(),
             arguments: serde_json::json!({
                 "operations": [{
                     "iri": "foundation:Rectangle",
                     "label": "Rectangle",
                     "icon": "https://example.com/icon.svg",
-                    "super_concepts": ["owl:Thing"],
-                    "upsert_details": ["foundation:width", "foundation:height", "foundation:area"]
+                    "super_classes": ["owl:Thing"],
+                    "add_properties": ["foundation:width", "foundation:height", "foundation:area"]
                 }]
             }),
         };
         let result = execute_tool(&mut conn, &call, None, None);
-        assert!(result.success, "learn_concept with calculated fields should succeed: {:?}", result.error);
+        assert!(result.success, "define_class with calculated fields should succeed: {:?}", result.error);
 
         let width = Property::get(&conn, "foundation:width").unwrap().unwrap();
         assert_eq!(width.property_type, PropertyType::DatatypeProperty);
@@ -277,7 +315,7 @@ mod tests {
         let mut conn = setup_test_db();
 
         let props_call = ToolCall {
-            name: "learn_properties".to_string(),
+            name: "define_property".to_string(),
             arguments: serde_json::json!({
                 "operations": [{"iri": "foundation:boxSize", "label": "size", "property_type": "datatype"}]
             }),
@@ -285,14 +323,14 @@ mod tests {
         assert!(execute_tool(&mut conn, &props_call, None, None).success);
 
         let call = ToolCall {
-            name: "learn_concepts".to_string(),
+            name: "define_class".to_string(),
             arguments: serde_json::json!({
                 "operations": [{
                     "iri": "foundation:Box",
                     "label": "Box",
                     "icon": "https://example.com/icon.svg",
-                    "super_concepts": ["owl:Thing"],
-                    "upsert_details": ["foundation:boxSize"]
+                    "super_classes": ["owl:Thing"],
+                    "add_properties": ["foundation:boxSize"]
                 }]
             }),
         };
@@ -307,11 +345,11 @@ mod tests {
     }
 
     #[test]
-    fn test_learn_property_circular_formula_is_rejected() {
+    fn test_define_property_circular_formula_is_rejected() {
         let mut conn = setup_test_db();
 
         let call = ToolCall {
-            name: "learn_properties".to_string(),
+            name: "define_property".to_string(),
             arguments: serde_json::json!({
                 "operations": [{
                     "iri": "foundation:selfRef",
@@ -327,14 +365,14 @@ mod tests {
         assert!(err.contains("Circular"), "Expected circular dependency error, got: {err}");
     }
 
-    // ---- learn_concept upsert: adding properties to existing concept ----
+    // ---- define_class upsert: adding properties to existing class ----
 
     #[test]
     fn test_update_concept_adds_calculated_fields() {
         let mut conn = setup_test_db();
 
         let radius_call = ToolCall {
-            name: "learn_properties".to_string(),
+            name: "define_property".to_string(),
             arguments: serde_json::json!({
                 "operations": [{"iri": "foundation:radius", "label": "radius", "property_type": "datatype"}]
             }),
@@ -342,21 +380,21 @@ mod tests {
         assert!(execute_tool(&mut conn, &radius_call, None, None).success);
 
         let create_call = ToolCall {
-            name: "learn_concepts".to_string(),
+            name: "define_class".to_string(),
             arguments: serde_json::json!({
                 "operations": [{
                     "iri": "foundation:Circle",
                     "label": "Circle",
                     "icon": "https://example.com/icon.svg",
-                    "super_concepts": ["owl:Thing"],
-                    "upsert_details": ["foundation:radius"]
+                    "super_classes": ["owl:Thing"],
+                    "add_properties": ["foundation:radius"]
                 }]
             }),
         };
         execute_tool(&mut conn, &create_call, None, None);
 
         let circ_call = ToolCall {
-            name: "learn_properties".to_string(),
+            name: "define_property".to_string(),
             arguments: serde_json::json!({
                 "operations": [{
                     "iri": "foundation:circumference",
@@ -369,11 +407,11 @@ mod tests {
         assert!(execute_tool(&mut conn, &circ_call, None, None).success);
 
         let update_call = ToolCall {
-            name: "learn_concepts".to_string(),
+            name: "define_class".to_string(),
             arguments: serde_json::json!({
                 "operations": [{
                     "iri": "foundation:Circle",
-                    "upsert_details": ["foundation:circumference"]
+                    "add_properties": ["foundation:circumference"]
                 }]
             }),
         };

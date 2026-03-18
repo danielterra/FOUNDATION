@@ -13,9 +13,8 @@
     "windows": [
       {
         "title": "FOUNDATION",
-        "width": 800,
-        "height": 600,
-        "maximized": true
+        "width": 1280,
+        "height": 800
       }
     ],
     "security": {

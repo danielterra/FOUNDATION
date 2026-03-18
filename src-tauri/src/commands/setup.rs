@@ -47,7 +47,7 @@ pub async fn initialize_app(
         super::log_backend("info", &stats_msg);
     }
 
-    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
+    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel::<(Vec<String>, Vec<String>)>();
     let executor = DbExecutor::new_with_notify(conn, db_path.clone(), Some(notify_tx));
     let executor_for_worker = executor.clone();
     let executor_for_recover = executor.clone();
@@ -55,12 +55,16 @@ pub async fn initialize_app(
 
     let app_for_notify = app.clone();
     tauri::async_runtime::spawn(async move {
-        while let Some(iris) = notify_rx.recv().await {
+        while let Some((subjects, iri_objects)) = notify_rx.recv().await {
             let mut seen = std::collections::HashSet::new();
-            for iri in iris {
+            for iri in subjects {
+                if seen.insert(iri.clone()) {
+                    app_for_notify.emit("entity-updated", serde_json::json!({ "entityId": iri })).ok();
+                }
+            }
+            for iri in iri_objects {
                 if seen.insert(iri.clone()) {
                     // entity-referenced: a write created a link pointing TO this IRI (new backlink).
-                    // Used only to detect new backlinks on the exact entity being inspected.
                     app_for_notify.emit("entity-referenced", serde_json::json!({ "entityId": iri })).ok();
                 }
             }

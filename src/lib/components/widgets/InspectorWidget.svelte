@@ -75,6 +75,8 @@
   let widgetDefinitions = $state([]);
   let unlistenEntityUpdated = $state(null);
   let unlistenEntityReferenced = $state(null);
+  let applicableAutomations = $state([]);
+  let runningAutomationIri = $state(null);
 
   async function loadEntity() {
     loading = true;
@@ -94,6 +96,18 @@
         }
       } else {
         widgetDefinitions = [];
+      }
+
+      const typeIris = (entityData?.types ?? []).map(t => t.iri).filter(Boolean);
+      if (typeIris.length > 0) {
+        try {
+          const raw = await invoke('automation__find_for_types', { typeIris });
+          applicableAutomations = JSON.parse(raw);
+        } catch {
+          applicableAutomations = [];
+        }
+      } else {
+        applicableAutomations = [];
       }
     } catch (err) {
       error = `Failed to load entity: ${entityId}`;
@@ -153,6 +167,22 @@
       });
     } catch (err) {
       console.error(`Failed to open ${widgetType} widget:`, err);
+    }
+  }
+
+  const isAutomationWithoutInputClass = $derived(
+    entityData?.types?.some(t => t.iri === 'foundation:Automation') &&
+    !entityData?.properties?.some(p => p.property === 'foundation:inputClass')
+  );
+
+  async function runAutomation(automationIri, inputIri = null) {
+    runningAutomationIri = automationIri;
+    try {
+      await invoke('automation__run', { automationIri, inputIri });
+    } catch (err) {
+      console.error('Failed to run automation:', err);
+    } finally {
+      runningAutomationIri = null;
     }
   }
 
@@ -422,6 +452,36 @@
     {/if}
     </div>
   </div>
+
+  {#if entityData && !entityData.isClass && (isAutomationWithoutInputClass || applicableAutomations.length > 0)}
+    <div class="actions-bar">
+      {#if isAutomationWithoutInputClass}
+        <button
+          class="action-bar-btn"
+          onclick={() => runAutomation(entityId)}
+          disabled={runningAutomationIri === entityId}
+        >
+          <span class="material-symbols-outlined" class:spinning={runningAutomationIri === entityId}>
+            {runningAutomationIri === entityId ? 'progress_activity' : 'play_circle'}
+          </span>
+          Run
+        </button>
+      {/if}
+      {#each applicableAutomations as auto}
+        <button
+          class="action-bar-btn"
+          onclick={() => runAutomation(auto.iri, entityId)}
+          disabled={runningAutomationIri === auto.iri}
+          title={auto.label}
+        >
+          <span class="material-symbols-outlined" class:spinning={runningAutomationIri === auto.iri}>
+            {runningAutomationIri === auto.iri ? 'progress_activity' : 'play_circle'}
+          </span>
+          {auto.label}
+        </button>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -587,6 +647,53 @@
 
   .action-btn .material-symbols-outlined {
     font-size: 18px;
+  }
+
+  .actions-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border-top: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+    background: color-mix(in srgb, var(--color-black) 60%, transparent);
+    flex-shrink: 0;
+  }
+
+  .action-bar-btn {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
+    width: 100%;
+    padding: 8px 12px;
+    background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
+    border-radius: 6px;
+    color: var(--color-interactive);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .action-bar-btn .material-symbols-outlined {
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+
+  .action-bar-btn:hover {
+    background: color-mix(in srgb, var(--color-interactive) 22%, transparent);
+    border-color: color-mix(in srgb, var(--color-interactive) 60%, transparent);
+    color: var(--color-neutral-active);
+  }
+
+  .action-bar-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 
   .header-types {

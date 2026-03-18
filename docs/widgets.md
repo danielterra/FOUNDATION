@@ -24,6 +24,8 @@ When a widget type is associated with a specific ontology class, it also declare
 | **Process Status** | `process_status` | `foundation:Process` | Shows real-time execution status and allows triggering the process |
 | **Connector Credential** | `connector_credential` | `foundation:Connector` | Configures API keys, tokens, or username/password for an external service |
 | **Connector Manager** | `connector_manager` | `foundation:Connector` | Exports and imports connector credential packages as JSON |
+| **MetaProcess** | `meta_process` | `foundation:MetaProcess` | Interactive SvelteFlow diagram of a MetaProcess — nodes, gateways, events, and sub-processes |
+| **Automation** | `automation` | `foundation:Automation` | Interactive SvelteFlow diagram of an Automation — flow nodes, gateways, and sequence flows |
 
 ## Creating Widgets
 
@@ -207,9 +209,19 @@ src/lib/components/widgets/
 ├── ProcessStatusWidget.svelte        # Process execution and monitoring
 ├── ConnectorCredentialWidget.svelte  # Credential configuration
 ├── ConnectorManagerWidget.svelte     # Connector package import/export
-└── inspector/
-    ├── PropertyList.svelte           # Grouped property display
-    ├── BacklinkList.svelte           # Entities referencing this entity
-    ├── FilePreview.svelte            # Inline file preview
-    └── MarkdownValue.svelte          # Markdown rendering
+├── MetaProcessWidget.svelte          # SvelteFlow diagram for MetaProcess
+├── AutomationWidget.svelte           # SvelteFlow diagram for Automation
+├── inspector/
+│   ├── PropertyList.svelte           # Grouped property display
+│   ├── BacklinkList.svelte           # Entities referencing this entity
+│   ├── FilePreview.svelte            # Inline file preview
+│   └── MarkdownValue.svelte          # Markdown rendering
+├── meta-process/                     # Node components for MetaProcessWidget
+│   ├── layout.js                     # Dagre layout engine
+│   ├── StatusBadge.svelte            # Status indicator
+│   └── Node*.svelte                  # One file per node type (13 types)
+└── automation/                       # Node components for AutomationWidget
+    ├── layout.js                     # Dagre layout engine
+    ├── StatusBadge.svelte            # Status indicator
+    └── Node*.svelte                  # One file per node type (9 types)
 ```
