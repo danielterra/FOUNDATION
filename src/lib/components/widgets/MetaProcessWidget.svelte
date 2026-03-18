@@ -19,7 +19,9 @@
   import NodeBoundaryEvent from './meta-process/NodeBoundaryEvent.svelte'
   import NodeBoundaryCondition from './meta-process/NodeBoundaryCondition.svelte'
 
-  let { widgetId, entityId, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props()
+  let {
+    widgetId, entityId, windowState = 'normal', onWindowStateChange, conversationIri = null
+  } = $props()
 
   const nodeTypes = {
     MetaStartEvent:          NodeStartEvent,
@@ -39,8 +41,8 @@
 
 
   let processLabel = $state('')
-  let nodes = $state([])
-  let edges = $state([])
+  let nodes = $state.raw([])
+  let edges = $state.raw([])
   let loading = $state(true)
   let error = $state(null)
   let expanded = $state(windowState === 'maximized')
@@ -76,7 +78,25 @@
       const flowNodes = data.nodes.map(n => ({
         id: n.id,
         type: n.type,
-        data: { label: n.label, nodeType: n.type, invokesProcess: n.invokes_process ?? null, status: n.status ?? null, statusColor: n.status_color ?? null, statusIcon: n.status_icon ?? null, conditionOperator: n.condition_operator ?? null, conditionValue: n.condition_value ?? null, eventType: n.event_type ?? null, triggerType: n.trigger_type ?? null, rendersComponent: n.renders_component ?? null, performedBy: n.performed_by ?? null, performedByIcon: n.performed_by_icon ?? null, executedIn: n.executed_in ?? null, executedInIcon: n.executed_in_icon ?? null },
+        data: {
+          label: n.label,
+          nodeType: n.type,
+          invokesProcess: n.invokes_process ?? null,
+          status: n.status ?? null,
+          statusColor: n.status_color ?? null,
+          statusIcon: n.status_icon ?? null,
+          conditionOperator: n.condition_operator ?? null,
+          conditionValue: n.condition_value ?? null,
+          eventType: n.event_type ?? null,
+          triggerType: n.trigger_type ?? null,
+          rendersComponent: n.renders_component ?? null,
+          performedBy: n.performed_by ?? null,
+          performedByIcon: n.performed_by_icon ?? null,
+          executedIn: n.executed_in ?? null,
+          executedInIcon: n.executed_in_icon ?? null,
+          inputConcepts: n.input_concepts ?? [],
+          outputConcepts: n.output_concepts ?? [],
+        },
         position: { x: 0, y: 0 },
       }))
 
@@ -87,7 +107,10 @@
         type: 'default',
         animated: true,
         label: e.label ?? undefined,
-        labelStyle: 'background:#000;color:#f1f5f9;padding:3px 7px;border-radius:4px;border:1px solid #475569;font-size:11px;font-weight:600;',
+        labelStyle: 'background:#000;color:#f1f5f9;padding:3px 7px;border-radius:4px;' +
+          'border:1px solid #475569;font-size:11px;font-weight:600;',
+        sourceHandle: e.source_handle ?? null,
+        targetHandle: e.target_handle ?? null,
       }))
 
       nodes = applyDagreLayout(flowNodes, flowEdges)
@@ -162,8 +185,11 @@
       <button class="action-btn" onclick={openExpanded} title="Expand">
         <span class="material-symbols-outlined">open_in_full</span>
       </button>
-      <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
-        <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
+      <button class="action-btn" onclick={toggleMinimize}
+        title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
+        <span class="material-symbols-outlined">
+          {windowState === 'minimized' ? 'expand_more' : 'expand_less'}
+        </span>
       </button>
       <button class="close-btn" onclick={closeWidget}>
         <span class="material-symbols-outlined">close</span>
@@ -195,7 +221,8 @@
           onnodepointerleave={() => hoveredNodeId = null}
         >
           <Controls />
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.08)" />
+          <Background variant={BackgroundVariant.Dots} gap={20} size={1}
+            color="rgba(255,255,255,0.08)" />
         </SvelteFlow>
       {/if}
     </div>
@@ -232,7 +259,8 @@
             onnodepointerleave={() => hoveredNodeId = null}
           >
             <Controls />
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.08)" />
+            <Background variant={BackgroundVariant.Dots} gap={20} size={1}
+            color="rgba(255,255,255,0.08)" />
           </SvelteFlow>
         {/if}
       </div>

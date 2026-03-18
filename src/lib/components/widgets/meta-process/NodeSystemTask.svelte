@@ -2,6 +2,7 @@
   import { Handle, Position } from '@xyflow/svelte'
   import { convertFileSrc } from '@tauri-apps/api/core'
   import StatusBadge from './StatusBadge.svelte'
+  import IoHandleLabel from './IoHandleLabel.svelte'
   let { data } = $props()
 
   function isImageIcon(icon) {
@@ -57,8 +58,26 @@
   </div>
   <StatusBadge status={data.status} statusColor={data.statusColor} statusIcon={data.statusIcon} />
 </div>
-<Handle type="target" position={Position.Left} />
-<Handle type="source" position={Position.Right} />
+{#if data.inputConcepts?.length > 0}
+  {#each data.inputConcepts as concept, i}
+    <Handle type="target" position={Position.Left} id="in-{concept.iri}"
+      style="top: {(i+1) / (data.inputConcepts.length + 1) * 100}%">
+      <IoHandleLabel icon={concept.icon} label={concept.label} align="left" />
+    </Handle>
+  {/each}
+{:else}
+  <Handle type="target" position={Position.Left} />
+{/if}
+{#if data.outputConcepts?.length > 0}
+  {#each data.outputConcepts as concept, i}
+    <Handle type="source" position={Position.Right} id="out-{concept.iri}"
+      style="top: {(i+1) / (data.outputConcepts.length + 1) * 100}%">
+      <IoHandleLabel icon={concept.icon} label={concept.label} align="right" />
+    </Handle>
+  {/each}
+{:else}
+  <Handle type="source" position={Position.Right} />
+{/if}
 
 <style>
   .node-wrap {
@@ -125,4 +144,5 @@
     line-height: 1.3;
     word-break: break-word;
   }
+
 </style>

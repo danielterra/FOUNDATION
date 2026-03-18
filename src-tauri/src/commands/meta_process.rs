@@ -5,6 +5,14 @@ use crate::owl::vocabulary::{rdf, rdfs};
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConceptRef {
+    pub iri: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
     pub id: String,
     #[serde(rename = "type")]
@@ -36,6 +44,8 @@ pub struct GraphNode {
     pub executed_in: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub executed_in_icon: Option<String>,
+    pub input_concepts: Vec<ConceptRef>,
+    pub output_concepts: Vec<ConceptRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +55,10 @@ pub struct GraphEdge {
     pub target: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_handle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_handle: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,7 +102,7 @@ pub async fn meta_process__get_graph(
         let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
         let mut nodes: Vec<GraphNode> = Vec::new();
-        let mut edges: Vec<GraphEdge> = Vec::new();
+        let mut raw_edges: Vec<(usize, String, String)> = Vec::new();
         let mut edge_counter = 0usize;
 
         queue.push_back(start_node);
@@ -202,6 +216,26 @@ pub async fn meta_process__get_graph(
                 (None, None, None, None)
             };
 
+            let input_concepts = get_all_iri_properties(
+                conn, &current, "foundation:inputConcept")
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|iri| {
+                    let t = crate::owl::Thing::get(conn, &iri);
+                    ConceptRef { iri, label: t.label, icon: t.icon }
+                })
+                .collect::<Vec<_>>();
+
+            let output_concepts = get_all_iri_properties(
+                conn, &current, "foundation:outputConcept")
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|iri| {
+                    let t = crate::owl::Thing::get(conn, &iri);
+                    ConceptRef { iri, label: t.label, icon: t.icon }
+                })
+                .collect::<Vec<_>>();
+
             nodes.push(GraphNode {
                 id: current.clone(),
                 node_type: node_type.clone(),
@@ -219,6 +253,8 @@ pub async fn meta_process__get_graph(
                 performed_by_icon,
                 executed_in,
                 executed_in_icon,
+                input_concepts,
+                output_concepts,
             });
 
             let is_gateway = matches!(
@@ -234,13 +270,8 @@ pub async fn meta_process__get_graph(
             };
 
             for target in next_targets {
+                raw_edges.push((edge_counter, current.clone(), target.clone()));
                 edge_counter += 1;
-                edges.push(GraphEdge {
-                    id: format!("e{}", edge_counter),
-                    source: current.clone(),
-                    target: target.clone(),
-                    label: None,
-                });
                 if !visited.contains(&target) {
                     queue.push_back(target);
                 }
@@ -250,19 +281,47 @@ pub async fn meta_process__get_graph(
                     conn, &current, "foundation:boundaryCondition")
                     .map_err(|e| e.to_string())?;
                 for bc in boundary_conditions {
+                    raw_edges.push((edge_counter, current.clone(), bc.clone()));
                     edge_counter += 1;
-                    edges.push(GraphEdge {
-                        id: format!("e{}", edge_counter),
-                        source: current.clone(),
-                        target: bc.clone(),
-                        label: None,
-                    });
                     if !visited.contains(&bc) {
                         queue.push_back(bc);
                     }
                 }
             }
         }
+
+        let node_map: std::collections::HashMap<String, &GraphNode> =
+            nodes.iter().map(|n| (n.id.clone(), n)).collect();
+
+        let edges: Vec<GraphEdge> = raw_edges
+            .into_iter()
+            .map(|(n, source, target)| {
+                let (source_handle, target_handle) =
+                    match (node_map.get(&source), node_map.get(&target)) {
+                        (Some(src), Some(tgt)) => {
+                            let matched = src.output_concepts.iter()
+                                .find(|out| tgt.input_concepts.iter()
+                                    .any(|inp| inp.iri == out.iri));
+                            match matched {
+                                Some(c) => (
+                                    Some(format!("out-{}", c.iri)),
+                                    Some(format!("in-{}", c.iri)),
+                                ),
+                                None => (None, None),
+                            }
+                        }
+                        _ => (None, None),
+                    };
+                GraphEdge {
+                    id: format!("e{}", n),
+                    source,
+                    target,
+                    label: None,
+                    source_handle,
+                    target_handle,
+                }
+            })
+            .collect();
 
         let graph = ProcessGraph {
             process_label,

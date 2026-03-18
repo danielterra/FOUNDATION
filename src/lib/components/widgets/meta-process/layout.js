@@ -59,7 +59,9 @@ function nodeSize(node) {
   if (TASK_TYPES.has(type)) {
     return { width: TASK_WIDTH, height: estimateTaskHeight(node) }
   }
-  if (type === 'MetaStartEvent' || type === 'MetaIntermediateEvent' || type === 'MetaBoundaryEvent') {
+  const isEventNode = type === 'MetaStartEvent' ||
+    type === 'MetaIntermediateEvent' || type === 'MetaBoundaryEvent'
+  if (isEventNode) {
     return { width: EVENT_WIDTH, height: estimateEventHeight(label, EVENT_WIDTH) }
   }
   if (type === 'MetaEndEvent') {
@@ -106,7 +108,7 @@ export function applyDagreLayout(nodes, edges, direction = 'LR') {
   const sizes = new Map(nodes.map(n => [n.id, nodeSize(n)]))
 
   const g = new dagre.graphlib.Graph()
-  g.setGraph({ rankdir: direction, ranksep: 80, nodesep: 70, marginx: 40, marginy: 40 })
+  g.setGraph({ rankdir: direction, ranksep: 240, nodesep: 210, marginx: 40, marginy: 40 })
   g.setDefaultEdgeLabel(() => ({}))
 
   for (const node of nodes) {
