@@ -257,6 +257,25 @@ pub fn append_triples(
         let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
         #[cfg(not(test))]
         crate::search::reindex_subjects(conn, &subjects);
+
+        WRITTEN_SUBJECTS.with(|v| {
+            let mut buf = v.borrow_mut();
+            for triple in triples {
+                if !is_vocabulary_iri(&triple.subject) {
+                    buf.push(triple.subject.clone());
+                }
+            }
+        });
+        WRITTEN_IRI_OBJECTS.with(|v| {
+            let mut buf = v.borrow_mut();
+            for triple in triples {
+                if let Object::Iri(iri) = &triple.object {
+                    if !is_vocabulary_iri(iri) {
+                        buf.push(iri.clone());
+                    }
+                }
+            }
+        });
     }
     Ok(tx_id)
 }
@@ -318,6 +337,25 @@ pub fn retract_triples(
         let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
         #[cfg(not(test))]
         crate::search::reindex_subjects(conn, &subjects);
+
+        WRITTEN_SUBJECTS.with(|v| {
+            let mut buf = v.borrow_mut();
+            for triple in triples {
+                if !is_vocabulary_iri(&triple.subject) {
+                    buf.push(triple.subject.clone());
+                }
+            }
+        });
+        WRITTEN_IRI_OBJECTS.with(|v| {
+            let mut buf = v.borrow_mut();
+            for triple in triples {
+                if let Object::Iri(iri) = &triple.object {
+                    if !is_vocabulary_iri(iri) {
+                        buf.push(iri.clone());
+                    }
+                }
+            }
+        });
     }
     Ok(tx_id)
 }

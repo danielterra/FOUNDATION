@@ -129,67 +129,63 @@ pub fn find_by_class_iris_and_properties_with_options(
 
     let class_placeholders = class_iris.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let mut joins = String::new();
+    let mut join_params: Vec<SqlValue> = Vec::new();
     let mut where_clause = format!(
-        "WHERE t0.predicate = 'rdf:type' AND t0.object IN ({class_placeholders}){type_retracted_filter}"
+        "WHERE t0.predicate = 'rdf:type' \
+         AND t0.object IN ({class_placeholders}){type_retracted_filter}"
     );
-    let mut params: Vec<SqlValue> = class_iris.iter()
+    let mut where_params: Vec<SqlValue> = class_iris.iter()
         .map(|iri| SqlValue::Text(iri.to_string()))
         .collect();
 
-    for (i, _) in properties.iter().enumerate() {
+    for (i, (prop_iri, _, operator)) in properties.iter().enumerate() {
         let n = i + 1;
-        joins.push_str(&format!("\n         INNER JOIN triples t{n} ON t0.subject = t{n}.subject"));
-    }
-
-    for (i, (prop_iri, _, _)) in properties.iter().enumerate() {
-        let n = i + 1;
+        let optional = is_optional_op(operator);
         let prop_retracted_filter = if include_retracted {
             String::new()
         } else {
             format!(" AND t{n}.retracted = 0")
         };
-        where_clause.push_str(&format!("\n           AND t{n}.predicate = ?{prop_retracted_filter}"));
-        params.push(SqlValue::Text(prop_iri.to_string()));
+
+        if optional {
+            joins.push_str(&format!(
+                "\n         LEFT JOIN triples t{n} ON t0.subject = t{n}.subject \
+                 AND t{n}.predicate = ?{prop_retracted_filter}"
+            ));
+            join_params.push(SqlValue::Text(prop_iri.to_string()));
+        } else {
+            joins.push_str(&format!(
+                "\n         INNER JOIN triples t{n} ON t0.subject = t{n}.subject"
+            ));
+            where_clause.push_str(&format!(
+                "\n           AND t{n}.predicate = ?{prop_retracted_filter}"
+            ));
+            where_params.push(SqlValue::Text(prop_iri.to_string()));
+        }
     }
 
     for (i, (_, value, operator)) in properties.iter().enumerate() {
         let n = i + 1;
-        if let Some(date_filter) = normalize_date_filter(value) {
-            let sql_op = validate_operator(operator)
-                .map_err(|_| format!("Invalid operator '{operator}': must be one of =, >=, <=, >, <"))?;
-            match date_filter {
-                DateFilter::Date(date_str) => {
-                    where_clause.push_str(&format!(
-                        "\n           AND substr(t{n}.object_value, 1, 10) {sql_op} ?"
-                    ));
-                    params.push(SqlValue::Text(date_str));
-                }
-                DateFilter::DateTime(epoch) => {
-                    where_clause.push_str(&format!(
-                        "\n           AND unixepoch(t{n}.object_value) {sql_op} ?"
-                    ));
-                    params.push(SqlValue::Integer(epoch));
-                }
-            }
-        } else if *value == "true" || *value == "false" {
-            let bool_val: i64 = if *value == "true" { 1 } else { 0 };
+        let optional = is_optional_op(operator);
+        let op = base_op(operator);
+
+        let value_cond = build_value_condition_fragment(n, value, op, &mut where_params)?;
+
+        if optional {
             where_clause.push_str(&format!(
-                "\n           AND (t{n}.object_value = ? OR t{n}.object = ? OR t{n}.object_boolean = ?)"
+                "\n           AND (t{n}.predicate IS NULL OR {value_cond})"
             ));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Integer(bool_val));
         } else {
-            where_clause.push_str(&format!(
-                "\n           AND (t{n}.object_value = ? OR t{n}.object = ?)"
-            ));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Text(value.to_string()));
+            where_clause.push_str(&format!("\n           AND {value_cond}"));
         }
     }
 
+    // params order must match SQL: JOIN params appear before WHERE params in the query
+    let params: Vec<SqlValue> = join_params.into_iter().chain(where_params).collect();
+
     let count_query = format!(
-        "SELECT COUNT(*) FROM (SELECT DISTINCT t0.subject FROM triples t0{joins}\n         {where_clause})"
+        "SELECT COUNT(*) FROM \
+         (SELECT DISTINCT t0.subject FROM triples t0{joins}\n         {where_clause})"
     );
     let total: usize = conn.query_row(
         &count_query,
@@ -197,12 +193,14 @@ pub fn find_by_class_iris_and_properties_with_options(
         |row| row.get::<_, i64>(0),
     )? as usize;
 
+    let limit_val: i64 = if limit == usize::MAX { -1 } else { limit as i64 };
     let mut data_params = params;
-    data_params.push(SqlValue::Integer(limit as i64));
+    data_params.push(SqlValue::Integer(limit_val));
     data_params.push(SqlValue::Integer(offset as i64));
 
     let data_query = format!(
-        "SELECT DISTINCT t0.subject FROM triples t0{joins}\n         {where_clause}\n         LIMIT ? OFFSET ?"
+        "SELECT DISTINCT t0.subject FROM triples t0{joins}\n         \
+         {where_clause}\n         LIMIT ? OFFSET ?"
     );
     let mut stmt = conn.prepare(&data_query)?;
     let entities: Vec<String> = stmt
@@ -225,58 +223,57 @@ pub fn find_by_properties_with_options(
     }
 
     let mut joins = String::new();
+    let mut join_params: Vec<SqlValue> = Vec::new();
     let mut where_clause = String::new();
-    let mut params: Vec<SqlValue> = Vec::new();
+    let mut where_params: Vec<SqlValue> = Vec::new();
 
-    for (i, _) in properties.iter().enumerate().skip(1) {
-        joins.push_str(&format!("\n         INNER JOIN triples t{i} ON t0.subject = t{i}.subject"));
-    }
-
-    for (i, (prop_iri, _, _)) in properties.iter().enumerate() {
+    for (i, (prop_iri, _, operator)) in properties.iter().enumerate() {
         let retracted_filter = if include_retracted {
             String::new()
         } else {
             format!(" AND t{i}.retracted = 0")
         };
-        let connector = if i == 0 { "WHERE" } else { "  AND" };
-        where_clause.push_str(&format!("\n         {connector} t{i}.predicate = ?{retracted_filter}"));
-        params.push(SqlValue::Text(prop_iri.to_string()));
+        let optional = is_optional_op(operator);
+
+        if i == 0 {
+            where_clause.push_str(&format!(
+                "\n         WHERE t{i}.predicate = ?{retracted_filter}"
+            ));
+            where_params.push(SqlValue::Text(prop_iri.to_string()));
+        } else if optional {
+            joins.push_str(&format!(
+                "\n         LEFT JOIN triples t{i} ON t0.subject = t{i}.subject \
+                 AND t{i}.predicate = ?{retracted_filter}"
+            ));
+            join_params.push(SqlValue::Text(prop_iri.to_string()));
+        } else {
+            joins.push_str(&format!(
+                "\n         INNER JOIN triples t{i} ON t0.subject = t{i}.subject"
+            ));
+            where_clause.push_str(&format!(
+                "\n           AND t{i}.predicate = ?{retracted_filter}"
+            ));
+            where_params.push(SqlValue::Text(prop_iri.to_string()));
+        }
     }
 
     for (i, (_, value, operator)) in properties.iter().enumerate() {
-        if let Some(date_filter) = normalize_date_filter(value) {
-            let sql_op = validate_operator(operator)
-                .map_err(|_| format!("Invalid operator '{operator}': must be one of =, >=, <=, >, <"))?;
-            match date_filter {
-                DateFilter::Date(date_str) => {
-                    where_clause.push_str(&format!(
-                        "\n           AND substr(t{i}.object_value, 1, 10) {sql_op} ?"
-                    ));
-                    params.push(SqlValue::Text(date_str));
-                }
-                DateFilter::DateTime(epoch) => {
-                    where_clause.push_str(&format!(
-                        "\n           AND unixepoch(t{i}.object_value) {sql_op} ?"
-                    ));
-                    params.push(SqlValue::Integer(epoch));
-                }
-            }
-        } else if *value == "true" || *value == "false" {
-            let bool_val: i64 = if *value == "true" { 1 } else { 0 };
+        let optional = is_optional_op(operator);
+        let op = base_op(operator);
+
+        let value_cond = build_value_condition_fragment(i, value, op, &mut where_params)?;
+
+        if optional && i > 0 {
             where_clause.push_str(&format!(
-                "\n           AND (t{i}.object_value = ? OR t{i}.object = ? OR t{i}.object_boolean = ?)"
+                "\n           AND (t{i}.predicate IS NULL OR {value_cond})"
             ));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Integer(bool_val));
         } else {
-            where_clause.push_str(&format!(
-                "\n           AND (t{i}.object_value = ? OR t{i}.object = ?)"
-            ));
-            params.push(SqlValue::Text(value.to_string()));
-            params.push(SqlValue::Text(value.to_string()));
+            where_clause.push_str(&format!("\n           AND {value_cond}"));
         }
     }
+
+    // params order must match SQL: JOIN params appear before WHERE params in the query
+    let params: Vec<SqlValue> = join_params.into_iter().chain(where_params).collect();
 
     let count_query = format!(
         "SELECT COUNT(*) FROM (SELECT DISTINCT t0.subject FROM triples t0{joins}{where_clause})"
@@ -287,8 +284,9 @@ pub fn find_by_properties_with_options(
         |row| row.get::<_, i64>(0),
     )? as usize;
 
+    let limit_val: i64 = if limit == usize::MAX { -1 } else { limit as i64 };
     let mut data_params = params;
-    data_params.push(SqlValue::Integer(limit as i64));
+    data_params.push(SqlValue::Integer(limit_val));
     data_params.push(SqlValue::Integer(offset as i64));
 
     let data_query = format!(
@@ -337,6 +335,67 @@ pub fn find_message_iris_by_conversation(
     Ok(iris)
 }
 
+fn is_optional_op(op: &str) -> bool {
+    op.starts_with('?')
+}
+
+fn base_op<'a>(op: &'a str) -> &'a str {
+    op.strip_prefix('?').unwrap_or(op)
+}
+
+fn build_value_condition_fragment(
+    n: usize,
+    value: &str,
+    base_op: &str,
+    params: &mut Vec<SqlValue>,
+) -> Result<String> {
+    let sql_op = validate_operator(base_op)
+        .map_err(|_| format!("Invalid operator '{base_op}': must be one of =, !=, >=, <=, >, <"))?;
+
+    if let Some(date_filter) = normalize_date_filter(value) {
+        match date_filter {
+            DateFilter::Date(date_str) => {
+                params.push(SqlValue::Text(date_str));
+                Ok(format!("substr(t{n}.object_value, 1, 10) {sql_op} ?"))
+            }
+            DateFilter::DateTime(epoch) => {
+                params.push(SqlValue::Integer(epoch));
+                Ok(format!("unixepoch(t{n}.object_value) {sql_op} ?"))
+            }
+        }
+    } else if value == "true" || value == "false" {
+        let bool_val: i64 = if value == "true" { 1 } else { 0 };
+        if base_op == "!=" {
+            params.push(SqlValue::Text(value.to_string()));
+            params.push(SqlValue::Text(value.to_string()));
+            params.push(SqlValue::Integer(bool_val));
+            Ok(format!(
+                "(t{n}.object_value IS NULL OR t{n}.object_value != ?) \
+                 AND (t{n}.object IS NULL OR t{n}.object != ?) \
+                 AND (t{n}.object_boolean IS NULL OR t{n}.object_boolean != ?)"
+            ))
+        } else {
+            params.push(SqlValue::Text(value.to_string()));
+            params.push(SqlValue::Text(value.to_string()));
+            params.push(SqlValue::Integer(bool_val));
+            Ok(format!(
+                "(t{n}.object_value = ? OR t{n}.object = ? OR t{n}.object_boolean = ?)"
+            ))
+        }
+    } else if base_op == "!=" {
+        params.push(SqlValue::Text(value.to_string()));
+        params.push(SqlValue::Text(value.to_string()));
+        Ok(format!(
+            "(t{n}.object_value IS NULL OR t{n}.object_value != ?) \
+             AND (t{n}.object IS NULL OR t{n}.object != ?)"
+        ))
+    } else {
+        params.push(SqlValue::Text(value.to_string()));
+        params.push(SqlValue::Text(value.to_string()));
+        Ok(format!("(t{n}.object_value = ? OR t{n}.object = ?)"))
+    }
+}
+
 enum DateFilter {
     Date(String),
     DateTime(i64),
@@ -362,7 +421,7 @@ fn normalize_date_filter(value: &str) -> Option<DateFilter> {
 
 fn validate_operator(op: &str) -> std::result::Result<&str, ()> {
     match op {
-        "=" | ">=" | "<=" | ">" | "<" => Ok(op),
+        "=" | "!=" | ">=" | "<=" | ">" | "<" => Ok(op),
         _ => Err(()),
     }
 }

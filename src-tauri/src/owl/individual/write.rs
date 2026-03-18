@@ -57,8 +57,18 @@ impl Individual {
             ));
         }
 
+        if property == "foundation:icon" {
+            for value in values {
+                if let Some(icon_str) = value.as_literal() {
+                    let (pred, obj) = crate::owl::icon_store_value(&icon_str);
+                    let triple = Triple::new(&self.iri, pred, obj);
+                    store::assert_triples(conn, &[triple], origin)?;
+                }
+            }
+            return Ok(());
+        }
+
         let is_meta_property = property.starts_with("rdfs:")
-            || property == "foundation:icon"
             || property == "foundation:hasIcon";
 
         if !is_meta_property {
@@ -141,8 +151,18 @@ impl Individual {
             ));
         }
 
+        if property == "foundation:icon" {
+            for value in values {
+                if let Some(icon_str) = value.as_literal() {
+                    let (pred, obj) = crate::owl::icon_store_value(&icon_str);
+                    let triple = Triple::new(&self.iri, pred, obj);
+                    store::append_triples(conn, &[triple], origin)?;
+                }
+            }
+            return Ok(());
+        }
+
         let is_meta_property = property.starts_with("rdfs:")
-            || property == "foundation:icon"
             || property == "foundation:hasIcon";
 
         if !is_meta_property {

@@ -430,13 +430,27 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         }
     }
 
+    let mut allowed_statuses: Vec<StatusInfo> = Vec::new();
+    let mut seen_status_iris = std::collections::HashSet::new();
+    for type_thing in &individual.types {
+        let status_iris = crate::owl::get_all_iri_properties(conn, &type_thing.iri, "foundation:allowedStatus")
+            .unwrap_or_default();
+        for status_iri in status_iris {
+            if seen_status_iris.insert(status_iri.clone()) {
+                let thing = crate::owl::Thing::get(conn, &status_iri);
+                let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri);
+                allowed_statuses.push(StatusInfo { iri: status_iri, label: thing.label, icon, color });
+            }
+        }
+    }
+
     Ok(EntityData {
         id: individual_id.to_string(),
         label,
         icon,
         comment,
         is_class: false,
-        allowed_statuses: vec![],
+        allowed_statuses,
         types: individual.types.clone(),
         super_classes: vec![],
         sub_classes: vec![],

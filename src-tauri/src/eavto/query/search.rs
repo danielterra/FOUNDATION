@@ -64,7 +64,7 @@ pub fn search_entities(
         FROM triples
         WHERE retracted = 0
           AND object_type = 'literal'
-          AND predicate NOT IN ('rdfs:label', 'rdfs:comment', 'foundation:icon', 'foundation:content')
+          AND predicate NOT IN ('rdfs:label', 'rdfs:comment', 'foundation:content')
           AND LENGTH(object_value) <= 500
           AND LOWER(object_value) LIKE :q_like
     ),

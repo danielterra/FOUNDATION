@@ -35,11 +35,11 @@
     flex-direction: row;
     align-items: center;
     justify-content: center;
-    gap: 2px;
+    gap: 6px;
     padding: 8px 14px;
     border-radius: 24px;
-    min-width: 120px;
-    text-align: center;
+    width: 200px;
+    box-sizing: border-box;
     cursor: pointer;
   }
   .end-event {
@@ -59,5 +59,6 @@
     font-size: 12px;
     font-weight: 500;
     line-height: 1.3;
+    word-break: break-word;
   }
 </style>

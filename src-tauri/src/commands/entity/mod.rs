@@ -182,6 +182,25 @@ pub async fn widget_inspector__update_property(
     Ok(())
 }
 
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__update_status(
+    entity_id: String,
+    status_iri: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let entity_id_clone = entity_id.clone();
+    executor.write(move |conn| {
+        let individual = Individual::new(&entity_id_clone);
+        individual.add_property(conn, "foundation:hasStatus", vec![Object::Iri(status_iri)], "user")
+            .map_err(|e| e.to_string())?;
+        Ok("updated".to_string())
+    }).await?;
+    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    Ok(())
+}
+
 pub(super) fn sort_backlinks_by_recency(conn: &Connection, backlinks: &mut Vec<PropertyValue>) {
     let entity_iris: Vec<String> = backlinks.iter().map(|b| b.value.clone()).collect();
     let max_tx_map = crate::eavto::query::get_entities_max_tx(conn, &entity_iris)

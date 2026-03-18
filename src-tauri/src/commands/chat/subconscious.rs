@@ -46,7 +46,12 @@ pub fn run_subconscious(content: &str, conn: &Connection) -> Vec<SubconsciousEnt
     entities
 }
 
-fn enrich(conn: &Connection, iri: &str, score: f32, is_open_loop: bool) -> Option<SubconsciousEntity> {
+fn enrich(
+    conn: &Connection,
+    iri: &str,
+    score: f32,
+    is_open_loop: bool,
+) -> Option<SubconsciousEntity> {
     let label = crate::owl::get_literal_property(conn, iri, "rdfs:label")
         .ok()
         .flatten()?;
@@ -67,52 +72,52 @@ fn enrich(conn: &Connection, iri: &str, score: f32, is_open_loop: bool) -> Optio
         .flatten()
         .unwrap_or_else(|| type_iri.clone());
 
-    let icon = crate::owl::get_literal_property(conn, iri, "foundation:icon")
-        .ok()
-        .flatten()
-        .or_else(|| crate::owl::get_literal_property(conn, &type_iri, "foundation:icon")
-            .ok()
-            .flatten());
+    let icon = crate::owl::Thing::get(conn, iri).icon
+        .or_else(|| crate::owl::Thing::get(conn, &type_iri).icon);
 
-    Some(SubconsciousEntity { iri: iri.to_string(), label, type_iri, type_label, icon, score, is_open_loop })
+    Some(SubconsciousEntity {
+        iri: iri.to_string(),
+        label,
+        type_iri,
+        type_label,
+        icon,
+        score,
+        is_open_loop,
+    })
 }
 
 fn query_open_loops(conn: &Connection) -> Vec<String> {
-    let mut stmt = match conn.prepare(
-        "SELECT DISTINCT t_type.subject
-         FROM triples t_type
-         JOIN triples t_status
-           ON t_status.subject = t_type.subject
-          AND t_status.predicate = 'foundation:hasStatus'
-          AND t_status.retracted = 0
-         JOIN triples t_status_label
-           ON t_status_label.subject = t_status.object
-          AND t_status_label.predicate = 'rdfs:label'
-          AND t_status_label.retracted = 0
-         WHERE t_type.retracted = 0
-           AND t_type.predicate = 'rdf:type'
-           AND (
-               (t_type.object = 'foundation:UserProblem'
-                AND t_status_label.object_value IN ('Pending', 'In Progress'))
-               OR
-               (t_type.object = 'foundation:Task'
-                AND t_status_label.object_value IN ('Pending', 'Planned'))
-           )
-           AND NOT EXISTS (
-               SELECT 1 FROM triples t_date
-               WHERE t_date.subject = t_type.subject
-                 AND t_date.predicate = 'foundation:dueDate'
-                 AND t_date.retracted = 0
-           )",
-    ) {
-        Ok(s) => s,
-        Err(_) => return vec![],
-    };
+    use chrono::Datelike;
 
-    stmt.query_map([], |row| row.get::<_, String>(0))
-        .ok()
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
-        .unwrap_or_default()
+    let tomorrow = chrono::Local::now() + chrono::Duration::days(1);
+    let tomorrow_str = tomorrow.format("%Y-%m-%d").to_string();
+
+    let props: &[(&str, &str, &str)] = &[
+        ("foundation:hasStatus", "foundation:Completed", "!="),
+        ("foundation:dueDate", &tomorrow_str, "?<="),
+    ];
+
+    let mut results = Vec::new();
+    for class_iri in &["foundation:Task", "foundation:UserProblem"] {
+        if let Ok((iris, _)) = crate::owl::Individual::find_by_class_and_properties_with_options(
+            conn, class_iri, props, false, usize::MAX, 0,
+        ) {
+            results.extend(iris);
+        }
+    }
+
+    let today_day = chrono::Local::now().day().to_string();
+    let tomorrow_day = tomorrow.day().to_string();
+    for day_str in [today_day.as_str(), tomorrow_day.as_str()] {
+        let props = &[("foundation:dueDayOfMonth", day_str, "=")];
+        if let Ok((iris, _)) = crate::owl::Individual::find_by_class_and_properties_with_options(
+            conn, "foundation:RecurringPurchase", props, false, usize::MAX, 0,
+        ) {
+            results.extend(iris);
+        }
+    }
+
+    results
 }
 
 pub fn format_context(entities: &[SubconsciousEntity]) -> Option<String> {
@@ -126,7 +131,10 @@ pub fn format_context(entities: &[SubconsciousEntity]) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
 
     if !relevant.is_empty() {
-        let mut lines = vec!["## Memory Context\nRelevant entities from your knowledge graph (ranked by relevance):".to_string()];
+        let header = concat!(
+            "## Memory Context\n",
+            "Relevant entities from your knowledge graph (ranked by relevance):");
+        let mut lines = vec![header.to_string()];
         for (i, e) in relevant.iter().enumerate() {
             lines.push(format!("{}. \"{}\" [{}] — {}", i + 1, e.label, e.type_label, e.iri));
         }
@@ -134,7 +142,10 @@ pub fn format_context(entities: &[SubconsciousEntity]) -> Option<String> {
     }
 
     if !open_loops.is_empty() {
-        let mut lines = vec!["## Open Loops\nPending problems and tasks requiring your attention:".to_string()];
+        let header = concat!(
+            "## Open Loops\n",
+            "Pending problems and tasks requiring your attention:");
+        let mut lines = vec![header.to_string()];
         for e in &open_loops {
             lines.push(format!("- [{}] \"{}\" — {}", e.type_label, e.label, e.iri));
         }

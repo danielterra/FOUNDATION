@@ -76,7 +76,7 @@
       const flowNodes = data.nodes.map(n => ({
         id: n.id,
         type: n.type,
-        data: { label: n.label, nodeType: n.type, invokesProcess: n.invokes_process ?? null, status: n.status ?? null, statusColor: n.status_color ?? null, statusIcon: n.status_icon ?? null, conditionOperator: n.condition_operator ?? null, conditionValue: n.condition_value ?? null, eventType: n.event_type ?? null, triggerType: n.trigger_type ?? null, rendersComponent: n.renders_component ?? null },
+        data: { label: n.label, nodeType: n.type, invokesProcess: n.invokes_process ?? null, status: n.status ?? null, statusColor: n.status_color ?? null, statusIcon: n.status_icon ?? null, conditionOperator: n.condition_operator ?? null, conditionValue: n.condition_value ?? null, eventType: n.event_type ?? null, triggerType: n.trigger_type ?? null, rendersComponent: n.renders_component ?? null, performedBy: n.performed_by ?? null, performedByIcon: n.performed_by_icon ?? null, executedIn: n.executed_in ?? null, executedInIcon: n.executed_in_icon ?? null },
         position: { x: 0, y: 0 },
       }))
 

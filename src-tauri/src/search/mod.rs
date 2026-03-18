@@ -175,7 +175,6 @@ fn build_document(idx: &SearchIndex, conn: &Connection, subject: &str) -> Option
            AND object_type = 'literal'
            AND predicate NOT IN (
                'foundation:content',
-               'foundation:icon',
                'foundation:hasIcon',
                'foundation:partOfConversation',
                'foundation:sender',

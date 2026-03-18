@@ -5,6 +5,31 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-03-18
+
+### Added
+
+- **AgentTask context injection**: Input IRIs are fetched as full `Individual` records and embedded in the agent's prompt under `## Input Data`, eliminating hallucination of entity properties
+- **`task_complete` tool**: AgentTask can now call `task_complete(success, output_iris[], message)` to explicitly signal completion with typed outcome; tool is isolated to AgentTask and not exposed globally
+- **`foundation:allowedTools`**: New property on `automation_AgentTask` to restrict which MCP tools the agent may invoke; empty means all tools available
+- **`foundation:triggeredBy`**: New property on `WorkflowExecution` linking back to the input instance that triggered the run — enables backlinks in the inspector
+- **Automation runner commands**: `automation__run(processIri, inputIri?)` and `automation__find_for_types(typeIris)` Tauri commands for triggering automations programmatically
+- **Inspector actions bar**: Fixed bottom bar in InspectorWidget with full-width buttons for running automations; shows "Run" for automations without `inputClass`, or per-automation buttons matched to entity type
+- **`applicableAutomations` in MCP**: `describe_individual` and `describe_class` now return automations applicable to the entity/class so the AI knows what actions are available
+- **Subconscious context**: Entity context injected into AI responses, entity chips in chat
+- **AutomationWidget**: Flow diagram widget for visualising and inspecting process automations
+
+### Changed
+
+- **Process executor**: `run_process` now accepts `input_iri: Option<String>` seeded into `ExecutionContext` as `inputIRIs`
+- **Toast animations**: Running automation toast uses pulsing purple (`--color-transition`) background instead of broken spinner; semantic color variables applied throughout
+
+### Fixed
+
+- **DB lock contention**: Fixed multiple database lock issues
+- **Camera file summaries**: Camera capture now generates file summaries correctly
+- **Inspector auto-refresh**: Inspector reloads entity data when related events are emitted
+
 ## [0.13.0] - 2026-03-17
 
 ### Added

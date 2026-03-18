@@ -983,9 +983,7 @@ pub async fn chat__get_conversation_agent(
         let label = crate::owl::get_literal_property(conn, &agent_iri, "rdfs:label")
             .ok()
             .flatten();
-        let icon = crate::owl::get_literal_property(conn, &agent_iri, "foundation:icon")
-            .ok()
-            .flatten();
+        let icon = crate::owl::Thing::get(conn, &agent_iri).icon;
 
         Ok::<_, String>(serde_json::json!({ "iri": agent_iri, "label": label, "icon": icon }))
     }).await

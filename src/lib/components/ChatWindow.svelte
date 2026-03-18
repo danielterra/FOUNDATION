@@ -549,6 +549,22 @@
 		fileInputElement.value = '';
 	}
 
+	async function handlePaste(e) {
+		const items = e.clipboardData?.items;
+		if (!items) return;
+
+		const imageItem = Array.from(items).find(item => item.type.startsWith('image/'));
+		if (!imageItem) return;
+
+		e.preventDefault();
+		const file = imageItem.getAsFile();
+		if (!file) return;
+
+		const ext = imageItem.type.split('/')[1] ?? 'png';
+		const namedFile = new File([file], `pasted-image-${Date.now()}.${ext}`, { type: imageItem.type });
+		await attachFile(namedFile);
+	}
+
 	async function attachFile(file) {
 		try {
 			if (file.size > 30 * 1024 * 1024) {
@@ -731,6 +747,7 @@
 				onSend={sendMessage}
 				onKeydown={handleKeydown}
 				onFileSelect={handleFileSelect}
+				onPaste={handlePaste}
 				bind:textareaElement
 				bind:fileInputElement
 				{editingMessageIri}

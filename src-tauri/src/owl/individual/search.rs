@@ -531,6 +531,104 @@ mod tests {
     }
 
     #[test]
+    fn test_not_equal_operator_excludes_matching_value() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskA", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
+            Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskB", "foundation:hasStatus", Object::Iri("foundation:Completed".to_string())),
+        ], "test").unwrap();
+
+        let (results, total) = Individual::find_by_class_and_properties_with_options(
+            &conn, "foundation:Task",
+            &[("foundation:hasStatus", "foundation:Completed", "!=")],
+            false, 100, 0,
+        ).unwrap();
+
+        assert_eq!(total, 1);
+        assert!(results.contains(&"foundation:TaskA".to_string()), "Active task should be returned");
+        assert!(!results.contains(&"foundation:TaskB".to_string()), "Completed task should be excluded");
+    }
+
+    #[test]
+    fn test_optional_lte_operator_includes_entity_without_property() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskB", "foundation:dueDate", Object::Literal {
+                value: "2026-03-10".to_string(),
+                datatype: Some("xsd:date".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:TaskC", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskC", "foundation:dueDate", Object::Literal {
+                value: "2099-12-31".to_string(),
+                datatype: Some("xsd:date".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let boundary = "2026-12-31";
+        let (results, total) = Individual::find_by_class_and_properties_with_options(
+            &conn, "foundation:Task",
+            &[("foundation:dueDate", boundary, "?<=")],
+            false, 100, 0,
+        ).unwrap();
+
+        assert_eq!(total, 2, "Should include task without dueDate and task with dueDate <= boundary");
+        assert!(results.contains(&"foundation:TaskA".to_string()), "Task without dueDate should be included");
+        assert!(results.contains(&"foundation:TaskB".to_string()), "Task with dueDate <= boundary should be included");
+        assert!(!results.contains(&"foundation:TaskC".to_string()), "Task with dueDate > boundary should be excluded");
+    }
+
+    #[test]
+    fn test_combined_not_equal_and_optional_lte_open_loops_pattern() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            // Active, no due date → open loop
+            Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskA", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
+            // Active, due date within boundary → open loop
+            Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskB", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
+            Triple::new("foundation:TaskB", "foundation:dueDate", Object::Literal {
+                value: "2026-03-10".to_string(),
+                datatype: Some("xsd:date".to_string()),
+                language: None,
+            }),
+            // Active, due date beyond boundary → not an open loop
+            Triple::new("foundation:TaskC", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskC", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
+            Triple::new("foundation:TaskC", "foundation:dueDate", Object::Literal {
+                value: "2099-12-31".to_string(),
+                datatype: Some("xsd:date".to_string()),
+                language: None,
+            }),
+            // Completed, no due date → not an open loop
+            Triple::new("foundation:TaskD", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskD", "foundation:hasStatus", Object::Iri("foundation:Completed".to_string())),
+        ], "test").unwrap();
+
+        let boundary = "2026-12-31";
+        let (results, total) = Individual::find_by_class_and_properties_with_options(
+            &conn, "foundation:Task",
+            &[
+                ("foundation:hasStatus", "foundation:Completed", "!="),
+                ("foundation:dueDate", boundary, "?<="),
+            ],
+            false, 100, 0,
+        ).unwrap();
+
+        assert_eq!(total, 2, "Should return only tasks that are not Completed AND (no dueDate OR dueDate <= boundary)");
+        assert!(results.contains(&"foundation:TaskA".to_string()), "Active task without dueDate should be included");
+        assert!(results.contains(&"foundation:TaskB".to_string()), "Active task with dueDate <= boundary should be included");
+        assert!(!results.contains(&"foundation:TaskC".to_string()), "Active task with dueDate > boundary should be excluded");
+        assert!(!results.contains(&"foundation:TaskD".to_string()), "Completed task should be excluded");
+    }
+
+    #[test]
     fn test_date_filter_utc_and_local_timezone_same_moment_are_equivalent() {
         let mut conn = setup_test_db();
         store::assert_triples(&mut conn, &[

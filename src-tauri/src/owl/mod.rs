@@ -407,11 +407,18 @@ pub fn resolve_status_appearance(
 
     loop {
         if icon.is_none() {
-            icon = get_iri_property(conn, &current, "foundation:hasIcon")
-                .ok()
-                .flatten()
-                .and_then(|iri| icon_iri_to_display(conn, &iri))
-                .or_else(|| get_literal_property(conn, &current, "foundation:icon").ok().flatten());
+            icon = {
+                use crate::eavto::query;
+                query::get_by_entity_predicate(conn, &current, "foundation:hasIcon")
+                    .ok()
+                    .and_then(|r| {
+                        r.triples.first().and_then(|t| match &t.object {
+                            crate::eavto::Object::Iri(icon_iri) => icon_iri_to_display(conn, icon_iri),
+                            crate::eavto::Object::Literal { value, .. } => Some(value.clone()),
+                            _ => None,
+                        })
+                    })
+            };
         }
         if color.is_none() {
             color = get_literal_property(conn, &current, "foundation:color").ok().flatten();

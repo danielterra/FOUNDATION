@@ -8,6 +8,7 @@
 		onSend,
 		onKeydown,
 		onFileSelect,
+		onPaste,
 		textareaElement = $bindable(null),
 		fileInputElement = $bindable(null),
 		editingMessageIri = null,
@@ -65,7 +66,6 @@
 	<button
 		class="attach-btn"
 		onclick={openFilePicker}
-		disabled={isLoading}
 		aria-label="Attach file"
 	>
 		<span class="material-symbols-outlined">attach_file</span>
@@ -74,13 +74,13 @@
 		bind:this={textareaElement}
 		bind:value={inputText}
 		onkeydown={onKeydown}
+		onpaste={onPaste}
 		placeholder="Ask me anything..."
 		rows="1"
-		disabled={isLoading}
 	></textarea>
 	<button
 		onclick={onSend}
-		disabled={(!inputText.trim() && !hasPendingAttachments) || isLoading}
+		disabled={!inputText.trim() && !hasPendingAttachments}
 		aria-label="Send"
 		class:loading={isLoading}
 	>

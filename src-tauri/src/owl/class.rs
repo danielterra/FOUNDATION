@@ -91,11 +91,10 @@ impl Class {
 
         let icon_result = query::get_by_entity_predicate(conn, &iri, "foundation:hasIcon")?;
         let icon = icon_result.triples.first()
-            .and_then(|t| t.object.as_iri())
-            .and_then(|iri| crate::owl::icon_iri_to_display(conn, iri))
-            .or_else(|| {
-                query::get_by_entity_predicate(conn, &iri, "foundation:icon").ok()
-                    .and_then(|r| r.triples.first().and_then(|t| t.object.as_literal()))
+            .and_then(|t| match &t.object {
+                crate::eavto::Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, icon_iri),
+                crate::eavto::Object::Literal { value, .. } => Some(value.clone()),
+                _ => None,
             });
 
         let comment_result = query::get_by_entity_predicate(conn, &iri, rdfs::COMMENT)?;
@@ -154,7 +153,7 @@ impl Class {
 
         const SKIP: &[&str] = &[
             rdf::TYPE, rdfs::LABEL, rdfs::COMMENT, rdfs::SUB_CLASS_OF,
-            "foundation:hasIcon", "foundation:icon", "foundation:allowedStatus", owl::ONE_OF,
+            "foundation:hasIcon", "foundation:allowedStatus", owl::ONE_OF,
         ];
 
         let all_triples_result = query::get_by_entity(conn, &iri)?;

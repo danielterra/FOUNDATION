@@ -23,11 +23,11 @@
     flex-direction: row;
     align-items: center;
     justify-content: center;
-    gap: 2px;
+    gap: 6px;
     padding: 8px 14px;
     border-radius: 6px;
-    min-width: 110px;
-    text-align: center;
+    width: 160px;
+    box-sizing: border-box;
     cursor: pointer;
   }
   .gateway-exclusive {
@@ -42,5 +42,6 @@
     font-size: 11px;
     font-weight: 500;
     line-height: 1.3;
+    word-break: break-word;
   }
 </style>

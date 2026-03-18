@@ -1,13 +1,59 @@
 <script>
   import { Handle, Position } from '@xyflow/svelte'
+  import { convertFileSrc } from '@tauri-apps/api/core'
   import StatusBadge from './StatusBadge.svelte'
   let { data } = $props()
+
+  function isImageIcon(icon) {
+    if (!icon) return false
+    return icon.startsWith('http://') || icon.startsWith('https://') ||
+           icon.startsWith('data:') || icon.startsWith('file://') || icon.startsWith('/')
+  }
+
+  function iconUrl(icon) {
+    if (!icon) return ''
+    if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''))
+    if (icon.startsWith('/')) return convertFileSrc(icon)
+    return icon
+  }
 </script>
 
 <div class="node-wrap">
   <div class="node system-task">
-    <span class="material-symbols-outlined icon">memory</span>
-    <span class="label">{data.label}</span>
+    {#if data.performedBy || data.executedIn}
+      <div class="row meta-row">
+        {#if data.performedBy}
+          <span class="meta-chip">
+            {#if data.performedByIcon && isImageIcon(data.performedByIcon)}
+              <img src={iconUrl(data.performedByIcon)} alt="" class="row-img" />
+            {:else if data.performedByIcon}
+              <span class="material-symbols-outlined row-icon">{data.performedByIcon}</span>
+            {:else}
+              <span class="material-symbols-outlined row-icon">person</span>
+            {/if}
+            <span class="row-label">{data.performedBy}</span>
+          </span>
+        {/if}
+        {#if data.performedBy && data.executedIn}
+          <span class="meta-sep">·</span>
+        {/if}
+        {#if data.executedIn}
+          <span class="meta-chip">
+            {#if data.executedInIcon && isImageIcon(data.executedInIcon)}
+              <img src={iconUrl(data.executedInIcon)} alt="" class="row-img" />
+            {:else if data.executedInIcon}
+              <span class="material-symbols-outlined row-icon">{data.executedInIcon}</span>
+            {:else}
+              <span class="material-symbols-outlined row-icon">apps</span>
+            {/if}
+            <span class="row-label">{data.executedIn}</span>
+          </span>
+        {/if}
+      </div>
+    {/if}
+    <div class="row task-row">
+      <span class="task-label">{data.label}</span>
+    </div>
   </div>
   <StatusBadge status={data.status} statusColor={data.statusColor} statusIcon={data.statusIcon} />
 </div>
@@ -20,27 +66,63 @@
   }
   .node {
     display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-    padding: 8px 14px;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 14px;
     border-radius: 6px;
-    min-width: 120px;
-    text-align: center;
+    width: 220px;
     cursor: pointer;
+    box-sizing: border-box;
   }
   .system-task {
     background: #0d2744;
     border: 2px solid #1E88E5;
     color: #90caf9;
   }
-  .icon {
-    font-size: 16px;
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
   }
-  .label {
+  .row-icon {
     font-size: 12px;
-    font-weight: 500;
+    flex-shrink: 0;
+  }
+  .row-img {
+    width: 12px;
+    height: 12px;
+    object-fit: contain;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .row-label {
+    font-size: 10px;
+    font-weight: 400;
+    line-height: 1.2;
+  }
+  .meta-row {
+    color: #4a9edd;
+    opacity: 0.85;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .meta-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .meta-sep {
+    font-size: 10px;
+    opacity: 0.5;
+  }
+  .task-row {
+    color: #90caf9;
+    padding: 2px 0;
+  }
+  .task-label {
+    font-size: 12px;
+    font-weight: 600;
     line-height: 1.3;
+    word-break: break-word;
   }
 </style>

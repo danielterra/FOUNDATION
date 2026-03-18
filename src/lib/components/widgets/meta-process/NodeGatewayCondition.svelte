@@ -27,7 +27,8 @@
     gap: 4px;
     padding: 6px 14px;
     border-radius: 20px;
-    min-width: 110px;
+    width: 180px;
+    box-sizing: border-box;
     cursor: pointer;
   }
   .gateway-condition {
@@ -48,5 +49,6 @@
     font-size: 11px;
     font-weight: 700;
     line-height: 1.3;
+    word-break: break-word;
   }
 </style>

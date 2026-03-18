@@ -2,13 +2,16 @@
   import { onMount, onDestroy, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import { marked } from 'marked';
   import { listen } from '@tauri-apps/api/event';
   import FilePreview from './inspector/FilePreview.svelte';
+  import MetaFields from './inspector/MetaFields.svelte';
   import PropertyList from './inspector/PropertyList.svelte';
   import BacklinkList from './inspector/BacklinkList.svelte';
 
-  let { entityId, widgetId, refreshKey = 0, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props();
+  let {
+    entityId, widgetId, refreshKey = 0, windowState = 'normal',
+    onWindowStateChange, conversationIri = null
+  } = $props();
 
   function toggleMinimize() {
     onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized');
@@ -77,6 +80,8 @@
   let unlistenEntityReferenced = $state(null);
   let applicableAutomations = $state([]);
   let runningAutomationIri = $state(null);
+  let showStatusPicker = $state(false);
+  let statusBadgeWrapperEl = $state(null);
 
   async function loadEntity() {
     loading = true;
@@ -139,6 +144,15 @@
       await invoke('widget_inspector__update_property', { entityId, propertyIri, value });
     } catch (err) {
       console.error('Failed to update property:', err);
+    }
+  }
+
+  async function updateStatus(statusIri) {
+    showStatusPicker = false;
+    try {
+      await invoke('widget_inspector__update_status', { entityId, statusIri });
+    } catch (err) {
+      console.error('Failed to update status:', err);
     }
   }
 
@@ -210,6 +224,17 @@
     untrack(() => loadEntity());
   });
 
+  $effect(() => {
+    if (!showStatusPicker) return;
+    function handleDocClick(e) {
+      if (statusBadgeWrapperEl && !statusBadgeWrapperEl.contains(e.target)) {
+        showStatusPicker = false;
+      }
+    }
+    document.addEventListener('click', handleDocClick, true);
+    return () => document.removeEventListener('click', handleDocClick, true);
+  });
+
   onMount(async () => {
     unlistenEntityUpdated = await listen('entity-updated', (event) => {
       const updatedId = event.payload.entityId;
@@ -279,28 +304,67 @@
       <div class="header-actions">
         <div class="header-action-buttons">
           {#each widgetDefinitions as def}
-            <button class="action-btn" onclick={() => openWidgetForEntity(def.widget_type)} title={def.description}>
-              <span class="material-symbols-outlined">{WIDGET_TYPE_ICONS[def.widget_type] ?? 'open_in_new'}</span>
+            {@const defIcon = WIDGET_TYPE_ICONS[def.widget_type] ?? 'open_in_new'}
+            <button
+              class="action-btn"
+              onclick={() => openWidgetForEntity(def.widget_type)}
+              title={def.description}
+            >
+              <span class="material-symbols-outlined">{defIcon}</span>
             </button>
           {/each}
           <button class="action-btn" onclick={copyEntityIri} title="Copy IRI">
             <span class="material-symbols-outlined">content_copy</span>
           </button>
-          <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
-            <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
+          <button
+            class="action-btn"
+            onclick={toggleMinimize}
+            title={windowState === 'minimized' ? 'Expand' : 'Minimize'}
+          >
+            <span class="material-symbols-outlined">
+              {windowState === 'minimized' ? 'expand_more' : 'expand_less'}
+            </span>
           </button>
           <button class="close-btn" onclick={closeWidget}>
             <span class="material-symbols-outlined">close</span>
           </button>
         </div>
         {#if entityData?.status}
-          <div
-            class="status-badge"
-            style="--status-color: {entityData.status.color || 'var(--color-neutral)'}"
-            title={entityData.status.iri}
-          >
-            <span class="material-symbols-outlined status-badge-icon">radio_button_checked</span>
-            <span class="status-badge-label">{entityData.status.label}</span>
+          {@const statusIcon = entityData.status.icon || 'radio_button_checked'}
+          <div class="status-badge-wrapper" bind:this={statusBadgeWrapperEl}>
+            <button
+              class="status-badge"
+              class:clickable={entityData.allowedStatuses?.length > 0}
+              style="--status-color: {entityData.status.color || 'var(--color-neutral)'}"
+              title={entityData.status.iri}
+              onclick={() => {
+                if (entityData.allowedStatuses?.length > 0) showStatusPicker = !showStatusPicker;
+              }}
+            >
+              <span class="material-symbols-outlined status-badge-icon">{statusIcon}</span>
+              <span class="status-badge-label">{entityData.status.label}</span>
+              {#if entityData.allowedStatuses?.length > 0}
+                <span class="material-symbols-outlined status-badge-chevron">expand_more</span>
+              {/if}
+            </button>
+            {#if showStatusPicker}
+              <div class="status-picker" role="listbox">
+                {#each entityData.allowedStatuses as s}
+                  {@const pickerIcon = s.icon || 'radio_button_checked'}
+                  <button
+                    class="status-picker-item"
+                    class:active={s.iri === entityData.status.iri}
+                    style="--status-color: {s.color || 'var(--color-neutral)'}"
+                    role="option"
+                    aria-selected={s.iri === entityData.status.iri}
+                    onclick={() => updateStatus(s.iri)}
+                  >
+                    <span class="material-symbols-outlined status-badge-icon">{pickerIcon}</span>
+                    <span class="status-badge-label">{s.label}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -321,15 +385,11 @@
       </div>
     {:else if entityData}
       <div class="content-scroll">
-        {#if entityData?.label}
-          <div class="entity-full-name">{entityData.label}</div>
-        {/if}
-
-        {#if entityData.comment}
-          <div class="description markdown-content">
-            {@html marked.parse(entityData.comment)}
-          </div>
-        {/if}
+        <MetaFields
+          label={entityData?.label}
+          comment={entityData?.comment}
+          onSave={saveProperty}
+        />
 
         <FilePreview {entityData} />
 
@@ -416,8 +476,10 @@
 
         <PropertyList
           properties={entityData.isClass
-            ? (entityData.properties ?? []).filter(p => p.property !== 'rdf:type' && p.property !== 'rdfs:subClassOf')
-            : (entityData.properties ?? []).filter(p => p.property !== 'foundation:hasStatus' && p.property !== 'rdf:type')}
+            ? (entityData.properties ?? []).filter(
+                p => p.property !== 'rdf:type' && p.property !== 'rdfs:subClassOf')
+            : (entityData.properties ?? []).filter(
+                p => p.property !== 'foundation:hasStatus' && p.property !== 'rdf:type')}
           requiredFields={entityData.requiredFields ?? []}
           isClass={entityData.isClass}
           {openEntityInspector}
@@ -453,29 +515,32 @@
     </div>
   </div>
 
-  {#if entityData && !entityData.isClass && (isAutomationWithoutInputClass || applicableAutomations.length > 0)}
+  {#if entityData && !entityData.isClass
+    && (isAutomationWithoutInputClass || applicableAutomations.length > 0)}
     <div class="actions-bar">
       {#if isAutomationWithoutInputClass}
+        {@const isRunning = runningAutomationIri === entityId}
         <button
           class="action-bar-btn"
           onclick={() => runAutomation(entityId)}
-          disabled={runningAutomationIri === entityId}
+          disabled={isRunning}
         >
-          <span class="material-symbols-outlined" class:spinning={runningAutomationIri === entityId}>
-            {runningAutomationIri === entityId ? 'progress_activity' : 'play_circle'}
+          <span class="material-symbols-outlined" class:spinning={isRunning}>
+            {isRunning ? 'progress_activity' : 'play_circle'}
           </span>
           Run
         </button>
       {/if}
       {#each applicableAutomations as auto}
+        {@const isAutoRunning = runningAutomationIri === auto.iri}
         <button
           class="action-bar-btn"
           onclick={() => runAutomation(auto.iri, entityId)}
-          disabled={runningAutomationIri === auto.iri}
+          disabled={isAutoRunning}
           title={auto.label}
         >
-          <span class="material-symbols-outlined" class:spinning={runningAutomationIri === auto.iri}>
-            {runningAutomationIri === auto.iri ? 'progress_activity' : 'play_circle'}
+          <span class="material-symbols-outlined" class:spinning={isAutoRunning}>
+            {isAutoRunning ? 'progress_activity' : 'play_circle'}
           </span>
           {auto.label}
         </button>
@@ -760,24 +825,6 @@
     to { transform: rotate(360deg); }
   }
 
-  .entity-full-name {
-    font-family: var(--font-title);
-    font-size: 16px;
-    font-weight: 700;
-    color: var(--color-neutral-active);
-    line-height: 1.4;
-    margin-bottom: 12px;
-    word-break: break-word;
-  }
-
-  .description {
-    margin: 0 0 16px 0;
-    font-size: 14px;
-    line-height: 1.6;
-    color: var(--color-neutral);
-    word-wrap: break-word;
-  }
-
   .section-group {
     display: flex;
     flex-direction: column;
@@ -864,6 +911,10 @@
     color: var(--color-neutral-active);
   }
 
+  .status-badge-wrapper {
+    position: relative;
+  }
+
   .status-badge {
     display: inline-flex;
     align-items: center;
@@ -872,6 +923,15 @@
     background: color-mix(in srgb, var(--status-color) 18%, transparent);
     border: 1px solid color-mix(in srgb, var(--status-color) 40%, transparent);
     border-radius: 20px;
+    cursor: default;
+  }
+
+  .status-badge.clickable {
+    cursor: pointer;
+  }
+
+  .status-badge.clickable:hover {
+    background: color-mix(in srgb, var(--status-color) 28%, transparent);
   }
 
   .status-badge-icon {
@@ -885,5 +945,48 @@
     font-weight: 600;
     color: var(--status-color);
     white-space: nowrap;
+  }
+
+  .status-badge-chevron {
+    font-size: 14px;
+    color: var(--status-color);
+    opacity: 0.7;
+  }
+
+  .status-picker {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 1000;
+    background: color-mix(in srgb, var(--color-black) 90%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+    border-radius: 8px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 160px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .status-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    width: 100%;
+    text-align: left;
+  }
+
+  .status-picker-item:hover {
+    background: color-mix(in srgb, var(--status-color) 25%, transparent);
+  }
+
+  .status-picker-item.active {
+    background: color-mix(in srgb, var(--status-color) 30%, transparent);
   }
 </style>

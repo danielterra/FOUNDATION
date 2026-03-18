@@ -3,6 +3,7 @@ use tauri::State;
 use crate::owl::{DbExecutor, get_iri_property, get_literal_property, get_all_iri_properties};
 use crate::owl::vocabulary::{rdf, rdfs};
 
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
     pub id: String,
@@ -27,6 +28,14 @@ pub struct GraphNode {
     pub trigger_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub renders_component: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub performed_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub performed_by_icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executed_in: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executed_in_icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,12 +111,14 @@ pub async fn meta_process__get_graph(
             let invokes_process = get_iri_property(conn, &current, "foundation:invokesProcess")
                 .map_err(|e| e.to_string())?;
 
-            let (status, status_color, status_icon) = match crate::owl::get_entity_status_info(conn, &current) {
+            let status_info = crate::owl::get_entity_status_info(conn, &current);
+            let (status, status_color, status_icon) = match status_info {
                 Some((_, label, color, icon)) => (Some(label), color, icon),
                 None => (None, None, None),
             };
 
-            let is_condition = node_type == "MetaGatewayCondition" || node_type == "MetaBoundaryCondition";
+            let is_condition = node_type == "MetaGatewayCondition"
+                || node_type == "MetaBoundaryCondition";
             let condition_operator = if is_condition {
                 let op_iri = get_iri_property(conn, &current, "foundation:conditionOperator")
                     .map_err(|e| e.to_string())?;
@@ -166,6 +177,31 @@ pub async fn meta_process__get_graph(
                 None
             };
 
+            let is_task = matches!(
+                node_type.as_str(),
+                "MetaSystemTask" | "MetaUserTask" | "MetaSubProcess"
+            );
+
+            let (performed_by, performed_by_icon, executed_in, executed_in_icon) = if is_task {
+                let pb_iri = get_iri_property(conn, &current, "foundation:performedBy")
+                    .map_err(|e| e.to_string())?;
+                let (pb, pb_icon) = pb_iri.as_deref().map(|iri| {
+                    let t = crate::owl::Thing::get(conn, iri);
+                    (Some(t.label), t.icon)
+                }).unwrap_or((None, None));
+
+                let ei_iri = get_iri_property(conn, &current, "foundation:executedIn")
+                    .map_err(|e| e.to_string())?;
+                let (ei, ei_icon) = ei_iri.as_deref().map(|iri| {
+                    let t = crate::owl::Thing::get(conn, iri);
+                    (Some(t.label), t.icon)
+                }).unwrap_or((None, None));
+
+                (pb, pb_icon, ei, ei_icon)
+            } else {
+                (None, None, None, None)
+            };
+
             nodes.push(GraphNode {
                 id: current.clone(),
                 node_type: node_type.clone(),
@@ -179,6 +215,10 @@ pub async fn meta_process__get_graph(
                 event_type,
                 trigger_type,
                 renders_component,
+                performed_by,
+                performed_by_icon,
+                executed_in,
+                executed_in_icon,
             });
 
             let is_gateway = matches!(
@@ -205,13 +245,9 @@ pub async fn meta_process__get_graph(
                     queue.push_back(target);
                 }
             }
-
-            let is_task = matches!(
-                node_type.as_str(),
-                "MetaSystemTask" | "MetaUserTask" | "MetaSubProcess"
-            );
             if is_task {
-                let boundary_conditions = get_all_iri_properties(conn, &current, "foundation:boundaryCondition")
+                let boundary_conditions = get_all_iri_properties(
+                    conn, &current, "foundation:boundaryCondition")
                     .map_err(|e| e.to_string())?;
                 for bc in boundary_conditions {
                     edge_counter += 1;
