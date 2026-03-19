@@ -4,9 +4,11 @@ mod settings;
 mod recovery;
 mod cancellation;
 mod subconscious;
+mod autonomous_reply;
 
 pub use tool_execution::execute_tools_from_message;
 pub use cancellation::AiCancellationState;
+pub use autonomous_reply::run_autonomous_reply;
 
 use crate::owl::{Individual, Object, DbExecutor};
 use rusqlite::OptionalExtension;
@@ -86,7 +88,6 @@ fn parse_timestamp(obj: &Object) -> Option<i64> {
     }
 }
 
-/// Cancel the current AI execution
 #[tauri::command]
 pub async fn chat__cancel(
     cancellation: State<'_, CancellationState>,

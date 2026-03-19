@@ -165,7 +165,6 @@ pub fn run() {
             commands::connector__test_auth,
             commands::connector__export_package,
             commands::connector__import_package,
-            commands::meta_process__get_graph,
             commands::automation__get_graph,
             commands::automation__run,
             commands::automation__find_for_types

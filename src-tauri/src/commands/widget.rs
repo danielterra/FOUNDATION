@@ -20,8 +20,8 @@ const DEFAULT_POS_X: f64 = 100.0;
 const DEFAULT_POS_Y: f64 = 100.0;
 const DEFAULT_WIDTH_MERMAID: f64 = 600.0;
 const DEFAULT_HEIGHT_MERMAID: f64 = 500.0;
-const DEFAULT_WIDTH_META_PROCESS: f64 = 400.0;
-const DEFAULT_HEIGHT_META_PROCESS: f64 = 600.0;
+const DEFAULT_WIDTH_FLOW: f64 = 400.0;
+const DEFAULT_HEIGHT_FLOW: f64 = 600.0;
 const DEFAULT_WIDTH_STANDARD: f64 = 400.0;
 const DEFAULT_HEIGHT_STANDARD: f64 = 600.0;
 
@@ -286,18 +286,11 @@ pub fn blackboard__list_widget_types() -> Vec<WidgetType> {
             default_size: Size { width: DEFAULT_WIDTH_STANDARD, height: DEFAULT_HEIGHT_STANDARD },
         },
         WidgetType {
-            id: "meta_process".to_string(),
-            name: "MetaProcess".to_string(),
-            description: "Interactive flow diagram of a MetaProcess".to_string(),
-            supports_entity: true,
-            default_size: Size { width: DEFAULT_WIDTH_META_PROCESS, height: DEFAULT_HEIGHT_META_PROCESS },
-        },
-        WidgetType {
             id: "automation".to_string(),
             name: "Automation".to_string(),
             description: "Interactive flow diagram of an Automation".to_string(),
             supports_entity: true,
-            default_size: Size { width: DEFAULT_WIDTH_META_PROCESS, height: DEFAULT_HEIGHT_META_PROCESS },
+            default_size: Size { width: DEFAULT_WIDTH_FLOW, height: DEFAULT_HEIGHT_FLOW },
         },
     ]
 }

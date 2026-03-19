@@ -7,7 +7,6 @@ mod blackboard;
 mod concept;
 mod concept_graph;
 mod definitions;
-mod meta_process;
 mod property;
 mod thing;
 
@@ -163,7 +162,6 @@ pub fn execute_tool(
         "describe_individual" => thing::describe_individual(conn, args),
         "describe_property" => property::describe_property(conn, args),
         "class_graph" => concept_graph::get_concept_graph(conn, args),
-        "get_process" => meta_process::get_process(conn, args),
         "blackboard_state" => blackboard::blackboard_state(conn, conversation_id),
         "blackboard_update" => blackboard::blackboard_update(conn, args, app, conversation_id),
         "run_process" => run_process_tool(args, app),

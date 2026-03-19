@@ -13,25 +13,27 @@
   import NodeRequestTask  from './automation/NodeRequestTask.svelte'
   import NodeUserTask     from './automation/NodeUserTask.svelte'
   import NodeGateway      from './automation/NodeGateway.svelte'
-  import NodeSubProcess   from './automation/NodeSubProcess.svelte'
+  import NodeSubProcess        from './automation/NodeSubProcess.svelte'
+  import NodeNOVAMessageTask   from './automation/NodeNOVAMessageTask.svelte'
 
   let { widgetId, entityId, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props()
 
   const nodeTypes = {
-    automation_StartEvent:  NodeStartEvent,
-    automation_EndEvent:    NodeEndEvent,
-    automation_AgentTask:   NodeAgentTask,
-    automation_CodeTask:    NodeCodeTask,
-    automation_ScriptTask:  NodeScriptTask,
-    automation_RequestTask: NodeRequestTask,
-    automation_UserTask:    NodeUserTask,
-    automation_Gateway:     NodeGateway,
-    automation_SubProcess:  NodeSubProcess,
+    automation_StartEvent:       NodeStartEvent,
+    automation_EndEvent:         NodeEndEvent,
+    automation_AgentTask:        NodeAgentTask,
+    automation_CodeTask:         NodeCodeTask,
+    automation_ScriptTask:       NodeScriptTask,
+    automation_RequestTask:      NodeRequestTask,
+    automation_UserTask:         NodeUserTask,
+    automation_Gateway:          NodeGateway,
+    automation_SubProcess:       NodeSubProcess,
+    automation_NOVAMessageTask:  NodeNOVAMessageTask,
   }
 
   let automationLabel = $state('')
-  let nodes = $state([])
-  let edges = $state([])
+  let nodes = $state.raw([])
+  let edges = $state.raw([])
   let loading = $state(true)
   let error = $state(null)
   let expanded = $state(windowState === 'maximized')
@@ -75,6 +77,11 @@
           status: n.status ?? null,
           statusColor: n.status_color ?? null,
           statusIcon: n.status_icon ?? null,
+          inputConceptLabel: n.input_concept_label ?? null,
+          inputConceptIcon: n.input_concept_icon ?? null,
+          outputConceptLabel: n.output_concept_label ?? null,
+          outputConceptIcon: n.output_concept_icon ?? null,
+          messagePayload: n.message_payload ?? null,
         },
         position: { x: 0, y: 0 },
       }))

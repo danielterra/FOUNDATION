@@ -25,6 +25,16 @@ pub struct AutomationGraphNode {
     pub status_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_concept_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_concept_icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_concept_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_concept_icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_payload: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +114,37 @@ pub async fn automation__get_graph(
                 None
             };
 
+            let (input_concept_label, input_concept_icon) =
+                if let Ok(Some(iri)) = get_iri_property(conn, &node_iri, "foundation:inputConcept") {
+                    let lbl = get_literal_property(conn, &iri, rdfs::LABEL)
+                        .map_err(|e| e.to_string())?
+                        .unwrap_or_else(|| iri.clone());
+                    let icon = get_literal_property(conn, &iri, "foundation:icon")
+                        .map_err(|e| e.to_string())?;
+                    (Some(lbl), icon)
+                } else {
+                    (None, None)
+                };
+
+            let (output_concept_label, output_concept_icon) =
+                if let Ok(Some(iri)) = get_iri_property(conn, &node_iri, "foundation:outputConcept") {
+                    let lbl = get_literal_property(conn, &iri, rdfs::LABEL)
+                        .map_err(|e| e.to_string())?
+                        .unwrap_or_else(|| iri.clone());
+                    let icon = get_literal_property(conn, &iri, "foundation:icon")
+                        .map_err(|e| e.to_string())?;
+                    (Some(lbl), icon)
+                } else {
+                    (None, None)
+                };
+
+            let message_payload = if node_type == "automation_NOVAMessageTask" {
+                get_literal_property(conn, &node_iri, "foundation:messagePayload")
+                    .map_err(|e| e.to_string())?
+            } else {
+                None
+            };
+
             nodes.push(AutomationGraphNode {
                 id: node_iri,
                 node_type,
@@ -113,6 +154,11 @@ pub async fn automation__get_graph(
                 status,
                 status_color,
                 status_icon,
+                input_concept_label,
+                input_concept_icon,
+                output_concept_label,
+                output_concept_icon,
+                message_payload,
             });
         }
 

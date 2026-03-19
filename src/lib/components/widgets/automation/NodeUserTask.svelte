@@ -1,6 +1,7 @@
 <script>
   import { Handle, Position } from '@xyflow/svelte'
   import StatusBadge from './StatusBadge.svelte'
+  import IoHandleLabel from './IoHandleLabel.svelte'
   let { data } = $props()
 </script>
 
@@ -10,12 +11,18 @@
     <span class="label">{data.label}</span>
   </div>
   <StatusBadge status={data.status} statusColor={data.statusColor} statusIcon={data.statusIcon} />
+  {#if data.inputConceptLabel}
+    <IoHandleLabel label={data.inputConceptLabel} icon={data.inputConceptIcon} side="input" />
+  {/if}
+  {#if data.outputConceptLabel}
+    <IoHandleLabel label={data.outputConceptLabel} icon={data.outputConceptIcon} side="output" />
+  {/if}
 </div>
 <Handle type="target" position={Position.Left} />
 <Handle type="source" position={Position.Right} />
 
 <style>
-  .node-wrap { position: relative; }
+  .node-wrap { position: relative; overflow: visible; }
   .node {
     display: flex;
     flex-direction: row;

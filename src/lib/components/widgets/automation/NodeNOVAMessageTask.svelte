@@ -3,15 +3,21 @@
   import StatusBadge from './StatusBadge.svelte'
   import IoHandleLabel from './IoHandleLabel.svelte'
   let { data } = $props()
+
+  const preview = $derived(
+    data.messagePayload
+      ? (data.messagePayload.length > 40 ? data.messagePayload.slice(0, 40) + '…' : data.messagePayload)
+      : null
+  )
 </script>
 
 <div class="node-wrap">
   <div class="node">
-    <span class="material-symbols-outlined icon">folder_open</span>
+    <span class="material-symbols-outlined icon">smart_toy</span>
     <div class="text">
       <span class="label">{data.label}</span>
-      {#if data.invokesProcess}
-        <span class="sub">Sub-process</span>
+      {#if preview}
+        <span class="sub">{preview}</span>
       {/if}
     </div>
   </div>
@@ -33,17 +39,15 @@
     flex-direction: row;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
-    min-width: 160px;
+    padding: 8px 14px;
+    min-width: 150px;
     cursor: pointer;
-    background: #002030;
-    border: 2px solid #00ACC1;
-    color: #80deea;
-    outline: 3px solid #00ACC133;
-    outline-offset: 2px;
+    background: #130820;
+    border: 2px solid #FF6F00;
+    color: #FFB74D;
   }
   .text { display: flex; flex-direction: column; gap: 2px; }
-  .icon { font-size: 20px; flex-shrink: 0; }
+  .icon { font-size: 18px; flex-shrink: 0; }
   .label { font-size: 12px; font-weight: 500; line-height: 1.3; }
-  .sub { font-size: 10px; opacity: 0.65; }
+  .sub { font-size: 10px; opacity: 0.7; }
 </style>

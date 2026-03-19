@@ -535,21 +535,6 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
 
         ToolTemplate {
-            name: "get_process".to_string(),
-            array_mode: false,
-            description: "Use when you need the complete flow graph of a MetaProcess — all nodes and edges from start to end, including gateways, conditions, and boundary events.".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "process_iri".to_string(),
-                    param_type: "string".to_string(),
-                    description: "IRI of the MetaProcess instance".to_string(),
-                    required: true,
-                    schema: None,
-                },
-            ],
-        },
-
-        ToolTemplate {
             name: "run_process".to_string(),
             array_mode: false,
             description: "Use to start a BPMN process asynchronously. Returns immediately; execution happens in the background.".to_string(),

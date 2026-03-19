@@ -47,7 +47,7 @@ fn load_flow_nodes(
 }
 
 /// Interpolates `{{key}}` placeholders in `template` using values from `ctx`.
-fn interpolate(template: &str, ctx: &ExecutionContext) -> String {
+pub(super) fn interpolate(template: &str, ctx: &ExecutionContext) -> String {
     let mut result = template.to_string();
     for (key, value) in ctx {
         result = result.replace(&format!("{{{{{}}}}}", key), value);
@@ -326,6 +326,11 @@ async fn execute_nodes(
             }
             "AgentTask" => {
                 super::agent_task::execute_agent_task(app, &node_iri, ctx, &step_iri).await
+            }
+            "NOVAMessageTask" => {
+                super::nova_message_task::execute_nova_message_task(app, &node_iri, ctx)
+                    .await
+                    .map(|_| String::new())
             }
             "SubProcess" => {
                 run_sub_process(app, process_iri, &node_iri, ctx).await.map(|_| String::new())

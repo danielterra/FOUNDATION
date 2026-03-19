@@ -124,7 +124,21 @@ pub async fn graph__search_entities(
 ) -> Result<String, String> {
     executor.read(move |conn| {
         let limit = limit.unwrap_or(100);
-        let results = if let Some(ref class_iri) = type_iri {
+        let results = if type_iri.as_deref() == Some("owl:Class") {
+            crate::owl::search_classes(conn, &query, limit)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|r| crate::owl::RichSearchResult {
+                    id: r.id,
+                    label: r.label,
+                    icon: r.icon,
+                    entity_type: "class".to_string(),
+                    matched_properties: vec![],
+                    concept_type: None,
+                    status: None,
+                })
+                .collect()
+        } else if let Some(ref class_iri) = type_iri {
             let tokens: Vec<String> = query
                 .split_whitespace()
                 .map(|s| s.to_lowercase())

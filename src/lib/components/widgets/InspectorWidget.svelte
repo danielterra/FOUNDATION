@@ -615,7 +615,7 @@
     display: flex;
     flex-direction: row;
     gap: 12px;
-    align-items: center;
+    align-items: flex-start;
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -623,6 +623,7 @@
 
   .widget-icon-container {
     flex-shrink: 0;
+    padding-top: 2px;
   }
 
   .entity-icon-symbol {
@@ -651,20 +652,19 @@
   }
 
   .widget-title {
-    display: flex;
-    align-items: center;
     font-family: var(--font-title);
     font-size: 11px;
     font-weight: 600;
     color: var(--color-neutral-active);
     overflow: hidden;
+    text-align: left;
   }
 
   .widget-title span {
-    overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .close-btn {

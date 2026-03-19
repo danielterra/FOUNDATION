@@ -9,11 +9,12 @@ const NODE_SIZES = {
   automation_RequestTask:  { width: 180, height: 55 },
   automation_UserTask:     { width: 180, height: 55 },
   automation_Gateway:      { width: 80,  height: 80 },
-  automation_SubProcess:   { width: 190, height: 60 },
+  automation_SubProcess:        { width: 190, height: 60 },
+  automation_NOVAMessageTask:   { width: 180, height: 55 },
 }
 
 const STATUS_BADGE_HEIGHT = 30
-const RANKSEP = 100
+const RANKSEP = 160
 
 function findBackEdges(nodes, edges) {
   const adj = new Map(nodes.map(n => [n.id, []]))
