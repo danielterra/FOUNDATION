@@ -7,8 +7,12 @@
 
 <div class="node-wrap">
   <div class="node">
-    <span class="material-symbols-outlined icon">terminal</span>
-    <span class="label">{data.label}</span>
+    <div class="side-tab">
+      <span class="material-symbols-outlined icon">terminal</span>
+    </div>
+    <div class="content">
+      <span class="label">{data.label}</span>
+    </div>
   </div>
   <StatusBadge status={data.status} statusColor={data.statusColor} statusIcon={data.statusIcon} />
   {#if data.inputConceptLabel}
@@ -26,15 +30,24 @@
   .node {
     display: flex;
     flex-direction: row;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    min-width: 150px;
+    align-items: stretch;
+    width: 220px;
     cursor: pointer;
+    border-radius: 8px;
     background: #00211e;
     border: 2px solid #00897B;
     color: #80cbc4;
+    overflow: hidden;
   }
-  .icon { font-size: 18px; flex-shrink: 0; }
+  .side-tab {
+    width: 28px;
+    flex-shrink: 0;
+    background: #00897B;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .icon { font-size: 16px; color: #00211e; font-variation-settings: 'FILL' 1; }
+  .content { display: flex; flex-direction: column; justify-content: center; padding: 8px 10px; min-width: 0; flex: 1; }
   .label { font-size: 12px; font-weight: 500; line-height: 1.3; }
 </style>

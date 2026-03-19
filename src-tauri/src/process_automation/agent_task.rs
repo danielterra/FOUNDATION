@@ -128,9 +128,6 @@ async fn persist_conversation(
     }
 }
 
-/// Executes an automation_AgentTask node headlessly.
-/// Reads the assignedAgent's API key and model, builds a prompt,
-/// runs the agentic tool loop until end_turn, and returns the final text output.
 pub async fn execute_agent_task(
     app: &AppHandle,
     node_iri: &str,
@@ -305,7 +302,7 @@ pub async fn execute_agent_task(
     let assistant = AIAssistant::new(Box::new(provider));
 
     let mut last_text = String::new();
-    let mut task_completion: Option<Result<Vec<String>>> = None;
+    let mut task_completion: Option<Result<(Vec<String>, String)>> = None;
 
     'outer: for _ in 0..MAX_TOOL_LOOPS {
         let request = GenerateRequest {
@@ -365,7 +362,7 @@ pub async fn execute_agent_task(
                 });
 
                 task_completion = Some(if success {
-                    Ok(output_iris)
+                    Ok((output_iris, message))
                 } else {
                     Err(if message.is_empty() { "Agent task marked as failed via task_complete".to_string() } else { message })
                 });
@@ -420,9 +417,9 @@ pub async fn execute_agent_task(
     persist_conversation(&executor, step_iri, &label, &model_identifier, &messages).await;
 
     match task_completion {
-        Some(Ok(output_iris)) => {
+        Some(Ok((output_iris, message))) => {
             let first = output_iris.first().cloned().unwrap_or_default();
-            Ok(first)
+            Ok(if !first.is_empty() { first } else { message })
         }
         Some(Err(e)) => Err(e),
         None => Ok(last_text),

@@ -7,8 +7,12 @@
 
 <div class="node-wrap">
   <div class="node">
-    <span class="material-symbols-outlined icon">call_split</span>
-    <span class="label">{data.label}</span>
+    <div class="side-tab">
+      <span class="material-symbols-outlined icon">call_split</span>
+    </div>
+    <div class="content">
+      <span class="label">{data.label}</span>
+    </div>
   </div>
   <StatusBadge status={data.status} statusColor={data.statusColor} statusIcon={data.statusIcon} />
   {#if data.inputConceptLabel}
@@ -25,20 +29,25 @@
   .node-wrap { position: relative; overflow: visible; }
   .node {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    padding: 10px 14px;
-    min-width: 70px;
+    flex-direction: row;
+    align-items: stretch;
+    width: 220px;
     cursor: pointer;
+    border-radius: 8px;
     background: #1a0a2e;
     border: 2px solid #7B1FA2;
     color: #ce93d8;
-    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
-    width: 80px;
-    height: 80px;
+    overflow: hidden;
   }
-  .icon { font-size: 20px; }
-  .label { font-size: 10px; font-weight: 600; text-align: center; line-height: 1.2; }
+  .side-tab {
+    width: 28px;
+    flex-shrink: 0;
+    background: #7B1FA2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .icon { font-size: 16px; color: #1a0a2e; font-variation-settings: 'FILL' 1; }
+  .content { display: flex; flex-direction: column; justify-content: center; padding: 8px 10px; min-width: 0; flex: 1; }
+  .label { font-size: 12px; font-weight: 500; line-height: 1.3; }
 </style>

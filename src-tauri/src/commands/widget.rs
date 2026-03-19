@@ -292,6 +292,13 @@ pub fn blackboard__list_widget_types() -> Vec<WidgetType> {
             supports_entity: true,
             default_size: Size { width: DEFAULT_WIDTH_FLOW, height: DEFAULT_HEIGHT_FLOW },
         },
+        WidgetType {
+            id: "workflow_execution".to_string(),
+            name: "Workflow Execution".to_string(),
+            description: "Step-by-step details of a workflow execution run".to_string(),
+            supports_entity: true,
+            default_size: Size { width: DEFAULT_WIDTH_STANDARD, height: DEFAULT_HEIGHT_STANDARD },
+        },
     ]
 }
 

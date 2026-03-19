@@ -167,7 +167,8 @@ pub fn run() {
             commands::connector__import_package,
             commands::automation__get_graph,
             commands::automation__run,
-            commands::automation__find_for_types
+            commands::automation__find_for_types,
+            commands::automation__get_execution
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -10,6 +10,7 @@
   import ConnectorCredentialWidget from './ConnectorCredentialWidget.svelte';
   import ConnectorManagerWidget from './ConnectorManagerWidget.svelte';
   import AutomationWidget from './AutomationWidget.svelte';
+  import WorkflowExecutionWidget from './WorkflowExecutionWidget.svelte';
 
   let { activeConversationIri = null } = $props();
 
@@ -29,6 +30,7 @@
   let topZIndex = $state(BASE_WIDGET_Z_INDEX);
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
+  const premaximizeState = new Map();
 
   function constrainSize(size) {
     return {
@@ -191,6 +193,18 @@
     });
   }
 
+  function moveWidget(widgetId, position) {
+    widgets = widgets.map(w =>
+      w.id === widgetId ? { ...w, position } : w
+    );
+    invoke('widget_blackboard__update_widget_position', {
+      widgetId,
+      position
+    }).catch(error => {
+      console.error('Failed to update widget position:', error);
+    });
+  }
+
   export function minimizeAll() {
     widgets.forEach(w => {
       if (w.window_state !== 'minimized') updateWidgetWindowState(w.id, 'minimized');
@@ -204,6 +218,25 @@
   }
 
   function updateWidgetWindowState(widgetId, windowState) {
+    const widget = widgets.find(w => w.id === widgetId);
+    const prevState = widget?.window_state;
+
+    if (windowState === 'maximized' && widget) {
+      premaximizeState.set(widgetId, {
+        size: { ...widget.size },
+        position: { ...widget.position }
+      });
+      resizeWidget(widgetId, viewportWidth, viewportHeight - TOP_BAR_HEIGHT);
+      moveWidget(widgetId, { x: 0, y: TOP_BAR_HEIGHT });
+    } else if (windowState === 'normal' && prevState === 'maximized') {
+      const saved = premaximizeState.get(widgetId);
+      if (saved) {
+        resizeWidget(widgetId, saved.size.width, saved.size.height);
+        moveWidget(widgetId, saved.position);
+        premaximizeState.delete(widgetId);
+      }
+    }
+
     widgets = widgets.map(w =>
       w.id === widgetId ? { ...w, window_state: windowState } : w
     );
@@ -222,7 +255,7 @@
       const w = event.payload;
       if (w.conversation_iri !== activeConversationIri) return;
 
-      // If widget already exists (e.g. duplicate entity-created event), bring it to front
+      // e.g. duplicate entity-created event
       const existingIdx = widgets.findIndex(existing => existing.id === w.id);
       if (existingIdx >= 0) {
         bringToFront(w.id);
@@ -286,8 +319,13 @@
     out:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicIn }}
   >
     {#if widget.window_state !== 'minimized'}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="resize-handle" onmousedown={(e) => startResize(e, widget)}></div>
+      <div
+        class="resize-handle"
+        role="button"
+        tabindex="0"
+        onmousedown={(e) => startResize(e, widget)}
+        onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && startResize(e, widget)}
+      ></div>
     {/if}
     {#if widget.widget_type === 'inspector'}
       <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} conversationIri={activeConversationIri} />
@@ -301,6 +339,8 @@
       <ConnectorManagerWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} />
     {:else if widget.widget_type === 'automation'}
       <AutomationWidget widgetId={widget.id} entityId={widget.entity_id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} conversationIri={activeConversationIri} />
+    {:else if widget.widget_type === 'workflow_execution'}
+      <WorkflowExecutionWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} />
     {/if}
   </div>
 {/each}

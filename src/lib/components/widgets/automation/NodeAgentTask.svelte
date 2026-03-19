@@ -7,12 +7,14 @@
 
 <div class="node-wrap">
   <div class="node">
-    <span class="material-symbols-outlined icon">assignment_ind</span>
-    <div class="text">
-      <span class="label">{data.label}</span>
+    <div class="side-tab">
+      <span class="material-symbols-outlined icon">assignment_ind</span>
+    </div>
+    <div class="content">
       {#if data.assignedAgent}
         <span class="sub">{data.assignedAgent}</span>
       {/if}
+      <span class="label">{data.label}</span>
     </div>
   </div>
   <StatusBadge status={data.status} statusColor={data.statusColor} statusIcon={data.statusIcon} />
@@ -31,17 +33,25 @@
   .node {
     display: flex;
     flex-direction: row;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    min-width: 150px;
+    align-items: stretch;
+    width: 220px;
     cursor: pointer;
+    border-radius: 8px;
     background: #1e0d36;
     border: 2px solid #8E24AA;
     color: #ce93d8;
+    overflow: hidden;
   }
-  .text { display: flex; flex-direction: column; gap: 2px; }
-  .icon { font-size: 18px; flex-shrink: 0; }
+  .side-tab {
+    width: 28px;
+    flex-shrink: 0;
+    background: #8E24AA;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .icon { font-size: 16px; color: #1e0d36; font-variation-settings: 'FILL' 1; }
+  .content { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 8px 10px; min-width: 0; flex: 1; }
   .label { font-size: 12px; font-weight: 500; line-height: 1.3; }
-  .sub { font-size: 10px; opacity: 0.7; }
+  .sub { font-size: 9px; font-family: var(--font-body); opacity: 0.7; }
 </style>

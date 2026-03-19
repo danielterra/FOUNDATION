@@ -36,9 +36,23 @@
   let edges = $state.raw([])
   let loading = $state(true)
   let error = $state(null)
-  let expanded = $state(windowState === 'maximized')
+  const expanded = $derived(windowState === 'maximized')
   let hoveredNodeId = $state(null)
   let running = $state(false)
+
+  let execNodeStatus = $state(new Map())
+  let activeExecutionIri = $state(null)
+  let activeStepLabel = $state(null)
+
+  const nodesWithExecStatus = $derived(
+    execNodeStatus.size === 0
+      ? nodes
+      : nodes.map(n => {
+          const s = execNodeStatus.get(n.id)
+          if (!s) return n
+          return { ...n, data: { ...n.data, status: s.statusLabel, statusColor: s.statusColor, statusIcon: s.statusIcon } }
+        })
+  )
 
   const displayEdges = $derived(
     hoveredNodeId === null
@@ -51,16 +65,15 @@
 
   let watchedIris = new Set()
   let unlisten = null
-
-  function portal(node) {
-    const target = document.querySelector('.canvas-area') ?? document.body
-    target.appendChild(node)
-    return { destroy() { node.remove() } }
-  }
+  let unlistenExecStarted = null
+  let unlistenStepProgress = null
+  let unlistenExecFinished = null
 
   async function loadGraph() {
     loading = true
     error = null
+    execNodeStatus = new Map()
+    activeStepLabel = null
     try {
       const raw = await invoke('automation__get_graph', { automationIri: entityId })
       const data = JSON.parse(raw)
@@ -82,19 +95,28 @@
           outputConceptLabel: n.output_concept_label ?? null,
           outputConceptIcon: n.output_concept_icon ?? null,
           messagePayload: n.message_payload ?? null,
+          usesTools: n.uses_tools ?? [],
+          assignedToRole: n.assigned_to_role ?? null,
+          assignedToUser: n.assigned_to_user ?? null,
+          outputConcepts: n.output_concepts ?? [],
         },
         position: { x: 0, y: 0 },
       }))
 
-      const flowEdges = data.edges.map(e => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        type: 'default',
-        animated: true,
-        label: e.label ?? undefined,
-        labelStyle: 'background:#000;color:#f1f5f9;padding:3px 7px;border-radius:4px;border:1px solid #475569;font-size:11px;font-weight:600;',
-      }))
+      const gatewayIds = new Set(data.nodes.filter(n => n.type === 'automation_Gateway').map(n => n.id))
+
+      const flowEdges = data.edges.map(e => {
+        const conditionLabel = gatewayIds.has(e.source) ? (e.condition_expression ?? null) : null
+        return {
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          type: 'default',
+          animated: true,
+          label: conditionLabel ?? undefined,
+          labelStyle: conditionLabel ? 'background:#1e293b;color:#f1f5f9;padding:2px 7px;border-radius:4px;border:1px solid #475569;font-size:11px;font-weight:500;' : undefined,
+        }
+      })
 
       nodes = applyDagreLayout(flowNodes, flowEdges)
       edges = flowEdges
@@ -130,14 +152,8 @@
     onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized')
   }
 
-  function openExpanded() {
-    expanded = true
-    onWindowStateChange?.('maximized')
-  }
-
-  function closeExpanded() {
-    expanded = false
-    onWindowStateChange?.('normal')
+  function toggleExpanded() {
+    onWindowStateChange?.(expanded ? 'normal' : 'maximized')
   }
 
   async function runAutomation() {
@@ -161,27 +177,60 @@
     unlisten = await listen('entity-updated', async (event) => {
       if (watchedIris.has(event.payload.entityId)) await loadGraph()
     })
+    unlistenExecStarted = await listen('automation-execution-started', (event) => {
+      if (event.payload.processIri === entityId) {
+        activeExecutionIri = event.payload.executionIri
+        execNodeStatus = new Map()
+        activeStepLabel = null
+        running = true
+      }
+    })
+    unlistenStepProgress = await listen('automation-step-progress', (event) => {
+      if (event.payload.executionIri !== activeExecutionIri) return
+      const { nodeIri, nodeLabel, status } = event.payload
+      const map = new Map(execNodeStatus)
+      if (status === 'started') {
+        map.set(nodeIri, { statusLabel: 'Running', statusColor: '#F59E0B', statusIcon: 'progress_activity' })
+        activeStepLabel = nodeLabel
+      } else if (status === 'completed') {
+        map.set(nodeIri, { statusLabel: 'Done', statusColor: '#22C55E', statusIcon: 'check_circle' })
+        activeStepLabel = null
+      } else if (status === 'failed') {
+        map.set(nodeIri, { statusLabel: 'Failed', statusColor: '#EF4444', statusIcon: 'error' })
+        activeStepLabel = null
+      }
+      execNodeStatus = map
+    })
+    unlistenExecFinished = await listen('automation-execution-finished', (event) => {
+      if (event.payload.executionIri !== activeExecutionIri) return
+      running = false
+      activeStepLabel = null
+    })
   })
 
   onDestroy(() => {
     if (unlisten) unlisten()
+    if (unlistenExecStarted) unlistenExecStarted()
+    if (unlistenStepProgress) unlistenStepProgress()
+    if (unlistenExecFinished) unlistenExecFinished()
   })
 </script>
-
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && expanded) closeExpanded() }} />
 
 <div class="automation-widget" class:minimized={windowState === 'minimized'}>
   <div class="widget-header">
     <div class="header-left">
       <span class="material-symbols-outlined header-icon">bolt</span>
       <span class="header-title">{automationLabel || 'Automation'}</span>
+      {#if activeStepLabel}
+        <span class="active-step-label">{activeStepLabel}…</span>
+      {/if}
     </div>
     <div class="header-actions">
       <button class="action-btn run-btn" onclick={runAutomation} disabled={running} title="Run automation">
         <span class="material-symbols-outlined">{running ? 'progress_activity' : 'play_arrow'}</span>
       </button>
-      <button class="action-btn" onclick={openExpanded} title="Expand">
-        <span class="material-symbols-outlined">open_in_full</span>
+      <button class="action-btn" onclick={toggleExpanded} title={expanded ? 'Restore' : 'Expand'}>
+        <span class="material-symbols-outlined">{expanded ? 'close_fullscreen' : 'open_in_full'}</span>
       </button>
       <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
         <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
@@ -223,44 +272,6 @@
   </div>
 </div>
 
-{#if expanded}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div use:portal class="modal-overlay" onclick={closeExpanded}>
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="modal-panel" onclick={(e) => e.stopPropagation()}>
-      <div class="modal-header">
-        <div class="header-left">
-          <span class="material-symbols-outlined header-icon">bolt</span>
-          <span class="header-title">{automationLabel || 'Automation'}</span>
-        </div>
-        <div class="header-actions">
-          <button class="action-btn" onclick={closeExpanded} title="Close">
-            <span class="material-symbols-outlined">close_fullscreen</span>
-          </button>
-        </div>
-      </div>
-      <div class="modal-canvas">
-        {#if !loading && !error}
-          <SvelteFlow
-            {nodes}
-            edges={displayEdges}
-            {nodeTypes}
-            fitView
-            panOnScroll
-            zoomOnScroll={false}
-            onnodeclick={handleNodeClick}
-            onnodepointerenter={({ node }) => hoveredNodeId = node.id}
-            onnodepointerleave={() => hoveredNodeId = null}
-          >
-            <Controls />
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.08)" />
-          </SvelteFlow>
-        {/if}
-      </div>
-      <div class="modal-hint">Scroll to zoom · Drag to pan · Press Esc to close</div>
-    </div>
-  </div>
-{/if}
 
 <style>
   .automation-widget {
@@ -276,8 +287,7 @@
     box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
   }
 
-  .widget-header,
-  .modal-header {
+  .widget-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -303,6 +313,16 @@
     font-size: 11px;
     font-weight: 600;
     color: var(--color-neutral-active);
+  }
+
+  .active-step-label {
+    font-size: 10px;
+    color: #F59E0B;
+    font-style: italic;
+    max-width: 140px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .header-actions {
@@ -432,43 +452,6 @@
     font-size: 32px;
   }
 
-  .modal-overlay {
-    position: absolute;
-    inset: 0;
-    background: color-mix(in srgb, var(--color-black) 80%, transparent);
-    backdrop-filter: blur(8px);
-    z-index: 9999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .modal-panel {
-    width: 92vw;
-    height: 90vh;
-    display: flex;
-    flex-direction: column;
-    background: color-mix(in srgb, var(--color-black) 90%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-    border-radius: 16px;
-    overflow: hidden;
-    box-shadow: 0 24px 64px color-mix(in srgb, var(--color-black) 60%, transparent);
-  }
-
-  .modal-canvas {
-    flex: 1;
-    overflow: hidden;
-    position: relative;
-  }
-
-  .modal-hint {
-    padding: 8px 16px;
-    font-size: 11px;
-    color: color-mix(in srgb, var(--color-white) 35%, transparent);
-    text-align: center;
-    border-top: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-    flex-shrink: 0;
-  }
 
   :global(.svelte-flow) {
     background: transparent !important;

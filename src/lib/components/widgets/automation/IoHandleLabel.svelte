@@ -1,8 +1,8 @@
 <script>
-  let { label, icon = null, side } = $props()
+  let { label, icon = null, side, topPercent = 50 } = $props()
 </script>
 
-<div class="io-label" class:input={side === 'input'} class:output={side === 'output'}>
+<div class="io-label" class:input={side === 'input'} class:output={side === 'output'} style="top: {topPercent}%">
   {#if icon}
     <span class="material-symbols-outlined icon">{icon}</span>
   {/if}
@@ -12,7 +12,6 @@
 <style>
   .io-label {
     position: absolute;
-    top: 50%;
     transform: translateY(-50%);
     display: flex;
     align-items: center;

@@ -4,21 +4,25 @@
   import IoHandleLabel from './IoHandleLabel.svelte'
   let { data } = $props()
 
+  const PAYLOAD_PREVIEW_LENGTH = 40
+
   const preview = $derived(
     data.messagePayload
-      ? (data.messagePayload.length > 40 ? data.messagePayload.slice(0, 40) + '…' : data.messagePayload)
+      ? (data.messagePayload.length > PAYLOAD_PREVIEW_LENGTH ? data.messagePayload.slice(0, PAYLOAD_PREVIEW_LENGTH) + '…' : data.messagePayload)
       : null
   )
 </script>
 
 <div class="node-wrap">
   <div class="node">
-    <span class="material-symbols-outlined icon">smart_toy</span>
-    <div class="text">
-      <span class="label">{data.label}</span>
+    <div class="side-tab">
+      <span class="material-symbols-outlined icon">smart_toy</span>
+    </div>
+    <div class="content">
       {#if preview}
         <span class="sub">{preview}</span>
       {/if}
+      <span class="label">{data.label}</span>
     </div>
   </div>
   <StatusBadge status={data.status} statusColor={data.statusColor} statusIcon={data.statusIcon} />
@@ -37,17 +41,25 @@
   .node {
     display: flex;
     flex-direction: row;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    min-width: 150px;
+    align-items: stretch;
+    width: 220px;
     cursor: pointer;
+    border-radius: 8px;
     background: #130820;
     border: 2px solid #FF6F00;
     color: #FFB74D;
+    overflow: hidden;
   }
-  .text { display: flex; flex-direction: column; gap: 2px; }
-  .icon { font-size: 18px; flex-shrink: 0; }
+  .side-tab {
+    width: 28px;
+    flex-shrink: 0;
+    background: #FF6F00;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .icon { font-size: 16px; color: #130820; font-variation-settings: 'FILL' 1; }
+  .content { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 8px 10px; min-width: 0; flex: 1; }
   .label { font-size: 12px; font-weight: 500; line-height: 1.3; }
-  .sub { font-size: 10px; opacity: 0.7; }
+  .sub { font-size: 9px; font-family: var(--font-body); opacity: 0.7; }
 </style>
