@@ -14,6 +14,7 @@ use tantivy::{
 use crate::commands::log_backend;
 
 const WRITER_HEAP_BYTES: usize = 50_000_000;
+const COMPLETED_PENALTY: f32 = 0.2;
 
 struct SearchIndex {
     index: Index,
@@ -23,23 +24,29 @@ struct SearchIndex {
     f_label: Field,
     f_comment: Field,
     f_props: Field,
+    f_content: Field,
     f_concept: Field,
+    f_is_class: Field,
     f_boost: Field,
+    f_completed: Field,
 }
 
 lazy_static::lazy_static! {
     static ref SEARCH_INDEX: Mutex<Option<SearchIndex>> = Mutex::new(None);
 }
 
-fn build_schema() -> (Schema, Field, Field, Field, Field, Field, Field) {
+fn build_schema() -> (Schema, Field, Field, Field, Field, Field, Field, Field, Field, Field) {
     let mut b = Schema::builder();
-    let f_iri     = b.add_text_field("iri",     STRING | STORED);
-    let f_label   = b.add_text_field("label",   TEXT   | STORED);
-    let f_comment = b.add_text_field("comment", TEXT);
-    let f_props   = b.add_text_field("props",   TEXT);
-    let f_concept = b.add_text_field("concept", STRING);
-    let f_boost   = b.add_u64_field("boost",    FAST   | STORED);
-    (b.build(), f_iri, f_label, f_comment, f_props, f_concept, f_boost)
+    let f_iri       = b.add_text_field("iri",       STRING | STORED);
+    let f_label     = b.add_text_field("label",     TEXT   | STORED);
+    let f_comment   = b.add_text_field("comment",   TEXT);
+    let f_props     = b.add_text_field("props",     TEXT);
+    let f_content   = b.add_text_field("content",   TEXT);
+    let f_concept   = b.add_text_field("concept",   STRING);
+    let f_is_class  = b.add_text_field("is_class",  STRING);
+    let f_boost     = b.add_u64_field("boost",      FAST   | STORED);
+    let f_completed = b.add_u64_field("completed",  FAST);
+    (b.build(), f_iri, f_label, f_comment, f_props, f_content, f_concept, f_is_class, f_boost, f_completed)
 }
 
 pub fn ensure_access_table(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -70,8 +77,8 @@ fn get_access_count(conn: &Connection, iri: &str) -> u64 {
     .unwrap_or(0)
 }
 
-fn get_concept_iri(conn: &Connection, subject: &str) -> Option<String> {
-    conn.query_row(
+fn get_concept_iris(conn: &Connection, subject: &str) -> Vec<String> {
+    let direct: Option<String> = conn.query_row(
         "SELECT object FROM triples
          WHERE subject = ?1 AND retracted = 0 AND predicate = 'rdf:type'
            AND object NOT LIKE 'owl:%'
@@ -80,8 +87,30 @@ fn get_concept_iri(conn: &Connection, subject: &str) -> Option<String> {
          LIMIT 1",
         [subject],
         |row| row.get(0),
+    ).ok();
+
+    let Some(root) = direct else { return vec![] };
+
+    conn.prepare(
+        "WITH RECURSIVE ancestors(iri) AS (
+             SELECT ?1
+             UNION ALL
+             SELECT t.object FROM triples t
+             JOIN ancestors a ON t.subject = a.iri
+             WHERE t.predicate = 'rdfs:subClassOf' AND t.retracted = 0
+               AND t.object NOT LIKE 'owl:%'
+               AND t.object NOT LIKE 'rdf:%'
+               AND t.object NOT LIKE 'rdfs:%'
+         )
+         SELECT DISTINCT iri FROM ancestors",
     )
     .ok()
+    .and_then(|mut stmt| {
+        stmt.query_map([&root], |row| row.get(0))
+            .ok()
+            .map(|iter| iter.filter_map(|r| r.ok()).collect())
+    })
+    .unwrap_or_else(|| vec![root])
 }
 
 pub fn init(index_dir: &Path, conn: &Connection) {
@@ -104,7 +133,7 @@ pub fn init(index_dir: &Path, conn: &Connection) {
 }
 
 fn do_init(index_dir: &Path, conn: &Connection) -> Result<SearchIndex, Box<dyn std::error::Error>> {
-    let (schema, f_iri, f_label, f_comment, f_props, f_concept, f_boost) = build_schema();
+    let (schema, f_iri, f_label, f_comment, f_props, f_content, f_concept, f_is_class, f_boost, f_completed) = build_schema();
 
     let (index, needs_rebuild) = if index_dir.exists() {
         let stale = Index::open_in_dir(index_dir)
@@ -129,7 +158,7 @@ fn do_init(index_dir: &Path, conn: &Connection) -> Result<SearchIndex, Box<dyn s
         .try_into()?;
 
     let mut idx = SearchIndex {
-        index, writer, reader, f_iri, f_label, f_comment, f_props, f_concept, f_boost,
+        index, writer, reader, f_iri, f_label, f_comment, f_props, f_content, f_concept, f_is_class, f_boost, f_completed,
     };
 
     if needs_rebuild {
@@ -137,6 +166,28 @@ fn do_init(index_dir: &Path, conn: &Connection) -> Result<SearchIndex, Box<dyn s
     }
 
     Ok(idx)
+}
+
+fn fetch_class_iris(conn: &Connection) -> std::collections::HashSet<String> {
+    conn.prepare(
+        "SELECT DISTINCT t1.subject FROM triples t1
+         WHERE t1.predicate = 'rdf:type' AND t1.retracted = 0
+           AND t1.object IN ('owl:Class', 'owl:ObjectProperty', 'owl:DatatypeProperty', 'owl:AnnotationProperty')
+           AND NOT EXISTS (
+               SELECT 1 FROM triples t2
+               WHERE t2.subject = t1.subject AND t2.predicate = 'rdf:type' AND t2.retracted = 0
+                 AND t2.object NOT LIKE 'owl:%'
+                 AND t2.object NOT LIKE 'rdf:%'
+                 AND t2.object NOT LIKE 'rdfs:%'
+           )",
+    )
+    .ok()
+    .and_then(|mut stmt| {
+        stmt.query_map([], |row| row.get(0))
+            .ok()
+            .map(|iter| iter.filter_map(|r| r.ok()).collect())
+    })
+    .unwrap_or_default()
 }
 
 fn do_full_rebuild(
@@ -148,16 +199,33 @@ fn do_full_rebuild(
     let mut stmt = conn.prepare(
         "SELECT DISTINCT subject FROM triples WHERE retracted = 0 AND predicate = 'rdfs:label'",
     )?;
-    let subjects: Vec<String> = stmt
+    let labeled: Vec<String> = stmt
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
-    log_backend("info", &format!("Indexing {} labeled subjects", subjects.len()));
+    let mut msg_stmt = conn.prepare(
+        "SELECT DISTINCT subject FROM triples WHERE retracted = 0
+         AND predicate = 'rdf:type' AND object = 'foundation:AIConversationMessage'",
+    )?;
+    let messages: Vec<String> = msg_stmt
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let mut seen = std::collections::HashSet::new();
+    let subjects: Vec<String> = labeled.into_iter()
+        .chain(messages)
+        .filter(|s| seen.insert(s.clone()))
+        .collect();
+
+    log_backend("info", &format!("Indexing {} subjects", subjects.len()));
+
+    let class_iris = fetch_class_iris(conn);
 
     idx.writer.delete_all_documents()?;
 
     for subject in &subjects {
-        if let Some(doc) = build_document(idx, conn, subject) {
+        let is_class = class_iris.contains(subject.as_str());
+        if let Some(doc) = build_document(idx, conn, subject, is_class) {
             idx.writer.add_document(doc)?;
         }
     }
@@ -167,14 +235,77 @@ fn do_full_rebuild(
     Ok(())
 }
 
-fn build_document(idx: &SearchIndex, conn: &Connection, subject: &str) -> Option<TantivyDocument> {
+fn is_completed_status(conn: &Connection, status_iri: &str) -> bool {
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = vec![status_iri.to_string()];
+    while let Some(iri) = queue.pop() {
+        if !visited.insert(iri.clone()) {
+            continue;
+        }
+        if iri == "foundation:Completed" {
+            return true;
+        }
+        let parents: Vec<String> = conn
+            .prepare(
+                "SELECT object FROM triples
+                 WHERE subject = ?1 AND predicate = 'rdfs:subClassOf' AND retracted = 0",
+            )
+            .ok()
+            .and_then(|mut stmt| {
+                stmt.query_map([&iri], |row| row.get(0))
+                    .ok()
+                    .map(|iter| iter.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+        queue.extend(parents);
+    }
+    false
+}
+
+fn subject_is_class(conn: &Connection, subject: &str) -> bool {
+    let has_instance_type: bool = conn.query_row(
+        "SELECT COUNT(*) FROM triples
+         WHERE subject = ?1 AND retracted = 0 AND predicate = 'rdf:type'
+           AND object NOT LIKE 'owl:%'
+           AND object NOT LIKE 'rdf:%'
+           AND object NOT LIKE 'rdfs:%'",
+        [subject],
+        |row| row.get::<_, i64>(0),
+    ).map(|c| c > 0).unwrap_or(false);
+
+    if has_instance_type {
+        return false;
+    }
+
+    conn.query_row(
+        "SELECT COUNT(*) FROM triples
+         WHERE subject = ?1 AND retracted = 0 AND predicate = 'rdf:type'
+           AND object IN ('owl:Class', 'owl:ObjectProperty', 'owl:DatatypeProperty', 'owl:AnnotationProperty')",
+        [subject],
+        |row| row.get::<_, i64>(0),
+    ).map(|c| c > 0).unwrap_or(false)
+}
+
+fn subject_is_completed(conn: &Connection, subject: &str) -> bool {
+    let status_iri = conn.query_row(
+        "SELECT object FROM triples
+         WHERE subject = ?1 AND predicate = 'foundation:hasStatus' AND retracted = 0 LIMIT 1",
+        [subject],
+        |row| row.get::<_, String>(0),
+    ).ok();
+    match status_iri {
+        Some(iri) => is_completed_status(conn, &iri),
+        None => false,
+    }
+}
+
+fn build_document(idx: &SearchIndex, conn: &Connection, subject: &str, is_class: bool) -> Option<TantivyDocument> {
     let mut stmt = conn.prepare(
         "SELECT predicate, object_value
          FROM triples
          WHERE subject = ? AND retracted = 0
            AND object_type = 'literal'
            AND predicate NOT IN (
-               'foundation:content',
                'foundation:hasIcon',
                'foundation:partOfConversation',
                'foundation:sender',
@@ -193,21 +324,33 @@ fn build_document(idx: &SearchIndex, conn: &Connection, subject: &str) -> Option
     let mut label = String::new();
     let mut comment = String::new();
     let mut props: Vec<String> = Vec::new();
+    let mut content_raw = String::new();
 
     for (predicate, value) in &rows {
         match predicate.as_str() {
-            "rdfs:label"   => label   = value.clone(),
-            "rdfs:comment" => comment = value.clone(),
-            _              => props.push(value.clone()),
+            "rdfs:label"         => label       = value.clone(),
+            "rdfs:comment"       => comment     = value.clone(),
+            "foundation:content" => content_raw = value.clone(),
+            _                    => props.push(value.clone()),
         }
     }
 
+    let content_text = if content_raw.is_empty() {
+        String::new()
+    } else {
+        extract_content_text(&content_raw)
+    };
+
     if label.is_empty() {
-        return None;
+        if content_text.is_empty() {
+            return None;
+        }
+        label = content_text.chars().take(80).collect();
     }
 
     let access_count = get_access_count(conn, subject);
-    let concept = get_concept_iri(conn, subject);
+    let concepts = get_concept_iris(conn, subject);
+    let completed = u64::from(subject_is_completed(conn, subject));
 
     let mut doc = TantivyDocument::default();
     doc.add_text(idx.f_iri, subject);
@@ -218,11 +361,34 @@ fn build_document(idx: &SearchIndex, conn: &Connection, subject: &str) -> Option
     if !props.is_empty() {
         doc.add_text(idx.f_props, &props.join(" "));
     }
-    if let Some(c) = concept {
-        doc.add_text(idx.f_concept, &c);
+    if !content_text.is_empty() {
+        doc.add_text(idx.f_content, &content_text);
     }
+    for c in &concepts {
+        doc.add_text(idx.f_concept, c);
+    }
+    doc.add_text(idx.f_is_class, if is_class { "1" } else { "0" });
     doc.add_u64(idx.f_boost, access_count);
+    doc.add_u64(idx.f_completed, completed);
     Some(doc)
+}
+
+fn extract_content_text(raw: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
+        if let Some(arr) = value.as_array() {
+            let text: String = arr.iter()
+                .filter_map(|b| b.get("text")?.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !text.is_empty() {
+                return text;
+            }
+        }
+        if let Some(s) = value.as_str() {
+            return s.to_string();
+        }
+    }
+    raw.to_string()
 }
 
 pub fn reindex_subjects(conn: &Connection, subjects: &[String]) {
@@ -245,7 +411,8 @@ pub fn reindex_subjects(conn: &Connection, subjects: &[String]) {
         let term = Term::from_field_text(idx.f_iri, subject);
         idx.writer.delete_term(term);
 
-        if let Some(doc) = build_document(idx, conn, subject) {
+        let is_class = subject_is_class(conn, subject);
+        if let Some(doc) = build_document(idx, conn, subject, is_class) {
             if let Err(e) = idx.writer.add_document(doc) {
                 log_backend("warn", &format!("Search index: failed to add {}: {}", subject, e));
             }
@@ -282,10 +449,11 @@ pub fn search_with_scores(query: &str, concept_iri: Option<&str>, limit: usize) 
 
     let mut parser = QueryParser::for_index(
         &idx.index,
-        vec![idx.f_label, idx.f_comment, idx.f_props],
+        vec![idx.f_label, idx.f_comment, idx.f_props, idx.f_content],
     );
     parser.set_field_boost(idx.f_label, 3.0);
     parser.set_field_boost(idx.f_comment, 1.5);
+    parser.set_field_boost(idx.f_content, 0.8);
 
     let safe_query = sanitize_query(query);
 
@@ -309,17 +477,96 @@ pub fn search_with_scores(query: &str, concept_iri: Option<&str>, limit: usize) 
         None => text_query,
     };
 
-    let top_docs_collector = TopDocs::with_limit(limit).tweak_score(
+    let fetch_limit = (limit * 3).max(50);
+    let top_docs_collector = TopDocs::with_limit(fetch_limit).tweak_score(
         move |seg_reader: &SegmentReader| {
-            let boost_col = seg_reader.fast_fields().u64("boost").ok();
+            let boost_col     = seg_reader.fast_fields().u64("boost").ok();
+            let completed_col = seg_reader.fast_fields().u64("completed").ok();
             move |doc: DocId, score: Score| {
                 let count = boost_col.as_ref()
                     .and_then(|col| col.first(doc))
                     .unwrap_or(0);
-                score * (1.0 + (count as f32).ln_1p() * 0.3)
+                let is_completed = completed_col.as_ref()
+                    .and_then(|col| col.first(doc))
+                    .unwrap_or(0);
+                let boosted = score * (1.0 + (count as f32).ln_1p() * 0.3);
+                if is_completed > 0 { boosted * COMPLETED_PENALTY } else { boosted }
             }
         }
     );
+
+    let top_docs = match searcher.search(final_query.as_ref(), &top_docs_collector) {
+        Ok(docs) => docs,
+        Err(_) => return vec![],
+    };
+
+    let query_lower = query.trim().to_lowercase();
+
+    let mut results: Vec<(String, f32)> = top_docs
+        .into_iter()
+        .filter_map(|(score, addr)| {
+            let doc: TantivyDocument = searcher.doc(addr).ok()?;
+            let iri = doc.get_first(idx.f_iri)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())?;
+            let label = doc.get_first(idx.f_label)
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let final_score = if label.trim().to_lowercase() == query_lower {
+                score * 10.0
+            } else {
+                score
+            };
+            Some((iri, final_score))
+        })
+        .collect();
+
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    results.truncate(limit);
+    results
+}
+
+pub fn search_concepts_with_scores(query: &str, limit: usize) -> Vec<(String, f32)> {
+    if query.trim().is_empty() {
+        return vec![];
+    }
+
+    let guard = match SEARCH_INDEX.lock() {
+        Ok(g) => g,
+        Err(_) => return vec![],
+    };
+    let idx = match guard.as_ref() {
+        Some(idx) => idx,
+        None => return vec![],
+    };
+
+    let searcher = idx.reader.searcher();
+
+    let mut parser = QueryParser::for_index(
+        &idx.index,
+        vec![idx.f_label, idx.f_comment],
+    );
+    parser.set_field_boost(idx.f_label, 3.0);
+    parser.set_field_boost(idx.f_comment, 1.5);
+
+    let safe_query = sanitize_query(query);
+
+    let text_query: Box<dyn Query> = match parser.parse_query(&safe_query) {
+        Ok(q) => q,
+        Err(_) => match parser.parse_query(&format!("\"{}\"", query.replace('"', ""))) {
+            Ok(q) => q,
+            Err(_) => return vec![],
+        },
+    };
+
+    let class_term = Term::from_field_text(idx.f_is_class, "1");
+    let class_filter = TermQuery::new(class_term, IndexRecordOption::Basic);
+    let final_query: Box<dyn Query> = Box::new(BooleanQuery::new(vec![
+        (Occur::Must, text_query),
+        (Occur::Must, Box::new(class_filter)),
+    ]));
+
+    let top_docs_collector = TopDocs::with_limit(limit);
 
     let top_docs = match searcher.search(final_query.as_ref(), &top_docs_collector) {
         Ok(docs) => docs,

@@ -3,7 +3,7 @@ use crate::commands::chat_storage::{create_assistant_message, load_conversation_
 use tauri::Emitter;
 use super::tool_execution::execute_tools_from_message;
 use super::message_utils::{message_to_api_format, inject_datetime_context, sanitize_tool_pairs, response_content_to_blocks};
-use super::settings::{get_system_prompt, get_max_input_tokens, get_supports_web_tools};
+use super::settings::load_agent_config;
 use super::super::log_backend;
 use super::MAX_OUTPUT_TOKENS;
 
@@ -66,7 +66,10 @@ pub async fn continue_conversation_after_recovery(
 ) -> Result<(), String> {
     const MAX_TOOL_LOOPS: usize = 50;
 
-    let max_tokens = get_max_input_tokens(&executor).await?;
+    let conv_id_for_config = conversation_id.clone();
+    let agent_config = executor.read(move |conn| {
+        load_agent_config(conn, &conv_id_for_config)
+    }).await?;
 
     let mut loop_count = 0;
     loop {
@@ -75,11 +78,11 @@ pub async fn continue_conversation_after_recovery(
             return Err("Too many tool execution loops during recovery".to_string());
         }
 
-        if cancellation.is_cancelled() {
+        if cancellation.is_cancelled(&conversation_id) {
             break;
         }
 
-        let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
+        let history = load_conversation_history(&executor, &conversation_id, agent_config.max_tokens).await?;
 
         let mut api_messages: Vec<crate::ai::ChatMessage> = history.iter()
             .map(message_to_api_format)
@@ -88,10 +91,10 @@ pub async fn continue_conversation_after_recovery(
         inject_datetime_context(&mut api_messages);
         sanitize_tool_pairs(&mut api_messages);
 
-        let system_prompt = get_system_prompt(&executor).await?;
+        let system_prompt = agent_config.system_prompt.clone();
         let blackboard_context = super::build_blackboard_context(&executor).await;
         let tools = crate::ai::functions::get_claude_tools();
-        let supports_web_tools = get_supports_web_tools(&executor).await;
+        let supports_web_tools = agent_config.supports_web_tools;
 
         let request = crate::ai::GenerateRequest {
             messages: api_messages,
@@ -105,10 +108,16 @@ pub async fn continue_conversation_after_recovery(
 
         app.emit(
             "ai-status",
-            serde_json::json!({ "status": "Claude is thinking (recovery)" }),
+            serde_json::json!({ "status": "Claude is thinking (recovery)", "conversationId": conversation_id }),
         ).ok();
         log_backend("info", "[RECOVERY] Calling Claude API...");
-        let api_response = crate::ai::generate_response(request).await
+        let provider = crate::ai::providers::ClaudeProvider::with_model(
+            agent_config.api_key.clone(),
+            agent_config.model_identifier.clone(),
+            agent_config.timeout_secs,
+        );
+        let assistant = crate::ai::AIAssistant::new(Box::new(provider));
+        let api_response = assistant.generate(request).await
             .map_err(|e| format!("Claude API error during recovery: {}", e))?;
 
         let stop_reason = api_response.stop_reason.clone()
@@ -125,7 +134,7 @@ pub async fn continue_conversation_after_recovery(
         let content_json = serde_json::to_string(&content_blocks)
             .map_err(|e| format!("Failed to serialize content: {}", e))?;
 
-        let current_model = crate::ai::get_current_model()?;
+        let current_model = agent_config.model_identifier.clone();
 
         if let Some(usage) = &api_response.usage {
             crate::commands::chat_storage::log_api_call(
@@ -175,7 +184,7 @@ pub async fn continue_conversation_after_recovery(
             );
             app.emit("chat-message-added", ()).ok();
 
-            if cancellation.is_cancelled() {
+            if cancellation.is_cancelled(&conversation_id) {
                 break;
             }
 

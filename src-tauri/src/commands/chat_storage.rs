@@ -181,6 +181,8 @@ pub(super) async fn create_message(
             ).map_err(|e| format!("Property error: {}", e))?;
         }
 
+        crate::search::reindex_subjects(conn, &[msg_iri_clone.clone()]);
+
         Ok(msg_iri_clone)
     }).await
 }

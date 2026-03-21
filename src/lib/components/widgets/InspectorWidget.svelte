@@ -78,10 +78,13 @@
   let widgetDefinitions = $state([]);
   let unlistenEntityUpdated = $state(null);
   let unlistenEntityReferenced = $state(null);
+  let unlistenEntityDeleted = $state(null);
   let applicableAutomations = $state([]);
   let runningAutomationIri = $state(null);
   let showStatusPicker = $state(false);
   let statusBadgeWrapperEl = $state(null);
+  let showDeleteConfirm = $state(false);
+  let deleteSuccess = $state(false);
 
   async function loadEntity() {
     loading = true;
@@ -119,6 +122,17 @@
       console.error('Failed to load entity:', err);
     } finally {
       loading = false;
+    }
+  }
+
+  async function deleteIndividual() {
+    if (!entityData?.id) return;
+    try {
+      await invoke('widget_inspector__delete_individual', { entityId: entityData.id });
+      deleteSuccess = true;
+      setTimeout(() => closeWidget(), 1500);
+    } catch (err) {
+      console.error('Failed to delete individual:', err);
     }
   }
 
@@ -268,15 +282,18 @@
         loadEntity();
       }
     });
+
+    unlistenEntityDeleted = await listen('entity-deleted', (event) => {
+      if (event.payload.entityId === entityId) {
+        closeWidget();
+      }
+    });
   });
 
   onDestroy(() => {
-    if (unlistenEntityUpdated) {
-      unlistenEntityUpdated();
-    }
-    if (unlistenEntityReferenced) {
-      unlistenEntityReferenced();
-    }
+    if (unlistenEntityUpdated) unlistenEntityUpdated();
+    if (unlistenEntityReferenced) unlistenEntityReferenced();
+    if (unlistenEntityDeleted) unlistenEntityDeleted();
   });
 </script>
 
@@ -323,6 +340,15 @@
               <span class="material-symbols-outlined">{defIcon}</span>
             </button>
           {/each}
+          {#if entityData && !entityData.isClass}
+            <button
+              class="action-btn action-btn--danger"
+              onclick={() => showDeleteConfirm = true}
+              title="Delete"
+            >
+              <span class="material-symbols-outlined">delete_forever</span>
+            </button>
+          {/if}
           <button class="action-btn" onclick={copyEntityIri} title="Copy IRI">
             <span class="material-symbols-outlined">content_copy</span>
           </button>
@@ -526,6 +552,27 @@
     </div>
   </div>
 
+  {#if showDeleteConfirm}
+    <div class="delete-overlay" role="dialog" aria-modal="true">
+      <div class="delete-dialog">
+        <span class="material-symbols-outlined delete-dialog-icon">delete_forever</span>
+        <p class="delete-dialog-title">Delete "{entityData?.label}"?</p>
+        <p class="delete-dialog-warning">This cannot be undone from the UI.</p>
+        <div class="delete-dialog-actions">
+          <button class="delete-cancel-btn" onclick={() => showDeleteConfirm = false}>Cancel</button>
+          <button class="delete-confirm-btn" onclick={() => { showDeleteConfirm = false; deleteIndividual(); }}>Delete</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if deleteSuccess}
+    <div class="delete-toast">
+      <span class="material-symbols-outlined">check_circle</span>
+      "{entityData?.label}" deleted
+    </div>
+  {/if}
+
   {#if entityData && !entityData.isClass
     && (isAutomationWithoutInputClass || applicableAutomations.length > 0)}
     <div class="actions-bar">
@@ -572,6 +619,7 @@
     border-radius: 12px;
     overflow: hidden;
     box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
+    position: relative;
   }
 
   .content-wrapper {
@@ -999,5 +1047,127 @@
 
   .status-picker-item.active {
     background: color-mix(in srgb, var(--status-color) 30%, transparent);
+  }
+
+  .action-btn--danger {
+    color: var(--color-danger, #ef4444);
+  }
+
+  .action-btn--danger:hover {
+    background: color-mix(in srgb, var(--color-danger, #ef4444) 15%, transparent);
+    color: var(--color-danger, #ef4444);
+  }
+
+  .delete-overlay {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in srgb, var(--color-black) 75%, transparent);
+    backdrop-filter: blur(4px);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+
+  .delete-dialog {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 24px 20px;
+    background: color-mix(in srgb, var(--color-black) 92%, transparent);
+    border: 1px solid color-mix(in srgb, #ef4444 40%, transparent);
+    border-radius: 10px;
+    max-width: 220px;
+    text-align: center;
+  }
+
+  .delete-dialog-icon {
+    font-size: 32px;
+    color: #ef4444;
+  }
+
+  .delete-dialog-title {
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-neutral-active);
+    margin: 0;
+    word-break: break-word;
+  }
+
+  .delete-dialog-warning {
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--color-neutral);
+    margin: 0;
+    opacity: 0.7;
+  }
+
+  .delete-dialog-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .delete-cancel-btn {
+    padding: 6px 14px;
+    background: color-mix(in srgb, var(--color-white) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+    border-radius: 6px;
+    color: var(--color-neutral-active);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .delete-cancel-btn:hover {
+    background: color-mix(in srgb, var(--color-white) 15%, transparent);
+  }
+
+  .delete-confirm-btn {
+    padding: 6px 14px;
+    background: color-mix(in srgb, #ef4444 20%, transparent);
+    border: 1px solid color-mix(in srgb, #ef4444 50%, transparent);
+    border-radius: 6px;
+    color: #ef4444;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .delete-confirm-btn:hover {
+    background: color-mix(in srgb, #ef4444 35%, transparent);
+    color: var(--color-neutral-active);
+  }
+
+  .delete-toast {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: color-mix(in srgb, #22c55e 20%, var(--color-black));
+    border: 1px solid color-mix(in srgb, #22c55e 50%, transparent);
+    border-radius: 20px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    color: #22c55e;
+    white-space: nowrap;
+    z-index: 101;
+    pointer-events: none;
+  }
+
+  .delete-toast .material-symbols-outlined {
+    font-size: 16px;
   }
 </style>

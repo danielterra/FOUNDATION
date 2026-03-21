@@ -3,8 +3,47 @@
 	import { openPath } from '@tauri-apps/plugin-opener';
 	import { marked } from 'marked';
 
-	const MIN_CHIP_OPACITY = 0.35;
-	const FALLBACK_ENTITY_SCORE = 0.5;
+	function subconsciousSummary(entities) {
+		const relevant = entities.filter(e => !e.is_open_loop);
+		const openLoops = entities.filter(e => e.is_open_loop);
+		const groups = {};
+		for (const e of relevant) {
+			groups[e.type_label] = (groups[e.type_label] || 0) + 1;
+		}
+		const parts = Object.entries(groups).map(([type, count]) => `${count} ${type}`);
+		if (openLoops.length > 0) {
+			parts.push(`${openLoops.length} open loop${openLoops.length !== 1 ? 's' : ''}`);
+		}
+		return parts.join(', ');
+	}
+
+	function estimateTokens(text) {
+		return Math.ceil(text.length / 4);
+	}
+
+	function formatSubconsciousContext(entities) {
+		const relevant = entities.filter(e => !e.is_open_loop);
+		const openLoops = entities.filter(e => e.is_open_loop);
+		const lines = [];
+		if (relevant.length > 0) {
+			lines.push('## Memory Context');
+			lines.push('Relevant entities from your knowledge graph (ranked by relevance):');
+			relevant.forEach((e, i) => {
+				lines.push(`${i + 1}. "${e.label}" [${e.type_label}] — ${e.iri}`);
+				(e.properties ?? []).forEach(([key, val]) => lines.push(`   - ${key}: ${val}`));
+			});
+		}
+		if (openLoops.length > 0) {
+			if (lines.length > 0) lines.push('');
+			lines.push('## Open Loops');
+			lines.push('Pending problems and tasks requiring your attention:');
+			openLoops.forEach(e => {
+				lines.push(`- [${e.type_label}] "${e.label}" — ${e.iri}`);
+				(e.properties ?? []).forEach(([key, val]) => lines.push(`   - ${key}: ${val}`));
+			});
+		}
+		return lines.join('\n');
+	}
 
 	marked.setOptions({
 		breaks: true,
@@ -68,7 +107,9 @@
 
 	function renderMarkdown(text) {
 		if (!text) return '';
-		return marked.parse(text);
+		return marked.parse(text)
+			.replace(/<table>/g, '<div class="table-wrapper"><table>')
+			.replace(/<\/table>/g, '</table></div>');
 	}
 
 	function extractTextFromContent(content) {
@@ -150,20 +191,15 @@
 >
 	<div class="message-content">
 		{#if message.role === 'user' && message.subconscious_entities?.length > 0}
-			<div class="subconscious-chips">
-				{#each message.subconscious_entities as entity}
-					<button
-						class="subconscious-chip {entity.is_open_loop ? 'open-loop' : ''}"
-						style="--score-opacity: {Math.max(MIN_CHIP_OPACITY, Math.min(1, entity.score ?? FALLBACK_ENTITY_SCORE))}"
-						onclick={() => onEntityClick?.(entity.iri)}
-						title="{entity.type_label}: {entity.label}"
-					>
-						<span class="material-symbols-outlined chip-icon">{entity.icon ?? 'circle'}</span>
-						<span class="chip-label">{entity.label}</span>
-						<span class="chip-type">{entity.type_label}</span>
-					</button>
-				{/each}
-			</div>
+			{@const ctx = formatSubconsciousContext(message.subconscious_entities)}
+			<details class="subconscious-chip">
+				<summary class="subconscious-chip-summary">
+					<span class="material-symbols-outlined subconscious-icon">neurology</span>
+					<span class="subconscious-summary-text">{subconsciousSummary(message.subconscious_entities)}</span>
+					<span class="subconscious-tokens">~{estimateTokens(ctx).toLocaleString()} tokens</span>
+				</summary>
+				<pre class="subconscious-context">{ctx}</pre>
+			</details>
 		{/if}
 		<div class="message-bubble">
 		{#if message.isThinking}
@@ -403,6 +439,12 @@
 		overflow-wrap: break-word;
 		max-width: 100%;
 		box-sizing: border-box;
+		overflow-x: hidden;
+	}
+
+	.message-text :global(.table-wrapper) {
+		overflow-x: auto;
+		max-width: 100%;
 	}
 
 	.message-attachments {
@@ -694,60 +736,66 @@
 	.tool-chip-json :global(.json-boolean) { color: #569cd6; }
 	.tool-chip-json :global(.json-null)    { color: #569cd6; }
 
-	.subconscious-chips {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px;
-		justify-content: flex-end;
-		padding: 0 2px 2px;
+	.subconscious-chip {
+		margin-bottom: 2px;
 	}
 
-	.subconscious-chip {
+	.subconscious-chip-summary {
 		display: inline-flex;
 		align-items: center;
-		gap: 4px;
-		padding: 2px 7px 2px 4px;
+		gap: 5px;
+		padding: 2px 8px 2px 5px;
 		border-radius: 12px;
-		border: 1px solid color-mix(in srgb, var(--color-interactive) calc(var(--score-opacity) * 40%), transparent);
-		background: color-mix(in srgb, var(--color-interactive) calc(var(--score-opacity) * 10%), transparent);
-		color: color-mix(in srgb, var(--color-interactive) calc(var(--score-opacity) * 100%), var(--color-neutral-disabled));
+		border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
+		background: color-mix(in srgb, var(--color-interactive) 8%, transparent);
+		color: color-mix(in srgb, var(--color-interactive) 85%, var(--color-neutral-disabled));
 		cursor: pointer;
-		transition: background 0.15s, border-color 0.15s;
 		font-size: 10px;
 		line-height: 1.4;
-		max-width: 180px;
+		list-style: none;
+		user-select: none;
+		transition: background 0.15s, border-color 0.15s;
 	}
 
-	.subconscious-chip:hover {
-		background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
-		border-color: color-mix(in srgb, var(--color-interactive) 60%, transparent);
+	.subconscious-chip-summary::-webkit-details-marker { display: none; }
+
+	.subconscious-chip-summary:hover {
+		background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
+		border-color: color-mix(in srgb, var(--color-interactive) 55%, transparent);
 	}
 
-	.subconscious-chip.open-loop {
-		border-color: color-mix(in srgb, var(--color-warning, #FF9800) 50%, transparent);
-		background: color-mix(in srgb, var(--color-warning, #FF9800) 8%, transparent);
-		color: color-mix(in srgb, var(--color-warning, #FF9800) 90%, var(--color-neutral-disabled));
-	}
-
-	.subconscious-chip.open-loop:hover {
-		background: color-mix(in srgb, var(--color-warning, #FF9800) 16%, transparent);
-	}
-
-	.chip-icon {
-		font-size: 11px;
+	.subconscious-icon {
+		font-size: 12px;
 		flex-shrink: 0;
+		font-variation-settings: 'FILL' 1;
 	}
 
-	.chip-label {
-		overflow: hidden;
-		text-overflow: ellipsis;
+	.subconscious-tokens {
+		opacity: 0.5;
+		font-size: 9px;
 		white-space: nowrap;
+		margin-left: 2px;
+	}
+
+	.subconscious-summary-text {
 		font-weight: 500;
 	}
 
-	.chip-type {
-		opacity: 0.65;
-		white-space: nowrap;
-		flex-shrink: 0;
+	.subconscious-context {
+		margin: 4px 0 0;
+		padding: 8px 10px;
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--color-interactive) 5%, var(--color-surface-2, #0f172a));
+		border: 1px solid color-mix(in srgb, var(--color-interactive) 20%, transparent);
+		font-size: 10px;
+		line-height: 1.6;
+		color: var(--color-neutral);
+		white-space: pre-wrap;
+		word-break: break-word;
+		overflow-x: auto;
+		max-height: 400px;
+		overflow-y: auto;
 	}
+
+
 </style>

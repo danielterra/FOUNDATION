@@ -12,6 +12,10 @@ type Result<T> = std::result::Result<T, String>;
 /// Keys come from a node's `foundation:outputKey` property.
 pub type ExecutionContext = HashMap<String, String>;
 
+/// Routing key injected into context when a SubProcess exits via a Segway.
+/// The parent executor skips nodes until it reaches the one matching this IRI.
+const SEGWAY_NEXT_KEY: &str = "__segwayNext";
+
 /// Loads all flow nodes for a process, returning (node_iri, node_type, output_key).
 fn load_flow_nodes(
     conn: &rusqlite::Connection,
@@ -44,6 +48,37 @@ fn load_flow_nodes(
         }
     }
     Ok(nodes)
+}
+
+/// Returns the `segwayToNode` IRI for the Segway whose `segwayFromEndEvent` matches `end_event_iri`,
+/// or None if no matching Segway exists on the SubProcess node.
+fn resolve_segway(
+    conn: &rusqlite::Connection,
+    subprocess_iri: &str,
+    end_event_iri: &str,
+) -> Result<Option<String>> {
+    let segway_result = query::get_by_entity_predicate(conn, subprocess_iri, "foundation:hasSegway")
+        .map_err(|e| e.to_string())?;
+
+    for triple in &segway_result.triples {
+        let Some(segway_iri) = triple.object.as_iri() else { continue };
+
+        let from_event = query::get_by_entity_predicate(conn, segway_iri, "foundation:segwayFromEndEvent")
+            .map_err(|e| e.to_string())?;
+        let matches = from_event.triples.first()
+            .and_then(|t| t.object.as_iri())
+            .map(|iri| iri == end_event_iri)
+            .unwrap_or(false);
+
+        if matches {
+            let to_node = query::get_by_entity_predicate(conn, segway_iri, "foundation:segwayToNode")
+                .map_err(|e| e.to_string())?;
+            return Ok(to_node.triples.first()
+                .and_then(|t| t.object.as_iri())
+                .map(|s| s.to_string()));
+        }
+    }
+    Ok(None)
 }
 
 /// Interpolates `{{key}}` placeholders in `template` using values from `ctx`.
@@ -188,15 +223,16 @@ pub async fn run_process(app: &AppHandle, process_iri: &str, input_iri: Option<S
     if let Some(iri) = input_iri {
         ctx.insert("inputIRIs".to_string(), iri);
     }
-    run_process_with_context(app, process_iri, &mut ctx).await
+    run_process_with_context(app, process_iri, &mut ctx).await.map(|_| ())
 }
 
 /// Runs a BPMN process, propagating and updating the provided execution context.
+/// Returns the IRI of the EndEvent that terminated the process, if any.
 pub async fn run_process_with_context(
     app: &AppHandle,
     process_iri: &str,
     ctx: &mut ExecutionContext,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let process_iri = process_iri.to_string();
     let executor = app.state::<DbExecutor>();
 
@@ -250,16 +286,26 @@ pub async fn run_process_with_context(
     run_result
 }
 
+/// Returns `Ok(Some(end_event_iri))` when an EndEvent is reached (halting execution),
+/// or `Ok(None)` when all nodes complete without hitting an EndEvent.
 async fn execute_nodes(
     app: &AppHandle,
     process_iri: &str,
     exec_iri: &str,
     nodes: Vec<(String, String, Option<String>)>,
     ctx: &mut ExecutionContext,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let executor = app.state::<DbExecutor>();
 
     for (node_iri, node_type, output_key) in nodes {
+        // Segway routing: skip nodes until we reach the one a SubProcess routed to.
+        if let Some(target) = ctx.get(SEGWAY_NEXT_KEY).cloned() {
+            if node_iri != target {
+                continue;
+            }
+            ctx.remove(SEGWAY_NEXT_KEY);
+        }
+
         let kind = normalize_node_type(&node_type);
 
         if kind == "StartEvent" {
@@ -268,7 +314,7 @@ async fn execute_nodes(
 
         if kind == "EndEvent" {
             log_backend("info", &format!("[executor] Process {} reached EndEvent {}", process_iri, node_iri));
-            continue;
+            return Ok(Some(node_iri));
         }
 
         let node_label = executor
@@ -380,7 +426,7 @@ async fn execute_nodes(
         }
     }
 
-    Ok(())
+    Ok(None)
 }
 
 async fn run_sub_process(
@@ -406,19 +452,41 @@ async fn run_sub_process(
         })
         .await?;
 
-    match called_iri {
-        Some(called) => {
-            log_backend("info", &format!("[executor] SubProcess {} calling {}", node_iri, called));
-            Box::pin(run_process_with_context(app, &called, ctx)).await
-        }
-        None => {
-            log_backend("warn", &format!(
-                "[executor] SubProcess {} has no calledElement — skipping (parent: {})",
-                node_iri, parent_process_iri
+    let Some(called) = called_iri else {
+        log_backend("warn", &format!(
+            "[executor] SubProcess {} has no calledElement — skipping (parent: {})",
+            node_iri, parent_process_iri
+        ));
+        return Ok(());
+    };
+
+    log_backend("info", &format!("[executor] SubProcess {} calling {}", node_iri, called));
+    let end_event_iri = Box::pin(run_process_with_context(app, &called, ctx)).await?;
+
+    if let Some(ref end_iri) = end_event_iri {
+        let next_node = executor
+            .read({
+                let subprocess_iri = node_iri.to_string();
+                let end_iri = end_iri.clone();
+                move |conn| resolve_segway(conn, &subprocess_iri, &end_iri)
+            })
+            .await?;
+
+        if let Some(next_iri) = next_node {
+            log_backend("info", &format!(
+                "[executor] SubProcess {} routed via EndEvent {} → {}",
+                node_iri, end_iri, next_iri
             ));
-            Ok(())
+            ctx.insert(SEGWAY_NEXT_KEY.to_string(), next_iri);
+        } else {
+            log_backend("warn", &format!(
+                "[executor] SubProcess {} has no Segway for EndEvent {} — continuing linearly",
+                node_iri, end_iri
+            ));
         }
     }
+
+    Ok(())
 }
 
 /// Dispatches an AI task (ServiceTask or ScriptTask) and returns its output string.

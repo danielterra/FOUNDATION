@@ -90,6 +90,16 @@
     }
   }
 
+  async function openInspector() {
+    await invoke('widget_blackboard__add_widget', {
+      widgetType: 'inspector',
+      entityId,
+      position: null,
+      size: null,
+      conversationId: conversationIri,
+    }).catch(() => {})
+  }
+
   async function closeWidget() {
     await invoke('widget_blackboard__remove_widget', { widgetId }).catch(() => {})
   }
@@ -139,6 +149,9 @@
           <span class="status-label">{detail.status_label}</span>
         </span>
       {/if}
+      <button class="close-btn" onclick={openInspector} title="Open inspector">
+        <span class="material-symbols-outlined">info</span>
+      </button>
       <button class="close-btn" onclick={closeWidget}>
         <span class="material-symbols-outlined">close</span>
       </button>

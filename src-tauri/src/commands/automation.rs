@@ -45,10 +45,10 @@ pub struct AutomationGraphNode {
     pub message_payload: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub uses_tools: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assigned_to_role: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assigned_to_user: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub assigned_to_roles: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub assigned_to_users: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub output_concepts: Vec<ConceptRef>,
 }
@@ -62,6 +62,8 @@ pub struct AutomationGraphEdge {
     pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub condition_expression: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_handle: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +71,7 @@ pub struct AutomationGraph {
     pub process_label: String,
     pub nodes: Vec<AutomationGraphNode>,
     pub edges: Vec<AutomationGraphEdge>,
+    pub sequence_flow_iris: Vec<String>,
 }
 
 fn extract_local_name(iri: &str) -> &str {
@@ -79,21 +82,15 @@ fn extract_local_name(iri: &str) -> &str {
         .unwrap_or(iri)
 }
 
-#[tauri::command]
-#[allow(non_snake_case)]
-pub async fn automation__get_graph(
-    automation_iri: String,
-    executor: State<'_, DbExecutor>,
-) -> Result<String, String> {
-    executor.read(move |conn| {
-        let process_label = get_literal_property(conn, &automation_iri, rdfs::LABEL)
+pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str) -> Result<AutomationGraph, String> {
+        let process_label = get_literal_property(conn, automation_iri, rdfs::LABEL)
             .map_err(|e| e.to_string())?
-            .unwrap_or_else(|| automation_iri.clone());
+            .unwrap_or_else(|| automation_iri.to_string());
 
-        let flow_node_iris = get_all_iri_properties(conn, &automation_iri, "foundation:hasFlowNode")
+        let flow_node_iris = get_all_iri_properties(conn, automation_iri, "foundation:hasFlowNode")
             .map_err(|e| e.to_string())?;
 
-        let sequence_flow_iris = get_all_iri_properties(conn, &automation_iri, "foundation:hasSequenceFlow")
+        let sequence_flow_iris = get_all_iri_properties(conn, automation_iri, "foundation:hasSequenceFlow")
             .map_err(|e| e.to_string())?;
 
         let mut nodes: Vec<AutomationGraphNode> = Vec::new();
@@ -103,7 +100,7 @@ pub async fn automation__get_graph(
                 .unwrap_or_default();
             let node_type = extract_local_name(&type_iri).to_string();
 
-            let label = get_literal_property(conn, &node_iri, rdfs::LABEL)
+            let mut label = get_literal_property(conn, &node_iri, rdfs::LABEL)
                 .map_err(|e| e.to_string())?
                 .unwrap_or_else(|| node_iri.clone());
 
@@ -132,11 +129,18 @@ pub async fn automation__get_graph(
                 None
             };
 
+            if let Some(ref process_iri) = invokes_process {
+                if let Ok(Some(process_label)) = get_literal_property(conn, process_iri, rdfs::LABEL) {
+                    label = process_label;
+                }
+            }
+
             let (input_concept_label, input_concept_icon, output_concept_label, output_concept_icon, output_concepts) =
                 if node_type == "automation_SubProcess" {
                     let (mut in_lbl, mut in_icon, mut out_lbl, mut out_icon) = (None, None, None, None);
                     let mut out_concepts: Vec<ConceptRef> = Vec::new();
 
+                    // Input: from the StartEvent of the called process
                     if let Some(ref process_iri) = invokes_process {
                         let sub_nodes = get_all_iri_properties(conn, process_iri, "foundation:hasFlowNode")
                             .map_err(|e| e.to_string())?;
@@ -150,19 +154,30 @@ pub async fn automation__get_graph(
                                     in_lbl = get_literal_property(conn, &c, rdfs::LABEL).map_err(|e| e.to_string())?;
                                     in_icon = get_literal_property(conn, &c, "foundation:icon").map_err(|e| e.to_string())?;
                                 }
-                            } else if sub_type == "automation_EndEvent" {
-                                let concept_iris = get_all_iri_properties(conn, sub_iri, "foundation:outputConcept")
-                                    .map_err(|e| e.to_string())?;
-                                for c in concept_iris {
-                                    let lbl = get_literal_property(conn, &c, rdfs::LABEL)
-                                        .map_err(|e| e.to_string())?
-                                        .unwrap_or_else(|| c.clone());
-                                    let icon = get_literal_property(conn, &c, "foundation:icon").map_err(|e| e.to_string())?;
-                                    if !out_concepts.iter().any(|x| x.label == lbl) {
-                                        out_concepts.push(ConceptRef { label: lbl, icon });
-                                    }
-                                }
+                                break;
                             }
+                        }
+                    }
+
+                    // Outputs: one handle per Segway, labelled by the triggering EndEvent
+                    let segway_iris = get_all_iri_properties(conn, &node_iri, "foundation:hasSegway")
+                        .map_err(|e| e.to_string())?;
+                    for segway_iri in &segway_iris {
+                        if let Ok(Some(end_iri)) = get_iri_property(conn, segway_iri, "foundation:segwayFromEndEvent") {
+                            let end_lbl = get_literal_property(conn, &end_iri, rdfs::LABEL)
+                                .map_err(|e| e.to_string())?
+                                .unwrap_or_else(|| end_iri.clone());
+                            let (lbl, icon) = if let Ok(Some(concept_iri)) = get_iri_property(conn, &end_iri, "foundation:outputConcept") {
+                                let concept_lbl = get_literal_property(conn, &concept_iri, rdfs::LABEL)
+                                    .map_err(|e| e.to_string())?
+                                    .unwrap_or_else(|| concept_iri.clone());
+                                let i = get_literal_property(conn, &concept_iri, "foundation:icon")
+                                    .map_err(|e| e.to_string())?;
+                                (format!("{} ({})", concept_lbl, end_lbl), i)
+                            } else {
+                                (end_lbl, None)
+                            };
+                            out_concepts.push(ConceptRef { label: lbl, icon });
                         }
                     }
 
@@ -204,28 +219,28 @@ pub async fn automation__get_graph(
                 None
             };
 
-            let (uses_tools, assigned_to_role, assigned_to_user) = if node_type == "automation_UserTask" {
+            let (uses_tools, assigned_to_roles, assigned_to_users) = if node_type == "automation_UserTask" {
                 let tool_iris = get_all_iri_properties(conn, &node_iri, "foundation:usesTool")
                     .map_err(|e| e.to_string())?;
                 let tools: Vec<String> = tool_iris.iter()
                     .filter_map(|iri| get_literal_property(conn, iri, rdfs::LABEL).ok().flatten())
                     .collect();
 
-                let role = if let Ok(Some(iri)) = get_iri_property(conn, &node_iri, "foundation:assignedToRole") {
-                    get_literal_property(conn, &iri, rdfs::LABEL).map_err(|e| e.to_string())?
-                } else {
-                    None
-                };
+                let role_iris = get_all_iri_properties(conn, &node_iri, "foundation:assignedToRole")
+                    .map_err(|e| e.to_string())?;
+                let roles: Vec<String> = role_iris.iter()
+                    .filter_map(|iri| get_literal_property(conn, iri, rdfs::LABEL).ok().flatten())
+                    .collect();
 
-                let user = if let Ok(Some(iri)) = get_iri_property(conn, &node_iri, "foundation:assignedToUser") {
-                    get_literal_property(conn, &iri, rdfs::LABEL).map_err(|e| e.to_string())?
-                } else {
-                    None
-                };
+                let user_iris = get_all_iri_properties(conn, &node_iri, "foundation:assignedToUser")
+                    .map_err(|e| e.to_string())?;
+                let users: Vec<String> = user_iris.iter()
+                    .filter_map(|iri| get_literal_property(conn, iri, rdfs::LABEL).ok().flatten())
+                    .collect();
 
-                (tools, role, user)
+                (tools, roles, users)
             } else {
-                (vec![], None, None)
+                (vec![], vec![], vec![])
             };
 
             nodes.push(AutomationGraphNode {
@@ -243,8 +258,8 @@ pub async fn automation__get_graph(
                 output_concept_icon,
                 message_payload,
                 uses_tools,
-                assigned_to_role,
-                assigned_to_user,
+                assigned_to_roles,
+                assigned_to_users,
                 output_concepts,
             });
         }
@@ -268,16 +283,54 @@ pub async fn automation__get_graph(
                     target,
                     label,
                     condition_expression,
+                    source_handle: None,
                 });
             }
         }
 
-        let graph = AutomationGraph {
+        // Synthetic edges from SubProcess Segways (replace SequenceFlow-based output routing)
+        let subprocess_nodes: Vec<&str> = nodes.iter()
+            .filter(|n| n.node_type == "automation_SubProcess")
+            .map(|n| n.id.as_str())
+            .collect();
+        let edge_offset = edges.len();
+        for (si, &sp_iri) in subprocess_nodes.iter().enumerate() {
+            let segway_iris = get_all_iri_properties(conn, sp_iri, "foundation:hasSegway")
+                .map_err(|e| e.to_string())?;
+            for (gi, segway_iri) in segway_iris.iter().enumerate() {
+                let to_node = get_iri_property(conn, segway_iri, "foundation:segwayToNode")
+                    .map_err(|e| e.to_string())?;
+                let seg_label = get_literal_property(conn, segway_iri, rdfs::LABEL)
+                    .map_err(|e| e.to_string())?;
+                if let Some(target) = to_node {
+                    edges.push(AutomationGraphEdge {
+                        id: format!("seg{}_{}", si, gi + edge_offset),
+                        source: sp_iri.to_string(),
+                        target,
+                        label: seg_label,
+                        condition_expression: None,
+                        source_handle: Some(format!("output-{}", gi)),
+                    });
+                }
+            }
+        }
+
+        Ok(AutomationGraph {
             process_label,
             nodes,
             edges,
-        };
+            sequence_flow_iris,
+        })
+}
 
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn automation__get_graph(
+    automation_iri: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor.read(move |conn| {
+        let graph = build_automation_graph(conn, &automation_iri)?;
         serde_json::to_string(&graph).map_err(|e| e.to_string())
     }).await
 }

@@ -90,9 +90,10 @@ fn parse_timestamp(obj: &Object) -> Option<i64> {
 
 #[tauri::command]
 pub async fn chat__cancel(
+    conversation_id: String,
     cancellation: State<'_, CancellationState>,
 ) -> Result<(), String> {
-    cancellation.cancel();
+    cancellation.cancel(&conversation_id);
     Ok(())
 }
 
@@ -111,7 +112,7 @@ pub async fn chat__send_and_reply(
 ) -> Result<Vec<serde_json::Value>, String> {
     const MAX_TOOL_LOOPS: usize = 50;
 
-    let mut cancel_rx = cancellation.begin();
+    let mut cancel_rx = cancellation.begin(&conversation_id);
 
     let conv_id = conversation_id.clone();
     let agent_config = executor.read(move |conn| {
@@ -232,8 +233,9 @@ pub async fn chat__send_and_reply(
     app.emit("chat-message-added", ()).ok();
 
     let content_for_subconscious = content.clone();
+    let exclude_iri = user_msg_iri.clone();
     let subconscious_entities = executor.read(move |conn| {
-        Ok(subconscious::run_subconscious(&content_for_subconscious, conn))
+        Ok(subconscious::run_subconscious(&content_for_subconscious, Some(&exclude_iri), conn))
     }).await.unwrap_or_default();
 
     if !subconscious_entities.is_empty() {
@@ -262,11 +264,11 @@ pub async fn chat__send_and_reply(
             );
         }
 
-        if cancellation.is_cancelled() {
+        if cancellation.is_cancelled(&conversation_id) {
             break;
         }
 
-        app.emit("ai-status", serde_json::json!({ "status": "Loading conversation history" })).ok();
+        app.emit("ai-status", serde_json::json!({ "status": "Loading conversation history", "conversationId": conversation_id })).ok();
 
         let history = load_conversation_history(&executor, &conversation_id, agent_config.max_tokens).await?;
         super::log_backend(
@@ -328,7 +330,7 @@ pub async fn chat__send_and_reply(
         );
         let assistant = crate::ai::AIAssistant::new(Box::new(provider));
 
-        app.emit("ai-status", serde_json::json!({ "status": "Claude is thinking" })).ok();
+        app.emit("ai-status", serde_json::json!({ "status": "Claude is thinking", "conversationId": conversation_id })).ok();
         super::log_backend("info", "[CHAT] Calling Claude API...");
 
         let api_result = tokio::select! {
@@ -408,7 +410,8 @@ pub async fn chat__send_and_reply(
                     "Executing {} tool{}",
                     tool_count,
                     if tool_count != 1 { "s" } else { "" }
-                )
+                ),
+                "conversationId": conversation_id
             })).ok();
 
             super::log_backend("info", "[CHAT] Executing tools...");
@@ -426,7 +429,7 @@ pub async fn chat__send_and_reply(
 
             app.emit("chat-message-added", ()).ok();
 
-            if cancellation.is_cancelled() {
+            if cancellation.is_cancelled(&conversation_id) {
                 break;
             }
 
@@ -586,7 +589,7 @@ pub async fn chat__edit_and_retry(
     executor: State<'_, DbExecutor>,
     cancellation: State<'_, CancellationState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let _cancel_rx = cancellation.begin();
+    let _cancel_rx = cancellation.begin(&conversation_id);
 
     let msg_timestamp = executor.read(move |conn| {
         let ind = Individual::get(conn, &message_iri)
@@ -682,7 +685,7 @@ pub async fn chat__retry_from_message(
     executor: State<'_, DbExecutor>,
     cancellation: State<'_, CancellationState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let _cancel_rx = cancellation.begin();
+    let _cancel_rx = cancellation.begin(&conversation_id);
 
     let msg_timestamp = executor.read(move |conn| {
         let ind = Individual::get(conn, &message_iri)

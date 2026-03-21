@@ -106,9 +106,20 @@
 
 .markdown-content table {
   border-collapse: collapse;
-  width: 100%;
+  width: max-content;
+  max-width: 100%;
   margin: 0.5em 0;
   font-size: 0.95em;
+}
+
+.markdown-content .table-wrapper {
+  overflow-x: auto;
+  width: 100%;
+  margin: 0.5em 0;
+}
+
+.markdown-content .table-wrapper table {
+  margin: 0;
 }
 
 .markdown-content th,

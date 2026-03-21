@@ -4,7 +4,7 @@
   import IoHandleLabel from './IoHandleLabel.svelte'
   let { data } = $props()
 
-  const hasMeta = $derived(data.assignedToRole || data.assignedToUser || data.usesTools?.length > 0)
+  const hasMeta = $derived(data.assignedToRoles?.length > 0 || data.assignedToUsers?.length > 0 || data.usesTools?.length > 0)
   const toolsLabel = $derived(data.usesTools?.join(', ') ?? '')
 </script>
 
@@ -16,18 +16,18 @@
     <div class="content">
       {#if hasMeta}
         <div class="meta-row">
-          {#if data.assignedToRole}
+          {#each data.assignedToRoles ?? [] as role}
             <span class="meta-item">
               <span class="material-symbols-outlined meta-icon">groups</span>
-              <span class="meta-label">{data.assignedToRole}</span>
+              <span class="meta-label">{role}</span>
             </span>
-          {/if}
-          {#if data.assignedToUser}
+          {/each}
+          {#each data.assignedToUsers ?? [] as user}
             <span class="meta-item">
               <span class="material-symbols-outlined meta-icon">account_circle</span>
-              <span class="meta-label">{data.assignedToUser}</span>
+              <span class="meta-label">{user}</span>
             </span>
-          {/if}
+          {/each}
           {#if toolsLabel}
             <span class="meta-item">
               <span class="material-symbols-outlined meta-icon">build</span>

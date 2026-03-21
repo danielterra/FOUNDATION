@@ -134,6 +134,7 @@ pub fn run() {
             commands::widget_inspector__update_property,
             commands::widget_inspector__set_references,
             commands::widget_inspector__update_status,
+            commands::widget_inspector__delete_individual,
             commands::shortcuts__get_all,
             commands::log_frontend,
             commands::get_log_file_path_command,

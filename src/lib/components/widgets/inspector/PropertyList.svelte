@@ -13,6 +13,36 @@
     openEntityInspector, onSave, onSaveReference,
   } = $props();
 
+  let hintVisible = $state(false);
+  let hintX = $state(0);
+  let hintY = $state(0);
+  let hintDesc = $state('');
+  let hintSourceLabel = $state('');
+  let hintSourceIcon = $state('');
+
+  function showHint(e, desc, sourceLabel, sourceIcon) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    hintDesc = desc ?? '';
+    hintSourceLabel = sourceLabel ?? '';
+    hintSourceIcon = sourceIcon ?? '';
+    hintX = rect.left + rect.width / 2;
+    hintY = rect.top - 8;
+    hintVisible = true;
+  }
+
+  function hideHint() {
+    hintVisible = false;
+  }
+
+  function bodyPortal(node) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      }
+    };
+  }
+
   let editingKey = $state(null);
   let draftValue = $state('');
   let editingDatatype = $state(null);
@@ -124,7 +154,6 @@
   }
 
   let optionalCollapsed = $state(true);
-  let emptyCollapsed = $state(true);
 
   const groupedDetails = $derived(
     (properties ?? []).reduce((acc, prop) => {
@@ -135,6 +164,7 @@
           propertyComment: prop.propertyComment,
           isObjectProperty: prop.isObjectProperty,
           sourceClassLabel: prop.sourceClassLabel,
+          sourceClassIcon: prop.sourceClassIcon,
           datatype: prop.datatype,
           rangeClassIri: prop.rangeClassIri,
           rangeClassLabel: prop.rangeClassLabel,
@@ -193,12 +223,11 @@
     } else {
       const filled = all.filter(g => !g.isEmpty);
       const empty = all.filter(g => g.isEmpty);
+      const allItems = [...filled, ...empty];
       return {
         mode: 'thing',
-        filled: groupBySource(filled),
-        empty: groupBySource(empty),
-        filledCount: filled.length,
-        emptyCount: empty.length,
+        all: [{ sourceClassLabel: null, items: allItems }],
+        allCount: allItems.length,
       };
     }
   });
@@ -360,6 +389,13 @@
     <div class="detail-header">
       <div class="detail-name">
         {detailGroup.propertyLabel}
+        {#if detailGroup.propertyComment || detailGroup.sourceClassLabel}
+          <span
+            class="material-symbols-outlined prop-info"
+            onmouseenter={(e) => showHint(e, detailGroup.propertyComment, detailGroup.sourceClassLabel, detailGroup.sourceClassIcon)}
+            onmouseleave={hideHint}
+          >info</span>
+        {/if}
         {#if detailGroup.isObjectProperty}
           <span class="detail-type detail-type-object">
             {#if detailGroup.rangeClassIcon}
@@ -395,10 +431,6 @@
         </button>
       {/if}
     </div>
-
-    {#if detailGroup.propertyComment}
-      <div class="detail-comment">{detailGroup.propertyComment}</div>
-    {/if}
 
     {#if editingRefKey === detailGroup.property}
       <ReferenceSelect
@@ -566,6 +598,28 @@
   {/each}
 {/snippet}
 
+<div
+  use:bodyPortal
+  class="prop-hint-portal"
+  class:prop-hint-visible={hintVisible}
+  style:left="{hintX}px"
+  style:top="{hintY}px"
+>
+  {#if hintDesc}
+    <p class="prop-hint-desc">{hintDesc}</p>
+  {/if}
+  {#if hintSourceLabel}
+    <div class="prop-hint-source" class:with-sep={hintDesc}>
+      <span class="prop-hint-chip">
+        {#if hintSourceIcon}
+          <span class="material-symbols-outlined prop-hint-chip-icon">{hintSourceIcon}</span>
+        {/if}
+        {hintSourceLabel}
+      </span>
+    </div>
+  {/if}
+</div>
+
 {#if properties?.length > 0}
   <div class="details-list">
 
@@ -606,30 +660,9 @@
 
     {:else}
 
-      {#if sections.filledCount > 0}
+      {#if sections.allCount > 0}
         <div class="section-body">
-          {@render sourceGroups(sections.filled, 0)}
-        </div>
-      {/if}
-
-      {#if sections.emptyCount > 0}
-        <div class="section">
-          <button
-            class="section-header collapsible"
-            use:sticky={{ top: 0 }}
-            onclick={() => emptyCollapsed = !emptyCollapsed}
-          >
-            <span class="material-symbols-outlined chevron" class:expanded={!emptyCollapsed}>
-              chevron_right
-            </span>
-            <span class="section-title">Empty fields</span>
-            <span class="section-count">{sections.emptyCount}</span>
-          </button>
-          {#if !emptyCollapsed}
-            <div class="section-body" transition:slide={{ duration: 300, easing: cubicOut }}>
-              {@render sourceGroups(sections.empty, 28)}
-            </div>
-          {/if}
+          {@render sourceGroups(sections.all, 0)}
         </div>
       {/if}
 
@@ -749,12 +782,27 @@
 
   .detail-name {
     font-family: var(--font-title);
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
     color: var(--color-neutral-active);
     display: flex;
     align-items: center;
     gap: 6px;
+  }
+
+  .prop-info {
+    font-size: 13px;
+    color: var(--color-neutral);
+    opacity: 0.45;
+    cursor: default;
+    user-select: none;
+    flex-shrink: 0;
+  }
+
+  .prop-info:hover {
+    opacity: 0.8;
   }
 
   .detail-type {
@@ -783,13 +831,6 @@
     color: var(--color-accent);
     border-radius: 4px;
     font-weight: 600;
-  }
-
-  .detail-comment {
-    font-size: 12px;
-    color: var(--color-neutral);
-    margin-bottom: 8px;
-    line-height: 1.4;
   }
 
   .empty-value {
@@ -1119,5 +1160,66 @@
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  :global(.prop-hint-portal) {
+    position: fixed;
+    z-index: 2147483647;
+    transform: translate(-50%, -100%);
+    background: color-mix(in srgb, var(--color-black) 88%, var(--color-white) 12%);
+    border: 1px solid color-mix(in srgb, var(--color-neutral) 22%, transparent);
+    border-radius: 6px;
+    padding: 8px 10px;
+    min-width: 160px;
+    max-width: 260px;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.12s, visibility 0.12s;
+    box-shadow: 0 4px 16px color-mix(in srgb, var(--color-black) 60%, transparent);
+    text-transform: none;
+    letter-spacing: normal;
+    font-family: var(--font-body);
+  }
+
+  :global(.prop-hint-portal.prop-hint-visible) {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  :global(.prop-hint-desc) {
+    font-size: 11px;
+    color: var(--color-neutral-active);
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  :global(.prop-hint-source) {
+    display: flex;
+    align-items: center;
+  }
+
+  :global(.prop-hint-source.with-sep) {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid color-mix(in srgb, var(--color-neutral) 15%, transparent);
+  }
+
+  :global(.prop-hint-chip) {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px 2px 5px;
+    background: color-mix(in srgb, var(--color-neutral) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-neutral) 20%, transparent);
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--color-neutral);
+  }
+
+  :global(.prop-hint-chip-icon) {
+    font-size: 12px;
+    opacity: 0.8;
   }
 </style>

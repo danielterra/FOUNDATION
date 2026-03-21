@@ -16,8 +16,9 @@
 	// State
 	let messages = $state([]);
 	let inputText = $state('');
-	let isLoading = $state(false);
-	let aiStatus = $state(null);  // { status: string, startTime: number }
+	let convLoading = $state({}); // {[iri]: {isLoading, aiStatus, elapsedSeconds, elapsedInterval}}
+	let isLoading = $derived(convLoading[activeConversationIri]?.isLoading ?? false);
+	let aiStatus = $derived(convLoading[activeConversationIri]?.aiStatus ?? null);
 	let chatContainer = $state(null);
 	let userLocation = $state(null);
 	let apiKey = $state('');
@@ -30,8 +31,7 @@
 	let textareaElement = $state(null);
 	let pendingAttachments = $state([]);  // {iri, fileName, mimeType, fileSize, localPath}
 	let fileInputElement = $state(null);
-	let elapsedSeconds = $state(0);
-	let elapsedInterval = $state(null);
+	let elapsedSeconds = $derived(convLoading[activeConversationIri]?.elapsedSeconds ?? 0);
 	let errorMessage = $state(null);
 	let editingMessageIri = $state(null);
 	let editingMessageText = $state('');
@@ -91,19 +91,21 @@
 			await loadMessages();
 		});
 
-		const unlistenAIProcessing = await listen('ai-processing-started', () => {
-			startAIStatus('Claude is thinking');
+		const unlistenAIProcessing = await listen('ai-processing-started', (event) => {
+			const iri = event.payload?.conversationId ?? activeConversationIri;
+			startAIStatus('Claude is thinking', iri);
 		});
 
 		const unlistenAIStatus = await listen('ai-status', (event) => {
-			if (event.payload && event.payload.status) {
-				startAIStatus(event.payload.status);
+			if (event.payload?.status) {
+				const iri = event.payload.conversationId ?? activeConversationIri;
+				startAIStatus(event.payload.status, iri);
 			}
 		});
 
 		const unlistenAIError = await listen('ai-error', (event) => {
-			stopAIStatus();
-			if (event.payload && event.payload.message) {
+			stopAIStatus(activeConversationIri);
+			if (event.payload?.message) {
 				showError(event.payload.message);
 			}
 		});
@@ -121,8 +123,8 @@
 			unlistenAIStatus();
 			unlistenAIError();
 			document.removeEventListener('chat-inject', handleChatInject);
-			if (elapsedInterval) {
-				clearInterval(elapsedInterval);
+			for (const state of Object.values(convLoading)) {
+				if (state.elapsedInterval) clearInterval(state.elapsedInterval);
 			}
 		};
 	});
@@ -325,33 +327,24 @@
 		}
 	}
 
-	function startAIStatus(status) {
-		isLoading = true;
-		aiStatus = {
-			status,
-			startTime: Date.now()
-		};
-		elapsedSeconds = 0;
-
-		if (elapsedInterval) {
-			clearInterval(elapsedInterval);
-		}
-
-		elapsedInterval = setInterval(() => {
-			if (aiStatus) {
-				elapsedSeconds = Math.floor((Date.now() - aiStatus.startTime) / 1000);
+	function startAIStatus(status, iri = activeConversationIri) {
+		const existing = convLoading[iri];
+		if (existing?.elapsedInterval) clearInterval(existing.elapsedInterval);
+		const startTime = Date.now();
+		const elapsedInterval = setInterval(() => {
+			const s = convLoading[iri];
+			if (s?.aiStatus) {
+				convLoading[iri] = { ...s, elapsedSeconds: Math.floor((Date.now() - s.aiStatus.startTime) / 1000) };
 			}
 		}, 1000);
+		convLoading[iri] = { isLoading: true, aiStatus: { status, startTime }, elapsedSeconds: 0, elapsedInterval };
 	}
 
-	function stopAIStatus() {
-		isLoading = false;
-		aiStatus = null;
-		elapsedSeconds = 0;
-		if (elapsedInterval) {
-			clearInterval(elapsedInterval);
-			elapsedInterval = null;
-		}
+	function stopAIStatus(iri = activeConversationIri) {
+		const existing = convLoading[iri];
+		if (!existing) return;
+		if (existing.elapsedInterval) clearInterval(existing.elapsedInterval);
+		convLoading[iri] = { isLoading: false, aiStatus: null, elapsedSeconds: 0, elapsedInterval: null };
 	}
 
 	function showError(msg) {
@@ -381,21 +374,23 @@
 	}
 
 	async function retryMessage(iri) {
-		if (isLoading || !isInitialized) return;
+		const convIri = activeConversationIri;
+		if ((convLoading[convIri]?.isLoading ?? false) || !isInitialized) return;
 
-		startAIStatus('Claude is thinking');
+		startAIStatus('Claude is thinking', convIri);
 
-		invoke('chat__retry_from_message', { messageIri: iri, conversationId: activeConversationIri }).then(() => {
-			stopAIStatus();
+		invoke('chat__retry_from_message', { messageIri: iri, conversationId: convIri }).then(() => {
+			stopAIStatus(convIri);
 		}).catch(err => {
 			console.error('Failed to retry message:', err);
 			showError(err);
-			stopAIStatus();
+			stopAIStatus(convIri);
 		});
 	}
 
 	async function sendMessage() {
-		if ((!inputText.trim() && pendingAttachments.length === 0) || isLoading || !isInitialized) return;
+		const convIri = activeConversationIri;
+		if ((!inputText.trim() && pendingAttachments.length === 0) || (convLoading[convIri]?.isLoading ?? false) || !isInitialized) return;
 
 		const content = inputText.trim();
 
@@ -408,14 +403,14 @@
 				textareaElement.style.height = 'auto';
 			}
 
-			startAIStatus('Claude is thinking');
+			startAIStatus('Claude is thinking', convIri);
 
-			invoke('chat__edit_and_retry', { messageIri: iri, newContent: content, conversationId: activeConversationIri }).then(() => {
-				stopAIStatus();
+			invoke('chat__edit_and_retry', { messageIri: iri, newContent: content, conversationId: convIri }).then(() => {
+				stopAIStatus(convIri);
 			}).catch(err => {
 				console.error('Failed to edit message:', err);
 				showError(err);
-				stopAIStatus();
+				stopAIStatus(convIri);
 			});
 			return;
 		}
@@ -431,21 +426,21 @@
 			textareaElement.style.height = 'auto';
 		}
 
-		startAIStatus('Claude is thinking');
+		startAIStatus('Claude is thinking', convIri);
 
 		invoke('chat__send_and_reply', {
 			content,
 			latitude: userLocation?.latitude ?? null,
 			longitude: userLocation?.longitude ?? null,
 			attachmentIris: attachmentIris.length > 0 ? attachmentIris : null,
-			conversationId: activeConversationIri,
+			conversationId: convIri,
 			cameraImages: cameraImages.length > 0 ? cameraImages : null,
 		}).then(() => {
-			stopAIStatus();
+			stopAIStatus(convIri);
 		}).catch(err => {
 			console.error('Failed to send message:', err);
 			showError(err);
-			stopAIStatus();
+			stopAIStatus(convIri);
 		});
 	}
 
@@ -459,8 +454,9 @@
 
 	function cancelAI() {
 		if (!isLoading) return;
-		stopAIStatus();
-		invoke('chat__cancel').catch(err => console.error('Failed to cancel AI:', err));
+		const convIri = activeConversationIri;
+		stopAIStatus(convIri);
+		invoke('chat__cancel', { conversationId: convIri }).catch(err => console.error('Failed to cancel AI:', err));
 	}
 
 	function handleKeydown(e) {

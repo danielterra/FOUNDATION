@@ -164,7 +164,8 @@ pub fn execute_tool(
         "class_graph" => concept_graph::get_concept_graph(conn, args),
         "blackboard_state" => blackboard::blackboard_state(conn, conversation_id),
         "blackboard_update" => blackboard::blackboard_update(conn, args, app, conversation_id),
-        "run_process" => run_process_tool(args, app),
+        "get_automation" => get_automation_tool(conn, args),
+        "run_automation" => run_automation_tool(args, app),
         _ => ToolResult {
             success: false,
             result: None,
@@ -174,32 +175,106 @@ pub fn execute_tool(
     }
 }
 
-fn run_process_tool(args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult {
+fn get_automation_tool(conn: &rusqlite::Connection, args: &Value) -> ToolResult {
+    let automation_iri = match args["automation_iri"].as_str() {
+        Some(iri) if !iri.is_empty() => iri,
+        _ => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("automation_iri is required".to_string()),
+            concept: None,
+        },
+    };
+
+    let graph = match crate::commands::automation::build_automation_graph(conn, automation_iri) {
+        Ok(g) => g,
+        Err(e) => return ToolResult {
+            success: false,
+            result: None,
+            error: Some(e),
+            concept: None,
+        },
+    };
+
+    let mut lines = vec![
+        format!("# Automation: {}", graph.process_label),
+        format!("IRI: {}", automation_iri),
+        String::new(),
+        "## Flow Nodes".to_string(),
+    ];
+
+    for node in &graph.nodes {
+        lines.push(format!("- [{}] {} ({})", node.node_type, node.label, node.id));
+        if let Some(ref agent) = node.assigned_agent {
+            lines.push(format!("  assigned_agent: {}", agent));
+        }
+        for role in &node.assigned_to_roles {
+            lines.push(format!("  assigned_to_role: {}", role));
+        }
+        for user in &node.assigned_to_users {
+            lines.push(format!("  assigned_to_user: {}", user));
+        }
+        if !node.uses_tools.is_empty() {
+            lines.push(format!("  uses_tools: {}", node.uses_tools.join(", ")));
+        }
+        if let Some(ref lbl) = node.input_concept_label {
+            lines.push(format!("  input: {}", lbl));
+        }
+        if let Some(ref lbl) = node.output_concept_label {
+            lines.push(format!("  output: {}", lbl));
+        }
+        for c in &node.output_concepts {
+            lines.push(format!("  output: {}", c.label));
+        }
+        if let Some(ref proc_iri) = node.invokes_process {
+            lines.push(format!("  calls: {}", proc_iri));
+        }
+    }
+
+    lines.push(String::new());
+    lines.push("## Sequence Flows".to_string());
+
+    for edge in &graph.edges {
+        let condition = edge.condition_expression.as_deref()
+            .map(|c| format!(" [if: {}]", c))
+            .unwrap_or_default();
+        lines.push(format!("- {} → {}{}", edge.source, edge.target, condition));
+    }
+
+    ToolResult {
+        success: true,
+        result: Some(Value::String(lines.join("\n"))),
+        error: None,
+        concept: None,
+    }
+}
+
+fn run_automation_tool(args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult {
     let app = match app {
         Some(a) => a.clone(),
         None => return ToolResult {
             success: false,
             result: None,
-            error: Some("run_process requires a running Foundation app".to_string()),
+            error: Some("run_automation requires a running Foundation app".to_string()),
             concept: None,
         },
     };
 
-    let process_iri = match args["process_iri"].as_str() {
+    let automation_iri = match args["automation_iri"].as_str() {
         Some(iri) if !iri.is_empty() => iri.to_string(),
         _ => return ToolResult {
             success: false,
             result: None,
-            error: Some("process_iri is required".to_string()),
+            error: Some("automation_iri is required".to_string()),
             concept: None,
         },
     };
 
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = crate::process_automation::executor::run_process(&app, &process_iri, None).await {
+        if let Err(e) = crate::process_automation::executor::run_process(&app, &automation_iri, None).await {
             crate::commands::log_backend(
                 "error",
-                &format!("[run_process] Error running {}: {}", process_iri, e),
+                &format!("[run_automation] Error running {}: {}", automation_iri, e),
             );
         }
     });

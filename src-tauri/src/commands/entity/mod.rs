@@ -80,6 +80,8 @@ pub struct PropertyValue {
     pub is_object_property: bool,
     pub source_class: Option<String>,
     pub source_class_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_class_icon: Option<String>,
     pub unit: Option<String>,
     pub unit_label: Option<String>,
     pub datatype: Option<String>,
@@ -254,6 +256,24 @@ pub async fn widget_inspector__update_status(
         Ok("updated".to_string())
     }).await?;
     app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__delete_individual(
+    entity_id: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let entity_id_clone = entity_id.clone();
+    executor.write(move |conn| {
+        Individual::retract(conn, &entity_id_clone, "user")
+            .map_err(|e| e.to_string())?;
+        Ok("retracted".to_string())
+    }).await?;
+    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    app.emit("entity-deleted", serde_json::json!({ "entityId": entity_id })).ok();
     Ok(())
 }
 
@@ -444,6 +464,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             is_object_property: true,
             source_class: None,
             source_class_label: None,
+            source_class_icon: None,
             unit: None,
             unit_label: None,
             datatype: None,
@@ -472,6 +493,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             is_object_property: true,
             source_class: None,
             source_class_label: None,
+            source_class_icon: None,
             unit: None,
             unit_label: None,
             datatype: None,
@@ -505,11 +527,11 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             })
             .unwrap_or_else(|| ("owl:Thing".to_string(), "Any".to_string(), None));
 
-        let (source_class, source_class_label) = if source_class_iri != class_id {
+        let (source_class, source_class_label, source_class_icon) = if source_class_iri != class_id {
             let source_thing = crate::owl::Thing::get(conn, source_class_iri);
-            (Some(source_class_iri.clone()), Some(source_thing.label))
+            (Some(source_class_iri.clone()), Some(source_thing.label), source_thing.icon)
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
@@ -536,6 +558,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             is_object_property,
             source_class,
             source_class_label,
+            source_class_icon,
             unit,
             unit_label,
             datatype: None,
@@ -583,6 +606,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             is_object_property,
             source_class: None,
             source_class_label: None,
+            source_class_icon: None,
             unit: None,
             unit_label: None,
             datatype: value_obj.datatype().map(|s| s.to_string()),
@@ -655,6 +679,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             is_object_property: true,
             source_class: Some(class_id.to_string()),
             source_class_label: None,
+            source_class_icon: None,
             unit: None,
             unit_label: None,
             datatype: None,

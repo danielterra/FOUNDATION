@@ -1,37 +1,49 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::collections::HashMap;
 use tokio::sync::oneshot;
 
+struct ConvCancel {
+    cancelled: bool,
+    tx: Option<oneshot::Sender<()>>,
+}
+
 pub struct AiCancellationState {
-    cancelled: AtomicBool,
-    cancel_tx: Mutex<Option<oneshot::Sender<()>>>,
+    convs: Mutex<HashMap<String, ConvCancel>>,
 }
 
 impl AiCancellationState {
     pub fn new() -> Self {
-        Self {
-            cancelled: AtomicBool::new(false),
-            cancel_tx: Mutex::new(None),
-        }
+        Self { convs: Mutex::new(HashMap::new()) }
     }
 
-    /// Call at the start of a new AI execution. Resets the flag and returns a
-    /// receiver that resolves immediately when `cancel()` is called.
-    pub fn begin(&self) -> oneshot::Receiver<()> {
+    /// Call at the start of a new AI execution for a conversation. Resets the cancelled flag
+    /// and returns a receiver that resolves immediately when `cancel()` is called.
+    pub fn begin(&self, conv_id: &str) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
-        *self.cancel_tx.lock().unwrap() = Some(tx);
-        self.cancelled.store(false, Ordering::SeqCst);
+        let mut map = self.convs.lock().unwrap();
+        if let Some(old) = map.get_mut(conv_id) {
+            old.cancelled = true;
+            if let Some(old_tx) = old.tx.take() {
+                let _ = old_tx.send(());
+            }
+        }
+        map.insert(conv_id.to_string(), ConvCancel { cancelled: false, tx: Some(tx) });
         rx
     }
 
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
-        if let Some(tx) = self.cancel_tx.lock().unwrap().take() {
-            let _ = tx.send(());
+    pub fn cancel(&self, conv_id: &str) {
+        let mut map = self.convs.lock().unwrap();
+        if let Some(c) = map.get_mut(conv_id) {
+            c.cancelled = true;
+            if let Some(tx) = c.tx.take() {
+                let _ = tx.send(());
+            }
         }
     }
 
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::SeqCst)
+    pub fn is_cancelled(&self, conv_id: &str) -> bool {
+        self.convs.lock().unwrap()
+            .get(conv_id)
+            .map_or(false, |c| c.cancelled)
     }
 }

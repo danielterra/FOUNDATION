@@ -535,14 +535,29 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
 
         ToolTemplate {
-            name: "run_process".to_string(),
+            name: "get_automation".to_string(),
             array_mode: false,
-            description: "Use to start a BPMN process asynchronously. Returns immediately; execution happens in the background.".to_string(),
+            description: "Return the full structure of an automation: all flow nodes (with type, label, assigned agent/role/user, tools, input/output concepts) and all sequence flows (with condition expressions). Use this to understand or reason about an automation before running or modifying it.".to_string(),
             parameters: vec![
                 Parameter {
-                    name: "process_iri".to_string(),
+                    name: "automation_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "IRI of the Automation process to execute".to_string(),
+                    description: "IRI of the Automation to inspect".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "run_automation".to_string(),
+            array_mode: false,
+            description: "Start an automation (BPMN process) asynchronously. Returns immediately; execution happens in the background.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "automation_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the Automation to execute".to_string(),
                     required: true,
                     schema: None,
                 },

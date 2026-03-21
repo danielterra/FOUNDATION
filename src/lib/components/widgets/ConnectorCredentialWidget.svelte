@@ -69,6 +69,16 @@
     }
   }
 
+  async function openInspector() {
+    await invoke('widget_blackboard__add_widget', {
+      widgetType: 'inspector',
+      entityId,
+      position: null,
+      size: null,
+      conversationId: null,
+    }).catch(() => {});
+  }
+
   async function closeWidget() {
     try {
       await invoke('widget_blackboard__remove_widget', { widgetId });
@@ -94,6 +104,9 @@
           <span class="material-symbols-outlined">check_circle</span>
         </span>
       {/if}
+      <button class="close-btn" onclick={openInspector} title="Open inspector">
+        <span class="material-symbols-outlined">info</span>
+      </button>
       <button class="close-btn" onclick={closeWidget}>
         <span class="material-symbols-outlined">close</span>
       </button>

@@ -96,8 +96,8 @@
           outputConceptIcon: n.output_concept_icon ?? null,
           messagePayload: n.message_payload ?? null,
           usesTools: n.uses_tools ?? [],
-          assignedToRole: n.assigned_to_role ?? null,
-          assignedToUser: n.assigned_to_user ?? null,
+          assignedToRoles: n.assigned_to_roles ?? [],
+          assignedToUsers: n.assigned_to_users ?? [],
           outputConcepts: n.output_concepts ?? [],
         },
         position: { x: 0, y: 0 },
@@ -113,6 +113,7 @@
           target: e.target,
           type: 'default',
           animated: true,
+          sourceHandle: e.source_handle ?? undefined,
           label: conditionLabel ?? undefined,
           labelStyle: conditionLabel ? 'background:#1e293b;color:#f1f5f9;padding:2px 7px;border-radius:4px;border:1px solid #475569;font-size:11px;font-weight:500;' : undefined,
         }
@@ -120,7 +121,16 @@
 
       nodes = applyDagreLayout(flowNodes, flowEdges)
       edges = flowEdges
-      watchedIris = new Set([entityId, ...data.nodes.map(n => n.id)])
+      const iris = new Set([entityId, ...data.nodes.map(n => n.id), ...(data.sequence_flow_iris ?? [])])
+      for (const n of data.nodes.filter(n => n.invokes_process)) {
+        iris.add(n.invokes_process)
+        try {
+          const subRaw = await invoke('automation__get_graph', { automationIri: n.invokes_process })
+          const subData = JSON.parse(subRaw)
+          subData.nodes.forEach(sn => iris.add(sn.id))
+        } catch {}
+      }
+      watchedIris = iris
     } catch (e) {
       error = String(e)
     } finally {
@@ -128,8 +138,16 @@
     }
   }
 
-  async function handleNodeClick({ node }) {
-    if (node.data.invokesProcess) {
+  async function handleNodeClick({ node, event }) {
+    if (event?.metaKey && node.data.invokesProcess) {
+      await invoke('widget_blackboard__add_widget', {
+        widgetType: 'inspector',
+        entityId: node.id,
+        position: null,
+        size: null,
+        conversationId: conversationIri,
+      }).catch(e => console.error('Failed to open inspector:', e))
+    } else if (node.data.invokesProcess) {
       await invoke('widget_blackboard__add_widget', {
         widgetType: 'automation',
         entityId: node.data.invokesProcess,
@@ -166,6 +184,16 @@
     } finally {
       running = false
     }
+  }
+
+  async function openInspector() {
+    await invoke('widget_blackboard__add_widget', {
+      widgetType: 'inspector',
+      entityId,
+      position: null,
+      size: null,
+      conversationId: conversationIri,
+    }).catch(() => {})
   }
 
   async function closeWidget() {
@@ -234,6 +262,9 @@
       </button>
       <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
         <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
+      </button>
+      <button class="action-btn" onclick={openInspector} title="Open inspector">
+        <span class="material-symbols-outlined">info</span>
       </button>
       <button class="close-btn" onclick={closeWidget}>
         <span class="material-symbols-outlined">close</span>

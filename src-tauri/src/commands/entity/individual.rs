@@ -106,6 +106,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             is_object_property,
             source_class: None,
             source_class_label: None,
+            source_class_icon: None,
             unit,
             unit_label,
             datatype,
@@ -147,11 +148,11 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                     let property_comment = prop.comment;
                     let is_object_property = prop.property_type == crate::owl::PropertyType::ObjectProperty;
 
-                    let (source_class, source_class_label) = if source_class_iri != &type_thing.iri {
+                    let (source_class, source_class_label, source_class_icon) = if source_class_iri != &type_thing.iri {
                         let source_thing = crate::owl::Thing::get(conn, source_class_iri);
-                        (Some(source_class_iri.clone()), Some(source_thing.label))
+                        (Some(source_class_iri.clone()), Some(source_thing.label), source_thing.icon)
                     } else {
-                        (None, None)
+                        (None, None, None)
                     };
 
                     let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
@@ -179,6 +180,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         is_object_property,
                         source_class,
                         source_class_label,
+                        source_class_icon,
                         unit,
                         unit_label,
                         datatype: None,
@@ -432,6 +434,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             is_object_property: true,
             source_class: source_class_iri,
             source_class_label,
+            source_class_icon: None,
             unit: None,
             unit_label: None,
             datatype: None,

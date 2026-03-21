@@ -10,7 +10,7 @@ mod chat_storage;
 pub mod widget;
 mod connector;
 mod connector_package;
-mod automation;
+pub mod automation;
 
 pub use setup::*;
 pub use entity::*;
