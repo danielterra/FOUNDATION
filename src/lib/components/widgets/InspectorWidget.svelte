@@ -29,6 +29,7 @@
   let unlistenEntityDeleted = $state(null);
   let applicableAutomations = $state([]);
   let runningAutomationIri = $state(null);
+  let togglingLock = $state(false);
   let showStatusPicker = $state(false);
   let statusBadgeWrapperEl = $state(null);
   let showDeleteConfirm = $state(false);
@@ -235,6 +236,20 @@
     }
   }
 
+  const isLocked = $derived(entityData?.isLocked === true);
+
+  async function toggleSystemLock() {
+    if (!entityData?.id || togglingLock) return;
+    togglingLock = true;
+    try {
+      await invoke('widget_inspector__set_system_locked', { entityId: entityData.id, locked: !isLocked });
+    } catch (err) {
+      console.error('Failed to toggle system lock:', err);
+    } finally {
+      togglingLock = false;
+    }
+  }
+
   const isAutomationWithoutInputClass = $derived(
     entityData?.types?.some(t => t.iri === 'foundation:Automation') &&
     !entityData?.properties?.some(p => p.property === 'foundation:inputClass')
@@ -367,7 +382,20 @@
               <span class="material-symbols-outlined">{defIcon}</span>
             </button>
           {/each}
-          {#if entityData && !entityData.isClass}
+          {#if entityData}
+            <button
+              class="action-btn"
+              class:action-btn--locked={isLocked}
+              onclick={toggleSystemLock}
+              disabled={togglingLock}
+              title={isLocked ? 'Unlock entity' : 'Lock entity'}
+            >
+              <span class="material-symbols-outlined">
+                {isLocked ? 'lock' : 'lock_open'}
+              </span>
+            </button>
+          {/if}
+          {#if entityData && !entityData.isClass && !isLocked}
             <button
               class="action-btn action-btn--danger"
               onclick={() => showDeleteConfirm = true}
@@ -397,11 +425,11 @@
           <div class="status-badge-wrapper" bind:this={statusBadgeWrapperEl}>
             <button
               class="status-badge"
-              class:clickable={entityData.allowedStatuses?.length > 0}
+              class:clickable={entityData.allowedStatuses?.length > 0 && !isLocked}
               style="--status-color: {entityData.status.color || 'var(--color-neutral)'}"
-              title={entityData.status.iri}
+              title={isLocked ? 'Entity is system-locked' : entityData.status.iri}
               onclick={() => {
-                if (entityData.allowedStatuses?.length > 0) showStatusPicker = !showStatusPicker;
+                if (entityData.allowedStatuses?.length > 0 && !isLocked) showStatusPicker = !showStatusPicker;
               }}
             >
               <span class="material-symbols-outlined status-badge-icon">{statusIcon}</span>
@@ -448,10 +476,19 @@
       </div>
     {:else if entityData}
       <div class="content-scroll">
+        {#if isLocked}
+          <div class="locked-banner">
+            <span class="material-symbols-outlined locked-banner-icon">lock</span>
+            <div class="locked-banner-body">
+              <span class="locked-banner-title">System Locked</span>
+              <span class="locked-banner-desc">This entity is protected. Use the lock icon to unlock it.</span>
+            </div>
+          </div>
+        {/if}
         <MetaFields
           label={entityData?.label}
           comment={entityData?.comment}
-          onSave={saveProperty}
+          onSave={isLocked ? null : saveProperty}
         />
 
         <FilePreview {entityData} />
@@ -540,14 +577,16 @@
         {#if entityData.isClass}
           <div class="class-props-header">
             <span class="class-props-title">Properties</span>
-            <button
-              class="add-property-btn"
-              onclick={() => showAddPropertyForm = !showAddPropertyForm}
-              title="Add property"
-            >
-              <span class="material-symbols-outlined">{showAddPropertyForm ? 'close' : 'add'}</span>
-              {showAddPropertyForm ? 'Cancel' : 'Add property'}
-            </button>
+            {#if !isLocked}
+              <button
+                class="add-property-btn"
+                onclick={() => showAddPropertyForm = !showAddPropertyForm}
+                title="Add property"
+              >
+                <span class="material-symbols-outlined">{showAddPropertyForm ? 'close' : 'add'}</span>
+                {showAddPropertyForm ? 'Cancel' : 'Add property'}
+              </button>
+            {/if}
           </div>
           {#if showAddPropertyForm}
             <ClassPropertyForm
@@ -589,10 +628,10 @@
           requiredFields={entityData.requiredFields ?? []}
           isClass={entityData.isClass}
           {openEntityInspector}
-          onSave={entityData.isClass ? null : saveProperty}
-          onSaveReference={entityData.isClass ? null : saveReferences}
-          onEditProperty={entityData.isClass ? editClassProperty : null}
-          onRemoveProperty={entityData.isClass ? initiateRemoveProperty : null}
+          onSave={entityData.isClass || isLocked ? null : saveProperty}
+          onSaveReference={entityData.isClass || isLocked ? null : saveReferences}
+          onEditProperty={entityData.isClass && !isLocked ? editClassProperty : null}
+          onRemoveProperty={entityData.isClass && !isLocked ? initiateRemoveProperty : null}
         />
 
         <BacklinkList backlinks={entityData.backlinks} {openEntityInspector} />
@@ -930,6 +969,44 @@
     padding: 16px;
   }
 
+  .locked-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    background: color-mix(in srgb, var(--color-warning, #f59e0b) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 35%, transparent);
+    border-radius: 8px;
+  }
+
+  .locked-banner-icon {
+    font-size: 18px;
+    color: var(--color-warning, #f59e0b);
+    flex-shrink: 0;
+    padding-top: 1px;
+  }
+
+  .locked-banner-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .locked-banner-title {
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--color-warning, #f59e0b);
+  }
+
+  .locked-banner-desc {
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--color-neutral);
+    line-height: 1.4;
+  }
+
   .loading, .error {
     display: flex;
     flex-direction: column;
@@ -1238,6 +1315,15 @@
 
   .status-picker-item.active {
     background: color-mix(in srgb, var(--status-color) 30%, transparent);
+  }
+
+  .action-btn--locked {
+    color: var(--color-warning, #f59e0b);
+  }
+
+  .action-btn--locked:hover {
+    background: color-mix(in srgb, var(--color-warning, #f59e0b) 15%, transparent);
+    color: var(--color-warning, #f59e0b);
   }
 
   .action-btn--danger {

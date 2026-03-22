@@ -147,6 +147,7 @@ impl Property {
         unit: Option<&str>,
         origin: &str
     ) -> Result<()> {
+        crate::owl::check_system_locked(conn, &self.iri, None)?;
         // Validate that numeric ranges have a unit
         if let Some(range_value) = range {
             let is_numeric = matches!(
@@ -235,6 +236,7 @@ impl Property {
     }
 
     pub fn retract(conn: &mut Connection, iri: &str, origin: &str) -> Result<Vec<String>> {
+        crate::owl::check_system_locked(conn, iri, None)?;
         let facts = query::get_by_predicate(conn, iri)?;
         let mut affected: std::collections::HashSet<String> = std::collections::HashSet::new();
         let facts_to_retract: Vec<Triple> = facts.triples.into_iter()

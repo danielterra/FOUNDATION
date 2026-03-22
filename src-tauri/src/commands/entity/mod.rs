@@ -48,6 +48,7 @@ pub struct EntityData {
     pub instances: Vec<crate::owl::Thing>,
 
     pub is_class: bool,
+    pub is_locked: bool,
     pub allowed_statuses: Vec<StatusInfo>,
 
     pub properties: Vec<PropertyValue>,
@@ -438,6 +439,24 @@ pub async fn widget_inspector__remove_class_property(
     }).await?;
 
     app.emit("entity-updated", serde_json::json!({ "entityId": class_iri })).ok();
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__set_system_locked(
+    entity_id: String,
+    locked: bool,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let entity_id_clone = entity_id.clone();
+    executor.write(move |conn| {
+        owl::set_system_locked(conn, &entity_id_clone, locked)
+            .map_err(|e| e.to_string())?;
+        Ok(String::new())
+    }).await?;
+    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
     Ok(())
 }
 
@@ -888,6 +907,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
         icon,
         comment,
         is_class: true,
+        is_locked: crate::owl::is_system_locked(conn, class_id),
         allowed_statuses,
         types: class.types.clone(),
         super_classes: class.super_classes.clone(),

@@ -7,6 +7,7 @@
   let metaDraft = $state('');
 
   function startMetaEdit(field) {
+    if (!onSave) return;
     editingMeta = field;
     metaDraft = field === 'label' ? (label ?? '') : (comment ?? '');
   }
@@ -50,7 +51,7 @@
       onblur={saveMetaEdit}
       use:focusOnMount
     />
-  {:else}
+  {:else if onSave}
     <div
       class="entity-full-name editable"
       role="button"
@@ -58,6 +59,8 @@
       onclick={() => startMetaEdit('label')}
       onkeydown={(e) => e.key === 'Enter' && startMetaEdit('label')}
     >{label || '—'}</div>
+  {:else}
+    <div class="entity-full-name" title="Entity is system-locked">{label || '—'}</div>
   {/if}
 </div>
 
@@ -71,7 +74,7 @@
       rows="4"
       use:focusOnMount
     ></textarea>
-  {:else}
+  {:else if onSave}
     <div
       class="description editable"
       class:empty={!comment}
@@ -80,6 +83,14 @@
       onclick={() => startMetaEdit('comment')}
       onkeydown={(e) => e.key === 'Enter' && startMetaEdit('comment')}
     >
+      {#if comment}
+        <div class="markdown-content">{@html marked.parse(comment)}</div>
+      {:else}
+        <span class="meta-empty-hint">Add description…</span>
+      {/if}
+    </div>
+  {:else}
+    <div class="description" class:empty={!comment} title="Entity is system-locked">
       {#if comment}
         <div class="markdown-content">{@html marked.parse(comment)}</div>
       {:else}

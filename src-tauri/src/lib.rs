@@ -138,6 +138,7 @@ pub fn run() {
             commands::widget_inspector__define_class_property,
             commands::widget_inspector__check_property_usage,
             commands::widget_inspector__remove_class_property,
+            commands::widget_inspector__set_system_locked,
             commands::shortcuts__get_all,
             commands::log_frontend,
             commands::get_log_file_path_command,

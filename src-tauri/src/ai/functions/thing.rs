@@ -321,11 +321,13 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
             }
         }
 
+        let is_locked = crate::owl::is_system_locked(conn, iri);
         let mut result = serde_json::json!({
             "iri": individual.iri,
             "label": individual.label,
             "icon": individual.icon,
             "comment": individual.comment,
+            "isSystemLocked": is_locked,
             "types": individual.types.iter().map(|t| serde_json::json!({
                 "iri": t.iri,
                 "label": t.label,
@@ -471,6 +473,9 @@ fn assert_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
                     .collect())
                 .unwrap_or_default();
             provided.insert("rdfs:label".to_string());
+            if comment.is_some() {
+                provided.insert("rdfs:comment".to_string());
+            }
             for prop_iri in &required {
                 if !provided.contains(*prop_iri) {
                     return Err(crate::owl::OwlError::ValidationError(format!(

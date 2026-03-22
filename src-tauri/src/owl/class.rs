@@ -238,6 +238,7 @@ impl Class {
         super_class: Option<&str>,
         origin: &str
     ) -> Result<()> {
+        crate::owl::check_system_locked(conn, &self.iri, None)?;
         let type_iri = match class_type {
             ClassType::RdfsClass => rdfs::CLASS,
             ClassType::OwlClass => owl::CLASS,
@@ -401,6 +402,7 @@ impl Class {
 
     /// Retract all triples about this class IRI
     pub fn retract_all(conn: &mut Connection, iri: &str, origin: &str) -> Result<()> {
+        crate::owl::check_system_locked(conn, iri, None)?;
         let result = query::get_by_entity(conn, iri)?;
         let triples: Vec<Triple> = result.triples.into_iter()
             .map(|t| Triple::new(t.subject, t.predicate, t.object))

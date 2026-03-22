@@ -16,6 +16,7 @@ impl Individual {
         icon: &str,
         origin: &str
     ) -> Result<()> {
+        crate::owl::check_system_locked(conn, &self.iri, None)?;
         crate::owl::validate_icon(conn, icon)?;
 
         let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(class_iri.to_string()));
@@ -51,6 +52,7 @@ impl Individual {
         values: Vec<Object>,
         origin: &str,
     ) -> Result<()> {
+        crate::owl::check_system_locked(conn, &self.iri, Some(property))?;
         if values.is_empty() {
             return Err(OwlError::InvalidOperation(
                 format!("No values provided for property {}", property)
@@ -145,6 +147,7 @@ impl Individual {
         values: Vec<Object>,
         origin: &str,
     ) -> Result<()> {
+        crate::owl::check_system_locked(conn, &self.iri, Some(property))?;
         if values.is_empty() {
             return Err(OwlError::InvalidOperation(
                 format!("No values provided for property {}", property)
@@ -281,6 +284,7 @@ impl Individual {
         value_str: &str,
         origin: &str,
     ) -> Result<Option<Object>> {
+        crate::owl::check_system_locked(conn, iri, Some(property_iri))?;
         let result = query::get_by_entity_predicate(conn, iri, property_iri)?;
         for triple in result.triples {
             let matches = match &triple.object {
@@ -322,6 +326,7 @@ impl Individual {
         property_iri: &str,
         origin: &str,
     ) -> Result<()> {
+        crate::owl::check_system_locked(conn, iri, Some(property_iri))?;
         let result = query::get_by_entity_predicate(conn, iri, property_iri)?;
         if !result.triples.is_empty() {
             store::retract_triples(conn, &result.triples, origin)?;

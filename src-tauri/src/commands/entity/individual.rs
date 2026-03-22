@@ -486,6 +486,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         icon,
         comment,
         is_class: false,
+        is_locked: crate::owl::is_system_locked(conn, individual_id),
         allowed_statuses,
         types: individual.types.clone(),
         super_classes: vec![],

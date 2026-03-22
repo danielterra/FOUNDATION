@@ -115,6 +115,7 @@ impl Individual {
 
     /// Retract all triples for the given entity IRI, including references to it from other entities
     pub fn retract(conn: &mut Connection, iri: &str, origin: &str) -> Result<()> {
+        crate::owl::check_system_locked(conn, iri, None)?;
         let mut triples = query::get_by_entity(conn, iri)?.triples;
         triples.extend(query::get_by_object_iri(conn, iri)?.triples);
         if !triples.is_empty() {

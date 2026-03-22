@@ -64,6 +64,12 @@ impl CardinalityRestriction {
 
         if let Some(max) = self.max {
             if count > max {
+                if max == 1 {
+                    return format!(
+                        "Property '{}' is single-valued. Use replace_property_values to overwrite the existing value.",
+                        property_name
+                    );
+                }
                 return format!(
                     "Property '{}' allows at most {} value(s), but has {}",
                     property_name, max, count

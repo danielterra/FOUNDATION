@@ -155,12 +155,14 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
             .collect();
 
         let applicable_automations = super::find_automations_for_types(conn, &[iri.to_string()]);
+        let is_locked = crate::owl::is_system_locked(conn, iri);
 
         let mut response = serde_json::json!({
             "iri": concept.iri,
             "label": concept.label,
             "icon": concept.icon,
             "comment": concept.comment,
+            "isSystemLocked": is_locked,
             "types": concept.types.iter().map(|t| serde_json::json!({
                 "iri": t.iri,
                 "label": t.label,
