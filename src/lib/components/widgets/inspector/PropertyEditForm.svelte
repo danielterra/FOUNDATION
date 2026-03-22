@@ -1,4 +1,5 @@
 <script>
+  import { focus } from '$lib/utils/actions';
   let { propertyIri, draftValue = $bindable(), saving, onsave, oncancel } = $props();
 </script>
 
@@ -11,7 +12,7 @@
       if (e.key === 'Escape') oncancel();
       else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) onsave(propertyIri);
     }}
-    autofocus
+    use:focus
     rows="5"
   ></textarea>
   <div class="edit-actions">

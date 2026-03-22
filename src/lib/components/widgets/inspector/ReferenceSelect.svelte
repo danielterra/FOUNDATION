@@ -1,6 +1,7 @@
 <script>
   import { invoke } from '@tauri-apps/api/core'
   import { convertFileSrc } from '@tauri-apps/api/core'
+  import { focus } from '$lib/utils/actions'
 
   let {
     propertyIri,
@@ -125,7 +126,7 @@
         oninput={onInput}
         onfocus={() => { if (results.length > 0) showDropdown = true }}
         onblur={() => setTimeout(() => { showDropdown = false }, 150)}
-        autofocus={selected.length === 0}
+        use:focus={selected.length === 0}
       />
       {#if searching}
         <span class="material-symbols-outlined search-spin">progress_activity</span>

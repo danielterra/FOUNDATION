@@ -7,10 +7,13 @@
   import FileGrid from './FileGrid.svelte';
   import PropertyEditForm from './PropertyEditForm.svelte';
   import ReferenceSelect from './ReferenceSelect.svelte';
+  import ClassPropertyForm from './ClassPropertyForm.svelte';
+  import { sticky, focus } from '$lib/utils/actions';
 
   let {
     properties, requiredFields = [], isClass = false,
     openEntityInspector, onSave, onSaveReference,
+    onEditProperty = null, onRemoveProperty = null,
   } = $props();
 
   let hintVisible = $state(false);
@@ -49,6 +52,8 @@
   let saving = $state(false);
   let editingRefKey = $state(null);
   let savingRef = $state(false);
+  let editingClassPropKey = $state(null);
+  let savingClassProp = $state(false);
 
   function editKey(propertyIri, valueIdx) {
     return `${propertyIri}::${valueIdx}`;
@@ -98,60 +103,6 @@
     }
   }
 
-  function sticky(node, { top = 0 } = {}) {
-    let scroller, section, nodeTop, sectionTop;
-
-    function findScroller() {
-      let el = node.parentElement;
-      while (el) {
-        const ov = getComputedStyle(el).overflowY;
-        if (ov === 'auto' || ov === 'scroll') return el;
-        el = el.parentElement;
-      }
-      return null;
-    }
-
-    function computeOffsets() {
-      const saved = node.style.transform;
-      node.style.transform = 'none';
-      const scrollerRect = scroller.getBoundingClientRect();
-      const nr = node.getBoundingClientRect();
-      const sr = section.getBoundingClientRect();
-      node.style.transform = saved;
-      nodeTop = nr.top - scrollerRect.top + scroller.scrollTop;
-      sectionTop = sr.top - scrollerRect.top + scroller.scrollTop;
-    }
-
-    function onScroll() {
-      const scrollTop = scroller.scrollTop;
-      const sectionHeight = section.offsetHeight;
-      const nodeHeight = node.offsetHeight;
-      if (scrollTop + top > nodeTop) {
-        const shift = Math.max(0, Math.min(
-          scrollTop + top - nodeTop,
-          sectionTop + sectionHeight - nodeTop - nodeHeight
-        ));
-        node.style.transform = `translateY(${shift}px)`;
-      } else {
-        node.style.transform = '';
-      }
-    }
-
-    requestAnimationFrame(() => {
-      scroller = findScroller();
-      section = node.parentElement;
-      if (!scroller) return;
-      computeOffsets();
-      scroller.addEventListener('scroll', onScroll, { passive: true });
-      onScroll();
-    });
-
-    return {
-      destroy() {
-        if (scroller) scroller.removeEventListener('scroll', onScroll);
-      }
-    };
-  }
 
   let optionalCollapsed = $state(true);
 
@@ -166,6 +117,7 @@
           sourceClassLabel: prop.sourceClassLabel,
           sourceClassIcon: prop.sourceClassIcon,
           datatype: prop.datatype,
+          unit: prop.unit ?? null,
           rangeClassIri: prop.rangeClassIri,
           rangeClassLabel: prop.rangeClassLabel,
           rangeClassIcon: prop.rangeClassIcon,
@@ -356,7 +308,7 @@
         if (e.key === 'Escape') cancelEdit();
         else if (e.key === 'Enter') saveEdit(propertyIri);
       }}
-      autofocus
+      use:focus
     />
     <div class="edit-actions">
       <button
@@ -392,6 +344,8 @@
         {#if detailGroup.propertyComment || detailGroup.sourceClassLabel}
           <span
             class="material-symbols-outlined prop-info"
+            role="img"
+            aria-label="Property info"
             onmouseenter={(e) => showHint(e, detailGroup.propertyComment, detailGroup.sourceClassLabel, detailGroup.sourceClassIcon)}
             onmouseleave={hideHint}
           >info</span>
@@ -429,10 +383,53 @@
         >
           <span class="material-symbols-outlined">edit</span>
         </button>
+      {:else if isClass && !detailGroup.sourceClassLabel && onEditProperty}
+        <div class="class-prop-actions">
+          <button
+            class="edit-btn"
+            title="Edit property"
+            onclick={() => editingClassPropKey = detailGroup.property}
+          >
+            <span class="material-symbols-outlined">edit</span>
+          </button>
+          {#if onRemoveProperty}
+            <button
+              class="edit-btn remove-btn"
+              title="Remove property"
+              onclick={() => onRemoveProperty(detailGroup.property, detailGroup.propertyLabel)}
+            >
+              <span class="material-symbols-outlined">delete</span>
+            </button>
+          {/if}
+        </div>
       {/if}
     </div>
 
-    {#if editingRefKey === detailGroup.property}
+    {#if isClass && editingClassPropKey === detailGroup.property}
+      <ClassPropertyForm
+        mode="edit"
+        initialValues={{
+          label: detailGroup.propertyLabel,
+          propertyType: detailGroup.isObjectProperty ? 'object' : 'datatype',
+          range: detailGroup.values[0]?.value ?? (detailGroup.isObjectProperty ? '' : 'xsd:string'),
+          rangeLabel: detailGroup.rangeClassLabel ?? detailGroup.values[0]?.valueLabel ?? '',
+          unit: detailGroup.unit ?? '',
+          comment: detailGroup.propertyComment ?? '',
+        }}
+        saving={savingClassProp}
+        onsave={async (vals) => {
+          if (!onEditProperty || savingClassProp) return;
+          savingClassProp = true;
+          try {
+            await onEditProperty(detailGroup.property, vals);
+          } finally {
+            savingClassProp = false;
+            editingClassPropKey = null;
+          }
+        }}
+        oncancel={() => editingClassPropKey = null}
+      />
+    {:else if editingRefKey === detailGroup.property}
       <ReferenceSelect
         propertyIri={detailGroup.property}
         rangeClassIri={detailGroup.rangeClassIri}
@@ -1078,6 +1075,16 @@
 
   .detail-item:hover .edit-btn {
     opacity: 1;
+  }
+
+  .class-prop-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .remove-btn:hover {
+    color: var(--color-error, #ef4444) !important;
   }
 
   .date-edit-container {

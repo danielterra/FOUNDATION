@@ -352,6 +352,16 @@ fn define_class_one(
                         let domains: Vec<&str> = prop.domains.iter().map(|s| s.as_str()).collect();
                         prop.assert(conn, prop.property_type, prop.label.as_deref().unwrap_or(""), None, &domains, prop.ranges.first().map(|s| s.as_str()), prop.unit.as_deref(), "ai")?;
                     }
+                    let existing = crate::owl::cardinality::get_class_cardinality_restrictions(conn, iri)?;
+                    let updated: Vec<crate::owl::cardinality::PropertyRestriction<'_>> = existing.iter()
+                        .filter(|r| r.property_iri != prop_iri)
+                        .map(|r| crate::owl::cardinality::PropertyRestriction {
+                            property_iri: r.property_iri.as_str(),
+                            min: r.min,
+                            max: r.max,
+                        })
+                        .collect();
+                    crate::owl::cardinality::set_class_cardinality_restrictions(conn, iri, &updated, "ai")?;
                     super::batch::queue_event("entity-updated", serde_json::json!({"entityId": prop_iri}));
                 }
             }

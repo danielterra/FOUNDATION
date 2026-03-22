@@ -15,7 +15,8 @@
   let entityLabel = $state('');
   let entityLoading = $state(true);
   let editMode = $state(false);
-  let draftContent = $state(content);
+  let draftContent = $state('');
+  $effect(() => { if (!editMode) draftContent = content; });
   let renderContainer = $state(null);
   let renderError = $state(null);
   let expanded = $state(windowState === 'maximized');
@@ -339,12 +340,21 @@
 </div>
 
 {#if expanded}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div use:portal class="modal-overlay" onclick={() => { expanded = false; onWindowStateChange?.('normal'); }}>
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    use:portal
+    class="modal-overlay"
+    role="button"
+    tabindex="-1"
+    onclick={() => { expanded = false; onWindowStateChange?.('normal'); }}
+    onkeydown={(e) => { if (e.key === 'Escape') { expanded = false; onWindowStateChange?.('normal'); } }}
+  >
     <div
       class="modal-panel"
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
       onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
     >
       <div class="modal-header">
         <div class="header-left">
@@ -369,7 +379,17 @@
         onmouseup={handleMouseUp}
         onmouseleave={handleMouseUp}
         onclick={handleCanvasClick}
-        role="img"
+        onkeydown={(e) => {
+          if (e.key === 'ArrowLeft') translateX += 20;
+          else if (e.key === 'ArrowRight') translateX -= 20;
+          else if (e.key === 'ArrowUp') translateY += 20;
+          else if (e.key === 'ArrowDown') translateY -= 20;
+          else if (e.key === '+' || e.key === '=') scale = Math.min(50, scale * 1.1);
+          else if (e.key === '-') scale = Math.max(0.1, scale * 0.9);
+          else if (e.key === '0') resetView();
+        }}
+        role="application"
+        tabindex="-1"
         aria-label="Mermaid diagram"
         style="cursor: {isDragging ? 'grabbing' : 'grab'};"
       >

@@ -7,6 +7,8 @@
   import MetaFields from './inspector/MetaFields.svelte';
   import PropertyList from './inspector/PropertyList.svelte';
   import BacklinkList from './inspector/BacklinkList.svelte';
+  import ClassPropertyForm from './inspector/ClassPropertyForm.svelte';
+  import { sticky } from '$lib/utils/actions';
 
   let {
     entityId, widgetId, refreshKey = 0, windowState = 'normal',
@@ -17,60 +19,6 @@
     onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized');
   }
 
-  function sticky(node, { top = 0 } = {}) {
-    let scroller, section, nodeTop, sectionTop;
-
-    function findScroller() {
-      let el = node.parentElement;
-      while (el) {
-        const ov = getComputedStyle(el).overflowY;
-        if (ov === 'auto' || ov === 'scroll') return el;
-        el = el.parentElement;
-      }
-      return null;
-    }
-
-    function computeOffsets() {
-      const saved = node.style.transform;
-      node.style.transform = 'none';
-      const scrollerRect = scroller.getBoundingClientRect();
-      const nr = node.getBoundingClientRect();
-      const sr = section.getBoundingClientRect();
-      node.style.transform = saved;
-      nodeTop = nr.top - scrollerRect.top + scroller.scrollTop;
-      sectionTop = sr.top - scrollerRect.top + scroller.scrollTop;
-    }
-
-    function onScroll() {
-      const scrollTop = scroller.scrollTop;
-      const sectionHeight = section.offsetHeight;
-      const nodeHeight = node.offsetHeight;
-      if (scrollTop + top > nodeTop) {
-        const shift = Math.max(0, Math.min(
-          scrollTop + top - nodeTop,
-          sectionTop + sectionHeight - nodeTop - nodeHeight
-        ));
-        node.style.transform = `translateY(${shift}px)`;
-      } else {
-        node.style.transform = '';
-      }
-    }
-
-    requestAnimationFrame(() => {
-      scroller = findScroller();
-      section = node.parentElement;
-      if (!scroller) return;
-      computeOffsets();
-      scroller.addEventListener('scroll', onScroll, { passive: true });
-      onScroll();
-    });
-
-    return {
-      destroy() {
-        if (scroller) scroller.removeEventListener('scroll', onScroll);
-      }
-    };
-  }
 
   let entityData = $state(null);
   let loading = $state(true);
@@ -85,6 +33,12 @@
   let statusBadgeWrapperEl = $state(null);
   let showDeleteConfirm = $state(false);
   let deleteSuccess = $state(false);
+  let showAddPropertyForm = $state(false);
+  let savingClassProperty = $state(false);
+  let removeConfirmProp = $state(null);
+  let removeConfirmCount = $state(0);
+  let removeConfirmExamples = $state([]);
+  let checkingUsage = $state(false);
 
   async function loadEntity() {
     loading = true;
@@ -168,6 +122,79 @@
       await invoke('widget_inspector__set_references', { entityId, propertyIri, iris });
     } catch (err) {
       console.error('Failed to update references:', err);
+    }
+  }
+
+  async function defineClassProperty(propertyIri, vals) {
+    savingClassProperty = true;
+    try {
+      await invoke('widget_inspector__define_class_property', {
+        classIri: entityId,
+        propertyIri: propertyIri ?? null,
+        label: vals.label,
+        propertyType: vals.propertyType,
+        range: vals.range,
+        unit: vals.unit ?? null,
+        comment: vals.comment ?? null,
+      });
+      showAddPropertyForm = false;
+    } catch (err) {
+      console.error('Failed to define class property:', err);
+    } finally {
+      savingClassProperty = false;
+    }
+  }
+
+  async function editClassProperty(propertyIri, vals) {
+    try {
+      await invoke('widget_inspector__define_class_property', {
+        classIri: entityId,
+        propertyIri,
+        label: vals.label,
+        propertyType: vals.propertyType,
+        range: vals.range,
+        unit: vals.unit ?? null,
+        comment: vals.comment ?? null,
+      });
+    } catch (err) {
+      console.error('Failed to edit class property:', err);
+    }
+  }
+
+  async function initiateRemoveProperty(propertyIri, propertyLabel) {
+    checkingUsage = true;
+    removeConfirmProp = null;
+    try {
+      const raw = await invoke('widget_inspector__check_property_usage', {
+        propertyIri,
+        classIri: entityId,
+      });
+      const result = JSON.parse(raw);
+      if (result.count === 0) {
+        await invoke('widget_inspector__remove_class_property', { propertyIri, classIri: entityId });
+      } else {
+        removeConfirmProp = { iri: propertyIri, label: propertyLabel };
+        removeConfirmCount = result.count;
+        removeConfirmExamples = result.examples ?? [];
+      }
+    } catch (err) {
+      console.error('Failed to check property usage:', err);
+    } finally {
+      checkingUsage = false;
+    }
+  }
+
+  async function confirmRemoveProperty() {
+    if (!removeConfirmProp) return;
+    try {
+      await invoke('widget_inspector__remove_class_property', {
+        propertyIri: removeConfirmProp.iri,
+        classIri: entityId,
+      });
+    } catch (err) {
+      console.error('Failed to remove property:', err);
+    } finally {
+      removeConfirmProp = null;
     }
   }
 
@@ -510,6 +537,49 @@
           </div>
         {/if}
 
+        {#if entityData.isClass}
+          <div class="class-props-header">
+            <span class="class-props-title">Properties</span>
+            <button
+              class="add-property-btn"
+              onclick={() => showAddPropertyForm = !showAddPropertyForm}
+              title="Add property"
+            >
+              <span class="material-symbols-outlined">{showAddPropertyForm ? 'close' : 'add'}</span>
+              {showAddPropertyForm ? 'Cancel' : 'Add property'}
+            </button>
+          </div>
+          {#if showAddPropertyForm}
+            <ClassPropertyForm
+              mode="add"
+              saving={savingClassProperty}
+              onsave={(vals) => defineClassProperty(null, vals)}
+              oncancel={() => showAddPropertyForm = false}
+            />
+          {/if}
+          {#if removeConfirmProp}
+            <div class="remove-confirm-dialog">
+              <div class="remove-confirm-icon">
+                <span class="material-symbols-outlined">warning</span>
+              </div>
+              <div class="remove-confirm-body">
+                <p class="remove-confirm-msg">
+                  <strong>{removeConfirmCount}</strong> individual{removeConfirmCount !== 1 ? 's' : ''} of this class
+                  {removeConfirmCount !== 1 ? 'have' : 'has'} a value for <em>{removeConfirmProp.label}</em>.
+                  Removing it will hide the property from the schema but existing values will be preserved.
+                </p>
+                {#if removeConfirmExamples.length > 0}
+                  <p class="remove-confirm-examples">{removeConfirmExamples.join(', ')}{removeConfirmCount > removeConfirmExamples.length ? '…' : ''}</p>
+                {/if}
+                <div class="remove-confirm-actions">
+                  <button class="remove-confirm-proceed" onclick={confirmRemoveProperty}>Remove anyway</button>
+                  <button class="remove-confirm-cancel" onclick={() => removeConfirmProp = null}>Cancel</button>
+                </div>
+              </div>
+            </div>
+          {/if}
+        {/if}
+
         <PropertyList
           properties={entityData.isClass
             ? (entityData.properties ?? []).filter(
@@ -521,6 +591,8 @@
           {openEntityInspector}
           onSave={entityData.isClass ? null : saveProperty}
           onSaveReference={entityData.isClass ? null : saveReferences}
+          onEditProperty={entityData.isClass ? editClassProperty : null}
+          onRemoveProperty={entityData.isClass ? initiateRemoveProperty : null}
         />
 
         <BacklinkList backlinks={entityData.backlinks} {openEntityInspector} />
@@ -882,6 +954,125 @@
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  .class-props-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 0 8px;
+    margin-top: 4px;
+  }
+
+  .class-props-title {
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
+  }
+
+  .add-property-btn {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px 8px;
+    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
+    border-radius: 5px;
+    color: var(--color-interactive);
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .add-property-btn:hover {
+    background: color-mix(in srgb, var(--color-interactive) 25%, transparent);
+  }
+
+  .add-property-btn .material-symbols-outlined {
+    font-size: 14px;
+  }
+
+  .remove-confirm-dialog {
+    display: flex;
+    gap: 10px;
+    padding: 12px;
+    background: color-mix(in srgb, var(--color-warning, #f59e0b) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 30%, transparent);
+    border-radius: 8px;
+    margin-bottom: 8px;
+  }
+
+  .remove-confirm-icon .material-symbols-outlined {
+    font-size: 20px;
+    color: var(--color-warning, #f59e0b);
+  }
+
+  .remove-confirm-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .remove-confirm-msg {
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--color-neutral-active);
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  .remove-confirm-examples {
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--color-neutral);
+    margin: 0;
+    font-style: italic;
+  }
+
+  .remove-confirm-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 2px;
+  }
+
+  .remove-confirm-proceed {
+    padding: 4px 10px;
+    background: color-mix(in srgb, var(--color-error, #ef4444) 20%, transparent);
+    border: none;
+    border-radius: 4px;
+    color: var(--color-error, #ef4444);
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .remove-confirm-proceed:hover {
+    background: color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent);
+  }
+
+  .remove-confirm-cancel {
+    padding: 4px 10px;
+    background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
+    border: none;
+    border-radius: 4px;
+    color: var(--color-neutral);
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .remove-confirm-cancel:hover {
+    background: color-mix(in srgb, var(--color-neutral) 22%, transparent);
   }
 
   .section-group {

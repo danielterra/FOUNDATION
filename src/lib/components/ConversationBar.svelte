@@ -1,6 +1,7 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
 	import { tick } from 'svelte';
+	import { focus } from '$lib/utils/actions';
 
 	let {
 		conversations = $bindable([]),
@@ -124,7 +125,7 @@
 									if (e.key === 'Enter') confirmRename();
 									else if (e.key === 'Escape') { renamingIri = null; }
 								}}
-								autofocus
+								use:focus
 							/>
 							<button class="item-icon-btn confirm" onclick={confirmRename} title="Confirm">
 								<span class="material-symbols-outlined">check</span>

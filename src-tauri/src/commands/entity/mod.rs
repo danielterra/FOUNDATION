@@ -277,6 +277,170 @@ pub async fn widget_inspector__delete_individual(
     Ok(())
 }
 
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__define_class_property(
+    class_iri: String,
+    property_iri: Option<String>,
+    label: String,
+    property_type: String,
+    range: String,
+    unit: Option<String>,
+    comment: Option<String>,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    let class_iri_clone = class_iri.clone();
+    let final_iri = property_iri.unwrap_or_else(|| {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        format!("foundation:Property_{}", ts)
+    });
+    let final_iri_clone = final_iri.clone();
+
+    executor.write(move |conn| {
+        let prop_type = match property_type.as_str() {
+            "object" => crate::owl::PropertyType::ObjectProperty,
+            _ => crate::owl::PropertyType::DatatypeProperty,
+        };
+
+        let existing = Property::get(conn, &final_iri_clone).map_err(|e| e.to_string())?;
+        let domains: Vec<String> = if let Some(ref existing_prop) = existing {
+            let mut domains = existing_prop.domains.clone();
+            if !domains.contains(&class_iri_clone) {
+                domains.push(class_iri_clone.clone());
+            }
+            domains
+        } else {
+            vec![class_iri_clone.clone()]
+        };
+        let domain_refs: Vec<&str> = domains.iter().map(|s| s.as_str()).collect();
+
+        Property::new(&final_iri_clone)
+            .assert(
+                conn,
+                prop_type,
+                &label,
+                comment.as_deref(),
+                &domain_refs,
+                Some(range.as_str()),
+                unit.as_deref(),
+                "user",
+            )
+            .map_err(|e| e.to_string())?;
+
+        Ok(final_iri_clone.clone())
+    }).await?;
+
+    app.emit("entity-updated", serde_json::json!({ "entityId": final_iri })).ok();
+    app.emit("entity-updated", serde_json::json!({ "entityId": class_iri })).ok();
+    Ok(final_iri)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__check_property_usage(
+    property_iri: String,
+    class_iri: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor.read(move |conn| {
+        let all_class_iris = owl::Class::get_descendant_iris(conn, &class_iri)
+            .unwrap_or_else(|_| vec![class_iri.clone()]);
+
+        let in_placeholders: Vec<String> = (0..all_class_iris.len())
+            .map(|i| format!("?{}", i + 2))
+            .collect();
+        let in_clause = in_placeholders.join(", ");
+
+        let mut params: Vec<String> = vec![property_iri.clone()];
+        params.extend(all_class_iris.iter().cloned());
+
+        let count_sql = format!(
+            "SELECT COUNT(DISTINCT t_val.subject)
+             FROM triples t_val
+             JOIN triples t_type ON t_type.subject = t_val.subject
+                AND t_type.predicate = 'rdf:type'
+                AND t_type.object IN ({in_clause})
+                AND t_type.retracted = 0
+             WHERE t_val.predicate = ?1
+               AND t_val.retracted = 0",
+        );
+        let count: usize = conn
+            .prepare(&count_sql).map_err(|e| e.to_string())?
+            .query_row(rusqlite::params_from_iter(params.iter()), |row| row.get::<_, i64>(0))
+            .map_err(|e| e.to_string())
+            .map(|n| n as usize)?;
+
+        let examples_sql = format!(
+            "SELECT DISTINCT t_val.subject, t_label.object_value
+             FROM triples t_val
+             JOIN triples t_type ON t_type.subject = t_val.subject
+                AND t_type.predicate = 'rdf:type'
+                AND t_type.object IN ({in_clause})
+                AND t_type.retracted = 0
+             LEFT JOIN triples t_label ON t_label.subject = t_val.subject
+                AND t_label.predicate = 'rdfs:label'
+                AND t_label.retracted = 0
+             WHERE t_val.predicate = ?1
+               AND t_val.retracted = 0
+             LIMIT 5",
+        );
+        let mut stmt = conn.prepare(&examples_sql).map_err(|e| e.to_string())?;
+        let examples: Vec<String> = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .map(|(iri, label)| label.unwrap_or(iri))
+            .collect();
+
+        serde_json::to_string(&serde_json::json!({ "count": count, "examples": examples }))
+            .map_err(|e| e.to_string())
+    }).await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__remove_class_property(
+    property_iri: String,
+    class_iri: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let class_iri_clone = class_iri.clone();
+    let property_iri_clone = property_iri.clone();
+
+    executor.write(move |conn| {
+        let prop = Property::get(conn, &property_iri_clone)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Property {} not found", property_iri_clone))?;
+
+        let new_domains: Vec<String> = prop.domains.into_iter()
+            .filter(|d| d != &class_iri_clone)
+            .collect();
+        let domain_refs: Vec<&str> = new_domains.iter().map(|s| s.as_str()).collect();
+
+        let label = prop.label.as_deref().unwrap_or("");
+        let prop_type = prop.property_type;
+        let range = prop.ranges.first().map(|s| s.as_str());
+        let unit = prop.unit.as_deref();
+        let comment = prop.comment.as_deref();
+
+        Property::new(&property_iri_clone)
+            .assert(conn, prop_type, label, comment, &domain_refs, range, unit, "user")
+            .map_err(|e| e.to_string())?;
+
+        Ok("removed".to_string())
+    }).await?;
+
+    app.emit("entity-updated", serde_json::json!({ "entityId": class_iri })).ok();
+    Ok(())
+}
+
 pub(super) fn sort_backlinks_by_recency(conn: &Connection, backlinks: &mut Vec<PropertyValue>) {
     let entity_iris: Vec<String> = backlinks.iter().map(|b| b.value.clone()).collect();
     let max_tx_map = crate::eavto::query::get_entities_max_tx(conn, &entity_iris)

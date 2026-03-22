@@ -145,8 +145,9 @@
       {/if}
     {:else}
       <div class="import-section">
-        <label class="field-label">Paste connector package JSON</label>
+        <label class="field-label" for="field-connector-json">Paste connector package JSON</label>
         <textarea
+          id="field-connector-json"
           class="json-input"
           placeholder={"{ \"schema_version\": \"1.0\", ... }"}
           bind:value={importText}

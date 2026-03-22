@@ -115,8 +115,8 @@
 
   <div class="widget-content">
     <div class="field-group">
-      <label class="field-label">Auth Type</label>
-      <select class="field-select" bind:value={authType}>
+      <label class="field-label" for="field-auth-type">Auth Type</label>
+      <select id="field-auth-type" class="field-select" bind:value={authType}>
         <option value="api_key">API Key</option>
         <option value="token">Bearer Token</option>
         <option value="username_password">Username / Password</option>
@@ -125,8 +125,9 @@
 
     {#if authType === 'api_key'}
       <div class="field-group">
-        <label class="field-label">API Key</label>
+        <label class="field-label" for="field-api-key">API Key</label>
         <input
+          id="field-api-key"
           class="field-input"
           type="password"
           placeholder="Enter API key…"
@@ -135,8 +136,9 @@
       </div>
     {:else if authType === 'token'}
       <div class="field-group">
-        <label class="field-label">Bearer Token</label>
+        <label class="field-label" for="field-bearer-token">Bearer Token</label>
         <input
+          id="field-bearer-token"
           class="field-input"
           type="password"
           placeholder="Enter token…"
@@ -145,8 +147,9 @@
       </div>
     {:else if authType === 'username_password'}
       <div class="field-group">
-        <label class="field-label">Username</label>
+        <label class="field-label" for="field-username">Username</label>
         <input
+          id="field-username"
           class="field-input"
           type="text"
           placeholder="Enter username…"
@@ -154,8 +157,9 @@
         />
       </div>
       <div class="field-group">
-        <label class="field-label">Password</label>
+        <label class="field-label" for="field-password">Password</label>
         <input
+          id="field-password"
           class="field-input"
           type="password"
           placeholder="Enter password…"
