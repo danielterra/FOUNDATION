@@ -91,6 +91,12 @@ pub async fn continue_conversation_after_recovery(
         inject_datetime_context(&mut api_messages);
         sanitize_tool_pairs(&mut api_messages);
 
+        let last_role = api_messages.last().map(|m| m.role.as_str());
+        if last_role == Some("assistant") {
+            log_backend("info", "[RECOVERY] Conversation ends with assistant message after sanitization — nothing to do");
+            break;
+        }
+
         let system_prompt = agent_config.system_prompt.clone();
         let blackboard_context = super::build_blackboard_context(&executor).await;
         let tools = crate::ai::functions::get_claude_tools();
