@@ -7,13 +7,13 @@
   import FileGrid from './FileGrid.svelte';
   import PropertyEditForm from './PropertyEditForm.svelte';
   import ReferenceSelect from './ReferenceSelect.svelte';
-  import ClassPropertyForm from './ClassPropertyForm.svelte';
   import { sticky, focus } from '$lib/utils/actions';
 
   let {
     properties, requiredFields = [], isClass = false,
     openEntityInspector, onSave, onSaveReference,
-    onEditProperty = null, onRemoveProperty = null,
+    onRemoveProperty = null,
+    onSaveCardinality = null,
   } = $props();
 
   let hintVisible = $state(false);
@@ -52,8 +52,7 @@
   let saving = $state(false);
   let editingRefKey = $state(null);
   let savingRef = $state(false);
-  let editingClassPropKey = $state(null);
-  let savingClassProp = $state(false);
+
 
   function editKey(propertyIri, valueIdx) {
     return `${propertyIri}::${valueIdx}`;
@@ -103,6 +102,44 @@
     }
   }
 
+
+  let editingCardinalityKey = $state(null);
+  let cardinalityDraftMin = $state('');
+  let cardinalityDraftMax = $state('');
+  let savingCardinality = $state(false);
+
+  function startCardinalityEdit(propertyIri, currentMin, currentMax) {
+    editingCardinalityKey = propertyIri;
+    cardinalityDraftMin = currentMin !== null && currentMin !== undefined ? String(currentMin) : '';
+    cardinalityDraftMax = currentMax !== null && currentMax !== undefined ? String(currentMax) : '';
+  }
+
+  function cancelCardinalityEdit() {
+    editingCardinalityKey = null;
+    cardinalityDraftMin = '';
+    cardinalityDraftMax = '';
+  }
+
+  async function saveCardinalityEdit(propertyIri) {
+    if (!onSaveCardinality || savingCardinality) return;
+    savingCardinality = true;
+    try {
+      const min = cardinalityDraftMin === '' ? null : parseInt(cardinalityDraftMin, 10);
+      const max = cardinalityDraftMax === '' ? null : parseInt(cardinalityDraftMax, 10);
+      await onSaveCardinality(propertyIri, min, max);
+    } finally {
+      savingCardinality = false;
+      editingCardinalityKey = null;
+      cardinalityDraftMin = '';
+      cardinalityDraftMax = '';
+    }
+  }
+
+  function formatCardinality(min, max) {
+    const minStr = min !== null && min !== undefined ? String(min) : '0';
+    const maxStr = max !== null && max !== undefined ? String(max) : '*';
+    return `${minStr}..${maxStr}`;
+  }
 
   let optionalCollapsed = $state(true);
 
@@ -366,6 +403,9 @@
         {#if detailGroup.values.length > 1}
           <span class="detail-count">{detailGroup.values.length}</span>
         {/if}
+        {#if isClass && (detailGroup.minCount !== null || detailGroup.maxCount !== null)}
+          <span class="cardinality-badge">{formatCardinality(detailGroup.minCount, detailGroup.maxCount)}</span>
+        {/if}
       </div>
       {#if onSave && !detailGroup.isObjectProperty && !detailGroup.isCalculated && (isStringType(detailGroup.datatype) || isDateType(detailGroup.datatype)) && (detailGroup.isEmpty || detailGroup.values.length <= 1)}
         <button
@@ -383,16 +423,32 @@
         >
           <span class="material-symbols-outlined">edit</span>
         </button>
-      {:else if isClass && !detailGroup.sourceClassLabel && onEditProperty}
+      {:else if isClass}
         <div class="class-prop-actions">
+          {#if onSaveCardinality && !detailGroup.sourceClassLabel}
+            <button
+              class="edit-btn"
+              class:active={editingCardinalityKey === detailGroup.property}
+              title="Edit cardinality"
+              onclick={() => {
+                if (editingCardinalityKey === detailGroup.property) {
+                  cancelCardinalityEdit();
+                } else {
+                  startCardinalityEdit(detailGroup.property, detailGroup.minCount, detailGroup.maxCount);
+                }
+              }}
+            >
+              <span class="material-symbols-outlined">rule</span>
+            </button>
+          {/if}
           <button
             class="edit-btn"
-            title="Edit property"
-            onclick={() => editingClassPropKey = detailGroup.property}
+            title="Inspect property"
+            onclick={() => openEntityInspector(detailGroup.property)}
           >
-            <span class="material-symbols-outlined">edit</span>
+            <span class="material-symbols-outlined">open_in_new</span>
           </button>
-          {#if onRemoveProperty}
+          {#if onRemoveProperty && !detailGroup.sourceClassLabel}
             <button
               class="edit-btn remove-btn"
               title="Remove property"
@@ -405,31 +461,61 @@
       {/if}
     </div>
 
-    {#if isClass && editingClassPropKey === detailGroup.property}
-      <ClassPropertyForm
-        mode="edit"
-        initialValues={{
-          label: detailGroup.propertyLabel,
-          propertyType: detailGroup.isObjectProperty ? 'object' : 'datatype',
-          range: detailGroup.values[0]?.value ?? (detailGroup.isObjectProperty ? '' : 'xsd:string'),
-          rangeLabel: detailGroup.rangeClassLabel ?? detailGroup.values[0]?.valueLabel ?? '',
-          unit: detailGroup.unit ?? '',
-          comment: detailGroup.propertyComment ?? '',
-        }}
-        saving={savingClassProp}
-        onsave={async (vals) => {
-          if (!onEditProperty || savingClassProp) return;
-          savingClassProp = true;
-          try {
-            await onEditProperty(detailGroup.property, vals);
-          } finally {
-            savingClassProp = false;
-            editingClassPropKey = null;
-          }
-        }}
-        oncancel={() => editingClassPropKey = null}
-      />
-    {:else if editingRefKey === detailGroup.property}
+    {#if editingCardinalityKey === detailGroup.property}
+      <div class="cardinality-edit-form">
+        <div class="cardinality-edit-row">
+          <label class="cardinality-edit-label">Min</label>
+          <input
+            class="cardinality-input"
+            type="number"
+            min="0"
+            bind:value={cardinalityDraftMin}
+            placeholder="0"
+            onkeydown={(e) => {
+              if (e.key === 'Escape') cancelCardinalityEdit();
+              else if (e.key === 'Enter') saveCardinalityEdit(detailGroup.property);
+            }}
+          />
+          <label class="cardinality-edit-label">Max</label>
+          <input
+            class="cardinality-input"
+            type="number"
+            min="0"
+            bind:value={cardinalityDraftMax}
+            placeholder="∞"
+            onkeydown={(e) => {
+              if (e.key === 'Escape') cancelCardinalityEdit();
+              else if (e.key === 'Enter') saveCardinalityEdit(detailGroup.property);
+            }}
+          />
+        </div>
+        <div class="edit-actions">
+          <button
+            class="edit-save-btn"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={() => saveCardinalityEdit(detailGroup.property)}
+            disabled={savingCardinality}
+          >
+            {#if savingCardinality}
+              <span class="material-symbols-outlined spinning-small">progress_activity</span>
+            {:else}
+              <span class="material-symbols-outlined">check</span>
+            {/if}
+            Save
+          </button>
+          <button
+            class="edit-cancel-btn"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={cancelCardinalityEdit}
+          >
+            <span class="material-symbols-outlined">close</span>
+            Cancel
+          </button>
+        </div>
+      </div>
+    {/if}
+
+    {#if editingRefKey === detailGroup.property}
       <ReferenceSelect
         propertyIri={detailGroup.property}
         rangeClassIri={detailGroup.rangeClassIri}
@@ -828,6 +914,63 @@
     color: var(--color-accent);
     border-radius: 4px;
     font-weight: 600;
+  }
+
+  .cardinality-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
+    color: var(--color-interactive);
+    border-radius: 4px;
+    font-weight: 600;
+    font-family: var(--font-mono, monospace);
+  }
+
+  .cardinality-edit-form {
+    padding: 8px;
+    background: color-mix(in srgb, var(--color-white) 4%, transparent);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .cardinality-edit-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .cardinality-edit-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--color-neutral);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    min-width: 26px;
+  }
+
+  .cardinality-input {
+    width: 70px;
+    background: color-mix(in srgb, var(--color-white) 5%, transparent);
+    border: 1px solid var(--color-interactive);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+    color: var(--color-neutral-active);
+    outline: none;
+    text-align: center;
+  }
+
+  .cardinality-input::-webkit-inner-spin-button,
+  .cardinality-input::-webkit-outer-spin-button {
+    opacity: 0.4;
+  }
+
+  .edit-btn.active {
+    color: var(--color-interactive);
+    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
   }
 
   .empty-value {

@@ -146,20 +146,13 @@
     }
   }
 
-  async function editClassProperty(propertyIri, vals) {
-    try {
-      await invoke('widget_inspector__define_class_property', {
-        classIri: entityId,
-        propertyIri,
-        label: vals.label,
-        propertyType: vals.propertyType,
-        range: vals.range,
-        unit: vals.unit ?? null,
-        comment: vals.comment ?? null,
-      });
-    } catch (err) {
-      console.error('Failed to edit class property:', err);
-    }
+  async function saveCardinality(propertyIri, minCount, maxCount) {
+    await invoke('widget_inspector__set_property_cardinality', {
+      classId: entityId,
+      propertyIri,
+      minCount,
+      maxCount,
+    });
   }
 
   async function initiateRemoveProperty(propertyIri, propertyLabel) {
@@ -630,8 +623,8 @@
           {openEntityInspector}
           onSave={entityData.isClass || isLocked ? null : saveProperty}
           onSaveReference={entityData.isClass || isLocked ? null : saveReferences}
-          onEditProperty={entityData.isClass && !isLocked ? editClassProperty : null}
           onRemoveProperty={entityData.isClass && !isLocked ? initiateRemoveProperty : null}
+          onSaveCardinality={entityData.isClass && !isLocked ? saveCardinality : null}
         />
 
         <BacklinkList backlinks={entityData.backlinks} {openEntityInspector} />

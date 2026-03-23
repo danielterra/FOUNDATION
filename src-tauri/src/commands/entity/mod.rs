@@ -460,6 +460,50 @@ pub async fn widget_inspector__set_system_locked(
     Ok(())
 }
 
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__set_property_cardinality(
+    class_id: String,
+    property_iri: String,
+    min_count: Option<u32>,
+    max_count: Option<u32>,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let class_id_clone = class_id.clone();
+    executor.write(move |conn| {
+        let mut restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, &class_id_clone)
+            .map_err(|e| e.to_string())?;
+
+        restrictions.retain(|r| r.property_iri != property_iri);
+
+        let has_constraint = min_count.map(|m| m > 0).unwrap_or(false) || max_count.is_some();
+        if has_constraint {
+            restrictions.push(crate::owl::cardinality::CardinalityRestriction {
+                property_iri: property_iri.clone(),
+                min: min_count,
+                max: max_count,
+                exact: None,
+            });
+        }
+
+        let prop_refs: Vec<crate::owl::cardinality::PropertyRestriction<'_>> = restrictions.iter()
+            .map(|r| crate::owl::cardinality::PropertyRestriction {
+                property_iri: &r.property_iri,
+                min: r.min,
+                max: r.max,
+            })
+            .collect();
+
+        crate::owl::cardinality::set_class_cardinality_restrictions(conn, &class_id_clone, &prop_refs, "user")
+            .map_err(|e| e.to_string())?;
+
+        Ok(String::new())
+    }).await?;
+    app.emit("entity-updated", serde_json::json!({ "entityId": class_id })).ok();
+    Ok(())
+}
+
 pub(super) fn sort_backlinks_by_recency(conn: &Connection, backlinks: &mut Vec<PropertyValue>) {
     let entity_iris: Vec<String> = backlinks.iter().map(|b| b.value.clone()).collect();
     let max_tx_map = crate::eavto::query::get_entities_max_tx(conn, &entity_iris)
@@ -634,6 +678,18 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
     }
 
 
+    let cardinality_restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_id)
+        .unwrap_or_default();
+
+    let cardinality_map: std::collections::HashMap<String, (Option<u32>, Option<u32>)> =
+        cardinality_restrictions.iter()
+            .map(|r| {
+                let min = r.min.or(r.exact);
+                let max = r.max.or(r.exact);
+                (r.property_iri.clone(), (min, max))
+            })
+            .collect();
+
     let mut properties = Vec::new();
 
     for type_thing in &class.types {
@@ -731,6 +787,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             (None, None)
         };
 
+        let (min_count, max_count) = cardinality_map.get(property_iri.as_str()).copied().unwrap_or((None, None));
+
         properties.push(PropertyValue {
             property: property_iri.clone(),
             property_label,
@@ -754,8 +812,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             range_class_label: None,
             range_class_icon: None,
             file_info: None,
-            min_count: None,
-            max_count: None,
+            min_count,
+            max_count,
         });
     }
 
@@ -884,11 +942,9 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
 
     let status = resolve_entity_status(conn, &properties);
 
-    let required_fields = crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_id)
-        .unwrap_or_default()
-        .into_iter()
+    let required_fields = cardinality_restrictions.iter()
         .filter(|r| r.is_required())
-        .map(|r| r.property_iri)
+        .map(|r| r.property_iri.clone())
         .collect();
 
     let allowed_statuses = crate::owl::get_all_iri_properties(conn, class_id, "foundation:allowedStatus")
