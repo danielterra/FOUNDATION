@@ -665,22 +665,17 @@ fn test_get_retracted_properties_filters_metadata_predicates() {
         Triple::new("foundation:Alice", "rdfs:comment", Object::Literal {
             value: "A person".to_string(), datatype: Some("xsd:string".to_string()), language: None,
         }),
-        Triple::new("foundation:Alice", "foundation:icon", Object::Literal {
-            value: "person".to_string(), datatype: Some("xsd:string".to_string()), language: None,
-        }),
         Triple::new("foundation:Alice", "foundation:score", Object::Integer(10)),
     ], "test").unwrap();
 
     Individual::clear_property(&mut conn, "foundation:Alice", "rdfs:label", "test").unwrap();
     Individual::clear_property(&mut conn, "foundation:Alice", "rdfs:comment", "test").unwrap();
-    Individual::clear_property(&mut conn, "foundation:Alice", "foundation:icon", "test").unwrap();
     Individual::clear_property(&mut conn, "foundation:Alice", "foundation:score", "test").unwrap();
 
     let result = Individual::get_retracted_properties(&conn, "foundation:Alice").unwrap();
     let predicates: Vec<&str> = result.iter().map(|t| t.predicate.as_str()).collect();
     assert!(!predicates.contains(&"rdfs:label"), "rdfs:label must be filtered");
     assert!(!predicates.contains(&"rdfs:comment"), "rdfs:comment must be filtered");
-    assert!(!predicates.contains(&"foundation:icon"), "foundation:icon must be filtered");
     assert!(predicates.contains(&"foundation:score"), "foundation:score must be included");
 }
 

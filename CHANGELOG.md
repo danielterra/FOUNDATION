@@ -5,6 +5,25 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-03-22
+
+### Added
+
+- **Inline cardinality editor**: Min/max cardinality controls on property rows in the class inspector; cardinality badge shows current constraint (e.g. `1..*`)
+- **System entity locking**: OWL-layer guard prevents mutations to system-locked entities; inspector UI shows lock state with toggle for system entities; migration binary to apply locks to existing ontology
+- **Search overhaul**: Improved search relevance, automation tool rename, inspector and chat enhancements
+- **Automation IO handles**: Replaced MetaProcess with Automation IO handles and NOVAMessageTask
+- **Multi-concept handles**: Class-compatible edge routing with multi-concept handles on automation nodes
+- **Automation graph visual overhaul**: Side-tab nodes and subprocess IO visualisation
+- **Full property editing in inspector**: References, dates, and string properties fully editable inline
+- **Meta-process node enrichment**: Inspector meta edit, icon consolidation, trigger types and `renders_component`
+
+### Fixed
+
+- **Recovery loop**: Break recovery loop when conversation ends with assistant message after sanitization — prevents infinite 400 error loop with Claude 4
+- **Inspector class property editing**: SQL safety fixes and a11y warnings resolved
+- **Subconscious context, entity chips**: DB lock fixes and camera fix
+
 ## [0.14.0] - 2026-03-18
 
 ### Added

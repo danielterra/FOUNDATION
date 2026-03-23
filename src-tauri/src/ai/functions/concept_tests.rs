@@ -211,11 +211,7 @@ fn test_allowed_statuses_accepts_valid_status_with_icon() {
             datatype: Some("xsd:string".to_string()),
             language: None,
         }),
-        Triple::new("foundation:StatusWithIcon", "foundation:icon", Object::Literal {
-            value: "check_circle".to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        }),
+        Triple::new("foundation:StatusWithIcon", "foundation:hasIcon", Object::Iri(crate::owl::icon_name_to_iri("check_circle"))),
     ], "test").unwrap();
 
     let args = serde_json::json!({

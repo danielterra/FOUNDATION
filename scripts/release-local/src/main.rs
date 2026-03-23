@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use chrono::Utc;
 use regex::Regex;
 use std::fs;
 use std::path::PathBuf;
@@ -138,83 +137,6 @@ fn update_cargo_toml(project_root: &PathBuf, version: &Version) -> Result<()> {
     Ok(())
 }
 
-fn update_software_release_ttl(project_root: &PathBuf, version: &Version) -> Result<()> {
-    let ttl_path = project_root.join("core-ontology/SoftwareRelease.ttl");
-    let content = fs::read_to_string(&ttl_path)?;
-
-    let version_str = version.to_string();
-    let version_iri = format!("FoundationRelease_{}_{}_{}",  version.major, version.minor, version.patch);
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-
-    // Get changelog from git commits since last tag
-    let changelog = get_changelog_from_git().unwrap_or_else(|_| format!("Release version {}", version_str));
-
-    // Find the last release definition and add new one after it
-    let new_release = format!(
-        r#"
-foundation:{} a foundation:SoftwareRelease , owl:NamedIndividual ;
-    rdfs:label "FOUNDATION v{}" ;
-    rdfs:comment "Release version {}" ;
-    foundation:releaseOf foundation:FoundationProduct ;
-    foundation:versionNumber "{}" ;
-    foundation:licenseType "MIT" ;
-    foundation:releaseDate "{}"^^xsd:date ;
-    foundation:changelog "{}" .
-"#,
-        version_iri, version_str, version_str, version_str, today, changelog
-    );
-
-    // Append to end of file
-    let updated_content = content.trim_end().to_string() + "\n" + &new_release;
-    fs::write(&ttl_path, updated_content)?;
-
-    Ok(())
-}
-
-fn get_changelog_from_git() -> Result<String> {
-    // Get last tag
-    let last_tag_output = Command::new("git")
-        .args(&["describe", "--tags", "--abbrev=0"])
-        .output()
-        .context("Failed to get last tag")?;
-
-    let last_tag = if last_tag_output.status.success() {
-        String::from_utf8_lossy(&last_tag_output.stdout).trim().to_string()
-    } else {
-        // No tags yet, get all commits
-        String::new()
-    };
-
-    // Get commits since last tag
-    let log_args = if last_tag.is_empty() {
-        vec!["log", "--pretty=format:%s", "--no-merges"]
-    } else {
-        vec!["log", &format!("{}..HEAD", last_tag), "--pretty=format:%s", "--no-merges"]
-    };
-
-    let output = Command::new("git")
-        .args(&log_args)
-        .output()
-        .context("Failed to get git log")?;
-
-    if !output.status.success() {
-        anyhow::bail!("Git log failed");
-    }
-
-    let commits = String::from_utf8_lossy(&output.stdout);
-    let changelog = commits
-        .lines()
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<&str>>()
-        .join("; ");
-
-    if changelog.is_empty() {
-        Ok("Minor updates and improvements".to_string())
-    } else {
-        Ok(changelog)
-    }
-}
-
 fn run_update_models(project_root: &PathBuf) -> Result<()> {
     let update_models_dir = project_root.join("scripts/update-models");
 
@@ -241,7 +163,7 @@ fn check_clean_working_tree() -> Result<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Filter out expected changes (version files and models)
-    let re = Regex::new(r"(?m)^\s*[MAD]\s+(package\.json|src-tauri/Cargo\.toml|core-ontology/.*\.ttl)$")?;
+    let re = Regex::new(r"(?m)^\s*[MAD]\s+(package\.json|src-tauri/Cargo\.toml)$")?;
     let unexpected_changes: Vec<&str> = stdout
         .lines()
         .filter(|line| !line.is_empty() && !re.is_match(line))
@@ -259,7 +181,7 @@ fn check_clean_working_tree() -> Result<()> {
 
 fn git_add_all() -> Result<()> {
     let output = Command::new("git")
-        .args(&["add", "package.json", "src-tauri/Cargo.toml", "core-ontology/"])
+        .args(&["add", "package.json", "src-tauri/Cargo.toml"])
         .output()
         .context("Failed to stage changes")?;
 

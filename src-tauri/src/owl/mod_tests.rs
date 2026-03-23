@@ -658,7 +658,7 @@ fn create_status(conn: &mut crate::eavto::Connection, iri: &str, label: &str, co
         Triple::new(iri, "rdf:type", Object::Iri("foundation:Status".to_string())),
         Triple::new(iri, "rdfs:label", lit(label)),
         Triple::new(iri, "foundation:color", lit(color)),
-        Triple::new(iri, "foundation:icon", lit(icon)),
+        Triple::new(iri, "foundation:hasIcon", Object::Iri(crate::owl::icon_name_to_iri(icon))),
     ], "test").unwrap();
 }
 
@@ -678,7 +678,7 @@ fn test_resolve_status_appearance_falls_back_to_parent() {
     // Parent has color and icon
     store::assert_triples(&mut conn, &[
         Triple::new("foundation:ParentStatus", "foundation:color", lit("#0000FF")),
-        Triple::new("foundation:ParentStatus", "foundation:icon", lit("star")),
+        Triple::new("foundation:ParentStatus", "foundation:hasIcon", Object::Iri(crate::owl::icon_name_to_iri("star"))),
     ], "test").unwrap();
     // Child only has parentStatus, no color/icon of its own
     store::assert_triples(&mut conn, &[

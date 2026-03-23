@@ -152,7 +152,16 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                             if sub_type == "automation_StartEvent" {
                                 if let Ok(Some(c)) = get_iri_property(conn, sub_iri, "foundation:inputConcept") {
                                     in_lbl = get_literal_property(conn, &c, rdfs::LABEL).map_err(|e| e.to_string())?;
-                                    in_icon = get_literal_property(conn, &c, "foundation:icon").map_err(|e| e.to_string())?;
+                                    in_icon = {
+                                        use crate::eavto::{query, Object};
+                                        query::get_by_entity_predicate(conn, &c, "foundation:hasIcon")
+                                            .map_err(|e| e.to_string())
+                                            .map(|r| r.triples.into_iter().next().and_then(|t| match t.object {
+                                                Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, &icon_iri),
+                                                Object::Literal { value, .. } => Some(value),
+                                                _ => None,
+                                            }))?
+                                    };
                                 }
                                 break;
                             }
@@ -171,8 +180,16 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                                 let concept_lbl = get_literal_property(conn, &concept_iri, rdfs::LABEL)
                                     .map_err(|e| e.to_string())?
                                     .unwrap_or_else(|| concept_iri.clone());
-                                let i = get_literal_property(conn, &concept_iri, "foundation:icon")
-                                    .map_err(|e| e.to_string())?;
+                                let i = {
+                                    use crate::eavto::{query, Object};
+                                    query::get_by_entity_predicate(conn, &concept_iri, "foundation:hasIcon")
+                                        .map_err(|e| e.to_string())
+                                        .map(|r| r.triples.into_iter().next().and_then(|t| match t.object {
+                                            Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, &icon_iri),
+                                            Object::Literal { value, .. } => Some(value),
+                                            _ => None,
+                                        }))?
+                                };
                                 (format!("{} ({})", concept_lbl, end_lbl), i)
                             } else {
                                 (end_lbl, None)
@@ -193,8 +210,16 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                         let lbl = get_literal_property(conn, &iri, rdfs::LABEL)
                             .map_err(|e| e.to_string())?
                             .unwrap_or_else(|| iri.clone());
-                        let icon = get_literal_property(conn, &iri, "foundation:icon")
-                            .map_err(|e| e.to_string())?;
+                        let icon = {
+                            use crate::eavto::{query, Object};
+                            query::get_by_entity_predicate(conn, &iri, "foundation:hasIcon")
+                                .map_err(|e| e.to_string())
+                                .map(|r| r.triples.into_iter().next().and_then(|t| match t.object {
+                                    Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, &icon_iri),
+                                    Object::Literal { value, .. } => Some(value),
+                                    _ => None,
+                                }))?
+                        };
                         (Some(lbl), icon)
                     } else {
                         (None, None)
@@ -203,8 +228,16 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                         let lbl = get_literal_property(conn, &iri, rdfs::LABEL)
                             .map_err(|e| e.to_string())?
                             .unwrap_or_else(|| iri.clone());
-                        let icon = get_literal_property(conn, &iri, "foundation:icon")
-                            .map_err(|e| e.to_string())?;
+                        let icon = {
+                            use crate::eavto::{query, Object};
+                            query::get_by_entity_predicate(conn, &iri, "foundation:hasIcon")
+                                .map_err(|e| e.to_string())
+                                .map(|r| r.triples.into_iter().next().and_then(|t| match t.object {
+                                    Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, &icon_iri),
+                                    Object::Literal { value, .. } => Some(value),
+                                    _ => None,
+                                }))?
+                        };
                         (Some(lbl), icon)
                     } else {
                         (None, None)

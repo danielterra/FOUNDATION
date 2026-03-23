@@ -63,18 +63,38 @@
     },
   });
 
-  function fixSvgDimensions(container) {
+  function fixSvgForWebkit(container) {
     const svgEl = container?.querySelector('svg');
     if (!svgEl) return;
+
+    // Fix 1: Set explicit pixel dimensions.
+    // WebKit (Tauri WKWebView) cannot compute SVG viewport height when width="100%"
+    // and no height is set, resulting in a zero-height viewport that clips all drawing elements.
     const viewBox = svgEl.getAttribute('viewBox');
-    if (!viewBox) return;
-    const parts = viewBox.trim().split(/\s+/);
-    if (parts.length !== 4) return;
-    const vbWidth = parseFloat(parts[2]);
-    const vbHeight = parseFloat(parts[3]);
-    if (vbWidth > 0 && vbHeight > 0) {
-      svgEl.setAttribute('width', vbWidth);
-      svgEl.setAttribute('height', vbHeight);
+    if (viewBox) {
+      const parts = viewBox.trim().split(/[\s,]+/);
+      if (parts.length === 4) {
+        const vbWidth = parseFloat(parts[2]);
+        const vbHeight = parseFloat(parts[3]);
+        if (vbWidth > 0 && vbHeight > 0) {
+          svgEl.setAttribute('width', String(vbWidth));
+          svgEl.setAttribute('height', String(vbHeight));
+          svgEl.style.removeProperty('max-width');
+        }
+      }
+    }
+
+    // Fix 2: Move SVG <style> to the HTML container.
+    // WebKit does not apply CSS from <style> elements embedded inside SVG when the SVG
+    // is inserted via innerHTML. SVG elements fall back to default styles (black fill,
+    // no stroke) making paths and rects invisible. Moving the style into the HTML scope
+    // ensures the selectors are evaluated correctly.
+    const svgStyle = svgEl.querySelector(':scope > style');
+    if (svgStyle) {
+      const htmlStyle = document.createElement('style');
+      htmlStyle.textContent = svgStyle.textContent;
+      container.insertBefore(htmlStyle, svgEl);
+      svgStyle.remove();
     }
   }
 
@@ -85,7 +105,7 @@
       const id = `mermaid-${widgetId.replace(/[^a-zA-Z0-9]/g, '_')}_${++renderCount}`;
       const { svg } = await mermaid.render(id, content);
       renderContainer.innerHTML = svg;
-      fixSvgDimensions(renderContainer);
+      fixSvgForWebkit(renderContainer);
     } catch (err) {
       renderError = err?.message ?? String(err);
       renderContainer.innerHTML = '';
@@ -98,7 +118,7 @@
       const id = `mermaid-modal-${widgetId.replace(/[^a-zA-Z0-9]/g, '_')}_${++renderCount}`;
       const { svg } = await mermaid.render(id, content);
       modalRenderContainer.innerHTML = svg;
-      fixSvgDimensions(modalRenderContainer);
+      fixSvgForWebkit(modalRenderContainer);
     } catch {
       modalRenderContainer.innerHTML = '';
     }

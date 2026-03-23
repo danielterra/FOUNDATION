@@ -78,7 +78,6 @@ const TRUNCATE_SUFFIX: &str = "...[truncated content]";
 const EXCLUDED_PREDICATES: &[&str] = &[
     "rdf:type",
     "rdfs:label",
-    "foundation:icon",
     "foundation:content",
     "foundation:subconsciousContext",
     "foundation:role",

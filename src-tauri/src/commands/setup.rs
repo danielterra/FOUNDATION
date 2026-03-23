@@ -37,7 +37,6 @@ pub async fn initialize_app(
         })?;
 
     owl::seed_icon_library(&mut conn);
-    owl::migrate_icon_to_has_icon(&mut conn);
 
     if let Ok(stats) = owl::get_stats(&conn) {
         let stats_msg = format!(
@@ -368,7 +367,7 @@ pub async fn setup__init(
     let release_iri = releases.first().ok_or_else(|| {
         format!(
             "SoftwareRelease for FOUNDATION version {} not found in ontology. \
-             Please add it to SoftwareRelease.ttl",
+             Please create it via MCP tools before releasing.",
             version
         )
     })?.clone();

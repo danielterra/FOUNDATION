@@ -59,17 +59,6 @@ impl Individual {
             ));
         }
 
-        if property == "foundation:icon" {
-            for value in values {
-                if let Some(icon_str) = value.as_literal() {
-                    let (pred, obj) = crate::owl::icon_store_value(&icon_str);
-                    let triple = Triple::new(&self.iri, pred, obj);
-                    store::assert_triples(conn, &[triple], origin)?;
-                }
-            }
-            return Ok(());
-        }
-
         let is_meta_property = property.starts_with("rdfs:")
             || property == "foundation:hasIcon";
 
@@ -152,17 +141,6 @@ impl Individual {
             return Err(OwlError::InvalidOperation(
                 format!("No values provided for property {}", property)
             ));
-        }
-
-        if property == "foundation:icon" {
-            for value in values {
-                if let Some(icon_str) = value.as_literal() {
-                    let (pred, obj) = crate::owl::icon_store_value(&icon_str);
-                    let triple = Triple::new(&self.iri, pred, obj);
-                    store::append_triples(conn, &[triple], origin)?;
-                }
-            }
-            return Ok(());
         }
 
         let is_meta_property = property.starts_with("rdfs:")
@@ -340,7 +318,6 @@ impl Individual {
             .map(|r| r.triples.into_iter().filter(|t| {
                 t.predicate != "rdfs:label"
                     && t.predicate != "rdfs:comment"
-                    && t.predicate != "foundation:icon"
                     && t.predicate != "foundation:hasIcon"
             }).collect())
             .map_err(|e| OwlError::DatabaseError(e.to_string()))

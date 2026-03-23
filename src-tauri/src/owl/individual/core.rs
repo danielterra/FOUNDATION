@@ -67,11 +67,6 @@ impl Individual {
                 Object::Iri(iri) => crate::owl::icon_iri_to_display(conn, iri),
                 Object::Literal { value, .. } => Some(value.clone()),
                 _ => None,
-            })
-            .or_else(|| {
-                all_triples.triples.iter()
-                    .find(|t| t.predicate == "foundation:icon")
-                    .and_then(|t| t.object.as_literal())
             });
 
         let comment = all_triples.triples.iter()
@@ -88,7 +83,6 @@ impl Individual {
             .filter(|t| {
                 t.predicate != rdfs::LABEL
                     && t.predicate != rdfs::COMMENT
-                    && t.predicate != "foundation:icon"
                     && t.predicate != "foundation:hasIcon"
             })
             .collect();

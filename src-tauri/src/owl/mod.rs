@@ -11,7 +11,7 @@ pub mod formula_worker;
 
 pub use graph_config::{load_graph_node_groups, get_graph_node_type_config, GraphNodeTypeConfig};
 
-pub use icons::{validate_icon, icon_name_to_iri, icon_iri_to_display, icon_store_value, seed_icon_library, migrate_icon_to_has_icon};
+pub use icons::{validate_icon, icon_name_to_iri, icon_iri_to_display, icon_store_value, seed_icon_library};
 
 pub use class::{Class, ClassType};
 pub use property::{Property, PropertyType};
@@ -194,23 +194,11 @@ pub fn search_individuals(
                         let has_icon_result = query::get_by_entity_predicate(
                             conn, individual_iri, "foundation:hasIcon",
                         )?;
-                        let from_has_icon = has_icon_result.triples.first()
-                            .and_then(|t| t.object.as_iri())
-                            .and_then(|iri| icon_iri_to_display(conn, iri));
-                        if from_has_icon.is_some() {
-                            from_has_icon
-                        } else {
-                            let icon_result = query::get_by_entity_predicate(
-                                conn, individual_iri, "foundation:icon",
-                            )?;
-                            icon_result.triples.first().and_then(|t| {
-                                if let Object::Literal { value, .. } = &t.object {
-                                    Some(value.clone())
-                                } else {
-                                    None
-                                }
-                            })
-                        }
+                        has_icon_result.triples.first().and_then(|t| match &t.object {
+                            Object::Iri(iri) => icon_iri_to_display(conn, iri),
+                            Object::Literal { value, .. } => Some(value.clone()),
+                            _ => None,
+                        })
                     };
 
                     let score = if label_lower == query_lower {
@@ -566,7 +554,6 @@ fn score_entity_against_tokens(
                 let prop_match = triples.iter().find(|t| {
                     t.predicate != "rdfs:label"
                         && t.predicate != "rdfs:comment"
-                        && t.predicate != "foundation:icon"
                         && t.predicate != "foundation:hasIcon"
                         && t.object.as_literal().map(|v| v.to_lowercase().contains(&token_lower)).unwrap_or(false)
                 });
@@ -603,13 +590,10 @@ fn enrich_from_triples(
 
     let icon = triples.iter()
         .find(|t| t.predicate == "foundation:hasIcon")
-        .and_then(|t| t.object.as_iri())
-        .and_then(|icon_iri| icon_iri_to_display(conn, icon_iri))
-        .or_else(|| {
-            triples.iter()
-                .find(|t| t.predicate == "foundation:icon")
-                .and_then(|t| t.object.as_literal())
-                .map(|s| s.to_string())
+        .and_then(|t| match &t.object {
+            Object::Iri(iri) => icon_iri_to_display(conn, iri),
+            Object::Literal { value, .. } => Some(value.clone()),
+            _ => None,
         });
 
     let type_iri = triples.iter()
@@ -931,7 +915,6 @@ fn matched_properties_for_tokens(
         // Find which non-label property matches this token
         let prop_match = triples.iter().find(|t| {
             t.predicate != "rdfs:label"
-                && t.predicate != "foundation:icon"
                 && t.predicate != "foundation:hasIcon"
                 && t.object.as_literal()
                     .map(|v| v.to_lowercase().contains(&tok))
