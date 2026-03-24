@@ -266,8 +266,10 @@ pub async fn execute_agent_task(
         format!("\n\n## Input Data\n{}", entity_blocks.join("\n\n"))
     };
 
+    let current_datetime = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let task_prompt = format!(
-        "You are executing the automation task: **{}**{}\n\n## Instructions\n{}\n\nComplete this task and respond with the result.",
+        "currentDateTime: {}\n\nYou are executing the automation task: **{}**{}\n\n## Instructions\n{}\n\nComplete this task and respond with the result.",
+        current_datetime,
         label,
         ctx_section,
         resolved_description

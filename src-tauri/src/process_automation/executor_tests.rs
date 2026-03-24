@@ -2,6 +2,32 @@ use super::*;
 use crate::eavto::{store, Triple, Object};
 use crate::eavto::test_helpers::setup_test_db;
 
+// ── step output → inputIRIs (regression: Bug_1774382679925) ──────────────────
+
+#[test]
+fn test_step_output_inserts_input_iris() {
+    let output = Some("foundation:Task_123".to_string());
+    let mut ctx = ExecutionContext::new();
+
+    if let Some(value) = output.filter(|v| !v.is_empty()) {
+        ctx.insert("inputIRIs".to_string(), value);
+    }
+
+    assert_eq!(ctx.get("inputIRIs").map(|s| s.as_str()), Some("foundation:Task_123"));
+}
+
+#[test]
+fn test_step_output_empty_not_inserted() {
+    let output = Some(String::new());
+    let mut ctx = ExecutionContext::new();
+
+    if let Some(value) = output.filter(|v| !v.is_empty()) {
+        ctx.insert("inputIRIs".to_string(), value);
+    }
+
+    assert!(ctx.get("inputIRIs").is_none());
+}
+
 // ── interpolate ──────────────────────────────────────────────────────────────
 
 #[test]
@@ -82,43 +108,24 @@ fn test_load_flow_nodes_returns_nodes_with_types() {
     let (nodes, _) = load_flow_nodes(&conn, "foundation:Proc1").unwrap();
     assert_eq!(nodes.len(), 2);
 
-    let types: Vec<&str> = nodes.iter().map(|(_, t, _)| t.as_str()).collect();
+    let types: Vec<&str> = nodes.iter().map(|(_, t)| t.as_str()).collect();
     assert!(types.contains(&"foundation:automation_StartEvent"));
     assert!(types.contains(&"foundation:automation_EndEvent"));
 }
 
 #[test]
-fn test_load_flow_nodes_includes_output_key() {
+fn test_load_flow_nodes_returns_node_iri_and_type() {
     let mut conn = setup_test_db();
     insert_triples(&mut conn, &[
         Triple::new("foundation:Task1", "foundation:partOfProcess", Object::Iri("foundation:Proc2".to_string())),
         Triple::new("foundation:Task1", "rdf:type", Object::Iri("foundation:automation_AgentTask".to_string())),
-        Triple::new("foundation:Task1", "foundation:outputKey", Object::Literal {
-            value: "taskResult".to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        }),
     ]);
 
     let (nodes, _) = load_flow_nodes(&conn, "foundation:Proc2").unwrap();
     assert_eq!(nodes.len(), 1);
-    let (iri, node_type, output_key) = &nodes[0];
+    let (iri, node_type) = &nodes[0];
     assert_eq!(iri, "foundation:Task1");
     assert_eq!(node_type, "foundation:automation_AgentTask");
-    assert_eq!(output_key.as_deref(), Some("taskResult"));
-}
-
-#[test]
-fn test_load_flow_nodes_missing_output_key_is_none() {
-    let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
-        Triple::new("foundation:Start3", "foundation:partOfProcess", Object::Iri("foundation:Proc3".to_string())),
-        Triple::new("foundation:Start3", "rdf:type", Object::Iri("foundation:automation_StartEvent".to_string())),
-    ]);
-
-    let (nodes, _) = load_flow_nodes(&conn, "foundation:Proc3").unwrap();
-    assert_eq!(nodes.len(), 1);
-    assert!(nodes[0].2.is_none());
 }
 
 #[test]

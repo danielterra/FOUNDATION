@@ -19,18 +19,18 @@ const SEGWAY_NEXT_KEY: &str = "__segwayNext";
 /// Loads all flow nodes for a process ordered by the BPMN sequence flow graph
 /// (BFS from StartEvent following sourceRef → targetRef). Orphan nodes not
 /// reachable from the start are appended at the end.
-/// Returns (node_iri, node_type, output_key).
+/// Returns (node_iri, node_type).
 /// Maps each node IRI to its outgoing (target, condition_expression) pairs.
 type FlowMap = HashMap<String, Vec<(String, Option<String>)>>;
 
 fn load_flow_nodes(
     conn: &rusqlite::Connection,
     process_iri: &str,
-) -> Result<(Vec<(String, String, Option<String>)>, FlowMap)> {
+) -> Result<(Vec<(String, String)>, FlowMap)> {
     let result = query::get_by_predicate_object(conn, "foundation:partOfProcess", process_iri)
         .map_err(|e| e.to_string())?;
 
-    let mut node_meta: HashMap<String, (String, Option<String>)> = HashMap::new();
+    let mut node_meta: HashMap<String, String> = HashMap::new();
     let mut seq_flow_iris: Vec<String> = Vec::new();
 
     for triple in &result.triples {
@@ -49,13 +49,7 @@ fn load_flow_nodes(
             continue;
         }
 
-        let output_key = query::get_by_entity_predicate(conn, node_iri, "foundation:outputKey")
-            .map_err(|e| e.to_string())?
-            .triples.first()
-            .and_then(|t| t.object.as_literal())
-            .map(|s| s.to_string());
-
-        node_meta.insert(node_iri.to_string(), (node_type, output_key));
+        node_meta.insert(node_iri.to_string(), node_type);
     }
 
     let mut adjacency: FlowMap = HashMap::new();
@@ -79,7 +73,7 @@ fn load_flow_nodes(
     let mut queue: VecDeque<String> = VecDeque::new();
 
     for iri in node_meta.keys() {
-        if node_meta[iri].0.contains("StartEvent") {
+        if node_meta[iri].contains("StartEvent") {
             visited.insert(iri.clone());
             queue.push_back(iri.clone());
         }
@@ -104,7 +98,7 @@ fn load_flow_nodes(
     }
 
     let nodes = ordered.into_iter()
-        .filter_map(|iri| node_meta.remove(&iri).map(|(t, k)| (iri, t, k)))
+        .filter_map(|iri| node_meta.remove(&iri).map(|t| (iri, t)))
         .collect();
 
     Ok((nodes, adjacency))
@@ -479,7 +473,7 @@ pub async fn run_process_with_context(
         })
         .await?;
 
-    let run_result = execute_nodes(app, &process_iri, &exec_iri, nodes, adjacency, ctx).await;
+    let run_result = execute_nodes(app, &process_iri, &exec_iri, nodes, adjacency, ctx, HashSet::new(), None).await;
 
     executor
         .write({
@@ -538,14 +532,25 @@ async fn execute_nodes(
     app: &AppHandle,
     process_iri: &str,
     exec_iri: &str,
-    nodes: Vec<(String, String, Option<String>)>,
+    nodes: Vec<(String, String)>,
     adjacency: FlowMap,
     ctx: &mut ExecutionContext,
+    initial_skip_set: HashSet<String>,
+    resume_from: Option<String>,
 ) -> Result<Option<String>> {
     let executor = app.state::<DbExecutor>();
-    let mut skip_set: HashSet<String> = HashSet::new();
+    let mut skip_set: HashSet<String> = initial_skip_set;
+    let mut resuming = resume_from.is_some();
 
-    for (node_iri, node_type, output_key) in nodes {
+    for (node_iri, node_type) in nodes {
+        if resuming {
+            if resume_from.as_deref() == Some(node_iri.as_str()) {
+                resuming = false;
+            } else {
+                continue;
+            }
+        }
+
         // Segway routing: skip nodes until we reach the one a SubProcess routed to.
         if let Some(target) = ctx.get(SEGWAY_NEXT_KEY).cloned() {
             if node_iri != target {
@@ -601,16 +606,24 @@ async fn execute_nodes(
             "status": "started",
         })).ok();
 
-        if !ctx.is_empty() {
+        {
             let step = step_iri.clone();
             let ctx_json = serde_json::to_string(ctx).unwrap_or_default();
+            let skip_json = serde_json::to_string(&skip_set.iter().collect::<Vec<_>>()).unwrap_or_default();
             executor.write(move |conn| {
-                let triple = crate::eavto::Triple::new(
-                    &step,
-                    "foundation:inputContext",
-                    Object::Literal { value: ctx_json, datatype: Some("xsd:string".to_string()), language: None },
-                );
-                crate::eavto::store::assert_triples(conn, &[triple], "process_automation")
+                let triples = vec![
+                    crate::eavto::Triple::new(
+                        &step,
+                        "foundation:inputContext",
+                        Object::Literal { value: ctx_json, datatype: Some("xsd:string".to_string()), language: None },
+                    ),
+                    crate::eavto::Triple::new(
+                        &step,
+                        "foundation:inputSkipSet",
+                        Object::Literal { value: skip_json, datatype: Some("xsd:string".to_string()), language: None },
+                    ),
+                ];
+                crate::eavto::store::assert_triples(conn, &triples, "process_automation")
                     .map(|_| String::new())
                     .map_err(|e| e.to_string())
             }).await.ok();
@@ -731,8 +744,8 @@ async fn execute_nodes(
             "status": "completed",
         })).ok();
 
-        if let (Some(key), Some(value)) = (output_key, output) {
-            ctx.insert(key, value);
+        if let Some(value) = output.filter(|v| !v.is_empty()) {
+            ctx.insert("inputIRIs".to_string(), value);
         }
 
         // If the node wrote foundation:outputIRIs directly (e.g. an AgentTask that
@@ -857,6 +870,134 @@ async fn dispatch_ai_task(
     ));
 
     Ok(format!("output_of_{}", node_iri))
+}
+
+async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()> {
+    let executor = app.state::<DbExecutor>();
+
+    let result = executor
+        .read({
+            let exec_iri = exec_iri.to_string();
+            move |conn| {
+                let process_iri = crate::owl::get_iri_property(conn, &exec_iri, "foundation:executesProcess")
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("Execution {} has no executesProcess", exec_iri))?;
+
+                let step_iris = crate::owl::get_all_iri_properties(conn, &exec_iri, "foundation:hasStepExecutions")
+                    .unwrap_or_default();
+
+                for step_iri in step_iris {
+                    let status = crate::owl::get_iri_property(conn, &step_iri, "foundation:hasStatus")
+                        .map_err(|e| e.to_string())?;
+                    if status.as_deref() != Some("foundation:InProgress") {
+                        continue;
+                    }
+                    let node_iri = crate::owl::get_iri_property(conn, &step_iri, "foundation:executesStep")
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| format!("Step {} has no executesStep", step_iri))?;
+                    let ctx_json = crate::owl::get_literal_property(conn, &step_iri, "foundation:inputContext")
+                        .map_err(|e| e.to_string())?
+                        .unwrap_or_else(|| "{}".to_string());
+                    let skip_json = crate::owl::get_literal_property(conn, &step_iri, "foundation:inputSkipSet")
+                        .map_err(|e| e.to_string())?
+                        .unwrap_or_else(|| "[]".to_string());
+                    return Ok(Some((process_iri, step_iri, node_iri, ctx_json, skip_json)));
+                }
+                Ok(None)
+            }
+        })
+        .await?;
+
+    let Some((process_iri, step_iri, node_iri, ctx_json, skip_json)) = result else {
+        executor
+            .write({
+                let exec_iri = exec_iri.to_string();
+                move |conn| finish_execution_record(conn, &exec_iri, Some("Interrupted: no recoverable step found"))
+            })
+            .await?;
+        return Ok(());
+    };
+
+    executor
+        .write({
+            let step_iri = step_iri.clone();
+            move |conn| finish_step_record(conn, &step_iri, None, Some("Interrupted: app was closed"))
+        })
+        .await?;
+
+    let mut ctx: ExecutionContext = serde_json::from_str(&ctx_json).unwrap_or_default();
+    let skip_vec: Vec<String> = serde_json::from_str(&skip_json).unwrap_or_default();
+    let skip_set: HashSet<String> = skip_vec.into_iter().collect();
+
+    log_backend("info", &format!(
+        "[executor] Resuming execution {} from node {} (skip_set: {} nodes)",
+        exec_iri, node_iri, skip_set.len()
+    ));
+
+    app.emit("automation-execution-started", serde_json::json!({
+        "processIri": process_iri,
+        "executionIri": exec_iri,
+        "resumed": true,
+    })).ok();
+
+    let (nodes, adjacency) = executor
+        .read({
+            let process_iri = process_iri.clone();
+            move |conn| load_flow_nodes(conn, &process_iri)
+        })
+        .await?;
+
+    let run_result = execute_nodes(
+        app, &process_iri, exec_iri, nodes, adjacency, &mut ctx,
+        skip_set, Some(node_iri),
+    )
+    .await;
+
+    executor
+        .write({
+            let exec_iri = exec_iri.to_string();
+            let error = run_result.as_ref().err().cloned();
+            move |conn| finish_execution_record(conn, &exec_iri, error.as_deref())
+        })
+        .await?;
+
+    run_result.map(|_| ())
+}
+
+pub async fn recover_interrupted_executions(app: &AppHandle) {
+    let executor = match app.try_state::<DbExecutor>() {
+        Some(e) => e,
+        None => return,
+    };
+
+    let exec_iris: Vec<String> = executor
+        .read(|conn| {
+            let all = crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:WorkflowExecution")
+                .map_err(|e| e.to_string())?;
+            let mut in_progress = Vec::new();
+            for iri in all {
+                if let Ok(Some(status)) = crate::owl::get_iri_property(conn, &iri, "foundation:hasStatus") {
+                    if status == "foundation:InProgress" {
+                        in_progress.push(iri);
+                    }
+                }
+            }
+            Ok(in_progress)
+        })
+        .await
+        .unwrap_or_default();
+
+    if exec_iris.is_empty() {
+        return;
+    }
+
+    log_backend("info", &format!("[executor] Recovering {} interrupted execution(s)", exec_iris.len()));
+
+    for exec_iri in exec_iris {
+        if let Err(e) = resume_workflow_execution(app, &exec_iri).await {
+            log_backend("error", &format!("[executor] Failed to resume execution {}: {}", exec_iri, e));
+        }
+    }
 }
 
 #[cfg(test)]

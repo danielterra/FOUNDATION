@@ -74,7 +74,9 @@ pub async fn initialize_app(
     recover_pending_jobs(&executor_for_recover, &worker).await;
     app.manage(worker);
 
-    tauri::async_runtime::spawn(crate::process_automation::scheduler::start(app.clone()));
+    crate::process_automation::executor::recover_interrupted_executions(&app).await;
+
+    tauri::async_runtime::spawn(crate::process_automation::scheduler::reload(app.clone()));
 
     let _ = app.emit("import-complete", ());
 
