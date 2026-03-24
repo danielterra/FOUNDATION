@@ -97,9 +97,11 @@
 		});
 
 		const unlistenAIStatus = await listen('ai-status', (event) => {
+			const iri = event.payload?.conversationId ?? activeConversationIri;
 			if (event.payload?.status) {
-				const iri = event.payload.conversationId ?? activeConversationIri;
 				startAIStatus(event.payload.status, iri);
+			} else {
+				stopAIStatus(iri);
 			}
 		});
 

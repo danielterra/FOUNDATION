@@ -326,6 +326,9 @@
         <button class="action-btn" onclick={openInspector} title="Open inspector">
           <span class="material-symbols-outlined">info</span>
         </button>
+        <button class="action-btn" onclick={() => onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized')} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
+          <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
+        </button>
         <button class="close-btn" onclick={closeWidget}>
           <span class="material-symbols-outlined">close</span>
         </button>

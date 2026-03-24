@@ -105,6 +105,8 @@ pub struct PropertyValue {
     pub min_count: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai_behavior_rules: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -718,6 +720,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             file_info: None,
             min_count: None,
             max_count: None,
+            ai_behavior_rules: None,
         });
     }
 
@@ -747,6 +750,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             file_info: None,
             min_count: None,
             max_count: None,
+            ai_behavior_rules: None,
         });
     }
 
@@ -788,6 +792,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
         };
 
         let (min_count, max_count) = cardinality_map.get(property_iri.as_str()).copied().unwrap_or((None, None));
+        let ai_behavior_rules = prop.ai_behavior_rules.clone();
 
         properties.push(PropertyValue {
             property: property_iri.clone(),
@@ -814,6 +819,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             file_info: None,
             min_count,
             max_count,
+            ai_behavior_rules,
         });
     }
 
@@ -862,6 +868,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             file_info: None,
             min_count: None,
             max_count: None,
+            ai_behavior_rules: None,
         });
     }
 
@@ -935,6 +942,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Re
             file_info: None,
             min_count: None,
             max_count: None,
+            ai_behavior_rules: None,
         });
     }
 

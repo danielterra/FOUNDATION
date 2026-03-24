@@ -175,10 +175,17 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
                 "iri": t.iri,
                 "label": t.label,
             })).collect::<Vec<_>>(),
-            "properties": concept.properties.iter().map(|(prop, source)| serde_json::json!({
-                "property": prop,
-                "source": source,
-            })).collect::<Vec<_>>(),
+            "properties": concept.properties.iter().map(|(prop_iri, source)| {
+                let ai_behavior_rules = crate::owl::Property::get(conn, prop_iri)
+                    .ok()
+                    .flatten()
+                    .and_then(|p| p.ai_behavior_rules);
+                serde_json::json!({
+                    "property": prop_iri,
+                    "source": source,
+                    "aiBehaviorRules": ai_behavior_rules,
+                })
+            }).collect::<Vec<_>>(),
             "instanceCount": concept.backlinks.len(),
             "allowedStatuses": allowed_statuses,
             "requiredFields": required_fields,

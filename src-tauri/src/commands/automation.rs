@@ -82,16 +82,34 @@ fn extract_local_name(iri: &str) -> &str {
         .unwrap_or(iri)
 }
 
+fn get_members_by_part_of_process(
+    conn: &Connection,
+    process_iri: &str,
+    is_sequence_flow: bool,
+) -> Result<Vec<String>, String> {
+    use crate::eavto::query;
+    let result = query::get_by_predicate_object(conn, "foundation:partOfProcess", process_iri)
+        .map_err(|e| e.to_string())?;
+    let mut iris = Vec::new();
+    for triple in &result.triples {
+        let type_iri = get_iri_property(conn, &triple.subject, rdf::TYPE)
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+        let is_sf = type_iri == "foundation:automation_SequenceFlow";
+        if is_sf == is_sequence_flow {
+            iris.push(triple.subject.clone());
+        }
+    }
+    Ok(iris)
+}
+
 pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str) -> Result<AutomationGraph, String> {
         let process_label = get_literal_property(conn, automation_iri, rdfs::LABEL)
             .map_err(|e| e.to_string())?
             .unwrap_or_else(|| automation_iri.to_string());
 
-        let flow_node_iris = get_all_iri_properties(conn, automation_iri, "foundation:hasFlowNode")
-            .map_err(|e| e.to_string())?;
-
-        let sequence_flow_iris = get_all_iri_properties(conn, automation_iri, "foundation:hasSequenceFlow")
-            .map_err(|e| e.to_string())?;
+        let flow_node_iris = get_members_by_part_of_process(conn, automation_iri, false)?;
+        let sequence_flow_iris = get_members_by_part_of_process(conn, automation_iri, true)?;
 
         let mut nodes: Vec<AutomationGraphNode> = Vec::new();
         for node_iri in flow_node_iris {
@@ -142,8 +160,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
 
                     // Input: from the StartEvent of the called process
                     if let Some(ref process_iri) = invokes_process {
-                        let sub_nodes = get_all_iri_properties(conn, process_iri, "foundation:hasFlowNode")
-                            .map_err(|e| e.to_string())?;
+                        let sub_nodes = get_members_by_part_of_process(conn, process_iri, false)?;
                         for sub_iri in &sub_nodes {
                             let sub_type = get_iri_property(conn, sub_iri, rdf::TYPE)
                                 .map_err(|e| e.to_string())?
@@ -343,6 +360,34 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                         label: seg_label,
                         condition_expression: None,
                         source_handle: Some(format!("output-{}", gi)),
+                    });
+                }
+            }
+        }
+
+        // Synthetic edges from ErrorHandlers attached to nodes in this process
+        let node_iris: Vec<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
+        let error_edge_offset = edges.len();
+        for (ei, &failed_node_iri) in node_iris.iter().enumerate() {
+            use crate::eavto::query;
+            let handlers = query::get_by_predicate_object(conn, "foundation:appliesTo", failed_node_iri)
+                .map_err(|e| e.to_string())?;
+            for (hi, triple) in handlers.triples.iter().enumerate() {
+                let handler_iri = &triple.subject;
+                let type_iri = get_iri_property(conn, handler_iri, rdf::TYPE)
+                    .map_err(|e| e.to_string())?
+                    .unwrap_or_default();
+                if type_iri != "foundation:ErrorHandler" {
+                    continue;
+                }
+                if let Ok(Some(fallback_iri)) = get_iri_property(conn, handler_iri, "foundation:fallbackNode") {
+                    edges.push(AutomationGraphEdge {
+                        id: format!("err{}_{}", ei, hi + error_edge_offset),
+                        source: failed_node_iri.to_string(),
+                        target: fallback_iri,
+                        label: Some("on error".to_string()),
+                        condition_expression: None,
+                        source_handle: Some("error".to_string()),
                     });
                 }
             }

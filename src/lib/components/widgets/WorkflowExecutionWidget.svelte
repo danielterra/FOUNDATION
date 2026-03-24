@@ -4,12 +4,17 @@
   import { listen } from '@tauri-apps/api/event'
   import ChatMessageBubble from '../ChatMessageBubble.svelte'
 
-  let { widgetId, entityId, conversationIri = null } = $props()
+  let { widgetId, entityId, conversationIri = null, windowState = 'normal', onWindowStateChange } = $props()
+
+  function toggleMinimize() {
+    onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized')
+  }
 
   let detail = $state(null)
   let loading = $state(true)
   let error = $state(null)
   let expandedStep = $state(null)
+  let errorDismissed = $state(null)
 
   let unlisteners = []
 
@@ -94,6 +99,7 @@
     await invoke('widget_blackboard__add_widget', {
       widgetType: 'inspector',
       entityId,
+      content: null,
       position: null,
       size: null,
       conversationId: conversationIri,
@@ -118,7 +124,17 @@
           await loadDetail()
         }
       })
-      unlisteners.push(unlistenProgress, unlistenFinished)
+      const unlistenMessage = await listen('automation-step-message', (event) => {
+        if (event.payload.executionIri !== entityId || !detail) return
+        const { stepIri, role, content } = event.payload
+        const stepIndex = detail.steps.findIndex(s => s.iri === stepIri)
+        if (stepIndex === -1) return
+        const msg = { role, content }
+        detail.steps[stepIndex].messages = [...detail.steps[stepIndex].messages, msg]
+        detail = detail
+        expandedStep = stepIri
+      })
+      unlisteners.push(unlistenProgress, unlistenFinished, unlistenMessage)
     }
   })
 
@@ -142,15 +158,17 @@
       {#if detail}
         <span
           class="status-badge"
-          class:spinning={isInProgress(detail.status_label)}
           style="color: {detail.status_color ?? '#94A3B8'}"
         >
-          <span class="material-symbols-outlined status-icon">{detail.status_icon ?? 'help'}</span>
+          <span class="material-symbols-outlined status-icon" class:spinning={isInProgress(detail.status_label)}>{detail.status_icon ?? 'help'}</span>
           <span class="status-label">{detail.status_label}</span>
         </span>
       {/if}
       <button class="close-btn" onclick={openInspector} title="Open inspector">
         <span class="material-symbols-outlined">info</span>
+      </button>
+      <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
+        <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
       </button>
       <button class="close-btn" onclick={closeWidget}>
         <span class="material-symbols-outlined">close</span>
@@ -169,10 +187,13 @@
         <p>{error}</p>
       </div>
     {:else if detail}
-      {#if detail.error_message}
+      {#if detail.error_message && errorDismissed !== detail.error_message}
         <div class="execution-error">
           <span class="material-symbols-outlined">error</span>
-          {detail.error_message}
+          <span class="error-message-text">{detail.error_message}</span>
+          <button class="error-dismiss" onclick={() => errorDismissed = detail.error_message} title="Dismiss">
+            <span class="material-symbols-outlined">close</span>
+          </button>
         </div>
       {/if}
 
@@ -395,6 +416,33 @@
     font-size: 16px;
     flex-shrink: 0;
     margin-top: 1px;
+  }
+
+  .error-message-text {
+    flex: 1;
+  }
+
+  .error-dismiss {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: #FCA5A5;
+    opacity: 0.6;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    border-radius: 3px;
+    transition: opacity 0.15s;
+  }
+
+  .error-dismiss:hover {
+    opacity: 1;
+  }
+
+  .error-dismiss .material-symbols-outlined {
+    font-size: 14px;
+    margin-top: 0;
   }
 
   .steps {

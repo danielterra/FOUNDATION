@@ -200,5 +200,10 @@ pub async fn continue_conversation_after_recovery(
         break;
     }
 
+    app.emit(
+        "ai-status",
+        serde_json::json!({ "status": null, "conversationId": conversation_id }),
+    ).ok();
+
     Ok(())
 }

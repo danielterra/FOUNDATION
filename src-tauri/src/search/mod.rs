@@ -455,7 +455,7 @@ pub fn search_with_scores(query: &str, concept_iri: Option<&str>, limit: usize) 
     parser.set_field_boost(idx.f_comment, 1.5);
     parser.set_field_boost(idx.f_content, 0.8);
 
-    let safe_query = sanitize_query(query);
+    let safe_query = sanitize_query(&expand_camel_case(query));
 
     let text_query: Box<dyn Query> = match parser.parse_query(&safe_query) {
         Ok(q) => q,
@@ -549,7 +549,7 @@ pub fn search_concepts_with_scores(query: &str, limit: usize) -> Vec<(String, f3
     parser.set_field_boost(idx.f_label, 3.0);
     parser.set_field_boost(idx.f_comment, 1.5);
 
-    let safe_query = sanitize_query(query);
+    let safe_query = sanitize_query(&expand_camel_case(query));
 
     let text_query: Box<dyn Query> = match parser.parse_query(&safe_query) {
         Ok(q) => q,
@@ -583,6 +583,23 @@ pub fn search_concepts_with_scores(query: &str, limit: usize) -> Vec<(String, f3
             Some((iri, score))
         })
         .collect()
+}
+
+/// Inserts spaces before uppercase letters in CamelCase runs so that
+/// e.g. "ErrorHandler" becomes "Error Handler" before Tantivy tokenisation.
+fn expand_camel_case(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    let chars: Vec<char> = s.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        if i > 0 && c.is_uppercase() {
+            let prev = chars[i - 1];
+            if prev.is_lowercase() || prev.is_ascii_digit() {
+                out.push(' ');
+            }
+        }
+        out.push(c);
+    }
+    out
 }
 
 fn sanitize_query(query: &str) -> String {

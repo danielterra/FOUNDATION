@@ -165,7 +165,7 @@
           {#if run.status === 'failed'}
             <span class="toast-label">Automation failed: <strong>{run.currentStep}</strong></span>
             {#if run.error}<span class="toast-error">{run.error}</span>{/if}
-            <button class="toast-inspect" onclick={() => invoke('widget_blackboard__add_widget', { widgetType: 'inspector', entityId: run.executionIri, position: null, size: null, conversationId: null })}>
+            <button class="toast-inspect" onclick={() => invoke('widget_blackboard__add_widget', { widgetType: 'inspector', entityId: run.executionIri, content: null, position: null, size: null, conversationId: null })}>
               Inspect
             </button>
           {:else if run.status === 'completed'}
@@ -174,6 +174,11 @@
             <span class="toast-label">Running: <strong>{run.currentStep}</strong></span>
           {/if}
         </div>
+        {#if run.status === 'failed'}
+          <button class="toast-close" onclick={() => automationRuns = automationRuns.filter(r => r.executionIri !== run.executionIri)}>
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        {/if}
       </div>
     {/each}
   </div>
@@ -300,6 +305,28 @@
 
   .toast-inspect:hover {
     background: color-mix(in srgb, #ef4444 20%, transparent);
+  }
+
+  .toast-close {
+    background: none;
+    border: none;
+    padding: 2px;
+    cursor: pointer;
+    color: var(--color-neutral-disabled);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    border-radius: 4px;
+    transition: color 0.15s;
+    align-self: flex-start;
+  }
+
+  .toast-close:hover {
+    color: var(--color-neutral-active);
+  }
+
+  .toast-close .material-symbols-outlined {
+    font-size: 16px;
   }
 
   .recalc-toasts {

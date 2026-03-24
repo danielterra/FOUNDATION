@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::ai::{AIAssistant, GenerateRequest, ChatMessage};
 use crate::ai::providers::{MessageContent, ContentBlock, ClaudeTool};
@@ -17,14 +17,10 @@ const DEFAULT_TIMEOUT_SECS: u64 = 180;
 fn task_complete_tool() -> ClaudeTool {
     ClaudeTool {
         name: "task_complete".to_string(),
-        description: "Signal explicit completion of this AgentTask. Call this to end the task with a typed outcome. If you do not call this, the task will time out as a failure.".to_string(),
+        description: "Signal explicit completion of this AgentTask. Business outcomes (pass/fail) must be written to foundation:outputIRIs before calling this. Do not call this if the task could not execute — a missing call causes a timeout failure.".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "success": {
-                    "type": "boolean",
-                    "description": "true if the task succeeded, false if it failed."
-                },
                 "output_iris": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -32,10 +28,10 @@ fn task_complete_tool() -> ClaudeTool {
                 },
                 "message": {
                     "type": "string",
-                    "description": "Optional message summarising the outcome or failure reason."
+                    "description": "Optional message summarising the outcome."
                 }
             },
-            "required": ["success"]
+            "required": []
         }),
     }
 }
@@ -133,6 +129,7 @@ pub async fn execute_agent_task(
     node_iri: &str,
     ctx: &ExecutionContext,
     step_iri: &str,
+    exec_iri: &str,
 ) -> Result<String> {
     let executor = app.state::<DbExecutor>();
 
@@ -302,7 +299,7 @@ pub async fn execute_agent_task(
     let assistant = AIAssistant::new(Box::new(provider));
 
     let mut last_text = String::new();
-    let mut task_completion: Option<Result<(Vec<String>, String)>> = None;
+    let mut task_completion: Option<(Vec<String>, String)> = None;
 
     'outer: for _ in 0..MAX_TOOL_LOOPS {
         let request = GenerateRequest {
@@ -332,10 +329,17 @@ pub async fn execute_agent_task(
                 input: tc.input.clone(),
             });
         }
+        let assistant_content_json = content_to_json(&MessageContent::ContentBlocks(assistant_blocks.clone()));
         messages.push(ChatMessage {
             role: "assistant".to_string(),
             content: MessageContent::ContentBlocks(assistant_blocks),
         });
+        app.emit("automation-step-message", serde_json::json!({
+            "executionIri": exec_iri,
+            "stepIri": step_iri,
+            "role": "assistant",
+            "content": assistant_content_json,
+        })).ok();
 
         if stop_reason != "tool_use" {
             break;
@@ -344,7 +348,6 @@ pub async fn execute_agent_task(
         let mut result_blocks: Vec<ContentBlock> = Vec::new();
         for tc in &response.tool_calls {
             if tc.name == "task_complete" {
-                let success = tc.input.get("success").and_then(|v| v.as_bool()).unwrap_or(true);
                 let output_iris: Vec<String> = tc.input.get("output_iris")
                     .and_then(|v| v.as_array())
                     .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
@@ -361,11 +364,7 @@ pub async fn execute_agent_task(
                     content: MessageContent::ContentBlocks(result_blocks),
                 });
 
-                task_completion = Some(if success {
-                    Ok((output_iris, message))
-                } else {
-                    Err(if message.is_empty() { "Agent task marked as failed via task_complete".to_string() } else { message })
-                });
+                task_completion = Some((output_iris, message));
                 break 'outer;
             }
 
@@ -417,11 +416,10 @@ pub async fn execute_agent_task(
     persist_conversation(&executor, step_iri, &label, &model_identifier, &messages).await;
 
     match task_completion {
-        Some(Ok((output_iris, message))) => {
+        Some((output_iris, message)) => {
             let first = output_iris.first().cloned().unwrap_or_default();
             Ok(if !first.is_empty() { first } else { message })
         }
-        Some(Err(e)) => Err(e),
         None => Ok(last_text),
     }
 }

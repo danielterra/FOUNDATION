@@ -23,17 +23,24 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         }
     }
 
+    let entity_class_iris: std::collections::HashSet<String> = individual.types.iter()
+        .map(|t| t.iri.clone())
+        .collect();
+
     let mut properties = Vec::new();
     for (property_iri, value_obj) in &individual.properties {
         let prop_result = Property::get(conn, property_iri);
-        let (property_label, property_comment, unit, unit_label, is_object_property, prop_ranges) =
+        let (property_label, property_comment, unit, unit_label, is_object_property, prop_ranges,
+            ai_behavior_rules) =
             if let Ok(Some(prop)) = prop_result {
-            let label = prop.label.clone().unwrap_or_else(|| property_iri.clone());
+            let label = prop.domain_labels.iter()
+                .find(|dl| entity_class_iris.contains(&dl.domain))
+                .map(|dl| dl.forward_label.clone())
+                .unwrap_or_else(|| prop.label.clone().unwrap_or_else(|| property_iri.clone()));
             let comment = prop.comment.clone();
 
             let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
                 let unit_display = resolve_unit_label(conn, unit_iri);
-
                 (Some(unit_iri.clone()), unit_display)
             } else {
                 (None, None)
@@ -41,9 +48,9 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
 
             let is_obj_prop = prop.property_type == crate::owl::PropertyType::ObjectProperty
                 || value_obj.is_iri();
-            (label, comment, unit, unit_label, is_obj_prop, prop.ranges)
+            (label, comment, unit, unit_label, is_obj_prop, prop.ranges, prop.ai_behavior_rules)
         } else {
-            (property_iri.clone(), None, None, None, value_obj.is_iri(), vec![])
+            (property_iri.clone(), None, None, None, value_obj.is_iri(), vec![], None)
         };
 
         let value = if is_object_property {
@@ -121,6 +128,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             file_info,
             min_count: None,
             max_count: None,
+            ai_behavior_rules,
         });
     }
 
@@ -170,6 +178,8 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         (None, None, None)
                     };
 
+                    let ai_behavior_rules = prop.ai_behavior_rules.clone();
+
                     properties.push(PropertyValue {
                         property: prop_iri.clone(),
                         property_label,
@@ -195,6 +205,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         file_info: None,
                         min_count: None,
                         max_count: None,
+                        ai_behavior_rules,
                     });
                 }
             }
@@ -335,18 +346,23 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         .collect();
     let class_things = crate::owl::Thing::get_batch(conn, &unique_class_iris);
 
-    let mut prop_cache: HashMap<String, (String, Option<String>)> = HashMap::new();
+    let mut prop_cache: HashMap<
+        String,
+        (String, Option<String>, Vec<crate::owl::DomainLabel>),
+    > = HashMap::new();
     {
         let unique_prop_iris: std::collections::HashSet<String> = individual.backlinks.iter()
             .map(|b| b.predicate.clone())
             .collect();
         for prop_iri in unique_prop_iris {
-            let (label, comment) = if let Ok(Some(prop)) = Property::get(conn, &prop_iri) {
-                (prop.label.unwrap_or_else(|| prop_iri.clone()), prop.comment)
+            let (label, comment, domain_labels) = if let Ok(Some(prop)) =
+                Property::get(conn, &prop_iri)
+            {
+                (prop.label.unwrap_or_else(|| prop_iri.clone()), prop.comment, prop.domain_labels)
             } else {
-                (prop_iri.clone(), None)
+                (prop_iri.clone(), None, vec![])
             };
-            prop_cache.insert(prop_iri, (label, comment));
+            prop_cache.insert(prop_iri, (label, comment, domain_labels));
         }
     }
 
@@ -390,7 +406,12 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         }
 
         let prop_label = prop_cache.get(&b.predicate)
-            .map(|(l, _)| l.clone())
+            .map(|(l, _, dls)| {
+                b.source_class.as_deref()
+                    .and_then(|cls| dls.iter().find(|dl| dl.domain == cls))
+                    .map(|dl| dl.inverse_label.as_deref().unwrap_or(&dl.forward_label).to_string())
+                    .unwrap_or_else(|| l.clone())
+            })
             .unwrap_or_else(|| b.predicate.clone());
 
         links.push(GraphLink {
@@ -402,9 +423,18 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
 
     let mut backlinks = Vec::new();
     for b in &individual.backlinks {
-        let (property_label, property_comment) = prop_cache.get(&b.predicate)
-            .cloned()
-            .unwrap_or_else(|| (b.predicate.clone(), None));
+        let (property_label, property_comment) = {
+            let cached = prop_cache.get(&b.predicate);
+            let resolved_label = b.source_class.as_deref()
+                .and_then(|cls| cached.and_then(|(_, _, dls)| {
+                    dls.iter().find(|dl| dl.domain == cls)
+                }))
+                .map(|dl| dl.inverse_label.as_deref().unwrap_or(&dl.forward_label).to_string())
+                .or_else(|| cached.map(|(l, _, _)| l.clone()))
+                .unwrap_or_else(|| b.predicate.clone());
+            let comment = cached.and_then(|(_, c, _)| c.clone());
+            (resolved_label, comment)
+        };
 
         let source_thing = source_things.get(&b.subject)
             .cloned()
@@ -449,6 +479,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             file_info: None,
             min_count: None,
             max_count: None,
+            ai_behavior_rules: None,
         });
     }
 

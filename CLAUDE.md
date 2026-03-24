@@ -139,7 +139,7 @@ LIMIT 20;"
 
 ## Foundation MCP Tools
 
-Current tools (19 total): `define_class`, `define_property`, `assert_individual`, `add_property_values`, `replace_property_values`, `remove_property_values`, `clear_property`, `retract_individual`, `retract_class`, `retract_property`, `search`, `describe_class`, `describe_individual`, `describe_property`, `class_graph`, `get_process`, `run_process`, `blackboard_state`, `blackboard_update`
+Current tools (18 total): `define_class`, `define_property`, `assert_individual`, `add_property_values`, `replace_property_values`, `remove_property_values`, `clear_property`, `retract_individual`, `retract_class`, `retract_property`, `search`, `describe_class`, `describe_individual`, `describe_property`, `class_graph`, `get_process`, `run_process`, `blackboard_update`
 
 - **ALWAYS use MCP tools** to interact with Foundation data
 - **NEVER access the database directly** via SQL INSERT/UPDATE/DELETE — always go through MCP tools

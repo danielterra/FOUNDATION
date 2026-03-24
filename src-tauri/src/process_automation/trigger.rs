@@ -107,21 +107,15 @@ fn find_processes_for_event_key(
         return Ok(Vec::new());
     }
 
-    // Find processes that contain those StartEvents (via hasFlowNode backlink)
-    let result = query::get_by_predicate(conn, "foundation:hasFlowNode")
-        .map_err(|e| e.to_string())?;
-
-    let process_iris: Vec<String> = result
-        .triples
-        .iter()
-        .filter(|t| {
-            t.object
-                .as_iri()
-                .map(|iri| start_event_iris.iter().any(|s| s == iri))
-                .unwrap_or(false)
-        })
-        .map(|t| t.subject.clone())
-        .collect();
+    // Find processes via partOfProcess on the StartEvents
+    let mut process_iris: Vec<String> = Vec::new();
+    for start_iri in &start_event_iris {
+        let result = query::get_by_entity_predicate(conn, start_iri, "foundation:partOfProcess")
+            .map_err(|e| e.to_string())?;
+        if let Some(process_iri) = result.triples.first().and_then(|t| t.object.as_iri()) {
+            process_iris.push(process_iri.to_string());
+        }
+    }
 
     Ok(process_iris)
 }

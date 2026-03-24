@@ -2,7 +2,11 @@
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
 
-  let { widgetId, entityId = '' } = $props();
+  let { widgetId, entityId = '', windowState = 'normal', onWindowStateChange } = $props();
+
+  function toggleMinimize() {
+    onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized');
+  }
 
   let connectorLabel = $state('');
   let authType = $state('api_key');
@@ -106,6 +110,9 @@
       {/if}
       <button class="close-btn" onclick={openInspector} title="Open inspector">
         <span class="material-symbols-outlined">info</span>
+      </button>
+      <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
+        <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
       </button>
       <button class="close-btn" onclick={closeWidget}>
         <span class="material-symbols-outlined">close</span>

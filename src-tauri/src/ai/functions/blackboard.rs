@@ -10,24 +10,6 @@ const WIDGET_DEFAULT_Y: f64 = 100.0;
 const WIDGET_DEFAULT_WIDTH: f64 = 400.0;
 const WIDGET_DEFAULT_HEIGHT: f64 = 600.0;
 
-
-pub fn blackboard_state(conn: &Connection, conversation_id: Option<&str>) -> ToolResult {
-    let result = if let Some(conv_id) = conversation_id {
-        widget::owl_get_widgets_for_conversation(conn, conv_id)
-    } else {
-        widget::owl_get_all_widgets(conn)
-    };
-    match result {
-        Ok(widgets) => ToolResult {
-            success: true,
-            result: Some(serde_json::json!({ "widgets": widgets })),
-            error: None,
-            concept: None,
-        },
-        Err(e) => ToolResult { success: false, result: None, error: Some(e), concept: None },
-    }
-}
-
 pub fn blackboard_update(
     conn: &mut Connection,
     args: &Value,

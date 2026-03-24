@@ -106,16 +106,20 @@
       const gatewayIds = new Set(data.nodes.filter(n => n.type === 'automation_Gateway').map(n => n.id))
 
       const flowEdges = data.edges.map(e => {
-        const conditionLabel = gatewayIds.has(e.source) ? (e.condition_expression ?? null) : null
+        const isErrorEdge = e.source_handle === 'error'
+        const conditionLabel = !isErrorEdge && gatewayIds.has(e.source) ? (e.condition_expression ?? null) : null
         return {
           id: e.id,
           source: e.source,
           target: e.target,
           type: 'default',
-          animated: true,
-          sourceHandle: e.source_handle ?? undefined,
-          label: conditionLabel ?? undefined,
-          labelStyle: conditionLabel ? 'background:#1e293b;color:#f1f5f9;padding:2px 7px;border-radius:4px;border:1px solid #475569;font-size:11px;font-weight:500;' : undefined,
+          animated: !isErrorEdge,
+          sourceHandle: isErrorEdge ? undefined : (e.source_handle ?? undefined),
+          style: isErrorEdge ? 'stroke:#ef4444;stroke-dasharray:5,4;stroke-width:1.5px;' : undefined,
+          label: isErrorEdge ? (e.label ?? 'on error') : (conditionLabel ?? undefined),
+          labelStyle: isErrorEdge
+            ? 'background:#450a0a;color:#fca5a5;padding:2px 7px;border-radius:4px;border:1px solid #ef4444;font-size:11px;font-weight:500;'
+            : conditionLabel ? 'background:#1e293b;color:#f1f5f9;padding:2px 7px;border-radius:4px;border:1px solid #475569;font-size:11px;font-weight:500;' : undefined,
         }
       })
 
@@ -143,6 +147,7 @@
       await invoke('widget_blackboard__add_widget', {
         widgetType: 'inspector',
         entityId: node.id,
+        content: null,
         position: null,
         size: null,
         conversationId: conversationIri,
@@ -151,6 +156,7 @@
       await invoke('widget_blackboard__add_widget', {
         widgetType: 'automation',
         entityId: node.data.invokesProcess,
+        content: null,
         position: null,
         size: null,
         conversationId: conversationIri,
@@ -159,6 +165,7 @@
       await invoke('widget_blackboard__add_widget', {
         widgetType: 'inspector',
         entityId: node.id,
+        content: null,
         position: null,
         size: null,
         conversationId: conversationIri,
@@ -190,6 +197,7 @@
     await invoke('widget_blackboard__add_widget', {
       widgetType: 'inspector',
       entityId,
+      content: null,
       position: null,
       size: null,
       conversationId: conversationIri,

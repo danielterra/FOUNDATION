@@ -72,7 +72,7 @@ fn test_find_processes_for_event_key_full_chain_returns_process() {
         }),
         Triple::new("foundation:MsgDef1", "foundation:eventType", Object::Iri("foundation:EventType1".to_string())),
         Triple::new("foundation:MsgDef1", "foundation:messageEventOf", Object::Iri("foundation:Start1".to_string())),
-        Triple::new("foundation:Proc1", "foundation:hasFlowNode", Object::Iri("foundation:Start1".to_string())),
+        Triple::new("foundation:Start1", "foundation:partOfProcess", Object::Iri("foundation:Proc1".to_string())),
     ]);
 
     let result = find_processes_for_event_key(&conn, "entity-created").unwrap();
@@ -93,8 +93,8 @@ fn test_find_processes_for_event_key_multiple_processes_returned() {
         Triple::new("foundation:MsgDef1", "foundation:messageEventOf", Object::Iri("foundation:Start1".to_string())),
         Triple::new("foundation:MsgDef2", "foundation:eventType", Object::Iri("foundation:EventType1".to_string())),
         Triple::new("foundation:MsgDef2", "foundation:messageEventOf", Object::Iri("foundation:Start2".to_string())),
-        Triple::new("foundation:Proc1", "foundation:hasFlowNode", Object::Iri("foundation:Start1".to_string())),
-        Triple::new("foundation:Proc2", "foundation:hasFlowNode", Object::Iri("foundation:Start2".to_string())),
+        Triple::new("foundation:Start1", "foundation:partOfProcess", Object::Iri("foundation:Proc1".to_string())),
+        Triple::new("foundation:Start2", "foundation:partOfProcess", Object::Iri("foundation:Proc2".to_string())),
     ]);
 
     let result = find_processes_for_event_key(&conn, "entity-created").unwrap();
@@ -114,7 +114,7 @@ fn test_find_processes_for_event_key_different_key_not_matched() {
         }),
         Triple::new("foundation:MsgDef1", "foundation:eventType", Object::Iri("foundation:EventType1".to_string())),
         Triple::new("foundation:MsgDef1", "foundation:messageEventOf", Object::Iri("foundation:Start1".to_string())),
-        Triple::new("foundation:Proc1", "foundation:hasFlowNode", Object::Iri("foundation:Start1".to_string())),
+        Triple::new("foundation:Start1", "foundation:partOfProcess", Object::Iri("foundation:Proc1".to_string())),
     ]);
 
     let result = find_processes_for_event_key(&conn, "entity-updated").unwrap();

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use chrono::Utc;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -16,38 +16,205 @@ pub type ExecutionContext = HashMap<String, String>;
 /// The parent executor skips nodes until it reaches the one matching this IRI.
 const SEGWAY_NEXT_KEY: &str = "__segwayNext";
 
-/// Loads all flow nodes for a process, returning (node_iri, node_type, output_key).
+/// Loads all flow nodes for a process ordered by the BPMN sequence flow graph
+/// (BFS from StartEvent following sourceRef → targetRef). Orphan nodes not
+/// reachable from the start are appended at the end.
+/// Returns (node_iri, node_type, output_key).
+/// Maps each node IRI to its outgoing (target, condition_expression) pairs.
+type FlowMap = HashMap<String, Vec<(String, Option<String>)>>;
+
 fn load_flow_nodes(
     conn: &rusqlite::Connection,
     process_iri: &str,
-) -> Result<Vec<(String, String, Option<String>)>> {
-    let result = query::get_by_entity_predicate(conn, process_iri, "foundation:hasFlowNode")
+) -> Result<(Vec<(String, String, Option<String>)>, FlowMap)> {
+    let result = query::get_by_predicate_object(conn, "foundation:partOfProcess", process_iri)
         .map_err(|e| e.to_string())?;
 
-    let mut nodes = Vec::new();
+    let mut node_meta: HashMap<String, (String, Option<String>)> = HashMap::new();
+    let mut seq_flow_iris: Vec<String> = Vec::new();
+
     for triple in &result.triples {
-        if let Some(node_iri) = triple.object.as_iri() {
-            let type_result = query::get_by_entity_predicate(conn, node_iri, "rdf:type")
-                .map_err(|e| e.to_string())?;
-            let node_type = type_result
-                .triples
-                .first()
-                .and_then(|t| t.object.as_iri())
-                .unwrap_or("foundation:automation_FlowNode")
-                .to_string();
+        let node_iri = &triple.subject;
+        let type_result = query::get_by_entity_predicate(conn, node_iri, "rdf:type")
+            .map_err(|e| e.to_string())?;
+        let node_type = type_result
+            .triples
+            .first()
+            .and_then(|t| t.object.as_iri())
+            .unwrap_or("foundation:automation_FlowNode")
+            .to_string();
 
-            let key_result = query::get_by_entity_predicate(conn, node_iri, "foundation:outputKey")
-                .map_err(|e| e.to_string())?;
-            let output_key = key_result
-                .triples
-                .first()
-                .and_then(|t| t.object.as_literal())
-                .map(|s| s.to_string());
+        if node_type == "foundation:automation_SequenceFlow" {
+            seq_flow_iris.push(node_iri.to_string());
+            continue;
+        }
 
-            nodes.push((node_iri.to_string(), node_type, output_key));
+        let output_key = query::get_by_entity_predicate(conn, node_iri, "foundation:outputKey")
+            .map_err(|e| e.to_string())?
+            .triples.first()
+            .and_then(|t| t.object.as_literal())
+            .map(|s| s.to_string());
+
+        node_meta.insert(node_iri.to_string(), (node_type, output_key));
+    }
+
+    let mut adjacency: FlowMap = HashMap::new();
+    for sf_iri in &seq_flow_iris {
+        let source = query::get_by_entity_predicate(conn, sf_iri, "foundation:sourceRef")
+            .map_err(|e| e.to_string())?
+            .triples.first().and_then(|t| t.object.as_iri()).map(|s| s.to_string());
+        let target = query::get_by_entity_predicate(conn, sf_iri, "foundation:targetRef")
+            .map_err(|e| e.to_string())?
+            .triples.first().and_then(|t| t.object.as_iri()).map(|s| s.to_string());
+        let condition = query::get_by_entity_predicate(conn, sf_iri, "foundation:conditionExpression")
+            .map_err(|e| e.to_string())?
+            .triples.first().and_then(|t| t.object.as_literal()).map(|s| s.to_string());
+        if let (Some(src), Some(tgt)) = (source, target) {
+            adjacency.entry(src).or_default().push((tgt, condition));
         }
     }
-    Ok(nodes)
+
+    let mut ordered: Vec<String> = Vec::new();
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+
+    for iri in node_meta.keys() {
+        if node_meta[iri].0.contains("StartEvent") {
+            visited.insert(iri.clone());
+            queue.push_back(iri.clone());
+        }
+    }
+
+    while let Some(iri) = queue.pop_front() {
+        ordered.push(iri.clone());
+        if let Some(neighbors) = adjacency.get(&iri) {
+            for (next, _) in neighbors {
+                if node_meta.contains_key(next) && !visited.contains(next) {
+                    visited.insert(next.clone());
+                    queue.push_back(next.clone());
+                }
+            }
+        }
+    }
+
+    for iri in node_meta.keys() {
+        if !visited.contains(iri) {
+            ordered.push(iri.clone());
+        }
+    }
+
+    let nodes = ordered.into_iter()
+        .filter_map(|iri| node_meta.remove(&iri).map(|(t, k)| (iri, t, k)))
+        .collect();
+
+    Ok((nodes, adjacency))
+}
+
+/// Pure context evaluation — no DB access.
+/// Supported forms:
+///   key.includes('val')    — context[key] contains val
+///   key == 'val'           — exact match (also ===)
+///   key != 'val'           — not equal (also !==)
+///   !key                   — context[key] is absent/empty
+///   key                    — context[key] is non-empty
+fn evaluate_condition_ctx(expr: &str, ctx: &ExecutionContext) -> bool {
+    let expr = expr.trim();
+
+    if let Some(dot_pos) = expr.find(".includes(") {
+        let key = expr[..dot_pos].trim();
+        let rest = expr[dot_pos + ".includes(".len()..].trim_end_matches(')');
+        let value = rest.trim().trim_matches('\'').trim_matches('"');
+        return ctx.get(key).map(|v| v.contains(value)).unwrap_or(false);
+    }
+
+    for op in &["===", "!==", "==", "!="] {
+        if let Some(op_pos) = expr.find(op) {
+            let key = expr[..op_pos].trim();
+            let val = expr[op_pos + op.len()..].trim().trim_matches('\'').trim_matches('"');
+            let ctx_val = ctx.get(key).map(|s| s.as_str()).unwrap_or("");
+            return if op.starts_with('!') { ctx_val != val } else { ctx_val == val };
+        }
+    }
+
+    if let Some(key) = expr.strip_prefix('!') {
+        return ctx.get(key.trim()).map(|v| v.is_empty()).unwrap_or(true);
+    }
+
+    ctx.get(expr).map(|v| !v.is_empty()).unwrap_or(false)
+}
+
+/// Resolves `foundation:<prop_name>` on the entity at `ctx[ctx_key]`.
+/// Returns the IRI or literal value, or None if not found.
+async fn resolve_entity_property(
+    ctx_key: &str,
+    prop_name: &str,
+    ctx: &ExecutionContext,
+    executor: &crate::owl::DbExecutor,
+) -> Option<String> {
+    let entity_iri = ctx.get(ctx_key)?.clone();
+    if !entity_iri.contains(':') || entity_iri.contains(' ') {
+        return None;
+    }
+    let prop_iri = format!("foundation:{}", prop_name);
+    executor.read(move |conn| {
+        if let Ok(Some(v)) = crate::owl::get_iri_property(conn, &entity_iri, &prop_iri) {
+            return Ok(Some(v));
+        }
+        crate::owl::get_literal_property(conn, &entity_iri, &prop_iri)
+            .map_err(|e| e.to_string())
+    }).await.ok().flatten()
+}
+
+/// Evaluates a condition expression, with DB-backed entity property lookups.
+///
+/// Entity property form (resolved against the DB):
+///   contextKey.propertyName == 'value'   — load entity at ctx[contextKey], compare foundation:propertyName
+///   contextKey.propertyName != 'value'
+///
+/// All other forms delegate to `evaluate_condition_ctx`.
+async fn evaluate_condition(
+    expr: &str,
+    ctx: &ExecutionContext,
+    executor: &crate::owl::DbExecutor,
+) -> bool {
+    let expr_trimmed = expr.trim();
+
+    // Detect "contextKey.propertyName op 'value'" — but skip ".includes(" which is ctx-only.
+    if let Some(dot_pos) = expr_trimmed.find('.') {
+        let potential_key = expr_trimmed[..dot_pos].trim();
+        let rest = expr_trimmed[dot_pos + 1..].trim();
+
+        if !rest.starts_with("includes(") && ctx.contains_key(potential_key) {
+            for op in &["===", "!==", "==", "!="] {
+                if let Some(op_pos) = rest.find(op) {
+                    let prop_name = rest[..op_pos].trim();
+                    let value = rest[op_pos + op.len()..].trim().trim_matches('\'').trim_matches('"');
+                    if let Some(entity_val) = resolve_entity_property(potential_key, prop_name, ctx, executor).await {
+                        return if op.starts_with('!') { entity_val != value } else { entity_val == value };
+                    }
+                }
+            }
+        }
+    }
+
+    evaluate_condition_ctx(expr_trimmed, ctx)
+}
+
+/// Returns all node IRIs reachable from `start` following the flow adjacency.
+fn reachable_from(start: &str, adjacency: &FlowMap) -> HashSet<String> {
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    queue.push_back(start.to_string());
+    while let Some(node) = queue.pop_front() {
+        if visited.insert(node.clone()) {
+            if let Some(neighbors) = adjacency.get(&node) {
+                for (target, _) in neighbors {
+                    queue.push_back(target.clone());
+                }
+            }
+        }
+    }
+    visited
 }
 
 /// Returns the `segwayToNode` IRI for the Segway whose `segwayFromEndEvent` matches `end_event_iri`,
@@ -86,6 +253,53 @@ pub(super) fn interpolate(template: &str, ctx: &ExecutionContext) -> String {
     let mut result = template.to_string();
     for (key, value) in ctx {
         result = result.replace(&format!("{{{{{}}}}}", key), value);
+    }
+    result
+}
+
+/// Like `interpolate`, but also resolves `{{contextKey.propertyName}}` by reading
+/// the property from the entity IRI stored under `contextKey` in `ctx`.
+/// `propertyName` may be a full IRI (e.g. `rdfs:label`) or a bare name prefixed
+/// with `foundation:` (e.g. `name` → `foundation:name`).
+pub(super) async fn interpolate_with_db(
+    template: &str,
+    ctx: &ExecutionContext,
+    executor: &crate::owl::DbExecutor,
+) -> String {
+    let mut result = template.to_string();
+    let mut search = template;
+    while let Some(start) = search.find("{{") {
+        let rest = &search[start + 2..];
+        let Some(end) = rest.find("}}") else { break };
+        let key = rest[..end].trim();
+        let placeholder = format!("{{{{{}}}}}", key);
+        search = &rest[end + 2..];
+
+        if let Some(dot) = key.find('.') {
+            let ctx_key = key[..dot].trim();
+            let prop_raw = key[dot + 1..].trim();
+            let prop_iri = if prop_raw.contains(':') {
+                prop_raw.to_string()
+            } else {
+                format!("foundation:{}", prop_raw)
+            };
+            if let Some(entity_iri) = ctx.get(ctx_key).cloned() {
+                if entity_iri.contains(':') && !entity_iri.contains(' ') {
+                    let value = executor.read(move |conn| {
+                        if let Ok(Some(v)) = crate::owl::get_iri_property(conn, &entity_iri, &prop_iri) {
+                            return Ok(Some(v));
+                        }
+                        crate::owl::get_literal_property(conn, &entity_iri, &prop_iri)
+                            .map_err(|e| e.to_string())
+                    }).await.ok().flatten();
+                    if let Some(v) = value {
+                        result = result.replace(&placeholder, &v);
+                    }
+                }
+            }
+        } else if let Some(value) = ctx.get(key) {
+            result = result.replace(&placeholder, value);
+        }
     }
     result
 }
@@ -258,14 +472,14 @@ pub async fn run_process_with_context(
         "executionIri": exec_iri,
     })).ok();
 
-    let nodes = executor
+    let (nodes, adjacency) = executor
         .read({
             let process_iri = process_iri.clone();
             move |conn| load_flow_nodes(conn, &process_iri)
         })
         .await?;
 
-    let run_result = execute_nodes(app, &process_iri, &exec_iri, nodes, ctx).await;
+    let run_result = execute_nodes(app, &process_iri, &exec_iri, nodes, adjacency, ctx).await;
 
     executor
         .write({
@@ -286,6 +500,38 @@ pub async fn run_process_with_context(
     run_result
 }
 
+/// Looks up an ErrorHandler individual whose `foundation:appliesTo` points to `node_iri`.
+/// Returns the `foundation:fallbackNode` IRI from that handler, if one exists.
+fn resolve_error_handler(
+    conn: &rusqlite::Connection,
+    node_iri: &str,
+) -> Result<Option<String>> {
+    let handlers = query::get_by_predicate_object(conn, "foundation:appliesTo", node_iri)
+        .map_err(|e| e.to_string())?;
+
+    for triple in &handlers.triples {
+        let handler_iri = &triple.subject;
+        let type_result = query::get_by_entity_predicate(conn, handler_iri, "rdf:type")
+            .map_err(|e| e.to_string())?;
+        let is_error_handler = type_result.triples.first()
+            .and_then(|t| t.object.as_iri())
+            .map(|iri| iri == "foundation:ErrorHandler")
+            .unwrap_or(false);
+
+        if !is_error_handler {
+            continue;
+        }
+
+        let fallback = query::get_by_entity_predicate(conn, handler_iri, "foundation:fallbackNode")
+            .map_err(|e| e.to_string())?;
+        if let Some(iri) = fallback.triples.first().and_then(|t| t.object.as_iri()) {
+            return Ok(Some(iri.to_string()));
+        }
+    }
+
+    Ok(None)
+}
+
 /// Returns `Ok(Some(end_event_iri))` when an EndEvent is reached (halting execution),
 /// or `Ok(None)` when all nodes complete without hitting an EndEvent.
 async fn execute_nodes(
@@ -293,9 +539,11 @@ async fn execute_nodes(
     process_iri: &str,
     exec_iri: &str,
     nodes: Vec<(String, String, Option<String>)>,
+    adjacency: FlowMap,
     ctx: &mut ExecutionContext,
 ) -> Result<Option<String>> {
     let executor = app.state::<DbExecutor>();
+    let mut skip_set: HashSet<String> = HashSet::new();
 
     for (node_iri, node_type, output_key) in nodes {
         // Segway routing: skip nodes until we reach the one a SubProcess routed to.
@@ -304,6 +552,11 @@ async fn execute_nodes(
                 continue;
             }
             ctx.remove(SEGWAY_NEXT_KEY);
+        }
+
+        if skip_set.contains(&node_iri) {
+            log_backend("info", &format!("[executor] Gateway skip: {}", node_iri));
+            continue;
         }
 
         let kind = normalize_node_type(&node_type);
@@ -371,7 +624,7 @@ async fn execute_nodes(
                 dispatch_ai_task(app, process_iri, &node_iri, &node_type, ctx).await
             }
             "AgentTask" => {
-                super::agent_task::execute_agent_task(app, &node_iri, ctx, &step_iri).await
+                super::agent_task::execute_agent_task(app, &node_iri, ctx, &step_iri, exec_iri).await
             }
             "NOVAMessageTask" => {
                 super::nova_message_task::execute_nova_message_task(app, &node_iri, ctx)
@@ -380,6 +633,46 @@ async fn execute_nodes(
             }
             "SubProcess" => {
                 run_sub_process(app, process_iri, &node_iri, ctx).await.map(|_| String::new())
+            }
+            "Gateway" => {
+                let outgoing = adjacency.get(&node_iri).cloned().unwrap_or_default();
+
+                let mut taken: Option<String> = None;
+                for (target, cond) in &outgoing {
+                    let matches = match cond {
+                        Some(expr) => evaluate_condition(expr, ctx, &executor).await,
+                        None => false,
+                    };
+                    if matches {
+                        taken = Some(target.clone());
+                        break;
+                    }
+                }
+                if taken.is_none() {
+                    taken = outgoing.iter().find(|(_, cond)| cond.is_none()).map(|(t, _)| t.clone());
+                }
+
+                if let Some(ref taken_target) = taken {
+                    let taken_reachable = reachable_from(taken_target, &adjacency);
+                    for (other_target, _) in &outgoing {
+                        if other_target == taken_target { continue; }
+                        for node in reachable_from(other_target, &adjacency) {
+                            if !taken_reachable.contains(&node) {
+                                skip_set.insert(node);
+                            }
+                        }
+                    }
+                    log_backend("info", &format!(
+                        "[executor] Gateway {} → {} (skipping {} nodes)",
+                        node_iri, taken_target, skip_set.len()
+                    ));
+                } else {
+                    log_backend("warn", &format!(
+                        "[executor] Gateway {} — no condition matched, executing all branches",
+                        node_iri
+                    ));
+                }
+                Ok(String::new())
             }
             _ => {
                 log_backend("warn", &format!("[executor] Skipping unhandled node type {} ({})", node_type, node_iri));
@@ -410,6 +703,23 @@ async fn execute_nodes(
                 "status": "failed",
                 "error": e,
             })).ok();
+
+            let fallback = executor
+                .read({
+                    let node_iri = node_iri.clone();
+                    move |conn| resolve_error_handler(conn, &node_iri)
+                })
+                .await?;
+
+            if let Some(fallback_iri) = fallback {
+                log_backend("info", &format!(
+                    "[executor] Node {} failed — ErrorHandler routing to {}",
+                    node_iri, fallback_iri
+                ));
+                ctx.insert(SEGWAY_NEXT_KEY.to_string(), fallback_iri);
+                continue;
+            }
+
             return Err(e.clone());
         }
 
@@ -423,6 +733,21 @@ async fn execute_nodes(
 
         if let (Some(key), Some(value)) = (output_key, output) {
             ctx.insert(key, value);
+        }
+
+        // If the node wrote foundation:outputIRIs directly (e.g. an AgentTask that
+        // calls replace_property_values on itself), inject it into the context so
+        // downstream gateways can evaluate conditions against it.
+        // Tries IRI first (ObjectProperty), then literal (DatatypeProperty).
+        let node_iri_read = node_iri.clone();
+        if let Ok(Some(val)) = executor.read(move |conn| {
+            if let Ok(Some(v)) = crate::owl::get_iri_property(conn, &node_iri_read, "foundation:outputIRIs") {
+                return Ok(Some(v));
+            }
+            crate::owl::get_literal_property(conn, &node_iri_read, "foundation:outputIRIs")
+                .map_err(|e| e.to_string())
+        }).await {
+            ctx.insert("outputIRIs".to_string(), val);
         }
     }
 

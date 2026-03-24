@@ -8,6 +8,7 @@
   import PropertyEditForm from './PropertyEditForm.svelte';
   import ReferenceSelect from './ReferenceSelect.svelte';
   import { sticky, focus } from '$lib/utils/actions';
+  import { onMount } from 'svelte';
 
   let {
     properties, requiredFields = [], isClass = false,
@@ -15,6 +16,40 @@
     onRemoveProperty = null,
     onSaveCardinality = null,
   } = $props();
+
+  let now = $state(Date.now());
+  let tickTimer;
+
+  function computeTickInterval() {
+    const MS_MINUTE = 60_000;
+    const MS_HOUR = 3_600_000;
+    const MS_DAY = 86_400_000;
+    let interval = MS_DAY;
+    for (const prop of properties) {
+      if (prop.datatype !== 'xsd:dateTime' || !prop.value) continue;
+      const ts = isNaN(Number(prop.value))
+        ? new Date(prop.value).getTime()
+        : Number(prop.value);
+      if (isNaN(ts)) continue;
+      const diff = Math.abs(now - ts);
+      if (diff < MS_MINUTE) return 1_000;
+      if (diff < MS_HOUR) interval = Math.min(interval, MS_MINUTE);
+      else if (diff < MS_DAY) interval = Math.min(interval, MS_HOUR);
+    }
+    return interval;
+  }
+
+  function scheduleTick() {
+    tickTimer = setTimeout(() => {
+      now = Date.now();
+      scheduleTick();
+    }, computeTickInterval());
+  }
+
+  onMount(() => {
+    scheduleTick();
+    return () => clearTimeout(tickTimer);
+  });
 
   let hintVisible = $state(false);
   let hintX = $state(0);
@@ -263,18 +298,19 @@
   }
 
   function formatDate(timestamp) {
+    const currentNow = now; // read $state to make this reactive
     const ts = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
     const date = new Date(ts);
 
     if (isNaN(date.getTime())) return timestamp;
 
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const nowDate = new Date(currentNow);
+    const today = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate());
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
 
     const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const diffMs = now - date;
+    const diffMs = currentNow - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
@@ -300,7 +336,7 @@
       return `${dayName} at ${timeStr}`;
     }
 
-    if (date.getFullYear() === now.getFullYear()) {
+    if (date.getFullYear() === nowDate.getFullYear()) {
       return date.toLocaleDateString('en-US', {
         month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
       });

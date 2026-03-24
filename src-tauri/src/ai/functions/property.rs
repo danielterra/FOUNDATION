@@ -96,6 +96,50 @@ fn define_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
             super::batch::queue_formula_recalc(iri.to_string());
         }
 
+        // Create DomainLabel entries for domain-specific labels
+        if let Some(dl_array) = args.get("domain_labels").and_then(|v| v.as_array()) {
+            use crate::eavto::{store, Triple, Object};
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            for (i, entry) in dl_array.iter().enumerate() {
+                let domain = match entry.get("domain").and_then(|v| v.as_str()) {
+                    Some(d) => d,
+                    None => continue,
+                };
+                let forward = match entry.get("forward_label").and_then(|v| v.as_str()) {
+                    Some(f) => f,
+                    None => continue,
+                };
+                let dl_iri = format!("foundation:DomainLabel_{now}_{i}");
+                let mut dl_triples = vec![
+                    Triple::new(
+                        &dl_iri, "rdf:type",
+                        Object::Iri("foundation:DomainLabel".to_string()),
+                    ),
+                    Triple::new(&dl_iri, "foundation:onProperty", Object::Iri(iri.to_string())),
+                    Triple::new(&dl_iri, "foundation:forDomain", Object::Iri(domain.to_string())),
+                    Triple::new(&dl_iri, "foundation:forwardLabel", Object::Literal {
+                        value: forward.to_string(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }),
+                ];
+                if let Some(inverse) = entry.get("inverse_label").and_then(|v| v.as_str()) {
+                    dl_triples.push(Triple::new(
+                        &dl_iri, "foundation:inverseLabel",
+                        Object::Literal {
+                            value: inverse.to_string(),
+                            datatype: Some("xsd:string".to_string()),
+                            language: None,
+                        },
+                    ));
+                }
+                store::assert_triples(conn, &dl_triples, "ai")?;
+            }
+        }
+
         super::batch::queue_event("entity-updated", json!({"entityId": iri}));
         for domain_iri in &domain_strings {
             super::batch::queue_event("entity-updated", json!({"entityId": domain_iri}));
@@ -175,6 +219,7 @@ fn get_property_one(conn: &Connection, args: &Value) -> ToolResult {
             "ranges": prop.ranges,
             "unit": prop.unit,
             "formula": prop.formula,
+            "aiBehaviorRules": prop.ai_behavior_rules,
         }))
     })() {
         Ok(result) => ToolResult { success: true, result: Some(result), error: None, concept: None },
@@ -231,6 +276,7 @@ fn search_properties_one(conn: &Connection, args: &Value) -> ToolResult {
                 "property_type": property_type,
                 "domains": prop.domains,
                 "ranges": prop.ranges,
+                "aiBehaviorRules": prop.ai_behavior_rules,
             }));
         }
 

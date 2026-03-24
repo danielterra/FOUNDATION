@@ -2,7 +2,11 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
 
-  let { widgetId, entityId = '', conversationIri = null } = $props();
+  let { widgetId, entityId = '', conversationIri = null, windowState = 'normal', onWindowStateChange } = $props();
+
+  function toggleMinimize() {
+    onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized');
+  }
 
   let connectorLabel = $state('');
   let exporting = $state(false);
@@ -98,6 +102,9 @@
       <span class="header-title">{connectorLabel || 'Connector Manager'}</span>
     </div>
     <div class="header-actions">
+      <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
+        <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
+      </button>
       <button class="close-btn" onclick={closeWidget}>
         <span class="material-symbols-outlined">close</span>
       </button>

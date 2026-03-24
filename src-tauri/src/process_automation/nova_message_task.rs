@@ -14,6 +14,12 @@ fn find_most_recent_conversation(conn: &rusqlite::Connection) -> Result<String> 
         WHERE t.predicate = 'rdf:type'
           AND t.object = 'foundation:AIConversation'
           AND t.retracted = 0
+          AND EXISTS (
+              SELECT 1 FROM triples h
+              WHERE h.subject = t.subject
+                AND h.predicate = 'foundation:handledBy'
+                AND h.retracted = 0
+          )
         ORDER BY t.rowid DESC
         LIMIT 1
         "#,
@@ -46,7 +52,7 @@ pub async fn execute_nova_message_task(
         })
         .await?;
 
-    let message_text = super::executor::interpolate(&payload_template, ctx);
+    let message_text = super::executor::interpolate_with_db(&payload_template, ctx, &executor).await;
 
     let final_message = if let Some(ref entity_iri) = context_entity_iri {
         let entity_summary = executor
@@ -92,5 +98,16 @@ pub async fn execute_nova_message_task(
     crate::commands::create_user_message(&executor, &conv_id, &final_message).await?;
     app.emit("chat-message-added", ()).ok();
 
-    crate::commands::run_autonomous_reply(app, &conv_id).await
+    let app_spawn = app.clone();
+    tokio::spawn(async move {
+        let executor = app_spawn.state::<DbExecutor>().inner().clone();
+        let cancellation = crate::commands::AiCancellationState::new();
+        if let Err(e) = crate::commands::continue_conversation_after_recovery(
+            app_spawn, executor, conv_id, &cancellation,
+        ).await {
+            crate::commands::log_backend("warn", &format!("[nova_message_task] Reply failed: {}", e));
+        }
+    });
+
+    Ok(())
 }

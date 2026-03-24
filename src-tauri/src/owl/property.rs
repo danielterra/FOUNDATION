@@ -3,6 +3,13 @@ use crate::eavto::{store, query, Triple, Object};
 use crate::owl::{Result, vocabulary::{rdf, rdfs, owl}};
 
 #[derive(Debug, Clone)]
+pub struct DomainLabel {
+    pub domain: String,
+    pub forward_label: String,
+    pub inverse_label: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Property {
     pub iri: String,
     pub label: Option<String>,
@@ -17,6 +24,8 @@ pub struct Property {
     pub inverse_of: Option<String>,
     pub unit: Option<String>,
     pub formula: Option<String>,
+    pub domain_labels: Vec<DomainLabel>,
+    pub ai_behavior_rules: Option<String>,
 }
 
 impl Property {
@@ -36,7 +45,31 @@ impl Property {
             inverse_of: None,
             unit: None,
             formula: None,
+            domain_labels: vec![],
+            ai_behavior_rules: None,
         }
+    }
+
+    fn get_domain_labels(conn: &Connection, property_iri: &str) -> Result<Vec<DomainLabel>> {
+        let dl_result = query::get_by_predicate_object(
+            conn, "foundation:onProperty", property_iri,
+        )?;
+        let mut domain_labels = Vec::new();
+        for triple in dl_result.triples {
+            let dl_iri = &triple.subject;
+            let domain = query::get_by_entity_predicate(conn, dl_iri, "foundation:forDomain")?
+                .triples.first().and_then(|t| t.object.as_iri()).map(|s| s.to_string());
+            let forward_label = query::get_by_entity_predicate(
+                conn, dl_iri, "foundation:forwardLabel",
+            )?.triples.first().and_then(|t| t.object.as_literal());
+            let inverse_label = query::get_by_entity_predicate(
+                conn, dl_iri, "foundation:inverseLabel",
+            )?.triples.first().and_then(|t| t.object.as_literal());
+            if let (Some(domain), Some(forward_label)) = (domain, forward_label) {
+                domain_labels.push(DomainLabel { domain, forward_label, inverse_label });
+            }
+        }
+        Ok(domain_labels)
     }
 
     /// Get complete property data
@@ -115,6 +148,14 @@ impl Property {
         let formula_result = query::get_by_entity_predicate(conn, &iri, "foundation:formula")?;
         let formula = formula_result.triples.first().and_then(|t| t.object.as_literal());
 
+        let ai_behavior_rules_result = query::get_by_entity_predicate(
+            conn, &iri, "foundation:aiBehaviorRules",
+        )?;
+        let ai_behavior_rules = ai_behavior_rules_result.triples.first()
+            .and_then(|t| t.object.as_literal());
+
+        let domain_labels = Self::get_domain_labels(conn, &iri)?;
+
         Ok(Some(Self {
             iri,
             label,
@@ -129,6 +170,8 @@ impl Property {
             inverse_of,
             unit,
             formula,
+            domain_labels,
+            ai_behavior_rules,
         }))
     }
 
@@ -719,5 +762,103 @@ mod tests {
         assert!(!property.is_transitive);
         assert!(!property.is_symmetric);
         assert_eq!(property.property_type, PropertyType::DatatypeProperty);
+    }
+
+    #[test]
+    fn test_domain_labels_loaded_from_store() {
+        use crate::eavto::{store, Triple, Object};
+        let mut conn = setup_test_db();
+
+        Property::new("foundation:hasFather").assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "has father",
+            None,
+            &["foundation:Person"],
+            Some("foundation:Person"),
+            None,
+            "test",
+        ).unwrap();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new(
+                "test:DomainLabel_1", "rdf:type",
+                Object::Iri("foundation:DomainLabel".to_string()),
+            ),
+            Triple::new(
+                "test:DomainLabel_1", "foundation:onProperty",
+                Object::Iri("foundation:hasFather".to_string()),
+            ),
+            Triple::new(
+                "test:DomainLabel_1", "foundation:forDomain",
+                Object::Iri("foundation:Person".to_string()),
+            ),
+            Triple::new(
+                "test:DomainLabel_1", "foundation:forwardLabel",
+                Object::Literal {
+                    value: "has father".to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            ),
+            Triple::new(
+                "test:DomainLabel_1", "foundation:inverseLabel",
+                Object::Literal {
+                    value: "has child".to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            ),
+        ], "test").unwrap();
+
+        let prop = Property::get(&conn, "foundation:hasFather").unwrap().unwrap();
+        assert_eq!(prop.domain_labels.len(), 1);
+        assert_eq!(prop.domain_labels[0].domain, "foundation:Person");
+        assert_eq!(prop.domain_labels[0].forward_label, "has father");
+        assert_eq!(prop.domain_labels[0].inverse_label, Some("has child".to_string()));
+    }
+
+    #[test]
+    fn test_domain_label_without_inverse_is_loaded() {
+        use crate::eavto::{store, Triple, Object};
+        let mut conn = setup_test_db();
+
+        Property::new("foundation:hasMember").assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "has member",
+            None,
+            &[],
+            None,
+            None,
+            "test",
+        ).unwrap();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new(
+                "test:DomainLabel_2", "rdf:type",
+                Object::Iri("foundation:DomainLabel".to_string()),
+            ),
+            Triple::new(
+                "test:DomainLabel_2", "foundation:onProperty",
+                Object::Iri("foundation:hasMember".to_string()),
+            ),
+            Triple::new(
+                "test:DomainLabel_2", "foundation:forDomain",
+                Object::Iri("foundation:Team".to_string()),
+            ),
+            Triple::new(
+                "test:DomainLabel_2", "foundation:forwardLabel",
+                Object::Literal {
+                    value: "member of team".to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            ),
+        ], "test").unwrap();
+
+        let prop = Property::get(&conn, "foundation:hasMember").unwrap().unwrap();
+        assert_eq!(prop.domain_labels.len(), 1);
+        assert_eq!(prop.domain_labels[0].inverse_label, None);
     }
 }

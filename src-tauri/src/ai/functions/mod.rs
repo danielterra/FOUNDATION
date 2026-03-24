@@ -162,7 +162,6 @@ pub fn execute_tool(
         "describe_individual" => thing::describe_individual(conn, args),
         "describe_property" => property::describe_property(conn, args),
         "class_graph" => concept_graph::get_concept_graph(conn, args),
-        "blackboard_state" => blackboard::blackboard_state(conn, conversation_id),
         "blackboard_update" => blackboard::blackboard_update(conn, args, app, conversation_id),
         "get_automation" => get_automation_tool(conn, args),
         "run_automation" => run_automation_tool(args, app),

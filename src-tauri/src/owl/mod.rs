@@ -14,7 +14,7 @@ pub use graph_config::{load_graph_node_groups, get_graph_node_type_config, Graph
 pub use icons::{validate_icon, icon_name_to_iri, icon_iri_to_display, icon_store_value, seed_icon_library};
 
 pub use class::{Class, ClassType};
-pub use property::{Property, PropertyType};
+pub use property::{Property, PropertyType, DomainLabel};
 pub use individual::Individual;
 pub use thing::Thing;
 pub use crate::eavto::Object;

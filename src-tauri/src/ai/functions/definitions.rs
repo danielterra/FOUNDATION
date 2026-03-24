@@ -34,7 +34,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "icon".to_string(),
                     param_type: "string".to_string(),
-                    description: "Material icon name or image URL. Required when creating.".to_string(),
+                    description: "Icon for this entity. Accepts: (1) Material Symbols name (e.g. 'person', 'home', 'star'); (2) local file URL (e.g. 'file:///Users/alice/Pictures/logo.png'); (3) web URL ('https://example.com/icon.svg'); (4) data URI ('data:image/png;base64,...'). Required when creating.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -156,6 +156,13 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     schema: None,
                 },
                 Parameter {
+                    name: "domain_labels".to_string(),
+                    param_type: "array".to_string(),
+                    description: "Domain-specific labels for this property. Each entry: {domain (class IRI), forward_label (label when traversing forward from that domain), inverse_label (optional, label for backlinks into that domain)}.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
                     name: "formula".to_string(),
                     param_type: "string".to_string(),
                     description: "Calculated formula using {{property_iri}} syntax. DatatypeProperty only. Circular dependencies are rejected.".to_string(),
@@ -187,7 +194,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "icon".to_string(),
                     param_type: "string".to_string(),
-                    description: "Material icon name or image URL. Inherits from class if omitted.".to_string(),
+                    description: "Icon for this entity. Accepts: (1) Material Symbols name (e.g. 'person', 'home', 'star'); (2) local file URL (e.g. 'file:///Users/alice/Pictures/logo.png'); (3) web URL ('https://example.com/icon.svg'); (4) data URI ('data:image/png;base64,...'). Inherits from class if omitted.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -378,26 +385,26 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         ToolTemplate {
             name: "search".to_string(),
             array_mode: false,
-            description: "Search for classes or individuals by label, type, or property value. ALL query tokens must match (AND).".to_string(),
+            description: "Search for classes or individuals by label, type, or property value. ALL query tokens must match (AND). Use space-separated words — CamelCase is auto-expanded (e.g. 'ErrorHandler' → 'Error Handler'). To look up a known class by IRI use describe_class instead.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "query".to_string(),
                     param_type: "string".to_string(),
-                    description: "Search keywords. ALL tokens must match. Use 1-3 important English words.".to_string(),
+                    description: "Search keywords. ALL tokens must match. Use 1-3 important English words. CamelCase is auto-expanded, e.g. 'ErrorHandler' → 'Error Handler'. Prefer space-separated words when possible.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "type".to_string(),
                     param_type: "string".to_string(),
-                    description: "Filter to 'class' or 'individual'. Omit to return both.".to_string(),
+                    description: "Filter results to 'class' (owl:Class) or 'individual'. Omit to return both. Note: to fetch a known class by IRI, use describe_class — search is for discovery when the IRI is unknown.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "concept_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "Filter to individuals of this class (e.g. 'foundation:Task').".to_string(),
+                    description: "Filter to individuals of this class (e.g. 'foundation:Task'). Returns all instances when query is empty.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -568,21 +575,10 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         // BLACKBOARD
         // ----------------------------------------------------------------
         ToolTemplate {
-            name: "blackboard_state".to_string(),
-            array_mode: false,
-            description: concat!(
-                "Returns the widgets currently open on the user's blackboard.",
-                " Use before blackboard_update to avoid duplicating existing widgets.",
-                " Widget types and their supported concepts are discoverable via search(concept_iri: 'foundation:WidgetDefinition').",
-            ).to_string(),
-            parameters: vec![],
-        },
-
-        ToolTemplate {
             name: "blackboard_update".to_string(),
             array_mode: true,
             description: concat!(
-                "Use to add, remove, or replace widgets on the user's blackboard. Call blackboard_state first to avoid duplicates.",
+                "Use to add, remove, or replace widgets on the user's blackboard. Current blackboard state is provided automatically in the conversation context.",
                 " Widgets are live — no need to refresh after assert_individual changes.",
                 " Widget type IDs: 'inspector' (any entity), 'meta_process' (MetaProcess), 'mermaid' (MermaidDiagram), 'process_status' (MetaProcess), 'connector_credential' (ExternalServiceConnector), 'connector_manager' (ExternalServiceConnector).",
             ).to_string(),

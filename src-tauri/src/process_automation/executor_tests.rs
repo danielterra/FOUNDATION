@@ -65,7 +65,7 @@ fn insert_triples(conn: &mut rusqlite::Connection, triples: &[Triple]) {
 #[test]
 fn test_load_flow_nodes_empty_process_returns_empty() {
     let conn = setup_test_db();
-    let result = load_flow_nodes(&conn, "foundation:Process_Empty").unwrap();
+    let (result, _) = load_flow_nodes(&conn, "foundation:Process_Empty").unwrap();
     assert!(result.is_empty());
 }
 
@@ -73,13 +73,13 @@ fn test_load_flow_nodes_empty_process_returns_empty() {
 fn test_load_flow_nodes_returns_nodes_with_types() {
     let mut conn = setup_test_db();
     insert_triples(&mut conn, &[
-        Triple::new("foundation:Proc1", "foundation:hasFlowNode", Object::Iri("foundation:Start1".to_string())),
-        Triple::new("foundation:Proc1", "foundation:hasFlowNode", Object::Iri("foundation:End1".to_string())),
+        Triple::new("foundation:Start1", "foundation:partOfProcess", Object::Iri("foundation:Proc1".to_string())),
+        Triple::new("foundation:End1", "foundation:partOfProcess", Object::Iri("foundation:Proc1".to_string())),
         Triple::new("foundation:Start1", "rdf:type", Object::Iri("foundation:automation_StartEvent".to_string())),
         Triple::new("foundation:End1",   "rdf:type", Object::Iri("foundation:automation_EndEvent".to_string())),
     ]);
 
-    let nodes = load_flow_nodes(&conn, "foundation:Proc1").unwrap();
+    let (nodes, _) = load_flow_nodes(&conn, "foundation:Proc1").unwrap();
     assert_eq!(nodes.len(), 2);
 
     let types: Vec<&str> = nodes.iter().map(|(_, t, _)| t.as_str()).collect();
@@ -91,7 +91,7 @@ fn test_load_flow_nodes_returns_nodes_with_types() {
 fn test_load_flow_nodes_includes_output_key() {
     let mut conn = setup_test_db();
     insert_triples(&mut conn, &[
-        Triple::new("foundation:Proc2", "foundation:hasFlowNode", Object::Iri("foundation:Task1".to_string())),
+        Triple::new("foundation:Task1", "foundation:partOfProcess", Object::Iri("foundation:Proc2".to_string())),
         Triple::new("foundation:Task1", "rdf:type", Object::Iri("foundation:automation_AgentTask".to_string())),
         Triple::new("foundation:Task1", "foundation:outputKey", Object::Literal {
             value: "taskResult".to_string(),
@@ -100,7 +100,7 @@ fn test_load_flow_nodes_includes_output_key() {
         }),
     ]);
 
-    let nodes = load_flow_nodes(&conn, "foundation:Proc2").unwrap();
+    let (nodes, _) = load_flow_nodes(&conn, "foundation:Proc2").unwrap();
     assert_eq!(nodes.len(), 1);
     let (iri, node_type, output_key) = &nodes[0];
     assert_eq!(iri, "foundation:Task1");
@@ -112,11 +112,11 @@ fn test_load_flow_nodes_includes_output_key() {
 fn test_load_flow_nodes_missing_output_key_is_none() {
     let mut conn = setup_test_db();
     insert_triples(&mut conn, &[
-        Triple::new("foundation:Proc3", "foundation:hasFlowNode", Object::Iri("foundation:Start3".to_string())),
+        Triple::new("foundation:Start3", "foundation:partOfProcess", Object::Iri("foundation:Proc3".to_string())),
         Triple::new("foundation:Start3", "rdf:type", Object::Iri("foundation:automation_StartEvent".to_string())),
     ]);
 
-    let nodes = load_flow_nodes(&conn, "foundation:Proc3").unwrap();
+    let (nodes, _) = load_flow_nodes(&conn, "foundation:Proc3").unwrap();
     assert_eq!(nodes.len(), 1);
     assert!(nodes[0].2.is_none());
 }
@@ -125,11 +125,11 @@ fn test_load_flow_nodes_missing_output_key_is_none() {
 fn test_load_flow_nodes_missing_type_defaults_to_flow_node() {
     let mut conn = setup_test_db();
     insert_triples(&mut conn, &[
-        Triple::new("foundation:Proc4", "foundation:hasFlowNode", Object::Iri("foundation:Node4".to_string())),
+        Triple::new("foundation:Node4", "foundation:partOfProcess", Object::Iri("foundation:Proc4".to_string())),
         // No rdf:type for Node4
     ]);
 
-    let nodes = load_flow_nodes(&conn, "foundation:Proc4").unwrap();
+    let (nodes, _) = load_flow_nodes(&conn, "foundation:Proc4").unwrap();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].1, "foundation:automation_FlowNode");
 }
@@ -138,14 +138,61 @@ fn test_load_flow_nodes_missing_type_defaults_to_flow_node() {
 fn test_load_flow_nodes_multiple_nodes_all_returned() {
     let mut conn = setup_test_db();
     insert_triples(&mut conn, &[
-        Triple::new("foundation:Proc5", "foundation:hasFlowNode", Object::Iri("foundation:S5".to_string())),
-        Triple::new("foundation:Proc5", "foundation:hasFlowNode", Object::Iri("foundation:T5".to_string())),
-        Triple::new("foundation:Proc5", "foundation:hasFlowNode", Object::Iri("foundation:E5".to_string())),
+        Triple::new("foundation:S5", "foundation:partOfProcess", Object::Iri("foundation:Proc5".to_string())),
+        Triple::new("foundation:T5", "foundation:partOfProcess", Object::Iri("foundation:Proc5".to_string())),
+        Triple::new("foundation:E5", "foundation:partOfProcess", Object::Iri("foundation:Proc5".to_string())),
         Triple::new("foundation:S5", "rdf:type", Object::Iri("foundation:automation_StartEvent".to_string())),
         Triple::new("foundation:T5", "rdf:type", Object::Iri("foundation:automation_AgentTask".to_string())),
         Triple::new("foundation:E5", "rdf:type", Object::Iri("foundation:automation_EndEvent".to_string())),
     ]);
 
-    let nodes = load_flow_nodes(&conn, "foundation:Proc5").unwrap();
+    let (nodes, _) = load_flow_nodes(&conn, "foundation:Proc5").unwrap();
     assert_eq!(nodes.len(), 3);
+}
+
+// ── resolve_error_handler ─────────────────────────────────────────────────────
+
+#[test]
+fn test_resolve_error_handler_returns_none_when_no_handler() {
+    let conn = setup_test_db();
+    let result = resolve_error_handler(&conn, "foundation:TaskNoHandler").unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_resolve_error_handler_returns_fallback_when_handler_attached() {
+    let mut conn = setup_test_db();
+    insert_triples(&mut conn, &[
+        Triple::new("foundation:EH1", "rdf:type", Object::Iri("foundation:ErrorHandler".to_string())),
+        Triple::new("foundation:EH1", "foundation:appliesTo", Object::Iri("foundation:TaskWithHandler".to_string())),
+        Triple::new("foundation:EH1", "foundation:fallbackNode", Object::Iri("foundation:FallbackNode".to_string())),
+    ]);
+
+    let result = resolve_error_handler(&conn, "foundation:TaskWithHandler").unwrap();
+    assert_eq!(result.as_deref(), Some("foundation:FallbackNode"));
+}
+
+#[test]
+fn test_resolve_error_handler_ignores_non_error_handler_applies_to() {
+    let mut conn = setup_test_db();
+    insert_triples(&mut conn, &[
+        Triple::new("foundation:SomeOtherThing", "rdf:type", Object::Iri("foundation:SomeClass".to_string())),
+        Triple::new("foundation:SomeOtherThing", "foundation:appliesTo", Object::Iri("foundation:TaskY".to_string())),
+        Triple::new("foundation:SomeOtherThing", "foundation:fallbackNode", Object::Iri("foundation:FallbackY".to_string())),
+    ]);
+
+    let result = resolve_error_handler(&conn, "foundation:TaskY").unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_resolve_error_handler_returns_none_when_handler_has_no_fallback() {
+    let mut conn = setup_test_db();
+    insert_triples(&mut conn, &[
+        Triple::new("foundation:EH2", "rdf:type", Object::Iri("foundation:ErrorHandler".to_string())),
+        Triple::new("foundation:EH2", "foundation:appliesTo", Object::Iri("foundation:TaskNoFallback".to_string())),
+    ]);
+
+    let result = resolve_error_handler(&conn, "foundation:TaskNoFallback").unwrap();
+    assert!(result.is_none());
 }

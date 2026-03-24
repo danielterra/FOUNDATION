@@ -4,7 +4,7 @@ mod entity;
 mod shortcuts;
 mod logging;
 mod ai;
-mod chat;
+pub mod chat;
 mod chat_attachments;
 mod chat_storage;
 pub mod widget;

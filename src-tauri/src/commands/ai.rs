@@ -155,21 +155,26 @@ pub async fn ai__initialize(
     ));
     ai::initialize_ai_with_model(api_key, model_identifier, timeout_secs).await?;
 
-    let executor_state = app.state::<DbExecutor>();
-    let cancellation_state = app.state::<super::chat::AiCancellationState>();
-    match super::chat::chat__recover_pending_tools(app.clone(), executor_state, cancellation_state).await {
-        Ok(count) if count > 0 => {
-            super::log_backend(
-                "info",
-                &format!("[RECOVERY] Recovered {} pending tool execution(s)", count),
-            );
+    let app_for_recovery = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let executor_state = app_for_recovery.state::<DbExecutor>();
+        let cancellation_state = app_for_recovery.state::<super::chat::AiCancellationState>();
+        match super::chat::chat__recover_pending_tools(
+            app_for_recovery.clone(), executor_state, cancellation_state,
+        ).await {
+            Ok(count) if count > 0 => {
+                super::log_backend(
+                    "info",
+                    &format!("[RECOVERY] Recovered {} pending tool execution(s)", count),
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                super::log_backend("warn", &format!("[RECOVERY] Failed to check pending tools: {}", e));
+                app_for_recovery.emit("ai-error", serde_json::json!({ "message": e })).ok();
+            }
         }
-        Ok(_) => {}
-        Err(e) => {
-            super::log_backend("warn", &format!("[RECOVERY] Failed to check pending tools: {}", e));
-            app.emit("ai-error", serde_json::json!({ "message": e })).ok();
-        }
-    }
+    });
 
     Ok(())
 }
