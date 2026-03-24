@@ -17,14 +17,13 @@ const DEFAULT_TIMEOUT_SECS: u64 = 180;
 fn task_complete_tool() -> ClaudeTool {
     ClaudeTool {
         name: "task_complete".to_string(),
-        description: "Signal explicit completion of this AgentTask. Business outcomes (pass/fail) must be written to foundation:outputIRIs before calling this. Do not call this if the task could not execute — a missing call causes a timeout failure.".to_string(),
+        description: "Signal explicit completion of this AgentTask. Pass the single output IRI (the main entity produced by this task) in output_iri — the executor forwards it to the next step as its input.".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "output_iris": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "IRIs produced by this task, passed as inputIRIs to the next step. Can be empty."
+                "output_iri": {
+                    "type": "string",
+                    "description": "The single IRI produced by this task, forwarded as input to the next step."
                 },
                 "message": {
                     "type": "string",
@@ -299,7 +298,7 @@ pub async fn execute_agent_task(
     let assistant = AIAssistant::new(Box::new(provider));
 
     let mut last_text = String::new();
-    let mut task_completion: Option<(Vec<String>, String)> = None;
+    let mut task_completion: Option<(String, String)> = None;
 
     'outer: for _ in 0..MAX_TOOL_LOOPS {
         let request = GenerateRequest {
@@ -348,9 +347,9 @@ pub async fn execute_agent_task(
         let mut result_blocks: Vec<ContentBlock> = Vec::new();
         for tc in &response.tool_calls {
             if tc.name == "task_complete" {
-                let output_iris: Vec<String> = tc.input.get("output_iris")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                let output_iri = tc.input.get("output_iri")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
                     .unwrap_or_default();
                 let message = tc.input.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
@@ -364,7 +363,7 @@ pub async fn execute_agent_task(
                     content: MessageContent::ContentBlocks(result_blocks),
                 });
 
-                task_completion = Some((output_iris, message));
+                task_completion = Some((output_iri, message));
                 break 'outer;
             }
 
@@ -416,10 +415,7 @@ pub async fn execute_agent_task(
     persist_conversation(&executor, step_iri, &label, &model_identifier, &messages).await;
 
     match task_completion {
-        Some((output_iris, message)) => {
-            let first = output_iris.first().cloned().unwrap_or_default();
-            Ok(if !first.is_empty() { first } else { message })
-        }
+        Some((output_iri, message)) => Ok(if !output_iri.is_empty() { output_iri } else { message }),
         None => Ok(last_text),
     }
 }

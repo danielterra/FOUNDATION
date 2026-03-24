@@ -51,6 +51,8 @@ pub struct AutomationGraphNode {
     pub assigned_to_users: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub output_concepts: Vec<ConceptRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timer_cycle: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -269,6 +271,19 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                 None
             };
 
+            let timer_cycle = if node_type == "automation_TimerStartEvent" {
+                let event_def_iri = get_iri_property(conn, &node_iri, "foundation:eventDefinition")
+                    .map_err(|e| e.to_string())?;
+                if let Some(def_iri) = event_def_iri {
+                    get_literal_property(conn, &def_iri, "foundation:timeCycle")
+                        .map_err(|e| e.to_string())?
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             let (uses_tools, assigned_to_roles, assigned_to_users) = if node_type == "automation_UserTask" {
                 let tool_iris = get_all_iri_properties(conn, &node_iri, "foundation:usesTool")
                     .map_err(|e| e.to_string())?;
@@ -311,6 +326,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                 assigned_to_roles,
                 assigned_to_users,
                 output_concepts,
+                timer_cycle,
             });
         }
 

@@ -65,30 +65,44 @@ Only include sections that have content. Derive entries from the commit list.
 
 ### Step 5 — Create SoftwareRelease individual via MCP
 
-Use `learn_thing` to create the release individual, then `learn_thing_detail` to add each property:
+Use `assert_individual` to create the release, then `add_property_values` to set each property:
 
 ```
-learn_thing(
-  iri: "foundation:FoundationRelease_X_Y_Z",
-  type_iri: "foundation:SoftwareRelease",
+assert_individual(operations: [{
+  class_iri: "foundation:SoftwareRelease",
   label: "FOUNDATION vX.Y.Z",
-  comment: "<one-line summary>"
-)
-learn_thing_detail(iri: "foundation:FoundationRelease_X_Y_Z", detail: "foundation:releaseOf",    value: "foundation:FoundationProduct")
-learn_thing_detail(iri: "foundation:FoundationRelease_X_Y_Z", detail: "foundation:versionNumber", value: "X.Y.Z")
-learn_thing_detail(iri: "foundation:FoundationRelease_X_Y_Z", detail: "foundation:licenseType",   value: "MIT")
-learn_thing_detail(iri: "foundation:FoundationRelease_X_Y_Z", detail: "foundation:releaseDate",   value: "YYYY-MM-DD")
-learn_thing_detail(iri: "foundation:FoundationRelease_X_Y_Z", detail: "foundation:changelog",     value: "<semicolon-separated list of commit subjects>")
+  comment: "<one-line summary>",
+  properties: [
+    {property_iri: "foundation:releaseOf",    values: ["foundation:FoundationProduct"]},
+    {property_iri: "foundation:versionNumber", values: ["X.Y.Z"]},
+    {property_iri: "foundation:licenseType",   values: ["MIT"]},
+    {property_iri: "foundation:releaseDate",   values: ["YYYY-MM-DD"]},
+    {property_iri: "foundation:changelog",     values: ["<semicolon-separated list of commit subjects>"]},
+    {property_iri: "foundation:hasStatus",     values: ["foundation:Completed"]}
+  ]
+}])
 ```
 
 Use today's date from the system context (`currentDate`).
+
+### Step 5b — Sync MCPTool records
+
+Ensure Foundation MCPTool records match the current implementation in `src-tauri/src/ai/functions/definitions.rs`:
+
+1. Call `search(concept_iri: "foundation:MCPTool", limit: 50)` to list all existing records.
+2. Compare against the tools returned by `get_available_tools()` in definitions.rs.
+3. For each tool that is **new** (exists in code but not in Foundation):
+   - Call `assert_individual` with `class_iri: "foundation:MCPTool"`, correct `toolDescription`, `inputSchema`, `outputSchema`, `implementedBy`, `hasStatus: foundation:Completed`.
+4. For each tool that is **renamed** (label mismatch): call `replace_property_values` to update `rdfs:label`, `toolDescription`, `inputSchema`, `outputSchema`.
+5. For each tool that is **removed** (exists in Foundation but not in code): call `retract_individual`.
+6. For each tool with **stale schemas**: call `replace_property_values` to update `toolDescription`, `inputSchema`, `outputSchema`.
 
 ### Step 6 — Query features from Foundation
 
 Start from the product to get only features actually linked to it:
 
-1. Call `remember_thing(iri: "foundation:FoundationProduct")` to get all `foundation:hasFeature` values.
-2. For each feature IRI, call `remember_thing(iri)` to get its label, comment, and status.
+1. Call `describe_individual(iris: ["foundation:FoundationProduct"])` to get all `foundation:hasFeature` values.
+2. For each feature IRI, call `describe_individual` to get its label, comment, and status.
 3. Include features with status `foundation:Completed` or `foundation:InProgress`. Skip `foundation:Pending`.
 4. Use the `comment` field as the one-line description (truncate/summarize if too long).
 5. Sort entries alphabetically by label.

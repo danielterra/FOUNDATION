@@ -5,7 +5,8 @@
   import { SvelteFlow, Controls, Background, BackgroundVariant } from '@xyflow/svelte'
   import '@xyflow/svelte/dist/style.css'
   import { applyDagreLayout } from './automation/layout.js'
-  import NodeStartEvent   from './automation/NodeStartEvent.svelte'
+  import NodeStartEvent        from './automation/NodeStartEvent.svelte'
+  import NodeTimerStartEvent   from './automation/NodeTimerStartEvent.svelte'
   import NodeEndEvent     from './automation/NodeEndEvent.svelte'
   import NodeAgentTask    from './automation/NodeAgentTask.svelte'
   import NodeCodeTask     from './automation/NodeCodeTask.svelte'
@@ -20,6 +21,7 @@
 
   const nodeTypes = {
     automation_StartEvent:       NodeStartEvent,
+    automation_TimerStartEvent:  NodeTimerStartEvent,
     automation_EndEvent:         NodeEndEvent,
     automation_AgentTask:        NodeAgentTask,
     automation_CodeTask:         NodeCodeTask,
@@ -99,6 +101,7 @@
           assignedToRoles: n.assigned_to_roles ?? [],
           assignedToUsers: n.assigned_to_users ?? [],
           outputConcepts: n.output_concepts ?? [],
+          timerCycle: n.timer_cycle ?? null,
         },
         position: { x: 0, y: 0 },
       }))

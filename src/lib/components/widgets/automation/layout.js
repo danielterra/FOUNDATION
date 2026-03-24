@@ -3,6 +3,7 @@ import dagre from '@dagrejs/dagre'
 const NODE_WIDTH = 220
 const NODE_SIZES = {
   automation_StartEvent:      { width: NODE_WIDTH, height: 50 },
+  automation_TimerStartEvent: { width: NODE_WIDTH, height: 50 },
   automation_EndEvent:        { width: NODE_WIDTH, height: 50 },
   automation_AgentTask:       { width: NODE_WIDTH, height: 55 },
   automation_CodeTask:        { width: NODE_WIDTH, height: 55 },
