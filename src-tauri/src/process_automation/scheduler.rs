@@ -24,42 +24,12 @@ const STATUS_PAUSED: &str = "foundation:Status_1773016842120";
 fn collect_timer_definitions(
     conn: &rusqlite::Connection,
 ) -> Result<Vec<(String, String)>, String> {
-    let timer_iris =
-        crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:automation_TimerEventDefinition")
+    let start_event_iris =
+        crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:automation_TimerStartEvent")
             .map_err(|e| e.to_string())?;
 
     let mut timers: Vec<(String, String)> = Vec::new();
-    for timer_iri in &timer_iris {
-        let ind = match Individual::get(conn, timer_iri.as_str()).map_err(|e| e.to_string())? {
-            Some(i) => i,
-            None => continue,
-        };
-
-        let cron_expr = match ind.properties.iter()
-            .find(|(p, _)| p == "foundation:timeCycle")
-            .and_then(|(_, v)| v.as_literal())
-        {
-            Some(e) => e.to_string(),
-            None => continue,
-        };
-
-        let is_paused = ind.properties.iter()
-            .find(|(p, _)| p == "foundation:hasStatus")
-            .and_then(|(_, v)| v.as_iri())
-            .map(|iri| iri == STATUS_PAUSED)
-            .unwrap_or(false);
-        if is_paused {
-            continue;
-        }
-
-        let start_event_iri = match ind.properties.iter()
-            .find(|(p, _)| p == "foundation:timerEventOf")
-            .and_then(|(_, v)| v.as_iri())
-        {
-            Some(iri) => iri.to_string(),
-            None => continue,
-        };
-
+    for start_event_iri in &start_event_iris {
         let start_event = match Individual::get(conn, start_event_iri.as_str()).map_err(|e| e.to_string())? {
             Some(i) => i,
             None => continue,
@@ -72,6 +42,36 @@ fn collect_timer_definitions(
             Some(iri) => iri.to_string(),
             None => continue,
         };
+
+        let timer_def_iri = match start_event.properties.iter()
+            .find(|(p, _)| p == "foundation:eventDefinition")
+            .and_then(|(_, v)| v.as_iri())
+        {
+            Some(iri) => iri.to_string(),
+            None => continue,
+        };
+
+        let timer_def = match Individual::get(conn, timer_def_iri.as_str()).map_err(|e| e.to_string())? {
+            Some(i) => i,
+            None => continue,
+        };
+
+        let cron_expr = match timer_def.properties.iter()
+            .find(|(p, _)| p == "foundation:timeCycle")
+            .and_then(|(_, v)| v.as_literal())
+        {
+            Some(e) => e.to_string(),
+            None => continue,
+        };
+
+        let is_paused = timer_def.properties.iter()
+            .find(|(p, _)| p == "foundation:hasStatus")
+            .and_then(|(_, v)| v.as_iri())
+            .map(|iri| iri == STATUS_PAUSED)
+            .unwrap_or(false);
+        if is_paused {
+            continue;
+        }
 
         timers.push((process_iri, cron_expr));
     }
@@ -176,7 +176,10 @@ async fn is_timer_event_definition(app: &AppHandle, entity_id: &str, include_ret
                 ind.properties.iter().any(|(p, v)| {
                     p == "rdf:type"
                         && v.as_iri()
-                            .map(|iri| iri == "foundation:automation_TimerEventDefinition")
+                            .map(|iri| {
+                                iri == "foundation:automation_TimerEventDefinition"
+                                    || iri == "foundation:automation_TimerStartEvent"
+                            })
                             .unwrap_or(false)
                 })
             };
@@ -209,6 +212,26 @@ mod scheduler_tests {
         store::assert_triples(conn, triples, "test").expect("Failed to insert triples");
     }
 
+    fn timer_start_event_triples(start_iri: &str, timer_iri: &str, process_iri: &str, cron: Option<&str>, paused: bool) -> Vec<Triple> {
+        let mut t = vec![
+            Triple::new(start_iri, "rdf:type", Object::Iri("foundation:automation_TimerStartEvent".to_string())),
+            Triple::new(start_iri, "foundation:eventDefinition", Object::Iri(timer_iri.to_string())),
+            Triple::new(start_iri, "foundation:partOfProcess", Object::Iri(process_iri.to_string())),
+            Triple::new(timer_iri, "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
+        ];
+        if let Some(c) = cron {
+            t.push(Triple::new(timer_iri, "foundation:timeCycle", Object::Literal {
+                value: c.to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }));
+        }
+        if paused {
+            t.push(Triple::new(timer_iri, "foundation:hasStatus", Object::Iri(super::STATUS_PAUSED.to_string())));
+        }
+        t
+    }
+
     #[test]
     fn test_collect_timer_definitions_empty_db_returns_empty() {
         let conn = setup_test_db();
@@ -217,18 +240,12 @@ mod scheduler_tests {
     }
 
     #[test]
-    fn test_collect_timer_definitions_returns_process_iri_not_start_event() {
+    fn test_collect_timer_definitions_returns_process_iri() {
         let mut conn = setup_test_db();
-        insert_triples(&mut conn, &[
-            Triple::new("foundation:Timer1", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
-            Triple::new("foundation:Timer1", "foundation:timeCycle", Object::Literal {
-                value: "0 * * * * *".to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }),
-            Triple::new("foundation:Timer1", "foundation:timerEventOf", Object::Iri("foundation:Start1".to_string())),
-            Triple::new("foundation:Start1", "foundation:partOfProcess", Object::Iri("foundation:Process1".to_string())),
-        ]);
+        insert_triples(&mut conn, &timer_start_event_triples(
+            "foundation:Start1", "foundation:Timer1", "foundation:Process1",
+            Some("0 * * * * *"), false,
+        ));
 
         let timers = collect_timer_definitions(&conn).unwrap();
         assert_eq!(timers.len(), 1);
@@ -240,28 +257,28 @@ mod scheduler_tests {
     #[test]
     fn test_collect_timer_definitions_skips_timer_without_time_cycle() {
         let mut conn = setup_test_db();
-        insert_triples(&mut conn, &[
-            Triple::new("foundation:Timer2", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
-            Triple::new("foundation:Timer2", "foundation:timerEventOf", Object::Iri("foundation:Start2".to_string())),
-            Triple::new("foundation:Start2", "foundation:partOfProcess", Object::Iri("foundation:Process2".to_string())),
-        ]);
+        insert_triples(&mut conn, &timer_start_event_triples(
+            "foundation:Start2", "foundation:Timer2", "foundation:Process2",
+            None, false,
+        ));
 
         let timers = collect_timer_definitions(&conn).unwrap();
         assert!(timers.is_empty());
     }
 
     #[test]
-    fn test_collect_timer_definitions_skips_timer_without_process_link() {
+    fn test_collect_timer_definitions_skips_start_event_without_process_link() {
         let mut conn = setup_test_db();
         insert_triples(&mut conn, &[
+            Triple::new("foundation:Start3", "rdf:type", Object::Iri("foundation:automation_TimerStartEvent".to_string())),
+            Triple::new("foundation:Start3", "foundation:eventDefinition", Object::Iri("foundation:Timer3".to_string())),
+            // No partOfProcess on Start3
             Triple::new("foundation:Timer3", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
             Triple::new("foundation:Timer3", "foundation:timeCycle", Object::Literal {
                 value: "0 * * * * *".to_string(),
                 datatype: Some("xsd:string".to_string()),
                 language: None,
             }),
-            Triple::new("foundation:Timer3", "foundation:timerEventOf", Object::Iri("foundation:Start3".to_string())),
-            // No partOfProcess on Start3
         ]);
 
         let timers = collect_timer_definitions(&conn).unwrap();
@@ -271,17 +288,10 @@ mod scheduler_tests {
     #[test]
     fn test_collect_timer_definitions_skips_paused_timer() {
         let mut conn = setup_test_db();
-        insert_triples(&mut conn, &[
-            Triple::new("foundation:TimerP", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
-            Triple::new("foundation:TimerP", "foundation:timeCycle", Object::Literal {
-                value: "0 * * * * *".to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }),
-            Triple::new("foundation:TimerP", "foundation:hasStatus", Object::Iri(super::STATUS_PAUSED.to_string())),
-            Triple::new("foundation:TimerP", "foundation:timerEventOf", Object::Iri("foundation:StartP".to_string())),
-            Triple::new("foundation:StartP", "foundation:partOfProcess", Object::Iri("foundation:ProcessP".to_string())),
-        ]);
+        insert_triples(&mut conn, &timer_start_event_triples(
+            "foundation:StartP", "foundation:TimerP", "foundation:ProcessP",
+            Some("0 * * * * *"), true,
+        ));
 
         let timers = collect_timer_definitions(&conn).unwrap();
         assert!(timers.is_empty());
@@ -290,17 +300,13 @@ mod scheduler_tests {
     #[test]
     fn test_collect_timer_definitions_includes_active_timer() {
         let mut conn = setup_test_db();
-        insert_triples(&mut conn, &[
-            Triple::new("foundation:TimerAct", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
-            Triple::new("foundation:TimerAct", "foundation:timeCycle", Object::Literal {
-                value: "0 * * * * *".to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }),
-            Triple::new("foundation:TimerAct", "foundation:hasStatus", Object::Iri("foundation:Status_1772755611667".to_string())),
-            Triple::new("foundation:TimerAct", "foundation:timerEventOf", Object::Iri("foundation:StartAct".to_string())),
-            Triple::new("foundation:StartAct", "foundation:partOfProcess", Object::Iri("foundation:ProcessAct".to_string())),
-        ]);
+        let mut triples = timer_start_event_triples(
+            "foundation:StartAct", "foundation:TimerAct", "foundation:ProcessAct",
+            Some("0 * * * * *"), false,
+        );
+        triples.push(Triple::new("foundation:TimerAct", "foundation:hasStatus",
+            Object::Iri("foundation:Status_1772755611667".to_string())));
+        insert_triples(&mut conn, &triples);
 
         let timers = collect_timer_definitions(&conn).unwrap();
         assert_eq!(timers.len(), 1);
@@ -310,25 +316,15 @@ mod scheduler_tests {
     #[test]
     fn test_collect_timer_definitions_multiple_timers() {
         let mut conn = setup_test_db();
-        insert_triples(&mut conn, &[
-            Triple::new("foundation:TimerA", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
-            Triple::new("foundation:TimerA", "foundation:timeCycle", Object::Literal {
-                value: "0 * * * * *".to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }),
-            Triple::new("foundation:TimerA", "foundation:timerEventOf", Object::Iri("foundation:StartA".to_string())),
-            Triple::new("foundation:StartA", "foundation:partOfProcess", Object::Iri("foundation:ProcessA".to_string())),
-
-            Triple::new("foundation:TimerB", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
-            Triple::new("foundation:TimerB", "foundation:timeCycle", Object::Literal {
-                value: "0 0 * * * *".to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }),
-            Triple::new("foundation:TimerB", "foundation:timerEventOf", Object::Iri("foundation:StartB".to_string())),
-            Triple::new("foundation:StartB", "foundation:partOfProcess", Object::Iri("foundation:ProcessB".to_string())),
-        ]);
+        let mut triples = timer_start_event_triples(
+            "foundation:StartA", "foundation:TimerA", "foundation:ProcessA",
+            Some("0 * * * * *"), false,
+        );
+        triples.extend(timer_start_event_triples(
+            "foundation:StartB", "foundation:TimerB", "foundation:ProcessB",
+            Some("0 0 * * * *"), false,
+        ));
+        insert_triples(&mut conn, &triples);
 
         let timers = collect_timer_definitions(&conn).unwrap();
         assert_eq!(timers.len(), 2);

@@ -50,7 +50,14 @@ impl DbExecutor {
         std::thread::spawn(move || {
             let mut write_conn = conn;
             while let Some(task) = write_rx.blocking_recv() {
-                let result = (task.operation)(&mut write_conn);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    (task.operation)(&mut write_conn)
+                })).unwrap_or_else(|e| {
+                    let msg = e.downcast_ref::<&str>().copied()
+                        .or_else(|| e.downcast_ref::<String>().map(|s| s.as_str()))
+                        .unwrap_or("unknown panic");
+                    Err(format!("write operation panicked: {}", msg))
+                });
                 if let Some(ref tx) = notify_tx_thread {
                     let subjects = crate::eavto::store::drain_written_subjects();
                     let iri_objects = crate::eavto::store::drain_written_iri_objects();

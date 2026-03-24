@@ -198,7 +198,7 @@
 					<span class="subconscious-summary-text">{subconsciousSummary(message.subconscious_entities)}</span>
 					<span class="subconscious-tokens">~{estimateTokens(ctx).toLocaleString()} tokens</span>
 				</summary>
-				<pre class="subconscious-context">{ctx}</pre>
+				<div class="subconscious-context markdown-body">{@html marked.parse(ctx)}</div>
 			</details>
 		{/if}
 		<div class="message-bubble">
@@ -790,11 +790,65 @@
 		font-size: 10px;
 		line-height: 1.6;
 		color: var(--color-neutral);
-		white-space: pre-wrap;
 		word-break: break-word;
 		overflow-x: auto;
 		max-height: 400px;
 		overflow-y: auto;
+	}
+
+	.subconscious-context :global(h1),
+	.subconscious-context :global(h2),
+	.subconscious-context :global(h3) {
+		font-size: 11px;
+		font-weight: 600;
+		margin: 8px 0 2px;
+		color: color-mix(in srgb, var(--color-interactive) 85%, var(--color-neutral));
+	}
+
+	.subconscious-context :global(p) {
+		margin: 2px 0;
+	}
+
+	.subconscious-context :global(ul),
+	.subconscious-context :global(ol) {
+		margin: 2px 0;
+		padding-left: 16px;
+	}
+
+	.subconscious-context :global(li) {
+		margin: 1px 0;
+	}
+
+	.subconscious-context :global(code) {
+		font-family: monospace;
+		font-size: 9px;
+		background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
+		padding: 1px 3px;
+		border-radius: 3px;
+	}
+
+	.subconscious-context :global(pre) {
+		background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
+		padding: 6px 8px;
+		border-radius: 4px;
+		overflow-x: auto;
+		margin: 4px 0;
+	}
+
+	.subconscious-context :global(pre code) {
+		background: none;
+		padding: 0;
+	}
+
+	.subconscious-context :global(strong) {
+		font-weight: 600;
+		color: color-mix(in srgb, var(--color-neutral) 90%, var(--color-interactive));
+	}
+
+	.subconscious-context :global(hr) {
+		border: none;
+		border-top: 1px solid color-mix(in srgb, var(--color-interactive) 20%, transparent);
+		margin: 6px 0;
 	}
 
 
