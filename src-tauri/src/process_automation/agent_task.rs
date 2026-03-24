@@ -151,7 +151,7 @@ pub async fn execute_agent_task(
                 let tool_iris = get_all_iri_properties(conn, &node_iri, "foundation:allowedTools")
                     .unwrap_or_default();
                 let allowed_tool_names: Vec<String> = tool_iris.iter()
-                    .filter_map(|iri| get_literal_property(conn, iri, "rdfs:label").ok().flatten())
+                    .filter_map(|iri| get_literal_property(conn, iri, "foundation:functionName").ok().flatten())
                     .collect();
 
                 Ok((label, description, agent_iri, allowed_tool_names))

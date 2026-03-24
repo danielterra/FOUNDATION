@@ -10,6 +10,8 @@
 	import ChatErrorBanner from './ChatErrorBanner.svelte';
 	import ChatMessageList from './ChatMessageList.svelte';
 
+	const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+
 	// Props
 	let { isOpen = $bindable(false), activeConversationIri = $bindable(null) } = $props();
 
@@ -551,7 +553,7 @@
 		const items = e.clipboardData?.items;
 		if (!items) return;
 
-		const imageItem = Array.from(items).find(item => item.type.startsWith('image/'));
+		const imageItem = Array.from(items).find(item => SUPPORTED_IMAGE_TYPES.includes(item.type));
 		if (!imageItem) return;
 
 		e.preventDefault();
@@ -570,7 +572,7 @@
 				return;
 			}
 
-			const isImage = file.type.startsWith('image/');
+			const isImage = SUPPORTED_IMAGE_TYPES.includes(file.type);
 			const isPDF = file.type === 'application/pdf';
 
 			if (!isImage && !isPDF) {

@@ -92,8 +92,8 @@ Ensure Foundation MCPTool records match the current implementation in `src-tauri
 1. Call `search(concept_iri: "foundation:MCPTool", limit: 50)` to list all existing records.
 2. Compare against the tools returned by `get_available_tools()` in definitions.rs.
 3. For each tool that is **new** (exists in code but not in Foundation):
-   - Call `assert_individual` with `class_iri: "foundation:MCPTool"`, correct `toolDescription`, `inputSchema`, `outputSchema`, `implementedBy`, `hasStatus: foundation:Completed`.
-4. For each tool that is **renamed** (label mismatch): call `replace_property_values` to update `rdfs:label`, `toolDescription`, `inputSchema`, `outputSchema`.
+   - Call `assert_individual` with `class_iri: "foundation:MCPTool"`, correct `toolDescription`, `inputSchema`, `outputSchema`, `implementedBy`, `functionName` (exact tool name string), `hasStatus: foundation:Completed`.
+4. For each tool that is **renamed** (label mismatch): call `replace_property_values` to update `rdfs:label`, `foundation:functionName`, `toolDescription`, `inputSchema`, `outputSchema`.
 5. For each tool that is **removed** (exists in Foundation but not in code): call `retract_individual`.
 6. For each tool with **stale schemas**: call `replace_property_values` to update `toolDescription`, `inputSchema`, `outputSchema`.
 
