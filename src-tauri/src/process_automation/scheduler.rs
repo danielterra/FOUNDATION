@@ -9,12 +9,14 @@ use crate::owl::{DbExecutor, Individual};
 
 pub struct SchedulerState {
     pub handles: Mutex<Vec<JoinHandle<()>>>,
+    reload_lock: tokio::sync::Mutex<()>,
 }
 
 impl SchedulerState {
     pub fn new() -> Self {
         Self {
             handles: Mutex::new(Vec::new()),
+            reload_lock: tokio::sync::Mutex::new(()),
         }
     }
 }
@@ -336,11 +338,14 @@ mod scheduler_tests {
 }
 
 /// Aborts all running schedule tasks and restarts them from current DB state.
+/// Uses reload_lock to serialize concurrent reload calls, preventing duplicate timer tasks.
 pub async fn reload(app: AppHandle) {
     let state = match app.try_state::<SchedulerState>() {
         Some(s) => s,
         None => return,
     };
+
+    let _guard = state.reload_lock.lock().await;
 
     {
         let mut handles = match state.handles.lock() {
@@ -352,5 +357,5 @@ pub async fn reload(app: AppHandle) {
         }
     }
 
-    start(app).await;
+    start(app.clone()).await;
 }
