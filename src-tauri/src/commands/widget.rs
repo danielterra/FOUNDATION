@@ -461,7 +461,7 @@ pub async fn widget_blackboard__update_widget_content(
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn widget_blackboard__list_widget_definitions(
-    concept_iri: Option<String>,
+    class_iri: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<WidgetDefinitionInfo>, String> {
     executor.read(move |conn| {
@@ -475,7 +475,7 @@ pub async fn widget_blackboard__list_widget_definitions(
                 _ => continue,
             };
 
-            if let Some(ref filter_iri) = concept_iri {
+            if let Some(ref filter_iri) = class_iri {
                 let supports_entity = ind.properties.iter()
                     .find(|(p, _)| p == "foundation:widgetDefSupportsEntity")
                     .and_then(|(_, v)| v.as_literal())

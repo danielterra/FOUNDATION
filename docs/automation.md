@@ -273,12 +273,12 @@ The agent has access to all FOUNDATION tools during execution:
 
 | Tool | Description |
 |------|-------------|
-| `learn_things` | Create or update entity instances |
-| `learn_concepts` | Create or update ontology classes |
-| `remember_things` | Query entity instances |
-| `remember_concepts` | Query ontology classes |
-| `forget_things` | Retract entity instances |
-| `forget_concepts` | Retract ontology classes |
+| `assert_individual` | Create or update entity instances |
+| `define_class` | Create or update ontology classes |
+| `search` | Query entity instances |
+| `describe_class` | Query ontology classes |
+| `retract_individual` | Retract entity instances |
+| `retract_class` | Retract ontology classes |
 | `blackboard_update` | Add or remove widgets on the blackboard |
 | `run_process` | Trigger another process (enables recursive orchestration) |
 

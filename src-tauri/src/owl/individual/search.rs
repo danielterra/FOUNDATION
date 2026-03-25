@@ -65,6 +65,13 @@ impl Individual {
         ).map_err(|e| OwlError::DatabaseError(e.to_string()))
     }
 
+    /// Returns the IRI of the conversation with the most recent user message.
+    /// Only considers conversations that have a `foundation:handledBy` triple.
+    pub fn find_conversation_by_last_user_message(conn: &Connection) -> Result<Option<String>> {
+        query::find_conversation_by_last_user_message(conn)
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))
+    }
+
     /// Returns IRIs of messages in `conversation_iri` ordered by sentAt descending (newest first).
     /// Pass `limit = usize::MAX` for no limit.
     pub fn find_messages_by_conversation(

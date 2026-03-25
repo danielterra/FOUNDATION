@@ -4,6 +4,7 @@ mod individual;
 mod thing;
 mod icons;
 mod graph_config;
+mod search_rich;
 pub mod vocabulary;
 pub mod cardinality;
 pub mod formula;
@@ -239,7 +240,7 @@ pub struct RichSearchResult {
     #[serde(rename = "type")]
     pub entity_type: String,
     pub matched_properties: Vec<serde_json::Value>,
-    pub concept_type: Option<serde_json::Value>,
+    pub class_type: Option<serde_json::Value>,
     pub status: Option<serde_json::Value>,
 }
 
@@ -386,21 +387,21 @@ pub fn find_entities_with_property(
     Ok(result.triples.into_iter().map(|t| t.subject).collect())
 }
 
-/// Validates that `status_iri` is in the `foundation:allowedStatus` list of `concept_iri`.
-/// Returns an error if the concept has no configured statuses, or if the status is not allowed.
+/// Validates that `status_iri` is in the `foundation:allowedStatus` list of `class_iri`.
+/// Returns an error if the class has no configured statuses, or if the status is not allowed.
 pub fn validate_allowed_status(
     conn: &Connection,
-    concept_iri: &str,
+    class_iri: &str,
     status_iri: &str,
 ) -> Result<()> {
     use crate::eavto::query;
-    let result = query::get_by_entity_predicate(conn, concept_iri, "foundation:allowedStatus")?;
+    let result = query::get_by_entity_predicate(conn, class_iri, "foundation:allowedStatus")?;
     if result.triples.is_empty() {
-        let concept_label = get_literal_property(conn, concept_iri, "rdfs:label")?
-            .unwrap_or_else(|| concept_iri.to_string());
+        let class_label = get_literal_property(conn, class_iri, "rdfs:label")?
+            .unwrap_or_else(|| class_iri.to_string());
         return Err(OwlError::ValidationError(format!(
             "Concept '{}' has no statuses configured. Every concept must have at least one allowed status. Use learn_concepts to add allowedStatuses to '{}'.",
-            concept_label, concept_iri
+            class_label, class_iri
         )));
     }
     let allowed_iris: Vec<String> = result.triples.iter()
@@ -417,11 +418,11 @@ pub fn validate_allowed_status(
                     .unwrap_or_else(|| iri.clone())
             })
             .collect();
-        let concept_label = get_literal_property(conn, concept_iri, "rdfs:label")?
-            .unwrap_or_else(|| concept_iri.to_string());
+        let class_label = get_literal_property(conn, class_iri, "rdfs:label")?
+            .unwrap_or_else(|| class_iri.to_string());
         return Err(OwlError::ValidationError(format!(
             "Status '{}' is not allowed for concept '{}'. Accepted statuses: {}",
-            status_iri, concept_label, allowed_labels.join(", ")
+            status_iri, class_label, allowed_labels.join(", ")
         )));
     }
     Ok(())
@@ -492,7 +493,7 @@ pub fn get_entity_status_info(
 
 /// Unified search across classes and individuals.
 ///
-/// Path A (concept_iri or filters provided): loads candidates for that class, optionally
+/// Path A (class_iri or filters provided): loads candidates for that class, optionally
 /// applies multi-token AND scoring in Rust, then paginates and enriches.
 ///
 /// Path B (global): uses SQL-based `search_entities` / `search_entities_scores_only` to
@@ -502,79 +503,20 @@ pub fn search_rich(
     conn: &Connection,
     tokens: &[String],
     entity_type_filter: Option<&str>,
-    concept_iri: Option<&str>,
+    class_iri: Option<&str>,
     filters: Option<&[(String, String, String)]>,
     include_retracted: bool,
     limit: usize,
     offset: usize,
 ) -> Result<(Vec<RichSearchResult>, usize)> {
     if filters.is_some() || include_retracted {
-        search_rich_structured(conn, tokens, entity_type_filter, concept_iri, filters, include_retracted, limit, offset)
+        search_rich_structured(conn, tokens, entity_type_filter, class_iri, filters, include_retracted, limit, offset)
     } else {
-        search_rich_global(conn, tokens, entity_type_filter, concept_iri, limit, offset)
+        search_rich_global(conn, tokens, entity_type_filter, class_iri, limit, offset)
     }
 }
 
-fn score_entity_against_tokens(
-    iri: &str,
-    triples: &[crate::eavto::Triple],
-    tokens: &[String],
-    matched_properties: &mut Vec<serde_json::Value>,
-) -> Option<i32> {
-    let label = triples.iter()
-        .find(|t| t.predicate == "rdfs:label")
-        .and_then(|t| t.object.as_literal())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default();
-
-    let local_part = iri.split(':').last().unwrap_or("").to_lowercase();
-
-    let mut total_score: i32 = 0;
-
-    for token in tokens {
-        let token_lower = token.to_lowercase();
-        let mut token_score: i32 = 0;
-        let mut matched_prop: Option<serde_json::Value> = None;
-
-        if iri.to_lowercase() == token_lower || local_part == token_lower {
-            token_score = 100;
-        } else if label == token_lower {
-            token_score = 50;
-        } else if label.starts_with(&token_lower) {
-            token_score = 40;
-        } else if label.contains(&token_lower) {
-            token_score = 30;
-        } else {
-            let comment_match = triples.iter()
-                .find(|t| t.predicate == "rdfs:comment" && t.object.as_literal().map(|v| v.to_lowercase().contains(&token_lower)).unwrap_or(false));
-            if comment_match.is_some() {
-                token_score = 20;
-                matched_prop = Some(serde_json::json!({ "detail_iri": "rdfs:comment" }));
-            } else {
-                let prop_match = triples.iter().find(|t| {
-                    t.predicate != "rdfs:label"
-                        && t.predicate != "rdfs:comment"
-                        && t.predicate != "foundation:hasIcon"
-                        && t.object.as_literal().map(|v| v.to_lowercase().contains(&token_lower)).unwrap_or(false)
-                });
-                if let Some(pm) = prop_match {
-                    token_score = 10;
-                    matched_prop = Some(serde_json::json!({ "detail_iri": pm.predicate }));
-                }
-            }
-        }
-
-        if token_score == 0 {
-            return None;
-        }
-        total_score += token_score;
-        if let Some(mp) = matched_prop {
-            matched_properties.push(mp);
-        }
-    }
-
-    Some(total_score)
-}
+use search_rich::{score_entity_against_tokens, matched_properties_for_tokens, entity_type_matches};
 
 fn enrich_from_triples(
     conn: &Connection,
@@ -610,7 +552,7 @@ fn enrich_from_triples(
     let is_class = type_iri.as_deref() == Some("owl:Class");
     let entity_type = if is_class { "class" } else { "individual" }.to_string();
 
-    let concept_type = if is_class {
+    let class_type = if is_class {
         None
     } else {
         type_iri.as_deref().and_then(|t| {
@@ -641,7 +583,7 @@ fn enrich_from_triples(
         icon,
         entity_type,
         matched_properties,
-        concept_type,
+        class_type,
         status,
     }
 }
@@ -658,7 +600,7 @@ fn enrich_from_sql_row(
     let is_class = row.type_iri.as_deref() == Some("owl:Class");
     let entity_type = if is_class { "class" } else { "individual" }.to_string();
 
-    let concept_type = if is_class {
+    let class_type = if is_class {
         None
     } else {
         row.type_iri.as_deref().and_then(|t| {
@@ -701,7 +643,7 @@ fn enrich_from_sql_row(
         icon,
         entity_type,
         matched_properties,
-        concept_type,
+        class_type,
         status,
     }
 }
@@ -710,7 +652,7 @@ fn search_rich_structured(
     conn: &Connection,
     tokens: &[String],
     _entity_type_filter: Option<&str>,
-    concept_iri: Option<&str>,
+    class_iri: Option<&str>,
     filters: Option<&[(String, String, String)]>,
     include_retracted: bool,
     limit: usize,
@@ -722,7 +664,7 @@ fn search_rich_structured(
         let constraint_refs: Vec<(&str, &str, &str)> = f.iter()
             .map(|(d, v, o)| (d.as_str(), v.as_str(), o.as_str()))
             .collect();
-        if let Some(concept) = concept_iri {
+        if let Some(concept) = class_iri {
             let (iris, _) = Individual::find_by_class_and_properties_with_options(
                 conn, concept, &constraint_refs, include_retracted, usize::MAX, 0,
             )?;
@@ -733,14 +675,14 @@ fn search_rich_structured(
             ).map_err(|e| OwlError::DatabaseError(e.to_string()))?;
             iris
         }
-    } else if let Some(concept) = concept_iri {
+    } else if let Some(concept) = class_iri {
         if include_retracted {
             Individual::find_by_class_with_date_range(conn, concept, None, None, true)?
         } else {
             Class::get_instances(conn, concept)?
         }
     } else {
-        return Err(OwlError::InvalidOperation("structured search requires concept_iri or filters".to_string()));
+        return Err(OwlError::InvalidOperation("structured search requires class_iri or filters".to_string()));
     };
 
     let load_batch = |subjects: &[String]| -> Result<std::collections::HashMap<String, Vec<crate::eavto::Triple>>> {
@@ -808,14 +750,14 @@ fn search_rich_global(
     conn: &Connection,
     tokens: &[String],
     entity_type_filter: Option<&str>,
-    concept_iri: Option<&str>,
+    class_iri: Option<&str>,
     limit: usize,
     offset: usize,
 ) -> Result<(Vec<RichSearchResult>, usize)> {
     use crate::eavto::query;
 
     if tokens.is_empty() {
-        if let Some(concept) = concept_iri {
+        if let Some(concept) = class_iri {
             let all_iris = Class::get_instances(conn, concept)?;
             let total = all_iris.len();
             let page: Vec<String> = all_iris.into_iter().skip(offset).take(limit).collect();
@@ -843,7 +785,7 @@ fn search_rich_global(
 
     // In tests, skip Tantivy (shared global index not populated with test data).
     #[cfg(test)]
-    return search_rich_sql_fallback(conn, tokens, entity_type_filter, concept_iri, limit, offset);
+    return search_rich_sql_fallback(conn, tokens, entity_type_filter, class_iri, limit, offset);
 
     // Non-empty query: Tantivy BM25 + usage boost + optional concept filter.
     #[cfg(not(test))]
@@ -851,7 +793,7 @@ fn search_rich_global(
         let query_str = tokens.join(" ");
         const TANTIVY_FETCH_MULTIPLIER: usize = 20;
         let fetch_limit = (offset + limit + 1) * TANTIVY_FETCH_MULTIPLIER;
-        let iris = crate::search::search(&query_str, concept_iri, fetch_limit);
+        let iris = crate::search::search(&query_str, class_iri, fetch_limit);
 
         if iris.is_empty() {
             return Ok((vec![], 0));
@@ -888,50 +830,6 @@ fn search_rich_global(
     }
 }
 
-/// Finds which properties in the triples contain at least one of the query tokens.
-/// Used to populate matchedProperties in Tantivy search results.
-fn matched_properties_for_tokens(
-    iri: &str,
-    triples: &[crate::eavto::Triple],
-    tokens: &[String],
-) -> Vec<serde_json::Value> {
-    let local_part = iri.split(':').last().unwrap_or("").to_lowercase();
-    let label = triples.iter()
-        .find(|t| t.predicate == "rdfs:label")
-        .and_then(|t| t.object.as_literal())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default();
-
-    let mut matched: Vec<serde_json::Value> = Vec::new();
-
-    for token in tokens {
-        let tok = token.to_lowercase();
-
-        // IRI or label match: no specific property to report
-        if iri.to_lowercase().contains(&tok) || local_part.contains(&tok) || label.contains(&tok) {
-            continue;
-        }
-
-        // Find which non-label property matches this token
-        let prop_match = triples.iter().find(|t| {
-            t.predicate != "rdfs:label"
-                && t.predicate != "foundation:hasIcon"
-                && t.object.as_literal()
-                    .map(|v| v.to_lowercase().contains(&tok))
-                    .unwrap_or(false)
-        });
-
-        if let Some(pm) = prop_match {
-            let entry = serde_json::json!({ "detail_iri": pm.predicate });
-            if !matched.iter().any(|e| e == &entry) {
-                matched.push(entry);
-            }
-        }
-    }
-
-    matched
-}
-
 #[cfg(test)]
 const SQL_FALLBACK_SCAN_LIMIT: usize = 5000;
 
@@ -940,7 +838,7 @@ fn search_rich_sql_fallback(
     conn: &Connection,
     tokens: &[String],
     entity_type_filter: Option<&str>,
-    concept_iri: Option<&str>,
+    class_iri: Option<&str>,
     limit: usize,
     offset: usize,
 ) -> Result<(Vec<RichSearchResult>, usize)> {
@@ -954,7 +852,7 @@ fn search_rich_sql_fallback(
 
     let candidate_iris: Vec<String> = rows.iter()
         .filter(|r| entity_type_matches(r.type_iri.as_deref(), entity_type_filter))
-        .filter(|r| concept_iri.map_or(true, |c| r.type_iri.as_deref() == Some(c)))
+        .filter(|r| class_iri.map_or(true, |c| r.type_iri.as_deref() == Some(c)))
         .map(|r| r.subject.clone())
         .collect();
 
@@ -988,18 +886,6 @@ fn search_rich_sql_fallback(
 
     Ok((results, total))
 }
-
-fn entity_type_matches(type_iri: Option<&str>, filter: Option<&str>) -> bool {
-    match filter {
-        None => true,
-        Some(f) => {
-            let is_class = type_iri == Some("owl:Class");
-            let et = if is_class { "class" } else { "individual" };
-            et == f
-        }
-    }
-}
-
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]

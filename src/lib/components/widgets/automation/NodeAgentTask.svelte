@@ -18,11 +18,11 @@
     </div>
   </div>
   <StatusBadge status={data.status} statusColor={data.statusColor} statusIcon={data.statusIcon} />
-  {#if data.inputConceptLabel}
-    <IoHandleLabel label={data.inputConceptLabel} icon={data.inputConceptIcon} side="input" />
+  {#if data.inputClassLabel}
+    <IoHandleLabel label={data.inputClassLabel} icon={data.inputClassIcon} side="input" />
   {/if}
-  {#if data.outputConceptLabel}
-    <IoHandleLabel label={data.outputConceptLabel} icon={data.outputConceptIcon} side="output" />
+  {#if data.outputClassLabel}
+    <IoHandleLabel label={data.outputClassLabel} icon={data.outputClassIcon} side="output" />
   {/if}
 </div>
 <Handle type="target" position={Position.Left} />

@@ -300,6 +300,42 @@ pub fn find_by_properties_with_options(
     Ok((entities, total))
 }
 
+/// Returns the IRI of the conversation whose most recent user message (role = 'user') is the newest.
+/// Only considers conversations that have a `foundation:handledBy` triple.
+pub fn find_conversation_by_last_user_message(conn: &Connection) -> Result<Option<String>> {
+    let sql = "
+        SELECT conv.subject
+        FROM triples conv
+        WHERE conv.predicate = 'rdf:type'
+          AND conv.object = 'foundation:AIConversation'
+          AND conv.retracted = 0
+          AND EXISTS (
+              SELECT 1 FROM triples h
+              WHERE h.subject = conv.subject
+                AND h.predicate = 'foundation:handledBy'
+                AND h.retracted = 0
+          )
+        ORDER BY (
+            SELECT MAX(t_sent.object_value)
+            FROM triples t_conv
+            JOIN triples t_sent ON t_sent.subject = t_conv.subject
+              AND t_sent.predicate = 'foundation:sentAt'
+              AND t_sent.retracted = 0
+            JOIN triples t_role ON t_role.subject = t_conv.subject
+              AND t_role.predicate = 'foundation:role'
+              AND t_role.object_value = 'user'
+              AND t_role.retracted = 0
+            WHERE t_conv.predicate = 'foundation:partOfConversation'
+              AND t_conv.object = conv.subject
+              AND t_conv.retracted = 0
+        ) DESC NULLS LAST
+        LIMIT 1
+    ";
+    let mut stmt = conn.prepare(sql)?;
+    let mut rows = stmt.query([])?;
+    Ok(rows.next()?.map(|row| row.get::<_, String>(0)).transpose()?)
+}
+
 pub fn find_message_iris_by_conversation(
     conn: &Connection,
     conversation_iri: &str,

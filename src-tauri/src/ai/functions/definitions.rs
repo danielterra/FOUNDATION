@@ -402,7 +402,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     schema: None,
                 },
                 Parameter {
-                    name: "concept_iri".to_string(),
+                    name: "class_iri".to_string(),
                     param_type: "string".to_string(),
                     description: "Filter to individuals of this class (e.g. 'foundation:Task'). Returns all instances when query is empty.".to_string(),
                     required: false,

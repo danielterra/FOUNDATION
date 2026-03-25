@@ -49,16 +49,16 @@ pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor) -> Opti
                     .and_then(|(_, v)| v.as_literal()))
                 .unwrap_or_default();
 
-            let concept_iri = entity_ind.as_ref()
+            let class_iri = entity_ind.as_ref()
                 .and_then(|ind| ind.properties.iter()
                     .find(|(p, _)| p == "rdf:type")
                     .and_then(|(_, v)| v.as_iri().map(String::from)))
                 .unwrap_or_default();
 
-            let concept_label = if concept_iri.is_empty() {
+            let class_label = if class_iri.is_empty() {
                 String::new()
             } else {
-                crate::owl::Individual::get(conn, &concept_iri)
+                crate::owl::Individual::get(conn, &class_iri)
                     .ok()
                     .flatten()
                     .and_then(|ind| ind.properties.into_iter()
@@ -68,8 +68,8 @@ pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor) -> Opti
             };
 
             lines.push(format!(
-                "- widget_type={}, concept_iri={}, concept_name={}, thing_iri={}, thing_name={}",
-                w.widget_type, concept_iri, concept_label, w.entity_id, entity_label
+                "- widget_type={}, class_iri={}, class_name={}, instance_iri={}, instance_name={}",
+                w.widget_type, class_iri, class_label, w.entity_id, entity_label
             ));
         }
 

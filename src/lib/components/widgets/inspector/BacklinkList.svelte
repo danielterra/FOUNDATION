@@ -15,7 +15,7 @@
         acc[key] = {
           key,
           propertyLabel: backlink.propertyLabel || backlink.property,
-          conceptName: backlink.sourceClassLabel || 'Unknown',
+          className: backlink.sourceClassLabel || 'Unknown',
           totalCount: backlink.groupTotal ?? null,
           entities: {}
         };
@@ -77,7 +77,7 @@
             chevron_right
           </span>
           <span class="group-label">
-            <span class="group-concept">{group.conceptName}</span>
+            <span class="group-class">{group.className}</span>
             <span class="group-arrow">→</span>
             <span class="group-prop">{group.propertyLabel}</span>
           </span>
@@ -175,7 +175,7 @@
     min-width: 0;
   }
 
-  .group-concept {
+  .group-class {
     font-family: var(--font-body);
     font-size: 11px;
     font-weight: 700;

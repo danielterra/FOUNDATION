@@ -5,23 +5,29 @@
 //
 // Architecture:
 // - Single writer thread with sequential queue for writes
-// - Each read opens its own connection (no locking — store is append-only)
+// - Read pool of N persistent connections — avoids the WAL scan overhead on
+//   every call (SQLite must scan the entire WAL to build a read snapshot when
+//   opening a new connection; with a large WAL this dominates read latency)
 // - WAL mode allows concurrent reads and writes at the SQLite file level
 // - All operations are async to avoid blocking Tauri's event loop
 // ============================================================================
 
 use rusqlite::Connection;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 
+const READ_POOL_SIZE: usize = 6;
+
 /// Executor for database operations.
-/// Writes are sequential (single writer thread). Reads are fully concurrent
-/// (each spawns its own connection — safe because the store is append-only).
+/// Writes are sequential (single writer thread). Reads reuse a pool of
+/// persistent connections so the WAL scan happens once at startup, not per call.
 pub struct DbExecutor {
     write_tx: mpsc::UnboundedSender<WriteTask>,
     db_path: PathBuf,
     /// Sends (subjects, iri_objects) written by each transaction so callers can emit events.
     notify_tx: Option<mpsc::UnboundedSender<(Vec<String>, Vec<String>)>>,
+    read_pool: Arc<Mutex<Vec<Connection>>>,
 }
 
 /// A write task to be executed sequentially
@@ -32,7 +38,7 @@ struct WriteTask {
 
 impl DbExecutor {
     /// Create a new executor. The given `conn` becomes the dedicated write connection.
-    /// `db_path` is used by read operations to open independent connections.
+    /// `db_path` is used by the read pool to open persistent connections at startup.
     pub fn new(conn: Connection, db_path: PathBuf) -> Self {
         Self::new_with_notify(conn, db_path, None)
     }
@@ -49,6 +55,7 @@ impl DbExecutor {
 
         std::thread::spawn(move || {
             let mut write_conn = conn;
+            let mut write_count: u32 = 0;
             while let Some(task) = write_rx.blocking_recv() {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     (task.operation)(&mut write_conn)
@@ -66,10 +73,19 @@ impl DbExecutor {
                     }
                 }
                 let _ = task.result_tx.send(result);
+
+                write_count += 1;
+                if write_count % 50 == 0 {
+                    let _ = write_conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+                }
             }
         });
 
-        Self { write_tx, db_path, notify_tx }
+        // Pool starts empty — connections are added lazily as reads complete,
+        // so startup is not delayed by upfront WAL scans.
+        let read_pool = Arc::new(Mutex::new(Vec::new()));
+
+        Self { write_tx, db_path, notify_tx, read_pool }
     }
 
     /// Create an executor backed by an in-memory database (for CI/test use only).
@@ -79,17 +95,39 @@ impl DbExecutor {
         Self::new(conn, PathBuf::from(":memory:"))
     }
 
-    /// Execute a read operation (fully concurrent — opens its own connection).
+    /// Execute a read operation using a pooled connection.
+    /// If all pool connections are in use, opens a temporary one.
     pub async fn read<F, R>(&self, operation: F) -> Result<R, String>
     where
         F: FnOnce(&Connection) -> Result<R, String> + Send + 'static,
         R: Send + 'static,
     {
         let path = self.db_path.clone();
+        let pool = self.read_pool.clone();
+
         tokio::task::spawn_blocking(move || {
-            let conn = Connection::open(&path).map_err(|e| e.to_string())?;
-            conn.busy_timeout(std::time::Duration::from_secs(30)).map_err(|e| e.to_string())?;
-            operation(&conn)
+            let conn_opt = pool.lock().ok().and_then(|mut g| g.pop());
+
+            let (conn, from_pool) = match conn_opt {
+                Some(c) => (c, true),
+                None => {
+                    let c = Connection::open(&path).map_err(|e| e.to_string())?;
+                    c.busy_timeout(std::time::Duration::from_secs(30)).map_err(|e| e.to_string())?;
+                    (c, false)
+                }
+            };
+
+            let result = operation(&conn);
+
+            if from_pool {
+                if let Ok(mut guard) = pool.lock() {
+                    if guard.len() < READ_POOL_SIZE {
+                        guard.push(conn);
+                    }
+                }
+            }
+
+            result
         })
         .await
         .map_err(|e| e.to_string())?
@@ -119,6 +157,7 @@ impl Clone for DbExecutor {
             write_tx: self.write_tx.clone(),
             db_path: self.db_path.clone(),
             notify_tx: self.notify_tx.clone(),
+            read_pool: self.read_pool.clone(),
         }
     }
 }

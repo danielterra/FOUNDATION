@@ -240,19 +240,6 @@ When creating instruction documents in the `todo/` folder:
 
 ### Simplicity Principle
 - **Avoid redundant functions**: If a function can be replaced by simple calls to other functions, it is not necessary
-- **Removed/merged tools** (no longer exist as separate tools):
-  - `learn_thing` / `learn_thing_detail` / `learn_things` → replaced by `assert_individual`, `add_property_values`, `replace_property_values`
-  - `learn_concept` / `learn_concepts` → renamed to `define_class`
-  - `learn_connection_type` / `learn_properties` → renamed to `define_property`
-  - `remember_thing` / `remember_things` / `remember` → renamed to `search`
-  - `remember_concept` / `remember_concepts` / `get_concepts` → renamed to `describe_class`
-  - `remember_properties` → renamed to `describe_property`
-  - `forget_things` → split into `retract_individual`, `remove_property_values`, `clear_property`
-  - `forget_concepts` → renamed to `retract_class`
-  - `forget_properties` → renamed to `retract_property`
-  - `get_things` → renamed to `describe_individual`
-  - `get_concept_graph` → renamed to `class_graph`
-  - `remember_concept_tree`: For deep hierarchies, call `remember_concepts` recursively
 
 ## Communication
 

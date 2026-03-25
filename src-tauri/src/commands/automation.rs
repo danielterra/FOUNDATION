@@ -5,7 +5,7 @@ use crate::owl::vocabulary::{rdf, rdfs};
 use rusqlite::Connection;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConceptRef {
+pub struct ClassRef {
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
@@ -34,13 +34,13 @@ pub struct AutomationGraphNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_concept_label: Option<String>,
+    pub input_class_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_concept_icon: Option<String>,
+    pub input_class_icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_concept_label: Option<String>,
+    pub output_class_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_concept_icon: Option<String>,
+    pub output_class_icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_payload: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -50,7 +50,7 @@ pub struct AutomationGraphNode {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub assigned_to_users: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub output_concepts: Vec<ConceptRef>,
+    pub output_classes: Vec<ClassRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timer_cycle: Option<String>,
 }
@@ -155,10 +155,10 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                 }
             }
 
-            let (input_concept_label, input_concept_icon, output_concept_label, output_concept_icon, output_concepts) =
+            let (input_class_label, input_class_icon, output_class_label, output_class_icon, output_classes) =
                 if node_type == "automation_SubProcess" {
                     let (mut in_lbl, mut in_icon, mut out_lbl, mut out_icon) = (None, None, None, None);
-                    let mut out_concepts: Vec<ConceptRef> = Vec::new();
+                    let mut out_classes: Vec<ClassRef> = Vec::new();
 
                     // Input: from the StartEvent of the called process
                     if let Some(ref process_iri) = invokes_process {
@@ -195,13 +195,13 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                             let end_lbl = get_literal_property(conn, &end_iri, rdfs::LABEL)
                                 .map_err(|e| e.to_string())?
                                 .unwrap_or_else(|| end_iri.clone());
-                            let (lbl, icon) = if let Ok(Some(concept_iri)) = get_iri_property(conn, &end_iri, "foundation:outputConcept") {
-                                let concept_lbl = get_literal_property(conn, &concept_iri, rdfs::LABEL)
+                            let (lbl, icon) = if let Ok(Some(class_iri)) = get_iri_property(conn, &end_iri, "foundation:outputConcept") {
+                                let class_lbl = get_literal_property(conn, &class_iri, rdfs::LABEL)
                                     .map_err(|e| e.to_string())?
-                                    .unwrap_or_else(|| concept_iri.clone());
+                                    .unwrap_or_else(|| class_iri.clone());
                                 let i = {
                                     use crate::eavto::{query, Object};
-                                    query::get_by_entity_predicate(conn, &concept_iri, "foundation:hasIcon")
+                                    query::get_by_entity_predicate(conn, &class_iri, "foundation:hasIcon")
                                         .map_err(|e| e.to_string())
                                         .map(|r| r.triples.into_iter().next().and_then(|t| match t.object {
                                             Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, &icon_iri),
@@ -209,21 +209,21 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                                             _ => None,
                                         }))?
                                 };
-                                (format!("{} ({})", concept_lbl, end_lbl), i)
+                                (format!("{} ({})", class_lbl, end_lbl), i)
                             } else {
                                 (end_lbl, None)
                             };
-                            out_concepts.push(ConceptRef { label: lbl, icon });
+                            out_classes.push(ClassRef { label: lbl, icon });
                         }
                     }
 
-                    if out_concepts.len() == 1 {
-                        let single = out_concepts.remove(0);
+                    if out_classes.len() == 1 {
+                        let single = out_classes.remove(0);
                         out_lbl = Some(single.label);
                         out_icon = single.icon;
                     }
 
-                    (in_lbl, in_icon, out_lbl, out_icon, out_concepts)
+                    (in_lbl, in_icon, out_lbl, out_icon, out_classes)
                 } else {
                     let (in_lbl, in_icon) = if let Ok(Some(iri)) = get_iri_property(conn, &node_iri, "foundation:inputConcept") {
                         let lbl = get_literal_property(conn, &iri, rdfs::LABEL)
@@ -317,15 +317,15 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                 status,
                 status_color,
                 status_icon,
-                input_concept_label,
-                input_concept_icon,
-                output_concept_label,
-                output_concept_icon,
+                input_class_label,
+                input_class_icon,
+                output_class_label,
+                output_class_icon,
                 message_payload,
                 uses_tools,
                 assigned_to_roles,
                 assigned_to_users,
-                output_concepts,
+                output_classes,
                 timer_cycle,
             });
         }

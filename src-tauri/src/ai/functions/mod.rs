@@ -216,13 +216,13 @@ fn get_automation_tool(conn: &rusqlite::Connection, args: &Value) -> ToolResult 
         if !node.uses_tools.is_empty() {
             lines.push(format!("  uses_tools: {}", node.uses_tools.join(", ")));
         }
-        if let Some(ref lbl) = node.input_concept_label {
+        if let Some(ref lbl) = node.input_class_label {
             lines.push(format!("  input: {}", lbl));
         }
-        if let Some(ref lbl) = node.output_concept_label {
+        if let Some(ref lbl) = node.output_class_label {
             lines.push(format!("  output: {}", lbl));
         }
-        for c in &node.output_concepts {
+        for c in &node.output_classes {
             lines.push(format!("  output: {}", c.label));
         }
         if let Some(ref proc_iri) = node.invokes_process {

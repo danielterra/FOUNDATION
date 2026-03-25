@@ -4,7 +4,7 @@
   import IoHandleLabel from './IoHandleLabel.svelte'
   let { data } = $props()
 
-  const multiOut = $derived(data.outputConcepts?.length > 1)
+  const multiOut = $derived(data.outputClasses?.length > 1)
 
   function handleTop(index, total) {
     return Math.round((index + 1) / (total + 1) * 100)
@@ -24,18 +24,18 @@
     </div>
   </div>
   <StatusBadge status={data.status} statusColor={data.statusColor} statusIcon={data.statusIcon} />
-  {#if data.inputConceptLabel}
-    <IoHandleLabel label={data.inputConceptLabel} icon={data.inputConceptIcon} side="input" />
+  {#if data.inputClassLabel}
+    <IoHandleLabel label={data.inputClassLabel} icon={data.inputClassIcon} side="input" />
   {/if}
   {#if multiOut}
-    {#each data.outputConcepts as concept, i}
-      {@const top = handleTop(i, data.outputConcepts.length)}
-      <IoHandleLabel label={concept.label} icon={concept.icon ?? null} side="output" topPercent={top} />
+    {#each data.outputClasses as cls, i}
+      {@const top = handleTop(i, data.outputClasses.length)}
+      <IoHandleLabel label={cls.label} icon={cls.icon ?? null} side="output" topPercent={top} />
       <Handle type="source" position={Position.Right} id="output-{i}" style="top: {top}%" />
     {/each}
   {:else}
-    {#if data.outputConceptLabel}
-      <IoHandleLabel label={data.outputConceptLabel} icon={data.outputConceptIcon} side="output" />
+    {#if data.outputClassLabel}
+      <IoHandleLabel label={data.outputClassLabel} icon={data.outputClassIcon} side="output" />
     {/if}
     <Handle type="source" position={Position.Right} />
   {/if}

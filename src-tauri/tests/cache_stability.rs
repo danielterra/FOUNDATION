@@ -5,6 +5,12 @@ fn large_system_prompt() -> String {
     // Target: clearly above 2048 tokens for all Claude models (including 4.x).
     // The content is intentionally static so the cache boundary on the system prompt
     // block remains identical across all turns. Measured at ~2600+ tokens.
+    //
+    // NOTE: The tool names embedded in this prompt (e.g. `remember_concepts`, `learn_thing`,
+    // `remember_things_by_details`) are INTENTIONALLY preserved with their legacy names.
+    // This test exists to verify that the prompt hash stays stable across code changes so
+    // that Claude's prompt-caching works correctly. Renaming these strings would invalidate
+    // the cache boundary and break the test's purpose.
     let section_a = "You are FOUNDATION, an intelligent assistant for a personal knowledge \
 management system that stores information as RDF triples in an ontology-driven database. \
 Your purpose is to help users capture, organise, connect, and retrieve knowledge about anything \

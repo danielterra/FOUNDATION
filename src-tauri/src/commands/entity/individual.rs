@@ -4,10 +4,16 @@ use super::{EntityData, PropertyValue, GraphNode, GraphLink, StatusInfo, FileInf
             resolve_unit_label, resolve_entity_status, resolve_status_for_entity};
 
 pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, u8)) -> Result<EntityData, String> {
+    let t0 = std::time::Instant::now();
     let (group_class, group_individual, group_literal) = groups;
     let individual = Individual::get(conn, individual_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Individual {} not found", individual_id))?;
+    let t_get = std::time::Instant::now();
+    let n_props = individual.properties.len();
+    let n_backlinks = individual.backlinks.len();
+    let n_types = individual.types.len();
+    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: Individual::get {}ms (props={n_props} backlinks={n_backlinks} types={n_types})", t_get.duration_since(t0).as_millis()));
 
     let label = individual.label.unwrap_or_else(|| individual_id.to_string());
     let icon = individual.icon;
@@ -132,6 +138,9 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         });
     }
 
+    let t_props = std::time::Instant::now();
+    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: property loop {}ms", t_props.duration_since(t_get).as_millis()));
+
     properties.sort_by(|a, b| {
         let tx_a = max_tx_per_predicate.get(&a.property).copied().unwrap_or(0);
         let tx_b = max_tx_per_predicate.get(&b.property).copied().unwrap_or(0);
@@ -212,6 +221,9 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         }
     }
 
+    let t_empty_props = std::time::Instant::now();
+    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: empty-props loop {}ms", t_empty_props.duration_since(t_props).as_millis()));
+
     {
         let mut card_map: HashMap<String, (Option<u32>, Option<u32>)> = HashMap::new();
         for type_thing in &individual.types {
@@ -238,6 +250,9 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             }
         }
     }
+
+    let t_cardinality = std::time::Instant::now();
+    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: cardinality {}ms", t_cardinality.duration_since(t_empty_props).as_millis()));
 
     let mut nodes = Vec::new();
     let mut links = Vec::new();
@@ -277,8 +292,11 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         if prop.is_object_property {
             if !added_node_ids.contains(&prop.value) {
                 let related_thing = crate::owl::Thing::get(conn, &prop.value);
-                let entity_exists_flag =
-                    Individual::get(conn, &prop.value).ok().flatten().is_some();
+                let entity_exists_flag = conn.query_row(
+                    "SELECT 1 FROM triples WHERE subject = ?1 AND retracted = 0 LIMIT 1",
+                    rusqlite::params![prop.value],
+                    |_| Ok(()),
+                ).is_ok();
 
                 nodes.push(GraphNode {
                     id: prop.value.clone(),
@@ -328,6 +346,9 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             });
         }
     }
+
+    let t_graph_nodes = std::time::Instant::now();
+    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: graph nodes {}ms", t_graph_nodes.duration_since(t_cardinality).as_millis()));
 
     let backlink_source_iris: Vec<String> = {
         let mut seen = std::collections::HashSet::new();
@@ -483,6 +504,9 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         });
     }
 
+    let t_backlinks = std::time::Instant::now();
+    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: backlinks section {}ms", t_backlinks.duration_since(t_graph_nodes).as_millis()));
+
     let status = resolve_entity_status(conn, &properties);
 
     let mut required_fields: Vec<String> = Vec::new();
@@ -510,6 +534,13 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             }
         }
     }
+
+    let t_tail = std::time::Instant::now();
+    crate::commands::logging::log_backend("DEBUG", &format!(
+        "[INSPECTOR] {individual_id}: tail (status+required+allowed) {}ms | TOTAL {}ms",
+        t_tail.duration_since(t_backlinks).as_millis(),
+        t_tail.duration_since(t0).as_millis(),
+    ));
 
     Ok(EntityData {
         id: individual_id.to_string(),

@@ -77,7 +77,7 @@ fn get_access_count(conn: &Connection, iri: &str) -> u64 {
     .unwrap_or(0)
 }
 
-fn get_concept_iris(conn: &Connection, subject: &str) -> Vec<String> {
+fn get_class_iris(conn: &Connection, subject: &str) -> Vec<String> {
     let direct: Option<String> = conn.query_row(
         "SELECT object FROM triples
          WHERE subject = ?1 AND retracted = 0 AND predicate = 'rdf:type'
@@ -349,7 +349,7 @@ fn build_document(idx: &SearchIndex, conn: &Connection, subject: &str, is_class:
     }
 
     let access_count = get_access_count(conn, subject);
-    let concepts = get_concept_iris(conn, subject);
+    let classes = get_class_iris(conn, subject);
     let completed = u64::from(subject_is_completed(conn, subject));
 
     let mut doc = TantivyDocument::default();
@@ -364,7 +364,7 @@ fn build_document(idx: &SearchIndex, conn: &Connection, subject: &str, is_class:
     if !content_text.is_empty() {
         doc.add_text(idx.f_content, &content_text);
     }
-    for c in &concepts {
+    for c in &classes {
         doc.add_text(idx.f_concept, c);
     }
     doc.add_text(idx.f_is_class, if is_class { "1" } else { "0" });
@@ -424,14 +424,14 @@ pub fn reindex_subjects(conn: &Connection, subjects: &[String]) {
     }
 }
 
-pub fn search(query: &str, concept_iri: Option<&str>, limit: usize) -> Vec<String> {
-    search_with_scores(query, concept_iri, limit)
+pub fn search(query: &str, class_iri: Option<&str>, limit: usize) -> Vec<String> {
+    search_with_scores(query, class_iri, limit)
         .into_iter()
         .map(|(iri, _)| iri)
         .collect()
 }
 
-pub fn search_with_scores(query: &str, concept_iri: Option<&str>, limit: usize) -> Vec<(String, f32)> {
+pub fn search_with_scores(query: &str, class_iri: Option<&str>, limit: usize) -> Vec<(String, f32)> {
     if query.trim().is_empty() {
         return vec![];
     }
@@ -465,7 +465,7 @@ pub fn search_with_scores(query: &str, concept_iri: Option<&str>, limit: usize) 
         },
     };
 
-    let final_query: Box<dyn Query> = match concept_iri {
+    let final_query: Box<dyn Query> = match class_iri {
         Some(concept) => {
             let term = Term::from_field_text(idx.f_concept, concept);
             let concept_filter = TermQuery::new(term, IndexRecordOption::Basic);

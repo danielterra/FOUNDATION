@@ -249,7 +249,7 @@
       const empty = all.filter(g => g.isEmpty);
       const allItems = [...filled, ...empty];
       return {
-        mode: 'thing',
+        mode: 'instance',
         all: [{ sourceClassLabel: null, items: allItems }],
         allCount: allItems.length,
       };

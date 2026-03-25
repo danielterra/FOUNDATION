@@ -6,29 +6,6 @@ use super::executor::ExecutionContext;
 
 type Result<T> = std::result::Result<T, String>;
 
-fn find_most_recent_conversation(conn: &rusqlite::Connection) -> Result<String> {
-    conn.query_row(
-        r#"
-        SELECT t.subject
-        FROM triples t
-        WHERE t.predicate = 'rdf:type'
-          AND t.object = 'foundation:AIConversation'
-          AND t.retracted = 0
-          AND EXISTS (
-              SELECT 1 FROM triples h
-              WHERE h.subject = t.subject
-                AND h.predicate = 'foundation:handledBy'
-                AND h.retracted = 0
-          )
-        ORDER BY t.rowid DESC
-        LIMIT 1
-        "#,
-        [],
-        |row| row.get::<_, String>(0),
-    )
-    .map_err(|e| format!("No active conversation found: {}", e))
-}
-
 pub async fn execute_nova_message_task(
     app: &AppHandle,
     node_iri: &str,
@@ -92,7 +69,11 @@ pub async fn execute_nova_message_task(
     };
 
     let conv_id = executor
-        .read(|conn| find_most_recent_conversation(conn))
+        .read(|conn| {
+            Individual::find_conversation_by_last_user_message(conn)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "No active conversation found".to_string())
+        })
         .await?;
 
     crate::commands::create_user_message(&executor, &conv_id, &final_message).await?;

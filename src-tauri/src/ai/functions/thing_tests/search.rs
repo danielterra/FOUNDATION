@@ -1,165 +1,4 @@
 use super::*;
-use crate::eavto::test_helpers::setup_test_db;
-use crate::eavto::{store, Triple, Object};
-use crate::owl::{Class, ClassType, Individual, Property, PropertyType};
-
-fn setup_task_class_with_statuses(conn: &mut Connection) {
-    let task_class = Class::new("foundation:Task");
-    task_class.assert(conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test").unwrap();
-
-    let triples = vec![
-        Triple::new("foundation:ActiveStatus", "rdf:type", Object::Iri("foundation:Status".to_string())),
-        Triple::new("foundation:ActiveStatus", "rdfs:label", Object::Literal {
-            value: "Active".to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        }),
-        Triple::new("foundation:DoneStatus", "rdf:type", Object::Iri("foundation:Status".to_string())),
-        Triple::new("foundation:DoneStatus", "rdfs:label", Object::Literal {
-            value: "Done".to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        }),
-        Triple::new("foundation:Task", "foundation:allowedStatus", Object::Iri("foundation:ActiveStatus".to_string())),
-        Triple::new("foundation:Task", "foundation:allowedStatus", Object::Iri("foundation:DoneStatus".to_string())),
-    ];
-    store::assert_triples(conn, &triples, "test").unwrap();
-
-    Property::new("foundation:priority")
-        .assert(conn, PropertyType::DatatypeProperty, "priority", None, &["foundation:Task"], Some("xsd:string"), None, "test")
-        .unwrap();
-
-    Property::new("foundation:hasStatus")
-        .assert(conn, PropertyType::ObjectProperty, "hasStatus", None, &["foundation:Task"], None, None, "test")
-        .unwrap();
-}
-
-fn create_task(conn: &mut Connection, iri: &str) {
-    let individual = Individual::new(iri);
-    individual.assert(conn, "foundation:Task", "Test Task", "https://example.com/icon.svg", "test").unwrap();
-}
-
-#[test]
-fn test_update_thing_with_properties_updates_literal_property() {
-    let mut conn = setup_test_db();
-    setup_task_class_with_statuses(&mut conn);
-    create_task(&mut conn, "foundation:Task_001");
-
-    let args = serde_json::json!({
-        "iri": "foundation:Task_001",
-        "property_iri": "foundation:priority",
-        "values": ["High"]
-    });
-
-    let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "replace_property_values should succeed: {:?}", result.error);
-    assert_eq!(result.result.unwrap()["iri"].as_str(), Some("foundation:Task_001"));
-}
-
-#[test]
-fn test_update_thing_with_valid_status_succeeds() {
-    let mut conn = setup_test_db();
-    setup_task_class_with_statuses(&mut conn);
-    create_task(&mut conn, "foundation:Task_002");
-
-    let args = serde_json::json!({
-        "iri": "foundation:Task_002",
-        "property_iri": "foundation:hasStatus",
-        "values": ["foundation:ActiveStatus"]
-    });
-
-    let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "replace_property_values with valid status should succeed: {:?}", result.error);
-}
-
-#[test]
-fn test_update_thing_with_invalid_status_returns_descriptive_error() {
-    let mut conn = setup_test_db();
-    setup_task_class_with_statuses(&mut conn);
-    create_task(&mut conn, "foundation:Task_003");
-
-    let args = serde_json::json!({
-        "iri": "foundation:Task_003",
-        "property_iri": "foundation:hasStatus",
-        "values": ["foundation:InvalidStatus"]
-    });
-
-    let result = replace_property_values_one(&mut conn, &args);
-    assert!(!result.success, "replace_property_values with invalid status should fail");
-    let error = result.error.unwrap();
-    assert!(
-        error.contains("foundation:InvalidStatus"),
-        "Error should mention the invalid status: {}", error
-    );
-    assert!(
-        error.contains("Allowed") || error.contains("allowed"),
-        "Error should list allowed statuses: {}", error
-    );
-}
-
-#[test]
-fn test_update_thing_partial_update_with_only_label() {
-    let mut conn = setup_test_db();
-    setup_task_class_with_statuses(&mut conn);
-    create_task(&mut conn, "foundation:Task_004");
-
-    let args = serde_json::json!({
-        "iri": "foundation:Task_004",
-        "property_iri": "rdfs:label",
-        "values": ["Updated Task Name"]
-    });
-
-    let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "Replacing rdfs:label should succeed: {:?}", result.error);
-    assert_eq!(result.result.unwrap()["iri"].as_str(), Some("foundation:Task_004"));
-}
-
-#[test]
-fn test_create_thing_without_icon_inherits_from_concept() {
-    let mut conn = setup_test_db();
-    setup_task_class_with_statuses(&mut conn);
-
-    let args = serde_json::json!({
-        "class_iri": "foundation:Task",
-        "label": "My Inherited Icon Task"
-    });
-
-    let result = assert_individual_one(&mut conn, &args);
-    assert!(result.success, "assert_individual without icon should succeed: {:?}", result.error);
-
-    let response = result.result.unwrap();
-    let iri = response["iri"].as_str().expect("result should have iri");
-
-    let individual = crate::owl::Individual::get(&conn, iri)
-        .expect("should be able to get individual")
-        .expect("individual should exist");
-
-    assert_eq!(
-        individual.icon.as_deref(),
-        Some("https://example.com/task.svg"),
-        "Individual should inherit the concept's icon"
-    );
-}
-
-fn setup_event_hierarchy(conn: &mut Connection) {
-    let event_class = Class::new("foundation:Event");
-    event_class.assert(conn, ClassType::OwlClass, "Event", "https://example.com/event.svg", None, "test").unwrap();
-
-    let vacation_class = Class::new("foundation:Vacation");
-    vacation_class.assert(
-        conn, ClassType::OwlClass, "Vacation", "https://example.com/vacation.svg",
-        Some("foundation:Event"), "test",
-    ).unwrap();
-
-    Property::new("foundation:hasStatus")
-        .assert(conn, PropertyType::ObjectProperty, "hasStatus", None, &["foundation:Event"], None, None, "test")
-        .unwrap();
-}
-
-fn create_event(conn: &mut Connection, iri: &str, concept_iri: &str) {
-    let individual = Individual::new(iri);
-    individual.assert(conn, concept_iri, "Test Event", "https://example.com/event.svg", "test").unwrap();
-}
 
 #[test]
 fn test_search_things_returns_subclass_instances() {
@@ -170,7 +9,7 @@ fn test_search_things_returns_subclass_instances() {
     create_event(&mut conn, "foundation:Vacation_001", "foundation:Vacation");
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Event"
+        "class_iri": "foundation:Event"
     });
 
     let result = search(&conn, &args);
@@ -218,7 +57,7 @@ fn test_find_things_by_detail_returns_subclass_instances() {
     }
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Event",
+        "class_iri": "foundation:Event",
         "filters": [
             {"detail": "foundation:hasStatus", "value": status_iri}
         ]
@@ -244,23 +83,6 @@ fn test_find_things_by_detail_returns_subclass_instances() {
     assert_eq!(things.len(), 2, "Should return exactly both instances");
 }
 
-fn setup_animal_hierarchy(conn: &mut Connection) {
-    let animal_class = Class::new("foundation:Animal");
-    animal_class.assert(conn, ClassType::OwlClass, "Animal", "https://example.com/animal.svg", None, "test").unwrap();
-
-    let mammal_class = Class::new("foundation:Mammal");
-    mammal_class.assert(
-        conn, ClassType::OwlClass, "Mammal", "https://example.com/mammal.svg",
-        Some("foundation:Animal"), "test",
-    ).unwrap();
-
-    let dog_class = Class::new("foundation:Dog");
-    dog_class.assert(
-        conn, ClassType::OwlClass, "Dog", "https://example.com/dog.svg",
-        Some("foundation:Mammal"), "test",
-    ).unwrap();
-}
-
 #[test]
 fn test_search_things_returns_instances_across_three_level_hierarchy() {
     let mut conn = setup_test_db();
@@ -276,7 +98,7 @@ fn test_search_things_returns_instances_across_three_level_hierarchy() {
     dog.assert(&mut conn, "foundation:Dog", "Test Dog", "https://example.com/dog.svg", "test").unwrap();
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Animal"
+        "class_iri": "foundation:Animal"
     });
 
     let result = search(&conn, &args);
@@ -303,7 +125,7 @@ fn test_search_things_returns_subclass_instances_when_parent_has_no_direct_insta
     create_event(&mut conn, "foundation:Vacation_004", "foundation:Vacation");
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Event"
+        "class_iri": "foundation:Event"
     });
 
     let result = search(&conn, &args);
@@ -321,7 +143,7 @@ fn test_search_things_returns_subclass_instances_when_parent_has_no_direct_insta
 }
 
 #[test]
-fn test_search_things_filters_by_label_with_concept_iri() {
+fn test_search_things_filters_by_label_with_class_iri() {
     let mut conn = setup_test_db();
     setup_task_class_with_statuses(&mut conn);
 
@@ -335,7 +157,7 @@ fn test_search_things_filters_by_label_with_concept_iri() {
     individual3.assert(&mut conn, "foundation:Task", "Read book", "https://example.com/task.svg", "test").unwrap();
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "query": "Ingresse"
     });
 
@@ -355,7 +177,7 @@ fn test_search_things_filters_by_label_with_concept_iri() {
 }
 
 #[test]
-fn test_search_things_filters_globally_without_concept_iri() {
+fn test_search_things_filters_globally_without_class_iri() {
     let mut conn = setup_test_db();
     setup_task_class_with_statuses(&mut conn);
 
@@ -394,7 +216,7 @@ fn test_search_things_label_match_is_case_insensitive() {
     individual.assert(&mut conn, "foundation:Task", "Ingresse Contract", "https://example.com/task.svg", "test").unwrap();
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "query": "ingresse"
     });
 
@@ -422,7 +244,7 @@ fn test_search_things_multi_token_query() {
     individual2.assert(&mut conn, "foundation:Task", "Ingresse Proposal", "https://example.com/task.svg", "test").unwrap();
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "query": "Ingresse contract"
     });
 
@@ -456,7 +278,7 @@ fn test_search_things_matches_by_comment() {
     task_two.assert(&mut conn, "foundation:Task", "Task Two", "https://example.com/task.svg", "test").unwrap();
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "query": "ingresse"
     });
 
@@ -493,7 +315,7 @@ fn test_search_things_matches_by_property_value() {
     }], "test").unwrap();
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "query": "ingresse"
     });
 
@@ -517,7 +339,7 @@ fn test_search_things_matched_properties_label_match() {
     individual.assert(&mut conn, "foundation:Task", "Ingresse Contract", "https://example.com/task.svg", "test").unwrap();
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "query": "ingresse"
     });
 
@@ -551,7 +373,7 @@ fn test_search_things_matched_properties_property_match() {
     }], "test").unwrap();
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "query": "ingresse"
     });
 
@@ -595,7 +417,7 @@ fn test_search_things_score_ordering() {
     }], "test").unwrap();
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "query": "ingresse"
     });
 
@@ -626,7 +448,7 @@ fn test_search_things_include_retracted_false_excludes_retracted() {
     Individual::retract(&mut conn, "foundation:Task_102", "test").unwrap();
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "include_retracted": false
     });
 
@@ -653,7 +475,7 @@ fn test_search_things_include_retracted_true_includes_retracted() {
     Individual::retract(&mut conn, "foundation:Task_104", "test").unwrap();
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "include_retracted": true
     });
 
@@ -680,7 +502,7 @@ fn test_search_things_default_excludes_retracted() {
     Individual::retract(&mut conn, "foundation:Task_106", "test").unwrap();
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task"
+        "class_iri": "foundation:Task"
     });
 
     let result = search(&conn, &args);
@@ -709,7 +531,7 @@ fn test_search_things_limit_restricts_results() {
     }
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "limit": 3
     });
 
@@ -735,7 +557,7 @@ fn test_search_things_offset_skips_results() {
     }
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "limit": 10,
         "offset": 3
     });
@@ -762,7 +584,7 @@ fn test_search_things_default_limit_returns_all_when_under_limit() {
     }
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task"
+        "class_iri": "foundation:Task"
     });
 
     let result = search(&conn, &args);
@@ -787,7 +609,7 @@ fn test_search_things_response_fields_are_correct() {
     }
 
     let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
+        "class_iri": "foundation:Task",
         "limit": 10,
         "offset": 0
     });
@@ -799,89 +621,6 @@ fn test_search_things_response_fields_are_correct() {
     assert_eq!(response["limit"].as_u64().unwrap(), 10, "limit field should be 10");
     assert_eq!(response["offset"].as_u64().unwrap(), 0, "offset field should be 0");
     assert_eq!(response["total"].as_u64().unwrap(), 2, "total field should be 2");
-}
-
-#[test]
-fn test_remove_before_add_in_same_operation_preserves_new_value() {
-    // Regression for Bug_1772970415230: remove must execute before replace
-    // so the new value written by replace is not wiped by the subsequent remove.
-    let mut conn = setup_test_db();
-    setup_task_class_with_statuses(&mut conn);
-    create_task(&mut conn, "foundation:Task_migrate_001");
-
-    let individual = Individual::new("foundation:Task_migrate_001");
-    individual.add_property(&mut conn, "foundation:priority", vec![Object::Literal {
-        value: "Low".to_string(),
-        datatype: Some("xsd:string".to_string()),
-        language: None,
-    }], "test").unwrap();
-
-    let remove_args = serde_json::json!({
-        "iri": "foundation:Task_migrate_001",
-        "property_iri": "foundation:priority",
-        "values": ["Low"]
-    });
-    let remove_result = remove_property_values_one(&mut conn, &remove_args);
-    assert!(remove_result.success, "remove_property_values should succeed: {:?}", remove_result.error);
-
-    let replace_args = serde_json::json!({
-        "iri": "foundation:Task_migrate_001",
-        "property_iri": "foundation:priority",
-        "values": ["High"]
-    });
-    let replace_result = replace_property_values_one(&mut conn, &replace_args);
-    assert!(replace_result.success, "replace_property_values should succeed: {:?}", replace_result.error);
-
-    let priority = crate::owl::get_literal_property(&conn, "foundation:Task_migrate_001", "foundation:priority")
-        .expect("query should succeed")
-        .expect("priority should have a value after the operation");
-
-    assert_eq!(priority, "High", "New value must survive after remove+replace");
-}
-
-// Regression: Bug_1773352703259 — assert_individual icon field must accept file:// URLs
-// The GUI stores file:// icons as literals on foundation:hasIcon (an ObjectProperty),
-// but the API was rejecting them because validate_value_type blocked literals on ObjectProperties.
-// fix: meta-properties (foundation:hasIcon) bypass the type-validation pipeline.
-
-#[test]
-fn test_update_thing_icon_file_url_is_accepted() {
-    let mut conn = setup_test_db();
-    setup_task_class_with_statuses(&mut conn);
-    create_task(&mut conn, "foundation:Task_icon_001");
-
-    let args = serde_json::json!({
-        "iri": "foundation:Task_icon_001",
-        "property_iri": "foundation:hasIcon",
-        "values": ["file:///Users/daniel/Documents/Foundation/attachments/icon.png"]
-    });
-
-    let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "replace_property_values with file:// icon should succeed: {:?}", result.error);
-
-    let individual = Individual::get(&conn, "foundation:Task_icon_001")
-        .unwrap().unwrap();
-    assert_eq!(
-        individual.icon.as_deref(),
-        Some("file:///Users/daniel/Documents/Foundation/attachments/icon.png"),
-        "Icon should be stored and readable as the file:// URL"
-    );
-}
-
-#[test]
-fn test_update_thing_icon_https_url_is_accepted() {
-    let mut conn = setup_test_db();
-    setup_task_class_with_statuses(&mut conn);
-    create_task(&mut conn, "foundation:Task_icon_002");
-
-    let args = serde_json::json!({
-        "iri": "foundation:Task_icon_002",
-        "property_iri": "foundation:hasIcon",
-        "values": ["https://example.com/icon.png"]
-    });
-
-    let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "replace_property_values with https:// icon should succeed: {:?}", result.error);
 }
 
 // Performance tests — run with a copy of the real DB:
@@ -919,7 +658,7 @@ fn perf_search_things_global_query() {
 
 #[test]
 #[ignore = "performance test, requires FOUNDATION_BENCH_DB env var"]
-fn perf_search_things_with_concept_iri() {
+fn perf_search_things_with_class_iri() {
     let db_path = std::env::var("FOUNDATION_BENCH_DB")
         .expect("Set FOUNDATION_BENCH_DB to path of a DB copy (use VACUUM INTO to create it)");
 
@@ -928,7 +667,7 @@ fn perf_search_things_with_concept_iri() {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     ).expect("Failed to open bench DB");
 
-    let args = serde_json::json!({"concept_iri": "foundation:Contract", "query": "Ingresse"});
+    let args = serde_json::json!({"class_iri": "foundation:Contract", "query": "Ingresse"});
 
     let _ = search(&conn, &args);
 
@@ -944,262 +683,4 @@ fn perf_search_things_with_concept_iri() {
         println!("[concept query run {}] {} results in {:?}", i + 1, n, elapsed);
     }
     println!("[concept query] average: {:?}", total / runs);
-}
-
-#[test]
-fn test_create_thing_label_satisfies_rdfs_label_required_field() {
-    // Regression for Bug_1772766219258: creating an instance with label should satisfy
-    // an rdfs:label cardinality restriction, since label is always stored as rdfs:label.
-    let mut conn = setup_test_db();
-    setup_task_class_with_statuses(&mut conn);
-
-    crate::owl::cardinality::set_class_required_fields(
-        &mut conn, "foundation:Task", &["foundation:priority"], "test",
-    ).unwrap();
-
-    // Simulate how rdfs:label ends up as a required field (legacy data or direct store)
-    crate::eavto::store::append_triples(&mut conn, &[
-        {
-            let blank_id = "_:restriction_rdfs_label_test".to_string();
-            crate::eavto::Triple::new(
-                "foundation:Task", "rdfs:subClassOf",
-                crate::eavto::Object::Blank(blank_id.clone()),
-            )
-        },
-    ], "test").unwrap();
-    crate::eavto::store::assert_triples(&mut conn, &[
-        crate::eavto::Triple::new(
-            "_:restriction_rdfs_label_test", "rdf:type",
-            crate::eavto::Object::Iri("owl:Restriction".to_string()),
-        ),
-        crate::eavto::Triple::new(
-            "_:restriction_rdfs_label_test", "owl:onProperty",
-            crate::eavto::Object::Iri("rdfs:label".to_string()),
-        ),
-        crate::eavto::Triple::new(
-            "_:restriction_rdfs_label_test", "owl:minCardinality",
-            crate::eavto::Object::Integer(1),
-        ),
-    ], "test").unwrap();
-
-    let args = serde_json::json!({
-        "class_iri": "foundation:Task",
-        "label": "My Task",
-        "properties": [
-            {"property_iri": "foundation:priority", "values": ["High"]}
-        ]
-    });
-
-    let result = assert_individual_one(&mut conn, &args);
-    assert!(
-        result.success,
-        "Creating a thing with label should satisfy rdfs:label required field; got: {:?}",
-        result.error
-    );
-}
-
-// regression: Bug_1772994393082 — partOfProcess domain must be automation_FlowNode,
-// not automation_SequenceFlow, so all flow node subtypes can set the property.
-
-const ICON_URL: &str = "https://example.com/icon.svg";
-
-fn setup_automation_hierarchy(conn: &mut Connection) {
-    let i = ICON_URL;
-    Class::new("foundation:automation_Process")
-        .assert(conn, ClassType::OwlClass, "Automation Process", i, None, "test").unwrap();
-    Class::new("foundation:automation_FlowNode")
-        .assert(conn, ClassType::OwlClass, "Flow Node", i, None, "test").unwrap();
-    Property::new("foundation:partOfProcess")
-        .assert(conn, PropertyType::ObjectProperty, "Part of Process", None,
-            &["foundation:automation_FlowNode"], Some("foundation:automation_Process"), None, "test")
-        .unwrap();
-    Class::new("foundation:automation_Event")
-        .assert(conn, ClassType::OwlClass, "Automation Event", i,
-            Some("foundation:automation_FlowNode"), "test").unwrap();
-    Class::new("foundation:automation_StartEvent")
-        .assert(conn, ClassType::OwlClass, "Start Event", i,
-            Some("foundation:automation_Event"), "test").unwrap();
-    Class::new("foundation:automation_Task")
-        .assert(conn, ClassType::OwlClass, "Automation Task", i,
-            Some("foundation:automation_FlowNode"), "test").unwrap();
-    Class::new("foundation:automation_AgentTask")
-        .assert(conn, ClassType::OwlClass, "Agent Task", i,
-            Some("foundation:automation_Task"), "test").unwrap();
-    Individual::new("foundation:Process_Reg")
-        .assert(conn, "foundation:automation_Process", "Reg Process", i, "test").unwrap();
-}
-
-fn set_part_of_process(
-    conn: &mut Connection, ind_iri: &str,
-) -> Result<(), crate::owl::OwlError> {
-    Individual::new(ind_iri).add_property(
-        conn, "foundation:partOfProcess",
-        vec![Object::Iri("foundation:Process_Reg".to_string())], "test",
-    )
-}
-
-#[test]
-fn test_part_of_process_accessible_on_start_event() {
-    let mut conn = setup_test_db();
-    setup_automation_hierarchy(&mut conn);
-    Individual::new("foundation:StartEvent_Reg")
-        .assert(&mut conn, "foundation:automation_StartEvent", "Reg Start", ICON_URL, "test").unwrap();
-    assert!(set_part_of_process(&mut conn, "foundation:StartEvent_Reg").is_ok(),
-        "partOfProcess must be settable on automation_StartEvent via automation_FlowNode inheritance");
-}
-
-#[test]
-fn test_part_of_process_accessible_on_agent_task() {
-    let mut conn = setup_test_db();
-    setup_automation_hierarchy(&mut conn);
-    Individual::new("foundation:AgentTask_Reg")
-        .assert(&mut conn, "foundation:automation_AgentTask", "Reg Agent", ICON_URL, "test").unwrap();
-    assert!(set_part_of_process(&mut conn, "foundation:AgentTask_Reg").is_ok(),
-        "partOfProcess must be settable on automation_AgentTask via automation_FlowNode inheritance");
-}
-
-#[test]
-fn test_part_of_process_accessible_on_sequence_flow() {
-    let mut conn = setup_test_db();
-    setup_automation_hierarchy(&mut conn);
-    // partOfProcess domain covers both automation_FlowNode and automation_SequenceFlow
-    Property::new("foundation:partOfProcess")
-        .assert(&mut conn, PropertyType::ObjectProperty, "Part of Process", None,
-            &["foundation:automation_FlowNode", "foundation:automation_SequenceFlow"],
-            Some("foundation:automation_Process"), None, "test")
-        .unwrap();
-    Class::new("foundation:automation_SequenceFlow")
-        .assert(&mut conn, ClassType::OwlClass, "Sequence Flow", ICON_URL, None, "test").unwrap();
-    Individual::new("foundation:SeqFlow_Reg")
-        .assert(&mut conn, "foundation:automation_SequenceFlow", "Reg Flow", ICON_URL, "test").unwrap();
-    assert!(set_part_of_process(&mut conn, "foundation:SeqFlow_Reg").is_ok(),
-        "partOfProcess must be settable on automation_SequenceFlow (direct domain match)");
-}
-
-#[test]
-fn test_find_things_by_detail_date_filter_with_operators() {
-    let mut conn = setup_test_db();
-
-    let task_class = Class::new("foundation:Task");
-    task_class.assert(&mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test").unwrap();
-
-    Property::new("foundation:dueDate")
-        .assert(&mut conn, PropertyType::DatatypeProperty, "dueDate", None, &["foundation:Task"], Some("xsd:date"), None, "test")
-        .unwrap();
-
-    Individual::new("foundation:TaskDue0307")
-        .assert(&mut conn, "foundation:Task", "Task Due 2026-03-07", "https://example.com/task.svg", "test").unwrap();
-    Individual::new("foundation:TaskDue0308")
-        .assert(&mut conn, "foundation:Task", "Task Due 2026-03-08", "https://example.com/task.svg", "test").unwrap();
-    Individual::new("foundation:TaskDue0309")
-        .assert(&mut conn, "foundation:Task", "Task Due 2026-03-09", "https://example.com/task.svg", "test").unwrap();
-
-    for (iri, date_str) in [
-        ("foundation:TaskDue0307", "2026-03-07"),
-        ("foundation:TaskDue0308", "2026-03-08"),
-        ("foundation:TaskDue0309", "2026-03-09"),
-    ] {
-        Individual::new(iri).add_property(
-            &mut conn,
-            "foundation:dueDate",
-            vec![crate::owl::Object::Literal {
-                value: date_str.to_string(),
-                datatype: Some("xsd:date".to_string()),
-                language: None,
-            }],
-            "test",
-        ).unwrap();
-    }
-
-    let args = serde_json::json!({
-        "concept_iri": "foundation:Task",
-        "filters": [
-            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": "="}
-        ]
-    });
-    let result = search(&conn, &args);
-    assert!(result.success, "date '=' filter should succeed: {:?}", result.error);
-    let things = result.result.unwrap()["entities"].as_array().unwrap().clone();
-    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
-    assert_eq!(iris, vec!["foundation:TaskDue0308"], "date '=' should return only the matching task");
-
-    let args_gte = serde_json::json!({
-        "concept_iri": "foundation:Task",
-        "filters": [
-            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": ">="}
-        ]
-    });
-    let result_gte = search(&conn, &args_gte);
-    assert!(result_gte.success, "date '>=' filter should succeed: {:?}", result_gte.error);
-    let things_gte = result_gte.result.unwrap()["entities"].as_array().unwrap().clone();
-    let iris_gte: Vec<&str> = things_gte.iter().filter_map(|t| t["id"].as_str()).collect();
-    assert!(iris_gte.contains(&"foundation:TaskDue0308"), "'>=' should include 2026-03-08");
-    assert!(iris_gte.contains(&"foundation:TaskDue0309"), "'>=' should include 2026-03-09");
-    assert!(!iris_gte.contains(&"foundation:TaskDue0307"), "'>=' should exclude 2026-03-07");
-
-    let args_lte = serde_json::json!({
-        "concept_iri": "foundation:Task",
-        "filters": [
-            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": "<="}
-        ]
-    });
-    let result_lte = search(&conn, &args_lte);
-    assert!(result_lte.success, "date '<=' filter should succeed: {:?}", result_lte.error);
-    let things_lte = result_lte.result.unwrap()["entities"].as_array().unwrap().clone();
-    let iris_lte: Vec<&str> = things_lte.iter().filter_map(|t| t["id"].as_str()).collect();
-    assert!(iris_lte.contains(&"foundation:TaskDue0307"), "'<=' should include 2026-03-07");
-    assert!(iris_lte.contains(&"foundation:TaskDue0308"), "'<=' should include 2026-03-08");
-    assert!(!iris_lte.contains(&"foundation:TaskDue0309"), "'<=' should exclude 2026-03-09");
-
-    let args_range = serde_json::json!({
-        "concept_iri": "foundation:Task",
-        "filters": [
-            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": ">="},
-            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": "<="}
-        ]
-    });
-    let result_range = search(&conn, &args_range);
-    assert!(result_range.success, "date range filter should succeed: {:?}", result_range.error);
-    let things_range = result_range.result.unwrap()["entities"].as_array().unwrap().clone();
-    assert_eq!(things_range.len(), 1, "range >=2026-03-08 AND <=2026-03-08 should return exactly 1");
-    assert_eq!(things_range[0]["id"].as_str().unwrap(), "foundation:TaskDue0308");
-}
-
-#[test]
-fn test_create_thing_with_invalid_object_property_returns_range_contexts() {
-    let mut conn = setup_test_db();
-
-    let persona_class = Class::new("foundation:Persona");
-    persona_class.assert(&mut conn, ClassType::OwlClass, "Persona", "https://example.com/persona.svg", None, "test").unwrap();
-
-    let user_story_class = Class::new("foundation:UserStory");
-    user_story_class.assert(&mut conn, ClassType::OwlClass, "User Story", "https://example.com/story.svg", None, "test").unwrap();
-
-    Property::new("foundation:userRole")
-        .assert(&mut conn, PropertyType::ObjectProperty, "user role", None, &["foundation:UserStory"], Some("foundation:Persona"), None, "test")
-        .unwrap();
-
-    let args = serde_json::json!({
-        "class_iri": "foundation:UserStory",
-        "label": "As a user",
-        "properties": [
-            {
-                "property_iri": "foundation:userRole",
-                "values": ["foundation:INVALID_PERSONA"]
-            }
-        ]
-    });
-
-    let result = assert_individual_one(&mut conn, &args);
-    assert!(!result.success, "assert_individual with invalid IRI should fail");
-
-    let range_ctx = result.result.expect("result should contain range contexts on failure");
-    let range_contexts = range_ctx["rangeContexts"].as_array().expect("should have rangeContexts");
-    assert!(!range_contexts.is_empty(), "should include range context for the failing property");
-
-    let ctx = &range_contexts[0];
-    assert_eq!(ctx["property"].as_str().unwrap(), "foundation:userRole");
-    assert_eq!(ctx["range"].as_str().unwrap(), "foundation:Persona");
-
-    assert!(result.concept.is_some(), "concept (UserStory) should be included in the error response");
 }

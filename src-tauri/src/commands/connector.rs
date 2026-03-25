@@ -40,7 +40,7 @@ pub async fn connector__save_credential(
 
         let auth_type = credential.get("auth_type").and_then(|v| v.as_str()).unwrap_or("api_key");
 
-        let (concept_iri, cred_iri) = match auth_type {
+        let (class_iri, cred_iri) = match auth_type {
             "api_key" => {
                 let iri = format!("foundation:APIKey_{}", timestamp);
                 ("foundation:APIKey", iri)
@@ -57,7 +57,7 @@ pub async fn connector__save_credential(
         };
 
         let ind = Individual::new(&cred_iri);
-        ind.assert(conn, concept_iri, &cred_iri, "vpn_key", "connector")
+        ind.assert(conn, class_iri, &cred_iri, "vpn_key", "connector")
             .map_err(|e| format!("Failed to create credential: {}", e))?;
 
         match auth_type {

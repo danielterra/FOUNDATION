@@ -79,7 +79,7 @@ pub async fn chat__list_conversations(
             }).collect()
         };
 
-        let mut conversations: Vec<(i64, serde_json::Value)> = Vec::new();
+        let mut conversations: Vec<((bool, i64), serde_json::Value)> = Vec::new();
 
         for iri in iris {
             let ind = Individual::get(conn, &iri)
@@ -102,7 +102,8 @@ pub async fn chat__list_conversations(
                 }
             });
 
-            let sort_key = last_msg_map.get(&iri).copied().unwrap_or(started_at);
+            let last_msg_ts = last_msg_map.get(&iri).copied();
+            let sort_key = (last_msg_ts.is_some(), last_msg_ts.unwrap_or(started_at));
             conversations.push((sort_key, serde_json::json!({
                 "iri": iri,
                 "label": label,

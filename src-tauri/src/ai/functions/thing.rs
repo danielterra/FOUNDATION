@@ -4,8 +4,8 @@ use crate::owl::{Individual, Object, Property, PropertyType};
 use super::ToolResult;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-fn load_concept_context(conn: &Connection, concept_iri: &str) -> Option<Value> {
-    super::concept::load_concept_context(conn, concept_iri)
+fn load_concept_context(conn: &Connection, class_iri: &str) -> Option<Value> {
+    super::concept::load_concept_context(conn, class_iri)
 }
 
 fn load_range_contexts(conn: &Connection, args: &Value) -> Option<Value> {
@@ -85,7 +85,7 @@ fn build_objects(conn: &Connection, property_iri: &str, raw_values: &[Value]) ->
 pub fn search(conn: &Connection, args: &Value) -> ToolResult {
     let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let entity_type_filter = args.get("type").and_then(|v| v.as_str());
-    let concept_iri = args.get("concept_iri").and_then(|v| v.as_str());
+    let class_iri = args.get("class_iri").and_then(|v| v.as_str());
     let include_retracted = args.get("include_retracted").and_then(|v| v.as_bool()).unwrap_or(false);
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
     let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
@@ -118,7 +118,7 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
         conn,
         &tokens,
         entity_type_filter,
-        concept_iri,
+        class_iri,
         filters_ref,
         include_retracted,
         limit,
@@ -142,7 +142,7 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
                     "icon": r.icon,
                     "type": r.entity_type,
                     "matchedProperties": r.matched_properties,
-                    "conceptType": r.concept_type,
+                    "classType": r.class_type,
                     "status": r.status,
                 }))
                 .collect();
@@ -162,7 +162,7 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
-            concept: concept_iri.and_then(|iri| load_concept_context(conn, iri)),
+            concept: class_iri.and_then(|iri| load_concept_context(conn, iri)),
         },
     }
 }
@@ -234,11 +234,11 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
 
         let mut backlinks: Vec<serde_json::Value> = concept_counts
             .into_iter()
-            .map(|(concept_iri, count)| {
-                let concept_label = crate::owl::Thing::get(conn, &concept_iri).label;
+            .map(|(class_iri, count)| {
+                let class_label = crate::owl::Thing::get(conn, &class_iri).label;
                 serde_json::json!({
-                    "concept": concept_iri,
-                    "conceptLabel": concept_label,
+                    "class": class_iri,
+                    "conceptLabel": class_label,
                     "count": count,
                 })
             })
@@ -555,10 +555,10 @@ fn add_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult {
     match (|| {
         if property_iri == "foundation:hasStatus" {
             if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
-                let concept_iri = crate::owl::get_iri_property(conn, iri, "rdf:type")
+                let class_iri = crate::owl::get_iri_property(conn, iri, "rdf:type")
                     .ok().flatten()
                     .ok_or_else(|| crate::owl::OwlError::NotFound(format!("Individual '{}' has no rdf:type", iri)))?;
-                crate::owl::validate_allowed_status(conn, &concept_iri, status_iri)?;
+                crate::owl::validate_allowed_status(conn, &class_iri, status_iri)?;
             }
         }
 
@@ -631,10 +631,10 @@ fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResul
 
         if property_iri == "foundation:hasStatus" {
             if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
-                let concept_iri = crate::owl::get_iri_property(conn, iri, "rdf:type")
+                let class_iri = crate::owl::get_iri_property(conn, iri, "rdf:type")
                     .ok().flatten()
                     .ok_or_else(|| crate::owl::OwlError::NotFound(format!("Individual '{}' has no rdf:type", iri)))?;
-                crate::owl::validate_allowed_status(conn, &concept_iri, status_iri)?;
+                crate::owl::validate_allowed_status(conn, &class_iri, status_iri)?;
             }
         }
 
@@ -799,5 +799,5 @@ fn retract_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
 }
 
 #[cfg(test)]
-#[path = "thing_tests.rs"]
+#[path = "thing_tests/mod.rs"]
 mod tests;

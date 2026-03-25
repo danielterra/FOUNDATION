@@ -139,7 +139,7 @@ pub async fn graph__search_entities(
                     icon: r.icon,
                     entity_type: "class".to_string(),
                     matched_properties: vec![],
-                    concept_type: None,
+                    class_type: None,
                     status: None,
                 })
                 .collect()
@@ -167,18 +167,52 @@ pub async fn inspector__get_entity(
     entity_id: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    executor.read(move |conn| {
-        crate::search::track_access(conn, &entity_id);
+    let t0 = std::time::Instant::now();
+    let entity_id_log = entity_id.clone();
+    let track_id = entity_id.clone();
+    let executor_clone = executor.inner().clone();
+    tokio::spawn(async move {
+        let _ = executor_clone.write(move |conn| {
+            crate::search::track_access(conn, &track_id);
+            Ok(String::new())
+        }).await;
+    });
+
+    let result = executor.read(move |conn| {
+        let t_read = std::time::Instant::now();
+        let t1 = t_read;
+
         let entity_type = determine_entity_type(conn, &entity_id)?;
+        let t2 = std::time::Instant::now();
+
         let groups = owl::load_graph_node_groups(conn);
+        let t3 = std::time::Instant::now();
 
         let data = match entity_type {
             EntityType::Class => get_class_data(conn, &entity_id, groups)?,
             EntityType::Individual => individual::get_individual_data(conn, &entity_id, groups)?,
         };
+        let t4 = std::time::Instant::now();
 
-        serde_json::to_string(&data).map_err(|e| e.to_string())
-    }).await
+        let json = serde_json::to_string(&data).map_err(|e| e.to_string());
+        let t5 = std::time::Instant::now();
+
+        crate::commands::logging::log_backend("DEBUG", &format!(
+            "[INSPECTOR] get_entity({entity_id}) \
+            read_wait={}ms track={}ms type={}ms groups={}ms data={}ms serialize={}ms total={}ms",
+            t_read.duration_since(t0).as_millis(),
+            t1.duration_since(t_read).as_millis(),
+            t2.duration_since(t1).as_millis(),
+            t3.duration_since(t2).as_millis(),
+            t4.duration_since(t3).as_millis(),
+            t5.duration_since(t4).as_millis(),
+            t5.duration_since(t0).as_millis(),
+        ));
+
+        json
+    }).await;
+    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] get_entity({}) total_async={}ms", entity_id_log, t0.elapsed().as_millis()));
+    result
 }
 
 /// Returns the GraphNodeType configuration stored in the ontology.

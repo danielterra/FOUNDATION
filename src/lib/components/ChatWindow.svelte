@@ -91,6 +91,7 @@
 
 		const unlistenMessages = await listen('chat-message-added', async () => {
 			await loadMessages();
+			await loadConversations();
 		});
 
 		const unlistenAIProcessing = await listen('ai-processing-started', (event) => {

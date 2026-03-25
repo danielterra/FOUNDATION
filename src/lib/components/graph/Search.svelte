@@ -215,12 +215,12 @@
 										{/if}
 										<div class="result-text">
 											<div class="result-label">{result.label}</div>
-											{#if result.conceptType}
-												<div class="concept-type">
-													{#if result.conceptType.icon}
-														<span class="material-symbols-outlined concept-type-icon">{result.conceptType.icon}</span>
+											{#if result.classType}
+												<div class="class-type">
+													{#if result.classType.icon}
+														<span class="material-symbols-outlined class-type-icon">{result.classType.icon}</span>
 													{/if}
-													<span>{result.conceptType.label}</span>
+													<span>{result.classType.label}</span>
 												</div>
 											{/if}
 											{#if result.status}
@@ -400,7 +400,7 @@
 		text-overflow: ellipsis;
 	}
 
-	.concept-type {
+	.class-type {
 		display: flex;
 		align-items: center;
 		gap: 0.25rem;
@@ -408,7 +408,7 @@
 		font-size: 0.75rem;
 	}
 
-	.concept-type-icon {
+	.class-type-icon {
 		font-size: 14px;
 	}
 
