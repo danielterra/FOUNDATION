@@ -18,6 +18,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 
 const READ_POOL_SIZE: usize = 6;
+const WAL_TRUNCATE_INTERVAL: u32 = 200;
+const WAL_PASSIVE_INTERVAL: u32 = 50;
 
 /// Executor for database operations.
 /// Writes are sequential (single writer thread). Reads reuse a pool of
@@ -53,6 +55,13 @@ impl DbExecutor {
         let (write_tx, mut write_rx) = mpsc::unbounded_channel::<WriteTask>();
         let notify_tx_thread = notify_tx.clone();
 
+        // Pool starts empty — connections are added lazily as reads complete.
+        // Every 200 writes the pool is drained and a TRUNCATE checkpoint runs so the
+        // WAL does not grow unboundedly (pool read-marks would otherwise block PASSIVE
+        // checkpoints indefinitely).
+        let read_pool = Arc::new(Mutex::new(Vec::<Connection>::new()));
+        let pool_for_checkpoint = read_pool.clone();
+
         std::thread::spawn(move || {
             let mut write_conn = conn;
             let mut write_count: u32 = 0;
@@ -75,15 +84,22 @@ impl DbExecutor {
                 let _ = task.result_tx.send(result);
 
                 write_count += 1;
-                if write_count % 50 == 0 {
+                if write_count % WAL_TRUNCATE_INTERVAL == 0 {
+                    // Pool read-marks block TRUNCATE checkpoints indefinitely — drain the
+                    // pool first so the WAL can be zeroed and does not grow unboundedly.
+                    let old_conns = {
+                        let mut guard = pool_for_checkpoint
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        std::mem::take(&mut *guard)
+                    };
+                    drop(old_conns);
+                    let _ = write_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+                } else if write_count % WAL_PASSIVE_INTERVAL == 0 {
                     let _ = write_conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
                 }
             }
         });
-
-        // Pool starts empty — connections are added lazily as reads complete,
-        // so startup is not delayed by upfront WAL scans.
-        let read_pool = Arc::new(Mutex::new(Vec::new()));
 
         Self { write_tx, db_path, notify_tx, read_pool }
     }

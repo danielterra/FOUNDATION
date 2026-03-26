@@ -38,19 +38,33 @@ pub async fn initialize_app(
 
     owl::seed_icon_library(&mut conn);
 
-    if let Ok(stats) = owl::get_stats(&conn) {
-        let stats_msg = format!(
-            "Database initialized - Triples: {}, Active: {}, Transactions: {}, Entities: {}",
-            stats.total_facts, stats.active_facts, stats.total_transactions, stats.entities_count
-        );
-        super::log_backend("info", &stats_msg);
-    }
+    // Drain the WAL now — only one connection exists so no readers can block this.
+    // Pool connections maintain WAL read marks that prevent PASSIVE checkpoints from advancing,
+    // causing the WAL to grow unboundedly during normal operation.
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+
+    purge_old_retractions(&conn);
+
+
+    let t0 = std::time::Instant::now();
 
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel::<(Vec<String>, Vec<String>)>();
     let executor = DbExecutor::new_with_notify(conn, db_path.clone(), Some(notify_tx));
     let executor_for_worker = executor.clone();
     let executor_for_recover = executor.clone();
     app.manage(executor);
+    super::log_backend("debug", &format!("[STARTUP] executor_ready={}ms", t0.elapsed().as_millis()));
+
+    // Log DB stats in the background — COUNT queries are slow (~500ms on large DBs)
+    let stats_executor = app.state::<DbExecutor>().inner().clone();
+    tauri::async_runtime::spawn(async move {
+        if let Ok(stats) = stats_executor.read(|conn| owl::get_stats(conn).map_err(|e| e.to_string())).await {
+            super::log_backend("info", &format!(
+                "Database initialized - Triples: {}, Active: {}, Transactions: {}, Entities: {}",
+                stats.total_facts, stats.active_facts, stats.total_transactions, stats.entities_count
+            ));
+        }
+    });
 
     let app_for_notify = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -63,7 +77,6 @@ pub async fn initialize_app(
             }
             for iri in iri_objects {
                 if seen.insert(iri.clone()) {
-                    // entity-referenced: a write created a link pointing TO this IRI (new backlink).
                     app_for_notify.emit("entity-referenced", serde_json::json!({ "entityId": iri })).ok();
                 }
             }
@@ -71,12 +84,18 @@ pub async fn initialize_app(
     });
 
     let worker = FormulaWorker::spawn(app.clone(), executor_for_worker);
+    super::log_backend("debug", &format!("[STARTUP] formula_worker={}ms", t0.elapsed().as_millis()));
+
     recover_pending_jobs(&executor_for_recover, &worker).await;
+    super::log_backend("debug", &format!("[STARTUP] recover_jobs={}ms", t0.elapsed().as_millis()));
+
     app.manage(worker);
 
     crate::process_automation::executor::recover_interrupted_executions(&app).await;
+    super::log_backend("debug", &format!("[STARTUP] recover_executions={}ms", t0.elapsed().as_millis()));
 
     tauri::async_runtime::spawn(crate::process_automation::scheduler::reload(app.clone()));
+    super::log_backend("debug", &format!("[STARTUP] total_before_emit={}ms", t0.elapsed().as_millis()));
 
     let _ = app.emit("import-complete", ());
 
@@ -117,6 +136,23 @@ async fn recover_pending_jobs(
 
     for job_id in job_ids {
         let _ = worker.sender.try_send(WorkerCommand::Enqueue { job_id });
+    }
+}
+
+fn purge_old_retractions(conn: &Connection) {
+    let cutoff_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+        - 7 * 24 * 60 * 60 * 1000;
+
+    match conn.execute(
+        "DELETE FROM triples WHERE retracted = 1 AND created_at < ?1",
+        rusqlite::params![cutoff_ms],
+    ) {
+        Ok(n) if n > 0 => super::log_backend("info", &format!("[STARTUP] Purged {} retracted triples older than 7 days", n)),
+        Ok(_) => {}
+        Err(e) => super::log_backend("warn", &format!("[STARTUP] Failed to purge old retractions: {}", e)),
     }
 }
 

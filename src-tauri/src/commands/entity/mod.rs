@@ -5,13 +5,6 @@ use crate::owl::{self, Class, Individual, Property, Connection, DbExecutor, Obje
 
 mod individual;
 
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum EntityType {
-    Class,
-    Individual,
-}
-
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -180,33 +173,30 @@ pub async fn inspector__get_entity(
 
     let result = executor.read(move |conn| {
         let t_read = std::time::Instant::now();
-        let t1 = t_read;
-
-        let entity_type = determine_entity_type(conn, &entity_id)?;
-        let t2 = std::time::Instant::now();
 
         let groups = owl::load_graph_node_groups(conn);
+        let t2 = std::time::Instant::now();
+
+        let data = if let Some(class) = Class::get(conn, &entity_id).map_err(|e| e.to_string())? {
+            get_class_data(conn, &entity_id, groups, class)?
+        } else if let Some(individual) = Individual::get(conn, &entity_id).map_err(|e| e.to_string())? {
+            individual::get_individual_data(conn, &entity_id, groups, individual)?
+        } else {
+            return Err(format!("Entity {} not found or unknown type", entity_id));
+        };
         let t3 = std::time::Instant::now();
 
-        let data = match entity_type {
-            EntityType::Class => get_class_data(conn, &entity_id, groups)?,
-            EntityType::Individual => individual::get_individual_data(conn, &entity_id, groups)?,
-        };
-        let t4 = std::time::Instant::now();
-
         let json = serde_json::to_string(&data).map_err(|e| e.to_string());
-        let t5 = std::time::Instant::now();
+        let t4 = std::time::Instant::now();
 
         crate::commands::logging::log_backend("DEBUG", &format!(
             "[INSPECTOR] get_entity({entity_id}) \
-            read_wait={}ms track={}ms type={}ms groups={}ms data={}ms serialize={}ms total={}ms",
+            read_wait={}ms groups={}ms data={}ms serialize={}ms total={}ms",
             t_read.duration_since(t0).as_millis(),
-            t1.duration_since(t_read).as_millis(),
-            t2.duration_since(t1).as_millis(),
+            t2.duration_since(t_read).as_millis(),
             t3.duration_since(t2).as_millis(),
             t4.duration_since(t3).as_millis(),
-            t5.duration_since(t4).as_millis(),
-            t5.duration_since(t0).as_millis(),
+            t4.duration_since(t0).as_millis(),
         ));
 
         json
@@ -581,23 +571,8 @@ pub(super) fn resolve_status_for_entity(conn: &Connection, entity_iri: &str) -> 
         .map(|(iri, label, color, icon)| StatusInfo { iri, label, icon, color })
 }
 
-fn determine_entity_type(conn: &Connection, entity_id: &str) -> Result<EntityType, String> {
-    if Class::get(conn, entity_id).map_err(|e| e.to_string())?.is_some() {
-        return Ok(EntityType::Class);
-    }
-
-    if Individual::get(conn, entity_id).map_err(|e| e.to_string())?.is_some() {
-        return Ok(EntityType::Individual);
-    }
-
-    Err(format!("Entity {} not found or unknown type", entity_id))
-}
-
-fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8)) -> Result<EntityData, String> {
+fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class: Class) -> Result<EntityData, String> {
     let (group_class, _group_individual, group_literal) = groups;
-    let class = Class::get(conn, class_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Class {} not found", class_id))?;
 
     let label = class.label.unwrap_or_else(|| class_id.to_string());
     let icon = class.icon;

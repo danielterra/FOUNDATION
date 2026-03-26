@@ -11,6 +11,16 @@
 	import ChatMessageList from './ChatMessageList.svelte';
 
 	const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+	const MESSAGE_PAGE_SIZE = 50;
+	const TEXTAREA_MAX_HEIGHT = 300;
+	const SCROLL_LOAD_THRESHOLD = 100;
+	const MAX_CAMERA_FRAMES_PER_MESSAGE = 4;
+	const MAX_FILE_SIZE_BYTES = 30 * 1024 * 1024;
+	const CAMERA_FRAME_WIDTH = 320;
+	const CAMERA_FRAME_HEIGHT = 240;
+	const JPEG_QUALITY = 0.6;
+	const MAX_CAPTURED_FRAMES = 60;
+	const CAMERA_INACTIVITY_TIMEOUT_MS = 3000;
 
 	// Props
 	let { isOpen = $bindable(false), activeConversationIri = $bindable(null) } = $props();
@@ -26,7 +36,7 @@
 	let apiKey = $state('');
 	let isInitialized = $state(false);
 	let showApiKeyInput = $state(false);
-	let messageLimit = $state(50);
+	let messageLimit = $state(MESSAGE_PAGE_SIZE);
 	let isLoadingMore = $state(false);
 	let isLoadingMessages = $state(true);
 	let hasMoreMessages = $state(true);
@@ -61,11 +71,15 @@
 		const { listen } = await import('@tauri-apps/api/event');
 
 		const initializeApp = async () => {
+			const t0 = performance.now();
+			console.debug('[INIT] initializeApp start');
 			try {
 				const storedKey = await invoke('ai__get_api_key');
+				console.debug(`[INIT] ai__get_api_key=${Math.round(performance.now() - t0)}ms`);
 				if (storedKey) {
 					apiKey = storedKey;
 					await initializeAI(storedKey);
+					console.debug(`[INIT] initializeAI=${Math.round(performance.now() - t0)}ms`);
 				} else {
 					showApiKeyInput = true;
 				}
@@ -74,6 +88,7 @@
 				showApiKeyInput = true;
 			}
 			await loadConversations();
+			console.debug(`[INIT] loadConversations=${Math.round(performance.now() - t0)}ms`);
 			if (conversations.length > 0) {
 				const saved = localStorage.getItem('activeConversationIri');
 				const exists = saved && conversations.some(c => c.iri === saved);
@@ -81,6 +96,7 @@
 				inputText = localStorage.getItem(`draft_${activeConversationIri}`) ?? '';
 			}
 			await loadMessages();
+			console.debug(`[INIT] loadMessages=${Math.round(performance.now() - t0)}ms — done`);
 		};
 
 		const unlistenImport = await listen('import-complete', async () => {
@@ -144,7 +160,7 @@
 	function autoResizeTextarea() {
 		if (!textareaElement) return;
 		textareaElement.style.height = 'auto';
-		const newHeight = Math.min(textareaElement.scrollHeight, 300);
+		const newHeight = Math.min(textareaElement.scrollHeight, TEXTAREA_MAX_HEIGHT);
 		textareaElement.style.height = newHeight + 'px';
 	}
 
@@ -247,7 +263,7 @@
 			activeConversationIri = conv.iri;
 			localStorage.setItem('activeConversationIri', conv.iri);
 			messages = [];
-			messageLimit = 50;
+			messageLimit = MESSAGE_PAGE_SIZE;
 			hasMoreMessages = true;
 			await loadConversations();
 			await loadMessages();
@@ -262,7 +278,7 @@
 		localStorage.setItem('activeConversationIri', iri);
 		inputText = localStorage.getItem(`draft_${iri}`) ?? '';
 		messages = [];
-		messageLimit = 50;
+		messageLimit = MESSAGE_PAGE_SIZE;
 		hasMoreMessages = true;
 		await loadMessages();
 	}
@@ -303,7 +319,7 @@
 		const previousScrollHeight = chatContainer?.scrollHeight || 0;
 
 		try {
-			messageLimit += 50;
+			messageLimit += MESSAGE_PAGE_SIZE;
 
 			const msgs = await invoke('chat__get_recent_messages', {
 				limit: messageLimit,
@@ -327,7 +343,7 @@
 
 	function handleScroll() {
 		if (!chatContainer || isLoadingMore) return;
-		if (chatContainer.scrollTop < 100) {
+		if (chatContainer.scrollTop < SCROLL_LOAD_THRESHOLD) {
 			loadMoreMessages();
 		}
 	}
@@ -421,7 +437,7 @@
 		}
 
 		const attachmentIris = pendingAttachments.map(a => a.iri);
-		const cameraImages = selectEvenly(capturedFrames, 4);
+		const cameraImages = selectEvenly(capturedFrames, MAX_CAMERA_FRAMES_PER_MESSAGE);
 		stopCapturing(false);
 
 		inputText = '';
@@ -568,7 +584,7 @@
 
 	async function attachFile(file) {
 		try {
-			if (file.size > 30 * 1024 * 1024) {
+			if (file.size > MAX_FILE_SIZE_BYTES) {
 				alert(`File ${file.name} is too large. Maximum size is 30 MB.`);
 				return;
 			}
@@ -647,10 +663,10 @@
 		if (!cameraVideoEl || cameraVideoEl.readyState < 2) return null;
 		try {
 			const canvas = document.createElement('canvas');
-			canvas.width = 320;
-			canvas.height = 240;
-			canvas.getContext('2d').drawImage(cameraVideoEl, 0, 0, 320, 240);
-			return canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+			canvas.width = CAMERA_FRAME_WIDTH;
+			canvas.height = CAMERA_FRAME_HEIGHT;
+			canvas.getContext('2d').drawImage(cameraVideoEl, 0, 0, CAMERA_FRAME_WIDTH, CAMERA_FRAME_HEIGHT);
+			return canvas.toDataURL('image/jpeg', JPEG_QUALITY).split(',')[1];
 		} catch {
 			return null;
 		}
@@ -661,7 +677,7 @@
 		initCamera().then(() => {
 			if (!captureStarted) return;
 			captureTimer = setInterval(() => {
-				if (capturedFrames.length >= 60) return;
+				if (capturedFrames.length >= MAX_CAPTURED_FRAMES) return;
 				const frame = captureFrame();
 				if (frame) capturedFrames.push(frame);
 			}, 1000);
@@ -684,7 +700,7 @@
 
 	function resetCaptureInactivityTimer() {
 		clearTimeout(inactivityTimer);
-		inactivityTimer = setTimeout(() => stopCapturing(true), 3000);
+		inactivityTimer = setTimeout(() => stopCapturing(true), CAMERA_INACTIVITY_TIMEOUT_MS);
 	}
 
 	function selectEvenly(arr, n) {

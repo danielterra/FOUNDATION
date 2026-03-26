@@ -242,19 +242,27 @@ pub fn get_backlinks_grouped_limited(
                AND t.subject != ?1
              GROUP BY t.subject, t.predicate
          ),
+         subject_class AS (
+             SELECT subject, object AS source_class
+             FROM (
+                 SELECT t.subject, t.object, t.tx,
+                        ROW_NUMBER() OVER (PARTITION BY t.subject ORDER BY t.tx DESC) AS rn
+                 FROM triples t
+                 INNER JOIN backlinks_raw br ON t.subject = br.subject
+                 WHERE t.predicate = 'rdf:type'
+                   AND t.object_type = 'iri'
+                   AND t.retracted = 0
+             )
+             WHERE rn = 1
+         ),
          backlinks_with_class AS (
              SELECT
                  br.subject,
                  br.predicate,
                  br.last_tx,
-                 (SELECT t2.object FROM triples t2
-                  WHERE t2.subject = br.subject
-                    AND t2.predicate = 'rdf:type'
-                    AND t2.object_type = 'iri'
-                    AND t2.retracted = 0
-                  ORDER BY t2.tx DESC
-                  LIMIT 1) AS source_class
+                 sc.source_class
              FROM backlinks_raw br
+             LEFT JOIN subject_class sc ON sc.subject = br.subject
          ),
          group_counts AS (
              SELECT predicate, source_class, COUNT(*) AS total

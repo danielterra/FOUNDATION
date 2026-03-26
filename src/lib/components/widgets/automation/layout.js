@@ -20,8 +20,8 @@ const RANKSEP = 320
 const OUTPUT_HANDLE_SPACING = 26
 
 function subProcessExtraHeight(node) {
-  return (node.data?.outputConcepts?.length ?? 0) > 1
-    ? (node.data.outputConcepts.length - 1) * OUTPUT_HANDLE_SPACING
+  return (node.data?.outputClasses?.length ?? 0) > 1
+    ? (node.data.outputClasses.length - 1) * OUTPUT_HANDLE_SPACING
     : 0
 }
 

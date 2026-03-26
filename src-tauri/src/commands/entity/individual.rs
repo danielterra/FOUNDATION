@@ -3,17 +3,13 @@ use crate::owl::{self, Class, Individual, Property, Connection};
 use super::{EntityData, PropertyValue, GraphNode, GraphLink, StatusInfo, FileInfo,
             resolve_unit_label, resolve_entity_status, resolve_status_for_entity};
 
-pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, u8)) -> Result<EntityData, String> {
+pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, u8), individual: Individual) -> Result<EntityData, String> {
     let t0 = std::time::Instant::now();
     let (group_class, group_individual, group_literal) = groups;
-    let individual = Individual::get(conn, individual_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Individual {} not found", individual_id))?;
-    let t_get = std::time::Instant::now();
     let n_props = individual.properties.len();
     let n_backlinks = individual.backlinks.len();
     let n_types = individual.types.len();
-    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: Individual::get {}ms (props={n_props} backlinks={n_backlinks} types={n_types})", t_get.duration_since(t0).as_millis()));
+    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: Individual (props={n_props} backlinks={n_backlinks} types={n_types})"));
 
     let label = individual.label.unwrap_or_else(|| individual_id.to_string());
     let icon = individual.icon;
@@ -139,7 +135,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     }
 
     let t_props = std::time::Instant::now();
-    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: property loop {}ms", t_props.duration_since(t_get).as_millis()));
+    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: property loop {}ms", t_props.duration_since(t0).as_millis()));
 
     properties.sort_by(|a, b| {
         let tx_a = max_tx_per_predicate.get(&a.property).copied().unwrap_or(0);

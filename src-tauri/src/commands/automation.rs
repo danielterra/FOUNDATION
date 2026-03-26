@@ -169,7 +169,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                                 .map(|t| extract_local_name(&t).to_string())
                                 .unwrap_or_default();
                             if sub_type == "automation_StartEvent" {
-                                if let Ok(Some(c)) = get_iri_property(conn, sub_iri, "foundation:inputConcept") {
+                                if let Ok(Some(c)) = get_iri_property(conn, sub_iri, "foundation:inputClass") {
                                     in_lbl = get_literal_property(conn, &c, rdfs::LABEL).map_err(|e| e.to_string())?;
                                     in_icon = {
                                         use crate::eavto::{query, Object};
@@ -195,7 +195,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                             let end_lbl = get_literal_property(conn, &end_iri, rdfs::LABEL)
                                 .map_err(|e| e.to_string())?
                                 .unwrap_or_else(|| end_iri.clone());
-                            let (lbl, icon) = if let Ok(Some(class_iri)) = get_iri_property(conn, &end_iri, "foundation:outputConcept") {
+                            let (lbl, icon) = if let Ok(Some(class_iri)) = get_iri_property(conn, &end_iri, "foundation:outputClass") {
                                 let class_lbl = get_literal_property(conn, &class_iri, rdfs::LABEL)
                                     .map_err(|e| e.to_string())?
                                     .unwrap_or_else(|| class_iri.clone());
@@ -225,7 +225,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
 
                     (in_lbl, in_icon, out_lbl, out_icon, out_classes)
                 } else {
-                    let (in_lbl, in_icon) = if let Ok(Some(iri)) = get_iri_property(conn, &node_iri, "foundation:inputConcept") {
+                    let (in_lbl, in_icon) = if let Ok(Some(iri)) = get_iri_property(conn, &node_iri, "foundation:inputClass") {
                         let lbl = get_literal_property(conn, &iri, rdfs::LABEL)
                             .map_err(|e| e.to_string())?
                             .unwrap_or_else(|| iri.clone());
@@ -243,7 +243,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                     } else {
                         (None, None)
                     };
-                    let (out_lbl, out_icon) = if let Ok(Some(iri)) = get_iri_property(conn, &node_iri, "foundation:outputConcept") {
+                    let (out_lbl, out_icon) = if let Ok(Some(iri)) = get_iri_property(conn, &node_iri, "foundation:outputClass") {
                         let lbl = get_literal_property(conn, &iri, rdfs::LABEL)
                             .map_err(|e| e.to_string())?
                             .unwrap_or_else(|| iri.clone());

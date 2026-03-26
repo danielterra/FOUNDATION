@@ -1,7 +1,6 @@
 use crate::owl::{Individual, Object, DbExecutor};
 use tauri::State;
 
-use super::parse_timestamp;
 
 #[tauri::command]
 pub async fn chat__create_conversation(
@@ -56,60 +55,101 @@ pub async fn chat__list_conversations(
             false,
         ).map_err(|e| format!("Failed to query conversations: {}", e))?;
 
-        let last_msg_map: std::collections::HashMap<String, i64> = {
-            let mut stmt = conn.prepare(
-                "SELECT tp.object, MAX(ts.object_value) \
-                 FROM triples tp \
-                 JOIN triples ts ON ts.subject = tp.subject \
-                   AND ts.predicate = 'foundation:sentAt' \
-                   AND ts.retracted = 0 \
-                 WHERE tp.predicate = 'foundation:partOfConversation' \
-                   AND tp.retracted = 0 \
-                 GROUP BY tp.object"
-            ).map_err(|e| format!("Failed to prepare last-message query: {}", e))?;
-            let rows: Vec<(String, String)> = stmt.query_map([], |row| {
+        if iris.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Batch-fetch labels and createdAt in two queries — avoids Individual::get (backlinks CTE)
+        let placeholders = iris.iter().enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let params: Vec<&dyn rusqlite::ToSql> = iris.iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+
+        let label_sql = format!(
+            "SELECT subject, object_value FROM triples \
+             WHERE predicate = 'rdfs:label' AND retracted = 0 AND subject IN ({placeholders})"
+        );
+        let mut label_stmt = conn.prepare(&label_sql).map_err(|e| e.to_string())?;
+        let label_map: std::collections::HashMap<String, String> = label_stmt
+            .query_map(params.as_slice(), |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
-            .map_err(|e| format!("Failed to query last messages: {}", e))?
+            .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
             .collect();
-            rows.into_iter().filter_map(|(iri, rfc3339)| {
-                chrono::DateTime::parse_from_rfc3339(&rfc3339).ok()
-                    .map(|dt| (iri, dt.timestamp_millis()))
-            }).collect()
-        };
 
-        let mut conversations: Vec<((bool, i64), serde_json::Value)> = Vec::new();
+        let created_sql = format!(
+            "SELECT subject, object_value FROM triples \
+             WHERE predicate = 'foundation:createdAt' AND retracted = 0 AND subject IN ({placeholders})"
+        );
+        let mut created_stmt = conn.prepare(&created_sql).map_err(|e| e.to_string())?;
+        let created_map: std::collections::HashMap<String, i64> = created_stmt
+            .query_map(params.as_slice(), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .map(|(iri, dt)| {
+                let ms = chrono::DateTime::parse_from_rfc3339(&dt)
+                    .map(|d| d.timestamp_millis())
+                    .unwrap_or(0);
+                (iri, ms)
+            })
+            .collect();
 
-        for iri in iris {
-            let ind = Individual::get(conn, &iri)
-                .ok().flatten()
-                .unwrap_or_else(|| Individual::new(&iri));
+        // Last message timestamp per conversation (sentAt stored as xsd:dateTime string)
+        let mut last_msg_stmt = conn.prepare(
+            "SELECT tp.object, MAX(ts.object_value) \
+             FROM triples tp \
+             JOIN triples ts ON ts.subject = tp.subject \
+               AND ts.predicate = 'foundation:sentAt' \
+               AND ts.retracted = 0 \
+             WHERE tp.predicate = 'foundation:partOfConversation' \
+               AND tp.retracted = 0 \
+             GROUP BY tp.object"
+        ).map_err(|e| format!("Failed to prepare last-message query: {}", e))?;
+        let last_msg_map: std::collections::HashMap<String, i64> = last_msg_stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .map(|(iri, dt)| {
+                let ms = chrono::DateTime::parse_from_rfc3339(&dt)
+                    .map(|d| d.timestamp_millis())
+                    .unwrap_or(0);
+                (iri, ms)
+            })
+            .collect();
 
-            let started_at = ind.properties.iter()
-                .find(|(k, _)| k == "foundation:createdAt")
-                .and_then(|(_, v)| parse_timestamp(v))
-                .unwrap_or(0);
+        let mut conversations: Vec<((bool, i64), serde_json::Value)> = iris.iter().map(|iri| {
+            let started_at = created_map.get(iri).copied().unwrap_or(0);
 
-            let label = ind.label.clone().filter(|l| !l.is_empty()).unwrap_or_else(|| {
-                if started_at > 0 {
-                    let secs = started_at / 1000;
-                    chrono::DateTime::from_timestamp(secs, 0)
-                        .map(|dt| dt.format("Conversation %b %d, %Y %H:%M").to_string())
-                        .unwrap_or_else(|| "New Conversation".to_string())
-                } else {
-                    "New Conversation".to_string()
-                }
-            });
+            let label = label_map.get(iri).cloned()
+                .filter(|l| !l.is_empty())
+                .unwrap_or_else(|| {
+                    if started_at > 0 {
+                        let secs = started_at / 1000;
+                        chrono::DateTime::from_timestamp(secs, 0)
+                            .map(|dt| dt.format("Conversation %b %d, %Y %H:%M").to_string())
+                            .unwrap_or_else(|| "New Conversation".to_string())
+                    } else {
+                        "New Conversation".to_string()
+                    }
+                });
 
-            let last_msg_ts = last_msg_map.get(&iri).copied();
+            let last_msg_ts = last_msg_map.get(iri).copied();
             let sort_key = (last_msg_ts.is_some(), last_msg_ts.unwrap_or(started_at));
-            conversations.push((sort_key, serde_json::json!({
+            (sort_key, serde_json::json!({
                 "iri": iri,
                 "label": label,
                 "startedAt": started_at,
-            })));
-        }
+            }))
+        }).collect();
 
         conversations.sort_by(|a, b| b.0.cmp(&a.0));
         Ok(conversations.into_iter().map(|(_, v)| v).collect())

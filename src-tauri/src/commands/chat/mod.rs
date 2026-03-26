@@ -37,35 +37,35 @@ pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor) -> Opti
             return Ok(None);
         }
 
+        use std::collections::HashSet;
+
+        let entity_iris: Vec<String> = widgets.iter().map(|w| w.entity_id.clone()).collect();
+
+        let entity_things = crate::owl::Thing::get_batch(conn, &entity_iris);
+
+        let entity_types = crate::eavto::query::get_first_iri_property_batch(
+            conn, &entity_iris, "rdf:type",
+        ).unwrap_or_default();
+
+        let class_iris: Vec<String> = entity_types.values()
+            .cloned()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let class_things = crate::owl::Thing::get_batch(conn, &class_iris);
+
         let mut lines = Vec::new();
         for w in &widgets {
-            let entity_ind = crate::owl::Individual::get(conn, &w.entity_id)
-                .ok()
-                .flatten();
-
-            let entity_label = entity_ind.as_ref()
-                .and_then(|ind| ind.properties.iter()
-                    .find(|(p, _)| p == "rdfs:label")
-                    .and_then(|(_, v)| v.as_literal()))
+            let entity_label = entity_things.get(&w.entity_id)
+                .map(|t| t.label.as_str())
                 .unwrap_or_default();
-
-            let class_iri = entity_ind.as_ref()
-                .and_then(|ind| ind.properties.iter()
-                    .find(|(p, _)| p == "rdf:type")
-                    .and_then(|(_, v)| v.as_iri().map(String::from)))
+            let class_iri = entity_types.get(&w.entity_id)
+                .cloned()
                 .unwrap_or_default();
-
-            let class_label = if class_iri.is_empty() {
-                String::new()
-            } else {
-                crate::owl::Individual::get(conn, &class_iri)
-                    .ok()
-                    .flatten()
-                    .and_then(|ind| ind.properties.into_iter()
-                        .find(|(p, _)| p == "rdfs:label")
-                        .and_then(|(_, v)| v.as_literal()))
-                    .unwrap_or_default()
-            };
+            let class_label = class_things.get(&class_iri)
+                .map(|t| t.label.as_str())
+                .unwrap_or_default();
 
             lines.push(format!(
                 "- widget_type={}, class_iri={}, class_name={}, instance_iri={}, instance_name={}",
@@ -253,6 +253,7 @@ pub async fn chat__send_and_reply(
     }
 
     let subconscious_context = subconscious::format_context(&subconscious_entities);
+    let blackboard_context = build_blackboard_context(&executor).await;
 
     let mut loop_count = 0;
     loop {
@@ -298,7 +299,6 @@ pub async fn chat__send_and_reply(
             return Err("Conversation history is empty — cannot send request to Claude".to_string());
         }
 
-        let blackboard_context = build_blackboard_context(&executor).await;
         let tools = crate::ai::functions::get_claude_tools();
 
         let system_prompt = if let Some(ref frames) = camera_images {
@@ -317,7 +317,7 @@ pub async fn chat__send_and_reply(
             max_tokens: Some(MAX_OUTPUT_TOKENS),
             temperature: Some(0.3),
             system: Some(system_prompt),
-            blackboard_context,
+            blackboard_context: blackboard_context.clone(),
             tools: Some(tools),
             supports_web_tools: agent_config.supports_web_tools,
         };
