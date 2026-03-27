@@ -76,15 +76,12 @@ impl Property {
     pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
         let iri = iri.into();
 
-        // Get label
         let label_result = query::get_by_entity_predicate(conn, &iri, rdfs::LABEL)?;
         let label = label_result.triples.first().and_then(|t| t.object.as_literal());
 
-        // Get comment
         let comment_result = query::get_by_entity_predicate(conn, &iri, rdfs::COMMENT)?;
         let comment = comment_result.triples.first().and_then(|t| t.object.as_literal());
 
-        // Get property type
         let types_result = query::get_by_entity_predicate(conn, &iri, rdf::TYPE)?;
         if types_result.triples.is_empty() {
             return Ok(None);
@@ -112,34 +109,40 @@ impl Property {
             }
         }
 
-        // Get domains
         let domains_result = query::get_by_entity_predicate(conn, &iri, rdfs::DOMAIN)?;
         let domains: Vec<String> = domains_result.triples.iter()
             .filter_map(|t| t.object.as_iri())
             .map(|s| s.to_string())
             .collect();
 
-        // Get ranges
         let ranges_result = query::get_by_entity_predicate(conn, &iri, rdfs::RANGE)?;
         let ranges: Vec<String> = ranges_result.triples.iter()
             .filter_map(|t| t.object.as_iri())
             .map(|s| s.to_string())
             .collect();
 
-        // Get super properties
+        // A property typed as rdf:Property with a non-datatype range is functionally
+        // an object property (e.g. owl:sameAs, owl:differentFrom from external vocabularies).
+        if property_type == PropertyType::RdfProperty {
+            let has_class_range = ranges.iter().any(|r| {
+                !r.starts_with("xsd:") && r != "rdfs:Literal" && r != "rdf:langString"
+            });
+            if has_class_range {
+                property_type = PropertyType::ObjectProperty;
+            }
+        }
+
         let super_result = query::get_by_entity_predicate(conn, &iri, rdfs::SUB_PROPERTY_OF)?;
         let super_properties: Vec<String> = super_result.triples.iter()
             .filter_map(|t| t.object.as_iri())
             .map(|s| s.to_string())
             .collect();
 
-        // Get inverse
         let inverse_result = query::get_by_entity_predicate(conn, &iri, owl::INVERSE_OF)?;
         let inverse_of = inverse_result.triples.first()
             .and_then(|t| t.object.as_iri())
             .map(|s| s.to_string());
 
-        // Get QUDT unit
         let unit_result = query::get_by_entity_predicate(conn, &iri, "qudt:hasUnit")?;
         let unit = unit_result.triples.first()
             .and_then(|t| t.object.as_iri())
@@ -191,7 +194,6 @@ impl Property {
         origin: &str
     ) -> Result<()> {
         crate::owl::check_system_locked(conn, &self.iri, None)?;
-        // Validate that numeric ranges have a unit
         if let Some(range_value) = range {
             let is_numeric = matches!(
                 range_value,
@@ -220,7 +222,6 @@ impl Property {
             }
         }
 
-        // Assert property type
         let type_iri = match property_type {
             PropertyType::RdfProperty => rdf::PROPERTY,
             PropertyType::ObjectProperty => owl::OBJECT_PROPERTY,
@@ -237,7 +238,6 @@ impl Property {
             }),
         ];
 
-        // Add comment if provided
         if let Some(comment_text) = comment {
             triples.push(Triple::new(&self.iri, rdfs::COMMENT, Object::Literal {
                 value: comment_text.to_string(),
@@ -254,12 +254,10 @@ impl Property {
             ));
         }
 
-        // Add range if provided
         if let Some(range_class) = range {
             triples.push(Triple::new(&self.iri, rdfs::RANGE, Object::Iri(range_class.to_string())));
         }
 
-        // Add QUDT unit if provided (required for numeric ranges)
         if let Some(unit_iri) = unit {
             triples.push(Triple::new(&self.iri, "qudt:hasUnit", Object::Iri(unit_iri.to_string())));
         }
@@ -860,5 +858,69 @@ mod tests {
         let prop = Property::get(&conn, "foundation:hasMember").unwrap().unwrap();
         assert_eq!(prop.domain_labels.len(), 1);
         assert_eq!(prop.domain_labels[0].inverse_label, None);
+    }
+
+    #[test]
+    fn test_ac2_property_without_domain_labels_falls_back_to_rdfs_label() {
+        let mut conn = setup_test_db();
+
+        Property::new("foundation:hasRole").assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "has role",
+            None,
+            &[],
+            None,
+            None,
+            "test",
+        ).unwrap();
+
+        let prop = Property::get(&conn, "foundation:hasRole").unwrap().unwrap();
+        assert!(prop.domain_labels.is_empty(),
+            "AC2: property with no DomainLabel entries must have empty domain_labels");
+        assert_eq!(prop.label, Some("has role".to_string()),
+            "AC2: rdfs:label must be available as fallback when domain_labels is empty");
+    }
+
+    #[test]
+    fn test_ac4_domain_label_without_inverse_falls_back_to_forward_label() {
+        use crate::eavto::{store, Triple, Object};
+        let mut conn = setup_test_db();
+
+        Property::new("foundation:contains").assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "contains",
+            None,
+            &[],
+            None,
+            None,
+            "test",
+        ).unwrap();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("test:DL_ac4", "rdf:type",
+                Object::Iri("foundation:DomainLabel".to_string())),
+            Triple::new("test:DL_ac4", "foundation:onProperty",
+                Object::Iri("foundation:contains".to_string())),
+            Triple::new("test:DL_ac4", "foundation:forDomain",
+                Object::Iri("foundation:Container".to_string())),
+            Triple::new("test:DL_ac4", "foundation:forwardLabel", Object::Literal {
+                value: "contains".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let prop = Property::get(&conn, "foundation:contains").unwrap().unwrap();
+        let dl = prop.domain_labels.iter()
+            .find(|dl| dl.domain == "foundation:Container")
+            .expect("AC4: DomainLabel entry must be present");
+
+        assert!(dl.inverse_label.is_none(),
+            "AC4: inverse_label must be None when not specified");
+        let resolved_backlink = dl.inverse_label.as_deref().unwrap_or(&dl.forward_label);
+        assert_eq!(resolved_backlink, "contains",
+            "AC4: absent inverse_label falls back to forward_label in backlink resolution");
     }
 }

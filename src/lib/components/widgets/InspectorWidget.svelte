@@ -398,6 +398,38 @@
 
         <BacklinkList backlinks={entityData.backlinks} {openEntityInspector} />
       </div>
+
+      {#if !entityData.isClass && (isAutomationWithoutInputClass || applicableAutomations.length > 0)}
+        <div class="actions-bar">
+          {#if isAutomationWithoutInputClass}
+            {@const isRunning = runningAutomationIri === entityId}
+            <button
+              class="action-bar-btn"
+              onclick={() => runAutomation(entityId)}
+              disabled={isRunning}
+            >
+              <span class="material-symbols-outlined" class:spinning={isRunning}>
+                {isRunning ? 'progress_activity' : 'play_circle'}
+              </span>
+              Run
+            </button>
+          {/if}
+          {#each applicableAutomations as auto}
+            {@const isAutoRunning = runningAutomationIri === auto.iri}
+            <button
+              class="action-bar-btn"
+              onclick={() => runAutomation(auto.iri, entityId)}
+              disabled={isAutoRunning}
+              title={auto.label}
+            >
+              <span class="material-symbols-outlined" class:spinning={isAutoRunning}>
+                {isAutoRunning ? 'progress_activity' : 'play_circle'}
+              </span>
+              {auto.label}
+            </button>
+          {/each}
+        </div>
+      {/if}
     {/if}
     </div>
   </div>
@@ -422,39 +454,6 @@
       "{entityData?.label}" deleted
     </div>
   {/if}
-
-  {#if entityData && !entityData.isClass
-    && (isAutomationWithoutInputClass || applicableAutomations.length > 0)}
-    <div class="actions-bar">
-      {#if isAutomationWithoutInputClass}
-        {@const isRunning = runningAutomationIri === entityId}
-        <button
-          class="action-bar-btn"
-          onclick={() => runAutomation(entityId)}
-          disabled={isRunning}
-        >
-          <span class="material-symbols-outlined" class:spinning={isRunning}>
-            {isRunning ? 'progress_activity' : 'play_circle'}
-          </span>
-          Run
-        </button>
-      {/if}
-      {#each applicableAutomations as auto}
-        {@const isAutoRunning = runningAutomationIri === auto.iri}
-        <button
-          class="action-bar-btn"
-          onclick={() => runAutomation(auto.iri, entityId)}
-          disabled={isAutoRunning}
-          title={auto.label}
-        >
-          <span class="material-symbols-outlined" class:spinning={isAutoRunning}>
-            {isAutoRunning ? 'progress_activity' : 'play_circle'}
-          </span>
-          {auto.label}
-        </button>
-      {/each}
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -476,6 +475,8 @@
     grid-template-rows: 1fr;
     transition: grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1);
     overflow: hidden;
+    flex: 1;
+    min-height: 0;
   }
 
   .inspector-widget.minimized .content-wrapper {
@@ -499,10 +500,14 @@
   }
 
   .widget-content {
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .content-scroll {
+    flex: 1;
+    overflow-y: auto;
     padding: 16px;
   }
 

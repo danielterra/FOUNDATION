@@ -131,12 +131,23 @@
 
 	function hasToolUses(msg) {
 		return Array.isArray(msg.content) &&
-		       msg.content.some(block => block.type === 'tool_use');
+		       msg.content.some(block => block.type === 'tool_use' && block.name !== 'speak');
 	}
 
 	function hasTextContent(msg) {
 		if (!Array.isArray(msg.content)) return false;
 		return msg.content.some(block => block.type === 'text');
+	}
+
+	function getSpeakMessages(msg) {
+		if (!Array.isArray(msg.content)) return [];
+		return msg.content
+			.filter(block => block.type === 'tool_use' && block.name === 'speak')
+			.map(block => block.input?.message ?? '');
+	}
+
+	function hasSpeakMessages(msg) {
+		return getSpeakMessages(msg).length > 0;
 	}
 
 	function groupToolUsesWithResults(msg, allMessages) {
@@ -210,6 +221,25 @@
 					<span></span>
 				</div>
 				<span class="thinking-text">AI is thinking...</span>
+			</div>
+		{:else if hasSpeakMessages(message)}
+			{#if hasTextContent(message)}
+				<details class="reasoning-block">
+					<summary class="reasoning-summary">
+						<span class="material-symbols-outlined reasoning-icon">psychology</span>
+						<span class="reasoning-label">Reasoning</span>
+					</summary>
+					<div class="reasoning-content markdown-content">
+						{@html renderMarkdown(extractTextFromContent(message.content))}
+					</div>
+				</details>
+			{/if}
+			<div class="speak-messages">
+				{#each getSpeakMessages(message) as msg}
+					<div class="message-text markdown-content">
+						{@html renderMarkdown(msg)}
+					</div>
+				{/each}
 			</div>
 		{:else if hasTextContent(message)}
 			<div class="message-text markdown-content">
@@ -571,6 +601,54 @@
 	.token-pill-icon {
 		font-size: 10px;
 		line-height: 1;
+	}
+
+	.reasoning-block {
+		margin-bottom: 8px;
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--color-white) 4%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+		overflow: hidden;
+	}
+
+	.reasoning-summary {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 10px;
+		cursor: pointer;
+		user-select: none;
+		font-size: 12px;
+		color: var(--color-neutral);
+		list-style: none;
+	}
+
+	.reasoning-summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.reasoning-icon {
+		font-size: 14px;
+		opacity: 0.6;
+	}
+
+	.reasoning-label {
+		font-size: 12px;
+		font-style: italic;
+		opacity: 0.7;
+	}
+
+	.reasoning-content {
+		padding: 8px 12px 10px;
+		border-top: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
+		font-size: 13px;
+		opacity: 0.75;
+	}
+
+	.speak-messages {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
 	}
 
 	.thinking-indicator {

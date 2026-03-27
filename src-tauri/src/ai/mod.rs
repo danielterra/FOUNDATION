@@ -5,6 +5,14 @@ use tokio::sync::Mutex;
 pub mod functions;
 pub mod providers;
 
+pub const BASE_SYSTEM_PROMPT: &str = "\
+Before acting or responding, always reason explicitly:
+1. Understand the full context and what is being asked.
+2. Plan your actions or response step by step.
+3. Expose your reasoning before executing any action or producing a final answer.
+
+Never act impulsively — think first, then act.";
+
 use providers::{AIProvider, ClaudeProvider, MessageContent, ContentBlock};
 
 #[allow(unused_imports)]

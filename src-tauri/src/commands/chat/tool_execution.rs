@@ -73,6 +73,8 @@ pub async fn execute_tools_from_message(
     create_message(executor, conversation_id, "user", &content_json, None, None, None).await
 }
 
+const SPEAK_MAX_CHARS: usize = 144;
+
 async fn execute_tool(
     executor: &DbExecutor,
     app: &tauri::AppHandle,
@@ -80,6 +82,14 @@ async fn execute_tool(
     name: &str,
     input: &serde_json::Value,
 ) -> (String, bool) {
+    if name == "speak" {
+        let message = input.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        if message.chars().count() > SPEAK_MAX_CHARS {
+            return (format!("Message exceeds {} characters ({} chars). Split into shorter calls.", SPEAK_MAX_CHARS, message.chars().count()), true);
+        }
+        return ("Delivered.".to_string(), false);
+    }
+
     let call = ToolCall {
         name: name.to_string(),
         arguments: input.clone(),

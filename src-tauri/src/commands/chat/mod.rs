@@ -299,17 +299,32 @@ pub async fn chat__send_and_reply(
             return Err("Conversation history is empty — cannot send request to Claude".to_string());
         }
 
-        let tools = crate::ai::functions::get_claude_tools();
+        let mut tools = crate::ai::functions::get_claude_tools();
+        tools.push(crate::ai::providers::ClaudeTool {
+            name: "speak".to_string(),
+            description: "Send a message to the user. Use this — and only this — to communicate with the user. Think and plan internally first, then call speak when you have something concrete to say. Maximum 144 characters per call. Call speak multiple times for longer responses.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The message to deliver to the user. Maximum 144 characters."
+                    }
+                },
+                "required": ["message"]
+            }),
+        });
 
         let system_prompt = if let Some(ref frames) = camera_images {
             format!(
-                "{}\n\n[Camera Vision] {} webcam snapshot{} of the user were captured during the typing of this message and are included as image blocks at the start of the user's message, in chronological order. Use them to read the evolution of the user's facial expression, posture, and emotional energy over the course of composing the message, and calibrate your tone and depth of response accordingly. Do not mention the camera or the images to the user unless they explicitly ask.",
+                "{}\n\n{}\n\n[Camera Vision] {} webcam snapshot{} of the user were captured during the typing of this message and are included as image blocks at the start of the user's message, in chronological order. Use them to read the evolution of the user's facial expression, posture, and emotional energy over the course of composing the message, and calibrate your tone and depth of response accordingly. Do not mention the camera or the images to the user unless they explicitly ask.",
+                crate::ai::BASE_SYSTEM_PROMPT,
                 agent_config.system_prompt,
                 frames.len(),
                 if frames.len() == 1 { "" } else { "s" }
             )
         } else {
-            agent_config.system_prompt.clone()
+            format!("{}\n\n{}", crate::ai::BASE_SYSTEM_PROMPT, agent_config.system_prompt)
         };
 
         let request = crate::ai::GenerateRequest {

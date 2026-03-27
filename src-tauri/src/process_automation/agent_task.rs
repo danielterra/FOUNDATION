@@ -196,7 +196,7 @@ pub async fn execute_agent_task(
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("Model {} has no modelIdentifier", model_iri))?;
 
-                let system_prompt = Individual::get(conn, &agent_iri)
+                let agent_base_prompt = Individual::get(conn, &agent_iri)
                     .ok()
                     .flatten()
                     .and_then(|ind| {
@@ -205,6 +205,11 @@ pub async fn execute_agent_task(
                             .and_then(|(_, v)| v.as_literal())
                     })
                     .unwrap_or_default();
+                let system_prompt = if agent_base_prompt.is_empty() {
+                    crate::ai::BASE_SYSTEM_PROMPT.to_string()
+                } else {
+                    format!("{}\n\n{}", crate::ai::BASE_SYSTEM_PROMPT, agent_base_prompt)
+                };
 
                 let timeout_secs = get_literal_property(conn, &agent_iri, "foundation:requestTimeout")
                     .ok()
