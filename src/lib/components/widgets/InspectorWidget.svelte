@@ -467,7 +467,6 @@
     backdrop-filter: blur(20px);
     border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
     border-radius: 12px;
-    overflow: hidden;
     box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
     position: relative;
   }
@@ -477,6 +476,7 @@
     grid-template-rows: 1fr;
     transition: grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1);
     overflow: hidden;
+    border-radius: 0 0 12px 12px;
   }
 
   .inspector-widget.minimized .content-wrapper {

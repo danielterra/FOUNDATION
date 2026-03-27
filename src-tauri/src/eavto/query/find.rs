@@ -3,6 +3,36 @@ use rusqlite::types::Value as SqlValue;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// A filter applied to a property when querying individuals.
+pub enum PropertyFilter<'a> {
+    /// Scalar comparison: `(prop_iri, value, operator)`.
+    /// Supported operators: `=`, `!=`, `>=`, `<=`, `>`, `<`.
+    /// Prefix with `?` (e.g. `?<=`) to make the filter optional —
+    /// entities that lack the property are included.
+    Compare(&'a str, &'a str, &'a str),
+
+    /// Exclusion list: `(prop_iri, excluded_values)`.
+    /// Matches entities whose property value is NOT in the given list.
+    /// Entities that lack the property entirely are excluded (behaves like an INNER JOIN).
+    NotIn(&'a str, &'a [&'a str]),
+}
+
+impl<'a> PropertyFilter<'a> {
+    fn prop_iri(&self) -> &str {
+        match self {
+            PropertyFilter::Compare(prop, _, _) => prop,
+            PropertyFilter::NotIn(prop, _) => prop,
+        }
+    }
+
+    fn is_optional(&self) -> bool {
+        match self {
+            PropertyFilter::Compare(_, _, op) => is_optional_op(op),
+            PropertyFilter::NotIn(_, _) => false,
+        }
+    }
+}
+
 pub fn find_by_class_and_properties(
     conn: &Connection,
     class_iri: &str,
@@ -116,7 +146,7 @@ pub fn find_entities_by_class_with_date_range(
 pub fn find_by_class_iris_and_properties_with_options(
     conn: &Connection,
     class_iris: &[&str],
-    properties: &[(&str, &str, &str)],
+    properties: &[PropertyFilter<'_>],
     include_retracted: bool,
     limit: usize,
     offset: usize,
@@ -138,9 +168,9 @@ pub fn find_by_class_iris_and_properties_with_options(
         .map(|iri| SqlValue::Text(iri.to_string()))
         .collect();
 
-    for (i, (prop_iri, _, operator)) in properties.iter().enumerate() {
+    for (i, filter) in properties.iter().enumerate() {
         let n = i + 1;
-        let optional = is_optional_op(operator);
+        let optional = filter.is_optional();
         let prop_retracted_filter = if include_retracted {
             String::new()
         } else {
@@ -152,7 +182,7 @@ pub fn find_by_class_iris_and_properties_with_options(
                 "\n         LEFT JOIN triples t{n} ON t0.subject = t{n}.subject \
                  AND t{n}.predicate = ?{prop_retracted_filter}"
             ));
-            join_params.push(SqlValue::Text(prop_iri.to_string()));
+            join_params.push(SqlValue::Text(filter.prop_iri().to_string()));
         } else {
             joins.push_str(&format!(
                 "\n         INNER JOIN triples t{n} ON t0.subject = t{n}.subject"
@@ -160,23 +190,38 @@ pub fn find_by_class_iris_and_properties_with_options(
             where_clause.push_str(&format!(
                 "\n           AND t{n}.predicate = ?{prop_retracted_filter}"
             ));
-            where_params.push(SqlValue::Text(prop_iri.to_string()));
+            where_params.push(SqlValue::Text(filter.prop_iri().to_string()));
         }
     }
 
-    for (i, (_, value, operator)) in properties.iter().enumerate() {
+    for (i, filter) in properties.iter().enumerate() {
         let n = i + 1;
-        let optional = is_optional_op(operator);
-        let op = base_op(operator);
-
-        let value_cond = build_value_condition_fragment(n, value, op, &mut where_params)?;
-
-        if optional {
-            where_clause.push_str(&format!(
-                "\n           AND (t{n}.predicate IS NULL OR {value_cond})"
-            ));
-        } else {
-            where_clause.push_str(&format!("\n           AND {value_cond}"));
+        match filter {
+            PropertyFilter::Compare(_, value, op) => {
+                let optional = is_optional_op(op);
+                let value_cond = build_value_condition_fragment(n, value, base_op(op), &mut where_params)?;
+                if optional {
+                    where_clause.push_str(&format!(
+                        "\n           AND (t{n}.predicate IS NULL OR {value_cond})"
+                    ));
+                } else {
+                    where_clause.push_str(&format!("\n           AND {value_cond}"));
+                }
+            }
+            PropertyFilter::NotIn(_, values) if !values.is_empty() => {
+                let phs = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+                for v in *values {
+                    where_params.push(SqlValue::Text(v.to_string()));
+                }
+                for v in *values {
+                    where_params.push(SqlValue::Text(v.to_string()));
+                }
+                where_clause.push_str(&format!(
+                    "\n           AND (t{n}.object IS NULL OR t{n}.object NOT IN ({phs})) \
+                     AND (t{n}.object_value IS NULL OR t{n}.object_value NOT IN ({phs}))"
+                ));
+            }
+            PropertyFilter::NotIn(_, _) => {}
         }
     }
 
@@ -213,7 +258,7 @@ pub fn find_by_class_iris_and_properties_with_options(
 /// Find entities matching all given property filters, without any class restriction.
 pub fn find_by_properties_with_options(
     conn: &Connection,
-    properties: &[(&str, &str, &str)],
+    properties: &[PropertyFilter<'_>],
     include_retracted: bool,
     limit: usize,
     offset: usize,
@@ -227,25 +272,25 @@ pub fn find_by_properties_with_options(
     let mut where_clause = String::new();
     let mut where_params: Vec<SqlValue> = Vec::new();
 
-    for (i, (prop_iri, _, operator)) in properties.iter().enumerate() {
+    for (i, filter) in properties.iter().enumerate() {
         let retracted_filter = if include_retracted {
             String::new()
         } else {
             format!(" AND t{i}.retracted = 0")
         };
-        let optional = is_optional_op(operator);
+        let optional = filter.is_optional();
 
         if i == 0 {
             where_clause.push_str(&format!(
                 "\n         WHERE t{i}.predicate = ?{retracted_filter}"
             ));
-            where_params.push(SqlValue::Text(prop_iri.to_string()));
+            where_params.push(SqlValue::Text(filter.prop_iri().to_string()));
         } else if optional {
             joins.push_str(&format!(
                 "\n         LEFT JOIN triples t{i} ON t0.subject = t{i}.subject \
                  AND t{i}.predicate = ?{retracted_filter}"
             ));
-            join_params.push(SqlValue::Text(prop_iri.to_string()));
+            join_params.push(SqlValue::Text(filter.prop_iri().to_string()));
         } else {
             joins.push_str(&format!(
                 "\n         INNER JOIN triples t{i} ON t0.subject = t{i}.subject"
@@ -253,22 +298,37 @@ pub fn find_by_properties_with_options(
             where_clause.push_str(&format!(
                 "\n           AND t{i}.predicate = ?{retracted_filter}"
             ));
-            where_params.push(SqlValue::Text(prop_iri.to_string()));
+            where_params.push(SqlValue::Text(filter.prop_iri().to_string()));
         }
     }
 
-    for (i, (_, value, operator)) in properties.iter().enumerate() {
-        let optional = is_optional_op(operator);
-        let op = base_op(operator);
-
-        let value_cond = build_value_condition_fragment(i, value, op, &mut where_params)?;
-
-        if optional && i > 0 {
-            where_clause.push_str(&format!(
-                "\n           AND (t{i}.predicate IS NULL OR {value_cond})"
-            ));
-        } else {
-            where_clause.push_str(&format!("\n           AND {value_cond}"));
+    for (i, filter) in properties.iter().enumerate() {
+        match filter {
+            PropertyFilter::Compare(_, value, op) => {
+                let optional = is_optional_op(op);
+                let value_cond = build_value_condition_fragment(i, value, base_op(op), &mut where_params)?;
+                if optional && i > 0 {
+                    where_clause.push_str(&format!(
+                        "\n           AND (t{i}.predicate IS NULL OR {value_cond})"
+                    ));
+                } else {
+                    where_clause.push_str(&format!("\n           AND {value_cond}"));
+                }
+            }
+            PropertyFilter::NotIn(_, values) if !values.is_empty() => {
+                let phs = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+                for v in *values {
+                    where_params.push(SqlValue::Text(v.to_string()));
+                }
+                for v in *values {
+                    where_params.push(SqlValue::Text(v.to_string()));
+                }
+                where_clause.push_str(&format!(
+                    "\n           AND (t{i}.object IS NULL OR t{i}.object NOT IN ({phs})) \
+                     AND (t{i}.object_value IS NULL OR t{i}.object_value NOT IN ({phs}))"
+                ));
+            }
+            PropertyFilter::NotIn(_, _) => {}
         }
     }
 

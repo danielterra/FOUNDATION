@@ -114,7 +114,7 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
 
     let filters_ref: Option<&[(String, String, String)]> = filters_owned.as_deref();
 
-    match crate::owl::search_rich(
+    match crate::owl::search(
         conn,
         &tokens,
         entity_type_filter,

@@ -248,32 +248,32 @@ fn test_search_individuals_respects_limit() {
     assert_eq!(result.len(), 2);
 }
 
-// ── search_instances_rich ─────────────────────────────────────────────────
+// ── search_instances ─────────────────────────────────────────────────
 
 #[test]
-fn test_search_instances_rich_empty_query_returns_all() {
+fn test_search_instances_empty_query_returns_all() {
     let mut conn = setup_test_db();
     create_individual(&mut conn, "foundation:Alice", "foundation:Person", "Alice");
     create_individual(&mut conn, "foundation:Bob", "foundation:Person", "Bob");
 
-    let result = search_instances_rich(&conn, "", 100).unwrap();
+    let result = search_instances(&conn, "", 100).unwrap();
     assert!(result.len() >= 2);
 }
 
 #[test]
-fn test_search_instances_rich_matches_by_label() {
+fn test_search_instances_matches_by_label() {
     let mut conn = setup_test_db();
     create_individual(&mut conn, "foundation:Alice", "foundation:Person", "Alice Smith");
     create_individual(&mut conn, "foundation:Bob", "foundation:Person", "Bob Jones");
 
-    let result = search_instances_rich(&conn, "alice", 10).unwrap();
+    let result = search_instances(&conn, "alice", 10).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].id, "foundation:Alice");
     assert_eq!(result[0].entity_type, "individual");
 }
 
 #[test]
-fn test_search_instances_rich_matches_by_property_value() {
+fn test_search_instances_matches_by_property_value() {
     let mut conn = setup_test_db();
     store::assert_triples(&mut conn, &[
         Triple::new("foundation:Doc1", "rdf:type", Object::Iri("foundation:Document".to_string())),
@@ -289,25 +289,25 @@ fn test_search_instances_rich_matches_by_property_value() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances_rich(&conn, "quarterly", 10).unwrap();
+    let result = search_instances(&conn, "quarterly", 10).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].id, "foundation:Doc1");
     assert!(!result[0].matched_properties.is_empty());
 }
 
 #[test]
-fn test_search_instances_rich_respects_limit() {
+fn test_search_instances_respects_limit() {
     let mut conn = setup_test_db();
     create_individual(&mut conn, "foundation:A1", "foundation:Item", "Apple A");
     create_individual(&mut conn, "foundation:A2", "foundation:Item", "Apple B");
     create_individual(&mut conn, "foundation:A3", "foundation:Item", "Apple C");
 
-    let result = search_instances_rich(&conn, "apple", 2).unwrap();
+    let result = search_instances(&conn, "apple", 2).unwrap();
     assert_eq!(result.len(), 2);
 }
 
 #[test]
-fn test_search_instances_rich_returns_classes() {
+fn test_search_instances_returns_classes() {
     let mut conn = setup_test_db();
     store::assert_triples(&mut conn, &[
         Triple::new("foundation:Vehicle", "rdf:type", Object::Iri("owl:Class".to_string())),
@@ -318,25 +318,25 @@ fn test_search_instances_rich_returns_classes() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances_rich(&conn, "vehicle", 10).unwrap();
+    let result = search_instances(&conn, "vehicle", 10).unwrap();
     assert!(!result.is_empty());
     let found = result.iter().find(|r| r.id == "foundation:Vehicle").unwrap();
     assert_eq!(found.entity_type, "class");
 }
 
 #[test]
-fn test_search_instances_rich_iri_match_scores_highest() {
+fn test_search_instances_iri_match_scores_highest() {
     let mut conn = setup_test_db();
     create_individual(&mut conn, "foundation:Alice", "foundation:Person", "Alice");
     create_individual(&mut conn, "foundation:Bob", "foundation:Person", "Bob Alice Fan");
 
-    let result = search_instances_rich(&conn, "foundation:Alice", 10).unwrap();
+    let result = search_instances(&conn, "foundation:Alice", 10).unwrap();
     assert!(!result.is_empty());
     assert_eq!(result[0].id, "foundation:Alice");
 }
 
 #[test]
-fn test_search_instances_rich_label_scores_higher_than_property() {
+fn test_search_instances_label_scores_higher_than_property() {
     let mut conn = setup_test_db();
     store::assert_triples(&mut conn, &[
         Triple::new("foundation:TaskA", "rdf:type", Object::Iri("foundation:Task".to_string())),
@@ -358,13 +358,13 @@ fn test_search_instances_rich_label_scores_higher_than_property() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances_rich(&conn, "deploy", 10).unwrap();
+    let result = search_instances(&conn, "deploy", 10).unwrap();
     assert!(result.len() >= 2);
     assert_eq!(result[0].id, "foundation:TaskA");
 }
 
 #[test]
-fn test_search_instances_rich_label_exact_beats_starts_with_beats_contains() {
+fn test_search_instances_label_exact_beats_starts_with_beats_contains() {
     let mut conn = setup_test_db();
     store::assert_triples(&mut conn, &[
         Triple::new("foundation:E1", "rdf:type", Object::Iri("foundation:Thing".to_string())),
@@ -387,7 +387,7 @@ fn test_search_instances_rich_label_exact_beats_starts_with_beats_contains() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances_rich(&conn, "rust", 10).unwrap();
+    let result = search_instances(&conn, "rust", 10).unwrap();
     assert_eq!(result.len(), 3);
     assert_eq!(result[0].id, "foundation:E1", "exact match must be first");
     assert_eq!(result[1].id, "foundation:E2", "starts_with must be second");
@@ -395,7 +395,7 @@ fn test_search_instances_rich_label_exact_beats_starts_with_beats_contains() {
 }
 
 #[test]
-fn test_search_instances_rich_comment_match_works() {
+fn test_search_instances_comment_match_works() {
     let mut conn = setup_test_db();
     store::assert_triples(&mut conn, &[
         Triple::new("foundation:Widget", "rdf:type", Object::Iri("foundation:Component".to_string())),
@@ -411,7 +411,7 @@ fn test_search_instances_rich_comment_match_works() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances_rich(&conn, "dashboard", 10).unwrap();
+    let result = search_instances(&conn, "dashboard", 10).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].id, "foundation:Widget");
     let comment_prop = result[0].matched_properties.iter()
@@ -420,7 +420,7 @@ fn test_search_instances_rich_comment_match_works() {
 }
 
 #[test]
-fn test_search_instances_rich_comment_beats_property() {
+fn test_search_instances_comment_beats_property() {
     let mut conn = setup_test_db();
     store::assert_triples(&mut conn, &[
         Triple::new("foundation:Alpha", "rdf:type", Object::Iri("foundation:Thing".to_string())),
@@ -447,24 +447,24 @@ fn test_search_instances_rich_comment_beats_property() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances_rich(&conn, "widget", 10).unwrap();
+    let result = search_instances(&conn, "widget", 10).unwrap();
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].id, "foundation:Alpha", "comment match (score 20) must beat property match (score 10)");
 }
 
 #[test]
-fn test_search_instances_rich_iri_local_part_match() {
+fn test_search_instances_iri_local_part_match() {
     let mut conn = setup_test_db();
     create_individual(&mut conn, "foundation:ProjectAlpha", "foundation:Project", "Some Project");
     create_individual(&mut conn, "foundation:ProjectBeta", "foundation:Project", "Other Project");
 
-    let result = search_instances_rich(&conn, "ProjectAlpha", 10).unwrap();
+    let result = search_instances(&conn, "ProjectAlpha", 10).unwrap();
     assert!(!result.is_empty());
     assert_eq!(result[0].id, "foundation:ProjectAlpha");
 }
 
 #[test]
-fn test_search_instances_rich_matched_properties_content() {
+fn test_search_instances_matched_properties_content() {
     let mut conn = setup_test_db();
     store::assert_triples(&mut conn, &[
         Triple::new("foundation:Invoice1", "rdf:type", Object::Iri("foundation:Invoice".to_string())),
@@ -480,7 +480,7 @@ fn test_search_instances_rich_matched_properties_content() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances_rich(&conn, "acme", 10).unwrap();
+    let result = search_instances(&conn, "acme", 10).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].matched_properties.len(), 1);
     assert_eq!(result[0].matched_properties[0]["detail_iri"], "foundation:reference");

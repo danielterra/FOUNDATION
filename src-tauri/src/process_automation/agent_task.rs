@@ -14,16 +14,26 @@ const DEFAULT_MAX_TOKENS: u32 = 4096;
 const DEFAULT_TEMPERATURE: f32 = 0.3;
 const DEFAULT_TIMEOUT_SECS: u64 = 180;
 
-fn task_complete_tool() -> ClaudeTool {
+fn task_complete_tool(output_class: Option<&str>) -> ClaudeTool {
+    let (description, output_iri_description) = match output_class {
+        Some(class) => (
+            format!("Signal explicit completion of this AgentTask. You MUST pass the IRI of a {} individual in output_iri — the executor forwards it to the next step as its input.", class),
+            format!("The IRI of the {} individual produced by this task (e.g. 'foundation:Task_1234567890'). Must exist in the ontology before calling this tool.", class),
+        ),
+        None => (
+            "Signal explicit completion of this AgentTask. Pass the single output IRI (the main entity produced by this task) in output_iri — the executor forwards it to the next step as its input.".to_string(),
+            "The single IRI produced by this task, forwarded as input to the next step.".to_string(),
+        ),
+    };
     ClaudeTool {
         name: "task_complete".to_string(),
-        description: "Signal explicit completion of this AgentTask. Pass the single output IRI (the main entity produced by this task) in output_iri — the executor forwards it to the next step as its input.".to_string(),
+        description,
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "output_iri": {
                     "type": "string",
-                    "description": "The single IRI produced by this task, forwarded as input to the next step."
+                    "description": output_iri_description
                 },
                 "message": {
                     "type": "string",
@@ -132,7 +142,7 @@ pub async fn execute_agent_task(
 ) -> Result<String> {
     let executor = app.state::<DbExecutor>();
 
-    let (label, description, agent_iri, allowed_tool_names) = executor
+    let (label, description, agent_iri, allowed_tool_names, output_class) = executor
         .read({
             let node_iri = node_iri.to_string();
             move |conn| {
@@ -154,7 +164,10 @@ pub async fn execute_agent_task(
                     .filter_map(|iri| get_literal_property(conn, iri, "foundation:functionName").ok().flatten())
                     .collect();
 
-                Ok((label, description, agent_iri, allowed_tool_names))
+                let output_class = get_iri_property(conn, &node_iri, "foundation:outputClass")
+                    .map_err(|e| e.to_string())?;
+
+                Ok((label, description, agent_iri, allowed_tool_names, output_class))
             }
         })
         .await?;
@@ -291,7 +304,7 @@ pub async fn execute_agent_task(
             .map(|t| t.to_claude_tool())
             .collect()
     };
-    tools.push(task_complete_tool());
+    tools.push(task_complete_tool(output_class.as_deref()));
     let provider = crate::ai::providers::ClaudeProvider::with_model(
         api_key.clone(),
         model_identifier.clone(),
@@ -354,6 +367,51 @@ pub async fn execute_agent_task(
                     .map(|s| s.to_string())
                     .unwrap_or_default();
                 let message = tc.input.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                if let Some(ref expected_class) = output_class {
+                    let is_valid_iri_format = !output_iri.is_empty()
+                        && output_iri.contains(':')
+                        && !output_iri.contains(' ');
+
+                    let validation_error: Option<String> = if !is_valid_iri_format {
+                        Some(format!(
+                            "output_iri '{}' is not a valid IRI. You must pass a valid ontology IRI (e.g. 'foundation:Task_1234567890'). Create the {} individual first, then call task_complete with its IRI.",
+                            output_iri, expected_class
+                        ))
+                    } else {
+                        let iri_to_check = output_iri.clone();
+                        let class_to_check = expected_class.clone();
+                        executor.read(move |conn| {
+                            match Individual::get(conn, &iri_to_check) {
+                                Ok(Some(ind)) => {
+                                    if ind.types.iter().any(|t| t.iri == class_to_check) {
+                                        Ok(None)
+                                    } else {
+                                        let actual: Vec<String> = ind.types.iter().map(|t| t.iri.clone()).collect();
+                                        Ok(Some(format!(
+                                            "IRI '{}' is of type {:?}, not {}. Create a {} individual and call task_complete with its IRI.",
+                                            iri_to_check, actual, class_to_check, class_to_check
+                                        )))
+                                    }
+                                }
+                                Ok(None) => Ok(Some(format!(
+                                    "IRI '{}' does not exist in the ontology. Create the {} individual first, then call task_complete with its IRI.",
+                                    iri_to_check, class_to_check
+                                ))),
+                                Err(e) => Ok(Some(format!("Failed to validate IRI '{}': {}", iri_to_check, e))),
+                            }
+                        }).await.unwrap_or_default()
+                    };
+
+                    if let Some(error_msg) = validation_error {
+                        result_blocks.push(ContentBlock::ToolResult {
+                            tool_use_id: tc.id.clone(),
+                            content: error_msg,
+                            is_error: Some(true),
+                        });
+                        break;
+                    }
+                }
 
                 result_blocks.push(ContentBlock::ToolResult {
                     tool_use_id: tc.id.clone(),

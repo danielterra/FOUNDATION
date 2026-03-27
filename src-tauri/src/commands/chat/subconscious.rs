@@ -1,3 +1,4 @@
+use crate::eavto::query::PropertyFilter;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -271,15 +272,44 @@ fn extract_content_text(raw: &str) -> String {
     raw.to_string()
 }
 
+const CLOSED_ROOT_STATUSES: &[&str] = &["foundation:Completed", "foundation:Blocked"];
+
+fn closed_status_iris(conn: &Connection) -> Vec<String> {
+    let mut closed: std::collections::HashSet<String> =
+        CLOSED_ROOT_STATUSES.iter().map(|s| s.to_string()).collect();
+    loop {
+        let prev_len = closed.len();
+        let parents: Vec<String> = closed.iter().cloned().collect();
+        for parent in &parents {
+            let children: Vec<String> = conn.prepare(
+                "SELECT subject FROM triples
+                 WHERE predicate = 'foundation:parentStatus' AND object = ?1
+                   AND subject != ?1 AND retracted = 0",
+            ).ok()
+            .and_then(|mut stmt| {
+                stmt.query_map([parent], |r| r.get(0)).ok()
+                    .map(|iter| iter.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+            closed.extend(children);
+        }
+        if closed.len() == prev_len { break; }
+    }
+    closed.into_iter().collect()
+}
+
 fn query_open_loops(conn: &Connection) -> Vec<String> {
     use chrono::Datelike;
 
     let tomorrow = chrono::Local::now() + chrono::Duration::days(1);
     let tomorrow_str = tomorrow.format("%Y-%m-%d").to_string();
 
-    let props: &[(&str, &str, &str)] = &[
-        ("foundation:hasStatus", "foundation:Completed", "!="),
-        ("foundation:dueDate", &tomorrow_str, "?<="),
+    let closed = closed_status_iris(conn);
+    let closed_refs: Vec<&str> = closed.iter().map(String::as_str).collect();
+
+    let props = &[
+        PropertyFilter::NotIn("foundation:hasStatus", &closed_refs),
+        PropertyFilter::Compare("foundation:dueDate", &tomorrow_str, "?<="),
     ];
 
     let mut results = Vec::new();
@@ -294,7 +324,7 @@ fn query_open_loops(conn: &Connection) -> Vec<String> {
     let today_day = chrono::Local::now().day().to_string();
     let tomorrow_day = tomorrow.day().to_string();
     for day_str in [today_day.as_str(), tomorrow_day.as_str()] {
-        let props = &[("foundation:dueDayOfMonth", day_str, "=")];
+        let props = &[PropertyFilter::Compare("foundation:dueDayOfMonth", day_str, "=")];
         if let Ok((iris, _)) = crate::owl::Individual::find_by_class_and_properties_with_options(
             conn, "foundation:RecurringPurchase", props, false, usize::MAX, 0,
         ) {

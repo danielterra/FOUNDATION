@@ -126,7 +126,7 @@ pub async fn graph__search_entities(
             crate::owl::search_classes(conn, &query, limit)
                 .map_err(|e| e.to_string())?
                 .into_iter()
-                .map(|r| crate::owl::RichSearchResult {
+                .map(|r| crate::owl::SearchResult {
                     id: r.id,
                     label: r.label,
                     icon: r.icon,
@@ -141,12 +141,12 @@ pub async fn graph__search_entities(
                 .split_whitespace()
                 .map(|s| s.to_lowercase())
                 .collect();
-            let (results, _) = crate::owl::search_rich(
+            let (results, _) = crate::owl::search(
                 conn, &tokens, None, Some(class_iri.as_str()), None, false, limit, 0,
             ).map_err(|e| e.to_string())?;
             results
         } else {
-            crate::owl::search_instances_rich(conn, &query, limit)
+            crate::owl::search_instances(conn, &query, limit)
                 .map_err(|e| e.to_string())?
         };
         serde_json::to_string(&results).map_err(|e| e.to_string())

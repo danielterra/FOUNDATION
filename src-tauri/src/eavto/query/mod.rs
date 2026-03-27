@@ -779,7 +779,7 @@ mod tests {
         let (results, total) = find_by_class_iris_and_properties_with_options(
             &conn,
             &["foundation:Animal", "foundation:Dog"],
-            &[("foundation:name", "Rex", "=")],
+            &[PropertyFilter::Compare("foundation:name", "Rex", "=")],
             false,
             100,
             0,
@@ -797,7 +797,7 @@ mod tests {
         let (results, total) = find_by_class_iris_and_properties_with_options(
             &conn,
             &["owl:Class"],
-            &[("rdfs:label", "Test Class", "=")],
+            &[PropertyFilter::Compare("rdfs:label", "Test Class", "=")],
             false,
             100,
             0,
@@ -831,7 +831,7 @@ mod tests {
 
         let (results, total) = find_by_properties_with_options(
             &conn,
-            &[("foundation:status", "active", "=")],
+            &[PropertyFilter::Compare("foundation:status", "active", "=")],
             false,
             100,
             0,

@@ -48,7 +48,7 @@ impl Individual {
     pub fn find_by_class_and_properties_with_options(
         conn: &Connection,
         class_iri: &str,
-        properties: &[(&str, &str, &str)],
+        properties: &[query::PropertyFilter<'_>],
         include_retracted: bool,
         limit: usize,
         offset: usize,
@@ -88,6 +88,7 @@ impl Individual {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eavto::query::PropertyFilter;
     use crate::eavto::test_helpers::setup_test_db;
     use crate::owl::{Class, ClassType, Property, PropertyType, vocabulary::rdf};
 
@@ -215,7 +216,7 @@ mod tests {
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn,
             "foundation:Animal",
-            &[("foundation:animalName", "Rex", "=")],
+            &[PropertyFilter::Compare("foundation:animalName", "Rex", "=")],
             false,
             100,
             0,
@@ -266,7 +267,7 @@ mod tests {
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn,
             "foundation:Event",
-            &[("foundation:title", "Holiday", "=")],
+            &[PropertyFilter::Compare("foundation:title", "Holiday", "=")],
             false,
             100,
             0,
@@ -395,8 +396,8 @@ mod tests {
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
             &[
-                ("foundation:dueDate", "2026-03-08", ">="),
-                ("foundation:dueDate", "2026-03-08", "<="),
+                PropertyFilter::Compare("foundation:dueDate", "2026-03-08", ">="),
+                PropertyFilter::Compare("foundation:dueDate", "2026-03-08", "<="),
             ],
             false, 100, 0,
         ).unwrap();
@@ -430,8 +431,8 @@ mod tests {
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
             &[
-                ("foundation:dueDate", "2026-03-08", ">="),
-                ("foundation:dueDate", "2026-03-08", "<="),
+                PropertyFilter::Compare("foundation:dueDate", "2026-03-08", ">="),
+                PropertyFilter::Compare("foundation:dueDate", "2026-03-08", "<="),
             ],
             false, 100, 0,
         ).unwrap();
@@ -465,8 +466,8 @@ mod tests {
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
             &[
-                ("foundation:dueDate", "2026-03-08T00:00:00-03:00", ">="),
-                ("foundation:dueDate", "2026-03-08T23:59:59-03:00", "<="),
+                PropertyFilter::Compare("foundation:dueDate", "2026-03-08T00:00:00-03:00", ">="),
+                PropertyFilter::Compare("foundation:dueDate", "2026-03-08T23:59:59-03:00", "<="),
             ],
             false, 100, 0,
         ).unwrap();
@@ -497,7 +498,7 @@ mod tests {
         // Strict `>` excludes the boundary value
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[("foundation:dueDate", "2026-03-08", ">")],
+            &[PropertyFilter::Compare("foundation:dueDate", "2026-03-08", ">")],
             false, 100, 0,
         ).unwrap();
 
@@ -529,7 +530,7 @@ mod tests {
 
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[("foundation:dueDate", "2026-03-08T12:00:00", "=")],
+            &[PropertyFilter::Compare("foundation:dueDate", "2026-03-08T12:00:00", "=")],
             false, 100, 0,
         ).unwrap();
 
@@ -549,7 +550,7 @@ mod tests {
 
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[("foundation:hasStatus", "foundation:Completed", "!=")],
+            &[PropertyFilter::Compare("foundation:hasStatus", "foundation:Completed", "!=")],
             false, 100, 0,
         ).unwrap();
 
@@ -580,7 +581,7 @@ mod tests {
         let boundary = "2026-12-31";
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[("foundation:dueDate", boundary, "?<=")],
+            &[PropertyFilter::Compare("foundation:dueDate", boundary, "?<=")],
             false, 100, 0,
         ).unwrap();
 
@@ -622,8 +623,8 @@ mod tests {
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
             &[
-                ("foundation:hasStatus", "foundation:Completed", "!="),
-                ("foundation:dueDate", boundary, "?<="),
+                PropertyFilter::Compare("foundation:hasStatus", "foundation:Completed", "!="),
+                PropertyFilter::Compare("foundation:dueDate", boundary, "?<="),
             ],
             false, 100, 0,
         ).unwrap();
@@ -650,13 +651,13 @@ mod tests {
         // Filter with UTC equivalent: 2026-03-08T15:00:00-03:00 = 2026-03-08T18:00:00Z
         let (results_utc, _) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[("foundation:dueDate", "2026-03-08T18:00:00Z", "=")],
+            &[PropertyFilter::Compare("foundation:dueDate", "2026-03-08T18:00:00Z", "=")],
             false, 100, 0,
         ).unwrap();
 
         let (results_local, _) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[("foundation:dueDate", "2026-03-08T15:00:00-03:00", "=")],
+            &[PropertyFilter::Compare("foundation:dueDate", "2026-03-08T15:00:00-03:00", "=")],
             false, 100, 0,
         ).unwrap();
 

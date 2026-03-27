@@ -5,7 +5,19 @@ use crate::owl::{Result, OwlError, Thing, Class, vocabulary::{rdf, rdfs}};
 mod core;
 mod validation;
 mod write;
-mod search;
+mod find;
+mod properties;
+mod lock;
+mod status;
+
+pub use properties::{
+    get_all_iri_properties, replace_all_property_iris,
+    get_literal_property, get_iri_property,
+    has_property_iri, has_property_literal,
+    is_instance_of, find_entities_with_property,
+};
+pub use lock::{is_system_locked, set_system_locked, check_system_locked};
+pub use status::{validate_allowed_status, resolve_status_appearance, get_entity_status_info};
 
 /// Represents an OWL Individual (instance of a class)
 ///
