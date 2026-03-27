@@ -482,6 +482,10 @@
     grid-template-rows: 0fr;
   }
 
+  .inspector-widget.minimized :global(.widget-header) {
+    border-bottom: none;
+  }
+
   .inspector-widget.minimized :global(.header-top) {
     padding: 8px 12px;
   }
