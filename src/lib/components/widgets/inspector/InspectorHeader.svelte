@@ -167,7 +167,6 @@
     flex-direction: column;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     border-bottom: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-    border-radius: 12px 12px 0 0;
   }
 
   .header-top {
