@@ -1,10 +1,22 @@
 use serde::Serialize;
-use tauri::{State, Emitter};
+use tauri::{State, Emitter, Manager};
 use std::collections::HashMap;
 use crate::owl::{self, Class, Individual, Property, Connection, DbExecutor, Object};
 
 mod individual;
 
+fn enqueue_formula_jobs(app: &tauri::AppHandle, job_ids_json: &str) {
+    let job_ids: Vec<String> = serde_json::from_str(job_ids_json).unwrap_or_default();
+    if job_ids.is_empty() {
+        return;
+    }
+    let worker = app.state::<crate::owl::formula_worker::FormulaWorker>();
+    for job_id in job_ids {
+        let _ = worker.sender.try_send(
+            crate::owl::formula_worker::WorkerCommand::Enqueue { job_id }
+        );
+    }
+}
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -229,15 +241,20 @@ pub async fn widget_inspector__update_property(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
-    executor.write(move |conn| {
+    let property_iri_clone = property_iri.clone();
+    let job_ids_json = executor.write(move |conn| {
         let individual = Individual::new(&entity_id_clone);
-        individual.add_property(conn, &property_iri, vec![Object::Literal {
+        individual.add_property(conn, &property_iri_clone, vec![Object::Literal {
             value,
             datatype: Some(datatype.unwrap_or_else(|| "xsd:string".to_string())),
             language: None,
         }], "user").map_err(|e| e.to_string())?;
-        Ok("updated".to_string())
+        let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
+            conn, &entity_id_clone, &property_iri_clone,
+        );
+        serde_json::to_string(&job_ids).map_err(|e| e.to_string())
     }).await?;
+    enqueue_formula_jobs(&app, &job_ids_json);
     app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
     Ok(())
 }
@@ -252,17 +269,22 @@ pub async fn widget_inspector__set_references(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
-    executor.write(move |conn| {
-        Individual::clear_property(conn, &entity_id_clone, &property_iri, "user")
+    let property_iri_clone = property_iri.clone();
+    let job_ids_json = executor.write(move |conn| {
+        Individual::clear_property(conn, &entity_id_clone, &property_iri_clone, "user")
             .map_err(|e| e.to_string())?;
         if !iris.is_empty() {
             let individual = Individual::new(&entity_id_clone);
             let values: Vec<owl::Object> = iris.into_iter().map(owl::Object::Iri).collect();
-            individual.add_property(conn, &property_iri, values, "user")
+            individual.add_property(conn, &property_iri_clone, values, "user")
                 .map_err(|e| e.to_string())?;
         }
-        Ok("updated".to_string())
+        let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
+            conn, &entity_id_clone, &property_iri_clone,
+        );
+        serde_json::to_string(&job_ids).map_err(|e| e.to_string())
     }).await?;
+    enqueue_formula_jobs(&app, &job_ids_json);
     app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
     Ok(())
 }

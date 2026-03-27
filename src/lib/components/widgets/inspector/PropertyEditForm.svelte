@@ -1,19 +1,28 @@
 <script>
   import { focus } from '$lib/utils/actions';
   let { propertyIri, draftValue = $bindable(), saving, onsave, oncancel } = $props();
+
+  let textareaEl = $state(null);
+
+  $effect(() => {
+    if (!textareaEl) return;
+    draftValue;
+    textareaEl.style.height = 'auto';
+    textareaEl.style.height = Math.min(textareaEl.scrollHeight, 400) + 'px';
+  });
 </script>
 
 <div class="edit-container">
   <textarea
     class="edit-textarea"
     bind:value={draftValue}
+    bind:this={textareaEl}
     onblur={() => onsave(propertyIri)}
     onkeydown={(e) => {
       if (e.key === 'Escape') oncancel();
       else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) onsave(propertyIri);
     }}
     use:focus
-    rows="5"
   ></textarea>
   <div class="edit-actions">
     <button
@@ -51,7 +60,7 @@
 
   .edit-textarea {
     width: 100%;
-    min-height: 80px;
+    min-height: 36px;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
     border-radius: 6px;
@@ -60,9 +69,10 @@
     font-size: 13px;
     line-height: 1.5;
     padding: 8px;
-    resize: vertical;
+    resize: none;
     box-sizing: border-box;
     outline: none;
+    overflow-y: auto;
     transition: border-color 0.15s;
   }
 

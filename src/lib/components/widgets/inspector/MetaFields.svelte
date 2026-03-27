@@ -33,6 +33,15 @@
     }
   }
 
+  let commentTextareaEl = $state(null);
+
+  $effect(() => {
+    if (!commentTextareaEl) return;
+    metaDraft;
+    commentTextareaEl.style.height = 'auto';
+    commentTextareaEl.style.height = Math.min(commentTextareaEl.scrollHeight, 400) + 'px';
+  });
+
   function focusOnMount(node) {
     node.focus();
     if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') {
@@ -69,9 +78,9 @@
     <textarea
       class="meta-edit-textarea"
       bind:value={metaDraft}
+      bind:this={commentTextareaEl}
       onkeydown={onKeydown}
       onblur={saveMetaEdit}
-      rows="4"
       use:focusOnMount
     ></textarea>
   {:else if onSave}
@@ -144,6 +153,7 @@
 
   .meta-edit-textarea {
     width: 100%;
+    min-height: 36px;
     box-sizing: border-box;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     border: 1px solid var(--color-interactive);
@@ -153,7 +163,8 @@
     font-size: 14px;
     color: var(--color-neutral-active);
     line-height: 1.6;
-    resize: vertical;
+    resize: none;
+    overflow-y: auto;
     outline: none;
   }
 

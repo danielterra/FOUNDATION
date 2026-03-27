@@ -18,11 +18,11 @@ const PRED_CONVERSATION: &str = "foundation:partOfConversation";
 
 const DEFAULT_POS_X: f64 = 100.0;
 const DEFAULT_POS_Y: f64 = 100.0;
-const DEFAULT_WIDTH_MERMAID: f64 = 600.0;
+const DEFAULT_WIDTH_MERMAID: f64 = 700.0;
 const DEFAULT_HEIGHT_MERMAID: f64 = 500.0;
-const DEFAULT_WIDTH_FLOW: f64 = 400.0;
+const DEFAULT_WIDTH_FLOW: f64 = 480.0;
 const DEFAULT_HEIGHT_FLOW: f64 = 600.0;
-const DEFAULT_WIDTH_STANDARD: f64 = 400.0;
+const DEFAULT_WIDTH_STANDARD: f64 = 480.0;
 const DEFAULT_HEIGHT_STANDARD: f64 = 600.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

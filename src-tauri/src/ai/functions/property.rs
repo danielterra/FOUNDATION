@@ -86,6 +86,8 @@ fn define_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
                     "formula is only supported on datatype properties".to_string(),
                 ));
             }
+            crate::owl::formula::validate_expression(formula_str)?;
+            crate::owl::formula::validate_references_numeric(conn, formula_str)?;
             crate::owl::formula::validate_no_cycle(conn, iri, formula_str)?;
             use crate::eavto::{store, Triple, Object};
             store::assert_triples(conn, &[Triple::new(iri, "foundation:formula", Object::Literal {

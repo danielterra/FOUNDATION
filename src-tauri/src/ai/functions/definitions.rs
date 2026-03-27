@@ -165,7 +165,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "formula".to_string(),
                     param_type: "string".to_string(),
-                    description: "Calculated formula using {{property_iri}} syntax. DatatypeProperty only. Circular dependencies are rejected.".to_string(),
+                    description: "Arithmetic formula using {{property_iri}} references. Operators: +, -, *, /, ** (power), % (modulo). DatatypeProperty only. References must be numeric properties (xsd:integer, xsd:decimal, xsd:float, xsd:double) of the same class. Circular dependencies are rejected.".to_string(),
                     required: false,
                     schema: None,
                 },

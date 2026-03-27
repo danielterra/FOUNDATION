@@ -23,17 +23,6 @@
     mermaid: 'account_tree',
   };
 
-  let pickerTop = $state(0);
-  let pickerLeft = $state(0);
-
-  $effect(() => {
-    if (showStatusPicker && statusBadgeWrapperEl) {
-      const rect = statusBadgeWrapperEl.getBoundingClientRect();
-      pickerTop = rect.bottom + 4;
-      pickerLeft = rect.left;
-    }
-  });
-
   function isIconUrl(icon) {
     if (!icon) return false;
     return icon.startsWith('http://') || icon.startsWith('https://') ||
@@ -149,7 +138,7 @@
             {/if}
           </button>
           {#if showStatusPicker}
-            <div class="status-picker" role="listbox" style="top: {pickerTop}px; left: {pickerLeft}px;">
+            <div class="status-picker" role="listbox">
               {#each entityData.allowedStatuses as s}
                 {@const pickerIcon = s.icon || 'radio_button_checked'}
                 <button

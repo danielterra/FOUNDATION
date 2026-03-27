@@ -427,6 +427,8 @@ mod tests {
                     "iri": "foundation:selfRef",
                     "label": "self ref",
                     "property_type": "datatype",
+                    "range": "xsd:decimal",
+                    "unit": "unit:Meter",
                     "formula": "{{foundation:selfRef}} + 1"
                 }]
             }),

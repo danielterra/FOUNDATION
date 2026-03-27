@@ -133,10 +133,11 @@ pub fn evaluate_formula_for_instance_raw(
     }
 }
 
-/// Evaluate a simple arithmetic expression with `+`, `-`, `*`, `/` and proper precedence.
+/// Evaluate a simple arithmetic expression with `+`, `-`, `*`, `/`, `%`, `**` and proper precedence.
 ///
-/// Uses recursive descent: addition/subtraction are lowest precedence, then
-/// multiplication/division, then unary minus and parenthesised sub-expressions.
+/// Precedence (lowest to highest): +/- → */÷/% → ** → unary minus → parentheses.
+/// `**` is left-associative. All operators require explicit operands on both sides;
+/// infix unary minus (e.g. `10 + -3`) is not supported — use parentheses: `10 + (-3)`.
 pub fn eval_expr(expr: &str) -> Result<f64, String> {
     let expr = expr.trim();
     if expr.is_empty() {
@@ -148,24 +149,34 @@ pub fn eval_expr(expr: &str) -> Result<f64, String> {
         return Ok(n);
     }
 
-    // Find lowest-precedence operator outside parentheses (right-to-left for left-associativity)
     let bytes = expr.as_bytes();
     let mut depth = 0i32;
     let mut last_add_sub: Option<usize> = None;
-    let mut last_mul_div: Option<usize> = None;
+    let mut last_mul_div_mod: Option<usize> = None;
+    let mut last_pow: Option<usize> = None;
 
-    for (i, &b) in bytes.iter().enumerate() {
-        match b {
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
             b'(' => depth += 1,
             b')' => depth -= 1,
             b'+' | b'-' if depth == 0 && i > 0 => {
                 last_add_sub = Some(i);
             }
-            b'*' | b'/' if depth == 0 => {
-                last_mul_div = Some(i);
+            b'*' if depth == 0 => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                    last_pow = Some(i);
+                    i += 1; // skip second *
+                } else {
+                    last_mul_div_mod = Some(i);
+                }
+            }
+            b'/' | b'%' if depth == 0 => {
+                last_mul_div_mod = Some(i);
             }
             _ => {}
         }
+        i += 1;
     }
 
     if let Some(pos) = last_add_sub {
@@ -178,7 +189,7 @@ pub fn eval_expr(expr: &str) -> Result<f64, String> {
         };
     }
 
-    if let Some(pos) = last_mul_div {
+    if let Some(pos) = last_mul_div_mod {
         let left = eval_expr(&expr[..pos])?;
         let right = eval_expr(&expr[pos + 1..])?;
         return match bytes[pos] {
@@ -190,8 +201,21 @@ pub fn eval_expr(expr: &str) -> Result<f64, String> {
                     Ok(left / right)
                 }
             }
+            b'%' => {
+                if right == 0.0 {
+                    Err("Modulo by zero".to_string())
+                } else {
+                    Ok(left % right)
+                }
+            }
             _ => unreachable!(),
         };
+    }
+
+    if let Some(pos) = last_pow {
+        let left = eval_expr(&expr[..pos])?;
+        let right = eval_expr(&expr[pos + 2..])?; // skip both * chars
+        return Ok(left.powf(right));
     }
 
     // Unary minus
@@ -205,6 +229,62 @@ pub fn eval_expr(expr: &str) -> Result<f64, String> {
     }
 
     Err(format!("Cannot evaluate: '{}'", expr))
+}
+
+/// Validate that the formula expression is syntactically correct by substituting all
+/// `{{ref}}` placeholders with `1` and performing a dry-run evaluation.
+pub fn validate_expression(formula: &str) -> Result<(), crate::owl::OwlError> {
+    let mut expr = formula.to_string();
+    for ref_iri in extract_references(formula) {
+        let placeholder = format!("{{{{{}}}}}", ref_iri);
+        expr = expr.replace(&placeholder, "1");
+    }
+    eval_expr(expr.trim()).map(|_| ()).map_err(|e| {
+        crate::owl::OwlError::ValidationError(format!("Invalid formula expression: {}", e))
+    })
+}
+
+const NUMERIC_RANGES: &[&str] = &[
+    "xsd:integer", "xsd:decimal", "xsd:float", "xsd:double",
+    "xsd:int", "xsd:long", "xsd:short", "xsd:byte",
+    "xsd:nonNegativeInteger", "xsd:positiveInteger",
+];
+
+/// Validate that every `{{ref}}` in the formula points to an existing property with a numeric range.
+pub fn validate_references_numeric(
+    conn: &Connection,
+    formula: &str,
+) -> Result<(), crate::owl::OwlError> {
+    for ref_iri in extract_references(formula) {
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = ?1 AND predicate = 'rdf:type' AND retracted = 0",
+            rusqlite::params![ref_iri],
+            |row| row.get::<_, i64>(0),
+        ).map(|c| c > 0).unwrap_or(false);
+
+        if !exists {
+            return Err(crate::owl::OwlError::ValidationError(format!(
+                "Referenced property '{}' does not exist",
+                ref_iri
+            )));
+        }
+
+        let range: Option<String> = conn.query_row(
+            "SELECT object FROM triples WHERE subject = ?1 AND predicate = 'rdfs:range' AND retracted = 0 LIMIT 1",
+            rusqlite::params![ref_iri],
+            |row| row.get::<_, Option<String>>(0),
+        ).unwrap_or(None);
+
+        if let Some(r) = range.as_deref() {
+            if !NUMERIC_RANGES.contains(&r) {
+                return Err(crate::owl::OwlError::ValidationError(format!(
+                    "Referenced property '{}' has non-numeric range '{}'; formula references must be numeric",
+                    ref_iri, r
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Sort the given property IRIs topologically so dependencies come before dependents.
@@ -431,6 +511,43 @@ mod tests {
         // 10*2=20, 5/1=5, 20+5-3=22
         let result = eval_expr("10 * 2 + 5 / 1 - 3").unwrap();
         assert!((result - 22.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_eval_expr_pow() {
+        assert_eq!(eval_expr("2 ** 10").unwrap(), 1024.0);
+    }
+
+    #[test]
+    fn test_eval_expr_pow_precedence_over_mul() {
+        // 3 * 2**4 = 3 * 16 = 48, not (3*2)**4 = 1296
+        let result = eval_expr("3 * 2 ** 4").unwrap();
+        assert!((result - 48.0).abs() < 1e-10, "expected 48, got {}", result);
+    }
+
+    #[test]
+    fn test_eval_expr_mod() {
+        assert_eq!(eval_expr("10 % 3").unwrap(), 1.0);
+    }
+
+    #[test]
+    fn test_eval_expr_mod_by_zero() {
+        assert!(eval_expr("5 % 0").is_err());
+    }
+
+    #[test]
+    fn test_validate_expression_valid() {
+        assert!(validate_expression("{{p:a}} * {{p:b}} + 10").is_ok());
+    }
+
+    #[test]
+    fn test_validate_expression_gibberish() {
+        assert!(validate_expression("foo bar ??").is_err());
+    }
+
+    #[test]
+    fn test_validate_expression_constant() {
+        assert!(validate_expression("42").is_ok());
     }
 
     #[test]

@@ -3,6 +3,7 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
+  import NumberFlow from '@number-flow/svelte';
   import MarkdownValue from './MarkdownValue.svelte';
   import FileGrid from './FileGrid.svelte';
   import PropertyEditForm from './PropertyEditForm.svelte';
@@ -680,7 +681,11 @@
                 {#if val.unitLabel}
                   <span class="unit">{val.unitLabel}</span>
                 {/if}
-                <span class="value-text">{val.valueLabel || val.value}</span>
+                {#if detailGroup.isCalculated && !isNaN(Number(val.value)) && val.value !== ''}
+                  <NumberFlow class="value-text" value={Number(val.value)} />
+                {:else}
+                  <span class="value-text">{val.valueLabel || val.value}</span>
+                {/if}
               {/if}
               {#if val.valueStatus}
                 <span
