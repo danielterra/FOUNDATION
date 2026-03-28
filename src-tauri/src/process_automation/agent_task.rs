@@ -329,6 +329,7 @@ pub async fn execute_agent_task(
             blackboard_context: None,
             tools: Some(tools.clone()),
             supports_web_tools: false,
+            thinking: None,
         };
 
         let response = assistant.generate(request).await

@@ -180,6 +180,7 @@ async fn test_cache_boundary_stable_across_turns() {
             blackboard_context: None,
             tools: None,
             supports_web_tools: false,
+            thinking: None,
         };
 
         let response = provider

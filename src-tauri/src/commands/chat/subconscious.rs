@@ -17,14 +17,35 @@ pub struct SubconsciousEntity {
 const INSTANCE_SEARCH_LIMIT: usize = 10;
 const CONCEPT_SEARCH_LIMIT: usize = 5;
 
+fn split_into_chunks(content: &str) -> Vec<String> {
+    content
+        .split(|c| matches!(c, '.' | '!' | '?' | '\n' | ';' | ','))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn extract_chunk_query(chunk: &str) -> String {
+    chunk
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+        .filter(|w| !w.is_empty() && (w.chars().count() >= 4 || w.chars().any(|c| c.is_ascii_digit())))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub fn run_subconscious(content: &str, exclude_iri: Option<&str>, conn: &Connection) -> Vec<SubconsciousEntity> {
     let mut entities: Vec<SubconsciousEntity> = Vec::new();
     let mut seen_iris: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    let concept_hits = crate::search::search_concepts_with_scores(content, CONCEPT_SEARCH_LIMIT);
+    let full_query = extract_chunk_query(content);
+    let concept_query = if full_query.is_empty() { content } else { &full_query };
+
+    let concept_hits = crate::search::search_concepts_with_scores(concept_query, CONCEPT_SEARCH_LIMIT);
     crate::commands::log_backend("debug", &format!(
         "[subconscious] concept search '{}' → {} hits",
-        &content[..content.len().min(60)],
+        &concept_query[..concept_query.len().min(60)],
         concept_hits.len()
     ));
     for (iri, score) in &concept_hits {
@@ -38,11 +59,24 @@ pub fn run_subconscious(content: &str, exclude_iri: Option<&str>, conn: &Connect
         }
     }
 
-    let scored = crate::search::search_with_scores(content, None, INSTANCE_SEARCH_LIMIT);
+    let chunks = split_into_chunks(content);
+    let mut score_map: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
+    for chunk in &chunks {
+        let query = extract_chunk_query(chunk);
+        if query.is_empty() { continue; }
+        for (iri, score) in crate::search::search_with_scores(&query, None, INSTANCE_SEARCH_LIMIT * 3) {
+            if iri.starts_with("foundation:AIConversationMessage_") { continue; }
+            let entry = score_map.entry(iri).or_insert(0.0);
+            if score > *entry { *entry = score; }
+        }
+    }
+    let mut scored: Vec<(String, f32)> = score_map.into_iter().collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(INSTANCE_SEARCH_LIMIT);
+
     crate::commands::log_backend("debug", &format!(
-        "[subconscious] instance search '{}' → {} raw hits",
-        &content[..content.len().min(60)],
-        scored.len()
+        "[subconscious] instance search: {} chunks → {} unique hits",
+        chunks.len(), scored.len()
     ));
     for (iri, score) in &scored {
         if exclude_iri.map_or(false, |ex| ex == iri) { continue; }
@@ -375,4 +409,55 @@ pub fn format_context(entities: &[SubconsciousEntity]) -> Option<String> {
     }
 
     Some(parts.join("\n\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{split_into_chunks, extract_chunk_query};
+
+    #[test]
+    fn test_split_into_chunks_sentence_boundaries() {
+        let chunks = split_into_chunks("Hello world. How are you? Fine!");
+        assert_eq!(chunks, vec!["Hello world", "How are you", "Fine"]);
+    }
+
+    #[test]
+    fn test_split_into_chunks_comma_separated() {
+        let chunks = split_into_chunks("falei com a Mariana, ela vai me passar algumas coisas");
+        assert_eq!(chunks, vec!["falei com a Mariana", "ela vai me passar algumas coisas"]);
+    }
+
+    #[test]
+    fn test_split_into_chunks_newlines() {
+        let chunks = split_into_chunks("first line\nsecond line\nthird");
+        assert_eq!(chunks, vec!["first line", "second line", "third"]);
+    }
+
+    #[test]
+    fn test_extract_chunk_query_filters_short_words() {
+        let q = extract_chunk_query("falei com a Mariana ela vai passar");
+        assert_eq!(q, "falei Mariana passar");
+    }
+
+    #[test]
+    fn test_extract_chunk_query_keeps_digits() {
+        let q = extract_chunk_query("transferir os 26k de uma vez");
+        assert!(q.contains("26k"), "should keep '26k' even though it's 3 chars");
+        assert!(!q.contains(" os "), "should drop 'os'");
+        assert!(!q.contains(" de "), "should drop 'de'");
+    }
+
+    #[test]
+    fn test_extract_chunk_query_strips_punctuation() {
+        let q = extract_chunk_query("Mariana, Terra.");
+        assert_eq!(q, "Mariana Terra");
+    }
+
+    #[test]
+    fn test_chunked_approach_finds_entity_late_in_message() {
+        let long_msg = "I did shopping today, talked to family, had lunch, went for a walk, and by the way the Mariana debt needs attention";
+        let chunks = split_into_chunks(long_msg);
+        let last_chunk_query = extract_chunk_query(chunks.last().unwrap());
+        assert!(last_chunk_query.contains("Mariana"), "should find Mariana even at the end of a long message");
+    }
 }

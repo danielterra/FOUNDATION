@@ -41,7 +41,8 @@
     "dagre": "^0.8.5",
     "marked": "^17.0.3",
     "material-symbols": "^0.40.1",
-    "mermaid": "^11.12.3"
+    "mermaid": "^11.12.3",
+    "moment": "^2.30.1"
   },
   "devDependencies": {
     "@rdfjs/parser-n3": "^2.1.0",

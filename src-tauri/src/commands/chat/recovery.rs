@@ -106,11 +106,12 @@ pub async fn continue_conversation_after_recovery(
         let request = crate::ai::GenerateRequest {
             messages: api_messages,
             max_tokens: Some(MAX_OUTPUT_TOKENS),
-            temperature: Some(0.3),
+            temperature: None,
             system: Some(system_prompt),
             blackboard_context,
             tools: Some(tools),
             supports_web_tools,
+            thinking: Some(crate::ai::ThinkingConfig::Adaptive),
         };
 
         app.emit(
@@ -137,6 +138,7 @@ pub async fn continue_conversation_after_recovery(
         let content_blocks = response_content_to_blocks(
             &api_response.content,
             &api_response.tool_calls,
+            &api_response.thinking_blocks,
         )?;
         let content_json = serde_json::to_string(&content_blocks)
             .map_err(|e| format!("Failed to serialize content: {}", e))?;

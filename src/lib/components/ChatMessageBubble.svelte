@@ -2,6 +2,8 @@
 	import { convertFileSrc } from '@tauri-apps/api/core';
 	import { openPath } from '@tauri-apps/plugin-opener';
 	import { marked } from 'marked';
+	import { onMount, onDestroy } from 'svelte';
+	import moment from 'moment';
 
 	function subconsciousSummary(entities) {
 		const relevant = entities.filter(e => !e.is_open_loop);
@@ -81,9 +83,21 @@
 
 	let copySuccess = $state(false);
 	let copyTimeout = null;
+	let now = $state(Date.now());
+	let ticker;
+
+	onMount(() => {
+		ticker = setInterval(() => { now = Date.now(); }, 30_000);
+	});
+
+	onDestroy(() => {
+		clearInterval(ticker);
+	});
 
 	async function copyMessage() {
-		const text = extractTextFromContent(message.content);
+		const text = message.role === 'assistant' && hasSpeakMessages(message)
+			? getSpeakMessages(message).join('\n\n')
+			: extractTextFromContent(message.content);
 		try {
 			await navigator.clipboard.writeText(text);
 			copySuccess = true;
@@ -150,6 +164,15 @@
 		return getSpeakMessages(msg).length > 0;
 	}
 
+	function getThinkingBlocks(msg) {
+		if (!Array.isArray(msg.content)) return [];
+		return msg.content.filter(block => block.type === 'thinking');
+	}
+
+	function hasThinking(msg) {
+		return getThinkingBlocks(msg).length > 0;
+	}
+
 	function groupToolUsesWithResults(msg, allMessages) {
 		const toolUses = extractToolUses(msg.content);
 
@@ -190,10 +213,19 @@
 		}
 	}
 
-	function formatTime(sentAt) {
+	function formatRelativeTime(sentAt) {
 		if (!sentAt || isNaN(new Date(sentAt).getTime())) return '';
-		const d = new Date(sentAt);
-		return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+		now; // reactive dependency — recomputes every 30s
+		const m = moment(sentAt);
+		return m.isSame(moment(), 'day') ? m.fromNow() : m.calendar();
+	}
+
+	function formatAbsoluteTime(sentAt) {
+		if (!sentAt || isNaN(new Date(sentAt).getTime())) return '';
+		return new Date(sentAt).toLocaleString(undefined, {
+			day: 'numeric', month: 'short', year: 'numeric',
+			hour: '2-digit', minute: '2-digit'
+		});
 	}
 </script>
 
@@ -222,8 +254,18 @@
 				</div>
 				<span class="thinking-text">AI is thinking...</span>
 			</div>
-		{:else if hasSpeakMessages(message)}
-			{#if hasTextContent(message)}
+		{:else}
+			{#if hasThinking(message)}
+				<details class="reasoning-block">
+					<summary class="reasoning-summary">
+						<span class="material-symbols-outlined reasoning-icon">psychology</span>
+						<span class="reasoning-label">Reasoning</span>
+					</summary>
+					<div class="reasoning-content markdown-content">
+						{@html renderMarkdown(getThinkingBlocks(message).map(b => b.thinking).join('\n\n'))}
+					</div>
+				</details>
+			{:else if hasSpeakMessages(message) && hasTextContent(message)}
 				<details class="reasoning-block">
 					<summary class="reasoning-summary">
 						<span class="material-symbols-outlined reasoning-icon">psychology</span>
@@ -234,17 +276,19 @@
 					</div>
 				</details>
 			{/if}
-			<div class="speak-messages">
-				{#each getSpeakMessages(message) as msg}
-					<div class="message-text markdown-content">
-						{@html renderMarkdown(msg)}
-					</div>
-				{/each}
-			</div>
-		{:else if hasTextContent(message)}
-			<div class="message-text markdown-content">
-				{@html renderMarkdown(extractTextFromContent(message.content))}
-			</div>
+			{#if hasSpeakMessages(message)}
+				<div class="speak-messages">
+					{#each getSpeakMessages(message) as msg}
+						<div class="message-text markdown-content">
+							{@html renderMarkdown(msg)}
+						</div>
+					{/each}
+				</div>
+			{:else if hasTextContent(message)}
+				<div class="message-text markdown-content">
+					{@html renderMarkdown(extractTextFromContent(message.content))}
+				</div>
+			{/if}
 		{/if}
 
 		{#if message.attachments && message.attachments.length > 0}
@@ -338,7 +382,7 @@
 
 		{#if !message.isThinking}
 			<div class="message-bubble-footer">
-				<span class="message-time">{formatTime(message.sentAt)}</span>
+				<span class="message-time" title={formatAbsoluteTime(message.timestamp)}>{formatRelativeTime(message.timestamp)}</span>
 				{#if message.role === 'assistant' && message.input_tokens != null}
 					<span class="token-pill" title="Input tokens">
 						<span class="material-symbols-outlined token-pill-icon">arrow_upward</span>{(message.input_tokens / 1000).toFixed(1)}k

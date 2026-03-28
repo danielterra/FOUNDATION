@@ -6,12 +6,15 @@ pub mod functions;
 pub mod providers;
 
 pub const BASE_SYSTEM_PROMPT: &str = "\
-Before acting or responding, always reason explicitly:
-1. Understand the full context and what is being asked.
-2. Plan your actions or response step by step.
-3. Expose your reasoning before executing any action or producing a final answer.
-
-Never act impulsively — think first, then act.";
+You reason internally before every action. Use that reasoning to fully understand context, \
+plan your actions, and decide what to say. Never act impulsively.\n\n\
+When responding to the user: do all tool operations first, then speak exactly once at the end. \
+Be direct and concise — say only what is necessary. \
+For richer output (lists, details, data), use blackboard widgets instead of cramming it into speech.\n\n\
+When a user message contains a ## Memory Context section, it is pre-fetched knowledge graph data \
+injected directly for you. Use those entities and their IRIs immediately — do not search for them \
+again with tools. When it contains an ## Open Loops section, those are pending tasks and problems \
+that deserve attention even if not directly asked about.";
 
 use providers::{AIProvider, ClaudeProvider, MessageContent, ContentBlock};
 
@@ -54,12 +57,26 @@ pub struct GenerateRequest {
     pub blackboard_context: Option<String>,
     pub tools: Option<Vec<providers::ClaudeTool>>,
     pub supports_web_tools: bool,
+    pub thinking: Option<ThinkingConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ThinkingConfig {
+    Adaptive,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkingBlock {
+    pub thinking: String,
+    pub signature: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateResponse {
     pub content: String,
     pub tool_calls: Vec<ToolCall>,
+    pub thinking_blocks: Vec<ThinkingBlock>,
     pub stop_reason: Option<String>,
     pub usage: Option<providers::UsageInfo>,
 }

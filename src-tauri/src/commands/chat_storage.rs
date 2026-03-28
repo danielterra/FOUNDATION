@@ -17,6 +17,10 @@ pub enum ContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
     },
+    Thinking {
+        thinking: String,
+        signature: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -299,10 +303,13 @@ pub async fn load_conversation_history(
                 // tool_results are not in the immediately following message
                 if let Some(prev) = validated.last_mut() {
                     super::log_backend("warn", &format!(
-                        "[CHAT] Stripping tool_use blocks from {} — tool_results not after",
+                        "[CHAT] Stripping tool_use and thinking blocks from {} — tool_results not after",
                         prev.iri
                     ));
-                    prev.content.retain(|b| !matches!(b, ContentBlock::ToolUse { .. }));
+                    prev.content.retain(|b| !matches!(
+                        b,
+                        ContentBlock::ToolUse { .. } | ContentBlock::Thinking { .. }
+                    ));
                 }
 
                 let clean_content: Vec<ContentBlock> = msg.content.iter()
@@ -584,6 +591,7 @@ fn calculate_content_tokens(content_json: &str) -> Result<usize, String> {
             ContentBlock::CameraRef { token_estimate, .. } => *token_estimate,
             ContentBlock::Document { .. } => 0,
             ContentBlock::FileRef { token_estimate, .. } => *token_estimate,
+            ContentBlock::Thinking { thinking, .. } => bpe.encode_with_special_tokens(thinking).len(),
         };
     }
 

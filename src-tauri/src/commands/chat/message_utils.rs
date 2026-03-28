@@ -51,6 +51,12 @@ pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
                     is_error: *is_error,
                 }
             ),
+            ContentBlock::Thinking { thinking, signature } => Some(
+                ApiContentBlock::Thinking {
+                    thinking: thinking.clone(),
+                    signature: signature.clone(),
+                }
+            ),
         }
     }).collect();
 
@@ -177,15 +183,10 @@ pub fn inject_attachments_for_current_turn(
 
 /// Append subconscious context as a text block to the last user message.
 /// Keeps the system prompt fully static (cacheable) while surfacing dynamic memory context.
+/// Unlike inject_datetime_context (which prepends), this appends — safe to add after tool_result
+/// blocks without violating the API requirement that tool_results come first.
 pub fn inject_subconscious_context(messages: &mut Vec<ChatMessage>, context: &str) {
-    let target = messages.iter_mut().rev().find(|msg| {
-        if msg.role != "user" { return false; }
-        match &msg.content {
-            MessageContent::ContentBlocks(blocks) =>
-                !blocks.iter().any(|b| matches!(b, ApiContentBlock::ToolResult { .. })),
-            MessageContent::Text(_) => true,
-        }
-    });
+    let target = messages.iter_mut().rev().find(|msg| msg.role == "user");
 
     let Some(msg) = target else { return };
 
@@ -308,8 +309,9 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
         }
     }
 
-    // Strip trailing tool_use blocks from the last assistant message — the Claude API requires
-    // every tool_use to be followed by a tool_result, which is impossible for the last message.
+    // Strip trailing tool_use and thinking blocks from the last assistant message.
+    // The Claude API requires every tool_use to be followed by a tool_result, and
+    // thinking blocks without a subsequent tool_use are invalid at end of history.
     if let Some(last) = messages.last_mut() {
         if last.role == "assistant" {
             if let MessageContent::ContentBlocks(ref mut blocks) = last.content {
@@ -317,9 +319,12 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
                     blocks.iter().any(|b| matches!(b, ApiContentBlock::ToolUse { .. }));
                 if had_tool_use {
                     log_backend(
-                        "warn", "[CHAT] Stripping trailing tool_use blocks (end of history)",
+                        "warn", "[CHAT] Stripping trailing tool_use and thinking blocks (end of history)",
                     );
-                    blocks.retain(|b| !matches!(b, ApiContentBlock::ToolUse { .. }));
+                    blocks.retain(|b| !matches!(
+                        b,
+                        ApiContentBlock::ToolUse { .. } | ApiContentBlock::Thinking { .. }
+                    ));
                 }
             }
         }
@@ -334,8 +339,16 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
 pub fn response_content_to_blocks(
     content: &str,
     tool_calls: &[crate::ai::ToolCall],
+    thinking_blocks: &[crate::ai::ThinkingBlock],
 ) -> Result<Vec<ContentBlock>, String> {
     let mut blocks = Vec::new();
+
+    for tb in thinking_blocks {
+        blocks.push(ContentBlock::Thinking {
+            thinking: tb.thinking.clone(),
+            signature: tb.signature.clone(),
+        });
+    }
 
     if !content.is_empty() {
         blocks.push(ContentBlock::Text { text: content.to_string() });

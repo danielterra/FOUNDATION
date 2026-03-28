@@ -28,6 +28,8 @@ struct ClaudeRequest {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -69,6 +71,11 @@ pub enum ContentBlock {
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
+    },
+    #[serde(rename = "thinking")]
+    Thinking {
+        thinking: String,
+        signature: String,
     },
 }
 
@@ -116,6 +123,13 @@ pub struct UsageInfo {
 enum ResponseContentBlock {
     #[serde(rename = "text")]
     Text { text: String },
+    #[serde(rename = "thinking")]
+    Thinking {
+        #[serde(default)]
+        thinking: String,
+        #[serde(default)]
+        signature: String,
+    },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
@@ -235,10 +249,15 @@ impl AIProvider for ClaudeProvider {
             None
         };
 
+        let thinking = request.thinking.as_ref().map(|t|
+            serde_json::to_value(t).unwrap_or(serde_json::Value::Null)
+        );
+
         let claude_request = ClaudeRequest {
             model,
             max_tokens: request.max_tokens.unwrap_or(4096),
             messages,
+            thinking,
             system: {
                 let mut blocks: Vec<serde_json::Value> = Vec::new();
                 if let Some(s) = request.system {
@@ -321,11 +340,16 @@ impl AIProvider for ClaudeProvider {
 
         let mut text_parts = Vec::new();
         let mut tool_calls = Vec::new();
+        let mut thinking_blocks = Vec::new();
 
         for content_block in claude_response.content {
             match content_block {
                 ResponseContentBlock::Text { text } => {
                     text_parts.push(text);
+                }
+                ResponseContentBlock::Thinking { thinking, signature } => {
+                    crate::commands::log_backend("debug", "[CLAUDE API] Received thinking block");
+                    thinking_blocks.push(crate::ai::ThinkingBlock { thinking, signature });
                 }
                 ResponseContentBlock::ToolUse { id, name, input } => {
                     tool_calls.push(ToolCall { id, name, input });
@@ -386,6 +410,7 @@ impl AIProvider for ClaudeProvider {
         Ok(GenerateResponse {
             content,
             tool_calls,
+            thinking_blocks,
             stop_reason: claude_response.stop_reason,
             usage: claude_response.usage,
         })

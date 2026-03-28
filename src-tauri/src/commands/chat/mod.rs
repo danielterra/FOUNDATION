@@ -27,7 +27,7 @@ use settings::{get_max_input_tokens, load_agent_config};
 use recovery::delete_messages_from_timestamp;
 use cancellation::AiCancellationState as CancellationState;
 
-pub const MAX_OUTPUT_TOKENS: u32 = 4096;
+pub const MAX_OUTPUT_TOKENS: u32 = 16000;
 
 pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor) -> Option<String> {
     executor.read(|conn| {
@@ -251,6 +251,7 @@ pub async fn chat__send_and_reply(
             }], "chat").map_err(|e| format!("Failed to set subconsciousContext: {}", e))?;
             Ok(String::new())
         }).await.ok();
+        app.emit("chat-message-added", ()).ok();
     }
 
     let subconscious_context = subconscious::format_context(&subconscious_entities);
@@ -303,7 +304,7 @@ pub async fn chat__send_and_reply(
         let mut tools = crate::ai::functions::get_claude_tools();
         tools.push(crate::ai::providers::ClaudeTool {
             name: "speak".to_string(),
-            description: "Send a message to the user. Use this — and only this — to communicate with the user. Think and plan internally first, then call speak when you have something concrete to say. Maximum 144 characters per call. Call speak multiple times for longer responses.".to_string(),
+            description: "Send a message to the user. Your only output channel. Maximum 144 characters.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -331,11 +332,12 @@ pub async fn chat__send_and_reply(
         let request = crate::ai::GenerateRequest {
             messages: api_messages,
             max_tokens: Some(MAX_OUTPUT_TOKENS),
-            temperature: Some(0.3),
+            temperature: None,
             system: Some(system_prompt),
             blackboard_context: blackboard_context.clone(),
             tools: Some(tools),
             supports_web_tools: agent_config.supports_web_tools,
+            thinking: Some(crate::ai::ThinkingConfig::Adaptive),
         };
 
         let provider = crate::ai::providers::ClaudeProvider::with_model(
@@ -365,6 +367,7 @@ pub async fn chat__send_and_reply(
         let content_blocks = response_content_to_blocks(
             &api_response.content,
             &api_response.tool_calls,
+            &api_response.thinking_blocks,
         )?;
         let content_blocks = message_utils::extract_and_save_file_summaries(
             content_blocks,
