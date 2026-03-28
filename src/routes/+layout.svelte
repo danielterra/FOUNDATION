@@ -57,6 +57,10 @@
   let recalcJobs: RecalcJob[] = [];
   let unlistenRecalc: (() => void) | undefined;
 
+  let retentionRunning = $state(false);
+  let unlistenRetentionStarted: (() => void) | undefined;
+  let unlistenRetentionComplete: (() => void) | undefined;
+
   const backgroundVideos = [
     '/background-space.mp4',
     '/background-code.mp4',
@@ -79,6 +83,14 @@
   onMount(async () => {
     initializeLogging();
     document.addEventListener('click', handleLinkClick, true);
+
+    unlistenRetentionStarted = await listen('retention-started', () => {
+      retentionRunning = true;
+    });
+
+    unlistenRetentionComplete = await listen('retention-complete', () => {
+      retentionRunning = false;
+    });
 
     try {
       await invoke('initialize_app');
@@ -136,6 +148,8 @@
   onDestroy(() => {
     document.removeEventListener('click', handleLinkClick, true);
     unlistenRecalc?.();
+    unlistenRetentionStarted?.();
+    unlistenRetentionComplete?.();
     unlistenAutomationStarted?.();
     unlistenAutomationStep?.();
     unlistenAutomationFinished?.();
@@ -181,6 +195,13 @@
         {/if}
       </div>
     {/each}
+  </div>
+{/if}
+
+{#if retentionRunning}
+  <div class="retention-toast">
+    <span class="material-symbols-outlined retention-icon">cleaning_services</span>
+    <span>Cleaning up old data…</span>
   </div>
 {/if}
 
@@ -362,5 +383,29 @@
     font-weight: 600;
     min-width: 36px;
     text-align: right;
+  }
+
+  .retention-toast {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: color-mix(in srgb, var(--color-black) 85%, transparent);
+    backdrop-filter: blur(12px);
+    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+    color: var(--color-neutral);
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 12px;
+    z-index: 9999;
+    pointer-events: none;
+    animation: toast-pulse 1.5s ease-in-out infinite;
+  }
+
+  .retention-icon {
+    font-size: 15px;
+    opacity: 0.7;
   }
 </style>

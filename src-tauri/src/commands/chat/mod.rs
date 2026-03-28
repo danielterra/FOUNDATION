@@ -4,6 +4,7 @@ mod settings;
 mod recovery;
 mod cancellation;
 mod subconscious;
+pub mod retention;
 pub mod conversation;
 pub use tool_execution::execute_tools_from_message;
 pub use cancellation::AiCancellationState;
@@ -382,6 +383,7 @@ pub async fn chat__send_and_reply(
                 usage.output_tokens,
                 usage.cache_creation_input_tokens,
                 usage.cache_read_input_tokens,
+                Some(&conversation_id),
             ).await
                 .unwrap_or_else(|e| super::log_backend("warn", &format!("[CHAT] Failed to log API call: {}", e)));
         }
@@ -850,4 +852,13 @@ pub async fn chat__recover_pending_tools(
 
     continue_conversation_after_recovery(app.clone(), executor.inner().clone(), conv_id, &cancellation).await?;
     Ok(1)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn chat__purge_conversations(
+    executor: State<'_, DbExecutor>,
+) -> Result<usize, String> {
+    retention::run_retention_policy(executor.inner()).await;
+    Ok(0)
 }

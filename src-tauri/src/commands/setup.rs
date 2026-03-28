@@ -45,7 +45,6 @@ pub async fn initialize_app(
 
     purge_old_retractions(&conn);
 
-
     let t0 = std::time::Instant::now();
 
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel::<(Vec<String>, Vec<String>)>();
@@ -98,6 +97,14 @@ pub async fn initialize_app(
     super::log_backend("debug", &format!("[STARTUP] total_before_emit={}ms", t0.elapsed().as_millis()));
 
     let _ = app.emit("import-complete", ());
+
+    let retention_executor = app.state::<DbExecutor>().inner().clone();
+    let retention_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        retention_app.emit("retention-started", ()).ok();
+        crate::commands::chat::retention::run_retention_policy(&retention_executor).await;
+        retention_app.emit("retention-complete", ()).ok();
+    });
 
     Ok(())
 }

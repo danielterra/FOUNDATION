@@ -5,7 +5,7 @@ use super::ToolResult;
 
 const MAX_DEPTH_CAP: usize = 5;
 
-pub fn get_concept_graph(conn: &Connection, args: &Value) -> ToolResult {
+pub fn get_class_graph(conn: &Connection, args: &Value) -> ToolResult {
     let class_iri = match args.get("class_iri").and_then(|v| v.as_str()) {
         Some(iri) if !iri.is_empty() => iri,
         _ => return ToolResult {
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn test_missing_concept_iri_returns_error() {
         let conn = setup_test_db();
-        let result = get_concept_graph(&conn, &serde_json::json!({}));
+        let result = get_class_graph(&conn, &serde_json::json!({}));
         assert!(!result.success);
         assert!(result.error.as_deref().unwrap_or("").contains("class_iri"));
     }
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn test_unknown_iri_returns_entity_not_found() {
         let conn = setup_test_db();
-        let result = get_concept_graph(&conn, &serde_json::json!({"class_iri": "test:DoesNotExist"}));
+        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:DoesNotExist"}));
         assert!(!result.success);
         assert!(result.error.as_deref().unwrap_or("").contains("entity_not_found"));
     }
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn test_root_node_always_in_result() {
         let conn = setup_two_classes_one_prop();
-        let result = get_concept_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 0}));
+        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 0}));
         assert!(result.success);
         let nodes = result.result.as_ref().unwrap()["graphNodes"].as_array().unwrap();
         assert!(nodes.iter().any(|n| n["iri"] == "test:A"));
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn test_outbound_edge_via_direct_domain() {
         let conn = setup_two_classes_one_prop();
-        let result = get_concept_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 1}));
+        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 1}));
         assert!(result.success);
         let r = result.result.as_ref().unwrap();
         let edges = r["graphEdges"].as_array().unwrap();
@@ -257,7 +257,7 @@ mod tests {
             .unwrap();
 
         // Querying Child should still surface the edge because Parent is in Child's superclass chain
-        let result = get_concept_graph(&conn, &serde_json::json!({"class_iri": "test:Child", "max_depth": 1}));
+        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:Child", "max_depth": 1}));
         assert!(result.success);
         let edges = result.result.as_ref().unwrap()["graphEdges"].as_array().unwrap();
         assert!(
@@ -278,7 +278,7 @@ mod tests {
             .unwrap();
 
         // Query from the range side: test:Sink — should see inbound edge from test:Source
-        let result = get_concept_graph(&conn, &serde_json::json!({"class_iri": "test:Sink", "max_depth": 1}));
+        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:Sink", "max_depth": 1}));
         assert!(result.success);
         let edges = result.result.as_ref().unwrap()["graphEdges"].as_array().unwrap();
         assert!(
@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn test_depth_zero_returns_only_root() {
         let conn = setup_two_classes_one_prop();
-        let result = get_concept_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 0}));
+        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 0}));
         assert!(result.success);
         let r = result.result.as_ref().unwrap();
         assert_eq!(r["graphEdges"].as_array().unwrap().len(), 0);
@@ -304,7 +304,7 @@ mod tests {
     fn test_depth_cap_at_five() {
         let conn = setup_two_classes_one_prop();
         // max_depth: 99 must be silently capped — no panic or infinite loop
-        let result = get_concept_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 99}));
+        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 99}));
         assert!(result.success);
         let depth = result.result.as_ref().unwrap()["depthReached"].as_u64().unwrap();
         assert!(depth <= 5);
@@ -316,7 +316,7 @@ mod tests {
     fn test_no_duplicate_edges() {
         // A → prop → B: when we visit B we would see A as an inbound domain — must not add the edge again
         let conn = setup_two_classes_one_prop();
-        let result = get_concept_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 2}));
+        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 2}));
         assert!(result.success);
         let edges = result.result.as_ref().unwrap()["graphEdges"].as_array().unwrap();
         let matching: Vec<_> = edges.iter()
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn test_edge_includes_property_label() {
         let conn = setup_two_classes_one_prop();
-        let result = get_concept_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 1}));
+        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 1}));
         assert!(result.success);
         let edges = result.result.as_ref().unwrap()["graphEdges"].as_array().unwrap();
         let edge = edges.iter().find(|e| e["property"] == "test:linksTo").unwrap();
@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn test_depth_reached_reflects_actual_depth() {
         let conn = setup_two_classes_one_prop();
-        let result = get_concept_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 2}));
+        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 2}));
         assert!(result.success);
         let depth = result.result.as_ref().unwrap()["depthReached"].as_u64().unwrap();
         assert_eq!(depth, 1, "test:B is at depth 1 — depthReached must be 1");
@@ -358,7 +358,7 @@ mod tests {
         Property::new("test:name")
             .assert(&mut conn, PropertyType::DatatypeProperty, "Name", None, &["test:X"], Some("xsd:string"), None, "test")
             .unwrap();
-        let result = get_concept_graph(&conn, &serde_json::json!({"class_iri": "test:X", "max_depth": 2}));
+        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:X", "max_depth": 2}));
         assert!(result.success);
         let nodes = result.result.as_ref().unwrap()["graphNodes"].as_array().unwrap();
         assert!(nodes.iter().all(|n| !n["iri"].as_str().unwrap_or("").starts_with("xsd:")));

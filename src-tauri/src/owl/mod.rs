@@ -31,6 +31,7 @@ pub use individual::{
     has_property_iri, has_property_literal,
     is_instance_of, find_entities_with_property,
     validate_allowed_status, resolve_status_appearance, get_entity_status_info,
+    touch, LAST_UPDATED_AT,
 };
 
 pub use search::{

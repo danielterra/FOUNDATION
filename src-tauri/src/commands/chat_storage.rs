@@ -49,7 +49,6 @@ pub struct AIConversationMessage {
     pub output_tokens: Option<usize>,
 }
 
-/// Create a user message with text content
 pub async fn create_user_message(
     executor: &DbExecutor,
     conversation_id: &str,
@@ -63,7 +62,6 @@ pub async fn create_user_message(
     create_message(executor, conversation_id, "user", &content_json, None, None, None).await
 }
 
-/// Create an assistant message from API response
 pub async fn create_assistant_message(
     executor: &DbExecutor,
     conversation_id: &str,
@@ -133,7 +131,7 @@ pub(super) async fn create_message(
             .map_err(|e| format!("add_property failed: {}", e))?;
 
         msg.add_property(
-            conn, "foundation:partOfConversation", vec![Object::Iri(conversation_iri)], "ai",
+            conn, "foundation:partOfConversation", vec![Object::Iri(conversation_iri.clone())], "ai",
         ).map_err(|e| format!("Property error: {}", e))?;
 
         msg.add_property(
@@ -182,6 +180,8 @@ pub(super) async fn create_message(
         }
 
         crate::search::reindex_subjects(conn, &[msg_iri_clone.clone()]);
+
+        crate::owl::touch(conn, &conversation_iri);
 
         Ok(msg_iri_clone)
     }).await
@@ -445,10 +445,12 @@ pub async fn log_api_call(
     output_tokens: u32,
     cache_creation_tokens: u32,
     cache_read_tokens: u32,
+    conversation_id: Option<&str>,
 ) -> Result<(), String> {
     let timestamp = chrono::Utc::now().timestamp_millis();
     let iri = format!("foundation:AIAPICall_{}", timestamp);
     let model = model.to_string();
+    let conversation_iri = conversation_id.map(|s| s.to_string());
 
     executor.write(move |conn| {
         let call = Individual::new(&iri);
@@ -481,6 +483,12 @@ pub async fn log_api_call(
         call.add_property(conn, "foundation:calledAt",
             vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "ai")
             .map_err(|e| format!("Failed to set calledAt: {}", e))?;
+
+        if let Some(conv_iri) = conversation_iri {
+            call.add_property(conn, "foundation:generatedByConversation",
+                vec![Object::Iri(conv_iri)], "ai")
+                .map_err(|e| format!("Failed to set generatedByConversation: {}", e))?;
+        }
 
         if let Some(cost) = estimate_call_cost(
             conn, &model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,

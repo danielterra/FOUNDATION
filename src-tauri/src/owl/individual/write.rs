@@ -1,4 +1,5 @@
 use super::*;
+use super::timestamps::touch;
 
 pub(super) fn is_formula_property(conn: &Connection, property_iri: &str) -> Result<bool> {
     let result = query::get_by_entity_predicate(conn, property_iri, "foundation:formula")?;
@@ -34,17 +35,11 @@ impl Individual {
         let icon_triple = Triple::new(&self.iri, icon_pred, icon_obj);
         store::assert_triples(conn, &[icon_triple], origin)?;
 
+        touch(conn, &self.iri.clone());
+
         Ok(())
     }
 
-    /// Set property values for this individual, replacing all existing values.
-    /// Validates that:
-    /// 1. The property is defined in the individual's class or inherited from parent classes
-    /// 2. The new value count won't violate cardinality constraints
-    /// 3. If the property range has owl:oneOf, all values must be from the enumerated set
-    ///
-    /// Always retracts all current values and asserts the full new set atomically.
-    /// Pass all desired values — this is always a full replace, never an append.
     pub fn add_property(
         &self,
         conn: &mut Connection,
@@ -122,13 +117,14 @@ impl Individual {
             .map(|v| Triple::new(&self.iri, property, v))
             .collect();
         store::assert_triples(conn, &triples, origin)?;
+
+        if property != super::timestamps::LAST_UPDATED_AT {
+            touch(conn, &self.iri.clone());
+        }
+
         Ok(())
     }
 
-    /// Append property values to this individual WITHOUT removing existing values.
-    /// Validates that the new total count won't violate cardinality_max constraints.
-    /// Use this when you want to ADD values to a multi-valued property.
-    /// Use `add_property` when you want to REPLACE all values with a new set.
     pub fn append_property(
         &self,
         conn: &mut Connection,
@@ -207,6 +203,11 @@ impl Individual {
             .map(|v| Triple::new(&self.iri, property, v))
             .collect();
         store::append_triples(conn, &triples, origin)?;
+
+        if property != super::timestamps::LAST_UPDATED_AT {
+            touch(conn, &self.iri.clone());
+        }
+
         Ok(())
     }
 
@@ -285,19 +286,20 @@ impl Individual {
                 store::retract_triples(
                     conn, &[Triple::new(iri, property_iri, triple.object)], origin,
                 )?;
+                if property_iri != super::timestamps::LAST_UPDATED_AT {
+                    touch(conn, iri);
+                }
                 return Ok(Some(found));
             }
         }
         Ok(None)
     }
 
-    /// Returns the number of current (non-retracted) values for a property on an individual.
     pub fn get_property_count(conn: &Connection, iri: &str, property_iri: &str) -> Result<usize> {
         let result = query::get_by_entity_predicate(conn, iri, property_iri)?;
         Ok(result.triples.len())
     }
 
-    /// Retracts all current values of `property_iri` on individual `iri`.
     pub fn clear_property(
         conn: &mut Connection,
         iri: &str,
@@ -308,11 +310,13 @@ impl Individual {
         let result = query::get_by_entity_predicate(conn, iri, property_iri)?;
         if !result.triples.is_empty() {
             store::retract_triples(conn, &result.triples, origin)?;
+            if property_iri != super::timestamps::LAST_UPDATED_AT {
+                touch(conn, iri);
+            }
         }
         Ok(())
     }
 
-    /// Returns retracted triples for an individual, excluding metadata predicates.
     pub fn get_retracted_properties(conn: &Connection, iri: &str) -> Result<Vec<Triple>> {
         query::get_retracted_by_entity(conn, iri)
             .map(|r| r.triples.into_iter().filter(|t| {

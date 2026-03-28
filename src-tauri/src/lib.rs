@@ -153,6 +153,7 @@ pub fn run() {
             commands::chat__cancel,
             commands::chat__edit_and_retry,
             commands::chat__retry_from_message,
+            commands::chat__purge_conversations,
             commands::chat::conversation::chat__create_conversation,
             commands::chat::conversation::chat__list_conversations,
             commands::chat::conversation::chat__rename_conversation,

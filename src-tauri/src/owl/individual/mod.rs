@@ -9,6 +9,9 @@ mod find;
 mod properties;
 mod lock;
 mod status;
+mod timestamps;
+
+pub use timestamps::{touch, LAST_UPDATED_AT};
 
 pub use properties::{
     get_all_iri_properties, replace_all_property_iris,

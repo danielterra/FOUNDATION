@@ -1,4 +1,4 @@
-use crate::owl::{Individual, Object, Connection, DbExecutor};
+use crate::owl::{Individual, Connection, DbExecutor};
 use crate::commands::chat_storage::{create_assistant_message, load_conversation_history, load_message};
 use tauri::Emitter;
 use super::tool_execution::execute_tools_from_message;
@@ -7,15 +7,6 @@ use super::settings::load_agent_config;
 use super::super::log_backend;
 use super::MAX_OUTPUT_TOKENS;
 
-fn parse_timestamp(obj: &Object) -> Option<i64> {
-    match obj {
-        Object::DateTime(rfc3339) => chrono::DateTime::parse_from_rfc3339(rfc3339).ok().map(|dt| dt.timestamp_millis()),
-        _ => None,
-    }
-}
-
-/// Retract all messages in the conversation with sentAt >= from_timestamp (exclusive of the
-/// message at exactly from_timestamp when exclude_exact is true).
 pub fn delete_messages_from_timestamp(
     conn: &mut Connection,
     conversation_iri: &str,
@@ -36,7 +27,7 @@ pub fn delete_messages_from_timestamp(
 
         let ts = match ind.properties.iter()
             .find(|(k, _)| k == "foundation:sentAt")
-            .and_then(|(_, v)| parse_timestamp(v))
+            .and_then(|(_, v)| super::parse_timestamp(v))
         {
             Some(t) => t,
             None => continue,
@@ -57,7 +48,6 @@ pub fn delete_messages_from_timestamp(
     Ok(())
 }
 
-/// Helper function to continue conversation loop after recovery
 pub async fn continue_conversation_after_recovery(
     app: tauri::AppHandle,
     executor: DbExecutor,
@@ -83,6 +73,17 @@ pub async fn continue_conversation_after_recovery(
         }
 
         let history = load_conversation_history(&executor, &conversation_id, agent_config.max_tokens).await?;
+
+        let last_msg = history.last();
+        let ended_cleanly = last_msg.map_or(false, |m| {
+            m.role == "assistant"
+                && m.content.is_empty()
+                && m.stop_reason.as_deref() == Some("end_turn")
+        });
+        if ended_cleanly {
+            log_backend("info", "[RECOVERY] Conversation already ended cleanly (empty end_turn) — nothing to do");
+            break;
+        }
 
         let mut api_messages: Vec<crate::ai::ChatMessage> = history.iter()
             .map(message_to_api_format)
@@ -150,6 +151,7 @@ pub async fn continue_conversation_after_recovery(
                 usage.output_tokens,
                 usage.cache_creation_input_tokens,
                 usage.cache_read_input_tokens,
+                Some(&conversation_id),
             ).await
                 .unwrap_or_else(|e| log_backend("warn", &format!("[RECOVERY] Failed to log API call: {}", e)));
         }

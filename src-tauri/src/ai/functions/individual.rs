@@ -4,8 +4,8 @@ use crate::owl::{Individual, Object, Property, PropertyType};
 use super::ToolResult;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-fn load_concept_context(conn: &Connection, class_iri: &str) -> Option<Value> {
-    super::concept::load_concept_context(conn, class_iri)
+fn load_class_context(conn: &Connection, class_iri: &str) -> Option<Value> {
+    super::class::load_class_context(conn, class_iri)
 }
 
 fn load_range_contexts(conn: &Connection, args: &Value) -> Option<Value> {
@@ -162,7 +162,7 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
-            concept: class_iri.and_then(|iri| load_concept_context(conn, iri)),
+            concept: class_iri.and_then(|iri| load_class_context(conn,iri)),
         },
     }
 }
@@ -382,7 +382,7 @@ fn assert_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some("Missing required parameter: label".to_string()),
-            concept: load_concept_context(conn, class_iri),
+            concept: load_class_context(conn,class_iri),
         },
     };
 
@@ -399,7 +399,7 @@ fn assert_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
                     "No icon provided and class '{}' has no icon to inherit",
                     class_iri
                 )),
-                concept: load_concept_context(conn, class_iri),
+                concept: load_class_context(conn,class_iri),
             },
         }
     };
@@ -502,7 +502,7 @@ fn assert_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
             success: false,
             result: load_range_contexts(conn, args),
             error: Some(e.to_string()),
-            concept: load_concept_context(conn, class_iri),
+            concept: load_class_context(conn,class_iri),
         },
     }
 }
@@ -799,5 +799,5 @@ fn retract_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
 }
 
 #[cfg(test)]
-#[path = "thing_tests/mod.rs"]
+#[path = "individual_tests/mod.rs"]
 mod tests;

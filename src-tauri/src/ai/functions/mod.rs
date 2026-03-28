@@ -4,11 +4,11 @@ use rusqlite::Connection;
 
 mod batch;
 mod blackboard;
-mod concept;
-mod concept_graph;
+mod class;
+mod class_graph;
 mod definitions;
 mod property;
-mod thing;
+mod individual;
 
 pub use definitions::{get_available_tools, get_claude_tools};
 
@@ -147,21 +147,21 @@ pub fn execute_tool(
     };
 
     match call.name.as_str() {
-        "define_class" => concept::define_class(conn, args, app),
+        "define_class" => class::define_class(conn, args, app),
         "define_property" => property::define_property(conn, args, app),
-        "assert_individual" => thing::assert_individual(conn, args, app),
-        "add_property_values" => thing::add_property_values(conn, args, app),
-        "replace_property_values" => thing::replace_property_values(conn, args, app),
-        "remove_property_values" => thing::remove_property_values(conn, args, app),
-        "clear_property" => thing::clear_property(conn, args, app),
-        "retract_individual" => thing::retract_individual(conn, args, app),
-        "retract_class" => concept::retract_class(conn, args, app),
+        "assert_individual" => individual::assert_individual(conn, args, app),
+        "add_property_values" => individual::add_property_values(conn, args, app),
+        "replace_property_values" => individual::replace_property_values(conn, args, app),
+        "remove_property_values" => individual::remove_property_values(conn, args, app),
+        "clear_property" => individual::clear_property(conn, args, app),
+        "retract_individual" => individual::retract_individual(conn, args, app),
+        "retract_class" => class::retract_class(conn, args, app),
         "retract_property" => property::retract_property(conn, args, app),
-        "search" => thing::search(conn, args),
-        "describe_class" => concept::describe_class(conn, args),
-        "describe_individual" => thing::describe_individual(conn, args),
+        "search" => individual::search(conn, args),
+        "describe_class" => class::describe_class(conn, args),
+        "describe_individual" => individual::describe_individual(conn, args),
         "describe_property" => property::describe_property(conn, args),
-        "class_graph" => concept_graph::get_concept_graph(conn, args),
+        "class_graph" => class_graph::get_class_graph(conn, args),
         "blackboard_update" => blackboard::blackboard_update(conn, args, app, conversation_id),
         "get_automation" => get_automation_tool(conn, args),
         "run_automation" => run_automation_tool(args, app),

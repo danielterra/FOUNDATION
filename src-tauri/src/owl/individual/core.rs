@@ -107,9 +107,60 @@ impl Individual {
         }))
     }
 
-    /// Retract all triples for the given entity IRI, including references to it from other entities
+    /// Retract all triples for the given entity IRI, including references to it from other entities.
+    ///
+    /// Cascade rules are configured on the CLASS, not the property:
+    /// - `foundation:cascadeDeleteDomain propIRI` — when this class is retracted, also retract all
+    ///   subjects that hold `(subject, propIRI, this_iri)` (children reference the parent)
+    /// - `foundation:cascadeDeleteRange propIRI` — when this class is retracted, also retract all
+    ///   IRIs that this entity references via `(this_iri, propIRI, target)` (parent references children)
     pub fn retract(conn: &mut Connection, iri: &str, origin: &str) -> Result<()> {
         crate::owl::check_system_locked(conn, iri, None)?;
+
+        let type_iris: Vec<String> = query::get_by_entity_predicate(conn, iri, rdf::TYPE)
+            .map(|r| r.triples.into_iter()
+                .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+                .collect())
+            .unwrap_or_default();
+
+        for class_iri in &type_iris {
+            let domain_props: Vec<String> =
+                query::get_by_entity_predicate(conn, class_iri, "foundation:cascadeDeleteDomain")
+                    .map(|r| r.triples.into_iter()
+                        .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+                        .collect())
+                    .unwrap_or_default();
+
+            for prop in &domain_props {
+                let children: Vec<String> =
+                    query::get_by_predicate_object(conn, prop, iri)
+                        .map(|r| r.triples.into_iter().map(|t| t.subject).collect())
+                        .unwrap_or_default();
+                for child in children {
+                    Self::retract(conn, &child, origin)?;
+                }
+            }
+
+            let range_props: Vec<String> =
+                query::get_by_entity_predicate(conn, class_iri, "foundation:cascadeDeleteRange")
+                    .map(|r| r.triples.into_iter()
+                        .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+                        .collect())
+                    .unwrap_or_default();
+
+            for prop in &range_props {
+                let targets: Vec<String> =
+                    query::get_by_entity_predicate(conn, iri, prop)
+                        .map(|r| r.triples.into_iter()
+                            .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+                            .collect())
+                        .unwrap_or_default();
+                for target in targets {
+                    Self::retract(conn, &target, origin)?;
+                }
+            }
+        }
+
         let mut triples = query::get_by_entity(conn, iri)?.triples;
         triples.extend(query::get_by_object_iri(conn, iri)?.triples);
         if !triples.is_empty() {
@@ -316,5 +367,63 @@ mod tests {
         let iris = vec!["foundation:Alice".to_string()];
         let result = Individual::batch_load_retracted_triples(&conn, &iris).unwrap();
         assert!(result.contains_key("foundation:Alice"), "Retracted individual should appear in retracted batch");
+    }
+
+    #[test]
+    fn test_retract_cascades_domain_children() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Conv1", rdf::TYPE, Object::Iri("foundation:AIConversation".to_string())),
+            Triple::new("foundation:Msg1", rdf::TYPE, Object::Iri("foundation:AIConversationMessage".to_string())),
+            Triple::new("foundation:Msg1", "foundation:partOfConversation", Object::Iri("foundation:Conv1".to_string())),
+            Triple::new("foundation:AIConversation", "foundation:cascadeDeleteDomain",
+                Object::Iri("foundation:partOfConversation".to_string())),
+        ], "test").unwrap();
+
+        Individual::retract(&mut conn, "foundation:Conv1", "test").unwrap();
+
+        let conv = Individual::get(&conn, "foundation:Conv1").unwrap();
+        assert!(conv.is_none(), "Conversation must be retracted");
+
+        let msg = Individual::get(&conn, "foundation:Msg1").unwrap();
+        assert!(msg.is_none(), "Message must be cascade-retracted via cascadeDeleteDomain");
+    }
+
+    #[test]
+    fn test_retract_cascades_range_targets() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Parent1", rdf::TYPE, Object::Iri("foundation:Container".to_string())),
+            Triple::new("foundation:Child1", rdf::TYPE, Object::Iri("foundation:Item".to_string())),
+            Triple::new("foundation:Parent1", "foundation:hasChild", Object::Iri("foundation:Child1".to_string())),
+            Triple::new("foundation:Container", "foundation:cascadeDeleteRange",
+                Object::Iri("foundation:hasChild".to_string())),
+        ], "test").unwrap();
+
+        Individual::retract(&mut conn, "foundation:Parent1", "test").unwrap();
+
+        let parent = Individual::get(&conn, "foundation:Parent1").unwrap();
+        assert!(parent.is_none(), "Parent must be retracted");
+
+        let child = Individual::get(&conn, "foundation:Child1").unwrap();
+        assert!(child.is_none(), "Child must be cascade-retracted via cascadeDeleteRange");
+    }
+
+    #[test]
+    fn test_retract_without_cascade_rules_leaves_references_intact() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:EntityA", rdf::TYPE, Object::Iri("foundation:TypeA".to_string())),
+            Triple::new("foundation:EntityB", rdf::TYPE, Object::Iri("foundation:TypeB".to_string())),
+            Triple::new("foundation:EntityB", "foundation:linksTo", Object::Iri("foundation:EntityA".to_string())),
+        ], "test").unwrap();
+
+        Individual::retract(&mut conn, "foundation:EntityA", "test").unwrap();
+
+        let entity_b = Individual::get(&conn, "foundation:EntityB").unwrap();
+        assert!(entity_b.is_some(), "EntityB must survive when TypeA has no cascade rules");
     }
 }

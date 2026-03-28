@@ -36,6 +36,11 @@ pub async fn chat__create_conversation(
             Object::Iri("foundation:LocalAIAssistant".to_string()),
         ], "ai").map_err(|e| format!("Failed to set handledBy: {}", e))?;
 
+        conv.add_property(conn, "foundation:hasParticipant", vec![
+            Object::Iri("foundation:ThisUser".to_string()),
+            Object::Iri("foundation:LocalAIAssistant".to_string()),
+        ], "ai").map_err(|e| format!("Failed to set participants: {}", e))?;
+
         Ok(iri_clone)
     }).await?;
 
@@ -47,13 +52,21 @@ pub async fn chat__list_conversations(
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
     executor.read(move |conn| {
-        let iris = Individual::find_by_class_with_date_range(
-            conn,
-            "foundation:AIConversation",
-            None,
-            None,
-            false,
-        ).map_err(|e| format!("Failed to query conversations: {}", e))?;
+        let iris: Vec<String> = conn.prepare(
+            "SELECT DISTINCT t.subject FROM triples t
+             JOIN triples t_p ON t_p.subject = t.subject
+               AND t_p.predicate = 'foundation:hasParticipant'
+               AND t_p.object = 'foundation:ThisUser'
+               AND t_p.retracted = 0
+             WHERE t.predicate = 'rdf:type'
+               AND t.object = 'foundation:AIConversation'
+               AND t.retracted = 0
+             ORDER BY t.subject DESC"
+        ).map_err(|e| e.to_string())?
+        .query_map([], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
         if iris.is_empty() {
             return Ok(vec![]);
