@@ -1,12 +1,9 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import WidgetContainer from './WidgetContainer.svelte';
 
   let { widgetId, entityId = '', windowState = 'normal', onWindowStateChange } = $props();
-
-  function toggleMinimize() {
-    onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized');
-  }
 
   let connectorLabel = $state('');
   let authType = $state('api_key');
@@ -96,29 +93,23 @@
   });
 </script>
 
-<div class="connector-widget">
-  <div class="widget-header">
-    <div class="header-left">
-      <span class="material-symbols-outlined header-icon">vpn_key</span>
-      <span class="header-title">{connectorLabel || 'Connector Credentials'}</span>
-    </div>
-    <div class="header-actions">
-      {#if isConfigured}
-        <span class="configured-badge" title="Credentials configured">
-          <span class="material-symbols-outlined">check_circle</span>
-        </span>
-      {/if}
-      <button class="close-btn" onclick={openInspector} title="Open inspector">
-        <span class="material-symbols-outlined">info</span>
-      </button>
-      <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
-        <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
-      </button>
-      <button class="close-btn" onclick={closeWidget}>
-        <span class="material-symbols-outlined">close</span>
-      </button>
-    </div>
-  </div>
+<WidgetContainer
+  icon="vpn_key"
+  title={connectorLabel || 'Connector Credentials'}
+  {windowState}
+  {onWindowStateChange}
+  onClose={closeWidget}
+>
+  {#snippet headerActions()}
+    {#if isConfigured}
+      <span class="configured-badge" title="Credentials configured">
+        <span class="material-symbols-outlined">check_circle</span>
+      </span>
+    {/if}
+    <button class="action-btn" onclick={openInspector} title="Open inspector">
+      <span class="material-symbols-outlined">info</span>
+    </button>
+  {/snippet}
 
   <div class="widget-content">
     <div class="field-group">
@@ -208,80 +199,12 @@
       </button>
     </div>
   </div>
-</div>
+</WidgetContainer>
 
 <style>
-  .connector-widget {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    background: color-mix(in srgb, var(--color-black) 85%, transparent);
-    backdrop-filter: blur(20px);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
-  }
-
-  .widget-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-    flex-shrink: 0;
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .header-icon {
-    font-size: 22px;
-    color: var(--color-interactive);
-  }
-
-  .header-title {
-    font-family: var(--font-title);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--color-neutral-active);
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
   .configured-badge .material-symbols-outlined {
     font-size: 18px;
     color: var(--color-success, #22c55e);
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    padding: 4px;
-    cursor: pointer;
-    color: var(--color-interactive);
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    transition: all 0.2s;
-  }
-
-  .close-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    color: var(--color-neutral-active);
-  }
-
-  .close-btn .material-symbols-outlined {
-    font-size: 20px;
   }
 
   .widget-content {

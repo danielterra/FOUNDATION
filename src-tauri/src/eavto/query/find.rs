@@ -27,7 +27,7 @@ impl<'a> PropertyFilter<'a> {
 
     fn is_optional(&self) -> bool {
         match self {
-            PropertyFilter::Compare(_, _, op) => is_optional_op(op),
+            PropertyFilter::Compare(_, _, op) => is_optional_op(op) || base_op(op) == "not_exists",
             PropertyFilter::NotIn(_, _) => false,
         }
     }
@@ -198,14 +198,21 @@ pub fn find_by_class_iris_and_properties_with_options(
         let n = i + 1;
         match filter {
             PropertyFilter::Compare(_, value, op) => {
-                let optional = is_optional_op(op);
-                let value_cond = build_value_condition_fragment(n, value, base_op(op), &mut where_params)?;
-                if optional {
-                    where_clause.push_str(&format!(
-                        "\n           AND (t{n}.predicate IS NULL OR {value_cond})"
-                    ));
+                let base = base_op(op);
+                if base == "exists" {
+                    // INNER JOIN already ensures the property exists — no value condition needed
+                } else if base == "not_exists" {
+                    where_clause.push_str(&format!("\n           AND t{n}.predicate IS NULL"));
                 } else {
-                    where_clause.push_str(&format!("\n           AND {value_cond}"));
+                    let optional = is_optional_op(op);
+                    let value_cond = build_value_condition_fragment(n, value, base, &mut where_params)?;
+                    if optional {
+                        where_clause.push_str(&format!(
+                            "\n           AND (t{n}.predicate IS NULL OR {value_cond})"
+                        ));
+                    } else {
+                        where_clause.push_str(&format!("\n           AND {value_cond}"));
+                    }
                 }
             }
             PropertyFilter::NotIn(_, values) if !values.is_empty() => {
@@ -280,7 +287,20 @@ pub fn find_by_properties_with_options(
         };
         let optional = filter.is_optional();
 
-        if i == 0 {
+        let base = if let PropertyFilter::Compare(_, _, op) = filter { base_op(op) } else { "=" };
+
+        if i == 0 && base == "not_exists" {
+            let type_retracted = if include_retracted { "" } else { " AND t0.retracted = 0" };
+            where_clause.push_str(&format!(
+                "\n         WHERE t0.predicate = 'rdf:type'{type_retracted}\
+                 \n           AND NOT EXISTS (\
+                 \n               SELECT 1 FROM triples t_ne\
+                 \n               WHERE t_ne.subject = t0.subject\
+                 \n               AND t_ne.predicate = ?\
+                 \n               AND t_ne.retracted = 0)"
+            ));
+            where_params.push(SqlValue::Text(filter.prop_iri().to_string()));
+        } else if i == 0 {
             where_clause.push_str(&format!(
                 "\n         WHERE t{i}.predicate = ?{retracted_filter}"
             ));
@@ -305,14 +325,24 @@ pub fn find_by_properties_with_options(
     for (i, filter) in properties.iter().enumerate() {
         match filter {
             PropertyFilter::Compare(_, value, op) => {
-                let optional = is_optional_op(op);
-                let value_cond = build_value_condition_fragment(i, value, base_op(op), &mut where_params)?;
-                if optional && i > 0 {
-                    where_clause.push_str(&format!(
-                        "\n           AND (t{i}.predicate IS NULL OR {value_cond})"
-                    ));
+                let base = base_op(op);
+                if base == "exists" {
+                    // INNER JOIN (or first-filter WHERE) already ensures the property exists
+                } else if base == "not_exists" {
+                    if i > 0 {
+                        where_clause.push_str(&format!("\n           AND t{i}.predicate IS NULL"));
+                    }
+                    // i == 0: handled in the first loop via NOT EXISTS subquery
                 } else {
-                    where_clause.push_str(&format!("\n           AND {value_cond}"));
+                    let optional = is_optional_op(op);
+                    let value_cond = build_value_condition_fragment(i, value, base, &mut where_params)?;
+                    if optional && i > 0 {
+                        where_clause.push_str(&format!(
+                            "\n           AND (t{i}.predicate IS NULL OR {value_cond})"
+                        ));
+                    } else {
+                        where_clause.push_str(&format!("\n           AND {value_cond}"));
+                    }
                 }
             }
             PropertyFilter::NotIn(_, values) if !values.is_empty() => {

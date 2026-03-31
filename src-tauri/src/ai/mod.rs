@@ -67,9 +67,15 @@ pub enum ThinkingConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ThinkingBlock {
-    pub thinking: String,
-    pub signature: String,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ThinkingBlock {
+    Thinking {
+        thinking: String,
+        signature: String,
+    },
+    RedactedThinking {
+        data: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

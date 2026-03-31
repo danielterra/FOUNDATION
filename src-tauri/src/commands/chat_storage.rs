@@ -21,6 +21,9 @@ pub enum ContentBlock {
         thinking: String,
         signature: String,
     },
+    RedactedThinking {
+        data: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,7 +311,7 @@ pub async fn load_conversation_history(
                     ));
                     prev.content.retain(|b| !matches!(
                         b,
-                        ContentBlock::ToolUse { .. } | ContentBlock::Thinking { .. }
+                        ContentBlock::ToolUse { .. } | ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. }
                     ));
                 }
 
@@ -592,6 +595,7 @@ fn calculate_content_tokens(content_json: &str) -> Result<usize, String> {
             ContentBlock::Document { .. } => 0,
             ContentBlock::FileRef { token_estimate, .. } => *token_estimate,
             ContentBlock::Thinking { thinking, .. } => bpe.encode_with_special_tokens(thinking).len(),
+            ContentBlock::RedactedThinking { .. } => 0,
         };
     }
 

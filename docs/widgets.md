@@ -8,24 +8,37 @@ Every widget is bound to exactly one ontology entity via its `entity_id` (the en
 
 Widget IDs are **deterministic**: `foundation:Widget_{type}_{entity_id}`. This means you can never open two widgets of the same type for the same entity simultaneously — adding a widget that already exists is a no-op.
 
-Each widget type declares whether it requires an entity binding through the `supports_entity` flag:
+## Widget Type Registry
 
-- `supports_entity: true` — the widget renders data from a specific entity (Inspector, Process Status, Connector widgets)
-- `supports_entity: false` — the widget has its own content independent of any entity (Mermaid, when used standalone)
+Widget types are defined as `foundation:WidgetType` individuals in the ontology — no Rust code changes are needed to register a new type. Each individual declares:
 
-When a widget type is associated with a specific ontology class, it also declares `foundation:widgetDefSupportedConcepts`. This allows the UI and the AI to automatically suggest only the relevant widgets when the user selects an entity of a given type.
+| Property | Type | Description |
+|----------|------|-------------|
+| `foundation:widgetTypeId` | `xsd:string` | Programmatic ID used in code (e.g. `"mermaid"`) |
+| `foundation:widgetSupportedClass` | `xsd:string` | Entity class IRI this widget targets. `"owl:Thing"` means universal. |
+| `foundation:widgetDefaultWidth` | `xsd:decimal` | Default width in pixels |
+| `foundation:widgetDefaultHeight` | `xsd:decimal` | Default height in pixels |
+| `foundation:widgetUsageNote` | `xsd:string` | *(optional)* AI creation instructions — presence marks this as AI-creatable |
+| `rdfs:label` | literal | Display name shown in the UI |
+| `rdfs:comment` | literal | Description shown as a tooltip |
+| icon | — | Material Symbols icon name, used as the button icon in the Inspector header |
 
-## Available Widget Types
+### How the frontend discovers widget types
 
-| Widget | `widget_type` | Entity Binding | Description |
-|--------|--------------|----------------|-------------|
-| **Inspector** | `inspector` | Any entity | Displays all properties, relationships, backlinks, and child classes |
-| **Mermaid** | `mermaid` | Any entity with `foundation:diagramSource` | Renders and edits Mermaid diagrams; writes changes back to the entity property |
+The Inspector widget calls `widget_blackboard__list_widget_definitions(classIri)` on load, passing the current entity's class IRI. The backend queries all `foundation:WidgetType` individuals and returns those whose `widgetSupportedClass` matches the class IRI or is `owl:Thing` (universal). The Inspector header renders one icon button per result, using the widget's `icon` and `description` fields. Clicking a button calls `widget_blackboard__add_widget` with the corresponding `widgetTypeId`.
+
+### Available widget types
+
+| Widget | `widgetTypeId` | Supported Class | Description |
+|--------|---------------|-----------------|-------------|
+| **Inspector** | `inspector` | `owl:Thing` | Displays all properties, relationships, backlinks, and child classes |
+| **Mermaid Diagram** | `mermaid` | `foundation:MermaidDiagram` | Renders a Mermaid diagram from the entity's `foundation:diagramSource` property |
 | **Process Status** | `process_status` | `foundation:Process` | Shows real-time execution status and allows triggering the process |
-| **Connector Credential** | `connector_credential` | `foundation:Connector` | Configures API keys, tokens, or username/password for an external service |
+| **Connector Credentials** | `connector_credential` | `foundation:Connector` | Configures API keys, tokens, or username/password for an external service |
 | **Connector Manager** | `connector_manager` | `foundation:Connector` | Exports and imports connector credential packages as JSON |
-| **MetaProcess** | `meta_process` | `foundation:MetaProcess` | Interactive SvelteFlow diagram of a MetaProcess — nodes, gateways, events, and sub-processes |
-| **Automation** | `automation` | `foundation:Automation` | Interactive SvelteFlow diagram of an Automation — flow nodes, gateways, and sequence flows |
+| **Automation** | `automation` | `foundation:Automation` | Interactive SvelteFlow diagram of an Automation |
+| **Workflow Execution** | `workflow_execution` | `foundation:WorkflowExecution` | Step-by-step details of a workflow execution run |
+| **Graph** | `graph` | `foundation:GraphDiagram` | Force-directed graph of related entities; nodes are clickable for navigation |
 
 ## Creating Widgets
 
@@ -35,28 +48,23 @@ There are three ways to add a widget to the blackboard:
 
 **2. Via the UI** — Searching for an entity in the chat panel and selecting it opens a widget. The Inspector widget also shows available widget types for the current entity, allowing the user to open additional widgets directly.
 
-**3. Via the AI** — The AI assistant can manage the blackboard using two tools:
+**3. Via the AI** — The AI passes entity IRIs in the `speak` tool's `iris` parameter. The system automatically selects the best widget type for each IRI based on its `rdf:type`, falling back to `inspector` if no class-specific widget matches.
 
-```
-blackboard_widgets_list(concept_iri?)
-  → returns available widget types, optionally filtered by entity class
-
-blackboard_update(operations)
-  → accepts an array of operations: "add", "remove", or "replace"
-```
-
-Example `blackboard_update` call:
 ```json
-[
-  {
-    "operation": "add",
-    "widget_type": "mermaid",
-    "params": { "entity_id": "foundation:Process_InvoiceApproval" }
-  }
-]
+{
+  "message": "Here is the invoice approval process.",
+  "iris": ["foundation:Process_InvoiceApproval"]
+}
 ```
 
-The `replace` operation clears the entire blackboard before adding a new widget — useful for the AI to switch context entirely.
+### AI-creatable widgets
+
+Some widget types require the AI to first create a dedicated entity before displaying it. These are marked with a `foundation:widgetUsageNote` in the ontology and are listed in the AI system prompt automatically.
+
+| Widget | Required entity class | How |
+|--------|-----------------------|-----|
+| **Mermaid** | `foundation:MermaidDiagram` | Create the individual, set `foundation:diagramSource` to valid Mermaid syntax, then pass its IRI in `speak.iris` |
+| **Graph** | `foundation:GraphDiagram` | Create the individual, add `foundation:graphEntities` pointing to the entities to include, then pass its IRI in `speak.iris` |
 
 ## How a Widget Gets Its Data
 
@@ -78,18 +86,18 @@ sequenceDiagram
     Cmp->>Cmd: reload entity
 ```
 
-Widgets never store entity data themselves — they always read from the triple store on demand. When the user edits content in a widget (e.g., a Mermaid diagram), the change is written back to the entity's property (`foundation:diagramSource`) via `widget__update_content`, keeping the entity as the single source of truth.
+Widgets never store entity data themselves — they always read from the triple store on demand.
 
 ## Widget Storage Model
 
 ```
-foundation:Widget_mermaid_Process_InvoiceApproval
+foundation:Widget_mermaid_MermaidDiagram_InvoiceFlow
     rdf:type                    foundation:Widget
     foundation:widgetType       "mermaid"
-    foundation:widgetEntityId   foundation:Process_InvoiceApproval
+    foundation:widgetEntityId   foundation:MermaidDiagram_InvoiceFlow
     foundation:widgetPositionX  150
     foundation:widgetPositionY  100
-    foundation:widgetSizeWidth  600
+    foundation:widgetSizeWidth  700
     foundation:widgetSizeHeight 500
 ```
 
@@ -97,18 +105,17 @@ foundation:Widget_mermaid_Process_InvoiceApproval
 
 Adding a new widget type requires changes in three places.
 
-### 1. Register the type in Rust
+### 1. Register the type in the ontology
 
-Add an entry to `widget__list_types()` in [src-tauri/src/commands/widget.rs](../src-tauri/src/commands/widget.rs):
+Create a `foundation:WidgetType` individual — this is the only registration step needed on the backend.
 
-```rust
-WidgetType {
-    id: "my_widget".to_string(),
-    name: "My Widget".to_string(),
-    description: "What this widget does".to_string(),
-    supports_entity: true,  // false if it renders standalone content
-},
-```
+- `rdfs:label` — display name (e.g. `"My Widget"`)
+- `rdfs:comment` — description shown as a tooltip in the Inspector header
+- icon — Material Symbols name for the Inspector header button
+- `foundation:widgetTypeId` — programmatic ID (e.g. `"my_widget"`)
+- `foundation:widgetSupportedClass` — class IRI this widget targets (`"owl:Thing"` for universal)
+- `foundation:widgetDefaultWidth` / `foundation:widgetDefaultHeight` — default dimensions in pixels
+- `foundation:widgetUsageNote` *(optional)* — if set, the widget appears in the AI system prompt; value is the instruction shown to the AI
 
 ### 2. Create the Svelte component
 
@@ -130,7 +137,6 @@ Create `src/lib/components/widgets/MyWidget.svelte`. The component receives two 
     const resultStr = await invoke('entity__get', { entityId });
     const data = JSON.parse(resultStr);
     label = data?.label ?? entityId;
-    // read any other properties you need from data.properties
   }
 
   async function closeWidget() {
@@ -178,48 +184,25 @@ import MyWidget from './MyWidget.svelte';
   <MyWidget widgetId={widget.id} entityId={widget.entity_id} />
 ```
 
-### 4. Declare a WidgetDefinition in the ontology
-
-Register a `foundation:WidgetDefinition` so the AI and the UI can discover the widget. Without this entry, `blackboard_widgets_list` will never return the widget and the AI will be unable to place it on the blackboard.
-
-Use the `learn_things` MCP tool to register it:
-
-```json
-{
-  "concept_iri": "foundation:WidgetDefinition",
-  "label": "My Widget",
-  "properties": [
-    { "detail": "foundation:widgetDefId",               "value": "my_widget" },
-    { "detail": "foundation:widgetDefDescription",      "value": "What this widget does" },
-    { "detail": "foundation:widgetDefSupportsEntity",   "value": "true" },
-    { "detail": "foundation:widgetDefSupportedConcepts","value": "foundation:MyClass" }
-  ]
-}
-```
-
-Omit `widgetDefSupportedConcepts` to make the widget available for any entity type.
-
 ## Frontend Components
 
 ```
 src/lib/components/widgets/
 ├── WidgetManager.svelte              # Canvas: drag, z-index, viewport constraints
+├── WidgetContainer.svelte            # Shared chrome: header, resize, window state
 ├── InspectorWidget.svelte            # Entity inspector
 ├── MermaidWidget.svelte              # Diagram editor with pan/zoom and fullscreen
 ├── ProcessStatusWidget.svelte        # Process execution and monitoring
 ├── ConnectorCredentialWidget.svelte  # Credential configuration
 ├── ConnectorManagerWidget.svelte     # Connector package import/export
-├── MetaProcessWidget.svelte          # SvelteFlow diagram for MetaProcess
 ├── AutomationWidget.svelte           # SvelteFlow diagram for Automation
+├── WorkflowExecutionWidget.svelte    # Workflow execution step viewer
+├── GraphWidget.svelte                # Force-directed graph
 ├── inspector/
 │   ├── PropertyList.svelte           # Grouped property display
 │   ├── BacklinkList.svelte           # Entities referencing this entity
 │   ├── FilePreview.svelte            # Inline file preview
 │   └── MarkdownValue.svelte          # Markdown rendering
-├── meta-process/                     # Node components for MetaProcessWidget
-│   ├── layout.js                     # Dagre layout engine
-│   ├── StatusBadge.svelte            # Status indicator
-│   └── Node*.svelte                  # One file per node type (13 types)
 └── automation/                       # Node components for AutomationWidget
     ├── layout.js                     # Dagre layout engine
     ├── StatusBadge.svelte            # Status indicator

@@ -1,7 +1,7 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
 	import * as d3 from 'd3';
-	import { invoke } from '@tauri-apps/api/core';
+	import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 	import { createForceDirectedLayout } from './forceDirectedLayout.js';
 
 	export let graphData;
@@ -564,6 +564,12 @@
 			return 'material-symbol';
 		};
 
+		const resolveIconUrl = (icon) => {
+			if (!icon) return icon;
+			if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
+			return icon;
+		};
+
 		// Function to add visual elements to nodes
 		function createNodeVisuals(nodeSelection) {
 			// Add icon or circle for each node (Class or Individual)
@@ -606,8 +612,8 @@
 							.style('overflow', 'hidden')
 							.style('pointer-events', 'none')
 							.html(
-							`<img src="${d.icon}" ` +
-							'style="width: 24px; height: 24px; object-fit: cover; pointer-events: none;" />'
+							`<img src="${resolveIconUrl(d.icon)}" ` +
+							'style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%; pointer-events: none;" />'
 						);
 					} else {
 						// Render Material Symbols icon

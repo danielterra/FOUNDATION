@@ -57,6 +57,11 @@ pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
                     signature: signature.clone(),
                 }
             ),
+            ContentBlock::RedactedThinking { data } => Some(
+                ApiContentBlock::RedactedThinking {
+                    data: data.clone(),
+                }
+            ),
         }
     }).collect();
 
@@ -323,7 +328,7 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
                     );
                     blocks.retain(|b| !matches!(
                         b,
-                        ApiContentBlock::ToolUse { .. } | ApiContentBlock::Thinking { .. }
+                        ApiContentBlock::ToolUse { .. } | ApiContentBlock::Thinking { .. } | ApiContentBlock::RedactedThinking { .. }
                     ));
                 }
             }
@@ -344,10 +349,19 @@ pub fn response_content_to_blocks(
     let mut blocks = Vec::new();
 
     for tb in thinking_blocks {
-        blocks.push(ContentBlock::Thinking {
-            thinking: tb.thinking.clone(),
-            signature: tb.signature.clone(),
-        });
+        match tb {
+            crate::ai::ThinkingBlock::Thinking { thinking, signature } => {
+                blocks.push(ContentBlock::Thinking {
+                    thinking: thinking.clone(),
+                    signature: signature.clone(),
+                });
+            }
+            crate::ai::ThinkingBlock::RedactedThinking { data } => {
+                blocks.push(ContentBlock::RedactedThinking {
+                    data: data.clone(),
+                });
+            }
+        }
     }
 
     if !content.is_empty() {

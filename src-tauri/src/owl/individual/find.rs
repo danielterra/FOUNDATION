@@ -666,4 +666,98 @@ mod tests {
         assert!(results_utc.contains(&"foundation:TaskA".to_string()),
             "Should find task when filtering by exact UTC equivalent");
     }
+
+    #[test]
+    fn test_exists_operator_returns_individuals_with_property() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskA", "foundation:dueDate", Object::Literal {
+                value: "2026-03-10".to_string(),
+                datatype: Some("xsd:date".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskC", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskC", "foundation:dueDate", Object::Literal {
+                value: "2099-12-31".to_string(),
+                datatype: Some("xsd:date".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let (results, total) = Individual::find_by_class_and_properties_with_options(
+            &conn, "foundation:Task",
+            &[PropertyFilter::Compare("foundation:dueDate", "", "exists")],
+            false, 100, 0,
+        ).unwrap();
+
+        assert_eq!(total, 2);
+        assert!(results.contains(&"foundation:TaskA".to_string()), "Task with dueDate should be included");
+        assert!(!results.contains(&"foundation:TaskB".to_string()), "Task without dueDate should be excluded");
+        assert!(results.contains(&"foundation:TaskC".to_string()), "Task with dueDate should be included");
+    }
+
+    #[test]
+    fn test_not_exists_operator_returns_individuals_without_property() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskA", "foundation:dueDate", Object::Literal {
+                value: "2026-03-10".to_string(),
+                datatype: Some("xsd:date".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskC", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+        ], "test").unwrap();
+
+        let (results, total) = Individual::find_by_class_and_properties_with_options(
+            &conn, "foundation:Task",
+            &[PropertyFilter::Compare("foundation:dueDate", "", "not_exists")],
+            false, 100, 0,
+        ).unwrap();
+
+        assert_eq!(total, 2);
+        assert!(!results.contains(&"foundation:TaskA".to_string()), "Task with dueDate should be excluded");
+        assert!(results.contains(&"foundation:TaskB".to_string()), "Task without dueDate should be included");
+        assert!(results.contains(&"foundation:TaskC".to_string()), "Task without dueDate should be included");
+    }
+
+    #[test]
+    fn test_exists_combined_with_other_filters() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskA", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
+            Triple::new("foundation:TaskA", "foundation:dueDate", Object::Literal {
+                value: "2026-03-10".to_string(),
+                datatype: Some("xsd:date".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskB", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
+            Triple::new("foundation:TaskC", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:TaskC", "foundation:hasStatus", Object::Iri("foundation:Completed".to_string())),
+            Triple::new("foundation:TaskC", "foundation:dueDate", Object::Literal {
+                value: "2026-03-15".to_string(),
+                datatype: Some("xsd:date".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let (results, total) = Individual::find_by_class_and_properties_with_options(
+            &conn, "foundation:Task",
+            &[
+                PropertyFilter::Compare("foundation:hasStatus", "foundation:Active", "="),
+                PropertyFilter::Compare("foundation:dueDate", "", "exists"),
+            ],
+            false, 100, 0,
+        ).unwrap();
+
+        assert_eq!(total, 1);
+        assert!(results.contains(&"foundation:TaskA".to_string()), "Active task with dueDate should be included");
+        assert!(!results.contains(&"foundation:TaskB".to_string()), "Active task without dueDate should be excluded");
+        assert!(!results.contains(&"foundation:TaskC".to_string()), "Completed task should be excluded");
+    }
 }

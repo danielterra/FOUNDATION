@@ -411,7 +411,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "filters".to_string(),
                     param_type: "array".to_string(),
-                    description: "Property filters. Each: {detail, value, operator?}. operator: '='|'>='|'<='|'>'|'<' (default '='). ISO date for xsd:date, RFC3339 for xsd:dateTime.".to_string(),
+                    description: "Property filters. Each: {detail, value, operator?}. operator: '='|'!='|'>='|'<='|'>'|'<'|'exists'|'not_exists' (default '='). 'exists'/'not_exists' ignore the value field. ISO date for xsd:date, RFC3339 for xsd:dateTime.".to_string(),
                     required: false,
                     schema: Some(serde_json::json!({
                         "type": "array",
@@ -571,40 +571,5 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             ],
         },
 
-        // ----------------------------------------------------------------
-        // BLACKBOARD
-        // ----------------------------------------------------------------
-        ToolTemplate {
-            name: "blackboard_update".to_string(),
-            array_mode: true,
-            description: concat!(
-                "Use to add, remove, or replace widgets on the user's blackboard. Current blackboard state is provided automatically in the conversation context.",
-                " Widgets are live — no need to refresh after assert_individual changes.",
-                " Widget type IDs: 'inspector' (any entity), 'meta_process' (MetaProcess), 'mermaid' (MermaidDiagram), 'process_status' (MetaProcess), 'connector_credential' (ExternalServiceConnector), 'connector_manager' (ExternalServiceConnector).",
-            ).to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "operation".to_string(),
-                    param_type: "string".to_string(),
-                    description: "'add', 'remove', or 'replace'".to_string(),
-                    required: true,
-                    schema: None,
-                },
-                Parameter {
-                    name: "widget_type".to_string(),
-                    param_type: "string".to_string(),
-                    description: "Widget type ID".to_string(),
-                    required: false,
-                    schema: None,
-                },
-                Parameter {
-                    name: "params".to_string(),
-                    param_type: "object".to_string(),
-                    description: "Widget params".to_string(),
-                    required: false,
-                    schema: None,
-                },
-            ],
-        },
     ]
 }

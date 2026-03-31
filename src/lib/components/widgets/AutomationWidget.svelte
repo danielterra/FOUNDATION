@@ -5,6 +5,7 @@
   import { SvelteFlow, Controls, Background, BackgroundVariant } from '@xyflow/svelte'
   import '@xyflow/svelte/dist/style.css'
   import { applyDagreLayout } from './automation/layout.js'
+  import WidgetContainer from './WidgetContainer.svelte'
   import NodeStartEvent        from './automation/NodeStartEvent.svelte'
   import NodeTimerStartEvent   from './automation/NodeTimerStartEvent.svelte'
   import NodeEndEvent     from './automation/NodeEndEvent.svelte'
@@ -38,7 +39,6 @@
   let edges = $state.raw([])
   let loading = $state(true)
   let error = $state(null)
-  const expanded = $derived(windowState === 'maximized')
   let hoveredNodeId = $state(null)
   let running = $state(false)
 
@@ -176,14 +176,6 @@
     }
   }
 
-  function toggleMinimize() {
-    onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized')
-  }
-
-  function toggleExpanded() {
-    onWindowStateChange?.(expanded ? 'normal' : 'maximized')
-  }
-
   async function runAutomation() {
     if (running) return
     running = true
@@ -255,108 +247,60 @@
   })
 </script>
 
-<div class="automation-widget" class:minimized={windowState === 'minimized'}>
-  <div class="widget-header">
-    <div class="header-left">
-      <span class="material-symbols-outlined header-icon">bolt</span>
-      <span class="header-title">{automationLabel || 'Automation'}</span>
-      {#if activeStepLabel}
-        <span class="active-step-label">{activeStepLabel}…</span>
-      {/if}
-    </div>
-    <div class="header-actions">
-      <button class="action-btn run-btn" onclick={runAutomation} disabled={running} title="Run automation">
-        <span class="material-symbols-outlined">{running ? 'progress_activity' : 'play_arrow'}</span>
-      </button>
-      <button class="action-btn" onclick={toggleExpanded} title={expanded ? 'Restore' : 'Expand'}>
-        <span class="material-symbols-outlined">{expanded ? 'close_fullscreen' : 'open_in_full'}</span>
-      </button>
-      <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
-        <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
-      </button>
-      <button class="action-btn" onclick={openInspector} title="Open inspector">
-        <span class="material-symbols-outlined">info</span>
-      </button>
-      <button class="close-btn" onclick={closeWidget}>
-        <span class="material-symbols-outlined">close</span>
-      </button>
-    </div>
-  </div>
+<WidgetContainer
+  icon="bolt"
+  title={automationLabel || 'Automation'}
+  {windowState}
+  {onWindowStateChange}
+  onClose={closeWidget}
+  canExpand={true}
+>
+  {#snippet headerExtra()}
+    {#if activeStepLabel}
+      <span class="active-step-label">{activeStepLabel}…</span>
+    {/if}
+  {/snippet}
 
-  <div class="content-wrapper">
-    <div class="widget-content">
-      {#if loading}
-        <div class="loading">
-          <span class="material-symbols-outlined spinning">progress_activity</span>
-        </div>
-      {:else if error}
-        <div class="error-state">
-          <span class="material-symbols-outlined">error</span>
-          <p>{error}</p>
-        </div>
-      {:else}
-        <SvelteFlow
-          {nodes}
-          edges={displayEdges}
-          {nodeTypes}
-          fitView
-          panOnScroll
-          zoomOnScroll={false}
-          onnodeclick={handleNodeClick}
-          onnodepointerenter={({ node }) => hoveredNodeId = node.id}
-          onnodepointerleave={() => hoveredNodeId = null}
-        >
-          <Controls />
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.08)" />
-        </SvelteFlow>
-      {/if}
-    </div>
+  {#snippet headerActions()}
+    <button class="run-btn" onclick={runAutomation} disabled={running} title="Run automation">
+      <span class="material-symbols-outlined">{running ? 'progress_activity' : 'play_arrow'}</span>
+    </button>
+    <button onclick={openInspector} title="Open inspector">
+      <span class="material-symbols-outlined">info</span>
+    </button>
+  {/snippet}
+
+  <div class="widget-content">
+    {#if loading}
+      <div class="loading">
+        <span class="material-symbols-outlined spinning">progress_activity</span>
+      </div>
+    {:else if error}
+      <div class="error-state">
+        <span class="material-symbols-outlined">error</span>
+        <p>{error}</p>
+      </div>
+    {:else}
+      <SvelteFlow
+        {nodes}
+        edges={displayEdges}
+        {nodeTypes}
+        fitView
+        panOnScroll
+        zoomOnScroll={false}
+        onnodeclick={handleNodeClick}
+        onnodepointerenter={({ node }) => hoveredNodeId = node.id}
+        onnodepointerleave={() => hoveredNodeId = null}
+      >
+        <Controls />
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.08)" />
+      </SvelteFlow>
+    {/if}
   </div>
-</div>
+</WidgetContainer>
 
 
 <style>
-  .automation-widget {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    background: color-mix(in srgb, var(--color-black) 85%, transparent);
-    backdrop-filter: blur(20px);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
-  }
-
-  .widget-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-    flex-shrink: 0;
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .header-icon {
-    font-size: 22px;
-    color: var(--color-interactive);
-  }
-
-  .header-title {
-    font-family: var(--font-title);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--color-neutral-active);
-  }
-
   .active-step-label {
     font-size: 10px;
     color: #F59E0B;
@@ -367,32 +311,17 @@
     text-overflow: ellipsis;
   }
 
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .action-btn {
+  .run-btn {
     background: none;
     border: none;
     padding: 4px;
     cursor: pointer;
-    color: var(--color-interactive);
+    color: #43A047;
     border-radius: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: all 0.2s;
-  }
-
-  .action-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    color: var(--color-neutral-active);
-  }
-
-  .run-btn {
-    color: #43A047;
   }
   .run-btn:hover {
     background: color-mix(in srgb, #43A047 15%, transparent);
@@ -405,48 +334,8 @@
   .run-btn:disabled .material-symbols-outlined {
     animation: spin 1s linear infinite;
   }
-
-  .action-btn .material-symbols-outlined {
+  .run-btn .material-symbols-outlined {
     font-size: 18px;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    padding: 4px;
-    cursor: pointer;
-    color: var(--color-interactive);
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-  }
-
-  .close-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    color: var(--color-neutral-active);
-  }
-
-  .close-btn .material-symbols-outlined {
-    font-size: 20px;
-  }
-
-  .content-wrapper {
-    flex: 1;
-    min-height: 0;
-    display: grid;
-    grid-template-rows: 1fr;
-    transition: grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1);
-    overflow: hidden;
-  }
-
-  .minimized .content-wrapper {
-    grid-template-rows: 0fr;
-  }
-
-  .content-wrapper > .widget-content {
-    min-height: 0;
   }
 
   .widget-content {
@@ -493,7 +382,6 @@
   .error-state .material-symbols-outlined {
     font-size: 32px;
   }
-
 
   :global(.svelte-flow) {
     background: transparent !important;

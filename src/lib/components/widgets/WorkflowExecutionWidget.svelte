@@ -3,12 +3,9 @@
   import { invoke } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
   import ChatMessageBubble from '../ChatMessageBubble.svelte'
+  import WidgetContainer from './WidgetContainer.svelte'
 
   let { widgetId, entityId, conversationIri = null, windowState = 'normal', onWindowStateChange } = $props()
-
-  function toggleMinimize() {
-    onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized')
-  }
 
   let detail = $state(null)
   let loading = $state(true)
@@ -143,38 +140,33 @@
   })
 </script>
 
-<div class="widget">
-  <div class="widget-header">
-    <div class="header-left">
-      <span class="material-symbols-outlined header-icon">play_circle</span>
-      <div class="header-text">
-        <span class="header-title">{detail?.process_label ?? 'Execution'}</span>
-        {#if detail}
-          <span class="header-sub">{executionStartedAt(entityId) ?? ''}</span>
-        {/if}
-      </div>
-    </div>
-    <div class="header-right">
-      {#if detail}
-        <span
-          class="status-badge"
-          style="color: {detail.status_color ?? '#94A3B8'}"
-        >
-          <span class="material-symbols-outlined status-icon" class:spinning={isInProgress(detail.status_label)}>{detail.status_icon ?? 'help'}</span>
-          <span class="status-label">{detail.status_label}</span>
-        </span>
-      {/if}
-      <button class="close-btn" onclick={openInspector} title="Open inspector">
-        <span class="material-symbols-outlined">info</span>
-      </button>
-      <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
-        <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
-      </button>
-      <button class="close-btn" onclick={closeWidget}>
-        <span class="material-symbols-outlined">close</span>
-      </button>
-    </div>
-  </div>
+<WidgetContainer
+  icon="play_circle"
+  title={detail?.process_label ?? 'Execution'}
+  {windowState}
+  {onWindowStateChange}
+  onClose={closeWidget}
+>
+  {#snippet headerExtra()}
+    {#if detail}
+      <span class="header-sub">{executionStartedAt(entityId) ?? ''}</span>
+    {/if}
+  {/snippet}
+
+  {#snippet headerActions()}
+    {#if detail}
+      <span
+        class="status-badge"
+        style="color: {detail.status_color ?? '#94A3B8'}"
+      >
+        <span class="material-symbols-outlined status-icon" class:spinning={isInProgress(detail.status_label)}>{detail.status_icon ?? 'help'}</span>
+        <span class="status-label">{detail.status_label}</span>
+      </span>
+    {/if}
+    <button class="action-btn" onclick={openInspector} title="Open inspector">
+      <span class="material-symbols-outlined">info</span>
+    </button>
+  {/snippet}
 
   <div class="body">
     {#if loading}
@@ -265,73 +257,13 @@
       {/if}
     {/if}
   </div>
-</div>
+</WidgetContainer>
 
 <style>
-  .widget {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    background: color-mix(in srgb, var(--color-black) 85%, transparent);
-    backdrop-filter: blur(20px);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
-  }
-
-  .widget-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-    flex-shrink: 0;
-    gap: 8px;
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-  }
-
-  .header-icon {
-    font-size: 20px;
-    color: var(--color-interactive);
-    flex-shrink: 0;
-  }
-
-  .header-text {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    min-width: 0;
-  }
-
-  .header-title {
-    font-family: var(--font-title);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--color-neutral-active);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
   .header-sub {
     font-size: 10px;
     color: var(--color-neutral-disabled);
-  }
-
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
+    margin-left: 2px;
   }
 
   .status-badge {
@@ -348,28 +280,6 @@
 
   .status-label {
     white-space: nowrap;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    padding: 4px;
-    cursor: pointer;
-    color: var(--color-interactive);
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-  }
-
-  .close-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    color: var(--color-neutral-active);
-  }
-
-  .close-btn .material-symbols-outlined {
-    font-size: 18px;
   }
 
   .body {

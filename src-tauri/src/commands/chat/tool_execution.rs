@@ -3,12 +3,15 @@ use crate::ai::functions::ToolCall;
 use crate::commands::chat_storage::{AIConversationMessage, ContentBlock, load_message, create_message};
 use super::super::log_backend;
 
+/// Returns `(tool_result_msg_iri, had_successful_speak)`.
+/// `had_successful_speak` is true when a `speak` tool was called and delivered without error,
+/// signalling the loop to break — the AI has communicated with the user.
 pub async fn execute_tools_from_message(
     executor: &DbExecutor,
     app: &tauri::AppHandle,
     conversation_id: &str,
     assistant_message: &AIConversationMessage,
-) -> Result<String, String> {
+) -> Result<(String, bool), String> {
     let tool_use_ids: Vec<String> = assistant_message.content.iter()
         .filter_map(|b| {
             if let ContentBlock::ToolUse { id, .. } = b { Some(id.clone()) } else { None }
@@ -51,14 +54,18 @@ pub async fn execute_tools_from_message(
         log_backend("warn", &format!(
             "[CHAT] Skipping duplicate tool_result — results already stored in: {}", iri
         ));
-        return Ok(iri);
+        return Ok((iri, false));
     }
 
     let mut tool_results = Vec::new();
+    let mut had_successful_speak = false;
 
     for block in &assistant_message.content {
         if let ContentBlock::ToolUse { id, name, input } = block {
             let (content, is_error) = execute_tool(executor, app, conversation_id, name, input).await;
+            if name == "speak" && !is_error {
+                had_successful_speak = true;
+            }
             tool_results.push(ContentBlock::ToolResult {
                 tool_use_id: id.clone(),
                 content,
@@ -70,10 +77,12 @@ pub async fn execute_tools_from_message(
     let content_json = serde_json::to_string(&tool_results)
         .map_err(|e| format!("Failed to serialize tool results: {}", e))?;
 
-    create_message(executor, conversation_id, "user", &content_json, None, None, None).await
+    let iri = create_message(executor, conversation_id, "user", &content_json, None, None, None).await?;
+    Ok((iri, had_successful_speak))
 }
 
 const SPEAK_MAX_CHARS: usize = 144;
+const WIDGET_CASCADE_OFFSET_PX: f64 = 50.0;
 
 async fn execute_tool(
     executor: &DbExecutor,
@@ -86,6 +95,14 @@ async fn execute_tool(
         let message = input.get("message").and_then(|v| v.as_str()).unwrap_or("");
         if message.chars().count() > SPEAK_MAX_CHARS {
             return (format!("Message exceeds {} characters ({} chars). Split into shorter calls.", SPEAK_MAX_CHARS, message.chars().count()), true);
+        }
+        if let Some(iris_val) = input.get("iris").and_then(|v| v.as_array()) {
+            let iris: Vec<String> = iris_val.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            if !iris.is_empty() {
+                show_widgets_for_iris(executor, app, conversation_id, iris).await;
+            }
         }
         return ("Delivered.".to_string(), false);
     }
@@ -118,4 +135,61 @@ async fn execute_tool(
     } else {
         (result_json, true)
     }
+}
+
+async fn show_widgets_for_iris(
+    executor: &DbExecutor,
+    app: &tauri::AppHandle,
+    conversation_id: &str,
+    iris: Vec<String>,
+) {
+    use crate::commands::widget::{self, Widget, Position, Size, WindowState};
+    use tauri::Emitter;
+
+    let conv_id = conversation_id.to_string();
+    let app_clone = app.clone();
+
+    let _ = executor.write(move |conn| {
+        let widget_types = widget::blackboard__list_widget_types(conn);
+
+        let entity_types = crate::eavto::query::get_first_iri_property_batch(
+            conn, &iris, "rdf:type",
+        ).unwrap_or_default();
+
+        let mut offset_count = 0usize;
+
+        for entity_id in &iris {
+            let class_iri = entity_types.get(entity_id).cloned().unwrap_or_default();
+
+            let matched = widget_types.iter()
+                .find(|t| t.supported_class != "owl:Thing" && t.supported_class == class_iri)
+                .or_else(|| widget_types.iter().find(|t| t.id == "inspector"));
+
+            let (widget_type_id, width, height) = match matched {
+                Some(t) => (t.id.clone(), t.default_size.width, t.default_size.height),
+                None => ("inspector".to_string(), 480.0, 600.0),
+            };
+
+            let offset = offset_count as f64 * WIDGET_CASCADE_OFFSET_PX;
+            let sanitized_entity = entity_id.replace([':', '/', '#', ' '], "_");
+            let conv_suffix = conv_id.replace([':', '/', '#', ' '], "_");
+
+            let w = Widget {
+                id: format!("foundation:Widget_{}_{}_{}", widget_type_id, sanitized_entity, conv_suffix),
+                widget_type: widget_type_id,
+                entity_id: entity_id.clone(),
+                position: Position { x: 100.0 + offset, y: 100.0 + offset },
+                size: Size { width, height },
+                window_state: WindowState::Normal,
+                conversation_iri: Some(conv_id.clone()),
+            };
+
+            if widget::owl_insert_widget(conn, &w).is_ok() {
+                app_clone.emit("widget-added", w).ok();
+                offset_count += 1;
+            }
+        }
+
+        Ok(String::new())
+    }).await;
 }

@@ -77,6 +77,10 @@ pub enum ContentBlock {
         thinking: String,
         signature: String,
     },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking {
+        data: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -129,6 +133,10 @@ enum ResponseContentBlock {
         thinking: String,
         #[serde(default)]
         signature: String,
+    },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking {
+        data: String,
     },
     #[serde(rename = "tool_use")]
     ToolUse {
@@ -349,7 +357,11 @@ impl AIProvider for ClaudeProvider {
                 }
                 ResponseContentBlock::Thinking { thinking, signature } => {
                     crate::commands::log_backend("debug", "[CLAUDE API] Received thinking block");
-                    thinking_blocks.push(crate::ai::ThinkingBlock { thinking, signature });
+                    thinking_blocks.push(crate::ai::ThinkingBlock::Thinking { thinking, signature });
+                }
+                ResponseContentBlock::RedactedThinking { data } => {
+                    crate::commands::log_backend("debug", "[CLAUDE API] Received redacted_thinking block");
+                    thinking_blocks.push(crate::ai::ThinkingBlock::RedactedThinking { data });
                 }
                 ResponseContentBlock::ToolUse { id, name, input } => {
                     tool_calls.push(ToolCall { id, name, input });

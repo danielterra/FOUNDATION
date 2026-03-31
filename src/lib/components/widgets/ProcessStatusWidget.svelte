@@ -2,12 +2,9 @@
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import WidgetContainer from './WidgetContainer.svelte';
 
   let { widgetId, entityId = '', windowState = 'normal', onWindowStateChange } = $props();
-
-  function toggleMinimize() {
-    onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized');
-  }
 
   let processLabel = $state('');
   let running = $state(false);
@@ -75,32 +72,26 @@
   });
 </script>
 
-<div class="process-status-widget">
-  <div class="widget-header">
-    <div class="header-left">
-      <span class="material-symbols-outlined header-icon">autorenew</span>
-      <span class="header-title">{processLabel || 'Process'}</span>
-    </div>
-    <div class="header-actions">
-      <button
-        class="run-btn"
-        onclick={executeProcess}
-        disabled={running}
-        title="Run process"
-      >
-        <span class="material-symbols-outlined">{running ? 'progress_activity' : 'play_arrow'}</span>
-      </button>
-      <button class="run-btn" onclick={openInspector} title="Open inspector">
-        <span class="material-symbols-outlined">info</span>
-      </button>
-      <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
-        <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
-      </button>
-      <button class="close-btn" onclick={closeWidget}>
-        <span class="material-symbols-outlined">close</span>
-      </button>
-    </div>
-  </div>
+<WidgetContainer
+  icon="autorenew"
+  title={processLabel || 'Process'}
+  {windowState}
+  {onWindowStateChange}
+  onClose={closeWidget}
+>
+  {#snippet headerActions()}
+    <button
+      class="action-btn run-btn"
+      onclick={executeProcess}
+      disabled={running}
+      title="Run process"
+    >
+      <span class="material-symbols-outlined">{running ? 'progress_activity' : 'play_arrow'}</span>
+    </button>
+    <button class="action-btn" onclick={openInspector} title="Open inspector">
+      <span class="material-symbols-outlined">info</span>
+    </button>
+  {/snippet}
 
   <div class="widget-content">
     {#if error}
@@ -136,74 +127,16 @@
       </ul>
     {/if}
   </div>
-</div>
+</WidgetContainer>
 
 <style>
-  .process-status-widget {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    background: color-mix(in srgb, var(--color-black) 85%, transparent);
-    backdrop-filter: blur(20px);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
+  .run-btn {
+    color: #43A047;
   }
 
-  .widget-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-    flex-shrink: 0;
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .header-icon {
-    font-size: 22px;
-    color: var(--color-interactive);
-  }
-
-  .header-title {
-    font-family: var(--font-title);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--color-neutral-active);
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .run-btn,
-  .close-btn {
-    background: none;
-    border: none;
-    padding: 4px;
-    cursor: pointer;
-    color: var(--color-interactive);
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-  }
-
-  .run-btn:hover:not(:disabled),
-  .close-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    color: var(--color-neutral-active);
+  .run-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, #43A047 15%, transparent);
+    color: #66BB6A;
   }
 
   .run-btn:disabled {
@@ -211,8 +144,7 @@
     cursor: not-allowed;
   }
 
-  .run-btn .material-symbols-outlined,
-  .close-btn .material-symbols-outlined {
+  .run-btn .material-symbols-outlined {
     font-size: 20px;
   }
 

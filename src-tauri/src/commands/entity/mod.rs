@@ -165,6 +165,7 @@ pub async fn graph__search_entities(
     }).await
 }
 
+
 /// Get entity data with its complete neighborhood for visualization
 #[tauri::command]
 #[allow(non_snake_case)]

@@ -311,22 +311,31 @@ pub async fn chat__send_and_reply(
                     "message": {
                         "type": "string",
                         "description": "The message to deliver to the user. Maximum 144 characters."
+                    },
+                    "iris": {
+                        "type": "array",
+                        "description": "IRIs of entities to display as widgets on the blackboard. The best widget type for each entity will be selected automatically.",
+                        "items": { "type": "string" }
                     }
                 },
                 "required": ["message"]
             }),
         });
 
+        let widget_context = executor.read(|conn| {
+            Ok(crate::commands::widget::widget_system_context(conn))
+        }).await.unwrap_or_default();
         let system_prompt = if let Some(ref frames) = camera_images {
             format!(
-                "{}\n\n{}\n\n[Camera Vision] {} webcam snapshot{} of the user were captured during the typing of this message and are included as image blocks at the start of the user's message, in chronological order. Use them to read the evolution of the user's facial expression, posture, and emotional energy over the course of composing the message, and calibrate your tone and depth of response accordingly. Do not mention the camera or the images to the user unless they explicitly ask.",
+                "{}\n\n{}\n\n{}\n\n[Camera Vision] {} webcam snapshot{} of the user were captured during the typing of this message and are included as image blocks at the start of the user's message, in chronological order. Use them to read the evolution of the user's facial expression, posture, and emotional energy over the course of composing the message, and calibrate your tone and depth of response accordingly. Do not mention the camera or the images to the user unless they explicitly ask.",
                 crate::ai::BASE_SYSTEM_PROMPT,
+                widget_context,
                 agent_config.system_prompt,
                 frames.len(),
                 if frames.len() == 1 { "" } else { "s" }
             )
         } else {
-            format!("{}\n\n{}", crate::ai::BASE_SYSTEM_PROMPT, agent_config.system_prompt)
+            format!("{}\n\n{}\n\n{}", crate::ai::BASE_SYSTEM_PROMPT, widget_context, agent_config.system_prompt)
         };
 
         let request = crate::ai::GenerateRequest {
@@ -373,6 +382,12 @@ pub async fn chat__send_and_reply(
             content_blocks,
             &executor,
         ).await;
+
+        if content_blocks.is_empty() && stop_reason == "end_turn" {
+            super::log_backend("info", "[CHAT] Claude returned empty end_turn — conversation complete, not saving");
+            break;
+        }
+
         let content_json = serde_json::to_string(&content_blocks)
             .map_err(|e| format!("Failed to serialize content: {}", e))?;
 
@@ -434,7 +449,7 @@ pub async fn chat__send_and_reply(
             })).ok();
 
             super::log_backend("info", "[CHAT] Executing tools...");
-            let tool_result_msg_iri = execute_tools_from_message(
+            let (tool_result_msg_iri, had_successful_speak) = execute_tools_from_message(
                 &executor,
                 &app,
                 &conversation_id,
@@ -448,7 +463,7 @@ pub async fn chat__send_and_reply(
 
             app.emit("chat-message-added", ()).ok();
 
-            if cancellation.is_cancelled(&conversation_id) {
+            if cancellation.is_cancelled(&conversation_id) || had_successful_speak {
                 break;
             }
 
@@ -824,12 +839,20 @@ pub async fn chat__recover_pending_tools(
         last_msg.role, has_tool_use, last_msg.content.len()
     ));
 
+    let all_delivered = last_msg.role == "user" && !last_msg.content.is_empty()
+        && last_msg.content.iter().all(|b| matches!(
+            b,
+            ContentBlock::ToolResult { content, is_error, .. }
+            if content == "Delivered." && !matches!(is_error, Some(true))
+        ));
+
     let needs_recovery = (last_msg.role == "assistant" && has_tool_use)
-        || last_msg.role == "user";
+        || (last_msg.role == "user" && !all_delivered);
 
     if !needs_recovery {
         super::log_backend("info", &format!(
-            "[RECOVERY] No recovery needed (role={}, has_tool_use={})", last_msg.role, has_tool_use
+            "[RECOVERY] No recovery needed (role={}, has_tool_use={}, all_delivered={})",
+            last_msg.role, has_tool_use, all_delivered
         ));
         return Ok(0);
     }
@@ -840,7 +863,7 @@ pub async fn chat__recover_pending_tools(
     );
 
     if last_msg.role == "assistant" && has_tool_use {
-        let tool_result_msg_iri = execute_tools_from_message(
+        let (tool_result_msg_iri, _) = execute_tools_from_message(
             &executor,
             &app,
             &conv_id,

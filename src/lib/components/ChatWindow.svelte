@@ -447,6 +447,16 @@
 			textareaElement.style.height = 'auto';
 		}
 
+		if (content) {
+			messages = [...messages, {
+				iri: `optimistic_${Date.now()}`,
+				role: 'user',
+				content: [{ type: 'text', text: content }],
+				timestamp: Date.now(),
+			}];
+			scrollToBottom();
+		}
+
 		startAIStatus('Claude is thinking', convIri);
 
 		invoke('chat__send_and_reply', {

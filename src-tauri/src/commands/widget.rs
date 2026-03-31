@@ -7,7 +7,6 @@ const WIDGET_CLASS: &str = "foundation:Widget";
 const WIDGET_ICON: &str = "widgets";
 const PRED_WIDGET_TYPE: &str = "foundation:widgetType";
 const PRED_ENTITY_ID: &str = "foundation:widgetEntityId";
-const PRED_CONTENT: &str = "foundation:widgetContent";
 const PRED_POSITION_X: &str = "foundation:widgetPositionX";
 const PRED_POSITION_Y: &str = "foundation:widgetPositionY";
 const PRED_SIZE_WIDTH: &str = "foundation:widgetSizeWidth";
@@ -18,12 +17,6 @@ const PRED_CONVERSATION: &str = "foundation:partOfConversation";
 
 const DEFAULT_POS_X: f64 = 100.0;
 const DEFAULT_POS_Y: f64 = 100.0;
-const DEFAULT_WIDTH_MERMAID: f64 = 700.0;
-const DEFAULT_HEIGHT_MERMAID: f64 = 500.0;
-const DEFAULT_WIDTH_FLOW: f64 = 480.0;
-const DEFAULT_HEIGHT_FLOW: f64 = 600.0;
-const DEFAULT_WIDTH_STANDARD: f64 = 480.0;
-const DEFAULT_HEIGHT_STANDARD: f64 = 600.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -39,7 +32,6 @@ pub struct Widget {
     pub id: String,
     pub widget_type: String,
     pub entity_id: String,
-    pub content: Option<String>,
     pub position: Position,
     pub size: Size,
     pub window_state: WindowState,
@@ -63,14 +55,20 @@ pub struct WidgetType {
     pub id: String,
     pub name: String,
     pub description: String,
-    pub supports_entity: bool,
+    /// Class IRI this widget is designed for. `"owl:Thing"` means any entity.
+    pub supported_class: String,
     pub default_size: Size,
+    pub icon: String,
+    /// If set, this widget is AI-creatable and this text is shown to the AI in the system prompt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WidgetDefinitionInfo {
     pub widget_type: String,
     pub description: String,
+    pub icon: String,
 }
 
 fn str_obj(value: impl Into<String>) -> Object {
@@ -110,7 +108,6 @@ fn individual_to_widget(ind: Individual) -> Option<Widget> {
     let y = prop_f64(&ind, PRED_POSITION_Y)?;
     let width = prop_f64(&ind, PRED_SIZE_WIDTH)?;
     let height = prop_f64(&ind, PRED_SIZE_HEIGHT)?;
-    let content = prop_str(&ind, PRED_CONTENT);
     let conversation_iri = prop_iri(&ind, PRED_CONVERSATION);
 
     let window_state = prop_str(&ind, PRED_WINDOW_STATE)
@@ -125,7 +122,6 @@ fn individual_to_widget(ind: Individual) -> Option<Widget> {
         id: ind.iri,
         widget_type,
         entity_id,
-        content,
         position: Position { x, y },
         size: Size { width, height },
         window_state,
@@ -149,10 +145,6 @@ pub fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), S
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, PRED_SIZE_HEIGHT, vec![Object::Number(widget.size.height)], WIDGET_ORIGIN)
         .map_err(|e| e.to_string())?;
-    if let Some(content) = &widget.content {
-        ind.add_property(conn, PRED_CONTENT, vec![str_obj(content)], WIDGET_ORIGIN)
-            .map_err(|e| e.to_string())?;
-    }
     let state_str = match widget.window_state {
         WindowState::Normal => "normal",
         WindowState::Minimized => "minimized",
@@ -242,64 +234,169 @@ fn owl_update_widget_content(
     widget_id: &str,
     content: &str,
 ) -> Result<(), String> {
-    let ind = Individual::new(widget_id);
-    ind.add_property(conn, PRED_CONTENT, vec![str_obj(content)], WIDGET_ORIGIN)
+    let ind = match Individual::get(conn, widget_id).map_err(|e| e.to_string())? {
+        Some(ind) => ind,
+        None => return Ok(()),
+    };
+    let entity_id = match prop_str(&ind, PRED_ENTITY_ID) {
+        Some(id) => id,
+        None => return Ok(()),
+    };
+    Individual::new(&entity_id)
+        .add_property(conn, "foundation:diagramSource", vec![str_obj(content)], WIDGET_ORIGIN)
         .map_err(|e| e.to_string())
 }
 
+/// Returns a static system prompt section describing every widget type.
+/// Intended to be appended to the cached system prompt block so Claude always
+/// knows what widgets exist and how to use them — without querying at runtime.
+pub fn widget_system_context(conn: &Connection) -> String {
+    let all_types = blackboard__list_widget_types(conn);
+
+    let ai_creatable: Vec<&WidgetType> = all_types.iter()
+        .filter(|t| t.usage_note.is_some())
+        .collect();
+
+    if ai_creatable.is_empty() {
+        return String::new();
+    }
+
+    let list = ai_creatable.iter()
+        .map(|t| format!("- **{}** — {}", t.id, t.usage_note.as_deref().unwrap_or_default()))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "## AI-creatable widgets\n\
+         Create the required entity first, then pass its IRI in `speak.iris` to display it:\n\
+         {list}"
+    )
+}
+
 #[allow(non_snake_case)]
-pub fn blackboard__list_widget_types() -> Vec<WidgetType> {
-    vec![
-        WidgetType {
-            id: "inspector".to_string(),
-            name: "Inspector".to_string(),
-            description: "Display detailed information about a class or instance".to_string(),
-            supports_entity: true,
-            default_size: Size { width: DEFAULT_WIDTH_STANDARD, height: DEFAULT_HEIGHT_STANDARD },
-        },
-        WidgetType {
-            id: "mermaid".to_string(),
-            name: "Mermaid Diagram".to_string(),
-            description: "Display a Mermaid diagram".to_string(),
-            supports_entity: false,
-            default_size: Size { width: DEFAULT_WIDTH_MERMAID, height: DEFAULT_HEIGHT_MERMAID },
-        },
-        WidgetType {
-            id: "process_status".to_string(),
-            name: "Process Status".to_string(),
-            description: "Display real-time execution status of a BPMN process".to_string(),
-            supports_entity: true,
-            default_size: Size { width: DEFAULT_WIDTH_STANDARD, height: DEFAULT_HEIGHT_STANDARD },
-        },
-        WidgetType {
-            id: "connector_credential".to_string(),
-            name: "Connector Credentials".to_string(),
-            description: "Configure authentication credentials for an external service connector".to_string(),
-            supports_entity: true,
-            default_size: Size { width: DEFAULT_WIDTH_STANDARD, height: DEFAULT_HEIGHT_STANDARD },
-        },
-        WidgetType {
-            id: "connector_manager".to_string(),
-            name: "Connector Manager".to_string(),
-            description: "Export, import and manage credentials for a service connector".to_string(),
-            supports_entity: true,
-            default_size: Size { width: DEFAULT_WIDTH_STANDARD, height: DEFAULT_HEIGHT_STANDARD },
-        },
-        WidgetType {
-            id: "automation".to_string(),
-            name: "Automation".to_string(),
-            description: "Interactive flow diagram of an Automation".to_string(),
-            supports_entity: true,
-            default_size: Size { width: DEFAULT_WIDTH_FLOW, height: DEFAULT_HEIGHT_FLOW },
-        },
-        WidgetType {
-            id: "workflow_execution".to_string(),
-            name: "Workflow Execution".to_string(),
-            description: "Step-by-step details of a workflow execution run".to_string(),
-            supports_entity: true,
-            default_size: Size { width: DEFAULT_WIDTH_STANDARD, height: DEFAULT_HEIGHT_STANDARD },
-        },
-    ]
+pub fn blackboard__list_widget_types(conn: &Connection) -> Vec<WidgetType> {
+    let iris = match Individual::find_by_class_with_date_range(conn, "foundation:WidgetType", None, None, false) {
+        Ok(iris) => iris,
+        Err(_) => return vec![],
+    };
+
+    let mut types = Vec::new();
+    for iri in iris {
+        if let Ok(Some(ind)) = Individual::get(conn, &iri) {
+            let id = match prop_str(&ind, "foundation:widgetTypeId") {
+                Some(id) => id,
+                None => continue,
+            };
+            let name = ind.label.clone().unwrap_or_else(|| id.clone());
+            let description = ind.comment.clone().unwrap_or_default();
+            let supported_class = prop_str(&ind, "foundation:widgetSupportedClass")
+                .unwrap_or_else(|| "owl:Thing".to_string());
+            let width = match prop_f64(&ind, "foundation:widgetDefaultWidth") {
+                Some(w) => w,
+                None => continue,
+            };
+            let height = match prop_f64(&ind, "foundation:widgetDefaultHeight") {
+                Some(h) => h,
+                None => continue,
+            };
+            let icon = ind.icon.clone().unwrap_or_default();
+            let usage_note = prop_str(&ind, "foundation:widgetUsageNote");
+            types.push(WidgetType {
+                id,
+                name,
+                description,
+                supported_class,
+                default_size: Size { width, height },
+                icon,
+                usage_note,
+            });
+        }
+    }
+    types
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiGraphData {
+    pub nodes: Vec<crate::commands::entity::GraphNode>,
+    pub links: Vec<crate::commands::entity::GraphLink>,
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_blackboard__get_graph_data(
+    entity_iris: Vec<String>,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    let result = executor.read(move |conn| {
+        if entity_iris.is_empty() {
+            return serde_json::to_string(&MultiGraphData { nodes: vec![], links: vec![] })
+                .map_err(|e| e.to_string());
+        }
+
+        let groups = crate::owl::load_graph_node_groups(conn);
+        let (group_class, group_individual, _) = groups;
+
+        // Build nodes from the provided IRIs only
+        let things = crate::owl::Thing::get_batch(conn, &entity_iris);
+        let mut nodes: Vec<crate::commands::entity::GraphNode> = entity_iris.iter().map(|iri| {
+            let t = things.get(iri);
+            let is_class = crate::owl::Class::get(conn, iri).map(|c| c.is_some()).unwrap_or(false);
+            crate::commands::entity::GraphNode {
+                id: iri.clone(),
+                label: t.map(|t| t.label.clone()).unwrap_or_else(|| iri.clone()),
+                icon: t.and_then(|t| t.icon.clone()),
+                group: if is_class { group_class } else { group_individual },
+                is_broken_ref: None,
+                is_literal: None,
+            }
+        }).collect();
+
+        // Deduplicate nodes (entity_iris may contain duplicates)
+        nodes.dedup_by(|a, b| a.id == b.id);
+
+        // Query relations where BOTH source and target are in the provided set
+        let placeholders: String = entity_iris.iter().enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let sql = format!(
+            "SELECT t.subject, t.object, COALESCE(p.label, t.predicate) as link_label
+             FROM triples t
+             LEFT JOIN (
+                 SELECT subject, object_value as label
+                 FROM triples
+                 WHERE predicate = 'rdfs:label' AND object_type = 'literal' AND retracted = 0
+             ) p ON p.subject = t.predicate
+             WHERE t.subject IN ({placeholders})
+               AND t.object IN ({placeholders})
+               AND t.object_type = 'iri'
+               AND t.predicate NOT IN ('rdf:type', 'foundation:icon', 'rdfs:subClassOf')
+               AND t.retracted = 0"
+        );
+
+        let params: Vec<&dyn rusqlite::ToSql> = entity_iris.iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+
+        let links = conn.prepare_cached(&sql)
+            .and_then(|mut stmt| {
+                stmt.query_map(params.as_slice(), |row| {
+                    Ok(crate::commands::entity::GraphLink {
+                        source: row.get(0)?,
+                        target: row.get(1)?,
+                        label: row.get::<_, String>(2).unwrap_or_default(),
+                    })
+                }).and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+            })
+            .map_err(|e| e.to_string())?;
+
+        let out = MultiGraphData { nodes, links };
+        serde_json::to_string(&out).map_err(|e| e.to_string())
+    }).await?;
+
+    Ok(result)
 }
 
 #[tauri::command]
@@ -319,32 +416,29 @@ pub async fn widget_blackboard__add_widget(
     app: AppHandle,
     widget_type: String,
     entity_id: String,
-    content: Option<String>,
     position: Option<Position>,
     size: Option<Size>,
     conversation_id: Option<String>,
     executor: State<'_, DbExecutor>
 ) -> Result<Widget, String> {
-    let valid_types = blackboard__list_widget_types();
-    if !valid_types.iter().any(|t| t.id == widget_type) {
-        return Err(format!("Invalid widget type: {}. Available types: {:?}",
-            widget_type,
-            valid_types.iter().map(|t| &t.id).collect::<Vec<_>>()
-        ));
-    }
+    let widget_type_check = widget_type.clone();
+    let default_size = executor.read(move |conn| {
+        let valid_types = blackboard__list_widget_types(conn);
+        valid_types.into_iter()
+            .find(|t| t.id == widget_type_check)
+            .map(|t| t.default_size)
+            .ok_or_else(|| format!("Invalid widget type: {}", widget_type_check))
+    }).await?;
 
     let sanitized_entity = entity_id.replace([':', '/', '#', ' '], "_");
     let conv_suffix = conversation_id.as_deref()
         .map(|c| format!("_{}", c.replace([':', '/', '#', ' '], "_")))
         .unwrap_or_default();
-    let widget_def = valid_types.iter().find(|t| t.id == widget_type).expect("type validated above");
-    let default_size = widget_def.default_size.clone();
 
     let widget = Widget {
         id: format!("foundation:Widget_{widget_type}_{sanitized_entity}{conv_suffix}"),
         widget_type,
         entity_id,
-        content,
         position: position.unwrap_or(Position { x: DEFAULT_POS_X, y: DEFAULT_POS_Y }),
         size: size.unwrap_or(default_size),
         window_state: WindowState::Normal,
@@ -438,20 +532,6 @@ pub async fn widget_blackboard__update_widget_content(
     let widget_id_clone = widget_id.clone();
     executor.write(move |conn| {
         owl_update_widget_content(conn, &widget_id_clone, &content)?;
-        if let Ok(Some(ind)) = Individual::get(conn, &widget_id_clone) {
-            let is_mermaid = ind.properties.iter()
-                .any(|(p, v)| p == PRED_WIDGET_TYPE && v.as_literal().map_or(false, |s| s == "mermaid"));
-            if is_mermaid {
-                if let Some(entity_id) = ind.properties.iter()
-                    .find(|(p, _)| p == PRED_ENTITY_ID)
-                    .and_then(|(_, v)| v.as_literal())
-                {
-                    Individual::new(&entity_id)
-                        .add_property(conn, "foundation:diagramSource", vec![str_obj(&content)], WIDGET_ORIGIN)
-                        .ok();
-                }
-            }
-        }
         Ok("updated".to_string())
     }).await?;
     app.emit("widget-content-updated", widget_id).ok();
@@ -465,52 +545,22 @@ pub async fn widget_blackboard__list_widget_definitions(
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<WidgetDefinitionInfo>, String> {
     executor.read(move |conn| {
-        let widget_iris = crate::owl::find_entities_with_property(conn, rdf::TYPE, "foundation:WidgetDefinition")
-            .map_err(|e| e.to_string())?;
+        let all_types = blackboard__list_widget_types(conn);
 
-        let mut results = Vec::new();
-        for iri in widget_iris {
-            let ind = match Individual::get(conn, &iri) {
-                Ok(Some(ind)) => ind,
-                _ => continue,
-            };
-
-            if let Some(ref filter_iri) = class_iri {
-                let supports_entity = ind.properties.iter()
-                    .find(|(p, _)| p == "foundation:widgetDefSupportsEntity")
-                    .and_then(|(_, v)| v.as_literal())
-                    .map(|s| s == "true")
-                    .unwrap_or(false);
-
-                if !supports_entity {
-                    continue;
+        let results = all_types.into_iter()
+            .filter(|t| {
+                if let Some(ref filter_iri) = class_iri {
+                    t.supported_class == "owl:Thing" || &t.supported_class == filter_iri
+                } else {
+                    true
                 }
-
-                let supported_concepts: Vec<String> = ind.properties.iter()
-                    .filter(|(p, _)| p == "foundation:widgetDefSupportedConcepts")
-                    .filter_map(|(_, v)| v.as_iri().map(String::from))
-                    .collect();
-
-                if !supported_concepts.is_empty() && !supported_concepts.iter().any(|c| c == filter_iri) {
-                    continue;
-                }
-            }
-
-            let id = ind.properties.iter()
-                .find(|(p, _)| p == "foundation:widgetDefId")
-                .and_then(|(_, v)| v.as_literal())
-                .unwrap_or_default();
-
-            let description = ind.properties.iter()
-                .find(|(p, _)| p == "foundation:widgetDefDescription")
-                .and_then(|(_, v)| v.as_literal())
-                .unwrap_or_default();
-
-            results.push(WidgetDefinitionInfo {
-                widget_type: id.to_string(),
-                description: description.to_string(),
-            });
-        }
+            })
+            .map(|t| WidgetDefinitionInfo {
+                widget_type: t.id,
+                description: t.description,
+                icon: t.icon,
+            })
+            .collect();
 
         Ok(results)
     }).await

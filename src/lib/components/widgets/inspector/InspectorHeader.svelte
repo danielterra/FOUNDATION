@@ -19,10 +19,6 @@
     onUpdateStatus,
   } = $props();
 
-  const WIDGET_TYPE_ICONS = {
-    mermaid: 'account_tree',
-  };
-
   function isIconUrl(icon) {
     if (!icon) return false;
     return icon.startsWith('http://') || icon.startsWith('https://') ||
@@ -72,13 +68,12 @@
     <div class="header-actions">
       <div class="header-action-buttons">
         {#each widgetDefinitions as def}
-          {@const defIcon = WIDGET_TYPE_ICONS[def.widget_type] ?? 'open_in_new'}
           <button
             class="action-btn"
             onclick={() => onOpenWidget(def.widget_type)}
             title={def.description}
           >
-            <span class="material-symbols-outlined">{defIcon}</span>
+            <span class="material-symbols-outlined">{def.icon || 'open_in_new'}</span>
           </button>
         {/each}
         {#if entityData}
