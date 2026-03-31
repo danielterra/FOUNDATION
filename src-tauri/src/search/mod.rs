@@ -136,15 +136,14 @@ fn do_init(index_dir: &Path, conn: &Connection) -> Result<SearchIndex, Box<dyn s
     let (schema, f_iri, f_label, f_comment, f_props, f_content, f_concept, f_is_class, f_boost, f_completed) = build_schema();
 
     let (index, needs_rebuild) = if index_dir.exists() {
-        let stale = Index::open_in_dir(index_dir)
-            .map(|existing| existing.schema() != schema)
-            .unwrap_or(true);
-        if stale {
-            std::fs::remove_dir_all(index_dir)?;
-            std::fs::create_dir_all(index_dir)?;
-            (Index::create_in_dir(index_dir, schema)?, true)
-        } else {
-            (Index::open_in_dir(index_dir)?, false)
+        match Index::open_in_dir(index_dir) {
+            Ok(existing) if existing.schema() == schema => (existing, false),
+            _ => {
+                log_backend("warn", "Search index corrupt or stale — rebuilding from scratch");
+                std::fs::remove_dir_all(index_dir)?;
+                std::fs::create_dir_all(index_dir)?;
+                (Index::create_in_dir(index_dir, schema)?, true)
+            }
         }
     } else {
         std::fs::create_dir_all(index_dir)?;

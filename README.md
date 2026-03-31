@@ -6,25 +6,28 @@
 
 ![FOUNDATION Screenshot](static/Screenshot1.png)
 
-**Version 0.13.0** - AI-powered ontology management system with long-term memory
+**Version 0.16.0** - AI-powered ontology management system with long-term memory
 
 <!-- installers not yet available for this release
 [![Download for macOS](https://img.shields.io/badge/Download-macOS-blue?style=for-the-badge&logo=apple)](https://github.com/danielterra/FOUNDATION/releases/latest/download/FOUNDATION_0.13.0_universal.dmg)
 [![Download for Windows](https://img.shields.io/badge/Download-Windows-blue?style=for-the-badge&logo=windows)](https://github.com/danielterra/FOUNDATION/releases/latest/download/FOUNDATION_0.13.0_x64_en-US.msi)
 [![Download for Linux](https://img.shields.io/badge/Download-Linux-blue?style=for-the-badge&logo=linux)](https://github.com/danielterra/FOUNDATION/releases/latest/download/foundation_0.13.0_amd64.AppImage)
 -->
-[![Changelog](https://img.shields.io/badge/Changelog-v0.13.0-informational?style=for-the-badge)](https://github.com/danielterra/FOUNDATION/blob/main/CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/Changelog-v0.16.0-informational?style=for-the-badge)](https://github.com/danielterra/FOUNDATION/blob/main/CHANGELOG.md)
 
 ## Features
 
-- **Automation**: BPMN 2.0 workflow engine that reacts to data changes — connect to APIs, orchestrate multi-step processes, and trigger complex workflows without manual intervention. `[em desenvolvimento]`
-- **Camera Vision**: AI captures a webcam photo at each message, reads facial expression and body language, and stores the image and interpretation securely alongside the conversation history. `[finalizado]`
-- **Integrated AI Chat**: Built-in AI chat with full access to the personal knowledge base, context-aware and persistent across sessions, deeply integrated with the ontology. `[em desenvolvimento]`
-- **Local MCP Server**: Exposes a local MCP server (localhost:47177) so external AI clients (Claude Code, etc.) can access the same memory and tools as the built-in assistant. `[finalizado]`
-- **Ontology**: Structures data through formal relationships between entities using a shared base ontology — enabling different FOUNDATION instances to understand each other's data without integrations or mappings. `[em desenvolvimento]`
-- **Open Source and Free**: GNU GPL licensed — no subscriptions, no vendor lock-in, no corporation owns it. `[finalizado]`
-- **Ownership**: Runs locally on your machine — no Big Tech servers required, your data and tools fully under your control. `[finalizado]`
-- **Settings**: User preferences panel — language, locale, AI model, theme, and other configurable options stored as typed ontology instances. `[em desenvolvimento]`
+- **Automation**: A BPMN 2.0-based workflow engine that lets users and the AI model, schedule, and execute automated multi-step processes triggered by timers or internal events. `[em desenvolvimento]`
+- **Calculated Fields**: Read-only properties whose values are automatically computed from formulas referencing other instance properties, with cascading recalculation on change. `[em desenvolvimento]`
+- **Camera Vision**: Optionally captures a webcam photo on each message send, extracting facial expression and body language context to enrich long-term conversation memory. `[finalizado]`
+- **Dynamic Blackboard with Widgets**: A visual canvas where multiple widgets display entities and their relationships simultaneously, providing rich interactive context beyond text. `[em desenvolvimento]`
+- **Integrated AI Chat**: A built-in AI chat interface with full real-time access to the user's personal knowledge base, persistent across sessions and deeply integrated with the ontology. `[em desenvolvimento]`
+- **Local MCP Server**: Exposes a local Model Context Protocol server so external AI clients (e.g. Claude Code) can use the same memory and tools as the internal assistant. `[finalizado]`
+- **Ontology**: Structures data through formal relationships between entities via a shared base ontology that keeps data meaningful and interoperable as the system evolves. `[em desenvolvimento]`
+- **Open Source and Free**: FOUNDATION is released under GNU GPL — no vendor lock-in, no subscriptions, built by the community for everyone. `[finalizado]`
+- **Ownership**: Runs entirely on the user's own machine with no external servers required, ensuring full data ownership and control. `[finalizado]`
+- **Settings**: A settings panel for viewing and editing user preferences (language, locale, AI model, theme) stored as typed `SoftwareSetting` instances. `[em desenvolvimento]`
+- **Subconscious**: An automatic background memory mechanism that surfaces 5–10 relevant ontology entities as scored chips on every user message, enriching AI context without explicit search. `[finalizado]`
 
 ## Quick Start
 

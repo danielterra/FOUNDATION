@@ -15,7 +15,7 @@ const EXCLUDED_IRIS: &[&str] = &[
     // Example IRIs used in API description strings only (not real entity references)
     "foundation:Task_123",
     "foundation:Task_456",
-    "foundation:MetaProcess_123",
+    "foundation:Task_1234567890",
     "foundation:bpmn_Process_123",
     // Instances that exist in the DB but with origin 'ai' instead of an ontology origin.
     // TODO: move these to setup.rs so they are created with origin 'setup' and seeded properly.
@@ -40,7 +40,10 @@ fn is_excluded(iri: &str) -> bool {
 }
 
 fn is_test_path(path: &std::path::Path) -> bool {
-    if path.components().any(|c| c.as_os_str() == "tests") {
+    if path.components().any(|c| {
+        let s = c.as_os_str().to_string_lossy();
+        s == "tests" || s.ends_with("_tests")
+    }) {
         return true;
     }
     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {

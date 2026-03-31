@@ -5,6 +5,31 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-03-31
+
+### Added
+
+- **Ontology-driven widget registry**: Widget types are now defined as `foundation:WidgetType` individuals in the ontology — no Rust code changes required to register new types
+- **speak.iris**: `speak` tool accepts an `iris` parameter to auto-show widgets for referenced entities when communicating with the user
+- **Automation run toast**: Inspector shows a live toast notification when an automation is triggered, updating in real time as steps progress and resolving on completion or failure
+- **Numeric formula operators**: Formula properties support numeric operators with validation, recalculation, and NumberFlow animated display
+- **Adaptive thinking**: AI uses extended thinking budget dynamically based on task complexity
+- **Relative timestamps**: Chat messages show relative time (e.g. "2 min ago") instead of absolute timestamps
+- **speak tool**: Dedicated AI output tool for communicating with the user, with 144-character limit and optional entity widget display
+
+### Fixed
+
+- **Widget cascade positioning**: Widgets opened via `speak.iris` now cascade from top-left instead of appearing far off-screen
+- **Automation button in Inspector**: Inspector correctly shows automation buttons for classes with linked automations after fixing widget type registry lookup
+- **Recovery loop infinite cycling**: Concurrent recovery calls on the same conversation no longer create orphaned tool pairs that loop indefinitely
+- **Inspector header border-bottom**: Hidden when inspector is minimized to remove visual artifact
+- **rdf:Property type upgrade**: Improved handling of RDF property type assertions
+
+### Refactored
+
+- **Consolidated individual/class AI functions**: Merged redundant AI function handlers with retention policy
+- **actions-bar fix**: Corrected actions bar rendering and interaction
+
 ## [0.15.0] - 2026-03-22
 
 ### Added
