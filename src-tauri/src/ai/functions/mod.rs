@@ -134,7 +134,7 @@ pub fn execute_tool(
     conn: &mut Connection,
     call: &ToolCall,
     app: Option<&tauri::AppHandle>,
-    conversation_id: Option<&str>,
+    _conversation_id: Option<&str>,
 ) -> ToolResult {
     let is_array_mode = get_available_tools()
         .iter()
@@ -162,7 +162,7 @@ pub fn execute_tool(
         "describe_property" => property::describe_property(conn, args),
         "class_graph" => class_graph::get_class_graph(conn, args),
 "get_automation" => get_automation_tool(conn, args),
-        "run_automation" => run_automation_tool(args, app),
+        "run_automation" => run_automation_tool(conn, args, app),
         _ => ToolResult {
             success: false,
             result: None,
@@ -246,7 +246,9 @@ fn get_automation_tool(conn: &rusqlite::Connection, args: &Value) -> ToolResult 
     }
 }
 
-fn run_automation_tool(args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult {
+fn run_automation_tool(conn: &Connection, args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult {
+    use crate::owl::{find_entities_with_property, get_iri_property, get_literal_property, Individual};
+
     let app = match app {
         Some(a) => a.clone(),
         None => return ToolResult {
@@ -267,8 +269,89 @@ fn run_automation_tool(args: &Value, app: Option<&tauri::AppHandle>) -> ToolResu
         },
     };
 
+    let input_iri = args["input_iri"].as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let input_class_iri: Option<String> = (|| -> Option<String> {
+        let node_iris = find_entities_with_property(conn, "foundation:partOfProcess", &automation_iri)
+            .ok()?;
+
+        for node_iri in &node_iris {
+            let node_type = get_iri_property(conn, node_iri, "rdf:type").ok()??;
+            if node_type.ends_with("automation_StartEvent") {
+                if let Some(class_iri) = get_iri_property(conn, node_iri, "foundation:inputClass").ok()? {
+                    return Some(class_iri);
+                }
+            }
+        }
+        None
+    })();
+
+    if let Some(ref class_iri) = input_class_iri {
+        let class_label = get_literal_property(conn, class_iri, "rdfs:label")
+            .unwrap_or_default()
+            .unwrap_or_else(|| class_iri.clone());
+
+        let provided_iri = match &input_iri {
+            Some(iri) => iri.clone(),
+            None => return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!(
+                    "This automation requires an input of type '{}' but no input_iri was provided.",
+                    class_label
+                )),
+                concept: None,
+            },
+        };
+
+        let individual = match Individual::get(conn, &provided_iri) {
+            Ok(Some(ind)) => ind,
+            Ok(None) => return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!("Input individual '{}' not found in the ontology.", provided_iri)),
+                concept: None,
+            },
+            Err(e) => return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!("Failed to look up input individual '{}': {}", provided_iri, e)),
+                concept: None,
+            },
+        };
+
+        let actual_type = individual.properties.iter()
+            .find(|(k, _)| k == "rdf:type")
+            .map(|(_, v)| match v {
+                crate::owl::Object::Iri(iri) => iri.clone(),
+                _ => String::new(),
+            })
+            .unwrap_or_default();
+
+        if actual_type != *class_iri {
+            let actual_label = if actual_type.is_empty() {
+                "unknown".to_string()
+            } else {
+                get_literal_property(conn, &actual_type, "rdfs:label")
+                    .unwrap_or_default()
+                    .unwrap_or_else(|| actual_type.clone())
+            };
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!(
+                    "Type mismatch: automation expects input of type '{}' but '{}' is of type '{}'.",
+                    class_label, provided_iri, actual_label
+                )),
+                concept: None,
+            };
+        }
+    }
+
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = crate::process_automation::executor::run_process(&app, &automation_iri, None).await {
+        if let Err(e) = crate::process_automation::executor::run_process(&app, &automation_iri, input_iri).await {
             crate::commands::log_backend(
                 "error",
                 &format!("[run_automation] Error running {}: {}", automation_iri, e),

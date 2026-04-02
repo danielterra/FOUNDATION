@@ -353,7 +353,7 @@ mod tests {
 
         let result = initialize_db(&db_path);
 
-        assert!(result.is_ok(), "Database initialization should succeed");
+        assert!(result.is_ok(), "Database initialization should succeed: {:?}", result.err());
         assert!(db_path.exists(), "Database file should be created");
 
         let conn = Connection::open(&db_path).expect("Should open created database");

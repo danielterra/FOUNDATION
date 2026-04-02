@@ -304,12 +304,12 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
             let status_iris = crate::owl::get_all_iri_properties(conn, class_iri, "foundation:allowedStatus")?;
             for status_iri in status_iris {
                 let thing = crate::owl::Thing::get(conn, &status_iri);
-                let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri);
+                let comment = crate::owl::get_literal_property(conn, &status_iri, "rdfs:comment")
+                    .unwrap_or_default();
                 allowed_statuses.push(serde_json::json!({
                     "iri": status_iri,
                     "label": thing.label,
-                    "icon": icon,
-                    "color": color,
+                    "comment": comment,
                 }));
             }
 
@@ -784,12 +784,20 @@ fn retract_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
         },
     };
 
-    match Individual::retract(conn, iri, "ai") {
-        Ok(_) => {
+    match Individual::retract_with_summary(conn, iri, "ai") {
+        Ok(cascade) => {
             super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+            let message = if cascade.is_empty() {
+                format!("Individual '{}' retracted.", iri)
+            } else {
+                let parts: Vec<String> = cascade.iter()
+                    .map(|(prop, dir, count)| format!("{} via {} ({})", count, prop, dir))
+                    .collect();
+                format!("Individual '{}' retracted. Cascade: {}.", iri, parts.join(", "))
+            };
             ToolResult {
                 success: true,
-                result: Some(serde_json::json!({"iri": iri})),
+                result: Some(serde_json::json!({"iri": iri, "message": message})),
                 error: None,
                 concept: None,
             }

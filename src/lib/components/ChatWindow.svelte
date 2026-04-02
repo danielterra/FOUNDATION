@@ -50,12 +50,31 @@
 	let conversations = $state([]);
 	let conversationAgent = $state(null);
 	let loadMessagesVersion = 0;
+	let cameraEnabled = $state(localStorage.getItem('camera_vision_enabled') !== 'false');
+	let thinkingEnabled = $state(localStorage.getItem('thinking_enabled') !== 'false');
 	let cameraStream = null;
 	let cameraVideoEl = null;
 	let capturedFrames = [];
 	let captureTimer = null;
 	let captureStarted = false;
 	let inactivityTimer = null;
+
+	$effect(() => {
+		localStorage.setItem('camera_vision_enabled', String(cameraEnabled));
+		if (!cameraEnabled) stopCapturing(false);
+	});
+
+	$effect(() => {
+		localStorage.setItem('thinking_enabled', String(thinkingEnabled));
+	});
+
+	function toggleCamera() {
+		cameraEnabled = !cameraEnabled;
+	}
+
+	function toggleThinking() {
+		thinkingEnabled = !thinkingEnabled;
+	}
 
 	$effect(() => {
 		if (activeConversationIri) {
@@ -437,7 +456,7 @@
 		}
 
 		const attachmentIris = pendingAttachments.map(a => a.iri);
-		const cameraImages = selectEvenly(capturedFrames, MAX_CAMERA_FRAMES_PER_MESSAGE);
+		const cameraImages = cameraEnabled ? selectEvenly(capturedFrames, MAX_CAMERA_FRAMES_PER_MESSAGE) : [];
 		stopCapturing(false);
 
 		inputText = '';
@@ -466,6 +485,7 @@
 			attachmentIris: attachmentIris.length > 0 ? attachmentIris : null,
 			conversationId: convIri,
 			cameraImages: cameraImages.length > 0 ? cameraImages : null,
+			thinkingEnabled,
 		}).then(() => {
 			stopAIStatus(convIri);
 		}).catch(err => {
@@ -724,7 +744,7 @@
 	}
 
 	$effect(() => {
-		if (inputText.length > 0) {
+		if (inputText.length > 0 && cameraEnabled) {
 			if (!captureStarted) startCapturing();
 			resetCaptureInactivityTimer();
 		} else {
@@ -780,6 +800,10 @@
 				{editingMessageIri}
 				onCancelEdit={cancelEdit}
 				onCancelAI={cancelAI}
+				{cameraEnabled}
+				onToggleCamera={toggleCamera}
+				{thinkingEnabled}
+				onToggleThinking={toggleThinking}
 			/>
 		{/if}
 	</div>

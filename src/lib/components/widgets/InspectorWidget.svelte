@@ -1,9 +1,6 @@
 <script>
   import { onMount, onDestroy, untrack } from 'svelte';
 
-  const TOAST_SUCCESS_DISMISS_MS = 2000;
-  const TOAST_FAILURE_DISMISS_MS = 4000;
-  const TOAST_INVOKE_ERROR_DISMISS_MS = 3000;
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import FilePreview from './inspector/FilePreview.svelte';
@@ -30,14 +27,8 @@
   let unlistenEntityUpdated = $state(null);
   let unlistenEntityReferenced = $state(null);
   let unlistenEntityDeleted = $state(null);
-  let unlistenAutomationStarted = $state(null);
-  let unlistenAutomationStep = $state(null);
-  let unlistenAutomationFinished = $state(null);
   let applicableAutomations = $state([]);
   let runningAutomationIri = $state(null);
-  let automationToast = $state(null); // { label, step, status: 'running'|'completed'|'failed' }
-  let trackedAutomationIri = $state(null);
-  let trackedExecutionIri = $state(null);
   let togglingLock = $state(false);
   let showStatusPicker = $state(false);
   let statusBadgeWrapperEl = $state(null);
@@ -274,15 +265,10 @@
 
   async function runAutomation(automationIri, inputIri = null, label = null) {
     runningAutomationIri = automationIri;
-    trackedAutomationIri = automationIri;
-    trackedExecutionIri = null;
-    automationToast = { label: label ?? 'Automation', step: null, status: 'running' };
     try {
       await invoke('automation__run', { automationIri, inputIri });
     } catch (err) {
       console.error('Failed to run automation:', err);
-      automationToast = { label: label ?? 'Automation', step: null, status: 'failed' };
-      setTimeout(() => { automationToast = null; }, TOAST_INVOKE_ERROR_DISMISS_MS);
     } finally {
       runningAutomationIri = null;
     }
@@ -339,37 +325,12 @@
       }
     });
 
-    unlistenAutomationStarted = await listen('automation-execution-started', (event) => {
-      if (event.payload.processIri === trackedAutomationIri) {
-        trackedExecutionIri = event.payload.executionIri;
-      }
-    });
-
-    unlistenAutomationStep = await listen('automation-step-progress', (event) => {
-      if (event.payload.executionIri === trackedExecutionIri && automationToast) {
-        automationToast = { ...automationToast, step: event.payload.nodeLabel, status: 'running' };
-      }
-    });
-
-    unlistenAutomationFinished = await listen('automation-execution-finished', (event) => {
-      if (event.payload.executionIri !== trackedExecutionIri) return;
-      const succeeded = event.payload.status === 'Completed';
-      automationToast = { ...automationToast, step: null, status: succeeded ? 'completed' : 'failed' };
-      setTimeout(() => {
-        automationToast = null;
-        trackedAutomationIri = null;
-        trackedExecutionIri = null;
-      }, succeeded ? TOAST_SUCCESS_DISMISS_MS : TOAST_FAILURE_DISMISS_MS);
-    });
   });
 
   onDestroy(() => {
     if (unlistenEntityUpdated) unlistenEntityUpdated();
     if (unlistenEntityReferenced) unlistenEntityReferenced();
     if (unlistenEntityDeleted) unlistenEntityDeleted();
-    if (unlistenAutomationStarted) unlistenAutomationStarted();
-    if (unlistenAutomationStep) unlistenAutomationStep();
-    if (unlistenAutomationFinished) unlistenAutomationFinished();
   });
 </script>
 
@@ -512,21 +473,6 @@
     </div>
   {/if}
 
-  {#if automationToast}
-    {@const icon = automationToast.status === 'completed' ? 'check_circle' : automationToast.status === 'failed' ? 'error' : 'progress_activity'}
-    <div class="automation-toast" class:toast-success={automationToast.status === 'completed'} class:toast-error={automationToast.status === 'failed'}>
-      <span class="material-symbols-outlined" class:spinning={automationToast.status === 'running'}>{icon}</span>
-      {#if automationToast.status === 'completed'}
-        "{automationToast.label}" completed
-      {:else if automationToast.status === 'failed'}
-        "{automationToast.label}" failed
-      {:else if automationToast.step}
-        {automationToast.step}
-      {:else}
-        Starting "{automationToast.label}"…
-      {/if}
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -808,40 +754,4 @@
     font-size: 16px;
   }
 
-  .automation-toast {
-    position: absolute;
-    bottom: 12px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 14px;
-    background: color-mix(in srgb, #3b82f6 20%, var(--color-black));
-    border: 1px solid color-mix(in srgb, #3b82f6 50%, transparent);
-    border-radius: 20px;
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
-    color: #3b82f6;
-    white-space: nowrap;
-    z-index: 101;
-    pointer-events: none;
-  }
-
-  .automation-toast .material-symbols-outlined {
-    font-size: 16px;
-  }
-
-  .automation-toast.toast-success {
-    background: color-mix(in srgb, #22c55e 20%, var(--color-black));
-    border-color: color-mix(in srgb, #22c55e 50%, transparent);
-    color: #22c55e;
-  }
-
-  .automation-toast.toast-error {
-    background: color-mix(in srgb, #ef4444 20%, var(--color-black));
-    border-color: color-mix(in srgb, #ef4444 50%, transparent);
-    color: #ef4444;
-  }
 </style>

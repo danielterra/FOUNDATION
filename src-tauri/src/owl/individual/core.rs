@@ -115,6 +115,27 @@ impl Individual {
     /// - `foundation:cascadeDeleteRange propIRI` — when this class is retracted, also retract all
     ///   IRIs that this entity references via `(this_iri, propIRI, target)` (parent references children)
     pub fn retract(conn: &mut Connection, iri: &str, origin: &str) -> Result<()> {
+        let mut summary = Vec::new();
+        Self::retract_inner(conn, iri, origin, &mut summary)
+    }
+
+    /// Retract an individual and return a per-rule cascade summary: `(property_iri, direction, count)`.
+    pub fn retract_with_summary(
+        conn: &mut Connection,
+        iri: &str,
+        origin: &str,
+    ) -> Result<Vec<(String, String, usize)>> {
+        let mut summary: Vec<(String, String, usize)> = Vec::new();
+        Self::retract_inner(conn, iri, origin, &mut summary)?;
+        Ok(summary)
+    }
+
+    fn retract_inner(
+        conn: &mut Connection,
+        iri: &str,
+        origin: &str,
+        summary: &mut Vec<(String, String, usize)>,
+    ) -> Result<()> {
         crate::owl::check_system_locked(conn, iri, None)?;
 
         let type_iris: Vec<String> = query::get_by_entity_predicate(conn, iri, rdf::TYPE)
@@ -136,8 +157,12 @@ impl Individual {
                     query::get_by_predicate_object(conn, prop, iri)
                         .map(|r| r.triples.into_iter().map(|t| t.subject).collect())
                         .unwrap_or_default();
+                let count = children.len();
                 for child in children {
-                    Self::retract(conn, &child, origin)?;
+                    Self::retract_inner(conn, &child, origin, summary)?;
+                }
+                if count > 0 {
+                    summary.push((prop.clone(), "domain".to_string(), count));
                 }
             }
 
@@ -155,8 +180,12 @@ impl Individual {
                             .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
                             .collect())
                         .unwrap_or_default();
+                let count = targets.len();
                 for target in targets {
-                    Self::retract(conn, &target, origin)?;
+                    Self::retract_inner(conn, &target, origin, summary)?;
+                }
+                if count > 0 {
+                    summary.push((prop.clone(), "range".to_string(), count));
                 }
             }
         }

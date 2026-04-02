@@ -264,7 +264,7 @@ fn test_remove_details_with_other_domains_preserves_property() {
 }
 
 #[test]
-fn test_remove_details_last_domain_deletes_property() {
+fn test_remove_details_last_domain_preserves_property() {
     let mut conn = setup_test_db();
 
     crate::owl::Property::new("foundation:singleDomainProp")
@@ -287,7 +287,9 @@ fn test_remove_details_last_domain_deletes_property() {
     assert!(result.success, "remove_properties should succeed: {:?}", result.error);
 
     let prop = crate::owl::Property::get(&conn, "foundation:singleDomainProp").unwrap();
-    assert!(prop.is_none(), "property must be deleted when it has no remaining domains");
+    assert!(prop.is_some(), "property must still exist after domain dissociation");
+    let domains = prop.unwrap().domains;
+    assert!(!domains.contains(&"foundation:OnlyOwner".to_string()), "OnlyOwner must be removed from domains");
 }
 
 #[test]
@@ -599,4 +601,297 @@ fn test_rename_concept_rejects_existing_target() {
     };
     let result = execute_tool(&mut conn, &rename, None, None);
     assert!(!result.success, "rename to existing IRI must fail");
+}
+
+// ── cascade_rules ────────────────────────────────────────────────────────────
+
+fn setup_class(conn: &mut rusqlite::Connection, iri: &str) {
+    store::assert_triples(conn, &[
+        Triple::new(iri, "rdf:type", Object::Iri("owl:Class".to_string())),
+        Triple::new(iri, "rdfs:label", Object::Literal {
+            value: iri.to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+    ], "test").unwrap();
+}
+
+fn get_cascade_triples(conn: &rusqlite::Connection, class_iri: &str, predicate: &str) -> Vec<String> {
+    crate::eavto::query::get_by_entity_predicate(conn, class_iri, predicate)
+        .map(|r| r.triples.into_iter()
+            .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+            .collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn test_define_class_with_cascade_rules_stores_range_rule() {
+    let mut conn = setup_test_db();
+    setup_class(&mut conn, "test:Automation");
+
+    let args = serde_json::json!({
+        "iri": "test:Automation",
+        "cascade_rules": [{"property_iri": "foundation:hasSequenceFlow", "direction": "range"}]
+    });
+    let result = define_class_one(&mut conn, &args);
+    assert!(result.success, "Expected success, got: {:?}", result.error);
+
+    let range = get_cascade_triples(&conn, "test:Automation", "foundation:cascadeDeleteRange");
+    assert!(range.contains(&"foundation:hasSequenceFlow".to_string()),
+        "cascadeDeleteRange triple must be stored");
+}
+
+#[test]
+fn test_define_class_with_cascade_rules_stores_domain_rule() {
+    let mut conn = setup_test_db();
+    setup_class(&mut conn, "test:Automation");
+
+    let args = serde_json::json!({
+        "iri": "test:Automation",
+        "cascade_rules": [{"property_iri": "foundation:partOfAutomation", "direction": "domain"}]
+    });
+    let result = define_class_one(&mut conn, &args);
+    assert!(result.success, "Expected success, got: {:?}", result.error);
+
+    let domain = get_cascade_triples(&conn, "test:Automation", "foundation:cascadeDeleteDomain");
+    assert!(domain.contains(&"foundation:partOfAutomation".to_string()),
+        "cascadeDeleteDomain triple must be stored");
+}
+
+#[test]
+fn test_define_class_with_multiple_cascade_rules_stores_all() {
+    let mut conn = setup_test_db();
+    setup_class(&mut conn, "test:Automation");
+
+    let args = serde_json::json!({
+        "iri": "test:Automation",
+        "cascade_rules": [
+            {"property_iri": "foundation:hasSequenceFlow", "direction": "range"},
+            {"property_iri": "foundation:executesProcess", "direction": "domain"}
+        ]
+    });
+    let result = define_class_one(&mut conn, &args);
+    assert!(result.success, "Expected success, got: {:?}", result.error);
+
+    let range = get_cascade_triples(&conn, "test:Automation", "foundation:cascadeDeleteRange");
+    assert!(range.contains(&"foundation:hasSequenceFlow".to_string()));
+
+    let domain = get_cascade_triples(&conn, "test:Automation", "foundation:cascadeDeleteDomain");
+    assert!(domain.contains(&"foundation:executesProcess".to_string()));
+}
+
+#[test]
+fn test_define_class_cascade_rules_replaces_existing() {
+    let mut conn = setup_test_db();
+    setup_class(&mut conn, "test:Automation");
+
+    let first = serde_json::json!({
+        "iri": "test:Automation",
+        "cascade_rules": [{"property_iri": "foundation:hasSequenceFlow", "direction": "range"}]
+    });
+    define_class_one(&mut conn, &first);
+
+    let second = serde_json::json!({
+        "iri": "test:Automation",
+        "cascade_rules": [{"property_iri": "foundation:hasStep", "direction": "range"}]
+    });
+    let result = define_class_one(&mut conn, &second);
+    assert!(result.success, "Expected success, got: {:?}", result.error);
+
+    let range = get_cascade_triples(&conn, "test:Automation", "foundation:cascadeDeleteRange");
+    assert!(!range.contains(&"foundation:hasSequenceFlow".to_string()),
+        "Old rule must be replaced");
+    assert!(range.contains(&"foundation:hasStep".to_string()),
+        "New rule must be present");
+}
+
+#[test]
+fn test_define_class_omitting_cascade_rules_preserves_existing() {
+    let mut conn = setup_test_db();
+    setup_class(&mut conn, "test:Automation");
+
+    let first = serde_json::json!({
+        "iri": "test:Automation",
+        "cascade_rules": [{"property_iri": "foundation:hasSequenceFlow", "direction": "range"}]
+    });
+    define_class_one(&mut conn, &first);
+
+    let update = serde_json::json!({"iri": "test:Automation", "comment": "updated"});
+    let result = define_class_one(&mut conn, &update);
+    assert!(result.success, "Expected success, got: {:?}", result.error);
+
+    let range = get_cascade_triples(&conn, "test:Automation", "foundation:cascadeDeleteRange");
+    assert!(range.contains(&"foundation:hasSequenceFlow".to_string()),
+        "Existing rule must be preserved when cascade_rules is omitted");
+}
+
+#[test]
+fn test_retracting_parent_with_range_rule_deletes_owned_children() {
+    let mut conn = setup_test_db();
+
+    store::assert_triples(&mut conn, &[
+        Triple::new("test:AutoA", "rdf:type", Object::Iri("test:Automation".to_string())),
+        Triple::new("test:FlowF", "rdf:type", Object::Iri("test:FlowNode".to_string())),
+        Triple::new("test:AutoA", "foundation:hasSequenceFlow", Object::Iri("test:FlowF".to_string())),
+        Triple::new("test:Automation", "foundation:cascadeDeleteRange",
+            Object::Iri("foundation:hasSequenceFlow".to_string())),
+    ], "test").unwrap();
+
+    crate::owl::Individual::retract(&mut conn, "test:AutoA", "test").unwrap();
+
+    assert!(crate::owl::Individual::get(&conn, "test:AutoA").unwrap().is_none(),
+        "Parent must be retracted");
+    assert!(crate::owl::Individual::get(&conn, "test:FlowF").unwrap().is_none(),
+        "Child must be cascade-retracted via range rule");
+}
+
+#[test]
+fn test_retracting_parent_with_domain_rule_deletes_referencing_subjects() {
+    let mut conn = setup_test_db();
+
+    store::assert_triples(&mut conn, &[
+        Triple::new("test:AutoA", "rdf:type", Object::Iri("test:Automation".to_string())),
+        Triple::new("test:FlowF", "rdf:type", Object::Iri("test:FlowNode".to_string())),
+        Triple::new("test:FlowF", "foundation:partOfAutomation", Object::Iri("test:AutoA".to_string())),
+        Triple::new("test:Automation", "foundation:cascadeDeleteDomain",
+            Object::Iri("foundation:partOfAutomation".to_string())),
+    ], "test").unwrap();
+
+    crate::owl::Individual::retract(&mut conn, "test:AutoA", "test").unwrap();
+
+    assert!(crate::owl::Individual::get(&conn, "test:AutoA").unwrap().is_none(),
+        "Parent must be retracted");
+    assert!(crate::owl::Individual::get(&conn, "test:FlowF").unwrap().is_none(),
+        "Subject referencing parent must be cascade-retracted via domain rule");
+}
+
+#[test]
+fn test_cascade_is_recursive_grandchildren_retracted() {
+    let mut conn = setup_test_db();
+
+    store::assert_triples(&mut conn, &[
+        Triple::new("test:AutoA", "rdf:type", Object::Iri("test:Automation".to_string())),
+        Triple::new("test:FlowF", "rdf:type", Object::Iri("test:FlowNode".to_string())),
+        Triple::new("test:ActionX", "rdf:type", Object::Iri("test:Action".to_string())),
+        Triple::new("test:AutoA", "foundation:hasSequenceFlow", Object::Iri("test:FlowF".to_string())),
+        Triple::new("test:FlowF", "foundation:hasAction", Object::Iri("test:ActionX".to_string())),
+        Triple::new("test:Automation", "foundation:cascadeDeleteRange",
+            Object::Iri("foundation:hasSequenceFlow".to_string())),
+        Triple::new("test:FlowNode", "foundation:cascadeDeleteRange",
+            Object::Iri("foundation:hasAction".to_string())),
+    ], "test").unwrap();
+
+    crate::owl::Individual::retract(&mut conn, "test:AutoA", "test").unwrap();
+
+    assert!(crate::owl::Individual::get(&conn, "test:AutoA").unwrap().is_none());
+    assert!(crate::owl::Individual::get(&conn, "test:FlowF").unwrap().is_none(),
+        "Child must be retracted");
+    assert!(crate::owl::Individual::get(&conn, "test:ActionX").unwrap().is_none(),
+        "Grandchild must be retracted via recursive cascade");
+}
+
+#[test]
+fn test_system_locked_child_blocks_entire_cascade() {
+    let mut conn = setup_test_db();
+
+    store::assert_triples(&mut conn, &[
+        Triple::new("test:AutoA", "rdf:type", Object::Iri("test:Automation".to_string())),
+        Triple::new("test:FlowF", "rdf:type", Object::Iri("test:FlowNode".to_string())),
+        Triple::new("test:AutoA", "foundation:hasSequenceFlow", Object::Iri("test:FlowF".to_string())),
+        Triple::new("test:Automation", "foundation:cascadeDeleteRange",
+            Object::Iri("foundation:hasSequenceFlow".to_string())),
+        Triple::new("test:FlowF", "foundation:isSystemLocked", Object::Literal {
+            value: "true".to_string(),
+            datatype: Some("xsd:boolean".to_string()),
+            language: None,
+        }),
+    ], "test").unwrap();
+
+    let result = crate::owl::Individual::retract(&mut conn, "test:AutoA", "test");
+    assert!(result.is_err(), "Must fail when a cascade child is system-locked");
+
+    assert!(crate::owl::Individual::get(&conn, "test:AutoA").unwrap().is_some(),
+        "Parent must NOT be retracted when cascade is blocked");
+    assert!(crate::owl::Individual::get(&conn, "test:FlowF").unwrap().is_some(),
+        "Locked child must remain");
+}
+
+#[test]
+fn test_remove_property_auto_removes_cascade_rule() {
+    let mut conn = setup_test_db();
+    setup_class(&mut conn, "test:Automation");
+
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:hasSequenceFlow", "rdf:type",
+            Object::Iri("owl:ObjectProperty".to_string())),
+        Triple::new("foundation:hasSequenceFlow", "rdfs:label", Object::Literal {
+            value: "has sequence flow".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+        Triple::new("foundation:hasSequenceFlow", "rdfs:domain",
+            Object::Iri("test:Automation".to_string())),
+    ], "test").unwrap();
+
+    let set_rule = serde_json::json!({
+        "iri": "test:Automation",
+        "cascade_rules": [{"property_iri": "foundation:hasSequenceFlow", "direction": "range"}]
+    });
+    define_class_one(&mut conn, &set_rule);
+
+    let range_before = get_cascade_triples(&conn, "test:Automation", "foundation:cascadeDeleteRange");
+    assert!(range_before.contains(&"foundation:hasSequenceFlow".to_string()),
+        "Rule must exist before remove_properties");
+
+    let remove = serde_json::json!({
+        "iri": "test:Automation",
+        "remove_properties": ["foundation:hasSequenceFlow"]
+    });
+    let result = define_class_one(&mut conn, &remove);
+    assert!(result.success, "Expected success, got: {:?}", result.error);
+
+    let range_after = get_cascade_triples(&conn, "test:Automation", "foundation:cascadeDeleteRange");
+    assert!(!range_after.contains(&"foundation:hasSequenceFlow".to_string()),
+        "Cascade rule must be auto-removed when property is removed from class");
+}
+
+#[test]
+fn test_describe_class_returns_cascade_rules() {
+    use super::describe_class;
+    let mut conn = setup_test_db();
+    setup_class(&mut conn, "test:Automation");
+
+    let set_rule = serde_json::json!({
+        "iri": "test:Automation",
+        "cascade_rules": [
+            {"property_iri": "foundation:hasSequenceFlow", "direction": "range"},
+            {"property_iri": "foundation:executesProcess", "direction": "domain"}
+        ]
+    });
+    define_class_one(&mut conn, &set_rule);
+
+    let result = describe_class(&conn, &serde_json::json!({"iris": ["test:Automation"]}));
+    assert!(result.success, "describe_class must succeed");
+
+    let classes = result.result.unwrap();
+    let class = &classes["classes"][0];
+    let rules = class["cascade_rules"].as_array().expect("cascade_rules must be present");
+
+    assert_eq!(rules.len(), 2, "Both rules must be returned");
+    assert!(rules.iter().any(|r| r["property_iri"] == "foundation:hasSequenceFlow" && r["direction"] == "range"));
+    assert!(rules.iter().any(|r| r["property_iri"] == "foundation:executesProcess" && r["direction"] == "domain"));
+}
+
+#[test]
+fn test_cascade_rules_invalid_direction_returns_error() {
+    let mut conn = setup_test_db();
+    setup_class(&mut conn, "test:Automation");
+
+    let args = serde_json::json!({
+        "iri": "test:Automation",
+        "cascade_rules": [{"property_iri": "foundation:hasSequenceFlow", "direction": "invalid"}]
+    });
+    let result = define_class_one(&mut conn, &args);
+    assert!(!result.success, "Invalid direction must return error");
+    assert!(result.error.unwrap().contains("invalid"), "Error must mention the bad value");
 }

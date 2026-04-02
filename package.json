@@ -21,6 +21,7 @@
     "build:local": "cd scripts/release-local && cargo run --release",
     "build:release": "npm run build && npm run tauri:build",
     "logs": "./scripts/show-logs.sh \"$@\"",
+    "logs:watch": "./scripts/show-logs.sh --watch",
     "clear:chat": "./scripts/clear-chat-history.sh",
     "coverage": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --html",
     "test:perf": "./scripts/perf-test.sh"

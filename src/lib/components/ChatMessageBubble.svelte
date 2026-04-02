@@ -265,7 +265,7 @@
 						{@html renderMarkdown(getThinkingBlocks(message).map(b => b.thinking).join('\n\n'))}
 					</div>
 				</details>
-			{:else if hasSpeakMessages(message) && hasTextContent(message)}
+			{:else if message.role === 'assistant' && hasTextContent(message)}
 				<details class="reasoning-block">
 					<summary class="reasoning-summary">
 						<span class="material-symbols-outlined reasoning-icon">psychology</span>
@@ -284,7 +284,7 @@
 						</div>
 					{/each}
 				</div>
-			{:else if hasTextContent(message)}
+			{:else if message.role === 'user' && hasTextContent(message)}
 				<div class="message-text markdown-content">
 					{@html renderMarkdown(extractTextFromContent(message.content))}
 				</div>

@@ -29,9 +29,10 @@ use cancellation::AiCancellationState as CancellationState;
 
 pub const MAX_OUTPUT_TOKENS: u32 = 16000;
 
-pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor) -> Option<String> {
-    executor.read(|conn| {
-        let widgets = crate::commands::widget::owl_get_all_widgets(conn)
+pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor, conversation_id: &str) -> Option<String> {
+    let conv_id = conversation_id.to_string();
+    executor.read(move |conn| {
+        let widgets = crate::commands::widget::owl_get_widgets_for_conversation(conn, &conv_id)
             .unwrap_or_default();
 
         if widgets.is_empty() {
@@ -106,6 +107,7 @@ pub async fn chat__send_and_reply(
     attachment_iris: Option<Vec<String>>,
     conversation_id: String,
     camera_images: Option<Vec<String>>,
+    thinking_enabled: Option<bool>,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
     cancellation: State<'_, CancellationState>,
@@ -255,7 +257,7 @@ pub async fn chat__send_and_reply(
     }
 
     let subconscious_context = subconscious::format_context(&subconscious_entities);
-    let blackboard_context = build_blackboard_context(&executor).await;
+    let blackboard_context = build_blackboard_context(&executor, &conversation_id).await;
 
     let mut loop_count = 0;
     loop {
@@ -346,7 +348,7 @@ pub async fn chat__send_and_reply(
             blackboard_context: blackboard_context.clone(),
             tools: Some(tools),
             supports_web_tools: agent_config.supports_web_tools,
-            thinking: Some(crate::ai::ThinkingConfig::Adaptive),
+            thinking: if thinking_enabled.unwrap_or(true) { Some(crate::ai::ThinkingConfig::Adaptive) } else { None },
         };
 
         let provider = crate::ai::providers::ClaudeProvider::with_model(
@@ -692,7 +694,7 @@ pub async fn chat__edit_and_retry(
     let app_clone = app.clone();
     let executor_clone = executor.inner().clone();
     let mut response_messages = Vec::new();
-    continue_conversation_after_recovery(app_clone, executor_clone, conversation_id.clone(), &cancellation).await?;
+    continue_conversation_after_recovery(app_clone, executor_clone, conversation_id.clone(), &cancellation, false).await?;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
     let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
@@ -756,7 +758,7 @@ pub async fn chat__retry_from_message(
 
     let app_clone = app.clone();
     let executor_clone = executor.inner().clone();
-    continue_conversation_after_recovery(app_clone, executor_clone, conversation_id.clone(), &cancellation).await?;
+    continue_conversation_after_recovery(app_clone, executor_clone, conversation_id.clone(), &cancellation, false).await?;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
     let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
@@ -839,7 +841,10 @@ pub async fn chat__recover_pending_tools(
         last_msg.role, has_tool_use, last_msg.content.len()
     ));
 
-    let all_delivered = last_msg.role == "user" && !last_msg.content.is_empty()
+    let has_tool_results = last_msg.role == "user"
+        && last_msg.content.iter().any(|b| matches!(b, ContentBlock::ToolResult { .. }));
+
+    let all_delivered = has_tool_results
         && last_msg.content.iter().all(|b| matches!(
             b,
             ContentBlock::ToolResult { content, is_error, .. }
@@ -847,7 +852,7 @@ pub async fn chat__recover_pending_tools(
         ));
 
     let needs_recovery = (last_msg.role == "assistant" && has_tool_use)
-        || (last_msg.role == "user" && !all_delivered);
+        || (has_tool_results && !all_delivered);
 
     if !needs_recovery {
         super::log_backend("info", &format!(
@@ -876,7 +881,7 @@ pub async fn chat__recover_pending_tools(
         app.emit("chat-message-added", ()).ok();
     }
 
-    continue_conversation_after_recovery(app.clone(), executor.inner().clone(), conv_id, &cancellation).await?;
+    continue_conversation_after_recovery(app.clone(), executor.inner().clone(), conv_id, &cancellation, true).await?;
     Ok(1)
 }
 

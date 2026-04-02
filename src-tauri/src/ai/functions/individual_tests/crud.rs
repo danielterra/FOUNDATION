@@ -231,3 +231,47 @@ fn test_remove_before_add_in_same_operation_preserves_new_value() {
 
     assert_eq!(priority, "High", "New value must survive after remove+replace");
 }
+
+#[test]
+fn test_retract_individual_response_includes_cascade_summary() {
+    let mut conn = setup_test_db();
+
+    store::assert_triples(&mut conn, &[
+        Triple::new("test:Parent", "rdf:type", Object::Iri("test:ParentClass".to_string())),
+        Triple::new("test:Child1", "rdf:type", Object::Iri("test:ChildClass".to_string())),
+        Triple::new("test:Child2", "rdf:type", Object::Iri("test:ChildClass".to_string())),
+        Triple::new("test:Parent", "test:owns", Object::Iri("test:Child1".to_string())),
+        Triple::new("test:Parent", "test:owns", Object::Iri("test:Child2".to_string())),
+        Triple::new("test:ParentClass", "foundation:cascadeDeleteRange",
+            Object::Iri("test:owns".to_string())),
+    ], "test").unwrap();
+
+    let result = retract_individual_one(&mut conn, &serde_json::json!({"iri": "test:Parent"}));
+    assert!(result.success, "retract_individual must succeed: {:?}", result.error);
+
+    let message = result.result.unwrap()["message"].as_str().unwrap().to_string();
+    assert!(message.contains("Cascade"), "Response must include cascade summary; got: {}", message);
+    assert!(message.contains("2"), "Cascade count must be 2; got: {}", message);
+    assert!(message.contains("test:owns"), "Cascade must name the property; got: {}", message);
+    assert!(message.contains("range"), "Cascade must name the direction; got: {}", message);
+}
+
+#[test]
+fn test_retract_individual_response_no_cascade_no_summary() {
+    let mut conn = setup_test_db();
+
+    store::assert_triples(&mut conn, &[
+        Triple::new("test:Standalone", "rdf:type", Object::Iri("test:SomeClass".to_string())),
+        Triple::new("test:Standalone", "rdfs:label", Object::Literal {
+            value: "standalone".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+    ], "test").unwrap();
+
+    let result = retract_individual_one(&mut conn, &serde_json::json!({"iri": "test:Standalone"}));
+    assert!(result.success, "retract_individual must succeed: {:?}", result.error);
+
+    let message = result.result.unwrap()["message"].as_str().unwrap().to_string();
+    assert!(!message.contains("Cascade"), "No cascade must mean no summary; got: {}", message);
+}

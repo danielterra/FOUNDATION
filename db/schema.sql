@@ -17,7 +17,6 @@
 -- - Full RDF compatibility: Export to Turtle/JSON-LD without transformation
 -- ============================================================================
 
-PRAGMA journal_mode = DELETE;
 PRAGMA foreign_keys = ON;
 PRAGMA synchronous = NORMAL;
 
@@ -164,9 +163,7 @@ CREATE TABLE IF NOT EXISTS origins (
 
 -- Initialize common origins
 INSERT OR IGNORE INTO origins (id, name, description) VALUES
-  (1, 'rdf:core', 'RDF/RDFS/OWL core ontology'),
-  (2, 'foundation:CurrentUser', 'Data provided by the current user'),
-  (3, 'foundation:FOUNDATION', 'Data collected automatically by FOUNDATION application');
+  (1, 'rdf:core', 'RDF/RDFS/OWL core ontology');
 
 -- ============================================================================
 -- Metadata Table

@@ -14,6 +14,10 @@
 		editingMessageIri = null,
 		onCancelEdit = null,
 		onCancelAI = null,
+		cameraEnabled = true,
+		onToggleCamera = null,
+		thinkingEnabled = true,
+		onToggleThinking = null,
 	} = $props();
 
 	function openFilePicker() {
@@ -70,6 +74,32 @@
 	>
 		<span class="material-symbols-outlined">attach_file</span>
 	</button>
+	{#if onToggleCamera}
+		<button
+			class="attach-btn"
+			class:camera-off={!cameraEnabled}
+			onclick={onToggleCamera}
+			aria-label={cameraEnabled ? 'Disable camera vision' : 'Enable camera vision'}
+			title={cameraEnabled ? 'Camera vision on' : 'Camera vision off'}
+		>
+			<span class="material-symbols-outlined">
+				{cameraEnabled ? 'videocam' : 'videocam_off'}
+			</span>
+		</button>
+	{/if}
+	{#if onToggleThinking}
+		<button
+			class="attach-btn"
+			class:thinking-off={!thinkingEnabled}
+			onclick={onToggleThinking}
+			aria-label={thinkingEnabled ? 'Disable extended thinking' : 'Enable extended thinking'}
+			title={thinkingEnabled ? 'Extended thinking on' : 'Extended thinking off'}
+		>
+			<span class="material-symbols-outlined">
+				{thinkingEnabled ? 'psychology' : 'psychology_alt'}
+			</span>
+		</button>
+	{/if}
 	<textarea
 		bind:this={textareaElement}
 		bind:value={inputText}
@@ -119,12 +149,7 @@
 		display: flex;
 		align-items: center;
 		opacity: 0.6;
-		transition: opacity 0.15s;
 		flex-shrink: 0;
-	}
-
-	.cancel-ai-btn:hover {
-		opacity: 1;
 	}
 
 	.cancel-ai-btn .material-symbols-outlined {
@@ -219,12 +244,7 @@
 		display: flex;
 		align-items: center;
 		opacity: 0.7;
-		transition: opacity 0.15s;
 		flex-shrink: 0;
-	}
-
-	.edit-cancel-btn:hover {
-		opacity: 1;
 	}
 
 	.edit-cancel-btn .material-symbols-outlined {
@@ -250,20 +270,28 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		transition: all 0.2s;
 		flex-shrink: 0;
-	}
-
-	.attach-btn:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-white) 10%, transparent);
-		border-color: var(--color-interactive);
-		color: var(--color-interactive);
 	}
 
 	.attach-btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
+
+	.attach-btn.camera-off {
+		background: transparent;
+		color: var(--color-interactive);
+		border: 2px solid var(--color-interactive);
+		opacity: 0.5;
+	}
+
+	.attach-btn.thinking-off {
+		background: transparent;
+		color: var(--color-interactive);
+		border: 2px solid var(--color-interactive);
+		opacity: 0.5;
+	}
+
 
 	.attach-btn .material-symbols-outlined {
 		font-size: 20px;
@@ -312,17 +340,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		transition: all 0.2s;
 		flex-shrink: 0;
-	}
-
-	.chat-input button:hover:not(:disabled) {
-		background: var(--color-interactive-hover);
-		transform: scale(1.05);
-	}
-
-	.chat-input button:active:not(:disabled) {
-		background: var(--color-interactive-active);
 	}
 
 	.chat-input button:disabled {
@@ -332,10 +350,6 @@
 	}
 
 	.chat-input button.loading {
-		background: var(--color-transition);
-	}
-
-	.chat-input button.loading:hover {
 		background: var(--color-transition);
 	}
 

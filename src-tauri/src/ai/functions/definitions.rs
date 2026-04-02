@@ -98,6 +98,23 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     required: false,
                     schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
+                Parameter {
+                    name: "cascade_rules".to_string(),
+                    param_type: "array".to_string(),
+                    description: "Configure cascade-delete rules for this class. When an individual of this class is retracted, all related entities matching these rules are also retracted atomically — including their own cascade rules (recursive). Use this for any owned relationship where children should not outlive their parent.\n\nEach entry: { property_iri (string, required), direction ('range' | 'domain', required) }\n\n- direction 'range': retract all objects this individual references via property_iri. Use when the parent owns the children: (parent, property_iri, child) → child deleted. Example: Automation with hasSequenceFlow → retracting an Automation also retracts all its FlowNodes.\n- direction 'domain': retract all subjects that reference this individual via property_iri. Use when children point back to the parent: (child, property_iri, parent) → child deleted. Example: FlowNode with partOfAutomation → retracting an Automation also retracts all FlowNodes that reference it.\n\nProviding cascade_rules REPLACES all existing rules on the class. Omit to preserve existing rules. Call describe_class to inspect currently configured rules before modifying.".to_string(),
+                    required: false,
+                    schema: Some(serde_json::json!({
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "property_iri": { "type": "string" },
+                                "direction": { "type": "string", "enum": ["range", "domain"] }
+                            },
+                            "required": ["property_iri", "direction"]
+                        }
+                    })),
+                },
             ],
         },
 
@@ -566,6 +583,13 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     param_type: "string".to_string(),
                     description: "IRI of the Automation to execute".to_string(),
                     required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "input_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the input individual required by the automation's start event. Omit only if the automation has no inputClass.".to_string(),
+                    required: false,
                     schema: None,
                 },
             ],

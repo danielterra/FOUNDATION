@@ -211,6 +211,29 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
             response["applicableAutomations"] = serde_json::json!(applicable_automations);
         }
 
+        {
+            use crate::eavto::query;
+            let mut cascade_rules: Vec<serde_json::Value> = Vec::new();
+            for (predicate, direction) in &[
+                ("foundation:cascadeDeleteRange", "range"),
+                ("foundation:cascadeDeleteDomain", "domain"),
+            ] {
+                let triples = query::get_by_entity_predicate(conn, iri, predicate)
+                    .map(|r| r.triples).unwrap_or_default();
+                for t in triples {
+                    if let Some(prop_iri) = t.object.as_iri() {
+                        cascade_rules.push(serde_json::json!({
+                            "property_iri": prop_iri,
+                            "direction": direction,
+                        }));
+                    }
+                }
+            }
+            if !cascade_rules.is_empty() {
+                response["cascade_rules"] = serde_json::json!(cascade_rules);
+            }
+        }
+
         Ok::<_, crate::owl::OwlError>(response)
     })() {
         Ok(result) => ToolResult {
@@ -361,17 +384,15 @@ fn define_class_one(
         if let Some(remove_properties) = args.get("remove_properties").and_then(|v| v.as_array()) {
             for item in remove_properties {
                 if let Some(prop_iri) = item.as_str() {
-                    let mut prop = match crate::owl::Property::get(conn, prop_iri)? {
-                        Some(p) => p,
-                        None => continue,
-                    };
-                    prop.domains.retain(|d| d != iri);
-                    if prop.domains.is_empty() {
-                        crate::owl::Property::retract(conn, prop_iri, "ai")?;
-                    } else {
-                        let domains: Vec<&str> = prop.domains.iter().map(|s| s.as_str()).collect();
-                        prop.assert(conn, prop.property_type, prop.label.as_deref().unwrap_or(""), None, &domains, prop.ranges.first().map(|s| s.as_str()), prop.unit.as_deref(), "ai")?;
+                    if crate::owl::Property::get(conn, prop_iri)?.is_none() {
+                        continue;
                     }
+                    let domain_triple = crate::eavto::Triple::new(
+                        prop_iri,
+                        "rdfs:domain",
+                        crate::eavto::Object::Iri(iri.to_string()),
+                    );
+                    crate::eavto::store::retract_triples(conn, &[domain_triple], "ai")?;
                     let existing = crate::owl::cardinality::get_class_cardinality_restrictions(conn, iri)?;
                     let updated: Vec<crate::owl::cardinality::PropertyRestriction<'_>> = existing.iter()
                         .filter(|r| r.property_iri != prop_iri)
@@ -382,8 +403,47 @@ fn define_class_one(
                         })
                         .collect();
                     crate::owl::cardinality::set_class_cardinality_restrictions(conn, iri, &updated, "ai")?;
+                    retract_cascade_rule(conn, iri, prop_iri, "ai")?;
                     super::batch::queue_event("entity-updated", serde_json::json!({"entityId": prop_iri}));
                 }
+            }
+        }
+
+        if let Some(cascade_rules) = args.get("cascade_rules").and_then(|v| v.as_array()) {
+            use crate::eavto::{store, query, Triple, Object};
+
+            let range_triples = query::get_by_entity_predicate(conn, iri, "foundation:cascadeDeleteRange")
+                .map(|r| r.triples).unwrap_or_default();
+            let domain_triples = query::get_by_entity_predicate(conn, iri, "foundation:cascadeDeleteDomain")
+                .map(|r| r.triples).unwrap_or_default();
+            let to_retract: Vec<Triple> = range_triples.into_iter().chain(domain_triples)
+                .map(|t| Triple::new(t.subject, t.predicate, t.object))
+                .collect();
+            if !to_retract.is_empty() {
+                store::retract_triples(conn, &to_retract, "ai")?;
+            }
+
+            let mut new_triples = Vec::new();
+            for entry in cascade_rules {
+                let prop_iri = entry.get("property_iri").and_then(|v| v.as_str())
+                    .ok_or_else(|| crate::owl::OwlError::ValidationError(
+                        "Each cascade_rules entry must have 'property_iri'".to_string()
+                    ))?;
+                let direction = entry.get("direction").and_then(|v| v.as_str())
+                    .ok_or_else(|| crate::owl::OwlError::ValidationError(
+                        "Each cascade_rules entry must have 'direction' ('range' or 'domain')".to_string()
+                    ))?;
+                let predicate = match direction {
+                    "range" => "foundation:cascadeDeleteRange",
+                    "domain" => "foundation:cascadeDeleteDomain",
+                    other => return Err(crate::owl::OwlError::ValidationError(format!(
+                        "Invalid direction '{}'. Must be 'range' or 'domain'", other
+                    ))),
+                };
+                new_triples.push(Triple::new(iri, predicate, Object::Iri(prop_iri.to_string())));
+            }
+            if !new_triples.is_empty() {
+                store::assert_triples(conn, &new_triples, "ai")?;
             }
         }
 
@@ -557,4 +617,25 @@ fn retract_class_one(
             concept: None,
         },
     }
+}
+
+fn retract_cascade_rule(
+    conn: &mut Connection,
+    class_iri: &str,
+    prop_iri: &str,
+    origin: &str,
+) -> Result<(), crate::owl::OwlError> {
+    use crate::eavto::{store, query, Triple};
+    for predicate in &["foundation:cascadeDeleteRange", "foundation:cascadeDeleteDomain"] {
+        let triples = query::get_by_entity_predicate(conn, class_iri, predicate)
+            .map(|r| r.triples).unwrap_or_default();
+        let to_retract: Vec<Triple> = triples.into_iter()
+            .filter(|t| t.object.as_iri() == Some(prop_iri))
+            .map(|t| Triple::new(t.subject, t.predicate, t.object))
+            .collect();
+        if !to_retract.is_empty() {
+            store::retract_triples(conn, &to_retract, origin)?;
+        }
+    }
+    Ok(())
 }

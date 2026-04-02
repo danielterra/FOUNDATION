@@ -168,50 +168,50 @@
 
 <slot />
 
-{#if automationRuns.length > 0}
-  <div class="automation-toasts">
+{#if automationRuns.length > 0 || retentionRunning || recalcJobs.length > 0}
+  <div class="toast-stack">
     {#each automationRuns as run (run.executionIri)}
-      <div class="automation-toast" class:failed={run.status === 'failed'} class:done={run.status === 'completed'} class:running={run.status === 'running'}>
-        <span class="material-symbols-outlined toast-icon">
-          {#if run.status === 'running'}autorenew{:else if run.status === 'completed'}check_circle{:else}error{/if}
+      <div
+        class="automation-toast"
+        class:failed={run.status === 'failed'}
+        class:done={run.status === 'completed'}
+        class:running={run.status === 'running'}
+        role="button"
+        tabindex="0"
+        onclick={() => invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, content: null, position: null, size: null, conversationId: null })}
+        onkeydown={(e) => e.key === 'Enter' && invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, content: null, position: null, size: null, conversationId: null })}
+      >
+        <span class="material-symbols-outlined toast-icon" class:spinning={run.status === 'running'}>
+          {#if run.status === 'running'}progress_activity{:else if run.status === 'completed'}check_circle{:else}error{/if}
         </span>
         <div class="toast-body">
           {#if run.status === 'failed'}
             <span class="toast-label">Automation failed: <strong>{run.currentStep}</strong></span>
             {#if run.error}<span class="toast-error">{run.error}</span>{/if}
-            <button class="toast-inspect" onclick={() => invoke('widget_blackboard__add_widget', { widgetType: 'inspector', entityId: run.executionIri, content: null, position: null, size: null, conversationId: null })}>
-              Inspect
-            </button>
           {:else if run.status === 'completed'}
             <span class="toast-label">Automation completed</span>
           {:else}
             <span class="toast-label">Running: <strong>{run.currentStep}</strong></span>
           {/if}
         </div>
-        {#if run.status === 'failed'}
-          <button class="toast-close" onclick={() => automationRuns = automationRuns.filter(r => r.executionIri !== run.executionIri)}>
+        {#if run.status !== 'running'}
+          <button class="toast-close" onclick={(e) => { e.stopPropagation(); automationRuns = automationRuns.filter(r => r.executionIri !== run.executionIri); }}>
             <span class="material-symbols-outlined">close</span>
           </button>
         {/if}
       </div>
     {/each}
-  </div>
-{/if}
 
-{#if retentionRunning}
-  <div class="retention-toast">
-    <span class="material-symbols-outlined retention-icon">cleaning_services</span>
-    <span>Cleaning up old data…</span>
-  </div>
-{/if}
+    {#if retentionRunning}
+      <div class="system-toast">
+        <span class="material-symbols-outlined" style="font-size:15px;opacity:0.7">cleaning_services</span>
+        <span>Cleaning up old data…</span>
+      </div>
+    {/if}
 
-{#if recalcJobs.length > 0}
-  <div class="recalc-toasts">
     {#each recalcJobs as job (job.jobId)}
-      <div class="recalc-toast" class:done={job.status !== 'running'}>
-        <span class="recalc-label">
-          Recalculating <strong>{job.classLabel}</strong>
-        </span>
+      <div class="system-toast" class:done={job.status !== 'running'}>
+        <span class="recalc-label">Recalculating <strong>{job.classLabel}</strong></span>
         <span class="recalc-pct">{job.percent}%</span>
       </div>
     {/each}
@@ -237,7 +237,15 @@
     pointer-events: none;
   }
 
-  .automation-toasts {
+  .spinning {
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .toast-stack {
     position: fixed;
     bottom: 16px;
     left: 16px;
@@ -261,7 +269,7 @@
     min-width: 220px;
     max-width: 340px;
     pointer-events: auto;
-    transition: background 0.3s, border-color 0.3s;
+    cursor: pointer;
   }
 
   .automation-toast.running {
@@ -299,6 +307,7 @@
     gap: 3px;
     font-size: 12px;
     min-width: 0;
+    flex: 1;
   }
 
   .toast-label {
@@ -312,22 +321,6 @@
     word-break: break-word;
   }
 
-  .toast-inspect {
-    margin-top: 4px;
-    background: none;
-    border: 1px solid var(--color-danger);
-    color: color-mix(in srgb, var(--color-danger) 80%, white);
-    border-radius: 4px;
-    padding: 2px 8px;
-    font-size: 11px;
-    cursor: pointer;
-    width: fit-content;
-  }
-
-  .toast-inspect:hover {
-    background: color-mix(in srgb, #ef4444 20%, transparent);
-  }
-
   .toast-close {
     background: none;
     border: none;
@@ -338,44 +331,30 @@
     display: flex;
     align-items: center;
     border-radius: 4px;
-    transition: color 0.15s;
     align-self: flex-start;
-  }
-
-  .toast-close:hover {
-    color: var(--color-neutral-active);
   }
 
   .toast-close .material-symbols-outlined {
     font-size: 16px;
   }
 
-  .recalc-toasts {
-    position: fixed;
-    bottom: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    z-index: 9999;
-    pointer-events: none;
-  }
-
-  .recalc-toast {
-    background: var(--surface-2, #2a2a2a);
-    color: var(--text-1, #fff);
-    border-radius: 8px;
-    padding: 8px 16px;
+  .system-toast {
+    background: color-mix(in srgb, var(--color-black) 85%, transparent);
+    backdrop-filter: blur(12px);
+    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+    color: var(--color-neutral);
+    border-radius: 10px;
+    padding: 8px 14px;
     display: flex;
     align-items: center;
-    gap: 12px;
-    font-size: 13px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    transition: opacity 0.3s;
+    gap: 8px;
+    font-size: 12px;
+    pointer-events: none;
+    animation: toast-pulse 1.5s ease-in-out infinite;
   }
 
-  .recalc-toast.done {
+  .system-toast.done {
+    animation: none;
     opacity: 0.6;
   }
 
@@ -383,29 +362,5 @@
     font-weight: 600;
     min-width: 36px;
     text-align: right;
-  }
-
-  .retention-toast {
-    position: fixed;
-    bottom: 16px;
-    left: 16px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: color-mix(in srgb, var(--color-black) 85%, transparent);
-    backdrop-filter: blur(12px);
-    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-    color: var(--color-neutral);
-    border-radius: 10px;
-    padding: 8px 14px;
-    font-size: 12px;
-    z-index: 9999;
-    pointer-events: none;
-    animation: toast-pulse 1.5s ease-in-out infinite;
-  }
-
-  .retention-icon {
-    font-size: 15px;
-    opacity: 0.7;
   }
 </style>

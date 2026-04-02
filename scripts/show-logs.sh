@@ -1,10 +1,21 @@
 #!/bin/bash
 
 # Cross-platform script to show application logs
-# Usage: ./show-logs.sh [lines]
+# Usage: ./show-logs.sh [lines] [--watch]
 # Example: ./show-logs.sh 500
+# Example: ./show-logs.sh --watch
+# Example: ./show-logs.sh 500 --watch
 
-LINES=${1:-100}  # Default to 100 lines if no argument provided
+LINES=100
+WATCH=false
+
+for arg in "$@"; do
+    if [[ "$arg" == "--watch" ]]; then
+        WATCH=true
+    elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+        LINES=$arg
+    fi
+done
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # macOS
@@ -27,8 +38,16 @@ fi
 
 echo "=== FOUNDATION Application Logs ==="
 echo "Current date/time: $(date '+%Y-%m-%d %H:%M:%S')"
-echo "Showing last $LINES lines"
+if $WATCH; then
+    echo "Showing last $LINES lines (watching for changes...)"
+else
+    echo "Showing last $LINES lines"
+fi
 echo "==================================="
 echo ""
 
-tail -n "$LINES" "$LOG_FILE"
+if $WATCH; then
+    tail -n "$LINES" -f "$LOG_FILE"
+else
+    tail -n "$LINES" "$LOG_FILE"
+fi

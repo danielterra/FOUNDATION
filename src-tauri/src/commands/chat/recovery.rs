@@ -54,6 +54,7 @@ pub async fn continue_conversation_after_recovery(
     executor: DbExecutor,
     conversation_id: String,
     cancellation: &super::cancellation::AiCancellationState,
+    silent: bool,
 ) -> Result<(), String> {
     const MAX_TOOL_LOOPS: usize = 50;
 
@@ -134,7 +135,7 @@ pub async fn continue_conversation_after_recovery(
             widget_context,
             agent_config.system_prompt,
         );
-        let blackboard_context = super::build_blackboard_context(&executor).await;
+        let blackboard_context = super::build_blackboard_context(&executor, &conversation_id).await;
         let tools = crate::ai::functions::get_claude_tools();
         let supports_web_tools = agent_config.supports_web_tools;
 
@@ -149,10 +150,12 @@ pub async fn continue_conversation_after_recovery(
             thinking: Some(crate::ai::ThinkingConfig::Adaptive),
         };
 
-        app.emit(
-            "ai-status",
-            serde_json::json!({ "status": "Claude is thinking (recovery)", "conversationId": conversation_id }),
-        ).ok();
+        if !silent {
+            app.emit(
+                "ai-status",
+                serde_json::json!({ "status": "Claude is thinking (recovery)", "conversationId": conversation_id }),
+            ).ok();
+        }
         log_backend("info", "[RECOVERY] Calling Claude API...");
         let provider = crate::ai::providers::ClaudeProvider::with_model(
             agent_config.api_key.clone(),
@@ -252,10 +255,12 @@ pub async fn continue_conversation_after_recovery(
         break;
     }
 
-    app.emit(
-        "ai-status",
-        serde_json::json!({ "status": null, "conversationId": conversation_id }),
-    ).ok();
+    if !silent {
+        app.emit(
+            "ai-status",
+            serde_json::json!({ "status": null, "conversationId": conversation_id }),
+        ).ok();
+    }
 
     Ok(())
 }
