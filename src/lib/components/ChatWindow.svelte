@@ -49,6 +49,7 @@
 	let editingMessageText = $state('');
 	let conversations = $state([]);
 	let conversationAgent = $state(null);
+	let agents = $state([]);
 	let loadMessagesVersion = 0;
 	let cameraEnabled = $state(localStorage.getItem('camera_vision_enabled') !== 'false');
 	let thinkingEnabled = $state(localStorage.getItem('thinking_enabled') !== 'false');
@@ -116,6 +117,7 @@
 			}
 			await loadMessages();
 			console.debug(`[INIT] loadMessages=${Math.round(performance.now() - t0)}ms — done`);
+			loadAgents();
 		};
 
 		const unlistenImport = await listen('import-complete', async () => {
@@ -237,6 +239,27 @@
 			conversationAgent = { iri: agent.iri, label: agent.label, icon: agent.icon };
 		} catch {
 			conversationAgent = null;
+		}
+	}
+
+	async function loadAgents() {
+		try {
+			agents = await invoke('chat__list_agents');
+		} catch {
+			agents = [];
+		}
+	}
+
+	async function switchAgent(agentIri) {
+		if (!activeConversationIri) return;
+		try {
+			await invoke('chat__set_conversation_agent', {
+				conversationId: activeConversationIri,
+				agentIri,
+			});
+			await loadConversationAgent(activeConversationIri);
+		} catch (err) {
+			showError(err?.toString() ?? 'Failed to switch assistant');
 		}
 	}
 
@@ -757,7 +780,9 @@
 <div class="chat-panel">
 	<ChatHeader
 		{conversationAgent}
+		{agents}
 		onOpenAgentInspector={openAgentInspector}
+		onSwitchAgent={switchAgent}
 		onNewConversation={createConversation}
 		onDownloadChat={downloadChat}
 	/>

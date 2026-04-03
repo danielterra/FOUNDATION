@@ -1,18 +1,51 @@
 <script>
+	import AgentPicker from './AgentPicker.svelte';
+
 	let {
 		conversationAgent = null,
+		agents = [],
 		onOpenAgentInspector,
+		onSwitchAgent,
 		onNewConversation,
 		onDownloadChat
 	} = $props();
+
+	let pickerOpen = $state(false);
+
+	function togglePicker() {
+		pickerOpen = !pickerOpen;
+	}
+
+	function handleSelect(agentIri) {
+		onSwitchAgent?.(agentIri);
+		pickerOpen = false;
+	}
 </script>
 
 <div class="chat-header">
 	<div class="chat-header-left">
-		<button class="agent-avatar" onclick={onOpenAgentInspector} title={conversationAgent ? `Open ${conversationAgent.label} in Inspector` : 'AI Assistant'}>
-			<span class="material-symbols-outlined">{conversationAgent?.icon || 'smart_toy'}</span>
-		</button>
-		<span class="agent-name">{conversationAgent?.label || 'AI Assistant'}</span>
+		<div class="agent-area">
+			<button
+				class="agent-avatar"
+				class:picker-open={pickerOpen}
+				onclick={togglePicker}
+				title="Switch assistant"
+			>
+				<span class="material-symbols-outlined">{conversationAgent?.icon || 'smart_toy'}</span>
+			</button>
+			<button class="agent-name-btn" onclick={onOpenAgentInspector} title="Open in inspector">
+				<span class="agent-name">{conversationAgent?.label || 'AI Assistant'}</span>
+			</button>
+
+			{#if pickerOpen}
+				<AgentPicker
+					{agents}
+					activeAgentIri={conversationAgent?.iri}
+					onSelect={handleSelect}
+					onClose={() => pickerOpen = false}
+				/>
+			{/if}
+		</div>
 	</div>
 	<div class="chat-header-right">
 		<button class="header-action-btn" onclick={onNewConversation} title="New conversation">
@@ -43,6 +76,11 @@
 		flex: 1;
 	}
 
+	.agent-area {
+		position: relative;
+		flex-shrink: 0;
+	}
+
 	.agent-avatar {
 		width: 36px;
 		height: 36px;
@@ -54,11 +92,10 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		flex-shrink: 0;
 		transition: all 0.2s;
 	}
 
-	.agent-avatar:hover {
+	.agent-avatar.picker-open {
 		background: color-mix(in srgb, var(--color-interactive) 28%, transparent);
 		border-color: var(--color-interactive);
 	}
@@ -67,13 +104,27 @@
 		font-size: 18px;
 	}
 
+	.agent-name-btn {
+		background: none;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+		min-width: 0;
+		flex: 1;
+	}
+
 	.agent-name {
+		display: block;
 		font-size: 14px;
 		font-weight: 600;
 		color: var(--color-neutral-active);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.agent-name-btn:hover .agent-name {
+		color: var(--color-interactive);
 	}
 
 	.chat-header-right {
@@ -95,11 +146,6 @@
 		align-items: center;
 		justify-content: center;
 		transition: all 0.15s;
-	}
-
-	.header-action-btn:hover {
-		background: color-mix(in srgb, var(--color-white) 10%, transparent);
-		color: var(--color-neutral-active);
 	}
 
 	.header-action-btn .material-symbols-outlined {

@@ -1,5 +1,5 @@
 use crate::owl::{Individual, Object, DbExecutor};
-use tauri::State;
+use tauri::{Emitter, State};
 
 
 #[tauri::command]
@@ -228,4 +228,177 @@ pub async fn chat__rename_conversation(
             .map_err(|e| format!("Failed to rename conversation: {}", e))?;
         Ok("".to_string())
     }).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn chat__list_agents(
+    executor: State<'_, DbExecutor>,
+) -> Result<Vec<serde_json::Value>, String> {
+    executor.read(|conn| {
+        let iris: Vec<String> = conn.prepare(
+            "SELECT subject FROM triples \
+             WHERE predicate = 'rdf:type' AND object = 'foundation:SoftwareAgent' AND retracted = 0 \
+             ORDER BY subject"
+        ).map_err(|e| format!("Failed to list agents: {}", e))?
+        .query_map([], |row| row.get(0))
+        .map_err(|e| format!("Failed to list agents: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+        let agents = iris.iter().map(|iri| {
+            let thing = crate::owl::Thing::get(conn, iri);
+            let has_service = crate::owl::get_iri_property(conn, iri, "foundation:usesService")
+                .ok()
+                .flatten()
+                .is_some();
+            let is_active = crate::owl::get_iri_property(conn, iri, "foundation:hasStatus")
+                .ok()
+                .flatten()
+                .map(|s| s == "foundation:Status_1772755611667")
+                .unwrap_or(false);
+            serde_json::json!({
+                "iri": iri,
+                "label": thing.label,
+                "icon": thing.icon,
+                "available": is_active && has_service,
+            })
+        }).collect();
+
+        Ok(agents)
+    }).await
+}
+
+#[tauri::command]
+pub async fn chat__set_conversation_agent(
+    conversation_id: String,
+    agent_iri: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let agent_iri_clone = agent_iri.clone();
+    let conv_id_clone = conversation_id.clone();
+    executor.write(move |conn| {
+        let exists = Individual::get(conn, &agent_iri_clone)
+            .map_err(|e| format!("Failed to look up agent: {}", e))?
+            .is_some();
+        if !exists {
+            return Err(format!("Agent '{}' not found", agent_iri_clone));
+        }
+
+        crate::owl::replace_all_property_iris(
+            conn,
+            &conv_id_clone,
+            "foundation:handledBy",
+            &[agent_iri_clone.as_str()],
+            "user",
+        ).map_err(|e| format!("Failed to update handledBy: {}", e))?;
+
+        Ok(String::new())
+    }).await?;
+
+    app.emit("agent-changed", serde_json::json!({ "agentIri": agent_iri })).ok();
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::eavto::test_helpers::setup_test_db;
+    use crate::eavto::{store, Triple, Object};
+    use crate::owl::{Individual, Class, ClassType, Property, PropertyType};
+
+    const ICON: &str = "https://example.com/icon.svg";
+
+    fn setup_agent(conn: &mut crate::eavto::Connection, iri: &str, label: &str, active: bool, has_service: bool) {
+        Class::new("foundation:SoftwareAgent")
+            .assert(conn, ClassType::OwlClass, "Software Agent", ICON, None, "test")
+            .ok();
+
+        Individual::new(iri)
+            .assert(conn, "foundation:SoftwareAgent", label, ICON, "test")
+            .unwrap();
+
+        if active {
+            store::assert_triples(conn, &[
+                Triple::new(iri, "foundation:hasStatus",
+                    Object::Iri("foundation:Status_1772755611667".to_string())),
+            ], "test").unwrap();
+        }
+        if has_service {
+            store::assert_triples(conn, &[
+                Triple::new(iri, "foundation:usesService",
+                    Object::Iri("foundation:SomeService".to_string())),
+            ], "test").unwrap();
+        }
+    }
+
+    fn setup_conversation(conn: &mut crate::eavto::Connection, conv_iri: &str, agent_iri: &str) {
+        Class::new("foundation:AIConversation")
+            .assert(conn, ClassType::OwlClass, "AI Conversation", ICON, None, "test")
+            .ok();
+        Individual::new(conv_iri)
+            .assert(conn, "foundation:AIConversation", "Test Conv", ICON, "test")
+            .unwrap();
+        store::assert_triples(conn, &[
+            Triple::new(conv_iri, "foundation:handledBy", Object::Iri(agent_iri.to_string())),
+        ], "test").unwrap();
+    }
+
+    #[test]
+    fn test_list_agents_returns_available_true_for_active_with_service() {
+        let mut conn = setup_test_db();
+        setup_agent(&mut conn, "test:AgentA", "Agent A", true, true);
+
+        let has_service = crate::owl::get_iri_property(&conn, "test:AgentA", "foundation:usesService")
+            .ok().flatten().is_some();
+        let is_active = crate::owl::get_iri_property(&conn, "test:AgentA", "foundation:hasStatus")
+            .ok().flatten()
+            .map(|s| s == "foundation:Status_1772755611667")
+            .unwrap_or(false);
+
+        assert!(has_service, "Agent with usesService must have has_service=true");
+        assert!(is_active, "Agent with Active status must have is_active=true");
+        assert!(has_service && is_active, "available must be true for active agent with service");
+    }
+
+    #[test]
+    fn test_list_agents_flags_unavailable_when_missing_service() {
+        let mut conn = setup_test_db();
+        setup_agent(&mut conn, "test:AgentNoService", "No Service Agent", true, false);
+
+        let has_service = crate::owl::get_iri_property(&conn, "test:AgentNoService", "foundation:usesService")
+            .ok().flatten().is_some();
+        let is_active = crate::owl::get_iri_property(&conn, "test:AgentNoService", "foundation:hasStatus")
+            .ok().flatten()
+            .map(|s| s == "foundation:Status_1772755611667")
+            .unwrap_or(false);
+
+        assert!(!has_service, "Agent without usesService must not be available");
+        assert!(is_active, "Agent status is Active");
+        assert!(!(is_active && has_service), "available must be false");
+    }
+
+    #[test]
+    fn test_set_conversation_agent_updates_handled_by() {
+        let mut conn = setup_test_db();
+        setup_agent(&mut conn, "test:AgentA", "Agent A", true, true);
+        setup_agent(&mut conn, "test:AgentB", "Agent B", true, true);
+        setup_conversation(&mut conn, "test:Conv1", "test:AgentA");
+
+        crate::owl::replace_all_property_iris(
+            &mut conn, "test:Conv1", "foundation:handledBy", &["test:AgentB"], "test"
+        ).unwrap();
+
+        let agent = crate::owl::get_iri_property(&conn, "test:Conv1", "foundation:handledBy")
+            .unwrap().unwrap();
+        assert_eq!(agent, "test:AgentB", "handledBy must be updated to new agent");
+    }
+
+    #[test]
+    fn test_set_conversation_agent_nonexistent_agent_rejected() {
+        let mut conn = setup_test_db();
+        setup_conversation(&mut conn, "test:Conv2", "test:AgentA");
+
+        let exists = Individual::get(&conn, "test:NonExistent").unwrap().is_some();
+        assert!(!exists, "Non-existent agent must not be found");
+    }
 }
