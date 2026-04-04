@@ -6,6 +6,7 @@ use tantivy::{
     DocId, Score, SegmentReader,
     Index, IndexWriter, IndexReader, ReloadPolicy, TantivyDocument,
     collector::TopDocs,
+    merge_policy::LogMergePolicy,
     query::{BooleanQuery, Occur, Query, QueryParser, TermQuery},
     schema::{Field, IndexRecordOption, Schema, Value, STRING, STORED, TEXT, FAST},
     Term,
@@ -121,40 +122,85 @@ pub fn init(index_dir: &Path, conn: &Connection) {
     if guard.is_some() {
         return;
     }
+    let t0 = std::time::Instant::now();
+    log_backend("info", &format!("[SEARCH] Initializing index at {:?}", index_dir));
     match do_init(index_dir, conn) {
         Ok(idx) => {
             *guard = Some(idx);
-            log_backend("info", "Search index ready");
+            log_backend("info", &format!("[SEARCH] Index ready in {}ms", t0.elapsed().as_millis()));
         }
         Err(e) => {
-            log_backend("error", &format!("Search index init failed: {}", e));
+            log_backend("error", &format!("[SEARCH] Init failed after {}ms: {}", t0.elapsed().as_millis(), e));
         }
     }
 }
 
 fn do_init(index_dir: &Path, conn: &Connection) -> Result<SearchIndex, Box<dyn std::error::Error>> {
+    for attempt in 0u8..2 {
+        if attempt > 0 {
+            log_backend("warn", "[SEARCH] Corrupt index — wiping and rebuilding from scratch");
+            std::fs::remove_dir_all(index_dir).ok();
+        }
+        let t = std::time::Instant::now();
+        log_backend("info", &format!("[SEARCH] attempt {} — try_open_index", attempt + 1));
+        match try_open_index(index_dir, conn) {
+            Ok(idx) => {
+                log_backend("info", &format!("[SEARCH] attempt {} succeeded in {}ms", attempt + 1, t.elapsed().as_millis()));
+                return Ok(idx);
+            }
+            Err(e) if attempt == 0 => {
+                log_backend("warn", &format!("[SEARCH] attempt 1 failed after {}ms: {} — retrying", t.elapsed().as_millis(), e));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!()
+}
+
+fn try_open_index(index_dir: &Path, conn: &Connection) -> Result<SearchIndex, Box<dyn std::error::Error>> {
     let (schema, f_iri, f_label, f_comment, f_props, f_content, f_concept, f_is_class, f_boost, f_completed) = build_schema();
 
+    let t = std::time::Instant::now();
     let (index, needs_rebuild) = if index_dir.exists() {
+        log_backend("info", &format!("[SEARCH] Directory exists, opening index at {:?}", index_dir));
         match Index::open_in_dir(index_dir) {
-            Ok(existing) if existing.schema() == schema => (existing, false),
-            _ => {
-                log_backend("warn", "Search index corrupt or stale — rebuilding from scratch");
+            Ok(existing) if existing.schema() == schema => {
+                log_backend("info", &format!("[SEARCH] open_in_dir OK, schema matches ({}ms)", t.elapsed().as_millis()));
+                (existing, false)
+            }
+            Ok(_) => {
+                log_backend("warn", &format!("[SEARCH] open_in_dir OK but schema mismatch — recreating ({}ms)", t.elapsed().as_millis()));
+                std::fs::remove_dir_all(index_dir)?;
+                std::fs::create_dir_all(index_dir)?;
+                (Index::create_in_dir(index_dir, schema)?, true)
+            }
+            Err(e) => {
+                log_backend("warn", &format!("[SEARCH] open_in_dir failed ({}ms): {}", t.elapsed().as_millis(), e));
                 std::fs::remove_dir_all(index_dir)?;
                 std::fs::create_dir_all(index_dir)?;
                 (Index::create_in_dir(index_dir, schema)?, true)
             }
         }
     } else {
+        log_backend("info", "[SEARCH] Directory missing — creating fresh index");
         std::fs::create_dir_all(index_dir)?;
         (Index::create_in_dir(index_dir, schema)?, true)
     };
 
-    let writer: IndexWriter = index.writer(WRITER_HEAP_BYTES)?;
+    log_backend("info", &format!("[SEARCH] Acquiring writer ({}ms)", t.elapsed().as_millis()));
+    let mut writer: IndexWriter = index.writer(WRITER_HEAP_BYTES)?;
+    writer.set_merge_policy(Box::new(LogMergePolicy::default()));
+    log_backend("info", &format!("[SEARCH] Writer ready ({}ms)", t.elapsed().as_millis()));
+
+    let seg_count = index.searchable_segment_ids()?.len();
+    log_backend("info", &format!("[SEARCH] Segment count: {} ({}ms)", seg_count, t.elapsed().as_millis()));
+
+    log_backend("info", &format!("[SEARCH] Building reader ({}ms)", t.elapsed().as_millis()));
     let reader = index
         .reader_builder()
-        .reload_policy(ReloadPolicy::OnCommitWithDelay)
+        .reload_policy(ReloadPolicy::Manual)
         .try_into()?;
+    log_backend("info", &format!("[SEARCH] Reader ready, needs_rebuild={} ({}ms)", needs_rebuild, t.elapsed().as_millis()));
 
     let mut idx = SearchIndex {
         index, writer, reader, f_iri, f_label, f_comment, f_props, f_content, f_concept, f_is_class, f_boost, f_completed,
@@ -193,7 +239,8 @@ fn do_full_rebuild(
     idx: &mut SearchIndex,
     conn: &Connection,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    log_backend("info", "Building search index from scratch...");
+    let t = std::time::Instant::now();
+    log_backend("info", "[SEARCH] Full rebuild starting...");
 
     let mut stmt = conn.prepare(
         "SELECT DISTINCT subject FROM triples WHERE retracted = 0 AND predicate = 'rdfs:label'",
@@ -201,6 +248,7 @@ fn do_full_rebuild(
     let labeled: Vec<String> = stmt
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    log_backend("info", &format!("[SEARCH] Labeled subjects: {} ({}ms)", labeled.len(), t.elapsed().as_millis()));
 
     let mut msg_stmt = conn.prepare(
         "SELECT DISTINCT subject FROM triples WHERE retracted = 0
@@ -209,6 +257,7 @@ fn do_full_rebuild(
     let messages: Vec<String> = msg_stmt
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    log_backend("info", &format!("[SEARCH] Message subjects: {} ({}ms)", messages.len(), t.elapsed().as_millis()));
 
     let mut seen = std::collections::HashSet::new();
     let subjects: Vec<String> = labeled.into_iter()
@@ -216,21 +265,27 @@ fn do_full_rebuild(
         .filter(|s| seen.insert(s.clone()))
         .collect();
 
-    log_backend("info", &format!("Indexing {} subjects", subjects.len()));
+    log_backend("info", &format!("[SEARCH] Indexing {} total subjects ({}ms)", subjects.len(), t.elapsed().as_millis()));
 
     let class_iris = fetch_class_iris(conn);
+    log_backend("info", &format!("[SEARCH] Class IRI fetch done ({}ms)", t.elapsed().as_millis()));
 
     idx.writer.delete_all_documents()?;
 
-    for subject in &subjects {
+    for (i, subject) in subjects.iter().enumerate() {
         let is_class = class_iris.contains(subject.as_str());
         if let Some(doc) = build_document(idx, conn, subject, is_class) {
             idx.writer.add_document(doc)?;
         }
+        if i > 0 && i % 1000 == 0 {
+            log_backend("info", &format!("[SEARCH] Indexed {}/{} subjects ({}ms)", i, subjects.len(), t.elapsed().as_millis()));
+        }
     }
+    log_backend("info", &format!("[SEARCH] All documents added, committing ({}ms)", t.elapsed().as_millis()));
 
     idx.writer.commit()?;
-    log_backend("info", "Search index build complete");
+    idx.reader.reload()?;
+    log_backend("info", &format!("[SEARCH] Full rebuild complete in {}ms", t.elapsed().as_millis()));
     Ok(())
 }
 
@@ -420,6 +475,10 @@ pub fn reindex_subjects(conn: &Connection, subjects: &[String]) {
 
     if let Err(e) = idx.writer.commit() {
         log_backend("warn", &format!("Search index commit failed: {}", e));
+        return;
+    }
+    if let Err(e) = idx.reader.reload() {
+        log_backend("warn", &format!("Search index reader reload failed: {}", e));
     }
 }
 

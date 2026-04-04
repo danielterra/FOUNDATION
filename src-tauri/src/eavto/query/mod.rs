@@ -71,6 +71,50 @@ pub fn get_retracted_by_entity(conn: &Connection, entity: &str) -> Result<QueryR
     Ok(QueryResult::new(triples))
 }
 
+pub fn get_retraction_tx(conn: &Connection, entity: &str) -> Result<Option<i64>> {
+    conn.query_row(
+        "SELECT MAX(retraction_tx) FROM triples WHERE subject = ? AND retracted = 1",
+        [entity],
+        |row| row.get::<_, Option<i64>>(0),
+    ).map_err(Into::into)
+}
+
+pub fn get_retracted_by_entity_at_tx(
+    conn: &Connection, entity: &str, tx: i64,
+) -> Result<QueryResult> {
+    let mut stmt = conn.prepare(
+        "SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                object_type, object_number, object_integer, object_boolean,
+                tx, origin_id, retracted, created_at
+         FROM triples
+         WHERE subject = ? AND retraction_tx = ? AND retracted = 1"
+    )?;
+
+    let triples = stmt
+        .query_map(rusqlite::params![entity, tx], row_to_triple)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(QueryResult::new(triples))
+}
+
+pub fn get_retracted_by_predicate_at_tx(
+    conn: &Connection, predicate: &str, tx: i64,
+) -> Result<QueryResult> {
+    let mut stmt = conn.prepare(
+        "SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                object_type, object_number, object_integer, object_boolean,
+                tx, origin_id, retracted, created_at
+         FROM triples
+         WHERE predicate = ? AND retraction_tx = ? AND retracted = 1"
+    )?;
+
+    let triples = stmt
+        .query_map(rusqlite::params![predicate, tx], row_to_triple)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(QueryResult::new(triples))
+}
+
 pub fn get_by_object_iri(conn: &Connection, object_iri: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,

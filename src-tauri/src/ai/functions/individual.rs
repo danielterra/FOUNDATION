@@ -806,6 +806,111 @@ fn retract_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
     }
 }
 
+pub fn restore_individual(
+    conn: &mut Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, restore_individual_one)
+}
+
+fn restore_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
+    let iri = match args.get("iri").and_then(|v| v.as_str()) {
+        Some(iri) => iri,
+        None => return ToolResult {
+            success: false, result: None,
+            error: Some("Missing required parameter: iri".to_string()), concept: None,
+        },
+    };
+    match Individual::restore(conn, iri, "ai") {
+        Ok(()) => {
+            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+            ToolResult {
+                success: true,
+                result: Some(serde_json::json!({
+                    "iri": iri,
+                    "message": format!("Individual '{}' restored.", iri),
+                })),
+                error: None,
+                concept: None,
+            }
+        }
+        Err(e) => ToolResult {
+            success: false, result: None, error: Some(e.to_string()), concept: None,
+        },
+    }
+}
+
+pub fn restore_class(
+    conn: &mut Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, restore_class_one)
+}
+
+fn restore_class_one(conn: &mut Connection, args: &Value) -> ToolResult {
+    let iri = match args.get("iri").and_then(|v| v.as_str()) {
+        Some(iri) => iri,
+        None => return ToolResult {
+            success: false, result: None,
+            error: Some("Missing required parameter: iri".to_string()), concept: None,
+        },
+    };
+    match crate::owl::Class::restore(conn, iri, "ai") {
+        Ok(count) => {
+            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+            ToolResult {
+                success: true,
+                result: Some(serde_json::json!({
+                    "iri": iri,
+                    "message": format!("Class '{}' restored with {} instance(s).", iri, count),
+                })),
+                error: None,
+                concept: None,
+            }
+        }
+        Err(e) => ToolResult {
+            success: false, result: None, error: Some(e.to_string()), concept: None,
+        },
+    }
+}
+
+pub fn restore_property(
+    conn: &mut Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    super::batch::run_atomic(conn, args, app, restore_property_one)
+}
+
+fn restore_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
+    let iri = match args.get("iri").and_then(|v| v.as_str()) {
+        Some(iri) => iri,
+        None => return ToolResult {
+            success: false, result: None,
+            error: Some("Missing required parameter: iri".to_string()), concept: None,
+        },
+    };
+    match crate::owl::Property::restore(conn, iri, "ai") {
+        Ok(count) => {
+            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+            ToolResult {
+                success: true,
+                result: Some(serde_json::json!({
+                    "iri": iri,
+                    "message": format!("Property '{}' restored with {} fact(s).", iri, count),
+                })),
+                error: None,
+                concept: None,
+            }
+        }
+        Err(e) => ToolResult {
+            success: false, result: None, error: Some(e.to_string()), concept: None,
+        },
+    }
+}
+
 #[cfg(test)]
 #[path = "individual_tests/mod.rs"]
 mod tests;

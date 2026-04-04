@@ -1,6 +1,7 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
 	import { onMount } from 'svelte';
+	import { marked } from 'marked';
 	import Card from './Card.svelte';
 	import ChatAttachmentPreview from './ChatAttachmentPreview.svelte';
 	import ChatInputArea from './ChatInputArea.svelte';
@@ -59,6 +60,7 @@
 	let conversations = $state([]);
 	let conversationAgent = $state(null);
 	let agents = $state([]);
+	let streamingText = $state('');
 	let loadMessagesVersion = 0;
 	let cameraEnabled = $state(localStorage.getItem('camera_vision_enabled') !== 'false');
 	let thinkingEnabled = $state(localStorage.getItem('thinking_enabled') !== 'false');
@@ -135,7 +137,17 @@
 
 		await initializeApp();
 
+		const unlistenDelta = await listen('chat-ai-delta', (event) => {
+			const { conversationId, type, text } = event.payload;
+			if (conversationId !== activeConversationIri) return;
+			if (type === 'speak' || type === 'text') {
+				streamingText += text;
+				scrollToBottom();
+			}
+		});
+
 		const unlistenMessages = await listen('chat-message-added', async () => {
+			streamingText = '';
 			await loadMessages();
 			await loadConversations();
 		});
@@ -169,6 +181,7 @@
 
 		return () => {
 			unlistenImport();
+			unlistenDelta();
 			unlistenMessages();
 			unlistenAIProcessing();
 			unlistenAIStatus();
@@ -180,11 +193,26 @@
 		};
 	});
 
+	function renderMarkdown(text) {
+		if (!text) return '';
+		return marked.parse(text, { breaks: true, gfm: true });
+	}
+
 	function shouldDisplayMessage(message) {
 		if (!Array.isArray(message.content)) return true;
 		if (message.content.length === 0) return false;
-		const hasOnlyToolResults = message.content.every(block => block.type === 'tool_result');
-		return !hasOnlyToolResults;
+		if (message.content.every(block => block.type === 'tool_result')) return false;
+		if (message.role === 'assistant') {
+			return message.content.some(b =>
+				b.type === 'speak_output' ||
+				b.type === 'question_output' ||
+				(b.type === 'tool_use' && b.name !== 'speak' && b.name !== 'ask_question') ||
+				(b.type === 'thinking' && (b.thinking?.length ?? 0) > 0) ||
+				b.type === 'redacted_thinking' ||
+				(b.type === 'text' && (b.text?.length ?? 0) > 0)
+			);
+		}
+		return true;
 	}
 
 	function autoResizeTextarea() {
@@ -325,6 +353,7 @@
 
 	async function switchConversation(iri) {
 		activeConversationIri = iri;
+		streamingText = '';
 		loadMessagesVersion++;
 		localStorage.setItem('activeConversationIri', iri);
 		inputText = localStorage.getItem(`draft_${iri}`) ?? '';
@@ -820,6 +849,12 @@
 				onEntityClick={openEntityInspector}
 			/>
 
+			{#if streamingText}
+				<div class="streaming-bubble">
+					<div class="streaming-text markdown-content">{@html renderMarkdown(streamingText)}</div>
+				</div>
+			{/if}
+
 			<ChatAttachmentPreview
 				pendingAttachments={pendingAttachments}
 				onRemove={removeAttachment}
@@ -867,5 +902,21 @@
 		flex-direction: column;
 		overflow: hidden;
 		padding: 16px 24px;
+	}
+
+	.streaming-bubble {
+		margin: 4px 0 8px 0;
+		display: flex;
+		justify-content: flex-start;
+	}
+
+	.streaming-text {
+		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+		border-radius: 12px;
+		padding: 12px 16px;
+		max-width: 85%;
+		color: var(--color-white);
+		font-size: 14px;
+		line-height: 1.6;
 	}
 </style>

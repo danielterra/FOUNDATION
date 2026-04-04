@@ -590,12 +590,13 @@ fn retract_class_one(
         };
 
         let deleted_instances = instance_iris.len();
+
+        Class::retract_all(conn, iri, "ai")?;
+
         for instance_iri in &instance_iris {
             crate::owl::Individual::retract(conn, instance_iri, "ai")?;
             super::batch::queue_event("entity-updated", serde_json::json!({"entityId": instance_iri}));
         }
-
-        Class::retract_all(conn, iri, "ai")?;
 
         super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
 

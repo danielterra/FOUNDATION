@@ -1,6 +1,6 @@
 use crate::eavto::Connection;
 use crate::eavto::{store, query, Triple, Object};
-use crate::owl::{Result, Thing, vocabulary::{rdf, rdfs, owl}};
+use crate::owl::{Result, OwlError, Thing, vocabulary::{rdf, rdfs, owl}};
 
 const CLASS_INSTANCE_LIMIT: usize = 50;
 
@@ -398,6 +398,37 @@ impl Class {
         origin: &str,
     ) -> Result<()> {
         Self::set_super_classes(conn, iri, &[super_class], origin)
+    }
+
+    /// Restore a retracted class and all instances that were cascade-deleted with it.
+    /// Re-asserts triples as new rows (immutable store — never mutates existing rows).
+    /// Only restores instances retracted in the same cascade (tx >= class_retract_tx).
+    pub fn restore(conn: &mut Connection, iri: &str, origin: &str) -> Result<usize> {
+        use crate::owl::Individual;
+
+        let class_retract_tx = query::get_retraction_tx(conn, iri)?
+            .ok_or_else(|| OwlError::NotFound(
+                format!("Class '{}' has no retracted triples to restore", iri)
+            ))?;
+
+        Individual::restore(conn, iri, origin)?;
+
+        let instance_iris: Vec<String> = conn.prepare(
+            "SELECT DISTINCT subject FROM triples
+             WHERE predicate = 'rdf:type' AND object = ? AND retracted = 1 AND retraction_tx >= ?"
+        ).map_err(|e| OwlError::DatabaseError(e.to_string()))
+        .and_then(|mut stmt| {
+            stmt.query_map(rusqlite::params![iri, class_retract_tx], |row| row.get(0))
+                .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+                .map_err(|e| OwlError::DatabaseError(e.to_string()))
+        })?;
+
+        let count = instance_iris.len();
+        for instance_iri in instance_iris {
+            Individual::restore(conn, &instance_iri, origin)?;
+        }
+
+        Ok(count)
     }
 
     /// Retract all triples about this class IRI

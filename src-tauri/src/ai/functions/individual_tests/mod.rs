@@ -6,6 +6,7 @@ use crate::owl::{Class, ClassType, Individual, Property, PropertyType};
 mod crud;
 mod search;
 mod automation;
+mod restore;
 
 fn setup_task_class_with_statuses(conn: &mut Connection) {
     let task_class = Class::new("foundation:Task");

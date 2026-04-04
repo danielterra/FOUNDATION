@@ -396,6 +396,58 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             ],
         },
 
+        ToolTemplate {
+            name: "restore_individual".to_string(),
+            array_mode: true,
+            description: "Restore a retracted individual by re-asserting its triples as new rows. \
+                Only restores triples from the most recent retraction event. Superseded values \
+                from prior updates are not restored. Use search(include_retracted: true) to \
+                discover restorable IRIs.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the individual to restore".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "restore_class".to_string(),
+            array_mode: true,
+            description: "Restore a retracted class and all instances that were cascade-deleted \
+                with it. Instances retracted independently before the class retraction are NOT \
+                restored. Use search(include_retracted: true) to discover restorable IRIs.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the class to restore".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "restore_property".to_string(),
+            array_mode: true,
+            description: "Restore a retracted property definition and all facts retracted in \
+                the same operation. Facts superseded by earlier updates are NOT restored. \
+                Use search(include_retracted: true) to discover restorable IRIs.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the property to restore".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
         // ----------------------------------------------------------------
         // READ TOOLS
         // ----------------------------------------------------------------

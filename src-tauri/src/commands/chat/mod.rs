@@ -110,7 +110,7 @@ pub async fn chat__send_and_reply(
     attachment_iris: Option<Vec<String>>,
     conversation_id: String,
     camera_images: Option<Vec<String>>,
-    _thinking_enabled: Option<bool>,
+    thinking_enabled: Option<bool>,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
     cancellation: State<'_, CancellationState>,
@@ -271,6 +271,7 @@ pub async fn chat__send_and_reply(
         &agent_config,
         Some(first_turn_ctx),
         false,
+        thinking_enabled.unwrap_or(false),
         &cancellation,
     ).await?;
 

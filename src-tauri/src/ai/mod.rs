@@ -1,6 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 pub mod functions;
 pub mod providers;
@@ -28,7 +26,7 @@ alongside the content. Use that IRI to reference the file in tool calls (e.g. he
 adds csvColumns (one value per header), csvDelimiter, csvRowCount\n\
 Use describe_individual on the file IRI to inspect its metadata before processing.";
 
-use providers::{AIProvider, ClaudeProvider, MessageContent, ContentBlock};
+use providers::{MessageContent, ContentBlock};
 
 #[allow(unused_imports)]
 pub use providers::UsageInfo;
@@ -105,74 +103,4 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub input: serde_json::Value,
-}
-
-pub struct AIAssistant {
-    provider: Box<dyn AIProvider>,
-}
-
-impl AIAssistant {
-    pub fn new(provider: Box<dyn AIProvider>) -> Self {
-        Self { provider }
-    }
-
-    pub async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, String> {
-        self.provider.generate(request).await
-    }
-}
-
-lazy_static::lazy_static! {
-    pub static ref AI_INSTANCE: Arc<Mutex<Option<AIAssistant>>> = Arc::new(Mutex::new(None));
-    static ref CURRENT_MODEL: std::sync::RwLock<Option<String>> =
-        std::sync::RwLock::new(None);
-}
-
-pub fn get_current_model() -> Result<String, String> {
-    CURRENT_MODEL.read()
-        .map_err(|_| "CURRENT_MODEL lock poisoned".to_string())?
-        .clone()
-        .ok_or_else(|| "No AI model configured. Please configure a model in Settings.".to_string())
-}
-
-#[allow(dead_code)]
-pub async fn initialize_ai(api_key: String) -> Result<(), String> {
-    let provider = ClaudeProvider::new(api_key, 180);
-    let assistant = AIAssistant::new(Box::new(provider));
-
-    let mut instance = AI_INSTANCE.lock().await;
-    *instance = Some(assistant);
-
-    Ok(())
-}
-
-pub async fn initialize_ai_with_model(
-    api_key: String,
-    model_identifier: Option<String>,
-    timeout_secs: u64,
-) -> Result<(), String> {
-    if let Ok(mut current) = CURRENT_MODEL.write() {
-        *current = model_identifier.clone();
-    }
-
-    let provider = if let Some(model) = model_identifier {
-        ClaudeProvider::with_model(api_key, model, timeout_secs)
-    } else {
-        ClaudeProvider::new(api_key, timeout_secs)
-    };
-
-    let assistant = AIAssistant::new(Box::new(provider));
-
-    let mut instance = AI_INSTANCE.lock().await;
-    *instance = Some(assistant);
-
-    Ok(())
-}
-
-pub async fn generate_response(request: GenerateRequest) -> Result<GenerateResponse, String> {
-    let instance = AI_INSTANCE.lock().await;
-
-    match instance.as_ref() {
-        Some(assistant) => assistant.generate(request).await,
-        None => Err("AI not initialized".to_string()),
-    }
 }

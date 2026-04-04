@@ -1,6 +1,6 @@
 use crate::eavto::Connection;
 use crate::eavto::{store, query, Triple, Object};
-use crate::owl::{Result, vocabulary::{rdf, rdfs, owl}};
+use crate::owl::{Result, OwlError, vocabulary::{rdf, rdfs, owl}};
 
 #[derive(Debug, Clone)]
 pub struct DomainLabel {
@@ -276,25 +276,51 @@ impl Property {
         Ok(())
     }
 
+    /// Restore a retracted property and all its asserted facts retracted in the same tx.
+    /// Re-asserts triples as new rows (immutable store — never mutates existing rows).
+    pub fn restore(conn: &mut Connection, iri: &str, origin: &str) -> Result<usize> {
+        let retract_tx = query::get_retraction_tx(conn, iri)?
+            .ok_or_else(|| OwlError::NotFound(
+                format!("Property '{}' has no retracted triples to restore", iri)
+            ))?;
+
+        let def_triples = query::get_retracted_by_entity_at_tx(conn, iri, retract_tx)?;
+        let def: Vec<Triple> = def_triples.triples.into_iter()
+            .map(|t| Triple::new(t.subject, t.predicate, t.object))
+            .collect();
+        if !def.is_empty() {
+            store::assert_triples(conn, &def, origin)?;
+        }
+
+        let fact_triples = query::get_retracted_by_predicate_at_tx(conn, iri, retract_tx)?;
+        let count = fact_triples.triples.len();
+        let facts: Vec<Triple> = fact_triples.triples.into_iter()
+            .map(|t| Triple::new(t.subject, t.predicate, t.object))
+            .collect();
+        if !facts.is_empty() {
+            store::assert_triples(conn, &facts, origin)?;
+        }
+
+        Ok(count)
+    }
+
     pub fn retract(conn: &mut Connection, iri: &str, origin: &str) -> Result<Vec<String>> {
         crate::owl::check_system_locked(conn, iri, None)?;
         let facts = query::get_by_predicate(conn, iri)?;
         let mut affected: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let facts_to_retract: Vec<Triple> = facts.triples.into_iter()
+        let mut all_triples: Vec<Triple> = facts.triples.into_iter()
             .map(|t| {
                 affected.insert(t.subject.clone());
                 Triple::new(t.subject, t.predicate, t.object)
             })
             .collect();
-        if !facts_to_retract.is_empty() {
-            store::retract_triples(conn, &facts_to_retract, origin)?;
-        }
         let definition = query::get_by_entity(conn, iri)?;
-        let def_triples: Vec<Triple> = definition.triples.into_iter()
-            .map(|t| Triple::new(t.subject, t.predicate, t.object))
-            .collect();
-        if !def_triples.is_empty() {
-            store::retract_triples(conn, &def_triples, origin)?;
+        all_triples.extend(
+            definition.triples.into_iter()
+                .map(|t| Triple::new(t.subject, t.predicate, t.object))
+        );
+        if !all_triples.is_empty() {
+            store::retract_triples(conn, &all_triples, origin)?;
         }
         Ok(affected.into_iter().collect())
     }

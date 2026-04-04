@@ -380,20 +380,21 @@ fn do_retract_triples(
             Object::Iri(iri) | Object::Blank(iri) => {
                 tx.execute(
                     "UPDATE triples
-                     SET retracted = 1
+                     SET retracted = 1, retraction_tx = ?
                      WHERE subject = ? AND predicate = ? AND object = ? AND retracted = 0",
-                    (&triple.subject, &triple.predicate, iri),
+                    (tx_id, &triple.subject, &triple.predicate, iri),
                 )?;
             }
             Object::Literal { value, datatype, language } => {
                 tx.execute(
                     "UPDATE triples
-                     SET retracted = 1
+                     SET retracted = 1, retraction_tx = ?
                      WHERE subject = ? AND predicate = ? AND object_value = ?
                        AND COALESCE(object_datatype, 'xsd:string') = COALESCE(?, 'xsd:string')
                        AND COALESCE(object_language, '') = COALESCE(?, '')
                        AND retracted = 0",
                     (
+                        tx_id,
                         &triple.subject,
                         &triple.predicate,
                         value,
@@ -405,33 +406,33 @@ fn do_retract_triples(
             Object::Integer(i) => {
                 tx.execute(
                     "UPDATE triples
-                     SET retracted = 1
+                     SET retracted = 1, retraction_tx = ?
                      WHERE subject = ? AND predicate = ? AND object_integer = ? AND retracted = 0",
-                    (&triple.subject, &triple.predicate, i),
+                    (tx_id, &triple.subject, &triple.predicate, i),
                 )?;
             }
             Object::Number(n) => {
                 tx.execute(
                     "UPDATE triples
-                     SET retracted = 1
+                     SET retracted = 1, retraction_tx = ?
                      WHERE subject = ? AND predicate = ? AND object_number = ? AND retracted = 0",
-                    (&triple.subject, &triple.predicate, n),
+                    (tx_id, &triple.subject, &triple.predicate, n),
                 )?;
             }
             Object::Boolean(b) => {
                 tx.execute(
                     "UPDATE triples
-                     SET retracted = 1
+                     SET retracted = 1, retraction_tx = ?
                      WHERE subject = ? AND predicate = ? AND object_boolean = ? AND retracted = 0",
-                    (&triple.subject, &triple.predicate, if *b { 1 } else { 0 }),
+                    (tx_id, &triple.subject, &triple.predicate, if *b { 1 } else { 0 }),
                 )?;
             }
             Object::DateTime(rfc3339) => {
                 tx.execute(
                     "UPDATE triples
-                     SET retracted = 1
+                     SET retracted = 1, retraction_tx = ?
                      WHERE subject = ? AND predicate = ? AND object_value = ? AND retracted = 0",
-                    (&triple.subject, &triple.predicate, rfc3339),
+                    (tx_id, &triple.subject, &triple.predicate, rfc3339),
                 )?;
             }
         }

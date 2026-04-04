@@ -47,6 +47,7 @@ pub fn setup_test_db() -> Connection {
             origin_id INTEGER NOT NULL,
             created_at INTEGER NOT NULL,
             retracted INTEGER NOT NULL DEFAULT 0,
+            retraction_tx INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (tx) REFERENCES transactions(tx),
             FOREIGN KEY (origin_id) REFERENCES origins(id)
         );

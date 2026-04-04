@@ -40,6 +40,7 @@ pub async fn run_conversation_loop(
     agent_config: &AgentConfig,
     first_turn_ctx: Option<FirstTurnContext>,
     silent: bool,
+    thinking_enabled: bool,
     cancellation: &AiCancellationState,
 ) -> Result<(), String> {
     let mut cancel_rx = cancellation.begin(conversation_id);
@@ -244,6 +245,7 @@ pub async fn run_conversation_loop(
             match handle_speak(
                 executor, app, conversation_id,
                 speak_tc, &api_response.tool_calls,
+                &content_blocks,
                 usage, model, &stop_reason,
             ).await? {
                 SpeakOutcome::Success => break,

@@ -1,6 +1,6 @@
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::ai::{AIAssistant, GenerateRequest, ChatMessage};
+use crate::ai::{GenerateRequest, ChatMessage};
 use crate::ai::providers::{MessageContent, ContentBlock, ClaudeTool};
 use crate::ai::functions::{get_claude_tools, ToolCall as FunctionToolCall, execute_tool as execute_fn};
 use crate::owl::{DbExecutor, get_literal_property, get_iri_property, get_all_iri_properties, Individual, Object};
@@ -315,7 +315,6 @@ pub async fn execute_agent_task(
         model_identifier.clone(),
         timeout_secs,
     );
-    let assistant = AIAssistant::new(Box::new(provider));
 
     let mut last_text = String::new();
     let mut task_completion: Option<(String, String)> = None;
@@ -333,7 +332,7 @@ pub async fn execute_agent_task(
             tool_choice: None,
         };
 
-        let response = assistant.generate(request).await
+        let response = provider.generate_stream(request, app, exec_iri).await
             .map_err(|e| format!("Agent task API error: {}", e))?;
 
         let stop_reason = response.stop_reason.clone().unwrap_or_else(|| "end_turn".to_string());

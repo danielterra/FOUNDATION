@@ -119,12 +119,29 @@ fn initialize_db_with_progress(
         log_backend("info", "Database exists, skipping ontology import");
     }
 
+    let t_startup = std::time::Instant::now();
+
     run_migrations(&conn)?;
+    log_backend("info", &format!("[STARTUP] migrations={}ms", t_startup.elapsed().as_millis()));
 
     let search_dir = db_path.parent()
         .map(|p| p.join("search"))
         .unwrap_or_else(|| std::path::PathBuf::from("search"));
-    crate::search::init(&search_dir, &conn);
+    let search_db_path = db_path.to_path_buf();
+    std::thread::spawn(move || {
+        let t = std::time::Instant::now();
+        log_backend("info", "[SEARCH] Background init starting");
+        match Connection::open(&search_db_path) {
+            Ok(bg_conn) => {
+                crate::search::init(&search_dir, &bg_conn);
+                log_backend("info", &format!("[SEARCH] Background init complete in {}ms", t.elapsed().as_millis()));
+            }
+            Err(e) => {
+                log_backend("error", &format!("[SEARCH] Background init failed: {}", e));
+            }
+        }
+    });
+    log_backend("info", &format!("[STARTUP] search_init=spawned ({}ms)", t_startup.elapsed().as_millis()));
 
     if let Some(handle) = app {
         let _ = handle.emit("import-complete", ());
@@ -282,6 +299,17 @@ fn run_migrations(conn: &Connection) -> Result<(), DbError> {
     ).unwrap_or(0) > 0;
     if !has_instance_iri {
         conn.execute_batch("ALTER TABLE formula_recalc_jobs ADD COLUMN instance_iri TEXT")?;
+    }
+
+    let has_retraction_tx: bool = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('triples') WHERE name = 'retraction_tx'",
+        [],
+        |row| row.get::<_, i64>(0),
+    ).unwrap_or(0) > 0;
+    if !has_retraction_tx {
+        conn.execute_batch(
+            "ALTER TABLE triples ADD COLUMN retraction_tx INTEGER NOT NULL DEFAULT 0"
+        )?;
     }
 
     crate::search::ensure_access_table(conn).map_err(DbError::ConnectionError)?;

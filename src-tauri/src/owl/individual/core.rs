@@ -198,6 +198,27 @@ impl Individual {
         Ok(())
     }
 
+    pub fn restore(conn: &mut Connection, iri: &str, origin: &str) -> Result<()> {
+        let retract_tx = query::get_retraction_tx(conn, iri)?
+            .ok_or_else(|| OwlError::NotFound(
+                format!("Individual '{}' has no retracted triples to restore", iri)
+            ))?;
+
+        let retracted = query::get_retracted_by_entity_at_tx(conn, iri, retract_tx)?;
+        if retracted.triples.is_empty() {
+            return Err(OwlError::NotFound(
+                format!("No triples found for '{}' at retraction tx {}", iri, retract_tx)
+            ));
+        }
+
+        let triples: Vec<Triple> = retracted.triples.into_iter()
+            .map(|t| Triple::new(t.subject, t.predicate, t.object))
+            .collect();
+
+        store::assert_triples(conn, &triples, origin)?;
+        Ok(())
+    }
+
     pub fn search(conn: &Connection) -> Result<Vec<String>> {
         let result = query::get_by_predicate(conn, rdf::TYPE)?;
         let mut seen = std::collections::HashSet::new();

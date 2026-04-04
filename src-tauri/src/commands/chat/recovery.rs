@@ -56,7 +56,7 @@ pub async fn run_conversation_from_current_state(
 
     super::engine::run_conversation_loop(
         &app, &executor, &conversation_id,
-        &agent_config, None, silent, cancellation,
+        &agent_config, None, silent, false, cancellation,
     ).await?;
 
     if !silent {

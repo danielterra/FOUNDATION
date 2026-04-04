@@ -272,7 +272,7 @@
 			</div>
 		{:else if message.role === 'assistant'}
 			{#if hasReasoningContent(message)}
-				<details class="reasoning-block">
+				<details class="reasoning-block" open>
 					<summary class="reasoning-summary">
 						<span class="material-symbols-outlined reasoning-icon">psychology</span>
 						<span class="reasoning-label">Reasoning</span>

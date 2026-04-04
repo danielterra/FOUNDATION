@@ -92,6 +92,7 @@ pub async fn handle_speak(
     conversation_id: &str,
     tc: &crate::ai::ToolCall,
     all_tool_calls: &[crate::ai::ToolCall],
+    response_blocks: &[ContentBlock],
     usage: Option<&UsageInfo>,
     model: &str,
     stop_reason: &str,
@@ -149,7 +150,11 @@ pub async fn handle_speak(
         }).await.ok();
     }
 
-    let speak_blocks = vec![ContentBlock::SpeakOutput { text: speak_result }];
+    let mut speak_blocks: Vec<ContentBlock> = response_blocks.iter()
+        .filter(|b| matches!(b, ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. }))
+        .cloned()
+        .collect();
+    speak_blocks.push(ContentBlock::SpeakOutput { text: speak_result });
     let speak_json = serde_json::to_string(&speak_blocks)
         .map_err(|e| format!("Failed to serialize speak content: {}", e))?;
     create_assistant_message(

@@ -1,4 +1,3 @@
-use crate::ai;
 use crate::owl::DbExecutor;
 use crate::owl::{self, Individual, Object};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -94,66 +93,9 @@ pub async fn ai__get_api_key(
 #[allow(non_snake_case)]
 pub async fn ai__initialize(
     app: AppHandle,
-    api_key: String,
-    executor: State<'_, DbExecutor>,
+    _api_key: String,
+    _executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
-
-    let (model_identifier, timeout_secs) = executor.read(|conn| {
-        // Check user's preferred model from DefaultAIModelSetting first
-        let preferred_model_iri = if let Ok(Some(setting)) =
-            Individual::get(conn, "foundation:DefaultAIModelSetting")
-        {
-            setting.properties.iter()
-                .find(|(k, _)| k == "foundation:settingValue")
-                .and_then(|(_, v)| v.as_literal())
-        } else {
-            None
-        };
-
-        let model = if let Some(ref iri) = preferred_model_iri {
-            owl::get_literal_property(conn, iri, "foundation:modelIdentifier")
-                .ok()
-                .flatten()
-        } else {
-            // Fall back to the model on LocalAIAssistant
-            let model_iri = owl::get_iri_property(conn, "foundation:LocalAIAssistant", "foundation:usesModel")
-                .ok()
-                .flatten();
-            model_iri.and_then(|iri| {
-                owl::get_literal_property(conn, &iri, "foundation:modelIdentifier")
-                    .ok()
-                    .flatten()
-            })
-        };
-
-        let timeout = if let Ok(Some(setting)) =
-            Individual::get(conn, "foundation:DefaultAPIRequestTimeoutSetting")
-        {
-            setting.properties.iter()
-                .find(|(k, _)| k == "foundation:settingValue")
-                .and_then(|(_, v)| v.as_literal())
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(180)
-        } else {
-            180
-        };
-
-        Ok((model, timeout))
-    }).await.map_err(|e: String| format!("Failed to query AI settings: {}", e))?;
-
-    if model_identifier.is_none() {
-        super::log_backend(
-            "warn",
-            "No default model found in ontology. AI generation will fail \
-            until a model is configured in Settings.",
-        );
-    }
-
-    super::log_backend("info", &format!(
-        "[AI] Initializing with model={:?}, timeout={}s",
-        model_identifier, timeout_secs
-    ));
-    ai::initialize_ai_with_model(api_key, model_identifier, timeout_secs).await?;
 
     let app_for_recovery = app.clone();
     tauri::async_runtime::spawn(async move {
