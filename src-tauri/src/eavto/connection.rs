@@ -301,16 +301,59 @@ fn run_migrations(conn: &Connection) -> Result<(), DbError> {
         conn.execute_batch("ALTER TABLE formula_recalc_jobs ADD COLUMN instance_iri TEXT")?;
     }
 
-    let has_retraction_tx: bool = conn.query_row(
-        "SELECT COUNT(*) FROM pragma_table_info('triples') WHERE name = 'retraction_tx'",
-        [],
-        |row| row.get::<_, i64>(0),
-    ).unwrap_or(0) > 0;
-    if !has_retraction_tx {
-        conn.execute_batch(
-            "ALTER TABLE triples ADD COLUMN retraction_tx INTEGER NOT NULL DEFAULT 0"
-        )?;
-    }
+    conn.execute_batch("
+        DROP VIEW IF EXISTS triples_current;
+        DROP VIEW IF EXISTS entities;
+        DROP VIEW IF EXISTS ontology_classes;
+        DROP VIEW IF EXISTS ontology_properties;
+
+        CREATE VIEW IF NOT EXISTS triples_current AS
+        SELECT subject, predicate, object, object_value, object_datatype, object_language,
+               object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
+        FROM triples t
+        WHERE t.retracted = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM triples newer
+              WHERE newer.subject = t.subject
+                AND newer.predicate = t.predicate
+                AND newer.object IS t.object
+                AND newer.object_value IS t.object_value
+                AND newer.object_datatype IS t.object_datatype
+                AND newer.object_language IS t.object_language
+                AND newer.retracted = 1
+                AND newer.tx > t.tx
+          );
+
+        CREATE VIEW IF NOT EXISTS entities AS
+        SELECT DISTINCT subject FROM triples_current;
+
+        CREATE VIEW IF NOT EXISTS ontology_classes AS
+        SELECT DISTINCT subject as class_id,
+          (SELECT object_value FROM triples_current
+           WHERE subject = class_id AND predicate = 'rdfs:label' LIMIT 1) as label,
+          (SELECT object_value FROM triples_current
+           WHERE subject = class_id AND predicate = 'rdfs:comment' LIMIT 1) as comment,
+          (SELECT object FROM triples_current
+           WHERE subject = class_id AND predicate = 'rdfs:subClassOf' LIMIT 1) as parent_class
+        FROM triples_current
+        WHERE predicate = 'rdf:type'
+          AND object IN ('owl:Class', 'rdfs:Class');
+
+        CREATE VIEW IF NOT EXISTS ontology_properties AS
+        SELECT DISTINCT subject as property_id,
+          (SELECT object FROM triples_current
+           WHERE subject = property_id AND predicate = 'rdf:type' LIMIT 1) as property_type,
+          (SELECT object_value FROM triples_current
+           WHERE subject = property_id AND predicate = 'rdfs:label' LIMIT 1) as label,
+          (SELECT object FROM triples_current
+           WHERE subject = property_id AND predicate = 'rdfs:domain' LIMIT 1) as domain,
+          (SELECT object FROM triples_current
+           WHERE subject = property_id AND predicate = 'rdfs:range' LIMIT 1) as range
+        FROM triples_current
+        WHERE predicate = 'rdf:type'
+          AND object IN ('owl:ObjectProperty', 'owl:DatatypeProperty',
+                         'owl:AnnotationProperty', 'rdf:Property');
+    ")?;
 
     crate::search::ensure_access_table(conn).map_err(DbError::ConnectionError)?;
 

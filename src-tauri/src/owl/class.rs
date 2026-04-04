@@ -415,7 +415,7 @@ impl Class {
 
         let instance_iris: Vec<String> = conn.prepare(
             "SELECT DISTINCT subject FROM triples
-             WHERE predicate = 'rdf:type' AND object = ? AND retracted = 1 AND retraction_tx >= ?"
+             WHERE predicate = 'rdf:type' AND object = ? AND retracted = 1 AND tx >= ?"
         ).map_err(|e| OwlError::DatabaseError(e.to_string()))
         .and_then(|mut stmt| {
             stmt.query_map(rusqlite::params![iri, class_retract_tx], |row| row.get(0))

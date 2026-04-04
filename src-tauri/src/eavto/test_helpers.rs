@@ -31,7 +31,6 @@ pub fn setup_test_db() -> Connection {
         );
 
         CREATE TABLE IF NOT EXISTS triples (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
             subject TEXT NOT NULL,
             predicate TEXT NOT NULL,
             object TEXT,
@@ -41,13 +40,11 @@ pub fn setup_test_db() -> Connection {
             object_language TEXT,
             object_number REAL,
             object_integer INTEGER,
-            object_datetime INTEGER,
             object_boolean INTEGER,
             tx INTEGER NOT NULL,
             origin_id INTEGER NOT NULL,
             created_at INTEGER NOT NULL,
             retracted INTEGER NOT NULL DEFAULT 0,
-            retraction_tx INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (tx) REFERENCES transactions(tx),
             FOREIGN KEY (origin_id) REFERENCES origins(id)
         );
@@ -57,6 +54,23 @@ pub fn setup_test_db() -> Connection {
         CREATE INDEX IF NOT EXISTS idx_triples_object ON triples(object);
         CREATE INDEX IF NOT EXISTS idx_triples_tx ON triples(tx);
         CREATE INDEX IF NOT EXISTS idx_triples_retracted ON triples(retracted);
+
+        CREATE VIEW IF NOT EXISTS triples_current AS
+        SELECT subject, predicate, object, object_value, object_datatype, object_language,
+               object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
+        FROM triples t
+        WHERE t.retracted = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM triples newer
+              WHERE newer.subject = t.subject
+                AND newer.predicate = t.predicate
+                AND newer.object IS t.object
+                AND newer.object_value IS t.object_value
+                AND newer.object_datatype IS t.object_datatype
+                AND newer.object_language IS t.object_language
+                AND newer.retracted = 1
+                AND newer.tx > t.tx
+          );
 
         CREATE TABLE IF NOT EXISTS metadata (
             key TEXT PRIMARY KEY,
@@ -114,12 +128,12 @@ pub fn create_test_triples() -> Vec<Triple> {
     ]
 }
 
-/// Assert that a triple exists in the database
+/// Assert that a triple exists in the database (currently active)
 #[cfg(test)]
 pub fn assert_triple_exists(conn: &Connection, subject: &str, predicate: &str) {
     let count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = ? AND retracted = 0",
+            "SELECT COUNT(*) FROM triples_current WHERE subject = ? AND predicate = ?",
             [subject, predicate],
             |row| row.get(0),
         )
@@ -128,11 +142,11 @@ pub fn assert_triple_exists(conn: &Connection, subject: &str, predicate: &str) {
     assert!(count > 0, "Triple not found: {} {}", subject, predicate);
 }
 
-/// Get the count of active triples in the database
+/// Get the count of currently-active triples in the database
 #[cfg(test)]
 pub fn get_active_triple_count(conn: &Connection) -> i64 {
     conn.query_row(
-        "SELECT COUNT(*) FROM triples WHERE retracted = 0",
+        "SELECT COUNT(*) FROM triples_current",
         [],
         |row| row.get(0),
     )

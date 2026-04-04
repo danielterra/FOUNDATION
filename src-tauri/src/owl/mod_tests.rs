@@ -101,20 +101,19 @@ fn test_replace_all_property_iris_replaces_existing_values() {
     ).unwrap();
 
     let active: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM triples \
+        "SELECT COUNT(*) FROM triples_current \
          WHERE subject = 'foundation:TestConcept' \
-           AND predicate = 'foundation:allowedStatus' \
-           AND retracted = 0",
+           AND predicate = 'foundation:allowedStatus'",
         [],
         |row| row.get(0),
     ).unwrap();
     assert_eq!(active, 2, "Only the new set of values must remain");
 
     let status_a_active: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM triples \
+        "SELECT COUNT(*) > 0 FROM triples_current \
          WHERE subject = 'foundation:TestConcept' \
            AND predicate = 'foundation:allowedStatus' \
-           AND object = 'foundation:StatusA' AND retracted = 0",
+           AND object = 'foundation:StatusA'",
         [],
         |row| row.get(0),
     ).unwrap();

@@ -175,7 +175,18 @@ fn do_assert_triples(
     let origin_id = get_or_create_origin(tx, origin)?;
 
     for id in &rows_to_retract {
-        tx.execute("UPDATE triples SET retracted = 1 WHERE rowid = ?", [id])?;
+        tx.execute(
+            "INSERT INTO triples (
+                 subject, predicate, object, object_value, object_datatype,
+                 object_language, object_type, object_number, object_integer,
+                 object_boolean, tx, origin_id, retracted, created_at
+             )
+             SELECT subject, predicate, object, object_value, object_datatype,
+                    object_language, object_type, object_number, object_integer,
+                    object_boolean, ?1, ?2, 1, ?3
+             FROM triples WHERE rowid = ?4",
+            rusqlite::params![tx_id, origin_id, now, id],
+        )?;
     }
     for &idx in &indices_to_insert {
         insert_triple(tx, &triples[idx], tx_id, origin_id, now)?;
@@ -372,67 +383,141 @@ fn do_retract_triples(
     )?;
 
     let tx_id = tx.last_insert_rowid();
-    let _origin_id = get_or_create_origin(tx, origin)?;
+    let origin_id = get_or_create_origin(tx, origin)?;
 
-    // We need to match the exact triple (subject, predicate, AND object/object_value)
     for triple in triples {
         match &triple.object {
             Object::Iri(iri) | Object::Blank(iri) => {
                 tx.execute(
-                    "UPDATE triples
-                     SET retracted = 1, retraction_tx = ?
-                     WHERE subject = ? AND predicate = ? AND object = ? AND retracted = 0",
-                    (tx_id, &triple.subject, &triple.predicate, iri),
+                    "INSERT INTO triples (
+                         subject, predicate, object, object_value, object_datatype,
+                         object_language, object_type, object_number, object_integer,
+                         object_boolean, tx, origin_id, retracted, created_at
+                     )
+                     SELECT subject, predicate, object, object_value, object_datatype,
+                            object_language, object_type, object_number, object_integer,
+                            object_boolean, ?1, ?2, 1, ?3
+                     FROM triples
+                     WHERE subject = ?4 AND predicate = ?5 AND object = ?6
+                       AND retracted = 0
+                       AND tx = (
+                           SELECT MAX(tx) FROM triples
+                           WHERE subject = ?4 AND predicate = ?5 AND object = ?6
+                       )",
+                    rusqlite::params![tx_id, origin_id, now,
+                                      &triple.subject, &triple.predicate, iri],
                 )?;
             }
             Object::Literal { value, datatype, language } => {
+                let dt = datatype.as_deref().unwrap_or("xsd:string");
+                let lang = language.as_deref().unwrap_or("");
                 tx.execute(
-                    "UPDATE triples
-                     SET retracted = 1, retraction_tx = ?
-                     WHERE subject = ? AND predicate = ? AND object_value = ?
-                       AND COALESCE(object_datatype, 'xsd:string') = COALESCE(?, 'xsd:string')
-                       AND COALESCE(object_language, '') = COALESCE(?, '')
-                       AND retracted = 0",
-                    (
-                        tx_id,
-                        &triple.subject,
-                        &triple.predicate,
-                        value,
-                        datatype.as_ref().unwrap_or(&"xsd:string".to_string()),
-                        language.as_ref().unwrap_or(&"".to_string()),
-                    ),
+                    "INSERT INTO triples (
+                         subject, predicate, object, object_value, object_datatype,
+                         object_language, object_type, object_number, object_integer,
+                         object_boolean, tx, origin_id, retracted, created_at
+                     )
+                     SELECT subject, predicate, object, object_value, object_datatype,
+                            object_language, object_type, object_number, object_integer,
+                            object_boolean, ?1, ?2, 1, ?3
+                     FROM triples
+                     WHERE subject = ?4 AND predicate = ?5 AND object_value = ?6
+                       AND COALESCE(object_datatype, 'xsd:string') = ?7
+                       AND COALESCE(object_language, '') = ?8
+                       AND retracted = 0
+                       AND tx = (
+                           SELECT MAX(tx) FROM triples
+                           WHERE subject = ?4 AND predicate = ?5 AND object_value = ?6
+                             AND COALESCE(object_datatype, 'xsd:string') = ?7
+                             AND COALESCE(object_language, '') = ?8
+                       )",
+                    rusqlite::params![tx_id, origin_id, now,
+                                      &triple.subject, &triple.predicate, value, dt, lang],
                 )?;
             }
             Object::Integer(i) => {
                 tx.execute(
-                    "UPDATE triples
-                     SET retracted = 1, retraction_tx = ?
-                     WHERE subject = ? AND predicate = ? AND object_integer = ? AND retracted = 0",
-                    (tx_id, &triple.subject, &triple.predicate, i),
+                    "INSERT INTO triples (
+                         subject, predicate, object, object_value, object_datatype,
+                         object_language, object_type, object_number, object_integer,
+                         object_boolean, tx, origin_id, retracted, created_at
+                     )
+                     SELECT subject, predicate, object, object_value, object_datatype,
+                            object_language, object_type, object_number, object_integer,
+                            object_boolean, ?1, ?2, 1, ?3
+                     FROM triples
+                     WHERE subject = ?4 AND predicate = ?5 AND object_integer = ?6
+                       AND retracted = 0
+                       AND tx = (
+                           SELECT MAX(tx) FROM triples
+                           WHERE subject = ?4 AND predicate = ?5 AND object_integer = ?6
+                       )",
+                    rusqlite::params![tx_id, origin_id, now,
+                                      &triple.subject, &triple.predicate, i],
                 )?;
             }
             Object::Number(n) => {
                 tx.execute(
-                    "UPDATE triples
-                     SET retracted = 1, retraction_tx = ?
-                     WHERE subject = ? AND predicate = ? AND object_number = ? AND retracted = 0",
-                    (tx_id, &triple.subject, &triple.predicate, n),
+                    "INSERT INTO triples (
+                         subject, predicate, object, object_value, object_datatype,
+                         object_language, object_type, object_number, object_integer,
+                         object_boolean, tx, origin_id, retracted, created_at
+                     )
+                     SELECT subject, predicate, object, object_value, object_datatype,
+                            object_language, object_type, object_number, object_integer,
+                            object_boolean, ?1, ?2, 1, ?3
+                     FROM triples
+                     WHERE subject = ?4 AND predicate = ?5 AND object_number = ?6
+                       AND retracted = 0
+                       AND tx = (
+                           SELECT MAX(tx) FROM triples
+                           WHERE subject = ?4 AND predicate = ?5 AND object_number = ?6
+                       )",
+                    rusqlite::params![tx_id, origin_id, now,
+                                      &triple.subject, &triple.predicate, n],
                 )?;
             }
             Object::Boolean(b) => {
+                let bval = if *b { 1i64 } else { 0i64 };
                 tx.execute(
-                    "UPDATE triples
-                     SET retracted = 1, retraction_tx = ?
-                     WHERE subject = ? AND predicate = ? AND object_boolean = ? AND retracted = 0",
-                    (tx_id, &triple.subject, &triple.predicate, if *b { 1 } else { 0 }),
+                    "INSERT INTO triples (
+                         subject, predicate, object, object_value, object_datatype,
+                         object_language, object_type, object_number, object_integer,
+                         object_boolean, tx, origin_id, retracted, created_at
+                     )
+                     SELECT subject, predicate, object, object_value, object_datatype,
+                            object_language, object_type, object_number, object_integer,
+                            object_boolean, ?1, ?2, 1, ?3
+                     FROM triples
+                     WHERE subject = ?4 AND predicate = ?5 AND object_boolean = ?6
+                       AND retracted = 0
+                       AND tx = (
+                           SELECT MAX(tx) FROM triples
+                           WHERE subject = ?4 AND predicate = ?5 AND object_boolean = ?6
+                       )",
+                    rusqlite::params![tx_id, origin_id, now,
+                                      &triple.subject, &triple.predicate, bval],
                 )?;
             }
             Object::DateTime(rfc3339) => {
                 tx.execute(
-                    "UPDATE triples
-                     SET retracted = 1, retraction_tx = ?
-                     WHERE subject = ? AND predicate = ? AND object_value = ? AND retracted = 0",
-                    (tx_id, &triple.subject, &triple.predicate, rfc3339),
+                    "INSERT INTO triples (
+                         subject, predicate, object, object_value, object_datatype,
+                         object_language, object_type, object_number, object_integer,
+                         object_boolean, tx, origin_id, retracted, created_at
+                     )
+                     SELECT subject, predicate, object, object_value, object_datatype,
+                            object_language, object_type, object_number, object_integer,
+                            object_boolean, ?1, ?2, 1, ?3
+                     FROM triples
+                     WHERE subject = ?4 AND predicate = ?5 AND object_value = ?6
+                       AND retracted = 0
+                       AND tx = (
+                           SELECT MAX(tx) FROM triples
+                           WHERE subject = ?4 AND predicate = ?5 AND object_value = ?6
+                       )",
+                    rusqlite::params![tx_id, origin_id, now,
+                                      &triple.subject, &triple.predicate, rfc3339],
                 )?;
             }
         }
@@ -453,7 +538,9 @@ struct ExistingRow {
     object_boolean: Option<i64>,
 }
 
-/// Fetch all active (retracted = 0) rows for a given (subject, predicate) pair.
+/// Fetch all currently-active rows for a given (subject, predicate) pair.
+/// A row is active when retracted=0 AND its tx equals the MAX(tx) for that specific
+/// (subject, predicate, object) combination — meaning no newer retraction supersedes it.
 fn fetch_existing_rows(
     tx: &rusqlite::Connection,
     subject: &str,
@@ -462,8 +549,16 @@ fn fetch_existing_rows(
     let mut stmt = tx.prepare(
         "SELECT rowid, object, object_value, object_datatype, object_language,
                 object_integer, object_number, object_boolean
-         FROM triples
-         WHERE subject = ? AND predicate = ? AND retracted = 0",
+         FROM triples t1
+         WHERE subject = ?1 AND predicate = ?2 AND retracted = 0
+           AND tx = (
+               SELECT MAX(tx) FROM triples t2
+               WHERE t2.subject = ?1 AND t2.predicate = ?2
+                 AND t2.object IS t1.object
+                 AND t2.object_value IS t1.object_value
+                 AND t2.object_datatype IS t1.object_datatype
+                 AND t2.object_language IS t1.object_language
+           )",
     )?;
     let rows = stmt.query_map([subject, predicate], |row| {
         Ok(ExistingRow {
@@ -833,7 +928,18 @@ fn do_rename_iri(
     let origin_id = get_or_create_origin(tx, origin)?;
 
     for row in &rows {
-        tx.execute("UPDATE triples SET retracted = 1 WHERE rowid = ?", [row.rowid])?;
+        tx.execute(
+            "INSERT INTO triples (
+                 subject, predicate, object, object_value, object_datatype,
+                 object_language, object_type, object_number, object_integer,
+                 object_boolean, tx, origin_id, retracted, created_at
+             )
+             SELECT subject, predicate, object, object_value, object_datatype,
+                    object_language, object_type, object_number, object_integer,
+                    object_boolean, ?1, ?2, 1, ?3
+             FROM triples WHERE rowid = ?4",
+            rusqlite::params![tx_id, origin_id, now, row.rowid],
+        )?;
 
         let new_subject: &str = if row.subject == old_iri { new_iri } else { &row.subject };
         let new_object_owned: Option<String> = row.object.as_ref().map(|o| {

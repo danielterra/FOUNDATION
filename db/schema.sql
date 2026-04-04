@@ -205,41 +205,56 @@ CREATE INDEX IF NOT EXISTS idx_ontology_files_modified ON ontology_files(last_mo
 -- Views for Common Queries
 -- ============================================================================
 
--- Current state view: Only non-retracted triples, latest tx per (subject, predicate, origin_id)
+-- Current state view: active triples only.
+-- A triple is active when retracted=0 AND no newer retraction INSERT row exists for the same
+-- (subject, predicate, object) tuple. This supports the append-only retraction model where
+-- retraction is an INSERT (retracted=1) rather than a mutation of an existing row.
 CREATE VIEW IF NOT EXISTS triples_current AS
-SELECT DISTINCT
-  subject, predicate, object, object_value, object_datatype, object_language,
-  object_number, object_integer, object_boolean,
-  FIRST_VALUE(tx) OVER (PARTITION BY subject, predicate, origin_id ORDER BY tx DESC) as tx,
-  origin_id, object_type, created_at
-FROM triples
-WHERE retracted = 0;
+SELECT subject, predicate, object, object_value, object_datatype, object_language,
+       object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
+FROM triples t
+WHERE t.retracted = 0
+  AND NOT EXISTS (
+      SELECT 1 FROM triples newer
+      WHERE newer.subject = t.subject
+        AND newer.predicate = t.predicate
+        AND newer.object IS t.object
+        AND newer.object_value IS t.object_value
+        AND newer.object_datatype IS t.object_datatype
+        AND newer.object_language IS t.object_language
+        AND newer.retracted = 1
+        AND newer.tx > t.tx
+  );
 
--- Entity view: All subjects with at least one non-retracted triple
+-- Entity view: All subjects with at least one currently-active triple
 CREATE VIEW IF NOT EXISTS entities AS
-SELECT DISTINCT subject
-FROM triples
-WHERE retracted = 0;
+SELECT DISTINCT subject FROM triples_current;
 
 -- Ontology classes view: All OWL/RDFS classes defined
 CREATE VIEW IF NOT EXISTS ontology_classes AS
 SELECT DISTINCT subject as class_id,
-  (SELECT object_value FROM triples WHERE subject = class_id AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1) as label,
-  (SELECT object_value FROM triples WHERE subject = class_id AND predicate = 'rdfs:comment' AND retracted = 0 LIMIT 1) as comment,
-  (SELECT object FROM triples WHERE subject = class_id AND predicate = 'rdfs:subClassOf' AND retracted = 0 LIMIT 1) as parent_class
-FROM triples
+  (SELECT object_value FROM triples_current
+   WHERE subject = class_id AND predicate = 'rdfs:label' LIMIT 1) as label,
+  (SELECT object_value FROM triples_current
+   WHERE subject = class_id AND predicate = 'rdfs:comment' LIMIT 1) as comment,
+  (SELECT object FROM triples_current
+   WHERE subject = class_id AND predicate = 'rdfs:subClassOf' LIMIT 1) as parent_class
+FROM triples_current
 WHERE predicate = 'rdf:type'
-  AND object IN ('owl:Class', 'rdfs:Class')
-  AND retracted = 0;
+  AND object IN ('owl:Class', 'rdfs:Class');
 
 -- Ontology properties view: All OWL/RDFS properties defined
 CREATE VIEW IF NOT EXISTS ontology_properties AS
 SELECT DISTINCT subject as property_id,
-  (SELECT object FROM triples WHERE subject = property_id AND predicate = 'rdf:type' AND retracted = 0 LIMIT 1) as property_type,
-  (SELECT object_value FROM triples WHERE subject = property_id AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1) as label,
-  (SELECT object FROM triples WHERE subject = property_id AND predicate = 'rdfs:domain' AND retracted = 0 LIMIT 1) as domain,
-  (SELECT object FROM triples WHERE subject = property_id AND predicate = 'rdfs:range' AND retracted = 0 LIMIT 1) as range
-FROM triples
+  (SELECT object FROM triples_current
+   WHERE subject = property_id AND predicate = 'rdf:type' LIMIT 1) as property_type,
+  (SELECT object_value FROM triples_current
+   WHERE subject = property_id AND predicate = 'rdfs:label' LIMIT 1) as label,
+  (SELECT object FROM triples_current
+   WHERE subject = property_id AND predicate = 'rdfs:domain' LIMIT 1) as domain,
+  (SELECT object FROM triples_current
+   WHERE subject = property_id AND predicate = 'rdfs:range' LIMIT 1) as range
+FROM triples_current
 WHERE predicate = 'rdf:type'
-  AND object IN ('owl:ObjectProperty', 'owl:DatatypeProperty', 'owl:AnnotationProperty', 'rdf:Property')
-  AND retracted = 0;
+  AND object IN ('owl:ObjectProperty', 'owl:DatatypeProperty',
+                 'owl:AnnotationProperty', 'rdf:Property');

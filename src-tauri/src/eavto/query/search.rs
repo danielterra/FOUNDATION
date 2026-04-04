@@ -29,9 +29,8 @@ pub fn search_entities(
     WITH
     iri_match AS (
         SELECT DISTINCT subject, 100 AS score, NULL AS match_pred, NULL AS match_val
-        FROM triples
-        WHERE retracted = 0
-          AND (subject = :q_exact
+        FROM triples_current
+        WHERE (subject = :q_exact
                OR LOWER(subject) = :q_lower
                OR LOWER(SUBSTR(subject, INSTR(subject, ':') + 1)) = :q_lower)
     ),
@@ -43,27 +42,24 @@ pub fn search_entities(
                 ELSE 30
             END AS score,
             NULL AS match_pred, NULL AS match_val
-        FROM triples
-        WHERE retracted = 0
-          AND predicate = 'rdfs:label'
+        FROM triples_current
+        WHERE predicate = 'rdfs:label'
           AND object_type = 'literal'
           AND LOWER(object_value) LIKE :q_like
     ),
     comment_match AS (
         SELECT DISTINCT subject, 20 AS score,
             predicate AS match_pred, object_value AS match_val
-        FROM triples
-        WHERE retracted = 0
-          AND predicate = 'rdfs:comment'
+        FROM triples_current
+        WHERE predicate = 'rdfs:comment'
           AND object_type = 'literal'
           AND LOWER(object_value) LIKE :q_like
     ),
     prop_match AS (
         SELECT DISTINCT subject, 10 AS score,
             predicate AS match_pred, SUBSTR(object_value, 1, 200) AS match_val
-        FROM triples
-        WHERE retracted = 0
-          AND object_type = 'literal'
+        FROM triples_current
+        WHERE object_type = 'literal'
           AND predicate NOT IN ('rdfs:label', 'rdfs:comment', 'foundation:content')
           AND LENGTH(object_value) <= 500
           AND LOWER(object_value) LIKE :q_like
@@ -92,30 +88,31 @@ pub fn search_entities(
     ),
     labels AS (
         SELECT subject, MIN(object_value) AS label
-        FROM triples
-        WHERE retracted = 0 AND predicate = 'rdfs:label' AND object_type = 'literal'
+        FROM triples_current
+        WHERE predicate = 'rdfs:label' AND object_type = 'literal'
         GROUP BY subject
     ),
     types AS (
         SELECT subject,
             COALESCE(
-                MIN(CASE WHEN object NOT LIKE 'owl:%' AND object NOT LIKE 'rdf:%' AND object NOT LIKE 'rdfs:%' THEN object END),
+                MIN(CASE WHEN object NOT LIKE 'owl:%' AND object NOT LIKE 'rdf:%'
+                              AND object NOT LIKE 'rdfs:%' THEN object END),
                 MIN(object)
             ) AS type_iri
-        FROM triples
-        WHERE retracted = 0 AND predicate = 'rdf:type' AND object_type = 'iri'
+        FROM triples_current
+        WHERE predicate = 'rdf:type' AND object_type = 'iri'
         GROUP BY subject
     ),
     has_icon AS (
         SELECT subject, MIN(object) AS icon_iri
-        FROM triples
-        WHERE retracted = 0 AND predicate = 'foundation:hasIcon' AND object_type = 'iri'
+        FROM triples_current
+        WHERE predicate = 'foundation:hasIcon' AND object_type = 'iri'
         GROUP BY subject
     ),
     icon_lit AS (
         SELECT subject, MIN(object_value) AS icon_val
-        FROM triples
-        WHERE retracted = 0 AND predicate = 'foundation:icon' AND object_type = 'literal'
+        FROM triples_current
+        WHERE predicate = 'foundation:icon' AND object_type = 'literal'
         GROUP BY subject
     )
     SELECT
@@ -158,35 +155,39 @@ pub fn search_entities(
 }
 
 
-pub(super) fn search_entities_all(conn: &Connection, limit: usize) -> Result<Vec<EntitySearchRow>> {
+pub(super) fn search_entities_all(
+    conn: &Connection,
+    limit: usize,
+) -> Result<Vec<EntitySearchRow>> {
     let sql = "
     WITH
     labels AS (
         SELECT subject, MIN(object_value) AS label
-        FROM triples
-        WHERE retracted = 0 AND predicate = 'rdfs:label' AND object_type = 'literal'
+        FROM triples_current
+        WHERE predicate = 'rdfs:label' AND object_type = 'literal'
         GROUP BY subject
     ),
     types AS (
         SELECT subject,
             COALESCE(
-                MIN(CASE WHEN object NOT LIKE 'owl:%' AND object NOT LIKE 'rdf:%' AND object NOT LIKE 'rdfs:%' THEN object END),
+                MIN(CASE WHEN object NOT LIKE 'owl:%' AND object NOT LIKE 'rdf:%'
+                              AND object NOT LIKE 'rdfs:%' THEN object END),
                 MIN(object)
             ) AS type_iri
-        FROM triples
-        WHERE retracted = 0 AND predicate = 'rdf:type' AND object_type = 'iri'
+        FROM triples_current
+        WHERE predicate = 'rdf:type' AND object_type = 'iri'
         GROUP BY subject
     ),
     has_icon AS (
         SELECT subject, MIN(object) AS icon_iri
-        FROM triples
-        WHERE retracted = 0 AND predicate = 'foundation:hasIcon' AND object_type = 'iri'
+        FROM triples_current
+        WHERE predicate = 'foundation:hasIcon' AND object_type = 'iri'
         GROUP BY subject
     ),
     icon_lit AS (
         SELECT subject, MIN(object_value) AS icon_val
-        FROM triples
-        WHERE retracted = 0 AND predicate = 'foundation:icon' AND object_type = 'literal'
+        FROM triples_current
+        WHERE predicate = 'foundation:icon' AND object_type = 'literal'
         GROUP BY subject
     )
     SELECT

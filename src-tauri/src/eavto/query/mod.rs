@@ -11,6 +11,23 @@ use super::query_result_type::QueryResult;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// SQL fragment that, when appended after `AND retracted = 0`, ensures the row
+/// is the latest for its (subject, predicate, object) tuple — i.e., no newer
+/// retraction row supersedes it. This is required for the append-only model
+/// where retraction is an INSERT rather than a mutation.
+const AND_IS_CURRENT: &str =
+    "AND NOT EXISTS (
+         SELECT 1 FROM triples newer
+         WHERE newer.subject = t.subject
+           AND newer.predicate = t.predicate
+           AND newer.object IS t.object
+           AND newer.object_value IS t.object_value
+           AND newer.object_datatype IS t.object_datatype
+           AND newer.object_language IS t.object_language
+           AND newer.retracted = 1
+           AND newer.tx > t.tx
+     )";
+
 pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
 
     let mut stmt = conn.prepare(
@@ -18,7 +35,7 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
                 object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
-         WHERE subject = ? AND retracted = 0
+         WHERE subject = ?
          ORDER BY predicate, object, object_value, tx DESC"
     )?;
 
@@ -47,7 +64,7 @@ pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
                 Object::DateTime(dt) => format!("dt:{}", dt),
             };
             let key = format!("{}|{}", t.predicate, object_key);
-            seen_pairs.insert(key)
+            seen_pairs.insert(key) && !t.retracted
         })
         .collect();
 
@@ -73,7 +90,7 @@ pub fn get_retracted_by_entity(conn: &Connection, entity: &str) -> Result<QueryR
 
 pub fn get_retraction_tx(conn: &Connection, entity: &str) -> Result<Option<i64>> {
     conn.query_row(
-        "SELECT MAX(retraction_tx) FROM triples WHERE subject = ? AND retracted = 1",
+        "SELECT MAX(tx) FROM triples WHERE subject = ? AND retracted = 1",
         [entity],
         |row| row.get::<_, Option<i64>>(0),
     ).map_err(Into::into)
@@ -87,7 +104,7 @@ pub fn get_retracted_by_entity_at_tx(
                 object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
-         WHERE subject = ? AND retraction_tx = ? AND retracted = 1"
+         WHERE subject = ? AND tx = ? AND retracted = 1"
     )?;
 
     let triples = stmt
@@ -105,7 +122,7 @@ pub fn get_retracted_by_predicate_at_tx(
                 object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
          FROM triples
-         WHERE predicate = ? AND retraction_tx = ? AND retracted = 1"
+         WHERE predicate = ? AND tx = ? AND retracted = 1"
     )?;
 
     let triples = stmt
@@ -116,14 +133,16 @@ pub fn get_retracted_by_predicate_at_tx(
 }
 
 pub fn get_by_object_iri(conn: &Connection, object_iri: &str) -> Result<QueryResult> {
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
-         FROM triples
-         WHERE object = ? AND object_type = 'iri' AND retracted = 0"
-    )?;
-
+         FROM triples t
+         WHERE t.object = ? AND t.object_type = 'iri' AND t.retracted = 0
+         {}",
+        AND_IS_CURRENT
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let triples = stmt
         .query_map([object_iri], row_to_triple)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -132,15 +151,17 @@ pub fn get_by_object_iri(conn: &Connection, object_iri: &str) -> Result<QueryRes
 }
 
 pub fn get_by_predicate(conn: &Connection, predicate: &str) -> Result<QueryResult> {
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
-         FROM triples
-         WHERE predicate = ? AND retracted = 0
-         ORDER BY tx DESC"
-    )?;
-
+         FROM triples t
+         WHERE t.predicate = ? AND t.retracted = 0
+         {}
+         ORDER BY t.tx DESC",
+        AND_IS_CURRENT
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let triples = stmt
         .query_map([predicate], row_to_triple)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -176,23 +197,24 @@ pub fn get_by_entity_predicate_internal(
                     object_type, object_number, object_integer, object_boolean,
                     tx, origin_id, retracted, created_at
              FROM triples
-             WHERE subject = ? AND predicate = ? AND retracted = 0
+             WHERE subject = ? AND predicate = ?
              ORDER BY tx DESC
              LIMIT 1"
         )?;
 
-        let triples = stmt
+        let triples: Vec<Triple> = stmt
             .query_map([entity, predicate], row_to_triple)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        Ok(QueryResult::new(triples))
+        let active: Vec<Triple> = triples.into_iter().filter(|t| !t.retracted).collect();
+        Ok(QueryResult::new(active))
     } else {
         let mut stmt = conn.prepare(
             "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                     object_type, object_number, object_integer, object_boolean,
                     tx, origin_id, retracted, created_at
              FROM triples
-             WHERE subject = ? AND predicate = ? AND retracted = 0
+             WHERE subject = ? AND predicate = ?
              ORDER BY object, object_value, tx DESC"
         )?;
 
@@ -213,7 +235,7 @@ pub fn get_by_entity_predicate_internal(
                     Object::Boolean(b) => format!("bool:{}", b),
                     Object::DateTime(dt) => format!("dt:{}", dt),
                 };
-                seen_objects.insert(key)
+                seen_objects.insert(key) && !t.retracted
             })
             .collect();
 
@@ -228,17 +250,17 @@ pub fn get_by_predicate_object(
 ) -> Result<QueryResult> {
     let (where_clause, params): (&str, Vec<&dyn rusqlite::ToSql>) = if object == "true" {
         (
-            "WHERE predicate = ?1 AND object_boolean = 1 AND retracted = 0",
+            "WHERE t.predicate = ?1 AND t.object_boolean = 1 AND t.retracted = 0",
             vec![&predicate as &dyn rusqlite::ToSql],
         )
     } else if object == "false" {
         (
-            "WHERE predicate = ?1 AND object_boolean = 0 AND retracted = 0",
+            "WHERE t.predicate = ?1 AND t.object_boolean = 0 AND t.retracted = 0",
             vec![&predicate as &dyn rusqlite::ToSql],
         )
     } else {
         (
-            "WHERE predicate = ?1 AND object = ?2 AND retracted = 0",
+            "WHERE t.predicate = ?1 AND t.object = ?2 AND t.retracted = 0",
             vec![&predicate as &dyn rusqlite::ToSql, &object as &dyn rusqlite::ToSql],
         )
     };
@@ -247,10 +269,11 @@ pub fn get_by_predicate_object(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
-         FROM triples
+         FROM triples t
          {}
-         ORDER BY tx DESC",
-        where_clause
+         {}
+         ORDER BY t.tx DESC",
+        where_clause, AND_IS_CURRENT
     );
 
     let mut stmt = conn.prepare(&query)?;
@@ -284,6 +307,14 @@ pub fn get_backlinks_grouped_limited(
                AND t.retracted = 0
                AND t.predicate != 'rdf:type'
                AND t.subject != ?1
+               AND NOT EXISTS (
+                   SELECT 1 FROM triples newer
+                   WHERE newer.subject = t.subject
+                     AND newer.predicate = t.predicate
+                     AND newer.object IS t.object
+                     AND newer.retracted = 1
+                     AND newer.tx > t.tx
+               )
              GROUP BY t.subject, t.predicate
          ),
          subject_class AS (
@@ -296,6 +327,14 @@ pub fn get_backlinks_grouped_limited(
                  WHERE t.predicate = 'rdf:type'
                    AND t.object_type = 'iri'
                    AND t.retracted = 0
+                   AND NOT EXISTS (
+                       SELECT 1 FROM triples newer
+                       WHERE newer.subject = t.subject
+                         AND newer.predicate = t.predicate
+                         AND newer.object IS t.object
+                         AND newer.retracted = 1
+                         AND newer.tx > t.tx
+                   )
              )
              WHERE rn = 1
          ),
@@ -364,10 +403,11 @@ pub fn get_predicates_for_subjects(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
-         FROM triples
-         WHERE subject IN ({}) AND predicate IN ({}) AND retracted = 0
-         ORDER BY subject, predicate, tx DESC",
-        subject_phs, predicate_phs
+         FROM triples t
+         WHERE t.subject IN ({}) AND t.predicate IN ({}) AND t.retracted = 0
+         {}
+         ORDER BY t.subject, t.predicate, t.tx DESC",
+        subject_phs, predicate_phs, AND_IS_CURRENT
     );
     let mut params: Vec<SqlValue> = subjects.iter()
         .map(|s| SqlValue::Text(s.clone()))
@@ -390,10 +430,12 @@ pub fn get_first_iri_property_batch(
     }
     let placeholders = subjects.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
-        "SELECT subject, object FROM triples
-         WHERE subject IN ({}) AND predicate = ? AND object_type = 'iri' AND retracted = 0
-         ORDER BY subject, tx DESC",
-        placeholders
+        "SELECT subject, object FROM triples t
+         WHERE t.subject IN ({}) AND t.predicate = ? AND t.object_type = 'iri'
+           AND t.retracted = 0
+           {}
+         ORDER BY t.subject, t.tx DESC",
+        placeholders, AND_IS_CURRENT
     );
     let mut params: Vec<SqlValue> = subjects.iter()
         .map(|s| SqlValue::Text(s.clone()))
@@ -495,7 +537,7 @@ pub fn get_entities_max_tx(
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
-        "SELECT subject, MAX(tx) FROM triples WHERE subject IN ({}) AND retracted = 0 GROUP BY subject",
+        "SELECT subject, MAX(tx) FROM triples WHERE subject IN ({}) GROUP BY subject",
         placeholders
     );
 
@@ -528,10 +570,11 @@ pub fn batch_load_triples_for_subjects(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
-         FROM triples
-         WHERE subject IN ({}) AND retracted = 0
-         ORDER BY subject, predicate, tx DESC",
-        placeholders
+         FROM triples t
+         WHERE t.subject IN ({}) AND t.retracted = 0
+         {}
+         ORDER BY t.subject, t.predicate, t.tx DESC",
+        placeholders, AND_IS_CURRENT
     );
     let params: Vec<SqlValue> = subjects.iter().map(|s| SqlValue::Text(s.clone())).collect();
     let mut stmt = conn.prepare(&sql)?;

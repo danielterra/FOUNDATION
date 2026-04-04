@@ -44,30 +44,28 @@ pub fn find_by_class_and_properties(
 
     let mut query = String::from(
         "SELECT DISTINCT t0.subject
-         FROM triples t0"
+         FROM triples_current t0"
     );
 
     for (i, _) in properties.iter().enumerate() {
         let table_num = i + 1;
         query.push_str(&format!(
-            "\n         INNER JOIN triples t{} ON t0.subject = t{}.subject",
+            "\n         INNER JOIN triples_current t{} ON t0.subject = t{}.subject",
             table_num, table_num
         ));
     }
 
     query.push_str(&format!(
         "\n         WHERE t0.predicate = 'rdf:type'
-           AND t0.object = '{}'
-           AND t0.retracted = 0",
+           AND t0.object = '{}'",
         class_iri
     ));
 
     for (i, (prop_iri, _)) in properties.iter().enumerate() {
         let table_num = i + 1;
         query.push_str(&format!(
-            "\n           AND t{}.predicate = '{}'
-           AND t{}.retracted = 0",
-            table_num, prop_iri, table_num
+            "\n           AND t{}.predicate = '{}'",
+            table_num, prop_iri
         ));
     }
 
@@ -103,12 +101,9 @@ pub fn find_entities_by_class_with_date_range(
     to_millis: Option<i64>,
     include_retracted: bool,
 ) -> Result<Vec<String>> {
-    let retracted_clause = if include_retracted { "" } else { " AND retracted = 0" };
+    let table = if include_retracted { "triples" } else { "triples_current" };
 
-    let mut conditions = format!(
-        "predicate = 'rdf:type' AND object = ?1{}",
-        retracted_clause,
-    );
+    let mut conditions = String::from("predicate = 'rdf:type' AND object = ?1");
 
     if from_millis.is_some() {
         conditions.push_str(" AND created_at >= ?2");
@@ -119,7 +114,7 @@ pub fn find_entities_by_class_with_date_range(
     }
 
     let sql = format!(
-        "SELECT DISTINCT subject FROM triples WHERE {}",
+        "SELECT DISTINCT subject FROM {table} WHERE {}",
         conditions
     );
 
@@ -155,14 +150,14 @@ pub fn find_by_class_iris_and_properties_with_options(
         return Ok((Vec::new(), 0));
     }
 
-    let type_retracted_filter = if include_retracted { "" } else { " AND t0.retracted = 0" };
+    let table = if include_retracted { "triples" } else { "triples_current" };
 
     let class_placeholders = class_iris.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let mut joins = String::new();
     let mut join_params: Vec<SqlValue> = Vec::new();
     let mut where_clause = format!(
         "WHERE t0.predicate = 'rdf:type' \
-         AND t0.object IN ({class_placeholders}){type_retracted_filter}"
+         AND t0.object IN ({class_placeholders})"
     );
     let mut where_params: Vec<SqlValue> = class_iris.iter()
         .map(|iri| SqlValue::Text(iri.to_string()))
@@ -171,24 +166,19 @@ pub fn find_by_class_iris_and_properties_with_options(
     for (i, filter) in properties.iter().enumerate() {
         let n = i + 1;
         let optional = filter.is_optional();
-        let prop_retracted_filter = if include_retracted {
-            String::new()
-        } else {
-            format!(" AND t{n}.retracted = 0")
-        };
 
         if optional {
             joins.push_str(&format!(
-                "\n         LEFT JOIN triples t{n} ON t0.subject = t{n}.subject \
-                 AND t{n}.predicate = ?{prop_retracted_filter}"
+                "\n         LEFT JOIN {table} t{n} ON t0.subject = t{n}.subject \
+                 AND t{n}.predicate = ?"
             ));
             join_params.push(SqlValue::Text(filter.prop_iri().to_string()));
         } else {
             joins.push_str(&format!(
-                "\n         INNER JOIN triples t{n} ON t0.subject = t{n}.subject"
+                "\n         INNER JOIN {table} t{n} ON t0.subject = t{n}.subject"
             ));
             where_clause.push_str(&format!(
-                "\n           AND t{n}.predicate = ?{prop_retracted_filter}"
+                "\n           AND t{n}.predicate = ?"
             ));
             where_params.push(SqlValue::Text(filter.prop_iri().to_string()));
         }
@@ -237,7 +227,7 @@ pub fn find_by_class_iris_and_properties_with_options(
 
     let count_query = format!(
         "SELECT COUNT(*) FROM \
-         (SELECT DISTINCT t0.subject FROM triples t0{joins}\n         {where_clause})"
+         (SELECT DISTINCT t0.subject FROM {table} t0{joins}\n         {where_clause})"
     );
     let total: usize = conn.query_row(
         &count_query,
@@ -251,7 +241,7 @@ pub fn find_by_class_iris_and_properties_with_options(
     data_params.push(SqlValue::Integer(offset as i64));
 
     let data_query = format!(
-        "SELECT DISTINCT t0.subject FROM triples t0{joins}\n         \
+        "SELECT DISTINCT t0.subject FROM {table} t0{joins}\n         \
          {where_clause}\n         LIMIT ? OFFSET ?"
     );
     let mut stmt = conn.prepare(&data_query)?;
@@ -274,49 +264,44 @@ pub fn find_by_properties_with_options(
         return Ok((Vec::new(), 0));
     }
 
+    let table = if include_retracted { "triples" } else { "triples_current" };
+
     let mut joins = String::new();
     let mut join_params: Vec<SqlValue> = Vec::new();
     let mut where_clause = String::new();
     let mut where_params: Vec<SqlValue> = Vec::new();
 
     for (i, filter) in properties.iter().enumerate() {
-        let retracted_filter = if include_retracted {
-            String::new()
-        } else {
-            format!(" AND t{i}.retracted = 0")
-        };
         let optional = filter.is_optional();
 
         let base = if let PropertyFilter::Compare(_, _, op) = filter { base_op(op) } else { "=" };
 
         if i == 0 && base == "not_exists" {
-            let type_retracted = if include_retracted { "" } else { " AND t0.retracted = 0" };
             where_clause.push_str(&format!(
-                "\n         WHERE t0.predicate = 'rdf:type'{type_retracted}\
+                "\n         WHERE t0.predicate = 'rdf:type'\
                  \n           AND NOT EXISTS (\
-                 \n               SELECT 1 FROM triples t_ne\
+                 \n               SELECT 1 FROM {table} t_ne\
                  \n               WHERE t_ne.subject = t0.subject\
-                 \n               AND t_ne.predicate = ?\
-                 \n               AND t_ne.retracted = 0)"
+                 \n               AND t_ne.predicate = ?)"
             ));
             where_params.push(SqlValue::Text(filter.prop_iri().to_string()));
         } else if i == 0 {
             where_clause.push_str(&format!(
-                "\n         WHERE t{i}.predicate = ?{retracted_filter}"
+                "\n         WHERE t{i}.predicate = ?"
             ));
             where_params.push(SqlValue::Text(filter.prop_iri().to_string()));
         } else if optional {
             joins.push_str(&format!(
-                "\n         LEFT JOIN triples t{i} ON t0.subject = t{i}.subject \
-                 AND t{i}.predicate = ?{retracted_filter}"
+                "\n         LEFT JOIN {table} t{i} ON t0.subject = t{i}.subject \
+                 AND t{i}.predicate = ?"
             ));
             join_params.push(SqlValue::Text(filter.prop_iri().to_string()));
         } else {
             joins.push_str(&format!(
-                "\n         INNER JOIN triples t{i} ON t0.subject = t{i}.subject"
+                "\n         INNER JOIN {table} t{i} ON t0.subject = t{i}.subject"
             ));
             where_clause.push_str(&format!(
-                "\n           AND t{i}.predicate = ?{retracted_filter}"
+                "\n           AND t{i}.predicate = ?"
             ));
             where_params.push(SqlValue::Text(filter.prop_iri().to_string()));
         }
@@ -366,7 +351,7 @@ pub fn find_by_properties_with_options(
     let params: Vec<SqlValue> = join_params.into_iter().chain(where_params).collect();
 
     let count_query = format!(
-        "SELECT COUNT(*) FROM (SELECT DISTINCT t0.subject FROM triples t0{joins}{where_clause})"
+        "SELECT COUNT(*) FROM (SELECT DISTINCT t0.subject FROM {table} t0{joins}{where_clause})"
     );
     let total: usize = conn.query_row(
         &count_query,
@@ -380,7 +365,7 @@ pub fn find_by_properties_with_options(
     data_params.push(SqlValue::Integer(offset as i64));
 
     let data_query = format!(
-        "SELECT DISTINCT t0.subject FROM triples t0{joins}{where_clause}\n         LIMIT ? OFFSET ?"
+        "SELECT DISTINCT t0.subject FROM {table} t0{joins}{where_clause}\n         LIMIT ? OFFSET ?"
     );
     let mut stmt = conn.prepare(&data_query)?;
     let entities: Vec<String> = stmt
@@ -395,29 +380,24 @@ pub fn find_by_properties_with_options(
 pub fn find_conversation_by_last_user_message(conn: &Connection) -> Result<Option<String>> {
     let sql = "
         SELECT conv.subject
-        FROM triples conv
+        FROM triples_current conv
         WHERE conv.predicate = 'rdf:type'
           AND conv.object = 'foundation:AIConversation'
-          AND conv.retracted = 0
           AND EXISTS (
-              SELECT 1 FROM triples h
+              SELECT 1 FROM triples_current h
               WHERE h.subject = conv.subject
                 AND h.predicate = 'foundation:handledBy'
-                AND h.retracted = 0
           )
         ORDER BY (
             SELECT MAX(t_sent.object_value)
-            FROM triples t_conv
-            JOIN triples t_sent ON t_sent.subject = t_conv.subject
+            FROM triples_current t_conv
+            JOIN triples_current t_sent ON t_sent.subject = t_conv.subject
               AND t_sent.predicate = 'foundation:sentAt'
-              AND t_sent.retracted = 0
-            JOIN triples t_role ON t_role.subject = t_conv.subject
+            JOIN triples_current t_role ON t_role.subject = t_conv.subject
               AND t_role.predicate = 'foundation:role'
               AND t_role.object_value = 'user'
-              AND t_role.retracted = 0
             WHERE t_conv.predicate = 'foundation:partOfConversation'
               AND t_conv.object = conv.subject
-              AND t_conv.retracted = 0
         ) DESC NULLS LAST
         LIMIT 1
     ";
@@ -435,19 +415,16 @@ pub fn find_message_iris_by_conversation(
     let sql = "
         SELECT subject FROM (
             SELECT t_type.subject, MAX(t_sent.object_value) AS ts
-            FROM triples t_type
-            INNER JOIN triples t_conv
+            FROM triples_current t_type
+            INNER JOIN triples_current t_conv
                 ON t_type.subject = t_conv.subject
                 AND t_conv.predicate = 'foundation:partOfConversation'
                 AND (t_conv.object = ?1 OR t_conv.object_value = ?1)
-                AND t_conv.retracted = 0
-            LEFT JOIN triples t_sent
+            LEFT JOIN triples_current t_sent
                 ON t_type.subject = t_sent.subject
                 AND t_sent.predicate = 'foundation:sentAt'
-                AND t_sent.retracted = 0
             WHERE t_type.predicate = 'rdf:type'
               AND t_type.object = 'foundation:AIConversationMessage'
-              AND t_type.retracted = 0
             GROUP BY t_type.subject
         )
         ORDER BY ts DESC
@@ -560,8 +537,8 @@ pub fn find_entities_by_attribute_value(
 ) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT subject
-         FROM triples
-         WHERE predicate = ? AND object_value = ? AND retracted = 0"
+         FROM triples_current
+         WHERE predicate = ? AND object_value = ?"
     )?;
 
     let entities: Vec<String> = stmt

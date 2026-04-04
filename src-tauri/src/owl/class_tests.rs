@@ -573,7 +573,7 @@ fn test_set_label_retracts_old_label() {
         |row| row.get(0),
     ).unwrap();
     let active: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM triples WHERE subject = 'foundation:Task' AND predicate = 'rdfs:label' AND retracted = 0",
+        "SELECT COUNT(*) FROM triples_current WHERE subject = 'foundation:Task' AND predicate = 'rdfs:label'",
         [],
         |row| row.get(0),
     ).unwrap();
@@ -609,7 +609,7 @@ fn test_set_comment_replaces_existing_comment() {
     assert_eq!(class.comment, Some("Updated comment".to_string()));
 
     let active: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM triples WHERE subject = 'foundation:Task' AND predicate = 'rdfs:comment' AND retracted = 0",
+        "SELECT COUNT(*) FROM triples_current WHERE subject = 'foundation:Task' AND predicate = 'rdfs:comment'",
         [],
         |row| row.get(0),
     ).unwrap();
@@ -628,7 +628,7 @@ fn test_set_icon_url_icon_stores_as_has_icon_literal() {
     Class::set_icon(&mut conn, "foundation:Task", "https://example.com/new.svg", "test").unwrap();
 
     let active: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM triples WHERE subject = 'foundation:Task' AND predicate = 'foundation:hasIcon' AND object_type = 'literal' AND retracted = 0",
+        "SELECT COUNT(*) FROM triples_current WHERE subject = 'foundation:Task' AND predicate = 'foundation:hasIcon' AND object_type = 'literal'",
         [],
         |row| row.get(0),
     ).unwrap();
@@ -666,7 +666,7 @@ fn test_set_super_class_replaces_old() {
     Class::set_super_class(&mut conn, "foundation:Task", "foundation:NewParent", "test").unwrap();
 
     let active: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM triples WHERE subject = 'foundation:Task' AND predicate = 'rdfs:subClassOf' AND retracted = 0 AND object IS NOT NULL",
+        "SELECT COUNT(*) FROM triples_current WHERE subject = 'foundation:Task' AND predicate = 'rdfs:subClassOf' AND object IS NOT NULL",
         [],
         |row| row.get(0),
     ).unwrap();

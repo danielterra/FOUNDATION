@@ -215,26 +215,26 @@ fn test_assert_replaces_old_values() {
 
     // Should have only 1 active email (the latest one)
     let active: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM triples \
-         WHERE subject = 'test:Person1' AND predicate = 'test:email' AND retracted = 0",
+        "SELECT COUNT(*) FROM triples_current \
+         WHERE subject = 'test:Person1' AND predicate = 'test:email'",
         [],
         |row| row.get(0)
     ).unwrap();
     assert_eq!(active, 1);
 
-    // Should have 2 total emails in history (1 retracted + 1 active)
+    // Should have 3 total rows in history: original assert + retraction insert + new assert
     let total: i64 = conn.query_row(
         "SELECT COUNT(*) FROM triples \
          WHERE subject = 'test:Person1' AND predicate = 'test:email'",
         [],
         |row| row.get(0)
     ).unwrap();
-    assert_eq!(total, 2);
+    assert_eq!(total, 3);
 
     // Verify the active one is the latest
     let active_value: String = conn.query_row(
-        "SELECT object_value FROM triples \
-         WHERE subject = 'test:Person1' AND predicate = 'test:email' AND retracted = 0",
+        "SELECT object_value FROM triples_current \
+         WHERE subject = 'test:Person1' AND predicate = 'test:email'",
         [],
         |row| row.get(0)
     ).unwrap();
@@ -298,12 +298,12 @@ fn test_assert_different_value_does_retract_and_insert() {
 
     assert!(tx_id > 0, "changing a value must create a real transaction");
     let active: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM triples WHERE subject='test:Thing' AND retracted=0",
+        "SELECT COUNT(*) FROM triples_current WHERE subject='test:Thing'",
         [], |r| r.get(0),
     ).unwrap();
     assert_eq!(active, 1);
     let active_value: String = conn.query_row(
-        "SELECT object_value FROM triples WHERE subject='test:Thing' AND retracted=0",
+        "SELECT object_value FROM triples_current WHERE subject='test:Thing'",
         [], |r| r.get(0),
     ).unwrap();
     assert_eq!(active_value, "New");
@@ -373,7 +373,7 @@ fn test_assert_multivalue_partial_overlap_only_changes_diff() {
 
     let active: Vec<String> = {
         let mut stmt = conn.prepare(
-            "SELECT object_value FROM triples WHERE subject='test:Thing' AND predicate='foundation:tag' AND retracted=0 ORDER BY object_value"
+            "SELECT object_value FROM triples_current WHERE subject='test:Thing' AND predicate='foundation:tag' ORDER BY object_value"
         ).unwrap();
         stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
     };
