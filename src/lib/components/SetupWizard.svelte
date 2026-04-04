@@ -86,7 +86,6 @@
 				aiModelIri: selectedModel
 			});
 
-			console.log('Setup completed:', result);
 			onComplete(result);
 		} catch (e) {
 			console.error('Setup failed:', e);

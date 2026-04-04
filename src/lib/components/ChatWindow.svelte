@@ -7,10 +7,12 @@
 	import ConversationBar from './ConversationBar.svelte';
 	import ChatHeader from './ChatHeader.svelte';
 	import ChatApiKeySetup from './ChatApiKeySetup.svelte';
+	import SettingsPanel from './SettingsPanel.svelte';
 	import ChatErrorBanner from './ChatErrorBanner.svelte';
 	import ChatMessageList from './ChatMessageList.svelte';
 
 	const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+	const SUPPORTED_TEXT_TYPES = ['text/csv', 'text/plain'];
 	const MESSAGE_PAGE_SIZE = 50;
 	const TEXTAREA_MAX_HEIGHT = 300;
 	const SCROLL_LOAD_THRESHOLD = 100;
@@ -31,11 +33,18 @@
 	let convLoading = $state({}); // {[iri]: {isLoading, aiStatus, elapsedSeconds, elapsedInterval}}
 	let isLoading = $derived(convLoading[activeConversationIri]?.isLoading ?? false);
 	let aiStatus = $derived(convLoading[activeConversationIri]?.aiStatus ?? null);
+	let hasPendingQuestion = $derived(
+		Array.isArray(messages) && (() => {
+			const last = [...messages].reverse().find(m => !m.isThinking);
+			return Array.isArray(last?.content) && last.content.some(b => b.type === 'question_output');
+		})()
+	);
 	let chatContainer = $state(null);
 	let userLocation = $state(null);
 	let apiKey = $state('');
 	let isInitialized = $state(false);
 	let showApiKeyInput = $state(false);
+	let showSettings = $state(false);
 	let messageLimit = $state(MESSAGE_PAGE_SIZE);
 	let isLoadingMore = $state(false);
 	let isLoadingMessages = $state(true);
@@ -644,11 +653,12 @@
 
 			const isImage = SUPPORTED_IMAGE_TYPES.includes(file.type);
 			const isPDF = file.type === 'application/pdf';
+			const isText = SUPPORTED_TEXT_TYPES.includes(file.type);
 
-			if (!isImage && !isPDF) {
+			if (!isImage && !isPDF && !isText) {
 				alert(
 					`File ${file.name} is not supported. ` +
-					'Only images (PNG, JPEG, WebP, GIF) and PDFs are supported.'
+					'Supported: images (PNG, JPEG, WebP, GIF), PDFs, and text files (CSV, TXT).'
 				);
 				return;
 			}
@@ -785,7 +795,11 @@
 		onSwitchAgent={switchAgent}
 		onNewConversation={createConversation}
 		onDownloadChat={downloadChat}
+		onOpenSettings={() => showSettings = true}
 	/>
+	{#if showSettings}
+		<SettingsPanel onClose={() => showSettings = false} />
+	{/if}
 	<ConversationBar bind:conversations bind:activeConversationIri onSwitch={switchConversation} onDelete={handleDeleteConversation} />
 	<div class="chat-content">
 		{#if showApiKeyInput}
@@ -795,6 +809,7 @@
 
 			<ChatMessageList
 				{messages}
+				conversationId={activeConversationIri}
 				{isLoadingMessages}
 				{isLoadingMore}
 				bind:chatContainer
@@ -810,26 +825,28 @@
 				onRemove={removeAttachment}
 			/>
 
-			<ChatInputArea
-				bind:inputText
-				{isLoading}
-				hasPendingAttachments={pendingAttachments.length > 0}
-				{aiStatus}
-				{elapsedSeconds}
-				onSend={sendMessage}
-				onKeydown={handleKeydown}
-				onFileSelect={handleFileSelect}
-				onPaste={handlePaste}
-				bind:textareaElement
-				bind:fileInputElement
-				{editingMessageIri}
-				onCancelEdit={cancelEdit}
-				onCancelAI={cancelAI}
-				{cameraEnabled}
-				onToggleCamera={toggleCamera}
-				{thinkingEnabled}
-				onToggleThinking={toggleThinking}
-			/>
+			{#if !hasPendingQuestion}
+				<ChatInputArea
+					bind:inputText
+					{isLoading}
+					hasPendingAttachments={pendingAttachments.length > 0}
+					{aiStatus}
+					{elapsedSeconds}
+					onSend={sendMessage}
+					onKeydown={handleKeydown}
+					onFileSelect={handleFileSelect}
+					onPaste={handlePaste}
+					bind:textareaElement
+					bind:fileInputElement
+					{editingMessageIri}
+					onCancelEdit={cancelEdit}
+					onCancelAI={cancelAI}
+					{cameraEnabled}
+					onToggleCamera={toggleCamera}
+					{thinkingEnabled}
+					onToggleThinking={toggleThinking}
+				/>
+			{/if}
 		{/if}
 	</div>
 </div>

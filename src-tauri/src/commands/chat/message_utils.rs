@@ -62,6 +62,20 @@ pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
                     data: data.clone(),
                 }
             ),
+            ContentBlock::SpeakOutput { text } => Some(
+                ApiContentBlock::Text { text: text.clone() }
+            ),
+            ContentBlock::QuestionOutput { id, question, question_type, options } => Some(
+                ApiContentBlock::ToolUse {
+                    id: id.clone(),
+                    name: "ask_question".to_string(),
+                    input: serde_json::json!({
+                        "question": question,
+                        "type": question_type,
+                        "options": options,
+                    }),
+                }
+            ),
         }
     }).collect();
 
@@ -115,6 +129,16 @@ pub fn inject_attachments_for_current_turn(
                     media_type: mime_type.clone(),
                     data: data.clone(),
                 },
+            });
+        } else if mime_type.starts_with("text/") {
+            use base64::Engine as _;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+                .unwrap_or_default();
+            inject.push(ApiContentBlock::Text {
+                text: format!("<file_content mime_type=\"{}\">\n{}\n</file_content>", mime_type, decoded),
             });
         }
     }

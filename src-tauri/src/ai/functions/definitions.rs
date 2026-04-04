@@ -533,6 +533,71 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
             ],
         },
 
+        ToolTemplate {
+            name: "head_file".to_string(),
+            array_mode: false,
+            description: "Return the first N lines of a foundation:File individual. Also returns the total line count so the agent knows the file's full size. Ideal for inspecting CSV headers and structure before choosing a processing strategy.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "file_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the foundation:File individual (e.g. 'foundation:File_1234567890')".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "n".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Number of lines to return. Default: 10.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "read_lines".to_string(),
+            array_mode: false,
+            description: "Read a specific line range from a foundation:File individual. Returns lines with 1-based numbers, total line count, and character metadata. Lines exceeding the character window are truncated — use start_char/end_char to iterate over long lines.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "file_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the foundation:File individual (e.g. 'foundation:File_1234567890')".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "start_line".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "First line to return (1-based, inclusive).".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "end_line".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Last line to return (1-based, inclusive). Must be >= start_line.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "start_char".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "First character position within each line (1-based). Default: 1.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "end_char".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Last character position within each line (1-based, inclusive). Default: start_char + 4095.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
         // ----------------------------------------------------------------
         // GRAPH / PROCESS TOOLS
         // ----------------------------------------------------------------

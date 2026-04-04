@@ -330,6 +330,7 @@ pub async fn execute_agent_task(
             tools: Some(tools.clone()),
             supports_web_tools: false,
             thinking: None,
+            tool_choice: None,
         };
 
         let response = assistant.generate(request).await

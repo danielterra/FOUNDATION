@@ -41,6 +41,8 @@ pub async fn chat__attach_file(
         estimate_image_tokens(&raw)
     } else if mime_type == "application/pdf" {
         estimate_pdf_tokens(&raw)
+    } else if mime_type.starts_with("text/") {
+        super::chat_storage::tokenize_text(&String::from_utf8_lossy(&raw))
     } else {
         0
     };
@@ -48,7 +50,12 @@ pub async fn chat__attach_file(
     let data = base64::engine::general_purpose::STANDARD.encode(&raw);
 
     let timestamp = chrono::Utc::now().timestamp_millis();
-    let iri = format!("foundation:File_{}", timestamp);
+    let csv_prefix = is_csv(&mime_type, &file_name);
+    let iri = if csv_prefix {
+        format!("foundation:CSVFile_{}", timestamp)
+    } else {
+        format!("foundation:File_{}", timestamp)
+    };
 
     let permanent_path = {
         let attachments_dir = dirs::document_dir()
@@ -67,6 +74,12 @@ pub async fn chat__attach_file(
     let hash = format!("sha256:{:x}", Sha256::digest(&raw));
     let size = raw.len() as i64;
     let file_type_iri = mime_to_file_type_iri(&mime_type).map(|s| s.to_string());
+    let csv_meta = if csv_prefix {
+        let text = String::from_utf8_lossy(&raw);
+        Some(parse_csv_metadata(&text))
+    } else {
+        None
+    };
     let file_name_clone = file_name.clone();
     let hash_clone = hash.clone();
     let iri_clone = iri.clone();
@@ -74,7 +87,13 @@ pub async fn chat__attach_file(
     executor.write(move |conn| {
         let ind = Individual::new(&iri_clone);
 
-        ind.assert(conn, "foundation:File", &file_name_clone, "attach_file", "chat")
+        let (class_iri, icon) = if csv_meta.is_some() {
+            ("foundation:CSVFile", "csv")
+        } else {
+            ("foundation:File", "attach_file")
+        };
+
+        ind.assert(conn, class_iri, &file_name_clone, icon, "chat")
             .map_err(|e| format!("Failed to create File entity: {}", e))?;
 
         ind.add_property(conn, "foundation:fileName", vec![Object::Literal {
@@ -106,6 +125,28 @@ pub async fn chat__attach_file(
 
         ind.add_property(conn, "foundation:uploadDate", vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "chat")
             .map_err(|e| format!("Failed to set uploadDate: {}", e))?;
+
+        if let Some(ref csv) = csv_meta {
+            ind.add_property(conn, "foundation:csvDelimiter", vec![Object::Literal {
+                value: csv.delimiter.clone(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }], "chat").map_err(|e| format!("Failed to set csvDelimiter: {}", e))?;
+
+            ind.add_property(conn, "foundation:csvRowCount",
+                vec![Object::Integer(csv.row_count as i64)], "chat")
+                .map_err(|e| format!("Failed to set csvRowCount: {}", e))?;
+
+            if !csv.columns.is_empty() {
+                let col_objects: Vec<Object> = csv.columns.iter().map(|c| Object::Literal {
+                    value: c.clone(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                }).collect();
+                ind.add_property(conn, "foundation:csvColumns", col_objects, "chat")
+                    .map_err(|e| format!("Failed to set csvColumns: {}", e))?;
+            }
+        }
 
         Ok(iri_clone)
     }).await?;
@@ -190,4 +231,69 @@ fn mime_to_file_type_iri(mime_type: &str) -> Option<&'static str> {
         "text/plain" => Some("foundation:FileType_TXT"),
         _ => None,
     }
+}
+
+fn is_csv(mime_type: &str, file_name: &str) -> bool {
+    mime_type == "text/csv"
+        || mime_type == "application/csv"
+        || mime_type == "application/vnd.ms-excel"
+        || file_name.to_lowercase().ends_with(".csv")
+}
+
+struct CsvMetadata {
+    delimiter: String,
+    columns: Vec<String>,
+    row_count: usize,
+}
+
+fn parse_csv_metadata(content: &str) -> CsvMetadata {
+    let mut lines = content.lines().filter(|l| !l.trim().is_empty());
+
+    let header_line = match lines.next() {
+        Some(l) => l,
+        None => return CsvMetadata { delimiter: ",".to_string(), columns: vec![], row_count: 0 },
+    };
+
+    let delimiter = detect_delimiter(header_line);
+    let columns = split_csv_line(header_line, delimiter)
+        .into_iter()
+        .map(|c| c.trim().trim_matches('"').trim_matches('\'').trim().to_string())
+        .filter(|c| !c.is_empty())
+        .collect();
+
+    let row_count = lines.count();
+
+    CsvMetadata {
+        delimiter: delimiter.to_string(),
+        columns,
+        row_count,
+    }
+}
+
+fn detect_delimiter(line: &str) -> char {
+    let candidates = [(',', 0usize), (';', 0), ('\t', 0)];
+    let counts = candidates.map(|(delim, _)| (delim, line.chars().filter(|&c| c == delim).count()));
+    counts.into_iter().max_by_key(|&(_, count)| count)
+        .filter(|&(_, count)| count > 0)
+        .map(|(delim, _)| delim)
+        .unwrap_or(',')
+}
+
+fn split_csv_line(line: &str, delimiter: char) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for ch in line.chars() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            c if c == delimiter && !in_quotes => {
+                fields.push(current.clone());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    fields.push(current);
+    fields
 }

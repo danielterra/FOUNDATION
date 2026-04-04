@@ -4,7 +4,6 @@
 	import TopBar from '$lib/components/graph/TopBar.svelte';
 	import GraphVisualization from '$lib/components/graph/GraphVisualization.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
-	import KeyboardShortcuts from '$lib/components/KeyboardShortcuts.svelte';
 	import EntityInspectorPanel from '$lib/components/graph/EntityInspectorPanel.svelte';
 
 	let loading = $state(true);
@@ -17,7 +16,6 @@
 	let currentNodeIcon = $state(null);
 	let graphComponent = $state();
 	let visibleGraphData = $state(null);
-	let shortcuts = $state([]);
 	let topBarComponent = $state();
 	let inspectorPanels = $state([]);
 
@@ -78,14 +76,6 @@
 	}
 
 	onMount(async () => {
-		// Load keyboard shortcuts from backend
-		try {
-			const shortcutsJson = await invoke('shortcuts__get_all');
-			shortcuts = JSON.parse(shortcutsJson);
-		} catch (e) {
-			console.error('Failed to load shortcuts:', e);
-		}
-
 		// Check if initial setup is needed
 		try {
 			const setupComplete = await invoke('setup__check');
@@ -230,8 +220,6 @@
 				</div>
 			{/if}
 		</div>
-
-		<KeyboardShortcuts {shortcuts} />
 	{/if}
 </div>
 

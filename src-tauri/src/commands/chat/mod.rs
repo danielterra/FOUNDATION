@@ -1,33 +1,36 @@
 mod tool_execution;
 mod message_utils;
-mod settings;
+pub mod settings;
 mod recovery;
 mod cancellation;
 mod subconscious;
 pub mod retention;
 pub mod conversation;
+mod loop_tools;
+mod engine;
+
 pub use tool_execution::execute_tools_from_message;
 pub use cancellation::AiCancellationState;
-pub use recovery::continue_conversation_after_recovery;
+pub use recovery::run_conversation_from_current_state;
 
 use crate::owl::{Individual, Object, DbExecutor};
 use rusqlite::OptionalExtension;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use base64::Engine as _;
 use super::chat_attachments::PENDING_ATTACHMENTS;
 
 pub use super::chat_storage::{
     ContentBlock,
-    create_user_message, create_assistant_message, load_conversation_history,
+    create_user_message, load_conversation_history,
 };
-use super::chat_storage::{create_message, load_message};
+use super::chat_storage::create_message;
 
-use message_utils::{message_to_api_format, inject_datetime_context, sanitize_tool_pairs, response_content_to_blocks};
 use settings::{get_max_input_tokens, load_agent_config};
 use recovery::delete_messages_from_timestamp;
 use cancellation::AiCancellationState as CancellationState;
 
 pub const MAX_OUTPUT_TOKENS: u32 = 16000;
+pub const SPEAK_MAX_CHARS: usize = 288;
 
 pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor, conversation_id: &str) -> Option<String> {
     let conv_id = conversation_id.to_string();
@@ -107,15 +110,11 @@ pub async fn chat__send_and_reply(
     attachment_iris: Option<Vec<String>>,
     conversation_id: String,
     camera_images: Option<Vec<String>>,
-    thinking_enabled: Option<bool>,
+    _thinking_enabled: Option<bool>,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
     cancellation: State<'_, CancellationState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    const MAX_TOOL_LOOPS: usize = 50;
-
-    let mut cancel_rx = cancellation.begin(&conversation_id);
-
     let conv_id = conversation_id.clone();
     let agent_config = executor.read(move |conn| {
         load_agent_config(conn, &conv_id)
@@ -130,8 +129,6 @@ pub async fn chat__send_and_reply(
     if let Some(ref attachments) = attachment_iris {
         super::log_backend("info", &format!("[CHAT] Attachments: {:?}", attachments));
     }
-
-    let mut response_messages = Vec::new();
 
     // (mime_type, base64_data) — injected into API for current turn only, never stored in DB
     let mut attachment_binaries: Vec<(String, String)> = Vec::new();
@@ -165,7 +162,7 @@ pub async fn chat__send_and_reply(
             for iri in iris {
                 if let Some(att) = store.remove(iri) {
                     existing_file_iris.push(att.file_iri.clone());
-                    if att.mime_type.starts_with("image/") || att.mime_type == "application/pdf" {
+                    if att.mime_type.starts_with("image/") || att.mime_type == "application/pdf" || att.mime_type.starts_with("text/") {
                         attachment_binaries.push((att.mime_type.clone(), att.data.clone()));
                     }
                     let file_iri = att.file_iri.clone();
@@ -259,223 +256,25 @@ pub async fn chat__send_and_reply(
     let subconscious_context = subconscious::format_context(&subconscious_entities);
     let blackboard_context = build_blackboard_context(&executor, &conversation_id).await;
 
-    let mut loop_count = 0;
-    loop {
-        loop_count += 1;
-        if loop_count > MAX_TOOL_LOOPS {
-            return Err(
-                "Too many tool execution loops - stopping to prevent infinite loop".to_string(),
-            );
-        }
+    let first_turn_ctx = engine::FirstTurnContext {
+        camera_images,
+        attachment_binaries,
+        files_needing_summary,
+        subconscious_context,
+        blackboard_context,
+    };
 
-        if cancellation.is_cancelled(&conversation_id) {
-            break;
-        }
+    engine::run_conversation_loop(
+        &app,
+        executor.inner(),
+        &conversation_id,
+        &agent_config,
+        Some(first_turn_ctx),
+        false,
+        &cancellation,
+    ).await?;
 
-        app.emit("ai-status", serde_json::json!({ "status": "Loading conversation history", "conversationId": conversation_id })).ok();
-
-        let history = load_conversation_history(&executor, &conversation_id, agent_config.max_tokens).await?;
-        super::log_backend(
-            "info",
-            &format!("[CHAT] Loaded {} messages from history", history.len()),
-        );
-
-        let mut api_messages: Vec<crate::ai::ChatMessage> = history.iter()
-            .map(message_to_api_format)
-            .collect();
-
-        if loop_count == 1 {
-            message_utils::inject_attachments_for_current_turn(
-                &mut api_messages,
-                camera_images.as_deref(),
-                &attachment_binaries,
-                &files_needing_summary,
-            );
-            if let Some(ref ctx) = subconscious_context {
-                message_utils::inject_subconscious_context(&mut api_messages, ctx);
-            }
-        }
-
-        inject_datetime_context(&mut api_messages);
-        sanitize_tool_pairs(&mut api_messages);
-
-        if api_messages.is_empty() {
-            return Err("Conversation history is empty — cannot send request to Claude".to_string());
-        }
-
-        let mut tools = crate::ai::functions::get_claude_tools();
-        tools.push(crate::ai::providers::ClaudeTool {
-            name: "speak".to_string(),
-            description: "Send a message to the user. Your only output channel. Maximum 144 characters.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "message": {
-                        "type": "string",
-                        "description": "The message to deliver to the user. Maximum 144 characters."
-                    },
-                    "iris": {
-                        "type": "array",
-                        "description": "IRIs of entities to display as widgets on the blackboard. The best widget type for each entity will be selected automatically.",
-                        "items": { "type": "string" }
-                    }
-                },
-                "required": ["message"]
-            }),
-        });
-
-        let widget_context = executor.read(|conn| {
-            Ok(crate::commands::widget::widget_system_context(conn))
-        }).await.unwrap_or_default();
-        let system_prompt = if let Some(ref frames) = camera_images {
-            format!(
-                "{}\n\n{}\n\n{}\n\n[Camera Vision] {} webcam snapshot{} of the user were captured during the typing of this message and are included as image blocks at the start of the user's message, in chronological order. Use them to read the evolution of the user's facial expression, posture, and emotional energy over the course of composing the message, and calibrate your tone and depth of response accordingly. Do not mention the camera or the images to the user unless they explicitly ask.",
-                crate::ai::BASE_SYSTEM_PROMPT,
-                widget_context,
-                agent_config.system_prompt,
-                frames.len(),
-                if frames.len() == 1 { "" } else { "s" }
-            )
-        } else {
-            format!("{}\n\n{}\n\n{}", crate::ai::BASE_SYSTEM_PROMPT, widget_context, agent_config.system_prompt)
-        };
-
-        let request = crate::ai::GenerateRequest {
-            messages: api_messages,
-            max_tokens: Some(MAX_OUTPUT_TOKENS),
-            temperature: None,
-            system: Some(system_prompt),
-            blackboard_context: blackboard_context.clone(),
-            tools: Some(tools),
-            supports_web_tools: agent_config.supports_web_tools,
-            thinking: if thinking_enabled.unwrap_or(true) { Some(crate::ai::ThinkingConfig::Adaptive) } else { None },
-        };
-
-        let provider = crate::ai::providers::ClaudeProvider::with_model(
-            agent_config.api_key.clone(),
-            agent_config.model_identifier.clone(),
-            agent_config.timeout_secs,
-        );
-        let assistant = crate::ai::AIAssistant::new(Box::new(provider));
-
-        app.emit("ai-status", serde_json::json!({ "status": "Claude is thinking", "conversationId": conversation_id })).ok();
-        super::log_backend("info", "[CHAT] Calling Claude API...");
-
-        let api_result = tokio::select! {
-            biased;
-            _ = &mut cancel_rx => break,
-            result = assistant.generate(request) => result,
-        };
-        let api_response = api_result.map_err(|e| format!("Claude API error: {}", e))?;
-
-        let stop_reason = api_response.stop_reason.clone()
-            .unwrap_or_else(|| "end_turn".to_string());
-        super::log_backend(
-            "info",
-            &format!("[CHAT] Claude responded (stop_reason: {})", stop_reason),
-        );
-
-        let content_blocks = response_content_to_blocks(
-            &api_response.content,
-            &api_response.tool_calls,
-            &api_response.thinking_blocks,
-        )?;
-        let content_blocks = message_utils::extract_and_save_file_summaries(
-            content_blocks,
-            &executor,
-        ).await;
-
-        if content_blocks.is_empty() && stop_reason == "end_turn" {
-            super::log_backend("info", "[CHAT] Claude returned empty end_turn — conversation complete, not saving");
-            break;
-        }
-
-        let content_json = serde_json::to_string(&content_blocks)
-            .map_err(|e| format!("Failed to serialize content: {}", e))?;
-
-        let current_model = agent_config.model_identifier.clone();
-
-        if let Some(usage) = &api_response.usage {
-            super::chat_storage::log_api_call(
-                &executor,
-                &current_model,
-                usage.input_tokens,
-                usage.output_tokens,
-                usage.cache_creation_input_tokens,
-                usage.cache_read_input_tokens,
-                Some(&conversation_id),
-            ).await
-                .unwrap_or_else(|e| super::log_backend("warn", &format!("[CHAT] Failed to log API call: {}", e)));
-        }
-
-        let assistant_msg_iri = create_assistant_message(
-            &executor,
-            &conversation_id,
-            &content_json,
-            &current_model,
-            &stop_reason,
-            api_response.usage.as_ref().map(|u| u.input_tokens as usize).unwrap_or(0),
-            api_response.usage.as_ref().map(|u| u.output_tokens as usize).unwrap_or(0),
-        ).await?;
-
-        super::log_backend(
-            "info",
-            &format!("[CHAT] Created assistant message: {}", assistant_msg_iri),
-        );
-
-        app.emit("chat-message-added", ()).ok();
-
-        response_messages.push(serde_json::json!({
-            "iri": assistant_msg_iri,
-            "role": "assistant",
-            "content": api_response.content,
-            "stop_reason": stop_reason,
-        }));
-
-        let has_tool_use = !api_response.tool_calls.is_empty();
-        if stop_reason == "tool_use" || (stop_reason == "max_tokens" && has_tool_use) {
-            let assistant_msg = executor.read(move |conn| {
-                load_message(conn, &assistant_msg_iri)
-            }).await?;
-
-            let tool_count = assistant_msg.content.iter()
-                .filter(|b| matches!(b, ContentBlock::ToolUse { .. }))
-                .count();
-            app.emit("ai-status", serde_json::json!({
-                "status": format!(
-                    "Executing {} tool{}",
-                    tool_count,
-                    if tool_count != 1 { "s" } else { "" }
-                ),
-                "conversationId": conversation_id
-            })).ok();
-
-            super::log_backend("info", "[CHAT] Executing tools...");
-            let (tool_result_msg_iri, had_successful_speak) = execute_tools_from_message(
-                &executor,
-                &app,
-                &conversation_id,
-                &assistant_msg,
-            ).await?;
-
-            super::log_backend(
-                "info",
-                &format!("[CHAT] Created tool result message: {}", tool_result_msg_iri),
-            );
-
-            app.emit("chat-message-added", ()).ok();
-
-            if cancellation.is_cancelled(&conversation_id) || had_successful_speak {
-                break;
-            }
-
-            continue;
-        }
-
-        break;
-    }
-
-    Ok(response_messages)
+    Ok(vec![])
 }
 
 #[tauri::command]
@@ -580,6 +379,14 @@ pub async fn chat__get_recent_messages(
                 .find(|(k, _)| k == "foundation:outputTokens")
                 .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
 
+            let estimated_cost = msg.properties.iter()
+                .find(|(k, _)| k == "foundation:estimatedCost")
+                .and_then(|(_, v)| match v {
+                    Object::Number(n) => Some(*n),
+                    Object::Literal { value, .. } => value.parse::<f64>().ok(),
+                    _ => None,
+                });
+
             let subconscious_entities: Vec<subconscious::SubconsciousEntity> = msg.properties.iter()
                 .find(|(k, _)| k == "foundation:subconsciousContext")
                 .and_then(|(_, v)| match v {
@@ -596,6 +403,7 @@ pub async fn chat__get_recent_messages(
                 "attachments": attachments,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
+                "estimated_cost": estimated_cost,
                 "subconscious_entities": subconscious_entities,
             });
 
@@ -694,7 +502,7 @@ pub async fn chat__edit_and_retry(
     let app_clone = app.clone();
     let executor_clone = executor.inner().clone();
     let mut response_messages = Vec::new();
-    continue_conversation_after_recovery(app_clone, executor_clone, conversation_id.clone(), &cancellation, false).await?;
+    run_conversation_from_current_state(app_clone, executor_clone, conversation_id.clone(), &cancellation, false).await?;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
     let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
@@ -723,7 +531,7 @@ pub async fn chat__retry_from_message(
 ) -> Result<Vec<serde_json::Value>, String> {
     let _cancel_rx = cancellation.begin(&conversation_id);
 
-    let msg_timestamp = executor.read(move |conn| {
+    let (msg_timestamp, is_user_message) = executor.read(move |conn| {
         let ind = Individual::get(conn, &message_iri)
             .map_err(|e| format!("Failed to load message: {}", e))?
             .ok_or_else(|| format!("Message {} not found", message_iri))?;
@@ -736,8 +544,8 @@ pub async fn chat__retry_from_message(
             })
             .ok_or("Missing role")?;
 
-        if role != "assistant" {
-            return Err(format!("Message {} is not an assistant message", message_iri));
+        if role != "assistant" && role != "user" {
+            return Err(format!("Message {} has unexpected role: {}", message_iri, role));
         }
 
         let timestamp = ind.properties.iter()
@@ -745,12 +553,14 @@ pub async fn chat__retry_from_message(
             .and_then(|(_, v)| parse_timestamp(v))
             .ok_or("Missing timestamp")?;
 
-        Ok(timestamp)
+        Ok((timestamp, role == "user"))
     }).await?;
 
     let conv_id_for_write = conversation_id.clone();
     executor.write(move |conn| {
-        delete_messages_from_timestamp(conn, &conv_id_for_write, msg_timestamp, false)?;
+        // For user messages: keep the message, delete everything after it.
+        // For assistant messages: delete from that message onward.
+        delete_messages_from_timestamp(conn, &conv_id_for_write, msg_timestamp, is_user_message)?;
         Ok(String::new())
     }).await?;
 
@@ -758,13 +568,13 @@ pub async fn chat__retry_from_message(
 
     let app_clone = app.clone();
     let executor_clone = executor.inner().clone();
-    continue_conversation_after_recovery(app_clone, executor_clone, conversation_id.clone(), &cancellation, false).await?;
+    run_conversation_from_current_state(app_clone, executor_clone, conversation_id.clone(), &cancellation, false).await?;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
     let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
     let mut response_messages = Vec::new();
     for msg in history.iter().rev() {
-        if msg.role == "assistant" && msg.timestamp >= msg_timestamp {
+        if msg.role == "assistant" && msg.timestamp > msg_timestamp {
             response_messages.push(serde_json::json!({
                 "iri": msg.iri,
                 "role": "assistant",
@@ -881,7 +691,7 @@ pub async fn chat__recover_pending_tools(
         app.emit("chat-message-added", ()).ok();
     }
 
-    continue_conversation_after_recovery(app.clone(), executor.inner().clone(), conv_id, &cancellation, true).await?;
+    run_conversation_from_current_state(app.clone(), executor.inner().clone(), conv_id, &cancellation, true).await?;
     Ok(1)
 }
 
@@ -892,4 +702,66 @@ pub async fn chat__purge_conversations(
 ) -> Result<usize, String> {
     retention::run_retention_policy(executor.inner()).await;
     Ok(0)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn chat__dismiss_question(
+    conversation_id: String,
+    tool_use_id: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let result_blocks = vec![ContentBlock::ToolResult {
+        tool_use_id,
+        content: "[Question dismissed by user]".to_string(),
+        is_error: None,
+    }];
+    let result_json = serde_json::to_string(&result_blocks)
+        .map_err(|e| format!("Failed to serialize dismiss result: {}", e))?;
+
+    super::chat_storage::create_user_message_raw(&executor, &conversation_id, &result_json).await?;
+    app.emit("chat-message-added", ()).ok();
+
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn chat__answer_question(
+    conversation_id: String,
+    tool_use_id: String,
+    answer: serde_json::Value,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let answer_str = match &answer {
+        serde_json::Value::String(s) => s.clone(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    };
+
+    let result_blocks = vec![ContentBlock::ToolResult {
+        tool_use_id: tool_use_id.clone(),
+        content: answer_str,
+        is_error: None,
+    }];
+    let result_json = serde_json::to_string(&result_blocks)
+        .map_err(|e| format!("Failed to serialize answer: {}", e))?;
+
+    super::chat_storage::create_user_message_raw(&executor, &conversation_id, &result_json).await?;
+    app.emit("chat-message-added", ()).ok();
+
+    let app_clone = app.clone();
+    let executor_clone = executor.inner().clone();
+    let conv_id = conversation_id.clone();
+    tauri::async_runtime::spawn(async move {
+        let cancellation = app_clone.state::<CancellationState>();
+        if let Err(e) = recovery::run_conversation_from_current_state(
+            app_clone.clone(), executor_clone, conv_id, &cancellation, false,
+        ).await {
+            super::log_backend("warn", &format!("[CHAT] Recovery after answer failed: {}", e));
+        }
+    });
+
+    Ok(())
 }

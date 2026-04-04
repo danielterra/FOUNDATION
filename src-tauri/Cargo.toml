@@ -43,7 +43,8 @@ sysinfo = "0.32"  # For system information
 hostname = "0.4"  # For hostname detection
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "net", "io-util"] }  # For async executor and tests
 axum = { version = "0.7", features = ["json"] }  # For embedded MCP HTTP server
-reqwest = { version = "0.12", features = ["blocking", "json"] }  # For HTTP API calls
+reqwest = { version = "0.12", features = ["blocking", "json", "stream"] }  # For HTTP API calls
+futures-util = "0.3"  # For SSE stream processing
 async-trait = "0.1"  # For async trait definitions
 tiktoken-rs = "0.6"  # For accurate token counting (Claude/GPT compatible)
 base64 = "0.22.1"

@@ -24,6 +24,16 @@ pub enum ContentBlock {
     RedactedThinking {
         data: String,
     },
+    SpeakOutput {
+        text: String,
+    },
+    QuestionOutput {
+        id: String,
+        question: String,
+        question_type: String,
+        #[serde(default)]
+        options: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +79,14 @@ pub async fn create_user_message(
     create_message(executor, conversation_id, "user", &content_json, None, None, None).await
 }
 
+pub async fn create_user_message_raw(
+    executor: &DbExecutor,
+    conversation_id: &str,
+    content_json: &str,
+) -> Result<String, String> {
+    create_message(executor, conversation_id, "user", content_json, None, None, None).await
+}
+
 pub async fn create_assistant_message(
     executor: &DbExecutor,
     conversation_id: &str,
@@ -77,6 +95,8 @@ pub async fn create_assistant_message(
     stop_reason: &str,
     input_tokens: usize,
     output_tokens: usize,
+    cache_creation_tokens: usize,
+    cache_read_tokens: usize,
 ) -> Result<String, String> {
     create_message(
         executor,
@@ -85,7 +105,7 @@ pub async fn create_assistant_message(
         content_json,
         Some(model),
         Some(stop_reason),
-        Some((input_tokens, output_tokens)),
+        Some((input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)),
     ).await
 }
 
@@ -97,7 +117,7 @@ pub(super) async fn create_message(
     content_json: &str,
     model: Option<&str>,
     stop_reason: Option<&str>,
-    tokens: Option<(usize, usize)>,
+    tokens: Option<(usize, usize, usize, usize)>,
 ) -> Result<String, String> {
     let timestamp = chrono::Utc::now().timestamp_millis();
     let message_iri = format!("foundation:AIConversationMessage_{}", timestamp);
@@ -161,6 +181,33 @@ pub(super) async fn create_message(
                 .map_err(|e| format!("Property error: {}", e))?;
         }
 
+        if let Some((input, output, cache_creation, cache_read)) = tokens {
+            msg.add_property(
+                conn, "foundation:inputTokens", vec![Object::Integer(input as i64)], "ai",
+            ).map_err(|e| format!("Property error: {}", e))?;
+            msg.add_property(
+                conn, "foundation:outputTokens", vec![Object::Integer(output as i64)], "ai",
+            ).map_err(|e| format!("Property error: {}", e))?;
+            msg.add_property(
+                conn, "foundation:cacheCreationTokens", vec![Object::Integer(cache_creation as i64)], "ai",
+            ).map_err(|e| format!("Property error: {}", e))?;
+            msg.add_property(
+                conn, "foundation:cacheReadTokens", vec![Object::Integer(cache_read as i64)], "ai",
+            ).map_err(|e| format!("Property error: {}", e))?;
+
+            if let Some(model_str) = &model_opt {
+                if let Some(cost) = estimate_call_cost(
+                    conn, model_str,
+                    input as u32, output as u32,
+                    cache_creation as u32, cache_read as u32,
+                ) {
+                    msg.add_property(
+                        conn, "foundation:estimatedCost", vec![Object::Number(cost)], "ai",
+                    ).map_err(|e| format!("Property error: {}", e))?;
+                }
+            }
+        }
+
         if let Some(model_str) = model_opt {
             msg.add_property(conn, "foundation:model", vec![Object::Literal {
                 value: model_str,
@@ -175,15 +222,6 @@ pub(super) async fn create_message(
                 datatype: Some("xsd:string".to_string()),
                 language: None,
             }], "ai").map_err(|e| format!("Failed to set stopReason: {}", e))?;
-        }
-
-        if let Some((input, output)) = tokens {
-            msg.add_property(
-                conn, "foundation:inputTokens", vec![Object::Integer(input as i64)], "ai",
-            ).map_err(|e| format!("Property error: {}", e))?;
-            msg.add_property(
-                conn, "foundation:outputTokens", vec![Object::Integer(output as i64)], "ai",
-            ).map_err(|e| format!("Property error: {}", e))?;
         }
 
         crate::search::reindex_subjects(conn, &[msg_iri_clone.clone()]);
@@ -278,10 +316,10 @@ pub async fn load_conversation_history(
         let pending_tool_ids: Vec<String> = validated.last()
             .filter(|prev| prev.role == "assistant")
             .map(|prev| prev.content.iter()
-                .filter_map(|b| if let ContentBlock::ToolUse { id, .. } = b {
-                    Some(id.clone())
-                } else {
-                    None
+                .filter_map(|b| match b {
+                    ContentBlock::ToolUse { id, .. } => Some(id.clone()),
+                    ContentBlock::QuestionOutput { id, .. } => Some(id.clone()),
+                    _ => None,
                 })
                 .collect())
             .unwrap_or_default();
@@ -596,6 +634,12 @@ fn calculate_content_tokens(content_json: &str) -> Result<usize, String> {
             ContentBlock::FileRef { token_estimate, .. } => *token_estimate,
             ContentBlock::Thinking { thinking, .. } => bpe.encode_with_special_tokens(thinking).len(),
             ContentBlock::RedactedThinking { .. } => 0,
+            ContentBlock::SpeakOutput { text } => bpe.encode_with_special_tokens(text).len(),
+            ContentBlock::QuestionOutput { question, options, .. } => {
+                let opts = options.join(", ");
+                bpe.encode_with_special_tokens(question).len() +
+                bpe.encode_with_special_tokens(&opts).len() + TOOL_TOKEN_OVERHEAD
+            },
         };
     }
 

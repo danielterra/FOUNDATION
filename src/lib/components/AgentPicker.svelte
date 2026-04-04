@@ -1,10 +1,18 @@
 <script>
+	import { convertFileSrc } from '@tauri-apps/api/core';
+
 	let {
 		agents = [],
 		activeAgentIri = null,
 		onSelect,
 		onClose,
 	} = $props();
+
+	function resolveIcon(icon) {
+		if (!icon) return null;
+		if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
+		return icon;
+	}
 
 	function handleSelect(agent) {
 		if (!agent.available) return;
@@ -39,7 +47,8 @@
 		>
 			<span class="agent-icon">
 				{#if agent.icon?.startsWith('http') || agent.icon?.startsWith('file') || agent.icon?.startsWith('data')}
-					<img src={agent.icon} alt={agent.label} />
+					<img src={resolveIcon(agent.icon)} alt={agent.label} onerror={(e) => { e.currentTarget.style.display='none'; e.currentTarget.nextElementSibling.style.display='inline'; }} />
+					<span class="material-symbols-outlined" style="display:none">smart_toy</span>
 				{:else}
 					<span class="material-symbols-outlined">{agent.icon || 'smart_toy'}</span>
 				{/if}

@@ -5,7 +5,7 @@
   import GraphVisualization from '../graph/GraphVisualization.svelte';
   import WidgetContainer from './WidgetContainer.svelte';
 
-  let { widgetId, entityId = '', windowState = 'normal', onWindowStateChange } = $props();
+  let { widgetId, entityId = '', conversationIri = null, windowState = 'normal', onWindowStateChange } = $props();
 
   let label = $state('');
   let graphData = $state(null);
@@ -27,7 +27,7 @@
         entityId,
         position: null,
         size: null,
-        conversationId: null,
+        conversationId: conversationIri,
       });
     } catch (err) {
       console.error('Failed to open inspector:', err);

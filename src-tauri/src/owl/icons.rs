@@ -43,11 +43,16 @@ pub fn icon_store_value(icon: &str) -> (&'static str, crate::eavto::Object) {
 /// Validates that `icon` is a recognised icon: a valid Material Symbols IRI, a raw symbol name
 /// that exists in the seeded library, or a URL-based icon (http/https/file/data).
 pub fn validate_icon(conn: &Connection, icon: &str) -> crate::owl::Result<()> {
-    if icon.starts_with("http://")
-        || icon.starts_with("https://")
-        || icon.starts_with("file://")
-        || icon.starts_with("data:")
-    {
+    if icon.starts_with("http://") || icon.starts_with("https://") || icon.starts_with("data:") {
+        return Ok(());
+    }
+    if let Some(path) = icon.strip_prefix("file://") {
+        if !std::path::Path::new(path).exists() {
+            return Err(crate::owl::OwlError::ValidationError(format!(
+                "Icon file not found: '{}'. The file must exist on disk.",
+                path
+            )));
+        }
         return Ok(());
     }
 
@@ -271,12 +276,27 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_icon_url_formats_always_valid() {
+    fn test_validate_icon_http_https_data_always_valid() {
         let conn = setup_test_db();
         assert!(validate_icon(&conn, "https://example.com/icon.png").is_ok());
         assert!(validate_icon(&conn, "http://example.com/icon.png").is_ok());
-        assert!(validate_icon(&conn, "file:///path/to/icon.png").is_ok());
         assert!(validate_icon(&conn, "data:image/png;base64,abc").is_ok());
+    }
+
+    #[test]
+    fn test_validate_icon_file_url_nonexistent_rejected() {
+        let conn = setup_test_db();
+        assert!(validate_icon(&conn, "file:///nonexistent/path/icon.png").is_err());
+    }
+
+    #[test]
+    fn test_validate_icon_file_url_existing_accepted() {
+        let conn = setup_test_db();
+        let tmp = std::env::temp_dir().join("test_icon.png");
+        std::fs::write(&tmp, b"fake").unwrap();
+        let url = format!("file://{}", tmp.display());
+        assert!(validate_icon(&conn, &url).is_ok());
+        std::fs::remove_file(tmp).ok();
     }
 
 }

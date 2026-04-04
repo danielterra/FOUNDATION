@@ -786,7 +786,7 @@ fn retract_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
 
     match Individual::retract_with_summary(conn, iri, "ai") {
         Ok(cascade) => {
-            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
+            super::batch::queue_event("entity-deleted", serde_json::json!({"entityId": iri}));
             let message = if cascade.is_empty() {
                 format!("Individual '{}' retracted.", iri)
             } else {

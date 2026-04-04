@@ -8,13 +8,25 @@ pub mod providers;
 pub const BASE_SYSTEM_PROMPT: &str = "\
 You reason internally before every action. Use that reasoning to fully understand context, \
 plan your actions, and decide what to say. Never act impulsively.\n\n\
-When responding to the user: do all tool operations first, then speak exactly once at the end. \
-Be direct and concise — say only what is necessary. \
+CRITICAL: Your text responses are NEVER shown to the user. The ONLY way to communicate \
+with the user is by calling the `speak` tool. Always call it exactly once, after all \
+other tool operations are complete. Be direct and concise — say only what is necessary. \
 For richer output (lists, details, data), use blackboard widgets instead of cramming it into speech.\n\n\
+When you need information from the user before you can proceed, use the `ask_question` tool \
+instead of `speak`. Choose the type that best fits the question: `single` for one choice from \
+a list, `multi` for multiple selections, `text` for a free-form answer. After the user answers, \
+you will receive their response as a tool result and can continue your task.\n\n\
 When a user message contains a ## Memory Context section, it is pre-fetched knowledge graph data \
 injected directly for you. Use those entities and their IRIs immediately — do not search for them \
 again with tools. When it contains an ## Open Loops section, those are pending tasks and problems \
-that deserve attention even if not directly asked about.";
+that deserve attention even if not directly asked about.\n\n\
+## File Attachments\n\
+When the user attaches a file, it is persisted as a knowledge graph individual and its IRI is shown \
+alongside the content. Use that IRI to reference the file in tool calls (e.g. head_file).\n\
+- foundation:File — base class; properties: fileName, filePath, fileSize, fileHash, uploadDate, aiSummary\n\
+- foundation:CSVFile (subclass of File) — created automatically for CSV attachments; \
+adds csvColumns (one value per header), csvDelimiter, csvRowCount\n\
+Use describe_individual on the file IRI to inspect its metadata before processing.";
 
 use providers::{AIProvider, ClaudeProvider, MessageContent, ContentBlock};
 
@@ -58,6 +70,7 @@ pub struct GenerateRequest {
     pub tools: Option<Vec<providers::ClaudeTool>>,
     pub supports_web_tools: bool,
     pub thinking: Option<ThinkingConfig>,
+    pub tool_choice: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

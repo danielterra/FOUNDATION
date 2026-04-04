@@ -1,5 +1,6 @@
 <script>
 	import AgentPicker from './AgentPicker.svelte';
+	import { convertFileSrc } from '@tauri-apps/api/core';
 
 	let {
 		conversationAgent = null,
@@ -7,8 +8,19 @@
 		onOpenAgentInspector,
 		onSwitchAgent,
 		onNewConversation,
-		onDownloadChat
+		onDownloadChat,
+		onOpenSettings
 	} = $props();
+
+	function resolveIcon(icon) {
+		if (!icon) return null;
+		if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
+		return icon;
+	}
+
+	function isImageIcon(icon) {
+		return icon?.startsWith('http') || icon?.startsWith('file') || icon?.startsWith('data');
+	}
 
 	let pickerOpen = $state(false);
 
@@ -28,10 +40,15 @@
 			<button
 				class="agent-avatar"
 				class:picker-open={pickerOpen}
+				class:has-image={isImageIcon(conversationAgent?.icon)}
 				onclick={togglePicker}
 				title="Switch assistant"
 			>
-				<span class="material-symbols-outlined">{conversationAgent?.icon || 'smart_toy'}</span>
+				{#if isImageIcon(conversationAgent?.icon)}
+					<img src={resolveIcon(conversationAgent.icon)} alt={conversationAgent.label} />
+				{:else}
+					<span class="material-symbols-outlined">{conversationAgent?.icon || 'smart_toy'}</span>
+				{/if}
 			</button>
 			<button class="agent-name-btn" onclick={onOpenAgentInspector} title="Open in inspector">
 				<span class="agent-name">{conversationAgent?.label || 'AI Assistant'}</span>
@@ -53,6 +70,9 @@
 		</button>
 		<button class="header-action-btn" onclick={onDownloadChat} title="Download chat">
 			<span class="material-symbols-outlined">download</span>
+		</button>
+		<button class="header-action-btn" onclick={onOpenSettings} title="Settings">
+			<span class="material-symbols-outlined">settings</span>
 		</button>
 	</div>
 </div>
@@ -79,6 +99,9 @@
 	.agent-area {
 		position: relative;
 		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		gap: 8px;
 	}
 
 	.agent-avatar {
@@ -102,6 +125,20 @@
 
 	.agent-avatar .material-symbols-outlined {
 		font-size: 18px;
+	}
+
+	.agent-avatar.has-image {
+		background: transparent;
+		border-color: transparent;
+		padding: 0;
+		overflow: hidden;
+	}
+
+	.agent-avatar img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		border-radius: 50%;
 	}
 
 	.agent-name-btn {

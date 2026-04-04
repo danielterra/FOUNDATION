@@ -1,5 +1,6 @@
 <script>
 	import { convertFileSrc } from '@tauri-apps/api/core';
+	import ChatQuestionBlock from './ChatQuestionBlock.svelte';
 	import { openPath } from '@tauri-apps/plugin-opener';
 	import { marked } from 'marked';
 	import { onMount, onDestroy } from 'svelte';
@@ -79,7 +80,7 @@
 		return String(content);
 	}
 
-	let { message, messages, onEdit = null, onRetry = null, onEntityClick = null } = $props();
+	let { message, messages, conversationId = '', onEdit = null, onRetry = null, onEntityClick = null } = $props();
 
 	let copySuccess = $state(false);
 	let copyTimeout = null;
@@ -95,8 +96,8 @@
 	});
 
 	async function copyMessage() {
-		const text = message.role === 'assistant' && hasSpeakMessages(message)
-			? getSpeakMessages(message).join('\n\n')
+		const text = message.role === 'assistant' && hasSpeakOutput(message)
+			? getSpeakOutputTexts(message).join('\n\n')
 			: extractTextFromContent(message.content);
 		try {
 			await navigator.clipboard.writeText(text);
@@ -145,32 +146,47 @@
 
 	function hasToolUses(msg) {
 		return Array.isArray(msg.content) &&
-		       msg.content.some(block => block.type === 'tool_use' && block.name !== 'speak');
+		       msg.content.some(block => block.type === 'tool_use' && block.name !== 'speak' && block.name !== 'ask_question');
+	}
+
+	function hasQuestionOutput(msg) {
+		return Array.isArray(msg.content) && msg.content.some(b => b.type === 'question_output');
+	}
+
+	function getQuestionOutput(msg) {
+		if (!Array.isArray(msg.content)) return null;
+		return msg.content.find(b => b.type === 'question_output') ?? null;
+	}
+
+	function isLastMessage(msg) {
+		return messages.length > 0 && messages[messages.length - 1].iri === msg.iri;
+	}
+
+	function hasSpeakOutput(msg) {
+		return Array.isArray(msg.content) && msg.content.some(b => b.type === 'speak_output');
+	}
+
+	function getSpeakOutputTexts(msg) {
+		if (!Array.isArray(msg.content)) return [];
+		return msg.content.filter(b => b.type === 'speak_output').map(b => b.text ?? '');
+	}
+
+	function hasReasoningContent(msg) {
+		if (!Array.isArray(msg.content)) return false;
+		return msg.content.some(b => b.type === 'text' || b.type === 'thinking' || b.type === 'redacted_thinking');
+	}
+
+	function getReasoningText(msg) {
+		if (!Array.isArray(msg.content)) return '';
+		return msg.content
+			.filter(b => b.type === 'thinking' || b.type === 'text')
+			.map(b => b.type === 'thinking' ? (b.thinking ?? '') : (b.text ?? ''))
+			.join('\n\n');
 	}
 
 	function hasTextContent(msg) {
 		if (!Array.isArray(msg.content)) return false;
 		return msg.content.some(block => block.type === 'text');
-	}
-
-	function getSpeakMessages(msg) {
-		if (!Array.isArray(msg.content)) return [];
-		return msg.content
-			.filter(block => block.type === 'tool_use' && block.name === 'speak')
-			.map(block => block.input?.message ?? '');
-	}
-
-	function hasSpeakMessages(msg) {
-		return getSpeakMessages(msg).length > 0;
-	}
-
-	function getThinkingBlocks(msg) {
-		if (!Array.isArray(msg.content)) return [];
-		return msg.content.filter(block => block.type === 'thinking');
-	}
-
-	function hasThinking(msg) {
-		return getThinkingBlocks(msg).length > 0;
 	}
 
 	function groupToolUsesWithResults(msg, allMessages) {
@@ -254,41 +270,35 @@
 				</div>
 				<span class="thinking-text">AI is thinking...</span>
 			</div>
-		{:else}
-			{#if hasThinking(message)}
+		{:else if message.role === 'assistant'}
+			{#if hasReasoningContent(message)}
 				<details class="reasoning-block">
 					<summary class="reasoning-summary">
 						<span class="material-symbols-outlined reasoning-icon">psychology</span>
 						<span class="reasoning-label">Reasoning</span>
 					</summary>
 					<div class="reasoning-content markdown-content">
-						{@html renderMarkdown(getThinkingBlocks(message).map(b => b.thinking).join('\n\n'))}
-					</div>
-				</details>
-			{:else if message.role === 'assistant' && hasTextContent(message)}
-				<details class="reasoning-block">
-					<summary class="reasoning-summary">
-						<span class="material-symbols-outlined reasoning-icon">psychology</span>
-						<span class="reasoning-label">Reasoning</span>
-					</summary>
-					<div class="reasoning-content markdown-content">
-						{@html renderMarkdown(extractTextFromContent(message.content))}
+						{@html renderMarkdown(getReasoningText(message))}
 					</div>
 				</details>
 			{/if}
-			{#if hasSpeakMessages(message)}
-				<div class="speak-messages">
-					{#each getSpeakMessages(message) as msg}
-						<div class="message-text markdown-content">
-							{@html renderMarkdown(msg)}
-						</div>
-					{/each}
-				</div>
-			{:else if message.role === 'user' && hasTextContent(message)}
-				<div class="message-text markdown-content">
-					{@html renderMarkdown(extractTextFromContent(message.content))}
-				</div>
+			{#if hasSpeakOutput(message)}
+				{#each getSpeakOutputTexts(message) as text}
+					<div class="message-text markdown-content">
+						{@html renderMarkdown(text)}
+					</div>
+				{/each}
 			{/if}
+			{#if hasQuestionOutput(message)}
+				{@const q = getQuestionOutput(message)}
+				{#if q}
+					<ChatQuestionBlock {q} isLast={isLastMessage(message)} {conversationId} />
+				{/if}
+			{/if}
+		{:else if message.role === 'user' && hasTextContent(message)}
+			<div class="message-text markdown-content">
+				{@html renderMarkdown(extractTextFromContent(message.content))}
+			</div>
 		{/if}
 
 		{#if message.attachments && message.attachments.length > 0}
@@ -393,6 +403,11 @@
 						<span class="material-symbols-outlined token-pill-icon">arrow_downward</span>{message.output_tokens.toLocaleString()}
 					</span>
 				{/if}
+				{#if message.role === 'assistant' && message.estimated_cost != null}
+					<span class="token-pill" title="Estimated cost">
+						<span class="material-symbols-outlined token-pill-icon">attach_money</span>{message.estimated_cost < 0.01 ? '<$0.01' : '$' + message.estimated_cost.toFixed(2)}
+					</span>
+				{/if}
 			</div>
 			<div class="message-action-bar">
 				<button class="action-btn" onclick={copyMessage} title="Copy message">
@@ -403,7 +418,7 @@
 						<span class="material-symbols-outlined">edit</span>
 					</button>
 				{/if}
-				{#if message.role === 'assistant' && onRetry}
+				{#if onRetry}
 					<button class="action-btn" onclick={handleRetry} title="Retry">
 						<span class="material-symbols-outlined">refresh</span>
 					</button>
@@ -689,12 +704,6 @@
 		opacity: 0.75;
 	}
 
-	.speak-messages {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-
 	.thinking-indicator {
 		display: flex;
 		align-items: center;
@@ -972,6 +981,5 @@
 		border-top: 1px solid color-mix(in srgb, var(--color-interactive) 20%, transparent);
 		margin: 6px 0;
 	}
-
 
 </style>

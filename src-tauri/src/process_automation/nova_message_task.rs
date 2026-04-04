@@ -83,7 +83,7 @@ pub async fn execute_nova_message_task(
     tokio::spawn(async move {
         let executor = app_spawn.state::<DbExecutor>().inner().clone();
         let cancellation = app_spawn.state::<crate::commands::AiCancellationState>();
-        if let Err(e) = crate::commands::continue_conversation_after_recovery(
+        if let Err(e) = crate::commands::run_conversation_from_current_state(
             app_spawn.clone(), executor, conv_id, &cancellation, false,
         ).await {
             crate::commands::log_backend("warn", &format!("[nova_message_task] Reply failed: {}", e));

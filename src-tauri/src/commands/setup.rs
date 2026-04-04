@@ -90,8 +90,11 @@ pub async fn initialize_app(
 
     app.manage(worker);
 
-    crate::process_automation::executor::recover_interrupted_executions(&app).await;
-    super::log_backend("debug", &format!("[STARTUP] recover_executions={}ms", t0.elapsed().as_millis()));
+    let app_for_executions = app.clone();
+    tauri::async_runtime::spawn(async move {
+        crate::process_automation::executor::recover_interrupted_executions(&app_for_executions).await;
+    });
+    super::log_backend("debug", "[STARTUP] recover_executions=spawned (background)");
 
     tauri::async_runtime::spawn(crate::process_automation::scheduler::reload(app.clone()));
     super::log_backend("debug", &format!("[STARTUP] total_before_emit={}ms", t0.elapsed().as_millis()));
@@ -685,4 +688,55 @@ pub async fn setup__list_ai_models(
 
         Ok(result)
     }).await
+}
+
+/// Get the current AI model IRI from DefaultAIModelSetting
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn setup__get_current_ai_model(
+    executor: State<'_, DbExecutor>,
+) -> Result<Option<serde_json::Value>, String> {
+    executor.read(|conn| {
+        let model_iri = match crate::commands::chat::settings::get_ai_model_iri(conn)? {
+            Some(iri) => iri,
+            None => return Ok(None),
+        };
+
+        if let Ok(Some(model_ind)) = Individual::get(conn, &model_iri) {
+            let model_identifier = model_ind.properties.iter()
+                .find(|(k, _)| k == "foundation:modelIdentifier")
+                .and_then(|(_, v)| v.as_literal())
+                .unwrap_or_default();
+            Ok(Some(serde_json::json!({
+                "iri": model_iri,
+                "label": model_ind.label,
+                "modelIdentifier": model_identifier,
+            })))
+        } else {
+            Ok(None)
+        }
+    }).await
+}
+
+/// Save AI model selection to DefaultAIModelSetting
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn setup__save_ai_model(
+    model_iri: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    executor.write(move |conn| {
+        let setting = Individual::get(conn, "foundation:DefaultAIModelSetting")
+            .map_err(|e| format!("Failed to get DefaultAIModelSetting: {}", e))?
+            .ok_or_else(|| "DefaultAIModelSetting not found".to_string())?;
+
+        setting.add_property(conn, "foundation:settingValue", vec![Object::Literal {
+            value: model_iri.clone(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }], "settings").map_err(|e| format!("Failed to update settingValue: {}", e))?;
+
+        Ok(String::new())
+    }).await?;
+    Ok(())
 }

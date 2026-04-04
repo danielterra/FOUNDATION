@@ -30,7 +30,7 @@
 	type="file"
 	bind:this={fileInputElement}
 	onchange={onFileSelect}
-	accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+	accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/csv,text/plain"
 	multiple
 	style="display: none;"
 />

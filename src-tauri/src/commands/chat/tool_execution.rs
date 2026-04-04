@@ -2,6 +2,7 @@ use crate::owl::{Individual, DbExecutor};
 use crate::ai::functions::ToolCall;
 use crate::commands::chat_storage::{AIConversationMessage, ContentBlock, load_message, create_message};
 use super::super::log_backend;
+use tauri::Emitter;
 
 /// Returns `(tool_result_msg_iri, had_successful_speak)`.
 /// `had_successful_speak` is true when a `speak` tool was called and delivered without error,
@@ -78,11 +79,42 @@ pub async fn execute_tools_from_message(
         .map_err(|e| format!("Failed to serialize tool results: {}", e))?;
 
     let iri = create_message(executor, conversation_id, "user", &content_json, None, None, None).await?;
+    app.emit("chat-message-added", ()).ok();
     Ok((iri, had_successful_speak))
 }
 
-const SPEAK_MAX_CHARS: usize = 144;
+use super::SPEAK_MAX_CHARS;
 const WIDGET_CASCADE_OFFSET_PX: f64 = 50.0;
+
+/// Execute a speak tool call before saving any assistant message.
+/// Returns `(spoken_text, is_error)`.
+/// On success: shows widgets (if iris provided) and returns the text to store as a clean message.
+/// On failure: returns the error description.
+pub async fn try_speak(
+    executor: &DbExecutor,
+    app: &tauri::AppHandle,
+    conversation_id: &str,
+    input: &serde_json::Value,
+) -> (String, bool) {
+    let message = input.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    if message.chars().count() > SPEAK_MAX_CHARS {
+        return (format!(
+            "Too long: {} chars (max {}). Shorten to {} chars or fewer and retry.",
+            message.chars().count(), SPEAK_MAX_CHARS, SPEAK_MAX_CHARS
+        ), true);
+    }
+    let iris: Vec<String> = if let Some(arr) = input.get("iris").and_then(|v| v.as_array()) {
+        arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+    } else if let Some(s) = input.get("iris").and_then(|v| v.as_str()) {
+        serde_json::from_str::<Vec<String>>(s).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    if !iris.is_empty() {
+        show_widgets_for_iris(executor, app, conversation_id, iris).await;
+    }
+    (message.to_string(), false)
+}
 
 async fn execute_tool(
     executor: &DbExecutor,
@@ -94,15 +126,20 @@ async fn execute_tool(
     if name == "speak" {
         let message = input.get("message").and_then(|v| v.as_str()).unwrap_or("");
         if message.chars().count() > SPEAK_MAX_CHARS {
-            return (format!("Message exceeds {} characters ({} chars). Split into shorter calls.", SPEAK_MAX_CHARS, message.chars().count()), true);
+            return (format!(
+                "Too long: {} chars (max {}). Shorten to a single message of {} chars or fewer and retry once.",
+                message.chars().count(), SPEAK_MAX_CHARS, SPEAK_MAX_CHARS
+            ), true);
         }
-        if let Some(iris_val) = input.get("iris").and_then(|v| v.as_array()) {
-            let iris: Vec<String> = iris_val.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
-            if !iris.is_empty() {
-                show_widgets_for_iris(executor, app, conversation_id, iris).await;
-            }
+        let iris: Vec<String> = if let Some(arr) = input.get("iris").and_then(|v| v.as_array()) {
+            arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+        } else if let Some(s) = input.get("iris").and_then(|v| v.as_str()) {
+            serde_json::from_str::<Vec<String>>(s).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if !iris.is_empty() {
+            show_widgets_for_iris(executor, app, conversation_id, iris).await;
         }
         return ("Delivered.".to_string(), false);
     }

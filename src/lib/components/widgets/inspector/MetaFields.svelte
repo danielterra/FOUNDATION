@@ -42,6 +42,15 @@
     commentTextareaEl.style.height = Math.min(commentTextareaEl.scrollHeight, 400) + 'px';
   });
 
+  function parseMarkdown(text) {
+    if (!text || typeof text !== 'string') return '';
+    try {
+      return marked.parse(text);
+    } catch {
+      return text;
+    }
+  }
+
   function focusOnMount(node) {
     node.focus();
     if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') {
@@ -93,7 +102,7 @@
       onkeydown={(e) => e.key === 'Enter' && startMetaEdit('comment')}
     >
       {#if comment}
-        <div class="markdown-content">{@html marked.parse(comment)}</div>
+        <div class="markdown-content">{@html parseMarkdown(comment)}</div>
       {:else}
         <span class="meta-empty-hint">Add description…</span>
       {/if}
@@ -101,7 +110,7 @@
   {:else}
     <div class="description" class:empty={!comment} title="Entity is system-locked">
       {#if comment}
-        <div class="markdown-content">{@html marked.parse(comment)}</div>
+        <div class="markdown-content">{@html parseMarkdown(comment)}</div>
       {:else}
         <span class="meta-empty-hint">Add description…</span>
       {/if}

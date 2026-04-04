@@ -5,6 +5,7 @@
 
 	let {
 		messages,
+		conversationId = '',
 		isLoadingMessages,
 		isLoadingMore,
 		chatContainer = $bindable(null),
@@ -40,6 +41,7 @@
 					<ChatMessageBubble
 						{message}
 						{messages}
+						{conversationId}
 						onEdit={onEdit}
 						onRetry={onRetry}
 						onEntityClick={onEntityClick}

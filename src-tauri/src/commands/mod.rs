@@ -1,7 +1,6 @@
 mod setup;
 mod setup_system_info;
 mod entity;
-mod shortcuts;
 mod logging;
 mod ai;
 pub mod chat;
@@ -14,7 +13,6 @@ pub mod automation;
 
 pub use setup::*;
 pub use entity::*;
-pub use shortcuts::*;
 pub use logging::*;
 pub use ai::*;
 pub use chat::*;

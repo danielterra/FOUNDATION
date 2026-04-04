@@ -12,6 +12,7 @@ dependencies = [
  "chrono",
  "cron",
  "dirs 5.0.1",
+ "futures-util",
  "hostname",
  "image",
  "lazy_static",

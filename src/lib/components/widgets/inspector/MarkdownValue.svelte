@@ -15,6 +15,13 @@
           callbacks.delete(id);
         }
       };
+      worker.onerror = () => {
+        for (const [id, cb] of callbacks) {
+          cb('');
+        }
+        callbacks.clear();
+        worker = null;
+      };
     }
     return worker;
   }

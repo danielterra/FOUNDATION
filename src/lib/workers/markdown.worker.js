@@ -1,14 +1,13 @@
 import { marked } from 'marked';
 
-const renderer = new marked.Renderer();
-renderer.table = (token) => {
-  const defaultHtml = marked.Renderer.prototype.table.call(renderer, token);
-  return `<div class="table-wrapper">${defaultHtml}</div>`;
-};
-
-marked.use({ renderer });
-
 self.onmessage = ({ data: { id, text } }) => {
-  const html = marked.parse(text ?? '');
-  self.postMessage({ id, html });
+  try {
+    let html = marked.parse(text ?? '');
+    html = html
+      .replace(/<table>/g, '<div class="table-wrapper"><table>')
+      .replace(/<\/table>/g, '</table></div>');
+    self.postMessage({ id, html });
+  } catch {
+    self.postMessage({ id, html: text ?? '' });
+  }
 };

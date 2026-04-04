@@ -5,6 +5,7 @@ pub struct AgentConfig {
     pub model_identifier: String,
     pub system_prompt: String,
     pub max_tokens: usize,
+    pub max_output_tokens: u32,
     pub supports_web_tools: bool,
     pub timeout_secs: u64,
 }
@@ -43,6 +44,10 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
         .and_then(|(_, v)| v.as_literal())
         .unwrap_or_default();
 
+    let max_output_tokens = agent.properties.iter()
+        .find(|(k, _)| k == "foundation:maxOutputTokens")
+        .and_then(|(_, v)| if let Object::Integer(n) = v { Some(*n as u32) } else { None });
+
     let model = Individual::get(conn, &model_iri)
         .map_err(|e| format!("Failed to get model: {}", e))?
         .ok_or_else(|| format!("Model {} not found", model_iri))?;
@@ -71,6 +76,7 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
         model_identifier,
         system_prompt,
         max_tokens,
+        max_output_tokens: max_output_tokens.unwrap_or(crate::commands::chat::MAX_OUTPUT_TOKENS),
         supports_web_tools,
         timeout_secs,
     })
