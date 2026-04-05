@@ -222,14 +222,14 @@ fn test_assert_replaces_old_values() {
     ).unwrap();
     assert_eq!(active, 1);
 
-    // Should have 3 total rows in history: original assert + retraction insert + new assert
+    // Should have 2 total rows in history: original group + new group (no retraction row under group semantics)
     let total: i64 = conn.query_row(
         "SELECT COUNT(*) FROM triples \
          WHERE subject = 'test:Person1' AND predicate = 'test:email'",
         [],
         |row| row.get(0)
     ).unwrap();
-    assert_eq!(total, 3);
+    assert_eq!(total, 2, "expected 2 total rows: original group + new group (no retraction row under group semantics)");
 
     // Verify the active one is the latest
     let active_value: String = conn.query_row(
@@ -379,12 +379,12 @@ fn test_assert_multivalue_partial_overlap_only_changes_diff() {
     };
     assert_eq!(active, vec!["A", "C"]);
 
-    // A should have only 1 row total (not retracted + reinserted)
+    // A appears in both the original group (tx=1) and the new group (tx=2) under group semantics
     let a_rows: i64 = conn.query_row(
         "SELECT COUNT(*) FROM triples WHERE subject='test:Thing' AND predicate='foundation:tag' AND object_value='A'",
         [], |r| r.get(0),
     ).unwrap();
-    assert_eq!(a_rows, 1, "unchanged value A must not be duplicated");
+    assert_eq!(a_rows, 2, "A appears in original group (tx=1) and new group (tx=2) under group semantics");
 }
 
 #[test]

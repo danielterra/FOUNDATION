@@ -151,7 +151,10 @@ pub async fn handle_speak(
     }
 
     let mut speak_blocks: Vec<ContentBlock> = response_blocks.iter()
-        .filter(|b| matches!(b, ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. }))
+        .filter(|b| matches!(
+            b,
+            ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } | ContentBlock::Text { .. }
+        ))
         .cloned()
         .collect();
     speak_blocks.push(ContentBlock::SpeakOutput { text: speak_result });

@@ -10,14 +10,14 @@ pub struct Class {
     pub label: Option<String>,
     pub icon: Option<String>,
     pub comment: Option<String>,
-    pub types: Vec<Thing>, // rdf:type (e.g., owl:Class, rdfs:Class)
+    pub types: Vec<Thing>,
     pub super_classes: Vec<Thing>,
     pub sub_classes: Vec<Thing>,
-    pub properties: Vec<(String, String)>, // (property_iri, source_class_iri)
-    pub backlinks: Vec<(String, String, Object)>, // (source_entity, property_iri, value)
+    pub properties: Vec<(String, String)>,
+    pub backlinks: Vec<(String, String, Object)>,
     pub backlink_total: usize,
-    pub one_of_values: Vec<String>, // owl:oneOf enumerated individuals
-    pub concept_properties: Vec<(String, Object)>, // non-structural literal/IRI triples on this class IRI
+    pub one_of_values: Vec<String>,
+    pub concept_properties: Vec<(String, Object)>,
 }
 
 impl Class {
@@ -208,7 +208,7 @@ impl Class {
         let super_result = query::get_by_entity_predicate(conn, class_iri, rdfs::SUB_CLASS_OF)?;
         let super_classes: Vec<String> = super_result.triples.iter()
             .filter_map(|t| match &t.object {
-                Object::Iri(iri) => Some(iri.clone()),
+                Object::Iri(iri) | Object::Blank(iri) => Some(iri.clone()),
                 _ => None,
             })
             .collect();

@@ -60,16 +60,9 @@ pub fn setup_test_db() -> Connection {
                object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
         FROM triples t
         WHERE t.retracted = 0
-          AND NOT EXISTS (
-              SELECT 1 FROM triples newer
-              WHERE newer.subject = t.subject
-                AND newer.predicate = t.predicate
-                AND newer.object IS t.object
-                AND newer.object_value IS t.object_value
-                AND newer.object_datatype IS t.object_datatype
-                AND newer.object_language IS t.object_language
-                AND newer.retracted = 1
-                AND newer.tx > t.tx
+          AND t.tx = (
+              SELECT MAX(tx) FROM triples
+              WHERE subject = t.subject AND predicate = t.predicate
           );
 
         CREATE TABLE IF NOT EXISTS metadata (

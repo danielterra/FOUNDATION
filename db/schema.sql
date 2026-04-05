@@ -206,24 +206,18 @@ CREATE INDEX IF NOT EXISTS idx_ontology_files_modified ON ontology_files(last_mo
 -- ============================================================================
 
 -- Current state view: active triples only.
--- A triple is active when retracted=0 AND no newer retraction INSERT row exists for the same
--- (subject, predicate, object) tuple. This supports the append-only retraction model where
--- retraction is an INSERT (retracted=1) rather than a mutation of an existing row.
+-- A triple is active when retracted=0 AND its tx equals the maximum tx for its (subject, predicate)
+-- pair — meaning it belongs to the latest assertion group. This supports append-only group semantics
+-- where asserting new values creates a new group under a higher tx, automatically superseding the
+-- prior group.
 CREATE VIEW IF NOT EXISTS triples_current AS
 SELECT subject, predicate, object, object_value, object_datatype, object_language,
        object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
 FROM triples t
 WHERE t.retracted = 0
-  AND NOT EXISTS (
-      SELECT 1 FROM triples newer
-      WHERE newer.subject = t.subject
-        AND newer.predicate = t.predicate
-        AND newer.object IS t.object
-        AND newer.object_value IS t.object_value
-        AND newer.object_datatype IS t.object_datatype
-        AND newer.object_language IS t.object_language
-        AND newer.retracted = 1
-        AND newer.tx > t.tx
+  AND t.tx = (
+      SELECT MAX(tx) FROM triples
+      WHERE subject = t.subject AND predicate = t.predicate
   );
 
 -- Entity view: All subjects with at least one currently-active triple

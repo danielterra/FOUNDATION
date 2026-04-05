@@ -204,14 +204,14 @@ impl Individual {
                 format!("Individual '{}' has no retracted triples to restore", iri)
             ))?;
 
-        let retracted = query::get_retracted_by_entity_at_tx(conn, iri, retract_tx)?;
-        if retracted.triples.is_empty() {
+        let last_active = query::get_last_active_by_entity_before_tx(conn, iri, retract_tx)?;
+        if last_active.triples.is_empty() {
             return Err(OwlError::NotFound(
-                format!("No triples found for '{}' at retraction tx {}", iri, retract_tx)
+                format!("No active triples found for '{}' before retraction tx {}", iri, retract_tx)
             ));
         }
 
-        let triples: Vec<Triple> = retracted.triples.into_iter()
+        let triples: Vec<Triple> = last_active.triples.into_iter()
             .map(|t| Triple::new(t.subject, t.predicate, t.object))
             .collect();
 

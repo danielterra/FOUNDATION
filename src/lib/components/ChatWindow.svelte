@@ -477,6 +477,7 @@
 	async function retryMessage(iri) {
 		const convIri = activeConversationIri;
 		if ((convLoading[convIri]?.isLoading ?? false) || !isInitialized) return;
+		if (iri.startsWith('optimistic_')) return;
 
 		startAIStatus('Claude is thinking', convIri);
 
@@ -527,9 +528,10 @@
 			textareaElement.style.height = 'auto';
 		}
 
+		const optimisticIri = `optimistic_${Date.now()}`;
 		if (content) {
 			messages = [...messages, {
-				iri: `optimistic_${Date.now()}`,
+				iri: optimisticIri,
 				role: 'user',
 				content: [{ type: 'text', text: content }],
 				timestamp: Date.now(),
@@ -551,6 +553,8 @@
 			stopAIStatus(convIri);
 		}).catch(err => {
 			console.error('Failed to send message:', err);
+			messages = messages.filter(m => m.iri !== optimisticIri);
+			inputText = content;
 			showError(err);
 			stopAIStatus(convIri);
 		});

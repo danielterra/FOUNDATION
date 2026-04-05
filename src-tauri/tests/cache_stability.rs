@@ -1,5 +1,5 @@
 use FOUNDATION_tauri_app_lib::ai::{ChatMessage, GenerateRequest};
-use FOUNDATION_tauri_app_lib::ai::providers::{AIProvider, ClaudeProvider};
+use FOUNDATION_tauri_app_lib::ai::providers::ClaudeProvider;
 
 fn large_system_prompt() -> String {
     // Target: clearly above 2048 tokens for all Claude models (including 4.x).
@@ -181,6 +181,7 @@ async fn test_cache_boundary_stable_across_turns() {
             tools: None,
             supports_web_tools: false,
             thinking: None,
+            tool_choice: None,
         };
 
         let response = provider

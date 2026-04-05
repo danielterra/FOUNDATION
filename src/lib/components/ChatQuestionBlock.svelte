@@ -1,7 +1,15 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
 
-	let { q, isLast, conversationId } = $props();
+	let { q, answer = null, isLast, conversationId } = $props();
+
+	function formatAnswer(raw) {
+		try {
+			const parsed = JSON.parse(raw);
+			if (Array.isArray(parsed)) return parsed.join(', ');
+		} catch {}
+		return raw;
+	}
 
 	let selectedOptions = $state([]);
 	let textInput = $state('');
@@ -51,6 +59,8 @@
 			<button class="question-submit" onclick={() => answerQuestion(q.id, textInput)}>Submit</button>
 		{/if}
 		<button class="question-dismiss" onclick={() => dismissQuestion(q.id)}>Cancel</button>
+	{:else if answer}
+		<div class="question-answer">{formatAnswer(answer)}</div>
 	{:else}
 		<div class="question-answered">Answered</div>
 	{/if}
@@ -63,8 +73,8 @@
 		gap: 8px;
 		padding: 10px 12px;
 		border-radius: 8px;
-		background: color-mix(in srgb, var(--color-interactive) 6%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-interactive) 25%, transparent);
+		background: color-mix(in srgb, var(--color-neutral-active) 6%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-neutral-active) 15%, transparent);
 		margin-top: 4px;
 	}
 
@@ -76,8 +86,7 @@
 
 	.question-icon {
 		font-size: 14px;
-		color: var(--color-interactive);
-		opacity: 0.8;
+		color: var(--color-neutral-disabled);
 	}
 
 	.question-label {
@@ -85,7 +94,7 @@
 		font-weight: 600;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
-		color: color-mix(in srgb, var(--color-interactive) 80%, var(--color-neutral-disabled));
+		color: var(--color-neutral-disabled);
 	}
 
 	.question-text {
@@ -176,6 +185,15 @@
 		color: var(--color-neutral-disabled);
 		font-style: italic;
 		opacity: 0.6;
+	}
+
+	.question-answer {
+		font-size: 13px;
+		color: var(--color-neutral-active);
+		padding: 6px 10px;
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--color-neutral-active) 8%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-neutral-active) 15%, transparent);
 	}
 
 	.question-dismiss {

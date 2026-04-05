@@ -150,19 +150,163 @@ async fn recover_pending_jobs(
 }
 
 fn purge_old_retractions(conn: &Connection) {
+    const SEVEN_DAYS_MS: i64 = 7 * 24 * 60 * 60 * 1000;
     let cutoff_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
-        - 7 * 24 * 60 * 60 * 1000;
+        - SEVEN_DAYS_MS;
 
-    match conn.execute(
-        "DELETE FROM triples WHERE retracted = 1 AND created_at < ?1",
-        rusqlite::params![cutoff_ms],
-    ) {
-        Ok(n) if n > 0 => super::log_backend("info", &format!("[STARTUP] Purged {} retracted triples older than 7 days", n)),
+    match purge_superseded_triples(conn, cutoff_ms) {
+        Ok(n) if n > 0 => super::log_backend("info", &format!("[STARTUP] Purged {} superseded triples older than 7 days", n)),
         Ok(_) => {}
         Err(e) => super::log_backend("warn", &format!("[STARTUP] Failed to purge old retractions: {}", e)),
+    }
+}
+
+fn purge_superseded_triples(conn: &Connection, cutoff_ms: i64) -> rusqlite::Result<usize> {
+    conn.execute(
+        "DELETE FROM triples
+         WHERE created_at < ?1
+           AND tx < (
+               SELECT MAX(tx) FROM triples t2
+               WHERE t2.subject = triples.subject
+                 AND t2.predicate = triples.predicate
+           )",
+        rusqlite::params![cutoff_ms],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::purge_superseded_triples;
+    use crate::eavto::test_helpers::setup_test_db;
+
+    fn insert_triple(conn: &rusqlite::Connection, subject: &str, predicate: &str, value: &str, tx: i64, created_at: i64, retracted: i64) {
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object_value, object_type, tx, origin_id, created_at, retracted)
+             VALUES (?1, ?2, ?3, 'literal', ?4, 1, ?5, ?6)",
+            rusqlite::params![subject, predicate, value, tx, created_at, retracted],
+        ).unwrap();
+    }
+
+    fn insert_tx(conn: &rusqlite::Connection, tx: i64) {
+        conn.execute(
+            "INSERT INTO transactions (tx, origin, created_at) VALUES (?1, 'test', 0)",
+            rusqlite::params![tx],
+        ).unwrap();
+    }
+
+    fn count_rows(conn: &rusqlite::Connection, subject: &str, predicate: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject=?1 AND predicate=?2",
+            rusqlite::params![subject, predicate],
+            |r| r.get(0),
+        ).unwrap()
+    }
+
+    const OLD: i64 = 1_000_000;
+    const RECENT: i64 = i64::MAX;
+    const CUTOFF: i64 = 1_000_000_000;
+
+    #[test]
+    fn test_purge_deletes_superseded_old_rows() {
+        let conn = setup_test_db();
+        insert_tx(&conn, 1);
+        insert_tx(&conn, 2);
+        // tx=1 group (old, superseded by tx=2)
+        insert_triple(&conn, "ex:A", "ex:p", "v1", 1, OLD, 0);
+        // tx=2 group (current)
+        insert_triple(&conn, "ex:A", "ex:p", "v2", 2, OLD, 0);
+
+        let deleted = purge_superseded_triples(&conn, CUTOFF).unwrap();
+
+        assert_eq!(deleted, 1);
+        assert_eq!(count_rows(&conn, "ex:A", "ex:p"), 1);
+        let val: String = conn.query_row(
+            "SELECT object_value FROM triples WHERE subject='ex:A' AND predicate='ex:p'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(val, "v2");
+    }
+
+    #[test]
+    fn test_purge_never_deletes_current_group_even_if_ancient() {
+        let conn = setup_test_db();
+        insert_tx(&conn, 1);
+        // Only one tx — it IS the max, so it must never be deleted
+        insert_triple(&conn, "ex:A", "ex:p", "v1", 1, OLD, 0);
+
+        let deleted = purge_superseded_triples(&conn, CUTOFF).unwrap();
+
+        assert_eq!(deleted, 0);
+        assert_eq!(count_rows(&conn, "ex:A", "ex:p"), 1);
+    }
+
+    #[test]
+    fn test_purge_never_deletes_sentinel_even_if_ancient() {
+        // Sentinel = retracted=1 row at MAX(tx); property is empty after purge
+        let conn = setup_test_db();
+        insert_tx(&conn, 1);
+        insert_tx(&conn, 2);
+        // tx=1 group (old active values, now superseded)
+        insert_triple(&conn, "ex:A", "ex:p", "v1", 1, OLD, 0);
+        // tx=2 sentinel (marks property as empty, retracted=1, it IS the current max)
+        insert_triple(&conn, "ex:A", "ex:p", "sentinel", 2, OLD, 1);
+
+        let deleted = purge_superseded_triples(&conn, CUTOFF).unwrap();
+
+        // Only tx=1 row (superseded) must be deleted; sentinel at tx=2 survives
+        assert_eq!(deleted, 1);
+        assert_eq!(count_rows(&conn, "ex:A", "ex:p"), 1);
+        let (val, retracted): (String, i64) = conn.query_row(
+            "SELECT object_value, retracted FROM triples WHERE subject='ex:A' AND predicate='ex:p'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(val, "sentinel");
+        assert_eq!(retracted, 1, "sentinel row must survive");
+        // Confirm triples_current returns nothing (property is empty)
+        let current_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM triples_current WHERE subject='ex:A' AND predicate='ex:p'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(current_count, 0, "property must still appear empty after purge");
+    }
+
+    #[test]
+    fn test_purge_does_not_delete_recent_superseded_rows() {
+        let conn = setup_test_db();
+        insert_tx(&conn, 1);
+        insert_tx(&conn, 2);
+        // tx=1 group is superseded but was created recently — must not be deleted
+        insert_triple(&conn, "ex:A", "ex:p", "v1", 1, RECENT, 0);
+        insert_triple(&conn, "ex:A", "ex:p", "v2", 2, RECENT, 0);
+
+        let deleted = purge_superseded_triples(&conn, CUTOFF).unwrap();
+
+        assert_eq!(deleted, 0);
+        assert_eq!(count_rows(&conn, "ex:A", "ex:p"), 2);
+    }
+
+    #[test]
+    fn test_purge_deletes_entire_old_superseded_multivalue_group() {
+        let conn = setup_test_db();
+        insert_tx(&conn, 1);
+        insert_tx(&conn, 2);
+        // tx=1 group has 3 values (old, superseded)
+        insert_triple(&conn, "ex:A", "ex:tags", "a", 1, OLD, 0);
+        insert_triple(&conn, "ex:A", "ex:tags", "b", 1, OLD, 0);
+        insert_triple(&conn, "ex:A", "ex:tags", "c", 1, OLD, 0);
+        // tx=2 group is current
+        insert_triple(&conn, "ex:A", "ex:tags", "d", 2, OLD, 0);
+
+        let deleted = purge_superseded_triples(&conn, CUTOFF).unwrap();
+
+        assert_eq!(deleted, 3, "all 3 rows of the superseded group must be deleted");
+        assert_eq!(count_rows(&conn, "ex:A", "ex:tags"), 1);
     }
 }
 
@@ -453,9 +597,7 @@ pub async fn setup__init(
         "setup"
     ).map_err(|e| format!("Failed to link AI to service: {}", e))?;
 
-    // Only create user-specific settings if values are provided (non-default)
     if let Some(model_iri) = ai_model_iri {
-        // User selected a specific model - create a setting to override default
         let timestamp = chrono::Utc::now().timestamp_millis();
         let model_setting_iri = format!("foundation:AIModelSetting_{}", timestamp);
         let model_setting = Individual::new(&model_setting_iri);
@@ -499,9 +641,8 @@ pub async fn setup__init(
             "setup"
         ).map_err(|e| format!("Failed to set appliedTo: {}", e))?;
     }
-    // If no model provided, the default from ontology (DefaultAIModelSetting) will be used
 
-    // Detect and update locale settings (retraction is automatic when setting same property)
+    // retraction is automatic when setting the same property, so this is idempotent
     let locale_info = get_locale_info();
 
     let language_setting = Individual::get(conn, "foundation:DefaultLanguageSetting")

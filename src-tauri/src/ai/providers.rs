@@ -480,6 +480,87 @@ impl ClaudeProvider {
             usage,
         })
     }
+
+    /// Non-streaming request for integration tests and simple single-turn use cases.
+    pub async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, String> {
+        let messages: Vec<ClaudeMessage> = request
+            .messages
+            .into_iter()
+            .map(|msg| {
+                let content = match msg.content {
+                    MessageContent::Text(text) => serde_json::Value::String(text),
+                    MessageContent::ContentBlocks(blocks) => {
+                        serde_json::to_value(&blocks).unwrap_or(serde_json::Value::Null)
+                    }
+                };
+                ClaudeMessage { role: msg.role, content }
+            })
+            .collect();
+
+        let model = self.model_identifier.clone()
+            .ok_or_else(|| "No AI model configured".to_string())?;
+
+        let claude_request = serde_json::to_value(ClaudeRequest {
+            model,
+            max_tokens: request.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+            messages,
+            thinking: None,
+            system: request.system.map(|s| serde_json::json!([{
+                "type": "text",
+                "text": s,
+                "cache_control": { "type": "ephemeral" }
+            }])),
+            temperature: request.temperature,
+            tools: None,
+            tool_choice: None,
+        }).map_err(|e| format!("Failed to serialize request: {}", e))?;
+
+        let http_response = self.client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("anthropic-beta", "prompt-caching-2024-07-31")
+            .header("content-type", "application/json")
+            .json(&claude_request)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to send request: {}", e))?;
+
+        let status = http_response.status();
+        if !status.is_success() {
+            let error_text = http_response.text().await.unwrap_or_default();
+            return Err(format!("API request failed with status {}: {}", status, error_text));
+        }
+
+        let body: serde_json::Value = http_response.json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        let stop_reason = body["stop_reason"].as_str().map(String::from);
+        let content = body["content"]
+            .as_array()
+            .and_then(|blocks| blocks.iter()
+                .find(|b| b["type"] == "text")
+                .and_then(|b| b["text"].as_str())
+            )
+            .unwrap_or("")
+            .to_string();
+
+        let usage = body["usage"].as_object().map(|u| UsageInfo {
+            input_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
+            output_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
+            cache_creation_input_tokens: u["cache_creation_input_tokens"].as_u64().unwrap_or(0) as u32,
+            cache_read_input_tokens: u["cache_read_input_tokens"].as_u64().unwrap_or(0) as u32,
+        });
+
+        Ok(GenerateResponse {
+            content,
+            tool_calls: vec![],
+            thinking_blocks: vec![],
+            stop_reason,
+            usage,
+        })
+    }
 }
 
 #[allow(dead_code)]

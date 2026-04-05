@@ -5,6 +5,8 @@ use std::fmt;
 use std::error::Error;
 use crate::commands::log_backend;
 
+const DB_BUSY_TIMEOUT_SECS: u64 = 30;
+
 #[derive(Debug)]
 pub enum DbError {
     ConnectionError(rusqlite::Error),
@@ -98,7 +100,7 @@ fn initialize_db_with_progress(
     log_backend("info", &format!("Using database: {:?}", db_path));
     let conn = Connection::open(db_path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
-    conn.busy_timeout(std::time::Duration::from_secs(30)).map_err(|e| DbError::ConnectionError(e))?;
+    conn.busy_timeout(std::time::Duration::from_secs(DB_BUSY_TIMEOUT_SECS)).map_err(|e| DbError::ConnectionError(e))?;
 
     if needs_initialization {
         log_backend("info", "Initializing new database");
@@ -312,16 +314,9 @@ fn run_migrations(conn: &Connection) -> Result<(), DbError> {
                object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
         FROM triples t
         WHERE t.retracted = 0
-          AND NOT EXISTS (
-              SELECT 1 FROM triples newer
-              WHERE newer.subject = t.subject
-                AND newer.predicate = t.predicate
-                AND newer.object IS t.object
-                AND newer.object_value IS t.object_value
-                AND newer.object_datatype IS t.object_datatype
-                AND newer.object_language IS t.object_language
-                AND newer.retracted = 1
-                AND newer.tx > t.tx
+          AND t.tx = (
+              SELECT MAX(tx) FROM triples
+              WHERE subject = t.subject AND predicate = t.predicate
           );
 
         CREATE VIEW IF NOT EXISTS entities AS

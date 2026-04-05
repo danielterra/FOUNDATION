@@ -1,5 +1,8 @@
 use crate::owl::{Individual, Object, Connection, DbExecutor};
 
+const DEFAULT_MAX_INPUT_TOKENS: usize = 30000;
+const DEFAULT_TIMEOUT_SECS: u64 = 900;
+
 pub struct AgentConfig {
     pub api_key: String,
     pub model_identifier: String,
@@ -52,10 +55,17 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
         .map_err(|e| format!("Failed to get model: {}", e))?
         .ok_or_else(|| format!("Model {} not found", model_iri))?;
 
-    let max_tokens = model.properties.iter()
-        .find(|(k, _)| k == "foundation:maxInputTokens")
-        .and_then(|(_, v)| if let Object::Integer(n) = v { Some(*n as usize) } else { None })
-        .unwrap_or(30000);
+    let max_tokens = agent.properties.iter()
+        .find(|(k, _)| k == "foundation:maxInputTokensPreference")
+        .and_then(|(_, v)| match v {
+            Object::Integer(n) => Some(*n as usize),
+            Object::Literal { value, .. } => value.parse::<usize>().ok(),
+            _ => None,
+        })
+        .or_else(|| model.properties.iter()
+            .find(|(k, _)| k == "foundation:maxInputTokens")
+            .and_then(|(_, v)| if let Object::Integer(n) = v { Some(*n as usize) } else { None }))
+        .unwrap_or(DEFAULT_MAX_INPUT_TOKENS);
 
     let supports_web_tools = model.properties.iter().any(|(k, v)| {
         k == "foundation:modelCapability"
@@ -69,7 +79,7 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
             .find(|(k, _)| k == "foundation:settingValue")
             .and_then(|(_, v)| v.as_literal())
             .and_then(|v| v.parse::<u64>().ok()))
-        .unwrap_or(900);
+        .unwrap_or(DEFAULT_TIMEOUT_SECS);
 
     Ok(AgentConfig {
         api_key,

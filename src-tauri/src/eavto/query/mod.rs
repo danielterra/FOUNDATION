@@ -11,64 +11,25 @@ use super::query_result_type::QueryResult;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-/// SQL fragment that, when appended after `AND retracted = 0`, ensures the row
-/// is the latest for its (subject, predicate, object) tuple — i.e., no newer
-/// retraction row supersedes it. This is required for the append-only model
-/// where retraction is an INSERT rather than a mutation.
+/// SQL fragment that ensures the row is the latest assertion for its
+/// (subject, predicate) group — i.e., no newer tx exists for the same group.
 const AND_IS_CURRENT: &str =
-    "AND NOT EXISTS (
-         SELECT 1 FROM triples newer
-         WHERE newer.subject = t.subject
-           AND newer.predicate = t.predicate
-           AND newer.object IS t.object
-           AND newer.object_value IS t.object_value
-           AND newer.object_datatype IS t.object_datatype
-           AND newer.object_language IS t.object_language
-           AND newer.retracted = 1
-           AND newer.tx > t.tx
-     )";
+    "AND t.tx = (SELECT MAX(tx) FROM triples WHERE subject = t.subject AND predicate = t.predicate)";
 
 pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
-
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
-                tx, origin_id, retracted, created_at
-         FROM triples
-         WHERE subject = ?
-         ORDER BY predicate, object, object_value, tx DESC"
+                tx, origin_id, 0 AS retracted, created_at
+         FROM triples_current
+         WHERE subject = ?"
     )?;
 
-    let all_triples: Vec<Triple> = stmt
+    let triples: Vec<Triple> = stmt
         .query_map([entity], row_to_triple)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    let mut seen_pairs = std::collections::HashSet::new();
-    let current_triples: Vec<Triple> = all_triples
-        .into_iter()
-        .filter(|t| {
-            let object_key = match &t.object {
-                Object::Iri(iri) => format!("iri:{}", iri),
-                Object::Literal { value, datatype, language } => {
-                    format!(
-                        "lit:{}:{}:{}",
-                        value,
-                        datatype.as_deref().unwrap_or(""),
-                        language.as_deref().unwrap_or(""),
-                    )
-                },
-                Object::Blank(id) => format!("blank:{}", id),
-                Object::Integer(n) => format!("int:{}", n),
-                Object::Number(n) => format!("num:{}", n),
-                Object::Boolean(b) => format!("bool:{}", b),
-                Object::DateTime(dt) => format!("dt:{}", dt),
-            };
-            let key = format!("{}|{}", t.predicate, object_key);
-            seen_pairs.insert(key) && !t.retracted
-        })
-        .collect();
-
-    Ok(QueryResult::new(current_triples))
+    Ok(QueryResult::new(triples))
 }
 
 pub fn get_retracted_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
@@ -96,39 +57,62 @@ pub fn get_retraction_tx(conn: &Connection, entity: &str) -> Result<Option<i64>>
     ).map_err(Into::into)
 }
 
-pub fn get_retracted_by_entity_at_tx(
-    conn: &Connection, entity: &str, tx: i64,
+
+/// Returns all active triples for a subject as they existed just before `before_tx`.
+/// For each (subject, predicate), returns the group at MAX(tx) where retracted=0 AND tx < before_tx.
+pub fn get_last_active_by_entity_before_tx(
+    conn: &Connection,
+    entity: &str,
+    before_tx: i64,
 ) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
-                tx, origin_id, retracted, created_at
-         FROM triples
-         WHERE subject = ? AND tx = ? AND retracted = 1"
+                tx, origin_id, 0 AS retracted, created_at
+         FROM triples t
+         WHERE t.subject = ?1
+           AND t.retracted = 0
+           AND t.tx < ?2
+           AND t.tx = (
+               SELECT MAX(tx) FROM triples t2
+               WHERE t2.subject = ?1
+                 AND t2.predicate = t.predicate
+                 AND t2.retracted = 0
+                 AND t2.tx < ?2
+           )"
     )?;
-
     let triples = stmt
-        .query_map(rusqlite::params![entity, tx], row_to_triple)?
+        .query_map(rusqlite::params![entity, before_tx], row_to_triple)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-
     Ok(QueryResult::new(triples))
 }
 
-pub fn get_retracted_by_predicate_at_tx(
-    conn: &Connection, predicate: &str, tx: i64,
+/// Returns all active triples with the given predicate as they existed just before `before_tx`.
+/// For each (subject, predicate), returns the group at MAX(tx) where retracted=0 AND tx < before_tx.
+pub fn get_last_active_by_predicate_before_tx(
+    conn: &Connection,
+    predicate: &str,
+    before_tx: i64,
 ) -> Result<QueryResult> {
     let mut stmt = conn.prepare(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
-                tx, origin_id, retracted, created_at
-         FROM triples
-         WHERE predicate = ? AND tx = ? AND retracted = 1"
+                tx, origin_id, 0 AS retracted, created_at
+         FROM triples t
+         WHERE t.predicate = ?1
+           AND t.retracted = 0
+           AND t.tx < ?2
+           AND t.tx = (
+               SELECT MAX(tx) FROM triples t2
+               WHERE t2.subject = t.subject
+                 AND t2.predicate = ?1
+                 AND t2.retracted = 0
+                 AND t2.tx < ?2
+           )"
     )?;
-
     let triples = stmt
-        .query_map(rusqlite::params![predicate, tx], row_to_triple)?
+        .query_map(rusqlite::params![predicate, before_tx], row_to_triple)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-
     Ok(QueryResult::new(triples))
 }
 
@@ -212,34 +196,16 @@ pub fn get_by_entity_predicate_internal(
         let mut stmt = conn.prepare(
             "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                     object_type, object_number, object_integer, object_boolean,
-                    tx, origin_id, retracted, created_at
-             FROM triples
-             WHERE subject = ? AND predicate = ?
-             ORDER BY object, object_value, tx DESC"
+                    tx, origin_id, 0 AS retracted, created_at
+             FROM triples_current
+             WHERE subject = ? AND predicate = ?"
         )?;
 
-        let all_triples: Vec<Triple> = stmt
+        let triples: Vec<Triple> = stmt
             .query_map([entity, predicate], row_to_triple)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        let mut seen_objects = std::collections::HashSet::new();
-        let current_triples: Vec<Triple> = all_triples
-            .into_iter()
-            .filter(|t| {
-                let key = match &t.object {
-                    Object::Iri(iri) => format!("iri:{}", iri),
-                    Object::Blank(id) => format!("blank:{}", id),
-                    Object::Literal { value, .. } => format!("lit:{}", value),
-                    Object::Integer(i) => format!("int:{}", i),
-                    Object::Number(n) => format!("num:{}", n),
-                    Object::Boolean(b) => format!("bool:{}", b),
-                    Object::DateTime(dt) => format!("dt:{}", dt),
-                };
-                seen_objects.insert(key) && !t.retracted
-            })
-            .collect();
-
-        Ok(QueryResult::new(current_triples))
+        Ok(QueryResult::new(triples))
     }
 }
 
@@ -307,14 +273,7 @@ pub fn get_backlinks_grouped_limited(
                AND t.retracted = 0
                AND t.predicate != 'rdf:type'
                AND t.subject != ?1
-               AND NOT EXISTS (
-                   SELECT 1 FROM triples newer
-                   WHERE newer.subject = t.subject
-                     AND newer.predicate = t.predicate
-                     AND newer.object IS t.object
-                     AND newer.retracted = 1
-                     AND newer.tx > t.tx
-               )
+               AND t.tx = (SELECT MAX(tx) FROM triples WHERE subject = t.subject AND predicate = t.predicate)
              GROUP BY t.subject, t.predicate
          ),
          subject_class AS (
@@ -327,14 +286,7 @@ pub fn get_backlinks_grouped_limited(
                  WHERE t.predicate = 'rdf:type'
                    AND t.object_type = 'iri'
                    AND t.retracted = 0
-                   AND NOT EXISTS (
-                       SELECT 1 FROM triples newer
-                       WHERE newer.subject = t.subject
-                         AND newer.predicate = t.predicate
-                         AND newer.object IS t.object
-                         AND newer.retracted = 1
-                         AND newer.tx > t.tx
-                   )
+                   AND t.tx = (SELECT MAX(tx) FROM triples WHERE subject = t.subject AND predicate = t.predicate)
              )
              WHERE rn = 1
          ),

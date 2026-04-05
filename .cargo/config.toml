@@ -1,0 +1,8 @@
+[build]
+target-dir = "/Users/daniel/.cache/cargo-targets/FOUNDATION"
+
+[profile.dev]
+incremental = false
+
+[profile.release]
+incremental = false

@@ -68,9 +68,11 @@ pub fn assert_triples(
         assert_triples_begin(conn, triples, origin)?
     };
     if tx_id != 0 {
-        let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
         #[cfg(not(test))]
-        crate::search::reindex_subjects(conn, &subjects);
+        {
+            let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
+            crate::search::reindex_subjects(conn, &subjects);
+        }
 
         WRITTEN_SUBJECTS.with(|v| {
             let mut buf = v.borrow_mut();
@@ -128,7 +130,6 @@ fn do_assert_triples(
 ) -> Result<i64> {
     let now = now_millis();
 
-    // Group incoming triples by (subject, predicate), preserving order.
     let mut groups: Vec<((&str, &str), Vec<usize>)> = Vec::new();
     let mut group_index: std::collections::HashMap<(&str, &str), usize> =
         std::collections::HashMap::new();
@@ -142,28 +143,21 @@ fn do_assert_triples(
         }
     }
 
-    // Compare incoming with existing to find what actually needs to change.
-    let mut rows_to_retract: Vec<i64> = Vec::new();
     let mut indices_to_insert: Vec<usize> = Vec::new();
 
     for ((subject, predicate), incoming_indices) in &groups {
         let existing = fetch_existing_rows(tx, subject, predicate)?;
         let incoming: Vec<&Object> = incoming_indices.iter().map(|&i| &triples[i].object).collect();
 
-        for row in &existing {
-            if !incoming.iter().any(|obj| object_matches_row(obj, row)) {
-                rows_to_retract.push(row.rowid);
-            }
-        }
-        for &idx in incoming_indices {
-            if !existing.iter().any(|row| object_matches_row(&triples[idx].object, row)) {
-                indices_to_insert.push(idx);
-            }
+        let is_noop = existing.len() == incoming.len()
+            && incoming.iter().all(|obj| existing.iter().any(|row| object_matches_row(obj, row)));
+
+        if !is_noop {
+            indices_to_insert.extend(incoming_indices);
         }
     }
 
-    // Nothing to do — return 0 to signal no-op without writing any rows.
-    if rows_to_retract.is_empty() && indices_to_insert.is_empty() {
+    if indices_to_insert.is_empty() {
         return Ok(0);
     }
 
@@ -174,20 +168,6 @@ fn do_assert_triples(
     let tx_id = tx.last_insert_rowid();
     let origin_id = get_or_create_origin(tx, origin)?;
 
-    for id in &rows_to_retract {
-        tx.execute(
-            "INSERT INTO triples (
-                 subject, predicate, object, object_value, object_datatype,
-                 object_language, object_type, object_number, object_integer,
-                 object_boolean, tx, origin_id, retracted, created_at
-             )
-             SELECT subject, predicate, object, object_value, object_datatype,
-                    object_language, object_type, object_number, object_integer,
-                    object_boolean, ?1, ?2, 1, ?3
-             FROM triples WHERE rowid = ?4",
-            rusqlite::params![tx_id, origin_id, now, id],
-        )?;
-    }
     for &idx in &indices_to_insert {
         insert_triple(tx, &triples[idx], tx_id, origin_id, now)?;
     }
@@ -265,9 +245,11 @@ pub fn append_triples(
         tx_id
     };
     if tx_id != 0 {
-        let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
         #[cfg(not(test))]
-        crate::search::reindex_subjects(conn, &subjects);
+        {
+            let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
+            crate::search::reindex_subjects(conn, &subjects);
+        }
 
         WRITTEN_SUBJECTS.with(|v| {
             let mut buf = v.borrow_mut();
@@ -298,16 +280,33 @@ fn do_append_triples(
 ) -> Result<i64> {
     let now = now_millis();
 
-    // Only insert triples whose exact (subject, predicate, object) doesn't already exist.
-    let mut indices_to_insert: Vec<usize> = Vec::new();
+    let mut groups: Vec<((&str, &str), Vec<usize>)> = Vec::new();
+    let mut group_index: std::collections::HashMap<(&str, &str), usize> =
+        std::collections::HashMap::new();
     for (i, triple) in triples.iter().enumerate() {
-        let existing = fetch_existing_rows(tx, &triple.subject, &triple.predicate)?;
-        if !existing.iter().any(|row| object_matches_row(&triple.object, row)) {
-            indices_to_insert.push(i);
+        let key = (triple.subject.as_str(), triple.predicate.as_str());
+        if let Some(&idx) = group_index.get(&key) {
+            groups[idx].1.push(i);
+        } else {
+            group_index.insert(key, groups.len());
+            groups.push((key, vec![i]));
         }
     }
 
-    if indices_to_insert.is_empty() {
+    let mut groups_to_extend: Vec<(&str, &str, Vec<usize>)> = Vec::new();
+    for ((subject, predicate), incoming_indices) in &groups {
+        let existing = fetch_existing_rows(tx, subject, predicate)?;
+        let new_indices: Vec<usize> = incoming_indices
+            .iter()
+            .filter(|&&idx| !existing.iter().any(|row| object_matches_row(&triples[idx].object, row)))
+            .copied()
+            .collect();
+        if !new_indices.is_empty() {
+            groups_to_extend.push((subject, predicate, new_indices));
+        }
+    }
+
+    if groups_to_extend.is_empty() {
         return Ok(0);
     }
 
@@ -317,9 +316,25 @@ fn do_append_triples(
     )?;
     let tx_id = tx.last_insert_rowid();
     let origin_id = get_or_create_origin(tx, origin)?;
-    for &idx in &indices_to_insert {
-        insert_triple(tx, &triples[idx], tx_id, origin_id, now)?;
+
+    for (subject, predicate, new_indices) in &groups_to_extend {
+        tx.execute(
+            "INSERT INTO triples (subject, predicate, object, object_value, object_datatype,
+                                  object_language, object_type, object_number, object_integer,
+                                  object_boolean, tx, origin_id, retracted, created_at)
+             SELECT subject, predicate, object, object_value, object_datatype,
+                    object_language, object_type, object_number, object_integer,
+                    object_boolean, ?1, ?2, 0, ?3
+             FROM triples
+             WHERE subject = ?4 AND predicate = ?5 AND retracted = 0
+               AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ?4 AND predicate = ?5)",
+            rusqlite::params![tx_id, origin_id, now, subject, predicate],
+        )?;
+        for &idx in new_indices {
+            insert_triple(tx, &triples[idx], tx_id, origin_id, now)?;
+        }
     }
+
     Ok(tx_id)
 }
 
@@ -345,9 +360,11 @@ pub fn retract_triples(
         tx_id
     };
     if tx_id != 0 {
-        let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
         #[cfg(not(test))]
-        crate::search::reindex_subjects(conn, &subjects);
+        {
+            let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
+            crate::search::reindex_subjects(conn, &subjects);
+        }
 
         WRITTEN_SUBJECTS.with(|v| {
             let mut buf = v.borrow_mut();
@@ -377,148 +394,81 @@ fn do_retract_triples(
     origin: &str,
 ) -> Result<i64> {
     let now = now_millis();
+
+    let mut groups: Vec<((String, String), Vec<usize>)> = Vec::new();
+    let mut group_index: std::collections::HashMap<(String, String), usize> =
+        std::collections::HashMap::new();
+    for (i, triple) in triples.iter().enumerate() {
+        let key = (triple.subject.clone(), triple.predicate.clone());
+        if let Some(&idx) = group_index.get(&key) {
+            groups[idx].1.push(i);
+        } else {
+            group_index.insert(key.clone(), groups.len());
+            groups.push((key, vec![i]));
+        }
+    }
+
+    struct GroupWork {
+        subject: String,
+        predicate: String,
+        remaining: Vec<Object>,
+    }
+
+    let mut work: Vec<GroupWork> = Vec::new();
+
+    for ((subject, predicate), incoming_indices) in &groups {
+        let existing = fetch_existing_rows(tx, subject, predicate)?;
+        if existing.is_empty() {
+            continue;
+        }
+
+        let remaining: Vec<Object> = existing
+            .iter()
+            .filter(|row| {
+                !incoming_indices
+                    .iter()
+                    .any(|&i| object_matches_row(&triples[i].object, row))
+            })
+            .map(existing_row_to_object)
+            .collect();
+
+        work.push(GroupWork {
+            subject: subject.clone(),
+            predicate: predicate.clone(),
+            remaining,
+        });
+    }
+
+    if work.is_empty() {
+        return Ok(0);
+    }
+
     tx.execute(
         "INSERT INTO transactions (origin, created_at) VALUES (?, ?)",
         (origin, now),
     )?;
-
     let tx_id = tx.last_insert_rowid();
     let origin_id = get_or_create_origin(tx, origin)?;
 
-    for triple in triples {
-        match &triple.object {
-            Object::Iri(iri) | Object::Blank(iri) => {
-                tx.execute(
-                    "INSERT INTO triples (
-                         subject, predicate, object, object_value, object_datatype,
-                         object_language, object_type, object_number, object_integer,
-                         object_boolean, tx, origin_id, retracted, created_at
-                     )
-                     SELECT subject, predicate, object, object_value, object_datatype,
-                            object_language, object_type, object_number, object_integer,
-                            object_boolean, ?1, ?2, 1, ?3
-                     FROM triples
-                     WHERE subject = ?4 AND predicate = ?5 AND object = ?6
-                       AND retracted = 0
-                       AND tx = (
-                           SELECT MAX(tx) FROM triples
-                           WHERE subject = ?4 AND predicate = ?5 AND object = ?6
-                       )",
-                    rusqlite::params![tx_id, origin_id, now,
-                                      &triple.subject, &triple.predicate, iri],
-                )?;
-            }
-            Object::Literal { value, datatype, language } => {
-                let dt = datatype.as_deref().unwrap_or("xsd:string");
-                let lang = language.as_deref().unwrap_or("");
-                tx.execute(
-                    "INSERT INTO triples (
-                         subject, predicate, object, object_value, object_datatype,
-                         object_language, object_type, object_number, object_integer,
-                         object_boolean, tx, origin_id, retracted, created_at
-                     )
-                     SELECT subject, predicate, object, object_value, object_datatype,
-                            object_language, object_type, object_number, object_integer,
-                            object_boolean, ?1, ?2, 1, ?3
-                     FROM triples
-                     WHERE subject = ?4 AND predicate = ?5 AND object_value = ?6
-                       AND COALESCE(object_datatype, 'xsd:string') = ?7
-                       AND COALESCE(object_language, '') = ?8
-                       AND retracted = 0
-                       AND tx = (
-                           SELECT MAX(tx) FROM triples
-                           WHERE subject = ?4 AND predicate = ?5 AND object_value = ?6
-                             AND COALESCE(object_datatype, 'xsd:string') = ?7
-                             AND COALESCE(object_language, '') = ?8
-                       )",
-                    rusqlite::params![tx_id, origin_id, now,
-                                      &triple.subject, &triple.predicate, value, dt, lang],
-                )?;
-            }
-            Object::Integer(i) => {
-                tx.execute(
-                    "INSERT INTO triples (
-                         subject, predicate, object, object_value, object_datatype,
-                         object_language, object_type, object_number, object_integer,
-                         object_boolean, tx, origin_id, retracted, created_at
-                     )
-                     SELECT subject, predicate, object, object_value, object_datatype,
-                            object_language, object_type, object_number, object_integer,
-                            object_boolean, ?1, ?2, 1, ?3
-                     FROM triples
-                     WHERE subject = ?4 AND predicate = ?5 AND object_integer = ?6
-                       AND retracted = 0
-                       AND tx = (
-                           SELECT MAX(tx) FROM triples
-                           WHERE subject = ?4 AND predicate = ?5 AND object_integer = ?6
-                       )",
-                    rusqlite::params![tx_id, origin_id, now,
-                                      &triple.subject, &triple.predicate, i],
-                )?;
-            }
-            Object::Number(n) => {
-                tx.execute(
-                    "INSERT INTO triples (
-                         subject, predicate, object, object_value, object_datatype,
-                         object_language, object_type, object_number, object_integer,
-                         object_boolean, tx, origin_id, retracted, created_at
-                     )
-                     SELECT subject, predicate, object, object_value, object_datatype,
-                            object_language, object_type, object_number, object_integer,
-                            object_boolean, ?1, ?2, 1, ?3
-                     FROM triples
-                     WHERE subject = ?4 AND predicate = ?5 AND object_number = ?6
-                       AND retracted = 0
-                       AND tx = (
-                           SELECT MAX(tx) FROM triples
-                           WHERE subject = ?4 AND predicate = ?5 AND object_number = ?6
-                       )",
-                    rusqlite::params![tx_id, origin_id, now,
-                                      &triple.subject, &triple.predicate, n],
-                )?;
-            }
-            Object::Boolean(b) => {
-                let bval = if *b { 1i64 } else { 0i64 };
-                tx.execute(
-                    "INSERT INTO triples (
-                         subject, predicate, object, object_value, object_datatype,
-                         object_language, object_type, object_number, object_integer,
-                         object_boolean, tx, origin_id, retracted, created_at
-                     )
-                     SELECT subject, predicate, object, object_value, object_datatype,
-                            object_language, object_type, object_number, object_integer,
-                            object_boolean, ?1, ?2, 1, ?3
-                     FROM triples
-                     WHERE subject = ?4 AND predicate = ?5 AND object_boolean = ?6
-                       AND retracted = 0
-                       AND tx = (
-                           SELECT MAX(tx) FROM triples
-                           WHERE subject = ?4 AND predicate = ?5 AND object_boolean = ?6
-                       )",
-                    rusqlite::params![tx_id, origin_id, now,
-                                      &triple.subject, &triple.predicate, bval],
-                )?;
-            }
-            Object::DateTime(rfc3339) => {
-                tx.execute(
-                    "INSERT INTO triples (
-                         subject, predicate, object, object_value, object_datatype,
-                         object_language, object_type, object_number, object_integer,
-                         object_boolean, tx, origin_id, retracted, created_at
-                     )
-                     SELECT subject, predicate, object, object_value, object_datatype,
-                            object_language, object_type, object_number, object_integer,
-                            object_boolean, ?1, ?2, 1, ?3
-                     FROM triples
-                     WHERE subject = ?4 AND predicate = ?5 AND object_value = ?6
-                       AND retracted = 0
-                       AND tx = (
-                           SELECT MAX(tx) FROM triples
-                           WHERE subject = ?4 AND predicate = ?5 AND object_value = ?6
-                       )",
-                    rusqlite::params![tx_id, origin_id, now,
-                                      &triple.subject, &triple.predicate, rfc3339],
-                )?;
+    for w in work {
+        if w.remaining.is_empty() {
+            tx.execute(
+                "INSERT INTO triples (subject, predicate, object, object_value, object_datatype,
+                                      object_language, object_type, object_number, object_integer,
+                                      object_boolean, tx, origin_id, retracted, created_at)
+                 SELECT subject, predicate, object, object_value, object_datatype,
+                        object_language, object_type, object_number, object_integer,
+                        object_boolean, ?1, ?2, 1, ?3
+                 FROM triples
+                 WHERE subject = ?4 AND predicate = ?5 AND retracted = 0
+                   AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ?4 AND predicate = ?5)
+                 LIMIT 1",
+                rusqlite::params![tx_id, origin_id, now, w.subject, w.predicate],
+            )?;
+        } else {
+            for obj in w.remaining {
+                let triple = Triple::new(&w.subject, &w.predicate, obj);
+                insert_triple(tx, &triple, tx_id, origin_id, now)?;
             }
         }
     }
@@ -528,7 +478,6 @@ fn do_retract_triples(
 
 /// Represents an existing active triple row fetched from the DB for comparison.
 struct ExistingRow {
-    rowid: i64,
     object: Option<String>,
     object_value: Option<String>,
     object_datatype: Option<String>,
@@ -539,37 +488,29 @@ struct ExistingRow {
 }
 
 /// Fetch all currently-active rows for a given (subject, predicate) pair.
-/// A row is active when retracted=0 AND its tx equals the MAX(tx) for that specific
-/// (subject, predicate, object) combination — meaning no newer retraction supersedes it.
+/// A row is active when retracted=0 AND its tx equals the MAX(tx) for that (subject, predicate)
+/// — i.e., all members of the latest group for this SP pair.
 fn fetch_existing_rows(
     tx: &rusqlite::Connection,
     subject: &str,
     predicate: &str,
 ) -> rusqlite::Result<Vec<ExistingRow>> {
     let mut stmt = tx.prepare(
-        "SELECT rowid, object, object_value, object_datatype, object_language,
+        "SELECT object, object_value, object_datatype, object_language,
                 object_integer, object_number, object_boolean
-         FROM triples t1
+         FROM triples
          WHERE subject = ?1 AND predicate = ?2 AND retracted = 0
-           AND tx = (
-               SELECT MAX(tx) FROM triples t2
-               WHERE t2.subject = ?1 AND t2.predicate = ?2
-                 AND t2.object IS t1.object
-                 AND t2.object_value IS t1.object_value
-                 AND t2.object_datatype IS t1.object_datatype
-                 AND t2.object_language IS t1.object_language
-           )",
+           AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ?1 AND predicate = ?2)",
     )?;
     let rows = stmt.query_map([subject, predicate], |row| {
         Ok(ExistingRow {
-            rowid: row.get(0)?,
-            object: row.get(1)?,
-            object_value: row.get(2)?,
-            object_datatype: row.get(3)?,
-            object_language: row.get(4)?,
-            object_integer: row.get(5)?,
-            object_number: row.get(6)?,
-            object_boolean: row.get(7)?,
+            object: row.get(0)?,
+            object_value: row.get(1)?,
+            object_datatype: row.get(2)?,
+            object_language: row.get(3)?,
+            object_integer: row.get(4)?,
+            object_number: row.get(5)?,
+            object_boolean: row.get(6)?,
         })
     })?
     .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -594,6 +535,34 @@ fn object_matches_row(obj: &Object, row: &ExistingRow) -> bool {
     }
 }
 
+fn existing_row_to_object(row: &ExistingRow) -> Object {
+    if let Some(ref iri) = row.object {
+        if iri.starts_with("_:") {
+            Object::Blank(iri.clone())
+        } else {
+            Object::Iri(iri.clone())
+        }
+    } else if let Some(i) = row.object_integer {
+        Object::Integer(i)
+    } else if let Some(n) = row.object_number {
+        Object::Number(n)
+    } else if let Some(b) = row.object_boolean {
+        Object::Boolean(b != 0)
+    } else {
+        let value = row.object_value.clone().unwrap_or_default();
+        let dt = row.object_datatype.clone();
+        if dt.as_deref() == Some("xsd:dateTime") {
+            Object::DateTime(value)
+        } else {
+            Object::Literal {
+                value,
+                datatype: dt,
+                language: row.object_language.clone(),
+            }
+        }
+    }
+}
+
 /// Insert a single triple into the database
 fn insert_triple(
     tx: &rusqlite::Connection,
@@ -602,7 +571,6 @@ fn insert_triple(
     origin_id: i64,
     created_at: i64,
 ) -> rusqlite::Result<()> {
-    // Need to compute everything together to ensure datatype matches typed columns
     let int_str;
     let num_str;
     let bool_str;
@@ -649,7 +617,6 @@ fn insert_triple(
         }
 
         Object::Literal { value, datatype, language } => {
-            // If parse fails, return an error (user provided invalid data)
             match datatype.as_deref() {
                 Some("xsd:decimal") | Some("xsd:double") | Some("xsd:float") => {
                     let n = value.parse::<f64>()

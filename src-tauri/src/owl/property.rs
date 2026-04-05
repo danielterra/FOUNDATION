@@ -284,21 +284,21 @@ impl Property {
                 format!("Property '{}' has no retracted triples to restore", iri)
             ))?;
 
-        let def_triples = query::get_retracted_by_entity_at_tx(conn, iri, retract_tx)?;
-        let def: Vec<Triple> = def_triples.triples.into_iter()
+        let def = query::get_last_active_by_entity_before_tx(conn, iri, retract_tx)?;
+        let def_triples: Vec<Triple> = def.triples.into_iter()
             .map(|t| Triple::new(t.subject, t.predicate, t.object))
             .collect();
-        if !def.is_empty() {
-            store::assert_triples(conn, &def, origin)?;
+        if !def_triples.is_empty() {
+            store::assert_triples(conn, &def_triples, origin)?;
         }
 
-        let fact_triples = query::get_retracted_by_predicate_at_tx(conn, iri, retract_tx)?;
-        let count = fact_triples.triples.len();
-        let facts: Vec<Triple> = fact_triples.triples.into_iter()
+        let facts = query::get_last_active_by_predicate_before_tx(conn, iri, retract_tx)?;
+        let count = facts.triples.len();
+        let fact_triples: Vec<Triple> = facts.triples.into_iter()
             .map(|t| Triple::new(t.subject, t.predicate, t.object))
             .collect();
-        if !facts.is_empty() {
-            store::assert_triples(conn, &facts, origin)?;
+        if !fact_triples.is_empty() {
+            store::assert_triples(conn, &fact_triples, origin)?;
         }
 
         Ok(count)

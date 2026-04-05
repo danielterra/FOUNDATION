@@ -158,6 +158,15 @@
 		return msg.content.find(b => b.type === 'question_output') ?? null;
 	}
 
+	function getQuestionAnswer(q, currentMsg) {
+		const msgIndex = messages.findIndex(m => m.iri === currentMsg.iri);
+		if (msgIndex < 0 || msgIndex >= messages.length - 1) return null;
+		const nextMsg = messages[msgIndex + 1];
+		if (!Array.isArray(nextMsg?.content)) return null;
+		const result = nextMsg.content.find(b => b.type === 'tool_result' && b.tool_use_id === q.id);
+		return result?.content ?? null;
+	}
+
 	function isLastMessage(msg) {
 		return messages.length > 0 && messages[messages.length - 1].iri === msg.iri;
 	}
@@ -173,14 +182,14 @@
 
 	function hasReasoningContent(msg) {
 		if (!Array.isArray(msg.content)) return false;
-		return msg.content.some(b => b.type === 'text' || b.type === 'thinking' || b.type === 'redacted_thinking');
+		return msg.content.some(b => b.type === 'thinking' || b.type === 'redacted_thinking');
 	}
 
 	function getReasoningText(msg) {
 		if (!Array.isArray(msg.content)) return '';
 		return msg.content
-			.filter(b => b.type === 'thinking' || b.type === 'text')
-			.map(b => b.type === 'thinking' ? (b.thinking ?? '') : (b.text ?? ''))
+			.filter(b => b.type === 'thinking')
+			.map(b => b.thinking ?? '')
 			.join('\n\n');
 	}
 
@@ -282,7 +291,11 @@
 					</div>
 				</details>
 			{/if}
-			{#if hasSpeakOutput(message)}
+			{#if hasTextContent(message)}
+				<div class="message-text markdown-content">
+					{@html renderMarkdown(extractTextFromContent(message.content))}
+				</div>
+			{:else if hasSpeakOutput(message)}
 				{#each getSpeakOutputTexts(message) as text}
 					<div class="message-text markdown-content">
 						{@html renderMarkdown(text)}
@@ -292,7 +305,7 @@
 			{#if hasQuestionOutput(message)}
 				{@const q = getQuestionOutput(message)}
 				{#if q}
-					<ChatQuestionBlock {q} isLast={isLastMessage(message)} {conversationId} />
+					<ChatQuestionBlock {q} answer={getQuestionAnswer(q, message)} isLast={isLastMessage(message)} {conversationId} />
 				{/if}
 			{/if}
 		{:else if message.role === 'user' && hasTextContent(message)}
