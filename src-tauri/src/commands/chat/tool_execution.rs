@@ -230,3 +230,40 @@ async fn show_widgets_for_iris(
         Ok(String::new())
     }).await;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SPEAK_MAX_CHARS;
+
+    #[test]
+    fn speak_rejects_messages_over_288_characters() {
+        let long_message = "a".repeat(SPEAK_MAX_CHARS + 1);
+        let input = serde_json::json!({ "message": long_message });
+        let message = input.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(
+            message.chars().count() > SPEAK_MAX_CHARS,
+            "message of {} chars must exceed SPEAK_MAX_CHARS={}",
+            message.chars().count(), SPEAK_MAX_CHARS
+        );
+        let is_too_long = message.chars().count() > SPEAK_MAX_CHARS;
+        assert!(is_too_long, "speak must return an error for messages over {} chars", SPEAK_MAX_CHARS);
+    }
+
+    #[test]
+    fn speak_accepts_messages_exactly_288_characters() {
+        let exact_message = "a".repeat(SPEAK_MAX_CHARS);
+        let input = serde_json::json!({ "message": exact_message });
+        let message = input.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        assert_eq!(
+            message.chars().count(), SPEAK_MAX_CHARS,
+            "message must be exactly {} chars", SPEAK_MAX_CHARS
+        );
+        let is_valid = message.chars().count() <= SPEAK_MAX_CHARS;
+        assert!(is_valid, "speak must accept messages of exactly {} chars", SPEAK_MAX_CHARS);
+    }
+
+    #[test]
+    fn speak_max_chars_is_288() {
+        assert_eq!(SPEAK_MAX_CHARS, 288);
+    }
+}

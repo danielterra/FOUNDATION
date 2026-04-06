@@ -80,7 +80,7 @@
 		return String(content);
 	}
 
-	let { message, messages, conversationId = '', onEdit = null, onRetry = null, onEntityClick = null } = $props();
+	let { message, messages, conversationId = '', isStreaming = false, onEdit = null, onRetry = null, onEntityClick = null } = $props();
 
 	let copySuccess = $state(false);
 	let copyTimeout = null;
@@ -95,48 +95,24 @@
 		clearInterval(ticker);
 	});
 
-	async function copyMessage() {
-		const text = message.role === 'assistant' && hasSpeakOutput(message)
-			? getSpeakOutputTexts(message).join('\n\n')
-			: extractTextFromContent(message.content);
-		try {
-			await navigator.clipboard.writeText(text);
-			copySuccess = true;
-			if (copyTimeout) clearTimeout(copyTimeout);
-			copyTimeout = setTimeout(() => {
-				copySuccess = false;
-			}, 2000);
-		} catch (err) {
-			console.error('Failed to copy:', err);
+	function getDisplayText(msg) {
+		if (!Array.isArray(msg.content)) return '';
+		if (msg.role === 'assistant') {
+			const speak = msg.content.find(b => b.type === 'speak_output');
+			return speak?.text ?? '';
 		}
+		return msg.content
+			.filter(b => b.type === 'text')
+			.map(b => b.text ?? '')
+			.join('\n\n');
 	}
 
-	function handleEdit() {
-		const text = extractTextFromContent(message.content);
-		onEdit?.(message.iri, text);
-	}
-
-	function handleRetry() {
-		onRetry?.(message.iri);
-	}
-
-	function renderMarkdown(text) {
-		if (!text) return '';
-		return marked.parse(text)
-			.replace(/<table>/g, '<div class="table-wrapper"><table>')
-			.replace(/<\/table>/g, '</table></div>');
-	}
-
-	function extractTextFromContent(content) {
-		if (!content) return '';
-		if (typeof content === 'string') return content;
-		if (Array.isArray(content)) {
-			return content
-				.filter(block => block.type === 'text')
-				.map(block => block.text)
-				.join('\n\n');
-		}
-		return '';
+	function getPreSpeakText(msg) {
+		if (!Array.isArray(msg.content)) return '';
+		return msg.content
+			.filter(b => b.type === 'text')
+			.map(b => b.text ?? '')
+			.join('\n\n');
 	}
 
 	function extractToolUses(content) {
@@ -171,15 +147,6 @@
 		return messages.length > 0 && messages[messages.length - 1].iri === msg.iri;
 	}
 
-	function hasSpeakOutput(msg) {
-		return Array.isArray(msg.content) && msg.content.some(b => b.type === 'speak_output');
-	}
-
-	function getSpeakOutputTexts(msg) {
-		if (!Array.isArray(msg.content)) return [];
-		return msg.content.filter(b => b.type === 'speak_output').map(b => b.text ?? '');
-	}
-
 	function hasReasoningContent(msg) {
 		if (!Array.isArray(msg.content)) return false;
 		return msg.content.some(b => b.type === 'thinking' || b.type === 'redacted_thinking');
@@ -193,9 +160,31 @@
 			.join('\n\n');
 	}
 
-	function hasTextContent(msg) {
-		if (!Array.isArray(msg.content)) return false;
-		return msg.content.some(block => block.type === 'text');
+	async function copyMessage() {
+		const parts = [getPreSpeakText(message), getDisplayText(message)].filter(Boolean);
+		try {
+			await navigator.clipboard.writeText(parts.join('\n\n'));
+			copySuccess = true;
+			if (copyTimeout) clearTimeout(copyTimeout);
+			copyTimeout = setTimeout(() => { copySuccess = false; }, 2000);
+		} catch (err) {
+			console.error('Failed to copy:', err);
+		}
+	}
+
+	function handleEdit() {
+		onEdit?.(message.iri, getDisplayText(message));
+	}
+
+	function handleRetry() {
+		onRetry?.(message.iri);
+	}
+
+	function renderMarkdown(text) {
+		if (!text) return '';
+		return marked.parse(text)
+			.replace(/<table>/g, '<div class="table-wrapper"><table>')
+			.replace(/<\/table>/g, '</table></div>');
 	}
 
 	function groupToolUsesWithResults(msg, allMessages) {
@@ -269,7 +258,7 @@
 				<div class="subconscious-context markdown-body">{@html marked.parse(ctx)}</div>
 			</details>
 		{/if}
-		<div class="message-bubble">
+		<div class="message-bubble" class:streaming={isStreaming}>
 		{#if message.isThinking}
 			<div class="thinking-indicator">
 				<div class="thinking-dots">
@@ -281,7 +270,7 @@
 			</div>
 		{:else if message.role === 'assistant'}
 			{#if hasReasoningContent(message)}
-				<details class="reasoning-block" open>
+				<details class="reasoning-block">
 					<summary class="reasoning-summary">
 						<span class="material-symbols-outlined reasoning-icon">psychology</span>
 						<span class="reasoning-label">Reasoning</span>
@@ -291,16 +280,27 @@
 					</div>
 				</details>
 			{/if}
-			{#if hasTextContent(message)}
-				<div class="message-text markdown-content">
-					{@html renderMarkdown(extractTextFromContent(message.content))}
-				</div>
-			{:else if hasSpeakOutput(message)}
-				{#each getSpeakOutputTexts(message) as text}
-					<div class="message-text markdown-content">
-						{@html renderMarkdown(text)}
-					</div>
-				{/each}
+			{@const preSpeakText = getPreSpeakText(message)}
+			{#if preSpeakText}
+				<details class="reasoning-block" open={isStreaming || undefined}>
+					<summary class="reasoning-summary">
+						<span class="material-symbols-outlined reasoning-icon">psychology</span>
+						<span class="reasoning-label">Reasoning</span>
+					</summary>
+					{#if isStreaming}
+						<div class="reasoning-content streaming-text">{preSpeakText}<span class="stream-cursor">▋</span></div>
+					{:else}
+						<div class="reasoning-content markdown-content">{@html renderMarkdown(preSpeakText)}</div>
+					{/if}
+				</details>
+			{/if}
+			{@const displayText = getDisplayText(message)}
+			{#if displayText}
+				{#if isStreaming}
+					<div class="message-text streaming-text">{displayText}<span class="stream-cursor">▋</span></div>
+				{:else}
+					<div class="message-text markdown-content">{@html renderMarkdown(displayText)}</div>
+				{/if}
 			{/if}
 			{#if hasQuestionOutput(message)}
 				{@const q = getQuestionOutput(message)}
@@ -308,10 +308,13 @@
 					<ChatQuestionBlock {q} answer={getQuestionAnswer(q, message)} isLast={isLastMessage(message)} {conversationId} />
 				{/if}
 			{/if}
-		{:else if message.role === 'user' && hasTextContent(message)}
-			<div class="message-text markdown-content">
-				{@html renderMarkdown(extractTextFromContent(message.content))}
-			</div>
+		{:else if message.role === 'user'}
+			{@const displayText = getDisplayText(message)}
+			{#if displayText}
+				<div class="message-text markdown-content">
+					{@html renderMarkdown(displayText)}
+				</div>
+			{/if}
 		{/if}
 
 		{#if message.attachments && message.attachments.length > 0}
@@ -495,12 +498,6 @@
 		opacity: 0.7;
 	}
 
-	.action-btn:hover {
-		color: var(--color-interactive-hover);
-		background: color-mix(in srgb, var(--color-interactive) 10%, transparent);
-		opacity: 1;
-	}
-
 	.action-btn .material-symbols-outlined {
 		font-size: 14px;
 	}
@@ -531,6 +528,11 @@
 	.message.ai .message-bubble {
 		background: color-mix(in srgb, var(--color-white) 4%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
+	}
+
+	.message.ai .message-bubble.streaming {
+		background: color-mix(in srgb, var(--color-transition) 6%, transparent);
+		border-color: color-mix(in srgb, var(--color-transition) 25%, transparent);
 	}
 
 	.message-text {
@@ -569,12 +571,6 @@
 		min-width: 150px;
 		max-width: 200px;
 		text-align: left;
-	}
-
-	.attachment-thumbnail:hover {
-		background: color-mix(in srgb, var(--color-white) 12%, transparent);
-		border-color: color-mix(in srgb, var(--color-white) 25%, transparent);
-		transform: translateY(-1px);
 	}
 
 	.attachment-thumbnail:active {
@@ -717,6 +713,22 @@
 		opacity: 0.75;
 	}
 
+	.streaming-text {
+		white-space: pre-wrap;
+		line-height: 1.5;
+	}
+
+	@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+	.stream-cursor {
+		display: inline-block;
+		font-size: 0.85em;
+		vertical-align: middle;
+		animation: blink 0.8s step-start infinite;
+		color: var(--color-transition);
+		margin-left: 1px;
+	}
+
 	.thinking-indicator {
 		display: flex;
 		align-items: center;
@@ -738,13 +750,8 @@
 		animation: thinking-bounce 1.4s infinite ease-in-out;
 	}
 
-	.thinking-dots span:nth-child(1) {
-		animation-delay: -0.32s;
-	}
-
-	.thinking-dots span:nth-child(2) {
-		animation-delay: -0.16s;
-	}
+	.thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
+	.thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
 
 	@keyframes thinking-bounce {
 		0%, 80%, 100% {
@@ -764,14 +771,7 @@
 		animation: thinking-pulse 1.5s infinite ease-in-out;
 	}
 
-	@keyframes thinking-pulse {
-		0%, 100% {
-			opacity: 0.6;
-		}
-		50% {
-			opacity: 1;
-		}
-	}
+	@keyframes thinking-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
 
 	.message.thinking {
 		animation: slide-in 0.3s ease-out;

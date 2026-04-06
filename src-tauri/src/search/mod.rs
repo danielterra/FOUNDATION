@@ -7,7 +7,7 @@ use tantivy::{
     Index, IndexWriter, IndexReader, ReloadPolicy, TantivyDocument,
     collector::TopDocs,
     merge_policy::LogMergePolicy,
-    query::{BooleanQuery, Occur, Query, QueryParser, TermQuery},
+    query::{AllQuery, BooleanQuery, Occur, Query, QueryParser, TermQuery},
     schema::{Field, IndexRecordOption, Schema, Value, STRING, STORED, TEXT, FAST},
     Term,
 };
@@ -16,6 +16,7 @@ use crate::commands::log_backend;
 
 const WRITER_HEAP_BYTES: usize = 50_000_000;
 const COMPLETED_PENALTY: f32 = 0.2;
+const ACCESS_BOOST_WEIGHT: f32 = 0.3;
 
 struct SearchIndex {
     index: Index,
@@ -188,7 +189,7 @@ fn try_open_index(index_dir: &Path, conn: &Connection) -> Result<SearchIndex, Bo
     };
 
     log_backend("info", &format!("[SEARCH] Acquiring writer ({}ms)", t.elapsed().as_millis()));
-    let mut writer: IndexWriter = index.writer(WRITER_HEAP_BYTES)?;
+    let writer: IndexWriter = index.writer(WRITER_HEAP_BYTES)?;
     writer.set_merge_policy(Box::new(LogMergePolicy::default()));
     log_backend("info", &format!("[SEARCH] Writer ready ({}ms)", t.elapsed().as_millis()));
 
@@ -547,7 +548,7 @@ pub fn search_with_scores(query: &str, class_iri: Option<&str>, limit: usize) ->
                 let is_completed = completed_col.as_ref()
                     .and_then(|col| col.first(doc))
                     .unwrap_or(0);
-                let boosted = score * (1.0 + (count as f32).ln_1p() * 0.3);
+                let boosted = score * (1.0 + (count as f32).ln_1p() * ACCESS_BOOST_WEIGHT);
                 if is_completed > 0 { boosted * COMPLETED_PENALTY } else { boosted }
             }
         }
@@ -582,6 +583,55 @@ pub fn search_with_scores(query: &str, class_iri: Option<&str>, limit: usize) ->
     results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     results.truncate(limit);
     results
+}
+
+pub fn search_all(class_iri: Option<&str>, limit: usize) -> Vec<String> {
+    let guard = match SEARCH_INDEX.lock() {
+        Ok(g) => g,
+        Err(_) => return vec![],
+    };
+    let idx = match guard.as_ref() {
+        Some(idx) => idx,
+        None => return vec![],
+    };
+
+    let searcher = idx.reader.searcher();
+
+    let final_query: Box<dyn Query> = match class_iri {
+        Some(concept) => {
+            let term = Term::from_field_text(idx.f_concept, concept);
+            let concept_filter = TermQuery::new(term, IndexRecordOption::Basic);
+            Box::new(BooleanQuery::new(vec![
+                (Occur::Must, Box::new(AllQuery) as Box<dyn Query>),
+                (Occur::Must, Box::new(concept_filter)),
+            ]))
+        }
+        None => Box::new(AllQuery),
+    };
+
+    let top_docs_collector = TopDocs::with_limit(limit).tweak_score(
+        move |seg_reader: &SegmentReader| {
+            let boost_col = seg_reader.fast_fields().u64("boost").ok();
+            move |doc: DocId, score: Score| {
+                let count = boost_col.as_ref()
+                    .and_then(|col| col.first(doc))
+                    .unwrap_or(0);
+                score * (1.0 + (count as f32).ln_1p() * ACCESS_BOOST_WEIGHT)
+            }
+        }
+    );
+
+    match searcher.search(final_query.as_ref(), &top_docs_collector) {
+        Ok(top_docs) => top_docs.into_iter()
+            .filter_map(|(_, addr)| {
+                let doc: TantivyDocument = searcher.doc(addr).ok()?;
+                doc.get_first(idx.f_iri)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect(),
+        Err(_) => vec![],
+    }
 }
 
 pub fn search_concepts_with_scores(query: &str, limit: usize) -> Vec<(String, f32)> {

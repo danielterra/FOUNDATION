@@ -187,7 +187,7 @@ pub async fn run_conversation_loop(
             blackboard_context,
             tools: Some(tools),
             supports_web_tools: agent_config.supports_web_tools,
-            thinking: None,
+            thinking: if thinking_enabled { Some(crate::ai::ThinkingConfig::Adaptive) } else { None },
             tool_choice: Some(serde_json::json!({ "type": "any" })),
         };
 

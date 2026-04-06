@@ -375,7 +375,6 @@ pub fn find_by_properties_with_options(
     Ok((entities, total))
 }
 
-/// Returns the IRI of the conversation whose most recent user message (role = 'user') is the newest.
 /// Only considers conversations that have a `foundation:handledBy` triple.
 pub fn find_conversation_by_last_user_message(conn: &Connection) -> Result<Option<String>> {
     let sql = "
@@ -546,4 +545,137 @@ pub fn find_entities_by_attribute_value(
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     Ok(entities)
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::*;
+    use crate::eavto::test_helpers::setup_test_db;
+
+    fn insert_triple(conn: &Connection, subject: &str, predicate: &str, value: &str) {
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object_value, object_type, tx, retracted) \
+             VALUES (?1, ?2, ?3, 'literal', 1, 0)",
+            rusqlite::params![subject, predicate, value],
+        ).unwrap();
+    }
+
+    fn insert_type(conn: &Connection, subject: &str, class: &str) {
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object, object_type, tx, retracted) \
+             VALUES (?1, 'rdf:type', ?2, 'iri', 1, 0)",
+            rusqlite::params![subject, class],
+        ).unwrap();
+    }
+
+    #[test]
+    fn sort_by_string_property_ascending_returns_ordered_results() {
+        let conn = setup_test_db();
+        insert_type(&conn, "ex:B", "ex:Thing");
+        insert_type(&conn, "ex:A", "ex:Thing");
+        insert_type(&conn, "ex:C", "ex:Thing");
+        insert_triple(&conn, "ex:B", "rdfs:label", "B");
+        insert_triple(&conn, "ex:A", "rdfs:label", "A");
+        insert_triple(&conn, "ex:C", "rdfs:label", "C");
+
+        let sort = SortSpec { property_iri: "rdfs:label".to_string(), direction: SortDirection::Asc };
+        let (results, _) = find_by_class_iris_and_properties_with_options(
+            &conn, &["ex:Thing"],
+            &[PropertyFilter::Compare("rdfs:label", "A", "?>=")],
+            false, usize::MAX, 0, Some(&sort),
+        ).unwrap();
+
+        assert_eq!(results, vec!["ex:A", "ex:B", "ex:C"]);
+    }
+
+    #[test]
+    fn sort_by_string_property_descending_returns_reverse_order() {
+        let conn = setup_test_db();
+        insert_type(&conn, "ex:B", "ex:Thing");
+        insert_type(&conn, "ex:A", "ex:Thing");
+        insert_type(&conn, "ex:C", "ex:Thing");
+        insert_triple(&conn, "ex:B", "rdfs:label", "B");
+        insert_triple(&conn, "ex:A", "rdfs:label", "A");
+        insert_triple(&conn, "ex:C", "rdfs:label", "C");
+
+        let sort = SortSpec { property_iri: "rdfs:label".to_string(), direction: SortDirection::Desc };
+        let (results, _) = find_by_class_iris_and_properties_with_options(
+            &conn, &["ex:Thing"],
+            &[PropertyFilter::Compare("rdfs:label", "A", "?>=")],
+            false, usize::MAX, 0, Some(&sort),
+        ).unwrap();
+
+        assert_eq!(results, vec!["ex:C", "ex:B", "ex:A"]);
+    }
+
+    #[test]
+    fn missing_sort_property_value_sorts_last_for_desc() {
+        let conn = setup_test_db();
+        insert_type(&conn, "ex:HasLabel", "ex:Thing");
+        insert_type(&conn, "ex:NoLabel", "ex:Thing");
+        insert_triple(&conn, "ex:HasLabel", "rdfs:label", "Z");
+
+        let sort = SortSpec { property_iri: "rdfs:label".to_string(), direction: SortDirection::Desc };
+        let (results, _) = find_by_class_iris_and_properties_with_options(
+            &conn, &["ex:Thing"],
+            &[PropertyFilter::Compare("rdf:type", "ex:Thing", "exists")],
+            false, usize::MAX, 0, Some(&sort),
+        ).unwrap();
+
+        assert_eq!(results.last().unwrap(), "ex:NoLabel");
+    }
+
+    #[test]
+    fn missing_sort_property_value_sorts_first_for_asc() {
+        let conn = setup_test_db();
+        insert_type(&conn, "ex:HasLabel", "ex:Thing");
+        insert_type(&conn, "ex:NoLabel", "ex:Thing");
+        insert_triple(&conn, "ex:HasLabel", "rdfs:label", "A");
+
+        let sort = SortSpec { property_iri: "rdfs:label".to_string(), direction: SortDirection::Asc };
+        let (results, _) = find_by_class_iris_and_properties_with_options(
+            &conn, &["ex:Thing"],
+            &[PropertyFilter::Compare("rdf:type", "ex:Thing", "exists")],
+            false, usize::MAX, 0, Some(&sort),
+        ).unwrap();
+
+        assert_eq!(results.first().unwrap(), "ex:NoLabel");
+    }
+
+    #[test]
+    fn no_sort_spec_preserves_existing_behavior() {
+        let conn = setup_test_db();
+        insert_type(&conn, "ex:X", "ex:Thing");
+        insert_triple(&conn, "ex:X", "rdfs:label", "X");
+
+        let (results, total) = find_by_class_iris_and_properties_with_options(
+            &conn, &["ex:Thing"],
+            &[PropertyFilter::Compare("rdfs:label", "X", "=")],
+            false, usize::MAX, 0, None,
+        ).unwrap();
+
+        assert_eq!(total, 1);
+        assert_eq!(results, vec!["ex:X"]);
+    }
+
+    #[test]
+    fn sort_by_datetime_property_orders_by_epoch() {
+        let conn = setup_test_db();
+        insert_type(&conn, "ex:Early", "ex:Thing");
+        insert_type(&conn, "ex:Late", "ex:Thing");
+        insert_triple(&conn, "ex:Early", "foundation:createdAt", "2020-01-01T00:00:00Z");
+        insert_triple(&conn, "ex:Late", "foundation:createdAt", "2025-06-01T00:00:00Z");
+
+        let sort = SortSpec {
+            property_iri: "foundation:createdAt".to_string(),
+            direction: SortDirection::Asc,
+        };
+        let (results, _) = find_by_class_iris_and_properties_with_options(
+            &conn, &["ex:Thing"],
+            &[PropertyFilter::Compare("rdf:type", "ex:Thing", "exists")],
+            false, usize::MAX, 0, Some(&sort),
+        ).unwrap();
+
+        assert_eq!(results, vec!["ex:Early", "ex:Late"]);
+    }
 }

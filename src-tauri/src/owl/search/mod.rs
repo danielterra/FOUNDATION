@@ -197,9 +197,8 @@ pub fn search_individuals(
 /// Path A (class_iri or filters provided): loads candidates for that class, optionally
 /// applies multi-token AND scoring in Rust, then paginates and enriches.
 ///
-/// Path B (global): uses SQL-based `search_entities` / `search_entities_scores_only` to
-/// find candidates, intersects per-token score maps for multi-token AND, then enriches the
-/// result page.
+/// Path B (global): uses Tantivy BM25 full-text search to find and rank candidates,
+/// then enriches the result page with triple data.
 pub fn search(
     conn: &Connection,
     tokens: &[String],

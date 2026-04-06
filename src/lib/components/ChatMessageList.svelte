@@ -1,6 +1,4 @@
 <script>
-	import { fly } from 'svelte/transition';
-	import { cubicOut } from 'svelte/easing';
 	import ChatMessageBubble from './ChatMessageBubble.svelte';
 
 	let {
@@ -15,6 +13,7 @@
 		onRetry,
 		onEntityClick = null
 	} = $props();
+
 </script>
 
 <div class="chat-messages" bind:this={chatContainer} onscroll={onScroll}>
@@ -37,11 +36,12 @@
 	{:else}
 		{#each messages as message (message.iri)}
 			{#if shouldDisplayMessage(message)}
-				<div in:fly={{ y: 80, duration: 380, easing: cubicOut }}>
+				<div class="message-enter">
 					<ChatMessageBubble
 						{message}
 						{messages}
 						{conversationId}
+						isStreaming={message.iri === '__streaming__'}
 						onEdit={onEdit}
 						onRetry={onRetry}
 						onEntityClick={onEntityClick}
@@ -53,6 +53,15 @@
 </div>
 
 <style>
+	@keyframes message-enter {
+		from { opacity: 0; transform: translateY(24px); }
+		to   { opacity: 1; transform: translateY(0); }
+	}
+
+	.message-enter {
+		animation: message-enter 380ms cubic-bezier(0.215, 0.61, 0.355, 1) both;
+	}
+
 	.chat-messages {
 		flex: 1;
 		overflow-y: auto;

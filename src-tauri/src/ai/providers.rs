@@ -149,17 +149,24 @@ fn extract_speak_text(json: &str) -> &str {
             let mut i = 0;
             while i < bytes.len() {
                 if bytes[i] == b'\\' {
-                    i += 2; // skip JSON escape sequence
+                    i += 2;
                 } else if bytes[i] == b'"' {
-                    return &after[..i]; // found closing quote
+                    return &after[..i];
                 } else {
                     i += 1;
                 }
             }
-            return after; // partial — no closing quote yet
+            return after;
         }
     }
     ""
+}
+
+fn unescape_json_string(s: &str) -> String {
+    s.replace("\\n", "\n")
+     .replace("\\t", "\t")
+     .replace("\\\"", "\"")
+     .replace("\\\\", "\\")
 }
 
 impl ClaudeProvider {
@@ -374,11 +381,7 @@ impl ClaudeProvider {
                                                 ));
                                                 if full_text.len() > block.speak_text_emitted {
                                                     let new_text = &full_text[block.speak_text_emitted..];
-                                                    let unescaped = new_text
-                                                        .replace("\\n", "\n")
-                                                        .replace("\\t", "\t")
-                                                        .replace("\\\"", "\"")
-                                                        .replace("\\\\", "\\");
+                                                    let unescaped = unescape_json_string(new_text);
                                                     if !unescaped.is_empty() {
                                                         block.speak_text_emitted = full_text.len();
                                                         crate::commands::log_backend("debug", &format!(

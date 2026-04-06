@@ -6,6 +6,8 @@ use crate::owl::{
 use super::SearchResult;
 use super::scoring::{score_entity_against_tokens, matched_properties_for_tokens, entity_type_matches};
 
+const BROWSE_PREFETCH_EXTRA: usize = 1000;
+
 pub(super) fn enrich_from_triples(
     conn: &Connection,
     iri: &str,
@@ -68,66 +70,6 @@ pub(super) fn enrich_from_triples(
     SearchResult {
         id: iri.to_string(),
         label,
-        icon,
-        entity_type,
-        matched_properties,
-        class_type,
-        status,
-    }
-}
-
-pub(super) fn enrich_from_sql_row(
-    conn: &Connection,
-    row: &crate::eavto::query::EntitySearchRow,
-) -> SearchResult {
-    let icon = row.has_icon_iri
-        .as_deref()
-        .and_then(|iri| icon_iri_to_display(conn, iri))
-        .or_else(|| row.icon_literal.clone());
-
-    let is_class = row.type_iri.as_deref() == Some("owl:Class");
-    let entity_type = if is_class { "class" } else { "individual" }.to_string();
-
-    let class_type = if is_class {
-        None
-    } else {
-        row.type_iri.as_deref().and_then(|t| {
-            if t.starts_with("owl:") || t.starts_with("rdf:") || t.starts_with("rdfs:") {
-                None
-            } else {
-                let type_thing = Thing::get(conn, t);
-                Some(serde_json::json!({
-                    "iri": t,
-                    "label": type_thing.label,
-                    "icon": type_thing.icon,
-                }))
-            }
-        })
-    };
-
-    let matched_properties: Vec<serde_json::Value> = row.props_raw
-        .as_deref()
-        .map(|raw| {
-            raw.split('\x1E')
-                .filter_map(|entry| {
-                    let pred = entry.splitn(2, '\x1F').next()?;
-                    Some(serde_json::json!({ "detail_iri": pred }))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let status = get_entity_status_info(conn, &row.subject)
-        .map(|(s_iri, s_label, s_color, s_icon)| serde_json::json!({
-            "iri": s_iri,
-            "label": s_label,
-            "icon": s_icon,
-            "color": s_color,
-        }));
-
-    SearchResult {
-        id: row.subject.clone(),
-        label: row.label.clone(),
         icon,
         entity_type,
         matched_properties,
@@ -259,37 +201,13 @@ pub(super) fn search_global(
             return Ok((results, total));
         }
 
-        let big_limit = offset + limit + 1000;
-        let rows = query::search_entities(conn, "", big_limit)
-            .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
-        let filtered: Vec<_> = rows.into_iter()
-            .filter(|r| entity_type_matches(r.type_iri.as_deref(), entity_type_filter))
-            .collect();
-        let total = filtered.len();
-        let page: Vec<_> = filtered.into_iter().skip(offset).take(limit).collect();
-        let results = page.iter().map(|r| enrich_from_sql_row(conn, r)).collect();
-        return Ok((results, total));
-    }
-
-    // In tests, skip Tantivy (shared global index not populated with test data).
-    #[cfg(test)]
-    return search_sql_fallback(conn, tokens, entity_type_filter, class_iri, limit, offset);
-
-    // Non-empty query: Tantivy BM25 + usage boost + optional concept filter.
-    #[cfg(not(test))]
-    {
-        let query_str = tokens.join(" ");
-        const TANTIVY_FETCH_MULTIPLIER: usize = 20;
-        let fetch_limit = (offset + limit + 1) * TANTIVY_FETCH_MULTIPLIER;
-        let iris = crate::search::search(&query_str, class_iri, fetch_limit);
-
+        let big_limit = offset + limit + BROWSE_PREFETCH_EXTRA;
+        let iris = crate::search::search_all(None, big_limit);
         if iris.is_empty() {
             return Ok((vec![], 0));
         }
-
         let batch = query::batch_load_triples_for_subjects(conn, &iris)
             .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
-
         let filtered: Vec<&String> = iris.iter()
             .filter(|iri| {
                 if entity_type_filter.is_none() {
@@ -303,72 +221,49 @@ pub(super) fn search_global(
                 entity_type_matches(type_iri, entity_type_filter)
             })
             .collect();
-
         let total = filtered.len();
         let page: Vec<&String> = filtered.into_iter().skip(offset).take(limit).collect();
-
         let results: Vec<SearchResult> = page.iter().map(|iri| {
             let empty = vec![];
             let triples = batch.get(iri.as_str()).unwrap_or(&empty);
-            let matched_props = matched_properties_for_tokens(iri, triples, tokens);
-            enrich_from_triples(conn, iri, triples, matched_props)
+            enrich_from_triples(conn, iri, triples, vec![])
         }).collect();
-
-        Ok((results, total))
+        return Ok((results, total));
     }
-}
 
-#[cfg(test)]
-const SQL_FALLBACK_SCAN_LIMIT: usize = 5000;
+    let query_str = tokens.join(" ");
+    const TANTIVY_FETCH_MULTIPLIER: usize = 20;
+    let fetch_limit = (offset + limit + 1) * TANTIVY_FETCH_MULTIPLIER;
+    let iris = crate::search::search(&query_str, class_iri, fetch_limit);
 
-#[cfg(test)]
-pub(super) fn search_sql_fallback(
-    conn: &Connection,
-    tokens: &[String],
-    entity_type_filter: Option<&str>,
-    class_iri: Option<&str>,
-    limit: usize,
-    offset: usize,
-) -> Result<(Vec<SearchResult>, usize)> {
-    use crate::eavto::query;
-    let first_token = match tokens.first() {
-        Some(t) => t.as_str(),
-        None => return Ok((vec![], 0)),
-    };
-    let rows = query::search_entities(conn, first_token, offset + limit + SQL_FALLBACK_SCAN_LIMIT)
+    if iris.is_empty() {
+        return Ok((vec![], 0));
+    }
+
+    let batch = query::batch_load_triples_for_subjects(conn, &iris)
         .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
 
-    let candidate_iris: Vec<String> = rows.iter()
-        .filter(|r| entity_type_matches(r.type_iri.as_deref(), entity_type_filter))
-        .filter(|r| class_iri.map_or(true, |c| r.type_iri.as_deref() == Some(c)))
-        .map(|r| r.subject.clone())
+    let filtered: Vec<&String> = iris.iter()
+        .filter(|iri| {
+            if entity_type_filter.is_none() {
+                return true;
+            }
+            let empty = vec![];
+            let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+            let type_iri = triples.iter()
+                .find(|t| t.predicate == "rdf:type")
+                .and_then(|t| t.object.as_iri());
+            entity_type_matches(type_iri, entity_type_filter)
+        })
         .collect();
 
-    let batch = query::batch_load_triples_for_subjects(conn, &candidate_iris)
-        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
-
-    let mut scored: Vec<(String, i32)> = Vec::new();
-    for iri in &candidate_iris {
-        let empty = vec![];
-        let triples = batch.get(iri.as_str()).unwrap_or(&empty);
-        let mut matched_props = vec![];
-        if let Some(score) = score_entity_against_tokens(iri, triples, tokens, &mut matched_props) {
-            scored.push((iri.clone(), score));
-        }
-    }
-    scored.sort_by(|a, b| b.1.cmp(&a.1));
-
-    let total = scored.len();
-    let page: Vec<String> = scored.into_iter().skip(offset).take(limit).map(|(iri, _)| iri).collect();
-
-    let page_batch = query::batch_load_triples_for_subjects(conn, &page)
-        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+    let total = filtered.len();
+    let page: Vec<&String> = filtered.into_iter().skip(offset).take(limit).collect();
 
     let results: Vec<SearchResult> = page.iter().map(|iri| {
         let empty = vec![];
-        let triples = page_batch.get(iri.as_str()).unwrap_or(&empty);
-        let mut matched_props = vec![];
-        score_entity_against_tokens(iri, triples, tokens, &mut matched_props);
+        let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+        let matched_props = matched_properties_for_tokens(iri, triples, tokens);
         enrich_from_triples(conn, iri, triples, matched_props)
     }).collect();
 

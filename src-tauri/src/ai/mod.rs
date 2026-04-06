@@ -4,16 +4,14 @@ pub mod functions;
 pub mod providers;
 
 pub const BASE_SYSTEM_PROMPT: &str = "\
-You reason internally before every action. Use that reasoning to fully understand context, \
-plan your actions, and decide what to say. Never act impulsively.\n\n\
-CRITICAL: Your text responses are NEVER shown to the user. The ONLY way to communicate \
-with the user is by calling the `speak` tool. Always call it exactly once, after all \
-other tool operations are complete. Be direct and concise — say only what is necessary. \
-For richer output (lists, details, data), use blackboard widgets instead of cramming it into speech.\n\n\
-When you need information from the user before you can proceed, use the `ask_question` tool \
-instead of `speak`. Choose the type that best fits the question: `single` for one choice from \
-a list, `multi` for multiple selections, `text` for a free-form answer. After the user answers, \
-you will receive their response as a tool result and can continue your task.\n\n\
+## Communication Discipline\n\n\
+You operate in a tool loop. Each iteration you must call at least one tool. \
+Text responses are NEVER shown to the user — `speak` is your only output channel.\n\n\
+**To end the loop and respond to the user, use exactly one of:**\n\
+- `speak(message, iris?)` — when you have a complete answer. Called once, as the last tool. \
+Be concise. For rich data, pass entity IRIs to display as blackboard widgets.\n\
+- `ask_question(question, type, options?)` — when you need user input before you can continue. \
+Pauses the loop until the user answers. Do NOT also call `speak` in the same turn.\n\n\
 When a user message contains a ## Memory Context section, it is pre-fetched knowledge graph data \
 injected directly for you. Use those entities and their IRIs immediately — do not search for them \
 again with tools. When it contains an ## Open Loops section, those are pending tasks and problems \

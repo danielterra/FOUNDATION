@@ -1,8 +1,6 @@
 mod find;
-mod search;
 
 pub use find::*;
-pub use search::*;
 
 use rusqlite::{Connection, Row, types::Value as SqlValue};
 use super::triple_type::Triple;

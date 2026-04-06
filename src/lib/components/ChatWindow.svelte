@@ -60,7 +60,63 @@
 	let conversations = $state([]);
 	let conversationAgent = $state(null);
 	let agents = $state([]);
-	let streamingText = $state('');
+	let streamingReasoning = $state('');
+	let streamingSpeak = $state('');
+
+	let streamingMessage = $derived.by(() => {
+		if (!streamingReasoning && !streamingSpeak) return null;
+		const content = [];
+		if (streamingReasoning) content.push({ type: 'text', text: streamingReasoning });
+		if (streamingSpeak) content.push({ type: 'speak_output', text: streamingSpeak });
+		return { iri: '__streaming__', role: 'assistant', content, timestamp: Date.now() };
+	});
+
+	let visibleMessages = $derived(streamingMessage ? [...messages, streamingMessage] : messages);
+	let reasoningQueue = '';
+	let speakQueue = '';
+	let typewriterTimer = null;
+
+	const TYPEWRITER_INTERVAL_MS = 16;
+
+	function drainQueues() {
+		let changed = false;
+		if (reasoningQueue.length > 0) {
+			streamingReasoning += reasoningQueue[0];
+			reasoningQueue = reasoningQueue.slice(1);
+			changed = true;
+		}
+		if (speakQueue.length > 0) {
+			streamingSpeak += speakQueue[0];
+			speakQueue = speakQueue.slice(1);
+			changed = true;
+		}
+		if (changed) scrollToBottom();
+		if (reasoningQueue.length > 0 || speakQueue.length > 0) {
+			typewriterTimer = setTimeout(drainQueues, TYPEWRITER_INTERVAL_MS);
+		} else {
+			typewriterTimer = null;
+		}
+	}
+
+	function enqueueStreamChunk(type, text) {
+		if (type === 'text') {
+			reasoningQueue += text;
+		} else {
+			speakQueue += text;
+		}
+		if (!typewriterTimer) {
+			typewriterTimer = setTimeout(drainQueues, TYPEWRITER_INTERVAL_MS);
+		}
+	}
+
+	function clearStreaming() {
+		clearTimeout(typewriterTimer);
+		typewriterTimer = null;
+		reasoningQueue = '';
+		speakQueue = '';
+		streamingReasoning = '';
+		streamingSpeak = '';
+	}
 	let loadMessagesVersion = 0;
 	let cameraEnabled = $state(localStorage.getItem('camera_vision_enabled') !== 'false');
 	let thinkingEnabled = $state(localStorage.getItem('thinking_enabled') !== 'false');
@@ -140,15 +196,24 @@
 		const unlistenDelta = await listen('chat-ai-delta', (event) => {
 			const { conversationId, type, text } = event.payload;
 			if (conversationId !== activeConversationIri) return;
-			if (type === 'speak' || type === 'text') {
-				streamingText += text;
-				scrollToBottom();
+			if (type === 'text') {
+				enqueueStreamChunk('text', text);
+			} else if (type === 'speak') {
+				enqueueStreamChunk('speak', text);
 			}
 		});
 
 		const unlistenMessages = await listen('chat-message-added', async () => {
-			streamingText = '';
-			await loadMessages();
+			const msgs = await invoke('chat__get_recent_messages', {
+				limit: messageLimit,
+				conversationId: activeConversationIri
+			});
+			// Clear streaming and update messages in the same tick so Svelte
+			// replaces the __streaming__ entry with the real message in one render.
+			clearStreaming();
+			hasMoreMessages = msgs.length === messageLimit;
+			messages = msgs;
+			scrollToBottom();
 			await loadConversations();
 		});
 
@@ -205,11 +270,11 @@
 		if (message.role === 'assistant') {
 			return message.content.some(b =>
 				b.type === 'speak_output' ||
+				(b.type === 'text' && (b.text?.length ?? 0) > 0) ||
 				b.type === 'question_output' ||
 				(b.type === 'tool_use' && b.name !== 'speak' && b.name !== 'ask_question') ||
 				(b.type === 'thinking' && (b.thinking?.length ?? 0) > 0) ||
-				b.type === 'redacted_thinking' ||
-				(b.type === 'text' && (b.text?.length ?? 0) > 0)
+				b.type === 'redacted_thinking'
 			);
 		}
 		return true;
@@ -353,7 +418,7 @@
 
 	async function switchConversation(iri) {
 		activeConversationIri = iri;
-		streamingText = '';
+		clearStreaming();
 		loadMessagesVersion++;
 		localStorage.setItem('activeConversationIri', iri);
 		inputText = localStorage.getItem(`draft_${iri}`) ?? '';
@@ -841,7 +906,7 @@
 			<ChatErrorBanner {errorMessage} onDismiss={dismissError} />
 
 			<ChatMessageList
-				{messages}
+				messages={visibleMessages}
 				conversationId={activeConversationIri}
 				{isLoadingMessages}
 				{isLoadingMore}
@@ -852,12 +917,6 @@
 				onRetry={retryMessage}
 				onEntityClick={openEntityInspector}
 			/>
-
-			{#if streamingText}
-				<div class="streaming-bubble">
-					<div class="streaming-text markdown-content">{@html renderMarkdown(streamingText)}</div>
-				</div>
-			{/if}
 
 			<ChatAttachmentPreview
 				pendingAttachments={pendingAttachments}
@@ -908,19 +967,4 @@
 		padding: 16px 24px;
 	}
 
-	.streaming-bubble {
-		margin: 4px 0 8px 0;
-		display: flex;
-		justify-content: flex-start;
-	}
-
-	.streaming-text {
-		background: color-mix(in srgb, var(--color-white) 8%, transparent);
-		border-radius: 12px;
-		padding: 12px 16px;
-		max-width: 85%;
-		color: var(--color-white);
-		font-size: 14px;
-		line-height: 1.6;
-	}
 </style>
