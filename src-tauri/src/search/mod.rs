@@ -585,6 +585,10 @@ pub fn search_with_scores(query: &str, class_iri: Option<&str>, limit: usize) ->
     results
 }
 
+pub fn is_initialized() -> bool {
+    SEARCH_INDEX.lock().ok().map_or(false, |g| g.is_some())
+}
+
 pub fn search_all(class_iri: Option<&str>, limit: usize) -> Vec<String> {
     let guard = match SEARCH_INDEX.lock() {
         Ok(g) => g,

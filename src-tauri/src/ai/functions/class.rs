@@ -77,7 +77,9 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
         };
 
         let allowed_statuses: Vec<serde_json::Value> = {
-            let status_iris = crate::owl::get_all_iri_properties(conn, iri, "foundation:allowedStatus")?;
+            let status_iris = crate::owl::get_all_iri_properties(
+                conn, iri, "foundation:allowedStatus",
+            )?;
             status_iris.iter()
                 .map(|status_iri| {
                     let thing = crate::owl::Thing::get(conn, status_iri);
@@ -93,11 +95,14 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
         };
 
         let required_fields: Vec<serde_json::Value> = {
-            let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, iri)?;
+            let restrictions =
+                crate::owl::cardinality::get_class_cardinality_restrictions(conn, iri)?;
             restrictions.into_iter()
                 .filter(|r| r.is_required())
                 .map(|r| {
-                    let label = crate::owl::get_literal_property(conn, &r.property_iri, "rdfs:label")
+                    let label = crate::owl::get_literal_property(
+                        conn, &r.property_iri, "rdfs:label",
+                    )
                         .ok()
                         .flatten();
                     serde_json::json!({
@@ -118,7 +123,9 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
                     let label = crate::owl::get_literal_property(conn, prop_iri, "rdfs:label")
                         .ok()
                         .flatten();
-                    let domain_iris = crate::owl::get_all_iri_properties(conn, prop_iri, "rdfs:domain")
+                    let domain_iris = crate::owl::get_all_iri_properties(
+                        conn, prop_iri, "rdfs:domain",
+                    )
                         .unwrap_or_default();
                     let domains: Vec<serde_json::Value> = domain_iris.iter()
                         .map(|d| {
@@ -307,21 +314,26 @@ fn define_class_one(
         let label_arg = args.get("label").and_then(|v| v.as_str());
         let icon_arg = args.get("icon").and_then(|v| v.as_str());
 
-        let needs_assert = is_new || label_arg.is_some() || icon_arg.is_some();
-
-        if needs_assert {
+        if is_new {
             let label = label_arg
-                .or_else(|| existing.as_ref().and_then(|c| c.label.as_deref()))
                 .ok_or_else(|| crate::owl::OwlError::ValidationError(
-                    "Missing required parameter: label (required when creating a new class)".to_string()
+                    "Missing required parameter: label \
+                     (required when creating a new class)".to_string()
                 ))?;
             let icon = icon_arg
-                .or_else(|| existing.as_ref().and_then(|c| c.icon.as_deref()))
                 .ok_or_else(|| crate::owl::OwlError::ValidationError(
-                    "Missing required parameter: icon (required when creating a new class)".to_string()
+                    "Missing required parameter: icon \
+                     (required when creating a new class)".to_string()
                 ))?;
             let concept = Class::new(iri);
             concept.assert(conn, crate::owl::ClassType::OwlClass, label, icon, None, "ai")?;
+        } else {
+            if let Some(label) = label_arg {
+                Class::set_label(conn, iri, label, "ai")?;
+            }
+            if let Some(icon) = icon_arg {
+                Class::set_icon(conn, iri, icon, "ai")?;
+            }
         }
 
         if let Some(comment) = args.get("comment").and_then(|v| v.as_str()) {
@@ -337,7 +349,9 @@ fn define_class_one(
                 .unwrap_or_default();
             if iris.is_empty() {
                 return Err(crate::owl::OwlError::ValidationError(
-                    "Missing required parameter: super_classes (at least one superclass is required when creating a class)".to_string()
+                    "Missing required parameter: super_classes \
+                     (at least one superclass is required when creating a class)"
+                        .to_string()
                 ));
             }
             Class::set_super_classes(conn, iri, &iris, "ai")?;
@@ -363,7 +377,9 @@ fn define_class_one(
                 let individual = crate::owl::Individual::get(conn, *status_iri)?;
                 if individual.is_none() {
                     return Err(crate::owl::OwlError::ValidationError(format!(
-                        "Status '{}' does not exist. Use search to query existing Status instances before setting allowedStatuses.",
+                        "Status '{}' does not exist. \
+                         Use search to query existing Status instances \
+                         before setting allowedStatuses.",
                         status_iri
                     )));
                 }
@@ -393,8 +409,10 @@ fn define_class_one(
                         crate::eavto::Object::Iri(iri.to_string()),
                     );
                     crate::eavto::store::retract_triples(conn, &[domain_triple], "ai")?;
-                    let existing = crate::owl::cardinality::get_class_cardinality_restrictions(conn, iri)?;
-                    let updated: Vec<crate::owl::cardinality::PropertyRestriction<'_>> = existing.iter()
+                    let existing =
+                        crate::owl::cardinality::get_class_cardinality_restrictions(conn, iri)?;
+                    let updated: Vec<crate::owl::cardinality::PropertyRestriction<'_>> =
+                        existing.iter()
                         .filter(|r| r.property_iri != prop_iri)
                         .map(|r| crate::owl::cardinality::PropertyRestriction {
                             property_iri: r.property_iri.as_str(),
@@ -402,9 +420,14 @@ fn define_class_one(
                             max: r.max,
                         })
                         .collect();
-                    crate::owl::cardinality::set_class_cardinality_restrictions(conn, iri, &updated, "ai")?;
+                    crate::owl::cardinality::set_class_cardinality_restrictions(
+                        conn, iri, &updated, "ai",
+                    )?;
                     retract_cascade_rule(conn, iri, prop_iri, "ai")?;
-                    super::batch::queue_event("entity-updated", serde_json::json!({"entityId": prop_iri}));
+                    super::batch::queue_event(
+                        "entity-updated",
+                        serde_json::json!({"entityId": prop_iri}),
+                    );
                 }
             }
         }
@@ -412,9 +435,13 @@ fn define_class_one(
         if let Some(cascade_rules) = args.get("cascade_rules").and_then(|v| v.as_array()) {
             use crate::eavto::{store, query, Triple, Object};
 
-            let range_triples = query::get_by_entity_predicate(conn, iri, "foundation:cascadeDeleteRange")
+            let range_triples = query::get_by_entity_predicate(
+                conn, iri, "foundation:cascadeDeleteRange",
+            )
                 .map(|r| r.triples).unwrap_or_default();
-            let domain_triples = query::get_by_entity_predicate(conn, iri, "foundation:cascadeDeleteDomain")
+            let domain_triples = query::get_by_entity_predicate(
+                conn, iri, "foundation:cascadeDeleteDomain",
+            )
                 .map(|r| r.triples).unwrap_or_default();
             let to_retract: Vec<Triple> = range_triples.into_iter().chain(domain_triples)
                 .map(|t| Triple::new(t.subject, t.predicate, t.object))
@@ -431,7 +458,8 @@ fn define_class_one(
                     ))?;
                 let direction = entry.get("direction").and_then(|v| v.as_str())
                     .ok_or_else(|| crate::owl::OwlError::ValidationError(
-                        "Each cascade_rules entry must have 'direction' ('range' or 'domain')".to_string()
+                        "Each cascade_rules entry must have 'direction' \
+                         ('range' or 'domain')".to_string()
                     ))?;
                 let predicate = match direction {
                     "range" => "foundation:cascadeDeleteRange",
@@ -457,25 +485,42 @@ fn define_class_one(
 
                 let mut prop = crate::owl::Property::get(conn, prop_iri)?
                     .ok_or_else(|| crate::owl::OwlError::ValidationError(
-                        format!("Property '{}' not found. Define it first with define_property.", prop_iri)
+                        format!(
+                            "Property '{}' not found. Define it first with define_property.",
+                            prop_iri,
+                        )
                     ))?;
 
                 if !prop.domains.contains(&iri.to_string()) {
                     prop.domains.push(iri.to_string());
                     let domains: Vec<&str> = prop.domains.iter().map(|s| s.as_str()).collect();
-                    prop.assert(conn, prop.property_type, prop.label.as_deref().unwrap_or(""), None, &domains, prop.ranges.first().map(|s| s.as_str()), prop.unit.as_deref(), "ai")?;
+                    prop.assert(
+                        conn,
+                        prop.property_type,
+                        prop.label.as_deref().unwrap_or(""),
+                        None,
+                        &domains,
+                        prop.ranges.first().map(|s| s.as_str()),
+                        prop.unit.as_deref(),
+                        "ai",
+                    )?;
 
                     if prop.formula.is_some() {
                         super::batch::queue_formula_recalc(prop_iri.to_string());
                     }
                 }
 
-                super::batch::queue_event("entity-updated", serde_json::json!({"entityId": prop_iri}));
+                super::batch::queue_event(
+                    "entity-updated",
+                    serde_json::json!({"entityId": prop_iri}),
+                );
                 super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
             }
         }
 
-        if let Some(property_restrictions) = args.get("property_restrictions").and_then(|v| v.as_array()) {
+        if let Some(property_restrictions) =
+            args.get("property_restrictions").and_then(|v| v.as_array())
+        {
             struct RestrictionEntry {
                 prop_iri: String,
                 min: Option<u32>,
@@ -494,7 +539,8 @@ fn define_class_one(
                 let prop = crate::owl::Property::get(conn, prop_iri)?;
                 let is_valid = prop.map(|p| matches!(
                     p.property_type,
-                    crate::owl::PropertyType::ObjectProperty | crate::owl::PropertyType::DatatypeProperty
+                    crate::owl::PropertyType::ObjectProperty
+                        | crate::owl::PropertyType::DatatypeProperty
                 )).unwrap_or(false);
                 if !is_valid {
                     return Err(crate::owl::OwlError::ValidationError(format!(
@@ -518,7 +564,9 @@ fn define_class_one(
                 })
                 .collect();
 
-            crate::owl::cardinality::set_class_cardinality_restrictions(conn, iri, &restrictions, "ai")?;
+            crate::owl::cardinality::set_class_cardinality_restrictions(
+                conn, iri, &restrictions, "ai",
+            )?;
         }
 
         if is_new {
@@ -595,7 +643,10 @@ fn retract_class_one(
 
         for instance_iri in &instance_iris {
             crate::owl::Individual::retract(conn, instance_iri, "ai")?;
-            super::batch::queue_event("entity-updated", serde_json::json!({"entityId": instance_iri}));
+            super::batch::queue_event(
+                "entity-updated",
+                serde_json::json!({"entityId": instance_iri}),
+            );
         }
 
         super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));

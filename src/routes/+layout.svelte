@@ -4,6 +4,7 @@
   import '$lib/markdown.css';
   import { initializeLogging } from '$lib/logging.js';
   import { onMount, onDestroy } from 'svelte';
+  const { children } = $props();
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { openUrl } from '@tauri-apps/plugin-opener';
@@ -32,7 +33,7 @@
     error?: string;
   };
 
-  let automationRuns: AutomationRun[] = [];
+  let automationRuns = $state<AutomationRun[]>([]);
   let unlistenAutomationStarted: (() => void) | undefined;
   let unlistenAutomationStep: (() => void) | undefined;
   let unlistenAutomationFinished: (() => void) | undefined;
@@ -54,7 +55,7 @@
     status: 'running' | 'completed' | 'cancelled';
   };
 
-  let recalcJobs: RecalcJob[] = [];
+  let recalcJobs = $state<RecalcJob[]>([]);
   let unlistenRecalc: (() => void) | undefined;
 
   let retentionRunning = $state(false);
@@ -166,7 +167,7 @@
   <source src={selectedVideo} type="video/mp4" />
 </video>
 
-<slot />
+{@render children()}
 
 {#if automationRuns.length > 0 || retentionRunning || recalcJobs.length > 0}
   <div class="toast-stack">
@@ -178,8 +179,8 @@
         class:running={run.status === 'running'}
         role="button"
         tabindex="0"
-        onclick={() => invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, content: null, position: null, size: null, conversationId: null })}
-        onkeydown={(e) => e.key === 'Enter' && invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, content: null, position: null, size: null, conversationId: null })}
+        onclick={() => invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, position: null, size: null, conversationId: null }).catch(e => console.error('[toast] Failed to open widget:', e))}
+        onkeydown={(e) => e.key === 'Enter' && invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, position: null, size: null, conversationId: null }).catch(e => console.error('[toast] Failed to open widget:', e))}
       >
         <span class="material-symbols-outlined toast-icon" class:spinning={run.status === 'running'}>
           {#if run.status === 'running'}progress_activity{:else if run.status === 'completed'}check_circle{:else}error{/if}
@@ -253,7 +254,6 @@
     flex-direction: column;
     gap: 8px;
     z-index: 9999;
-    pointer-events: none;
   }
 
   .automation-toast {

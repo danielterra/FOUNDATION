@@ -6,7 +6,6 @@
   import FilePreview from './inspector/FilePreview.svelte';
   import MetaFields from './inspector/MetaFields.svelte';
   import PropertyList from './inspector/PropertyList.svelte';
-  import BacklinkList from './inspector/BacklinkList.svelte';
   import InspectorHeader from './inspector/InspectorHeader.svelte';
   import InspectorClassView from './inspector/InspectorClassView.svelte';
 
@@ -23,6 +22,9 @@
   let entityData = $state(null);
   let loading = $state(true);
   let error = $state(null);
+  let loadPending = false;
+  let reloadWhenDone = false;
+  let loadDebounceTimer = null;
   let widgetDefinitions = $state([]);
   let unlistenEntityUpdated = $state(null);
   let unlistenEntityReferenced = $state(null);
@@ -52,7 +54,17 @@
     }
   }
 
+  function scheduleLoad() {
+    if (loadDebounceTimer !== null) clearTimeout(loadDebounceTimer);
+    loadDebounceTimer = setTimeout(() => {
+      loadDebounceTimer = null;
+      loadEntity();
+    }, 20);
+  }
+
   async function loadEntity() {
+    if (loadPending) { reloadWhenDone = true; return; }
+    loadPending = true;
     loading = true;
     error = null;
 
@@ -91,7 +103,12 @@
       error = `Failed to load entity: ${entityId}`;
       console.error('Failed to load entity:', err);
     } finally {
+      loadPending = false;
       loading = false;
+      if (reloadWhenDone) {
+        reloadWhenDone = false;
+        scheduleLoad();
+      }
     }
   }
 
@@ -276,7 +293,7 @@
 
   $effect(() => {
     refreshKey;
-    untrack(() => loadEntity());
+    untrack(() => scheduleLoad());
   });
 
   $effect(() => {
@@ -294,14 +311,14 @@
     unlistenEntityUpdated = await listen('entity-updated', (event) => {
       const updatedId = event.payload.entityId;
       if (updatedId === entityId) {
-        loadEntity();
+        scheduleLoad();
         return;
       }
       if (entityData) {
         const inBacklinks = entityData.backlinks?.some(b => b.value === updatedId);
         const inProperties = entityData.properties?.some(p => p.value === updatedId);
         if (inBacklinks || inProperties) {
-          loadEntity();
+          scheduleLoad();
         }
       }
     });
@@ -311,7 +328,7 @@
     // (e.g. a new Automation linked to this entity's class via foundation:inputClass).
     unlistenEntityReferenced = await listen('entity-referenced', (event) => {
       if (event.payload.entityId === entityId) {
-        loadEntity();
+        scheduleLoad();
         return;
       }
       if (entityData?.types?.some(t => t.iri === event.payload.entityId)) {
@@ -414,7 +431,6 @@
           onSaveCardinality={entityData.isClass && !isLocked ? saveCardinality : null}
         />
 
-        <BacklinkList backlinks={entityData.backlinks} {openEntityInspector} />
       </div>
 
       {#if !entityData.isClass && (isAutomationWithoutInputClass || applicableAutomations.length > 0)}

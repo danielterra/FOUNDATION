@@ -3,6 +3,19 @@ use rusqlite::types::Value as SqlValue;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+#[derive(Debug, Clone)]
+pub struct SortSpec {
+    pub property_iri: String,
+    pub direction: SortDirection,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
 /// A filter applied to a property when querying individuals.
 pub enum PropertyFilter<'a> {
     /// Scalar comparison: `(prop_iri, value, operator)`.
@@ -145,6 +158,7 @@ pub fn find_by_class_iris_and_properties_with_options(
     include_retracted: bool,
     limit: usize,
     offset: usize,
+    sort: Option<&SortSpec>,
 ) -> Result<(Vec<String>, usize)> {
     if properties.is_empty() || class_iris.is_empty() {
         return Ok((Vec::new(), 0));
@@ -195,7 +209,8 @@ pub fn find_by_class_iris_and_properties_with_options(
                     where_clause.push_str(&format!("\n           AND t{n}.predicate IS NULL"));
                 } else {
                     let optional = is_optional_op(op);
-                    let value_cond = build_value_condition_fragment(n, value, base, &mut where_params)?;
+                    let value_cond =
+                        build_value_condition_fragment(n, value, base, &mut where_params)?;
                     if optional {
                         where_clause.push_str(&format!(
                             "\n           AND (t{n}.predicate IS NULL OR {value_cond})"
@@ -222,12 +237,26 @@ pub fn find_by_class_iris_and_properties_with_options(
         }
     }
 
-    // params order must match SQL: JOIN params appear before WHERE params in the query
-    let params: Vec<SqlValue> = join_params.into_iter().chain(where_params).collect();
+    // Sort join (comes before filter joins in SQL so its param is first)
+    let sort_join = if sort.is_some() {
+        format!(
+            "\n         LEFT JOIN {table} tsort ON t0.subject = tsort.subject \
+             AND tsort.predicate = ?"
+        )
+    } else {
+        String::new()
+    };
+    let mut sort_join_param: Vec<SqlValue> = sort
+        .map(|s| vec![SqlValue::Text(s.property_iri.clone())])
+        .unwrap_or_default();
+
+    // params order: sort join param, filter join params, where params
+    sort_join_param.extend(join_params);
+    let params: Vec<SqlValue> = sort_join_param.into_iter().chain(where_params).collect();
 
     let count_query = format!(
         "SELECT COUNT(*) FROM \
-         (SELECT DISTINCT t0.subject FROM {table} t0{joins}\n         {where_clause})"
+         (SELECT DISTINCT t0.subject FROM {table} t0{sort_join}{joins}\n         {where_clause})"
     );
     let total: usize = conn.query_row(
         &count_query,
@@ -240,14 +269,33 @@ pub fn find_by_class_iris_and_properties_with_options(
     data_params.push(SqlValue::Integer(limit_val));
     data_params.push(SqlValue::Integer(offset as i64));
 
-    let data_query = format!(
-        "SELECT DISTINCT t0.subject FROM {table} t0{joins}\n         \
-         {where_clause}\n         LIMIT ? OFFSET ?"
-    );
-    let mut stmt = conn.prepare(&data_query)?;
-    let entities: Vec<String> = stmt
-        .query_map(rusqlite::params_from_iter(data_params.iter()), |row| row.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let entities: Vec<String> = if let Some(s) = sort {
+        let dir = match s.direction {
+            SortDirection::Asc => "ASC",
+            SortDirection::Desc => "DESC",
+        };
+        let inner = format!(
+            "SELECT DISTINCT t0.subject, COALESCE(tsort.object_value, tsort.object) AS _sort \
+             FROM {table} t0{sort_join}{joins}\n         {where_clause}"
+        );
+        let data_query =
+            format!("SELECT subject FROM ({inner}) ORDER BY _sort {dir} LIMIT ? OFFSET ?");
+        let mut stmt = conn.prepare(&data_query)?;
+        let rows: std::result::Result<Vec<_>, _> = stmt
+            .query_map(rusqlite::params_from_iter(data_params.iter()), |row| row.get(0))?
+            .collect();
+        rows?
+    } else {
+        let data_query = format!(
+            "SELECT DISTINCT t0.subject FROM {table} t0{joins}\n         \
+             {where_clause}\n         LIMIT ? OFFSET ?"
+        );
+        let mut stmt = conn.prepare(&data_query)?;
+        let rows: std::result::Result<Vec<_>, _> = stmt
+            .query_map(rusqlite::params_from_iter(data_params.iter()), |row| row.get(0))?
+            .collect();
+        rows?
+    };
 
     Ok((entities, total))
 }
@@ -320,7 +368,8 @@ pub fn find_by_properties_with_options(
                     // i == 0: handled in the first loop via NOT EXISTS subquery
                 } else {
                     let optional = is_optional_op(op);
-                    let value_cond = build_value_condition_fragment(i, value, base, &mut where_params)?;
+                    let value_cond =
+                        build_value_condition_fragment(i, value, base, &mut where_params)?;
                     if optional && i > 0 {
                         where_clause.push_str(&format!(
                             "\n           AND (t{i}.predicate IS NULL OR {value_cond})"
@@ -494,7 +543,7 @@ fn build_value_condition_fragment(
     } else {
         params.push(SqlValue::Text(value.to_string()));
         params.push(SqlValue::Text(value.to_string()));
-        Ok(format!("(t{n}.object_value = ? OR t{n}.object = ?)"))
+        Ok(format!("(t{n}.object_value {sql_op} ? OR t{n}.object {sql_op} ?)"))
     }
 }
 
@@ -552,19 +601,33 @@ mod sort_tests {
     use super::*;
     use crate::eavto::test_helpers::setup_test_db;
 
+    fn ensure_tx(conn: &Connection) -> i64 {
+        if let Ok(id) = conn.query_row(
+            "SELECT id FROM transactions WHERE origin = 'test' LIMIT 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        ) {
+            return id;
+        }
+        conn.execute("INSERT INTO transactions (origin, created_at) VALUES ('test', 0)", []).unwrap();
+        conn.last_insert_rowid()
+    }
+
     fn insert_triple(conn: &Connection, subject: &str, predicate: &str, value: &str) {
+        let tx = ensure_tx(conn);
         conn.execute(
-            "INSERT INTO triples (subject, predicate, object_value, object_type, tx, retracted) \
-             VALUES (?1, ?2, ?3, 'literal', 1, 0)",
-            rusqlite::params![subject, predicate, value],
+            "INSERT INTO triples (subject, predicate, object_value, object_type, tx, origin_id, retracted, created_at) \
+             VALUES (?1, ?2, ?3, 'literal', ?4, 1, 0, 0)",
+            rusqlite::params![subject, predicate, value, tx],
         ).unwrap();
     }
 
     fn insert_type(conn: &Connection, subject: &str, class: &str) {
+        let tx = ensure_tx(conn);
         conn.execute(
-            "INSERT INTO triples (subject, predicate, object, object_type, tx, retracted) \
-             VALUES (?1, 'rdf:type', ?2, 'iri', 1, 0)",
-            rusqlite::params![subject, class],
+            "INSERT INTO triples (subject, predicate, object, object_type, tx, origin_id, retracted, created_at) \
+             VALUES (?1, 'rdf:type', ?2, 'iri', ?3, 1, 0, 0)",
+            rusqlite::params![subject, class, tx],
         ).unwrap();
     }
 

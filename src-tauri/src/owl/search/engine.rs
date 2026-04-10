@@ -96,7 +96,7 @@ pub(super) fn search_structured(
             .collect();
         if let Some(concept) = class_iri {
             let (iris, _) = Individual::find_by_class_and_properties_with_options(
-                conn, concept, &constraint_refs, include_retracted, usize::MAX, 0,
+                conn, concept, &constraint_refs, include_retracted, usize::MAX, 0, None,
             )?;
             iris
         } else {
@@ -176,6 +176,83 @@ pub(super) fn search_structured(
     Ok((results, total))
 }
 
+fn search_global_sql_fallback(
+    conn: &Connection,
+    tokens: &[String],
+    entity_type_filter: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> Result<(Vec<SearchResult>, usize)> {
+    use crate::eavto::query;
+
+    let all_iris: Vec<String> = conn
+        .prepare(
+            "SELECT DISTINCT subject FROM triples t
+             WHERE predicate = 'rdfs:label' AND retracted = 0
+               AND t.tx = (SELECT MAX(tx) FROM triples WHERE subject = t.subject AND predicate = 'rdfs:label')",
+        )
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?
+        .query_map([], |row| row.get(0))
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let batch = query::batch_load_triples_for_subjects(conn, &all_iris)
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+
+    let filter_entity_type = |iri: &String| -> bool {
+        if entity_type_filter.is_none() {
+            return true;
+        }
+        let empty = vec![];
+        let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+        let type_iri = triples.iter()
+            .find(|t| t.predicate == "rdf:type")
+            .and_then(|t| t.object.as_iri());
+        super::scoring::entity_type_matches(type_iri, entity_type_filter)
+    };
+
+    if tokens.is_empty() {
+        let filtered: Vec<String> = all_iris.into_iter().filter(filter_entity_type).collect();
+        let total = filtered.len();
+        let page: Vec<String> = filtered.into_iter().skip(offset).take(limit).collect();
+        let page_batch = query::batch_load_triples_for_subjects(conn, &page)
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+        let results = page.iter().map(|iri| {
+            let empty = vec![];
+            let triples = page_batch.get(iri.as_str()).unwrap_or(&empty);
+            enrich_from_triples(conn, iri, triples, vec![])
+        }).collect();
+        return Ok((results, total));
+    }
+
+    let mut scored: Vec<(String, i32)> = all_iris.iter()
+        .filter(|iri| filter_entity_type(iri))
+        .filter_map(|iri| {
+            let empty = vec![];
+            let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+            let mut matched = vec![];
+            super::scoring::score_entity_against_tokens(iri, triples, tokens, &mut matched)
+                .map(|score| (iri.clone(), score))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let total = scored.len();
+    let page: Vec<String> = scored.into_iter().skip(offset).take(limit).map(|(iri, _)| iri).collect();
+    let page_batch = query::batch_load_triples_for_subjects(conn, &page)
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+    let results = page.iter().map(|iri| {
+        let empty = vec![];
+        let triples = page_batch.get(iri.as_str()).unwrap_or(&empty);
+        let mut matched = vec![];
+        super::scoring::score_entity_against_tokens(iri, triples, tokens, &mut matched);
+        enrich_from_triples(conn, iri, triples, matched)
+    }).collect();
+
+    Ok((results, total))
+}
+
 pub(super) fn search_global(
     conn: &Connection,
     tokens: &[String],
@@ -185,6 +262,10 @@ pub(super) fn search_global(
     offset: usize,
 ) -> Result<(Vec<SearchResult>, usize)> {
     use crate::eavto::query;
+
+    if !crate::search::is_initialized() {
+        return search_global_sql_fallback(conn, tokens, entity_type_filter, limit, offset);
+    }
 
     if tokens.is_empty() {
         if let Some(concept) = class_iri {

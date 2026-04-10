@@ -141,6 +141,28 @@ impl ClaudeProvider {
     }
 }
 
+fn add_cache_breakpoint(message: &mut ClaudeMessage) {
+    let marker = serde_json::json!({"type": "ephemeral"});
+    match &mut message.content {
+        serde_json::Value::Array(blocks) => {
+            if let Some(last) = blocks.last_mut() {
+                if let Some(obj) = last.as_object_mut() {
+                    obj.insert("cache_control".to_string(), marker);
+                }
+            }
+        }
+        serde_json::Value::String(text) => {
+            let text_val = text.clone();
+            message.content = serde_json::json!([{
+                "type": "text",
+                "text": text_val,
+                "cache_control": {"type": "ephemeral"}
+            }]);
+        }
+        _ => {}
+    }
+}
+
 fn extract_speak_text(json: &str) -> &str {
     for prefix in &["\"message\":\"", "\"message\": \""] {
         if let Some(pos) = json.find(prefix) {
@@ -179,7 +201,7 @@ impl ClaudeProvider {
     ) -> Result<GenerateResponse, String> {
         use tauri::Emitter;
 
-        let messages: Vec<ClaudeMessage> = request
+        let mut messages: Vec<ClaudeMessage> = request
             .messages
             .into_iter()
             .map(|msg| {
@@ -192,6 +214,20 @@ impl ClaudeProvider {
                 ClaudeMessage { role: msg.role, content }
             })
             .collect();
+
+        // System prompt + tools use 2 of the 4 available cache slots, leaving 2 for messages.
+        // Place breakpoints at the two highest multiples-of-20 positions (indices 19, 39, 59, …)
+        // below the last message. As the conversation grows they advance in steps of 20,
+        // so the lower breakpoint is always a prior cache hit and only the upper one
+        // needs to be written. The last 1–20 messages are always processed fresh.
+        let msg_count = messages.len();
+        let k_max = msg_count.saturating_sub(1) / 20; // highest k where index 20k-1 < last msg
+        if k_max >= 2 {
+            add_cache_breakpoint(&mut messages[20 * k_max - 1]);
+            add_cache_breakpoint(&mut messages[20 * (k_max - 1) - 1]);
+        } else if k_max == 1 {
+            add_cache_breakpoint(&mut messages[19]);
+        }
 
         let model = self.model_identifier.clone()
             .ok_or_else(|| "No AI model configured. Please configure a model in Settings.".to_string())?;

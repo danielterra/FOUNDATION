@@ -66,35 +66,56 @@ pub async fn run_conversation_loop(
         }
 
         // Pending question guard: if the last assistant message has a QuestionOutput
-        // with no matching ToolResult in the following user message, the conversation
-        // is paused waiting for user input — do not call the API.
+        // with no matching ToolResult, check whether a newer user message exists.
+        // If yes, auto-dismiss the question so the new message is processed normally.
+        // If no newer user message exists, pause and wait for the user to answer.
         let history = load_conversation_history(executor, conversation_id, agent_config.max_tokens).await?;
 
-        let pending_question = {
-            let mut q_id: Option<String> = None;
-            for msg in history.iter().rev() {
+        {
+            let mut pending_q: Option<(String, usize)> = None; // (tool_use_id, assistant_index)
+            for (i, msg) in history.iter().enumerate().rev() {
                 if msg.role == "assistant" {
                     if let Some(ContentBlock::QuestionOutput { id, .. }) =
                         msg.content.iter().find(|b| matches!(b, ContentBlock::QuestionOutput { .. }))
                     {
-                        q_id = Some(id.clone());
+                        let already_answered = history.iter().skip(i + 1).any(|m| {
+                            m.role == "user" && m.content.iter().any(|b| {
+                                matches!(b,
+                                    ContentBlock::ToolResult { tool_use_id, .. }
+                                    if tool_use_id == id)
+                            })
+                        });
+                        if !already_answered {
+                            pending_q = Some((id.clone(), i));
+                        }
                     }
                     break;
                 }
             }
-            if let Some(ref id) = q_id {
-                !history.iter().rev().any(|m| {
-                    m.role == "user" && m.content.iter().any(|b| {
-                        matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == id)
-                    })
-                })
-            } else {
-                false
+
+            if let Some((_q_id, q_idx)) = pending_q {
+                let user_message_after = history.iter().skip(q_idx + 1).any(|m| {
+                    m.role == "user"
+                        && m.content.iter().any(|b| !matches!(b, ContentBlock::ToolResult { .. }))
+                });
+
+                if user_message_after {
+                    log_backend(
+                        "info",
+                        "[ENGINE] Unanswered ask_question — user continued; dismiss will be injected in-memory",
+                    );
+                    // Do NOT create a DB record: the dismiss timestamp would fall after the user's
+                    // new message, causing the history validator to see the wrong order and strip the
+                    // tool_use instead. sanitize_tool_pairs injects the synthetic ToolResult into
+                    // api_messages before the API call.
+                } else {
+                    log_backend(
+                        "info",
+                        "[ENGINE] Conversation paused — waiting for user answer to ask_question",
+                    );
+                    break;
+                }
             }
-        };
-        if pending_question {
-            log_backend("info", "[ENGINE] Conversation paused — waiting for user answer to ask_question");
-            break;
         }
 
         let ended_cleanly = history.last().map_or(false, |m| {
@@ -126,8 +147,11 @@ pub async fn run_conversation_loop(
             }
         }
 
-        inject_datetime_context(&mut api_messages);
+        // sanitize first: synthetic ToolResults must be prepended before inject_datetime
+        // so that inject_datetime skips the tool-result user message and targets the
+        // actual user turn instead.
         sanitize_tool_pairs(&mut api_messages);
+        inject_datetime_context(&mut api_messages);
 
         if strip_thinking {
             log_backend("warn", "[ENGINE] Stripping thinking blocks from history (previous 400 thinking-block error)");

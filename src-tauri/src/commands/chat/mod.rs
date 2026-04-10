@@ -287,8 +287,8 @@ pub async fn chat__get_recent_messages(
     let conv_id = conversation_id;
 
     let messages = executor.read(move |conn| {
-        // Load only the N most recent message IRIs directly from SQL — no in-memory sort needed
-        let message_iris = Individual::find_messages_by_conversation(conn, &conv_id, limit, 0)
+        // Fetch one extra to include a tool_result companion that follows the window boundary.
+        let message_iris = Individual::find_messages_by_conversation(conn, &conv_id, limit + 1, 0)
             .map_err(|e| format!("Failed to query messages: {}", e))?;
 
         let mut messages_with_ts: Vec<(i64, serde_json::Value)> = Vec::new();
@@ -411,11 +411,29 @@ pub async fn chat__get_recent_messages(
             messages_with_ts.push((timestamp, msg_json));
         }
 
-        let messages: Vec<serde_json::Value> = messages_with_ts
+        let mut messages: Vec<serde_json::Value> = messages_with_ts
             .into_iter()
             .rev()
             .map(|(_, msg)| msg)
             .collect();
+
+        // The extra message is at index 0 (oldest). Only keep it if it's a pure tool_result
+        // companion — otherwise drop it so hasMoreMessages counting stays correct.
+        if messages.len() > limit {
+            let is_tool_result_only = messages[0]
+                .get("content")
+                .and_then(|c| c.as_array())
+                .map(|blocks| {
+                    !blocks.is_empty()
+                        && blocks.iter().all(|b| {
+                            b.get("type").and_then(|t| t.as_str()) == Some("tool_result")
+                        })
+                })
+                .unwrap_or(false);
+            if !is_tool_result_only {
+                messages.remove(0);
+            }
+        }
 
         Ok(messages)
     }).await?;

@@ -57,15 +57,23 @@ fn next_iri_id() -> u64 {
     loop {
         let current = IRI_COUNTER.load(Ordering::Relaxed);
         let next = if now > current { now } else { current + 1 };
-        if IRI_COUNTER.compare_exchange(current, next, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+        if IRI_COUNTER.compare_exchange(
+            current, next, Ordering::Relaxed, Ordering::Relaxed,
+        ).is_ok() {
             return next;
         }
     }
 }
 
-fn build_objects(conn: &Connection, property_iri: &str, raw_values: &[Value]) -> Result<Vec<Object>, crate::owl::OwlError> {
+fn build_objects(
+    conn: &Connection,
+    property_iri: &str,
+    raw_values: &[Value],
+) -> Result<Vec<Object>, crate::owl::OwlError> {
     let prop = Property::get(conn, property_iri)?;
-    let is_iri = prop.as_ref().map(|p| p.property_type == PropertyType::ObjectProperty).unwrap_or(false);
+    let is_iri = prop.as_ref()
+        .map(|p| p.property_type == PropertyType::ObjectProperty)
+        .unwrap_or(false);
     let datatype = prop.as_ref()
         .and_then(|p| p.ranges.first().cloned())
         .unwrap_or_else(|| "xsd:string".to_string());
@@ -76,7 +84,11 @@ fn build_objects(conn: &Connection, property_iri: &str, raw_values: &[Value]) ->
             if is_iri {
                 Object::Iri(value.to_string())
             } else {
-                Object::Literal { value: value.to_string(), datatype: Some(datatype.clone()), language: None }
+                Object::Literal {
+                    value: value.to_string(),
+                    datatype: Some(datatype.clone()),
+                    language: None,
+                }
             }
         })
         .collect())
@@ -86,7 +98,9 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
     let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let entity_type_filter = args.get("type").and_then(|v| v.as_str());
     let class_iri = args.get("class_iri").and_then(|v| v.as_str());
-    let include_retracted = args.get("include_retracted").and_then(|v| v.as_bool()).unwrap_or(false);
+    let include_retracted = args.get("include_retracted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
     let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
@@ -95,7 +109,10 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
             arr.iter().filter_map(|item| {
                 let detail = item.get("detail").and_then(|v| v.as_str())?.to_string();
                 let value = item.get("value").and_then(|v| v.as_str())?.to_string();
-                let operator = item.get("operator").and_then(|v| v.as_str()).unwrap_or("=").to_string();
+                let operator = item.get("operator")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("=")
+                    .to_string();
                 Some((detail, value, operator))
             }).collect()
         });
@@ -221,28 +238,37 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
         let individual = Individual::get(conn, iri)?
             .ok_or_else(|| crate::owl::OwlError::NotFound(iri.to_string()))?;
 
-        let mut concept_counts: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
         let mut seen_groups = std::collections::HashSet::new();
+        let mut backlinks: Vec<serde_json::Value> = Vec::new();
         for b in &individual.backlinks {
-            let concept = b.source_class.clone().unwrap_or_else(|| "owl:Thing".to_string());
-            let group_key = format!("{}:{}", b.predicate, concept);
-            if seen_groups.insert(group_key) {
-                *concept_counts.entry(concept).or_insert(0) += b.group_total;
+            let source_class = b.source_class.clone().unwrap_or_else(|| "owl:Thing".to_string());
+            let group_key = format!("{}:{}", b.predicate, source_class);
+            if !seen_groups.insert(group_key) {
+                continue;
             }
-        }
-
-        let mut backlinks: Vec<serde_json::Value> = concept_counts
-            .into_iter()
-            .map(|(class_iri, count)| {
-                let class_label = crate::owl::Thing::get(conn, &class_iri).label;
-                serde_json::json!({
-                    "class": class_iri,
-                    "conceptLabel": class_label,
-                    "count": count,
+            let prop_label = crate::owl::Property::get(conn, &b.predicate)
+                .ok()
+                .flatten()
+                .map(|prop| {
+                    b.source_class.as_deref()
+                        .and_then(|cls| prop.domain_labels.iter().find(|dl| dl.domain == cls))
+                        .map(|dl| {
+                            dl.inverse_label.as_deref()
+                                .unwrap_or(&dl.forward_label)
+                                .to_string()
+                        })
+                        .or_else(|| prop.label.clone())
+                        .unwrap_or_else(|| b.predicate.clone())
                 })
-            })
-            .collect();
+                .unwrap_or_else(|| b.predicate.clone());
+            let class_label = crate::owl::Thing::get(conn, &source_class).label;
+            backlinks.push(serde_json::json!({
+                "class": source_class,
+                "conceptLabel": class_label,
+                "propertyLabel": prop_label,
+                "count": b.group_total,
+            }));
+        }
         backlinks.sort_by(|a, b| {
             let ca = a["count"].as_u64().unwrap_or(0);
             let cb = b["count"].as_u64().unwrap_or(0);
@@ -282,7 +308,11 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
             if prop.get("property").and_then(|p| p.as_str()) == Some("foundation:content") {
                 if let Some(value) = prop.get("value").and_then(|v| v.as_str()) {
                     if value.len() > CONTENT_MAX {
-                        let truncated = format!("{}…[{} chars total]", &value[..CONTENT_MAX], value.len());
+                        let truncated = format!(
+                            "{}…[{} chars total]",
+                            &value[..CONTENT_MAX],
+                            value.len(),
+                        );
                         prop["value"] = serde_json::json!(truncated);
                     }
                 }
@@ -301,7 +331,9 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
         let mut seen_required = std::collections::HashSet::new();
 
         for class_iri in &class_iris {
-            let status_iris = crate::owl::get_all_iri_properties(conn, class_iri, "foundation:allowedStatus")?;
+            let status_iris = crate::owl::get_all_iri_properties(
+                conn, class_iri, "foundation:allowedStatus",
+            )?;
             for status_iri in status_iris {
                 let thing = crate::owl::Thing::get(conn, &status_iri);
                 let comment = crate::owl::get_literal_property(conn, &status_iri, "rdfs:comment")
@@ -313,7 +345,8 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
                 }));
             }
 
-            let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_iri)?;
+            let restrictions =
+                crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_iri)?;
             for r in restrictions {
                 if r.is_required() && seen_required.insert(r.property_iri.clone()) {
                     required_fields.push(r.property_iri);
@@ -451,7 +484,10 @@ fn assert_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
 
                 if objects.is_empty() {
                     return Err(crate::owl::OwlError::ValidationError(
-                        format!("Property '{}' values contain no valid string entries", property_iri)
+                        format!(
+                            "Property '{}' values contain no valid string entries",
+                            property_iri,
+                        )
                     ));
                 }
 
@@ -459,7 +495,8 @@ fn assert_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
             }
         }
 
-        let restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_iri)?;
+        let restrictions =
+            crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_iri)?;
         let required: Vec<&str> = restrictions.iter()
             .filter(|r| r.is_required())
             .map(|r| r.property_iri.as_str())
@@ -486,7 +523,10 @@ fn assert_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
             }
         }
 
-        super::batch::queue_event("entity-created", serde_json::json!({"entityId": generated_iri.clone()}));
+        super::batch::queue_event(
+            "entity-created",
+            serde_json::json!({"entityId": generated_iri.clone()}),
+        );
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({
             "iri": generated_iri,
@@ -557,7 +597,10 @@ fn add_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult {
             if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
                 let class_iri = crate::owl::get_iri_property(conn, iri, "rdf:type")
                     .ok().flatten()
-                    .ok_or_else(|| crate::owl::OwlError::NotFound(format!("Individual '{}' has no rdf:type", iri)))?;
+                    .ok_or_else(|| {
+                        let msg = format!("Individual '{}' has no rdf:type", iri);
+                        crate::owl::OwlError::NotFound(msg)
+                    })?;
                 crate::owl::validate_allowed_status(conn, &class_iri, status_iri)?;
             }
         }
@@ -577,8 +620,12 @@ fn add_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult {
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({"iri": iri}))
     })() {
-        Ok(result) => ToolResult { success: true, result: Some(result), error: None, concept: None },
-        Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
+        Ok(result) => ToolResult {
+            success: true, result: Some(result), error: None, concept: None,
+        },
+        Err(e) => ToolResult {
+            success: false, result: None, error: Some(e.to_string()), concept: None,
+        },
     }
 }
 
@@ -633,7 +680,10 @@ fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResul
             if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
                 let class_iri = crate::owl::get_iri_property(conn, iri, "rdf:type")
                     .ok().flatten()
-                    .ok_or_else(|| crate::owl::OwlError::NotFound(format!("Individual '{}' has no rdf:type", iri)))?;
+                    .ok_or_else(|| {
+                        let msg = format!("Individual '{}' has no rdf:type", iri);
+                        crate::owl::OwlError::NotFound(msg)
+                    })?;
                 crate::owl::validate_allowed_status(conn, &class_iri, status_iri)?;
             }
         }
@@ -653,8 +703,12 @@ fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResul
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({"iri": iri}))
     })() {
-        Ok(result) => ToolResult { success: true, result: Some(result), error: None, concept: None },
-        Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
+        Ok(result) => ToolResult {
+            success: true, result: Some(result), error: None, concept: None,
+        },
+        Err(e) => ToolResult {
+            success: false, result: None, error: Some(e.to_string()), concept: None,
+        },
     }
 }
 
@@ -720,8 +774,12 @@ fn remove_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult
 
         Ok::<_, crate::owl::OwlError>(serde_json::json!({"iri": iri}))
     })() {
-        Ok(result) => ToolResult { success: true, result: Some(result), error: None, concept: None },
-        Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
+        Ok(result) => ToolResult {
+            success: true, result: Some(result), error: None, concept: None,
+        },
+        Err(e) => ToolResult {
+            success: false, result: None, error: Some(e.to_string()), concept: None,
+        },
     }
 }
 
@@ -760,8 +818,12 @@ fn clear_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
         super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
         Ok::<_, crate::owl::OwlError>(serde_json::json!({"iri": iri}))
     })() {
-        Ok(result) => ToolResult { success: true, result: Some(result), error: None, concept: None },
-        Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
+        Ok(result) => ToolResult {
+            success: true, result: Some(result), error: None, concept: None,
+        },
+        Err(e) => ToolResult {
+            success: false, result: None, error: Some(e.to_string()), concept: None,
+        },
     }
 }
 
@@ -802,7 +864,9 @@ fn retract_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
                 concept: None,
             }
         }
-        Err(e) => ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
+        Err(e) => ToolResult {
+            success: false, result: None, error: Some(e.to_string()), concept: None,
+        },
     }
 }
 

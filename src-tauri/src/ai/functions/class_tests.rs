@@ -895,3 +895,90 @@ fn test_cascade_rules_invalid_direction_returns_error() {
     assert!(!result.success, "Invalid direction must return error");
     assert!(result.error.unwrap().contains("invalid"), "Error must mention the bad value");
 }
+
+#[test]
+fn test_allowed_statuses_persisted_when_combined_with_add_properties() {
+    let mut conn = setup_test_db();
+
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:StatusActive", "rdfs:label", Object::Literal {
+            value: "Active".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+        Triple::new("foundation:StatusActive", "foundation:hasIcon",
+            Object::Iri(crate::owl::icon_name_to_iri("check_circle"))),
+    ], "test").unwrap();
+
+    crate::owl::Property::new("foundation:myProp")
+        .assert(&mut conn, crate::owl::PropertyType::DatatypeProperty, "My Prop", None, &[], Some("xsd:string"), None, "test")
+        .unwrap();
+
+    let args = serde_json::json!({
+        "iri": "foundation:MyClass",
+        "label": "My Class",
+        "icon": "star",
+        "super_classes": ["owl:Thing"],
+        "allowed_statuses": ["foundation:StatusActive"],
+        "add_properties": ["foundation:myProp"]
+    });
+
+    let result = define_class_one(&mut conn, &args);
+    assert!(result.success, "Expected success, got error: {:?}", result.error);
+
+    let status_iris = crate::owl::get_all_iri_properties(
+        &conn, "foundation:MyClass", "foundation:allowedStatus"
+    ).unwrap();
+    assert_eq!(
+        status_iris,
+        vec!["foundation:StatusActive"],
+        "allowed_statuses must be persisted when combined with add_properties in the same call"
+    );
+}
+
+#[test]
+fn test_allowed_statuses_persisted_via_execute_tool_with_add_properties() {
+    use crate::ai::functions::{ToolCall, execute_tool};
+
+    let mut conn = setup_test_db();
+
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:StatusActive", "rdfs:label", Object::Literal {
+            value: "Active".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+        Triple::new("foundation:StatusActive", "foundation:hasIcon",
+            Object::Iri(crate::owl::icon_name_to_iri("check_circle"))),
+    ], "test").unwrap();
+
+    crate::owl::Property::new("foundation:myProp")
+        .assert(&mut conn, crate::owl::PropertyType::DatatypeProperty, "My Prop", None, &[], Some("xsd:string"), None, "test")
+        .unwrap();
+
+    let call = ToolCall {
+        name: "define_class".to_string(),
+        arguments: serde_json::json!({
+            "operations": [{
+                "iri": "foundation:MyClass",
+                "label": "My Class",
+                "icon": "star",
+                "super_classes": ["owl:Thing"],
+                "allowed_statuses": ["foundation:StatusActive"],
+                "add_properties": ["foundation:myProp"]
+            }]
+        }),
+    };
+
+    let result = execute_tool(&mut conn, &call, None, None);
+    assert!(result.success, "Expected success, got error: {:?}", result.error);
+
+    let status_iris = crate::owl::get_all_iri_properties(
+        &conn, "foundation:MyClass", "foundation:allowedStatus"
+    ).unwrap();
+    assert_eq!(
+        status_iris,
+        vec!["foundation:StatusActive"],
+        "allowed_statuses must be persisted via execute_tool when combined with add_properties"
+    );
+}

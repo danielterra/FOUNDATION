@@ -190,6 +190,10 @@ fn describe_property_one(conn: &Connection, args: &Value) -> ToolResult {
     }
 }
 
+fn is_valid_iri(iri: &str) -> bool {
+    !iri.is_empty() && iri.contains(':')
+}
+
 fn get_property_one(conn: &Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
@@ -200,6 +204,18 @@ fn get_property_one(conn: &Connection, args: &Value) -> ToolResult {
             concept: None,
         },
     };
+
+    if !is_valid_iri(iri) {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!(
+                "Invalid IRI '{}': an IRI must contain ':' (e.g. 'foundation:hasStatus' or 'http://example.org/prop'). Use the 'query' field for keyword search instead.",
+                iri
+            )),
+            concept: None,
+        };
+    }
 
     match (|| {
         let prop = Property::get(conn, iri)?
@@ -253,11 +269,30 @@ fn search_properties_one(conn: &Connection, args: &Value) -> ToolResult {
                 None => continue,
             };
 
+            let mut matched_label: Option<String> = None;
+
             if !query_str.is_empty() {
                 let label_lower = prop.label.as_deref().unwrap_or("").to_lowercase();
                 let comment_lower = prop.comment.as_deref().unwrap_or("").to_lowercase();
                 let iri_lower = iri.to_lowercase();
-                if !label_lower.contains(&query_lower)
+
+                let domain_match = prop.domain_labels.iter().find_map(|dl| {
+                    let fwd = dl.forward_label.to_lowercase();
+                    if fwd.contains(&query_lower) {
+                        return Some(format!("{} (forward label, domain: {})", dl.forward_label, dl.domain));
+                    }
+                    if let Some(inv) = &dl.inverse_label {
+                        let inv_lower = inv.to_lowercase();
+                        if inv_lower.contains(&query_lower) {
+                            return Some(format!("{} (inverse label, domain: {})", inv, dl.domain));
+                        }
+                    }
+                    None
+                });
+
+                if let Some(m) = domain_match {
+                    matched_label = Some(m);
+                } else if !label_lower.contains(&query_lower)
                     && !comment_lower.contains(&query_lower)
                     && !iri_lower.contains(&query_lower)
                 {
@@ -272,14 +307,18 @@ fn search_properties_one(conn: &Connection, args: &Value) -> ToolResult {
                 PropertyType::RdfProperty => "rdf",
             };
 
-            results.push(json!({
+            let mut entry = json!({
                 "iri": prop.iri,
                 "label": prop.label,
                 "property_type": property_type,
                 "domains": prop.domains,
                 "ranges": prop.ranges,
                 "aiBehaviorRules": prop.ai_behavior_rules,
-            }));
+            });
+            if let Some(m) = matched_label {
+                entry["matchedLabel"] = json!(m);
+            }
+            results.push(entry);
         }
 
         let total = results.len();

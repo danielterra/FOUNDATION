@@ -209,7 +209,7 @@ pub fn search(
     limit: usize,
     offset: usize,
 ) -> Result<(Vec<SearchResult>, usize)> {
-    if filters.is_some() || include_retracted {
+    if filters.is_some() || include_retracted || class_iri.is_some() {
         search_structured(conn, tokens, entity_type_filter, class_iri, filters, include_retracted, limit, offset)
     } else {
         search_global(conn, tokens, entity_type_filter, class_iri, limit, offset)

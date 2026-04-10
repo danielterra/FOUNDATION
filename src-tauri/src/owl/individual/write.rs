@@ -73,18 +73,9 @@ impl Individual {
         }
 
         if !is_meta_property {
-            let mut property_is_valid = false;
-
-            for triple in &types_result.triples {
-                if let Some(class_iri) = triple.object.as_iri() {
-                    if let Ok(Some(class)) = Class::get(conn, class_iri) {
-                        if class.properties.iter().any(|(prop_iri, _)| prop_iri == property) {
-                            property_is_valid = true;
-                            break;
-                        }
-                    }
-                }
-            }
+            let property_is_valid = types_result.triples.iter()
+                .filter_map(|t| t.object.as_iri())
+                .any(|class_iri| Class::has_property(conn, class_iri, property));
 
             if !property_is_valid {
                 return Err(OwlError::InvalidOperation(
@@ -158,18 +149,9 @@ impl Individual {
         }
 
         if !is_meta_property {
-            let mut property_is_valid = false;
-
-            for triple in &types_result.triples {
-                if let Some(class_iri) = triple.object.as_iri() {
-                    if let Ok(Some(class)) = Class::get(conn, class_iri) {
-                        if class.properties.iter().any(|(prop_iri, _)| prop_iri == property) {
-                            property_is_valid = true;
-                            break;
-                        }
-                    }
-                }
-            }
+            let property_is_valid = types_result.triples.iter()
+                .filter_map(|t| t.object.as_iri())
+                .any(|class_iri| Class::has_property(conn, class_iri, property));
 
             if !property_is_valid {
                 return Err(OwlError::InvalidOperation(

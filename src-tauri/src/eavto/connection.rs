@@ -350,6 +350,11 @@ fn run_migrations(conn: &Connection) -> Result<(), DbError> {
                          'owl:AnnotationProperty', 'rdf:Property');
     ")?;
 
+    conn.execute_batch("
+        CREATE INDEX IF NOT EXISTS idx_backlinks_active ON triples(object, subject, predicate, tx)
+        WHERE retracted = 0 AND object_type = 'iri' AND predicate != 'rdf:type';
+    ")?;
+
     crate::search::ensure_access_table(conn).map_err(DbError::ConnectionError)?;
 
     Ok(())

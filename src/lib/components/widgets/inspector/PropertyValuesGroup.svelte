@@ -1,0 +1,553 @@
+<script>
+  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { convertFileSrc } from '@tauri-apps/api/core';
+  import NumberFlow from '@number-flow/svelte';
+  import MarkdownValue from './MarkdownValue.svelte';
+  import PropertyEditForm from './PropertyEditForm.svelte';
+  import { focus } from '$lib/utils/actions';
+
+  let {
+    detailGroup,
+    editingKey,
+    editingDatatype,
+    draftValue = $bindable(),
+    saving,
+    now,
+    onSaveEdit,
+    onCancelEdit,
+    openEntityInspector,
+  } = $props();
+
+  function editKey(propertyIri, valueIdx) {
+    return `${propertyIri}::${valueIdx}`;
+  }
+
+  function isUrl(datatype) {
+    return datatype === 'xsd:anyURI';
+  }
+
+  function isStringType(datatype) {
+    return !datatype || datatype === 'xsd:string' || datatype === 'rdf:langString';
+  }
+
+  function isDateType(datatype) {
+    return datatype === 'xsd:date' || datatype === 'xsd:dateTime';
+  }
+
+  async function openUrl_(url) {
+    try {
+      await openUrl(url);
+    } catch (err) {
+      console.error('Failed to open URL:', err);
+    }
+  }
+
+  function formatDate(timestamp) {
+    const currentNow = now;
+    const ts = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
+    const date = new Date(ts);
+
+    if (isNaN(date.getTime())) return timestamp;
+
+    const nowDate = new Date(currentNow);
+    const today = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diffMs = currentNow - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins} ${diffMins === 1 ? 'minute' : 'minutes'} ago`;
+
+    if (dateDay.getTime() === today.getTime()) {
+      if (diffHours < 2) return '1 hour ago';
+      return `${diffHours} hours ago`;
+    }
+
+    if (dateDay.getTime() === yesterday.getTime()) {
+      const timeStr = date.toLocaleTimeString(
+        'en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return `Yesterday at ${timeStr}`;
+    }
+
+    if (diffDays < 7) {
+      const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+      const timeStr = date.toLocaleTimeString(
+        'en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return `${dayName} at ${timeStr}`;
+    }
+
+    if (date.getFullYear() === nowDate.getFullYear()) {
+      return date.toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
+      });
+    }
+
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true
+    });
+  }
+
+  function isIconUrl(icon) {
+    if (!icon) return false;
+    return icon.startsWith('http://') || icon.startsWith('https://') ||
+           icon.startsWith('data:') || icon.startsWith('file://') || icon.startsWith('/');
+  }
+
+  function getIconUrl(icon) {
+    if (!icon) return '';
+    if (icon.startsWith('http://') || icon.startsWith('https://') ||
+        icon.startsWith('data:')) return icon;
+    if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
+    if (icon.startsWith('/')) return convertFileSrc(icon);
+    return icon;
+  }
+</script>
+
+{#snippet dateEditor(propertyIri, inputType)}
+  <div class="date-edit-container">
+    <input
+      class="date-input"
+      type={inputType}
+      bind:value={draftValue}
+      onkeydown={(e) => {
+        if (e.key === 'Escape') onCancelEdit();
+        else if (e.key === 'Enter') onSaveEdit(propertyIri);
+      }}
+      use:focus
+    />
+    <div class="edit-actions">
+      <button
+        class="edit-save-btn"
+        onmousedown={(e) => e.preventDefault()}
+        onclick={() => onSaveEdit(propertyIri)}
+        disabled={saving}
+      >
+        {#if saving}
+          <span class="material-symbols-outlined spinning-small">progress_activity</span>
+        {:else}
+          <span class="material-symbols-outlined">check</span>
+        {/if}
+        Save
+      </button>
+      <button
+        class="edit-cancel-btn"
+        onmousedown={(e) => e.preventDefault()}
+        onclick={onCancelEdit}
+      >
+        <span class="material-symbols-outlined">close</span>
+        Cancel
+      </button>
+    </div>
+  </div>
+{/snippet}
+
+<div class="detail-values-group">
+  {#each detailGroup.values as val, idx (detailGroup.property + '_' + val.value + '_' + idx)}
+    {#if detailGroup.isObjectProperty}
+      <div
+        class="detail-value clickable"
+        class:calculated={detailGroup.isCalculated}
+        role="button"
+        tabindex="0"
+        onclick={() => openEntityInspector(val.value)}
+        onkeydown={(e) => e.key === 'Enter' && openEntityInspector(val.value)}
+      >
+        {#if val.valueIcon}
+          {#if isIconUrl(val.valueIcon)}
+            <img src={getIconUrl(val.valueIcon)} alt="" class="value-icon-image" />
+          {:else}
+            <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
+          {/if}
+        {/if}
+        {#if val.unitLabel}
+          <span class="unit">{val.unitLabel}</span>
+        {/if}
+        <span class="value-text">{val.valueLabel || val.value}</span>
+        {#if val.valueStatus}
+          <span
+            class="inline-status"
+            style="--status-color: {val.valueStatus.color || 'var(--color-neutral)'}"
+            title={val.valueStatus.iri}
+          >
+            <span class="material-symbols-outlined inline-status-icon">radio_button_checked</span>
+            <span class="inline-status-label">{val.valueStatus.label}</span>
+          </span>
+        {/if}
+        {#if val.formulaError}
+          <span class="formula-error" title={val.formulaError}>
+            <span class="material-symbols-outlined formula-error-icon">warning</span>
+            <span class="formula-error-text">{val.formulaError}</span>
+          </span>
+        {/if}
+      </div>
+    {:else}
+      <div class="detail-value" class:calculated={detailGroup.isCalculated}>
+        {#if val.datatype === 'xsd:dateTime'}
+          {#if editingKey === editKey(detailGroup.property, idx)}
+            {@render dateEditor(detailGroup.property, 'datetime-local')}
+          {:else}
+            {@const date = new Date(val.value)}
+            <div class="timestamp-display">
+              <span class="value-text">
+                {date.toLocaleString('en-US', {
+                  year: 'numeric', month: 'short', day: 'numeric',
+                  hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true
+                })}
+              </span>
+              <span class="timestamp-relative">{formatDate(date.getTime())}</span>
+            </div>
+          {/if}
+        {:else if val.datatype === 'xsd:date'}
+          {#if editingKey === editKey(detailGroup.property, idx)}
+            {@render dateEditor(detailGroup.property, 'date')}
+          {:else}
+            {@const [y, m, d] = val.value.split('-').map(Number)}
+            {@const date = new Date(y, m - 1, d)}
+            <span class="value-text">
+              {date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+            </span>
+          {/if}
+        {:else if isUrl(val.datatype)}
+          <button class="url-value" onclick={() => openUrl_(val.value)} title={val.value}>
+            <span class="value-text">{val.valueLabel || val.value}</span>
+            <span class="material-symbols-outlined url-open-icon">open_in_new</span>
+          </button>
+        {:else if isStringType(val.datatype)}
+          {#if editingKey === editKey(detailGroup.property, idx)}
+            <PropertyEditForm
+              propertyIri={detailGroup.property}
+              bind:draftValue
+              {saving}
+              onsave={onSaveEdit}
+              oncancel={onCancelEdit}
+            />
+          {:else if (val.value ?? '').length > 50_000}
+            <div class="value-large">
+              <pre class="value-pre">{val.value}</pre>
+              <button class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
+                <span class="material-symbols-outlined">content_copy</span>
+              </button>
+            </div>
+          {:else}
+            <MarkdownValue value={val.value} />
+          {/if}
+        {:else}
+          {#if val.unitLabel}
+            <span class="unit">{val.unitLabel}</span>
+          {/if}
+          {#if detailGroup.isCalculated && !isNaN(Number(val.value)) && val.value !== ''}
+            <NumberFlow class="value-text" value={Number(val.value)} />
+          {:else}
+            <span class="value-text">{val.valueLabel || val.value}</span>
+          {/if}
+        {/if}
+        {#if val.valueStatus}
+          <span
+            class="inline-status"
+            style="--status-color: {val.valueStatus.color || 'var(--color-neutral)'}"
+            title={val.valueStatus.iri}
+          >
+            <span class="material-symbols-outlined inline-status-icon">radio_button_checked</span>
+            <span class="inline-status-label">{val.valueStatus.label}</span>
+          </span>
+        {/if}
+        {#if val.formulaError}
+          <span class="formula-error" title={val.formulaError}>
+            <span class="material-symbols-outlined formula-error-icon">warning</span>
+            <span class="formula-error-text">{val.formulaError}</span>
+          </span>
+        {/if}
+      </div>
+    {/if}
+  {/each}
+</div>
+
+<style>
+  .detail-values-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .detail-value {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    background: color-mix(in srgb, var(--color-black) 30%, transparent);
+    border-radius: 6px;
+  }
+
+  .value-large {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .value-pre {
+    font-family: monospace;
+    font-size: 11px;
+    color: var(--color-neutral-active);
+    background: color-mix(in srgb, var(--color-black) 40%, transparent);
+    border-radius: 4px;
+    padding: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0;
+  }
+
+  .copy-btn {
+    align-self: flex-end;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-neutral);
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    border-radius: 4px;
+    transition: color 0.15s;
+  }
+
+  .copy-btn:hover {
+    color: var(--color-neutral-active);
+  }
+
+  .copy-btn .material-symbols-outlined {
+    font-size: 16px;
+  }
+
+  .clickable {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .clickable:hover {
+    background: color-mix(in srgb, var(--color-interactive) 20%, transparent) !important;
+    transform: translateX(2px);
+  }
+
+  .clickable:active {
+    transform: translateX(1px);
+  }
+
+  .value-icon {
+    font-size: 18px;
+    color: var(--color-interactive);
+  }
+
+  .value-icon-image {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    object-fit: cover;
+  }
+
+  .value-text {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--color-neutral-active);
+    flex: 1;
+  }
+
+  .unit {
+    font-size: 11px;
+    color: var(--color-neutral);
+    padding: 2px 6px;
+    background: color-mix(in srgb, var(--color-white) 5%, transparent);
+    border-radius: 4px;
+  }
+
+  .timestamp-display {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+  }
+
+  .timestamp-relative {
+    font-size: 11px;
+    color: var(--color-neutral);
+    opacity: 0.6;
+    font-family: var(--font-body);
+    font-style: italic;
+  }
+
+  .url-value {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--color-interactive);
+    text-align: left;
+  }
+
+  .url-value:hover .value-text {
+    text-decoration: underline;
+  }
+
+  .url-open-icon {
+    font-size: 14px;
+    opacity: 0.6;
+    flex-shrink: 0;
+  }
+
+  .inline-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 7px 2px 4px;
+    background: color-mix(in srgb, var(--status-color) 18%, transparent);
+    border: 1px solid color-mix(in srgb, var(--status-color) 40%, transparent);
+    border-radius: 20px;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .inline-status-icon {
+    font-size: 12px;
+    color: var(--status-color);
+  }
+
+  .inline-status-label {
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--status-color);
+    white-space: nowrap;
+  }
+
+  .detail-value.calculated {
+    font-style: italic;
+    color: var(--color-neutral);
+    background: color-mix(in srgb, var(--color-black) 20%, transparent);
+    border-left: 2px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+  }
+
+  .detail-value.calculated .value-text {
+    color: var(--color-neutral);
+  }
+
+  .formula-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 4px 6px;
+    background: color-mix(in srgb, var(--color-error, #ef4444) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent);
+    border-radius: 4px;
+    width: 100%;
+    margin-top: 4px;
+    box-sizing: border-box;
+  }
+
+  .formula-error-icon {
+    font-size: 14px;
+    color: var(--color-error, #ef4444);
+    flex-shrink: 0;
+    line-height: 1.4;
+  }
+
+  .formula-error-text {
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--color-error, #ef4444);
+    line-height: 1.4;
+  }
+
+  .date-edit-container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .date-input {
+    background: color-mix(in srgb, var(--color-black) 50%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
+    border-radius: 6px;
+    color: var(--color-neutral-active);
+    font-family: var(--font-body);
+    font-size: 13px;
+    padding: 6px 8px;
+    outline: none;
+    transition: border-color 0.15s;
+    color-scheme: dark;
+  }
+
+  .date-input:focus {
+    border-color: var(--color-interactive);
+  }
+
+  .edit-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .edit-save-btn,
+  .edit-cancel-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    transition: background 0.15s;
+  }
+
+  .edit-save-btn {
+    background: color-mix(in srgb, var(--color-interactive) 25%, transparent);
+    color: var(--color-interactive);
+  }
+
+  .edit-save-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-interactive) 40%, transparent);
+  }
+
+  .edit-save-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .edit-cancel-btn {
+    background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
+    color: var(--color-neutral);
+  }
+
+  .edit-cancel-btn:hover {
+    background: color-mix(in srgb, var(--color-neutral) 22%, transparent);
+  }
+
+  .edit-save-btn .material-symbols-outlined,
+  .edit-cancel-btn .material-symbols-outlined {
+    font-size: 14px;
+  }
+
+  .spinning-small {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+</style>

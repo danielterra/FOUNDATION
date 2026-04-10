@@ -1,6 +1,7 @@
 use crate::eavto::Connection;
 use crate::eavto::{store, query, Triple, Object};
 use crate::owl::{Result, OwlError, vocabulary::{rdf, rdfs, owl}};
+use rusqlite::types::Value as SqlValue;
 
 #[derive(Debug, Clone)]
 pub struct DomainLabel {
@@ -29,7 +30,6 @@ pub struct Property {
 }
 
 impl Property {
-    /// Create a new Property reference (for asserting)
     pub fn new(iri: impl Into<String>) -> Self {
         Self {
             iri: iri.into(),
@@ -54,17 +54,26 @@ impl Property {
         let dl_result = query::get_by_predicate_object(
             conn, "foundation:onProperty", property_iri,
         )?;
+        if dl_result.triples.is_empty() {
+            return Ok(vec![]);
+        }
+        let dl_iris: Vec<String> = dl_result.triples.iter().map(|t| t.subject.clone()).collect();
+        let dl_triples_map = query::batch_load_triples_for_subjects(conn, &dl_iris)?;
         let mut domain_labels = Vec::new();
-        for triple in dl_result.triples {
-            let dl_iri = &triple.subject;
-            let domain = query::get_by_entity_predicate(conn, dl_iri, "foundation:forDomain")?
-                .triples.first().and_then(|t| t.object.as_iri()).map(|s| s.to_string());
-            let forward_label = query::get_by_entity_predicate(
-                conn, dl_iri, "foundation:forwardLabel",
-            )?.triples.first().and_then(|t| t.object.as_literal());
-            let inverse_label = query::get_by_entity_predicate(
-                conn, dl_iri, "foundation:inverseLabel",
-            )?.triples.first().and_then(|t| t.object.as_literal());
+        for dl_iri in &dl_iris {
+            let triples = match dl_triples_map.get(dl_iri) {
+                Some(t) => t,
+                None => continue,
+            };
+            let domain = triples.iter()
+                .find(|t| t.predicate == "foundation:forDomain")
+                .and_then(|t| t.object.as_iri()).map(|s| s.to_string());
+            let forward_label = triples.iter()
+                .find(|t| t.predicate == "foundation:forwardLabel")
+                .and_then(|t| t.object.as_literal());
+            let inverse_label = triples.iter()
+                .find(|t| t.predicate == "foundation:inverseLabel")
+                .and_then(|t| t.object.as_literal());
             if let (Some(domain), Some(forward_label)) = (domain, forward_label) {
                 domain_labels.push(DomainLabel { domain, forward_label, inverse_label });
             }
@@ -72,26 +81,88 @@ impl Property {
         Ok(domain_labels)
     }
 
-    /// Get complete property data
-    pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
-        let iri = iri.into();
-
-        let label_result = query::get_by_entity_predicate(conn, &iri, rdfs::LABEL)?;
-        let label = label_result.triples.first().and_then(|t| t.object.as_literal());
-
-        let comment_result = query::get_by_entity_predicate(conn, &iri, rdfs::COMMENT)?;
-        let comment = comment_result.triples.first().and_then(|t| t.object.as_literal());
-
-        let types_result = query::get_by_entity_predicate(conn, &iri, rdf::TYPE)?;
-        if types_result.triples.is_empty() {
-            return Ok(None);
+    fn get_domain_labels_batch(
+        conn: &Connection,
+        property_iris: &[&str],
+    ) -> Result<std::collections::HashMap<String, Vec<DomainLabel>>> {
+        if property_iris.is_empty() {
+            return Ok(std::collections::HashMap::new());
         }
+        let placeholders = property_iris.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let sql = format!(
+            "SELECT subject, object FROM triples_current \
+             WHERE predicate = 'foundation:onProperty' AND object IN ({})",
+            placeholders
+        );
+        let params: Vec<SqlValue> = property_iris.iter()
+            .map(|s| SqlValue::Text(s.to_string()))
+            .collect();
+        let mut stmt = conn.prepare(&sql).map_err(|e| {
+            crate::owl::OwlError::DatabaseError(e.to_string())
+        })?;
+        let dl_refs: Vec<(String, String)> = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                let dl_iri: String = row.get(0)?;
+                let prop_iri: Option<String> = row.get(1)?;
+                Ok((dl_iri, prop_iri))
+            })
+            .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .filter_map(|(dl, p)| p.map(|pi| (dl, pi)))
+            .collect();
+
+        if dl_refs.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        let dl_iris: Vec<String> = {
+            let mut seen = std::collections::HashSet::new();
+            dl_refs.iter().map(|(dl, _)| dl.clone()).filter(|s| seen.insert(s.clone())).collect()
+        };
+        let dl_triples_map = query::batch_load_triples_for_subjects(conn, &dl_iris)?;
+
+        let mut result: std::collections::HashMap<String, Vec<DomainLabel>> =
+            std::collections::HashMap::new();
+        for (dl_iri, prop_iri) in dl_refs {
+            let triples = match dl_triples_map.get(&dl_iri) {
+                Some(t) => t,
+                None => continue,
+            };
+            let domain = triples.iter()
+                .find(|t| t.predicate == "foundation:forDomain")
+                .and_then(|t| t.object.as_iri()).map(|s| s.to_string());
+            let forward_label = triples.iter()
+                .find(|t| t.predicate == "foundation:forwardLabel")
+                .and_then(|t| t.object.as_literal());
+            let inverse_label = triples.iter()
+                .find(|t| t.predicate == "foundation:inverseLabel")
+                .and_then(|t| t.object.as_literal());
+            if let (Some(domain), Some(forward_label)) = (domain, forward_label) {
+                result.entry(prop_iri).or_default()
+                    .push(DomainLabel { domain, forward_label, inverse_label });
+            }
+        }
+        Ok(result)
+    }
+
+    fn build_from_triples(iri: &str, triples: &[Triple]) -> Option<Self> {
+        let has_type = triples.iter().any(|t| t.predicate == rdf::TYPE);
+        if !has_type {
+            return None;
+        }
+
+        let label = triples.iter()
+            .find(|t| t.predicate == rdfs::LABEL)
+            .and_then(|t| t.object.as_literal());
+        let comment = triples.iter()
+            .find(|t| t.predicate == rdfs::COMMENT)
+            .and_then(|t| t.object.as_literal());
+
         let mut property_type = PropertyType::RdfProperty;
         let mut is_functional = false;
         let mut is_transitive = false;
         let mut is_symmetric = false;
-
-        for triple in &types_result.triples {
+        for triple in triples.iter().filter(|t| t.predicate == rdf::TYPE) {
             if let Some(type_iri) = triple.object.as_iri() {
                 match type_iri {
                     t if t == owl::OBJECT_PROPERTY => property_type = PropertyType::ObjectProperty,
@@ -109,20 +180,17 @@ impl Property {
             }
         }
 
-        let domains_result = query::get_by_entity_predicate(conn, &iri, rdfs::DOMAIN)?;
-        let domains: Vec<String> = domains_result.triples.iter()
+        let domains: Vec<String> = triples.iter()
+            .filter(|t| t.predicate == rdfs::DOMAIN)
+            .filter_map(|t| t.object.as_iri())
+            .map(|s| s.to_string())
+            .collect();
+        let ranges: Vec<String> = triples.iter()
+            .filter(|t| t.predicate == rdfs::RANGE)
             .filter_map(|t| t.object.as_iri())
             .map(|s| s.to_string())
             .collect();
 
-        let ranges_result = query::get_by_entity_predicate(conn, &iri, rdfs::RANGE)?;
-        let ranges: Vec<String> = ranges_result.triples.iter()
-            .filter_map(|t| t.object.as_iri())
-            .map(|s| s.to_string())
-            .collect();
-
-        // A property typed as rdf:Property with a non-datatype range is functionally
-        // an object property (e.g. owl:sameAs, owl:differentFrom from external vocabularies).
         if property_type == PropertyType::RdfProperty {
             let has_class_range = ranges.iter().any(|r| {
                 !r.starts_with("xsd:") && r != "rdfs:Literal" && r != "rdf:langString"
@@ -132,35 +200,28 @@ impl Property {
             }
         }
 
-        let super_result = query::get_by_entity_predicate(conn, &iri, rdfs::SUB_PROPERTY_OF)?;
-        let super_properties: Vec<String> = super_result.triples.iter()
+        let super_properties: Vec<String> = triples.iter()
+            .filter(|t| t.predicate == rdfs::SUB_PROPERTY_OF)
             .filter_map(|t| t.object.as_iri())
             .map(|s| s.to_string())
             .collect();
-
-        let inverse_result = query::get_by_entity_predicate(conn, &iri, owl::INVERSE_OF)?;
-        let inverse_of = inverse_result.triples.first()
+        let inverse_of = triples.iter()
+            .find(|t| t.predicate == owl::INVERSE_OF)
             .and_then(|t| t.object.as_iri())
             .map(|s| s.to_string());
-
-        let unit_result = query::get_by_entity_predicate(conn, &iri, "qudt:hasUnit")?;
-        let unit = unit_result.triples.first()
+        let unit = triples.iter()
+            .find(|t| t.predicate == "qudt:hasUnit")
             .and_then(|t| t.object.as_iri())
             .map(|s| s.to_string());
-
-        let formula_result = query::get_by_entity_predicate(conn, &iri, "foundation:formula")?;
-        let formula = formula_result.triples.first().and_then(|t| t.object.as_literal());
-
-        let ai_behavior_rules_result = query::get_by_entity_predicate(
-            conn, &iri, "foundation:aiBehaviorRules",
-        )?;
-        let ai_behavior_rules = ai_behavior_rules_result.triples.first()
+        let formula = triples.iter()
+            .find(|t| t.predicate == "foundation:formula")
+            .and_then(|t| t.object.as_literal());
+        let ai_behavior_rules = triples.iter()
+            .find(|t| t.predicate == "foundation:aiBehaviorRules")
             .and_then(|t| t.object.as_literal());
 
-        let domain_labels = Self::get_domain_labels(conn, &iri)?;
-
-        Ok(Some(Self {
-            iri,
+        Some(Self {
+            iri: iri.to_string(),
             label,
             comment,
             property_type,
@@ -173,15 +234,42 @@ impl Property {
             inverse_of,
             unit,
             formula,
-            domain_labels,
+            domain_labels: vec![],
             ai_behavior_rules,
-        }))
+        })
     }
 
-    /// Assert a new property with metadata
-    ///
-    /// IMPORTANT: If range is a numeric type (xsd:decimal, xsd:integer, xsd:float, xsd:double),
-    /// you MUST provide a unit parameter with a valid QUDT unit (e.g., "unit:GigaBYTE")
+    pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
+        let iri = iri.into();
+        let all_triples = query::get_by_entity(conn, &iri)?;
+        let Some(mut prop) = Self::build_from_triples(&iri, &all_triples.triples) else {
+            return Ok(None);
+        };
+        prop.domain_labels = Self::get_domain_labels(conn, &iri)?;
+        Ok(Some(prop))
+    }
+
+    pub fn get_batch(
+        conn: &Connection,
+        iris: &[&str],
+    ) -> Result<std::collections::HashMap<String, Self>> {
+        if iris.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let iris_strings: Vec<String> = iris.iter().map(|s| s.to_string()).collect();
+        let triples_map = query::batch_load_triples_for_subjects(conn, &iris_strings)?;
+        let mut domain_labels_map = Self::get_domain_labels_batch(conn, iris)?;
+
+        let mut result = std::collections::HashMap::new();
+        for iri in iris {
+            let triples = triples_map.get(*iri).map(|v| v.as_slice()).unwrap_or(&[]);
+            let Some(mut prop) = Self::build_from_triples(iri, triples) else { continue };
+            prop.domain_labels = domain_labels_map.remove(*iri).unwrap_or_default();
+            result.insert(iri.to_string(), prop);
+        }
+        Ok(result)
+    }
+
     pub fn assert(
         &self,
         conn: &mut Connection,
@@ -276,8 +364,6 @@ impl Property {
         Ok(())
     }
 
-    /// Restore a retracted property and all its asserted facts retracted in the same tx.
-    /// Re-asserts triples as new rows (immutable store — never mutates existing rows).
     pub fn restore(conn: &mut Connection, iri: &str, origin: &str) -> Result<usize> {
         let retract_tx = query::get_retraction_tx(conn, iri)?
             .ok_or_else(|| OwlError::NotFound(
@@ -325,13 +411,6 @@ impl Property {
         Ok(affected.into_iter().collect())
     }
 
-    /// Check if a property is functional (has at most one value per subject)
-    ///
-    /// Returns true if the property is marked as owl:FunctionalProperty in the ontology.
-    /// This is used by the query layer to determine whether to return one value or multiple values.
-    ///
-    /// IMPORTANT: This method uses get_by_entity_predicate_internal with check_functional=false
-    /// to avoid infinite recursion.
     pub fn find_all_iris(conn: &Connection) -> Result<Vec<String>> {
         let obj_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::OBJECT_PROPERTY)?;
         let dat_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::DATATYPE_PROPERTY)?;
@@ -364,15 +443,12 @@ impl Property {
     }
 }
 
-/// ObjectProperty is just an alias - use Property with PropertyType::ObjectProperty
 #[allow(dead_code)]
 pub type ObjectProperty = Property;
 
-/// DatatypeProperty is just an alias - use Property with PropertyType::DatatypeProperty
 #[allow(dead_code)]
 pub type DatatypeProperty = Property;
 
-/// Property type classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyType {
     RdfProperty,
@@ -382,571 +458,5 @@ pub enum PropertyType {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::eavto::test_helpers::setup_test_db;
-
-    #[test]
-    fn test_assert_numeric_property_requires_unit() {
-        let mut conn = setup_test_db();
-        let prop = Property::new("foundation:hasAge");
-
-        // Try to assert numeric property WITHOUT unit - should fail
-        let result = prop.assert(
-            &mut conn,
-            PropertyType::DatatypeProperty,
-            "has age",
-            Some("The age of a person"),
-            &["foundation:Person"],
-            Some("xsd:integer"),
-            None, // NO UNIT - should fail
-            "test"
-        );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("qudt:unit"));
-    }
-
-    #[test]
-    fn test_assert_numeric_property_with_unit() {
-        let mut conn = setup_test_db();
-        let prop = Property::new("foundation:hasAge");
-
-        // Assert numeric property WITH unit - should succeed
-        let result = prop.assert(
-            &mut conn,
-            PropertyType::DatatypeProperty,
-            "has age",
-            Some("The age of a person"),
-            &["foundation:Person"],
-            Some("xsd:integer"),
-            Some("unit:YR"), // WITH UNIT - should succeed
-            "test"
-        );
-        assert!(result.is_ok());
-
-        // Get complete property data
-        let property = Property::get(&conn, "foundation:hasAge").unwrap().unwrap();
-        assert_eq!(property.iri, "foundation:hasAge");
-        assert_eq!(property.label, Some("has age".to_string()));
-        assert_eq!(property.comment, Some("The age of a person".to_string()));
-        assert_eq!(property.property_type, PropertyType::DatatypeProperty);
-        assert_eq!(property.domains.len(), 1);
-        assert_eq!(property.domains[0], "foundation:Person");
-        assert_eq!(property.ranges.len(), 1);
-        assert_eq!(property.ranges[0], "xsd:integer");
-    }
-
-    #[test]
-    fn test_object_property() {
-        let mut conn = setup_test_db();
-        let prop = Property::new("foundation:hasParent");
-
-        // Assert object property (no unit needed for object properties)
-        prop.assert(
-            &mut conn,
-            PropertyType::ObjectProperty,
-            "has parent",
-            None,
-            &["foundation:Person"],
-            Some("foundation:Person"),
-            None, // Object properties don't need units
-            "test"
-        ).unwrap();
-
-        // Get and verify
-        let property = Property::get(&conn, "foundation:hasParent").unwrap().unwrap();
-        assert_eq!(property.property_type, PropertyType::ObjectProperty);
-        assert!(Property::get(&conn, "foundation:hasParent").unwrap().is_some());
-    }
-
-    #[test]
-    fn test_non_numeric_property_cannot_have_unit() {
-        let mut conn = setup_test_db();
-        let prop = Property::new("foundation:hasName");
-
-        // Try to assert string property WITH unit - should fail
-        let result = prop.assert(
-            &mut conn,
-            PropertyType::DatatypeProperty,
-            "has name",
-            None,
-            &["foundation:Person"],
-            Some("xsd:string"),
-            Some("unit:GigaBYTE"), // String property with unit - should fail
-            "test"
-        );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("non-numeric"));
-    }
-
-    #[test]
-    fn test_all_numeric_types_require_unit() {
-        let mut conn = setup_test_db();
-
-        // Test all numeric types
-        let numeric_types = vec![
-            ("xsd:decimal", "unit:Meter"),
-            ("xsd:integer", "unit:YR"),
-            ("xsd:float", "unit:KiloGM"),
-            ("xsd:double", "unit:Second"),
-        ];
-
-        for (i, (xsd_type, unit)) in numeric_types.iter().enumerate() {
-            let prop = Property::new(&format!("test:prop{}", i));
-
-            // Without unit - should fail
-            let result = prop.assert(
-                &mut conn,
-                PropertyType::DatatypeProperty,
-                "test prop",
-                None,
-                &[],
-                Some(xsd_type),
-                None,
-                "test"
-            );
-            assert!(result.is_err(), "Should fail for {} without unit", xsd_type);
-
-            // With unit - should succeed
-            let result = prop.assert(
-                &mut conn,
-                PropertyType::DatatypeProperty,
-                "test prop",
-                None,
-                &[],
-                Some(xsd_type),
-                Some(unit),
-                "test"
-            );
-            assert!(result.is_ok(), "Should succeed for {} with unit", xsd_type);
-        }
-    }
-
-    // ── retract ─────────────────────────────────────────────────────────────
-
-    fn assert_object_property(conn: &mut Connection, iri: &str) {
-        Property::new(iri).assert(
-            conn,
-            PropertyType::ObjectProperty,
-            "Test Property",
-            Some("A test property"),
-            &["foundation:Person"],
-            Some("foundation:Person"),
-            None,
-            "test",
-        ).unwrap();
-    }
-
-    #[test]
-    fn test_retract_removes_property_definition() {
-        let mut conn = setup_test_db();
-        assert_object_property(&mut conn, "foundation:hasParent");
-
-        assert!(Property::get(&conn, "foundation:hasParent").unwrap().is_some());
-
-        Property::retract(&mut conn, "foundation:hasParent", "test").unwrap();
-
-        assert!(Property::get(&conn, "foundation:hasParent").unwrap().is_none(),
-            "property should no longer exist after retraction");
-    }
-
-    #[test]
-    fn test_retract_removes_fact_triples_using_property() {
-        let mut conn = setup_test_db();
-        assert_object_property(&mut conn, "foundation:hasParent");
-
-        // Create two instances using this property
-        store::assert_triples(&mut conn, &[
-            Triple::new("foundation:alice", "foundation:hasParent", Object::Iri("foundation:bob".to_string())),
-            Triple::new("foundation:carol", "foundation:hasParent", Object::Iri("foundation:dave".to_string())),
-        ], "test").unwrap();
-
-        Property::retract(&mut conn, "foundation:hasParent", "test").unwrap();
-
-        // Fact triples must be gone
-        let alice_facts = crate::eavto::query::get_by_entity_predicate(
-            &conn, "foundation:alice", "foundation:hasParent"
-        ).unwrap();
-        assert!(alice_facts.triples.is_empty(), "fact triple for alice must be retracted");
-
-        let carol_facts = crate::eavto::query::get_by_entity_predicate(
-            &conn, "foundation:carol", "foundation:hasParent"
-        ).unwrap();
-        assert!(carol_facts.triples.is_empty(), "fact triple for carol must be retracted");
-    }
-
-    #[test]
-    fn test_retract_returns_affected_subjects() {
-        let mut conn = setup_test_db();
-        assert_object_property(&mut conn, "foundation:hasParent");
-
-        store::assert_triples(&mut conn, &[
-            Triple::new("foundation:alice", "foundation:hasParent", Object::Iri("foundation:bob".to_string())),
-            Triple::new("foundation:carol", "foundation:hasParent", Object::Iri("foundation:dave".to_string())),
-        ], "test").unwrap();
-
-        let mut affected = Property::retract(&mut conn, "foundation:hasParent", "test").unwrap();
-        affected.sort();
-
-        assert_eq!(affected, vec!["foundation:alice", "foundation:carol"]);
-    }
-
-    #[test]
-    fn test_retract_nonexistent_property_returns_empty() {
-        let mut conn = setup_test_db();
-
-        let affected = Property::retract(&mut conn, "foundation:ghost", "test").unwrap();
-        assert!(affected.is_empty(), "retracting a non-existent property must not error");
-    }
-
-    #[test]
-    fn test_retract_with_no_usages_returns_empty_affected() {
-        let mut conn = setup_test_db();
-        assert_object_property(&mut conn, "foundation:hasParent");
-
-        let affected = Property::retract(&mut conn, "foundation:hasParent", "test").unwrap();
-        assert!(affected.is_empty(), "no instances used the property, so affected must be empty");
-    }
-
-    #[test]
-    fn test_retract_datatype_property() {
-        let mut conn = setup_test_db();
-
-        Property::new("foundation:birthDate").assert(
-            &mut conn,
-            PropertyType::DatatypeProperty,
-            "birth date",
-            None,
-            &["foundation:Person"],
-            Some("xsd:string"),
-            None,
-            "test",
-        ).unwrap();
-
-        store::assert_triples(&mut conn, &[
-            Triple::new("foundation:alice", "foundation:birthDate", Object::Literal {
-                value: "1990-01-01".to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }),
-        ], "test").unwrap();
-
-        let affected = Property::retract(&mut conn, "foundation:birthDate", "test").unwrap();
-        assert!(affected.contains(&"foundation:alice".to_string()));
-        assert!(Property::get(&conn, "foundation:birthDate").unwrap().is_none());
-    }
-
-    #[test]
-    fn test_property_characteristics() {
-        let mut conn = setup_test_db();
-        let prop = Property::new("foundation:hasParent");
-
-        // Assert property
-        prop.assert(
-            &mut conn,
-            PropertyType::ObjectProperty,
-            "has parent",
-            None,
-            &[],
-            None,
-            None,
-            "test"
-        ).unwrap();
-
-        // Add functional characteristic
-        let functional_triple = Triple::new(
-            "foundation:hasParent",
-            rdf::TYPE,
-            Object::Iri(owl::FUNCTIONAL_PROPERTY.to_string())
-        );
-        store::assert_triples(&mut conn, &[functional_triple], "test").unwrap();
-
-        // Get and verify
-        let property = Property::get(&conn, "foundation:hasParent").unwrap().unwrap();
-        assert!(property.is_functional);
-    }
-
-    #[test]
-    fn test_transitive_property_detection() {
-        let mut conn = setup_test_db();
-
-        Property::new("foundation:isAncestorOf").assert(
-            &mut conn,
-            PropertyType::ObjectProperty,
-            "is ancestor of",
-            None,
-            &[],
-            None,
-            None,
-            "test",
-        ).unwrap();
-
-        store::append_triples(&mut conn, &[
-            Triple::new("foundation:isAncestorOf", rdf::TYPE, Object::Iri(owl::TRANSITIVE_PROPERTY.to_string())),
-        ], "test").unwrap();
-
-        let property = Property::get(&conn, "foundation:isAncestorOf").unwrap().unwrap();
-        assert!(property.is_transitive, "property should be detected as transitive");
-        assert!(!property.is_symmetric);
-        assert!(!property.is_functional);
-        assert_eq!(property.property_type, PropertyType::ObjectProperty);
-    }
-
-    #[test]
-    fn test_symmetric_property_detection() {
-        let mut conn = setup_test_db();
-
-        Property::new("foundation:isSiblingOf").assert(
-            &mut conn,
-            PropertyType::ObjectProperty,
-            "is sibling of",
-            None,
-            &[],
-            None,
-            None,
-            "test",
-        ).unwrap();
-
-        store::append_triples(&mut conn, &[
-            Triple::new("foundation:isSiblingOf", rdf::TYPE, Object::Iri(owl::SYMMETRIC_PROPERTY.to_string())),
-        ], "test").unwrap();
-
-        let property = Property::get(&conn, "foundation:isSiblingOf").unwrap().unwrap();
-        assert!(property.is_symmetric, "property should be detected as symmetric");
-        assert!(!property.is_transitive);
-        assert!(!property.is_functional);
-        assert_eq!(property.property_type, PropertyType::ObjectProperty);
-    }
-
-    #[test]
-    fn test_annotation_property_detection() {
-        let mut conn = setup_test_db();
-
-        Property::new("foundation:seeAlso").assert(
-            &mut conn,
-            PropertyType::AnnotationProperty,
-            "see also",
-            None,
-            &[],
-            None,
-            None,
-            "test",
-        ).unwrap();
-
-        let property = Property::get(&conn, "foundation:seeAlso").unwrap().unwrap();
-        assert_eq!(property.property_type, PropertyType::AnnotationProperty);
-        assert!(!property.is_functional);
-        assert!(!property.is_transitive);
-        assert!(!property.is_symmetric);
-    }
-
-    #[test]
-    fn test_transitive_and_symmetric_combined() {
-        let mut conn = setup_test_db();
-
-        Property::new("foundation:equals").assert(
-            &mut conn,
-            PropertyType::ObjectProperty,
-            "equals",
-            None,
-            &[],
-            None,
-            None,
-            "test",
-        ).unwrap();
-
-        store::append_triples(&mut conn, &[
-            Triple::new("foundation:equals", rdf::TYPE, Object::Iri(owl::TRANSITIVE_PROPERTY.to_string())),
-            Triple::new("foundation:equals", rdf::TYPE, Object::Iri(owl::SYMMETRIC_PROPERTY.to_string())),
-        ], "test").unwrap();
-
-        let property = Property::get(&conn, "foundation:equals").unwrap().unwrap();
-        assert!(property.is_transitive);
-        assert!(property.is_symmetric);
-        assert_eq!(property.property_type, PropertyType::ObjectProperty);
-    }
-
-    #[test]
-    fn test_property_without_characteristics_has_all_false() {
-        let mut conn = setup_test_db();
-
-        Property::new("foundation:hasName").assert(
-            &mut conn,
-            PropertyType::DatatypeProperty,
-            "has name",
-            None,
-            &[],
-            Some("xsd:string"),
-            None,
-            "test",
-        ).unwrap();
-
-        let property = Property::get(&conn, "foundation:hasName").unwrap().unwrap();
-        assert!(!property.is_functional);
-        assert!(!property.is_transitive);
-        assert!(!property.is_symmetric);
-        assert_eq!(property.property_type, PropertyType::DatatypeProperty);
-    }
-
-    #[test]
-    fn test_domain_labels_loaded_from_store() {
-        use crate::eavto::{store, Triple, Object};
-        let mut conn = setup_test_db();
-
-        Property::new("foundation:hasFather").assert(
-            &mut conn,
-            PropertyType::ObjectProperty,
-            "has father",
-            None,
-            &["foundation:Person"],
-            Some("foundation:Person"),
-            None,
-            "test",
-        ).unwrap();
-
-        store::assert_triples(&mut conn, &[
-            Triple::new(
-                "test:DomainLabel_1", "rdf:type",
-                Object::Iri("foundation:DomainLabel".to_string()),
-            ),
-            Triple::new(
-                "test:DomainLabel_1", "foundation:onProperty",
-                Object::Iri("foundation:hasFather".to_string()),
-            ),
-            Triple::new(
-                "test:DomainLabel_1", "foundation:forDomain",
-                Object::Iri("foundation:Person".to_string()),
-            ),
-            Triple::new(
-                "test:DomainLabel_1", "foundation:forwardLabel",
-                Object::Literal {
-                    value: "has father".to_string(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                },
-            ),
-            Triple::new(
-                "test:DomainLabel_1", "foundation:inverseLabel",
-                Object::Literal {
-                    value: "has child".to_string(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                },
-            ),
-        ], "test").unwrap();
-
-        let prop = Property::get(&conn, "foundation:hasFather").unwrap().unwrap();
-        assert_eq!(prop.domain_labels.len(), 1);
-        assert_eq!(prop.domain_labels[0].domain, "foundation:Person");
-        assert_eq!(prop.domain_labels[0].forward_label, "has father");
-        assert_eq!(prop.domain_labels[0].inverse_label, Some("has child".to_string()));
-    }
-
-    #[test]
-    fn test_domain_label_without_inverse_is_loaded() {
-        use crate::eavto::{store, Triple, Object};
-        let mut conn = setup_test_db();
-
-        Property::new("foundation:hasMember").assert(
-            &mut conn,
-            PropertyType::ObjectProperty,
-            "has member",
-            None,
-            &[],
-            None,
-            None,
-            "test",
-        ).unwrap();
-
-        store::assert_triples(&mut conn, &[
-            Triple::new(
-                "test:DomainLabel_2", "rdf:type",
-                Object::Iri("foundation:DomainLabel".to_string()),
-            ),
-            Triple::new(
-                "test:DomainLabel_2", "foundation:onProperty",
-                Object::Iri("foundation:hasMember".to_string()),
-            ),
-            Triple::new(
-                "test:DomainLabel_2", "foundation:forDomain",
-                Object::Iri("foundation:Team".to_string()),
-            ),
-            Triple::new(
-                "test:DomainLabel_2", "foundation:forwardLabel",
-                Object::Literal {
-                    value: "member of team".to_string(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                },
-            ),
-        ], "test").unwrap();
-
-        let prop = Property::get(&conn, "foundation:hasMember").unwrap().unwrap();
-        assert_eq!(prop.domain_labels.len(), 1);
-        assert_eq!(prop.domain_labels[0].inverse_label, None);
-    }
-
-    #[test]
-    fn test_ac2_property_without_domain_labels_falls_back_to_rdfs_label() {
-        let mut conn = setup_test_db();
-
-        Property::new("foundation:hasRole").assert(
-            &mut conn,
-            PropertyType::ObjectProperty,
-            "has role",
-            None,
-            &[],
-            None,
-            None,
-            "test",
-        ).unwrap();
-
-        let prop = Property::get(&conn, "foundation:hasRole").unwrap().unwrap();
-        assert!(prop.domain_labels.is_empty(),
-            "AC2: property with no DomainLabel entries must have empty domain_labels");
-        assert_eq!(prop.label, Some("has role".to_string()),
-            "AC2: rdfs:label must be available as fallback when domain_labels is empty");
-    }
-
-    #[test]
-    fn test_ac4_domain_label_without_inverse_falls_back_to_forward_label() {
-        use crate::eavto::{store, Triple, Object};
-        let mut conn = setup_test_db();
-
-        Property::new("foundation:contains").assert(
-            &mut conn,
-            PropertyType::ObjectProperty,
-            "contains",
-            None,
-            &[],
-            None,
-            None,
-            "test",
-        ).unwrap();
-
-        store::assert_triples(&mut conn, &[
-            Triple::new("test:DL_ac4", "rdf:type",
-                Object::Iri("foundation:DomainLabel".to_string())),
-            Triple::new("test:DL_ac4", "foundation:onProperty",
-                Object::Iri("foundation:contains".to_string())),
-            Triple::new("test:DL_ac4", "foundation:forDomain",
-                Object::Iri("foundation:Container".to_string())),
-            Triple::new("test:DL_ac4", "foundation:forwardLabel", Object::Literal {
-                value: "contains".to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }),
-        ], "test").unwrap();
-
-        let prop = Property::get(&conn, "foundation:contains").unwrap().unwrap();
-        let dl = prop.domain_labels.iter()
-            .find(|dl| dl.domain == "foundation:Container")
-            .expect("AC4: DomainLabel entry must be present");
-
-        assert!(dl.inverse_label.is_none(),
-            "AC4: inverse_label must be None when not specified");
-        let resolved_backlink = dl.inverse_label.as_deref().unwrap_or(&dl.forward_label);
-        assert_eq!(resolved_backlink, "contains",
-            "AC4: absent inverse_label falls back to forward_label in backlink resolution");
-    }
-}
+#[path = "property_tests.rs"]
+mod tests;

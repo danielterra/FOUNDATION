@@ -123,16 +123,21 @@ impl Class {
         let properties = Self::get_properties(conn, &iri)?;
 
         let backlink_total: usize = conn.query_row(
-            "SELECT COUNT(DISTINCT subject) FROM triples WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0",
-            rusqlite::params![&iri],
+            "SELECT COUNT(DISTINCT subject) FROM triples t
+             WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0
+               AND t.tx = (SELECT MAX(tx) FROM triples WHERE subject = t.subject AND predicate = 'rdf:type' AND object = ?)",
+            rusqlite::params![&iri, &iri],
             |row| row.get(0),
         ).unwrap_or(0);
 
         let mut instance_stmt = conn.prepare(
-            "SELECT DISTINCT subject FROM triples WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0 ORDER BY tx DESC LIMIT ?"
+            "SELECT DISTINCT subject FROM triples t
+             WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0
+               AND t.tx = (SELECT MAX(tx) FROM triples WHERE subject = t.subject AND predicate = 'rdf:type' AND object = ?)
+             ORDER BY tx DESC LIMIT ?"
         ).map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
         let instance_iris: Vec<String> = instance_stmt
-            .query_map(rusqlite::params![&iri, CLASS_INSTANCE_LIMIT as i64], |row| row.get(0))
+            .query_map(rusqlite::params![&iri, &iri, CLASS_INSTANCE_LIMIT as i64], |row| row.get(0))
             .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?
             .filter_map(|r| r.ok())
             .collect();
@@ -177,6 +182,14 @@ impl Class {
             one_of_values,
             concept_properties,
         }))
+    }
+
+    /// Check if a property is valid for a class (declared, universal, or inherited).
+    /// Much cheaper than Class::get() — does not load instances or backlinks.
+    pub fn has_property(conn: &Connection, class_iri: &str, property_iri: &str) -> bool {
+        Self::get_properties(conn, class_iri)
+            .map(|props| props.iter().any(|(p, _)| p == property_iri))
+            .unwrap_or(false)
     }
 
     /// Get all properties for this class (declared, used, and inherited)

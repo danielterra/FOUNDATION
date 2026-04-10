@@ -52,6 +52,7 @@ impl Individual {
         include_retracted: bool,
         limit: usize,
         offset: usize,
+        sort: Option<&query::SortSpec>,
     ) -> Result<(Vec<String>, usize)> {
         let descendant_iris = Class::get_descendant_iris(conn, class_iri)?;
         let class_iris: Vec<&str> = descendant_iris.iter().map(|s| s.as_str()).collect();
@@ -62,6 +63,7 @@ impl Individual {
             include_retracted,
             limit,
             offset,
+            sort,
         ).map_err(|e| OwlError::DatabaseError(e.to_string()))
     }
 
@@ -220,6 +222,7 @@ mod tests {
             false,
             100,
             0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 1, "Should find 1 result via polymorphic search");
@@ -271,6 +274,7 @@ mod tests {
             false,
             100,
             0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 1);
@@ -400,6 +404,7 @@ mod tests {
                 PropertyFilter::Compare("foundation:dueDate", "2026-03-08", "<="),
             ],
             false, 100, 0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 1, "ISO date filter should match xsd:date stored value");
@@ -435,6 +440,7 @@ mod tests {
                 PropertyFilter::Compare("foundation:dueDate", "2026-03-08", "<="),
             ],
             false, 100, 0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 1, "ISO date filter should match xsd:dateTime by UTC date prefix");
@@ -470,6 +476,7 @@ mod tests {
                 PropertyFilter::Compare("foundation:dueDate", "2026-03-08T23:59:59-03:00", "<="),
             ],
             false, 100, 0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 1, "Local timezone datetime filter should match only same-day tasks");
@@ -500,6 +507,7 @@ mod tests {
             &conn, "foundation:Task",
             &[PropertyFilter::Compare("foundation:dueDate", "2026-03-08", ">")],
             false, 100, 0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 1);
@@ -532,6 +540,7 @@ mod tests {
             &conn, "foundation:Task",
             &[PropertyFilter::Compare("foundation:dueDate", "2026-03-08T12:00:00", "=")],
             false, 100, 0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 1);
@@ -552,6 +561,7 @@ mod tests {
             &conn, "foundation:Task",
             &[PropertyFilter::Compare("foundation:hasStatus", "foundation:Completed", "!=")],
             false, 100, 0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 1);
@@ -583,6 +593,7 @@ mod tests {
             &conn, "foundation:Task",
             &[PropertyFilter::Compare("foundation:dueDate", boundary, "?<=")],
             false, 100, 0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 2, "Should include task without dueDate and task with dueDate <= boundary");
@@ -627,6 +638,7 @@ mod tests {
                 PropertyFilter::Compare("foundation:dueDate", boundary, "?<="),
             ],
             false, 100, 0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 2, "Should return only tasks that are not Completed AND (no dueDate OR dueDate <= boundary)");
@@ -653,12 +665,14 @@ mod tests {
             &conn, "foundation:Task",
             &[PropertyFilter::Compare("foundation:dueDate", "2026-03-08T18:00:00Z", "=")],
             false, 100, 0,
+        None,
         ).unwrap();
 
         let (results_local, _) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
             &[PropertyFilter::Compare("foundation:dueDate", "2026-03-08T15:00:00-03:00", "=")],
             false, 100, 0,
+        None,
         ).unwrap();
 
         assert_eq!(results_utc, results_local,
@@ -690,6 +704,7 @@ mod tests {
             &conn, "foundation:Task",
             &[PropertyFilter::Compare("foundation:dueDate", "", "exists")],
             false, 100, 0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 2);
@@ -716,6 +731,7 @@ mod tests {
             &conn, "foundation:Task",
             &[PropertyFilter::Compare("foundation:dueDate", "", "not_exists")],
             false, 100, 0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 2);
@@ -753,6 +769,7 @@ mod tests {
                 PropertyFilter::Compare("foundation:dueDate", "", "exists"),
             ],
             false, 100, 0,
+        None,
         ).unwrap();
 
         assert_eq!(total, 1);

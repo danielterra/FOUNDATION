@@ -177,3 +177,123 @@ fn test_describe_property_not_found_returns_error() {
     }, None, None);
     assert!(!result.success, "should fail for unknown property IRI");
 }
+
+// ── describe_property IRI validation ─────────────────────────────────────────
+
+#[test]
+fn test_describe_property_valid_prefixed_iri_returns_property_details() {
+    let mut conn = setup_test_db();
+
+    execute_tool(&mut conn, &ToolCall {
+        name: "define_property".to_string(),
+        arguments: serde_json::json!({
+            "operations": [{"iri": "foundation:validPrefixedProp", "label": "Valid Prefixed Prop", "property_type": "datatype"}]
+        }),
+    }, None, None);
+
+    let result = execute_tool(&mut conn, &ToolCall {
+        name: "describe_property".to_string(),
+        arguments: serde_json::json!({"operations": [{"iri": "foundation:validPrefixedProp"}]}),
+    }, None, None);
+    assert!(result.success, "valid prefixed IRI should succeed: {:?}", result.error);
+    let data = result.result.unwrap();
+    assert_eq!(data["results"][0]["iri"].as_str().unwrap(), "foundation:validPrefixedProp");
+}
+
+#[test]
+fn test_describe_property_valid_absolute_iri_passes_validation() {
+    let mut conn = setup_test_db();
+
+    execute_tool(&mut conn, &ToolCall {
+        name: "define_property".to_string(),
+        arguments: serde_json::json!({
+            "operations": [{"iri": "http://example.org/prop", "label": "Example Prop", "property_type": "datatype"}]
+        }),
+    }, None, None);
+
+    let result = execute_tool(&mut conn, &ToolCall {
+        name: "describe_property".to_string(),
+        arguments: serde_json::json!({"operations": [{"iri": "http://example.org/prop"}]}),
+    }, None, None);
+    assert!(result.success, "valid absolute IRI should succeed: {:?}", result.error);
+    let data = result.result.unwrap();
+    assert_eq!(data["results"][0]["iri"].as_str().unwrap(), "http://example.org/prop");
+}
+
+#[test]
+fn test_describe_property_plain_text_iri_returns_invalid_iri_error() {
+    let mut conn = setup_test_db();
+
+    let result = execute_tool(&mut conn, &ToolCall {
+        name: "describe_property".to_string(),
+        arguments: serde_json::json!({"operations": [{"iri": "part of product"}]}),
+    }, None, None);
+    assert!(!result.success, "plain text IRI should fail");
+    let err = result.error.unwrap();
+    assert!(err.contains("Invalid IRI"), "error should contain 'Invalid IRI', got: {err}");
+    assert!(err.contains("query"), "error should suggest using 'query' field, got: {err}");
+}
+
+#[test]
+fn test_describe_property_empty_string_iri_returns_invalid_iri_error() {
+    let mut conn = setup_test_db();
+
+    let result = execute_tool(&mut conn, &ToolCall {
+        name: "describe_property".to_string(),
+        arguments: serde_json::json!({"operations": [{"iri": ""}]}),
+    }, None, None);
+    assert!(!result.success, "empty string IRI should fail");
+    let err = result.error.unwrap();
+    assert!(err.contains("Invalid IRI"), "error should contain 'Invalid IRI', got: {err}");
+}
+
+#[test]
+fn test_describe_property_numeric_string_iri_returns_invalid_iri_error() {
+    let mut conn = setup_test_db();
+
+    let result = execute_tool(&mut conn, &ToolCall {
+        name: "describe_property".to_string(),
+        arguments: serde_json::json!({"operations": [{"iri": "123"}]}),
+    }, None, None);
+    assert!(!result.success, "numeric string IRI should fail");
+    let err = result.error.unwrap();
+    assert!(err.contains("Invalid IRI"), "error should contain 'Invalid IRI', got: {err}");
+}
+
+#[test]
+fn test_describe_property_invalid_iri_error_is_immediate_with_no_lookup() {
+    let mut conn = setup_test_db();
+
+    let result = execute_tool(&mut conn, &ToolCall {
+        name: "describe_property".to_string(),
+        arguments: serde_json::json!({"operations": [{"iri": "no colon here"}]}),
+    }, None, None);
+    assert!(!result.success, "invalid IRI should fail");
+    let err = result.error.unwrap();
+    assert!(err.contains("Invalid IRI"),
+        "error must say 'Invalid IRI' (not 'not found'), confirming no lookup was attempted; got: {err}");
+    assert!(!err.to_lowercase().contains("not found"),
+        "error must not be a NotFound error — lookup must not have been attempted; got: {err}");
+}
+
+#[test]
+fn test_describe_property_query_only_skips_iri_validation() {
+    let mut conn = setup_test_db();
+
+    execute_tool(&mut conn, &ToolCall {
+        name: "define_property".to_string(),
+        arguments: serde_json::json!({
+            "operations": [{"iri": "foundation:statusQueryProp", "label": "StatusQueryLabel", "property_type": "datatype"}]
+        }),
+    }, None, None);
+
+    let result = execute_tool(&mut conn, &ToolCall {
+        name: "describe_property".to_string(),
+        arguments: serde_json::json!({"operations": [{"query": "StatusQueryLabel"}]}),
+    }, None, None);
+    assert!(result.success, "query-only should succeed without IRI validation: {:?}", result.error);
+    let data = result.result.unwrap();
+    let props = data["results"][0]["properties"].as_array().unwrap();
+    assert!(props.iter().any(|p| p["iri"] == "foundation:statusQueryProp"),
+        "search should find the property by label");
+}

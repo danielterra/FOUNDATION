@@ -29,12 +29,63 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         .map(|t| t.iri.clone())
         .collect();
 
+    // Pre-fetch all class objects to avoid redundant Class::get calls.
+    let mut class_cache: HashMap<String, Class> = HashMap::new();
+    for type_thing in &individual.types {
+        if let Ok(Some(class)) = Class::get(conn, &type_thing.iri) {
+            class_cache.insert(type_thing.iri.clone(), class);
+        }
+    }
+
+    // Collect all property IRIs needed (filled + class-defined empty) for a single batch fetch.
+    let filled_iris_set: std::collections::HashSet<&str> = individual.properties.iter()
+        .map(|(iri, _)| iri.as_str())
+        .collect();
+    let mut all_prop_iris: Vec<String> = individual.properties.iter()
+        .map(|(iri, _)| iri.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    {
+        let mut seen = std::collections::HashSet::new();
+        for type_thing in &individual.types {
+            if let Some(class) = class_cache.get(&type_thing.iri) {
+                for (prop_iri, _) in &class.properties {
+                    if !filled_iris_set.contains(prop_iri.as_str()) && seen.insert(prop_iri.clone()) {
+                        all_prop_iris.push(prop_iri.clone());
+                    }
+                }
+            }
+        }
+    }
+    let all_prop_iris_refs: Vec<&str> = all_prop_iris.iter().map(|s| s.as_str()).collect();
+    let prop_cache = Property::get_batch(conn, &all_prop_iris_refs).unwrap_or_default();
+
+    // Pre-fetch Thing metadata for all range/source class IRIs in one batch.
+    let mut thing_iris: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for prop in prop_cache.values() {
+        if let Some(range_iri) = prop.ranges.first() {
+            thing_iris.insert(range_iri.clone());
+        }
+    }
+    for type_thing in &individual.types {
+        if let Some(class) = class_cache.get(&type_thing.iri) {
+            for (_, source_class_iri) in &class.properties {
+                if source_class_iri != &type_thing.iri {
+                    thing_iris.insert(source_class_iri.clone());
+                }
+            }
+        }
+    }
+    let thing_iris_vec: Vec<String> = thing_iris.into_iter().collect();
+    let thing_cache = crate::owl::Thing::get_batch(conn, &thing_iris_vec);
+
     let mut properties = Vec::new();
     for (property_iri, value_obj) in &individual.properties {
-        let prop_result = Property::get(conn, property_iri);
+        let prop_opt = prop_cache.get(property_iri.as_str());
         let (property_label, property_comment, unit, unit_label, is_object_property, prop_ranges,
             ai_behavior_rules) =
-            if let Ok(Some(prop)) = prop_result {
+            if let Some(prop) = prop_opt {
             let label = prop.domain_labels.iter()
                 .find(|dl| entity_class_iris.contains(&dl.domain))
                 .map(|dl| dl.forward_label.clone())
@@ -50,7 +101,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
 
             let is_obj_prop = prop.property_type == crate::owl::PropertyType::ObjectProperty
                 || value_obj.is_iri();
-            (label, comment, unit, unit_label, is_obj_prop, prop.ranges, prop.ai_behavior_rules)
+            (label, comment, unit, unit_label, is_obj_prop, prop.ranges.clone(), prop.ai_behavior_rules.clone())
         } else {
             (property_iri.clone(), None, None, None, value_obj.is_iri(), vec![], None)
         };
@@ -71,7 +122,9 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
 
         let (range_class_iri, range_class_label, range_class_icon) = if is_object_property {
             prop_ranges.first().map(|range_iri| {
-                let range_thing = crate::owl::Thing::get(conn, range_iri);
+                let range_thing = thing_cache.get(range_iri)
+                    .cloned()
+                    .unwrap_or_else(|| crate::owl::Thing::get(conn, range_iri));
                 (Some(range_iri.clone()), Some(range_thing.label), range_thing.icon)
             }).unwrap_or((None, None, None))
         } else {
@@ -150,19 +203,21 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         let mut seen = std::collections::HashSet::new();
 
         for type_thing in &individual.types {
-            if let Ok(Some(class)) = Class::get(conn, &type_thing.iri) {
+            if let Some(class) = class_cache.get(&type_thing.iri) {
                 for (prop_iri, source_class_iri) in &class.properties {
                     if filled_iris.contains(prop_iri) { continue; }
                     if !seen.insert(prop_iri.clone()) { continue; }
 
-                    let Ok(Some(prop)) = Property::get(conn, prop_iri) else { continue };
+                    let Some(prop) = prop_cache.get(prop_iri.as_str()) else { continue };
 
-                    let property_label = prop.label.unwrap_or_else(|| prop_iri.clone());
-                    let property_comment = prop.comment;
+                    let property_label = prop.label.clone().unwrap_or_else(|| prop_iri.clone());
+                    let property_comment = prop.comment.clone();
                     let is_object_property = prop.property_type == crate::owl::PropertyType::ObjectProperty;
 
                     let (source_class, source_class_label, source_class_icon) = if source_class_iri != &type_thing.iri {
-                        let source_thing = crate::owl::Thing::get(conn, source_class_iri);
+                        let source_thing = thing_cache.get(source_class_iri)
+                            .cloned()
+                            .unwrap_or_else(|| crate::owl::Thing::get(conn, source_class_iri));
                         (Some(source_class_iri.clone()), Some(source_thing.label), source_thing.icon)
                     } else {
                         (None, None, None)
@@ -176,7 +231,9 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
 
                     let (range_class_iri, range_class_label, range_class_icon) = if is_object_property {
                         prop.ranges.first().map(|range_iri| {
-                            let range_thing = crate::owl::Thing::get(conn, range_iri);
+                            let range_thing = thing_cache.get(range_iri)
+                                .cloned()
+                                .unwrap_or_else(|| crate::owl::Thing::get(conn, range_iri));
                             (Some(range_iri.clone()), Some(range_thing.label), range_thing.icon)
                         }).unwrap_or((None, None, None))
                     } else {
@@ -438,7 +495,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         });
     }
 
-    let mut backlinks = Vec::new();
+    let backlinks: Vec<PropertyValue> = Vec::new();
     for b in &individual.backlinks {
         let (property_label, property_comment) = {
             let cached = prop_cache.get(&b.predicate);
@@ -471,7 +528,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             .and_then(|status_iri| status_cache.get(status_iri))
             .cloned();
 
-        backlinks.push(PropertyValue {
+        properties.push(PropertyValue {
             property: b.predicate.clone(),
             property_label,
             property_comment,

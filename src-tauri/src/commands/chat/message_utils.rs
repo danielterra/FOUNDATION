@@ -328,12 +328,16 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
         );
 
         if let MessageContent::ContentBlocks(ref mut blocks) = messages[next].content {
+            // Prepend so tool_result blocks come before any text blocks — the Claude API
+            // requires tool_result blocks to appear before other content in user messages.
+            let mut pos = 0;
             for id in missing {
-                blocks.push(ApiContentBlock::ToolResult {
+                blocks.insert(pos, ApiContentBlock::ToolResult {
                     tool_use_id: id,
                     content: "Tool result unavailable (conversation was interrupted)".to_string(),
                     is_error: Some(true),
                 });
+                pos += 1;
             }
         }
     }

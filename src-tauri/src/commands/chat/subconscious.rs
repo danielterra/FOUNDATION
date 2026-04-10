@@ -1,4 +1,3 @@
-use crate::eavto::query::PropertyFilter;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +9,6 @@ pub struct SubconsciousEntity {
     pub type_label: String,
     pub icon: Option<String>,
     pub score: f32,
-    pub is_open_loop: bool,
     pub properties: Vec<(String, String)>,
 }
 
@@ -51,7 +49,7 @@ pub fn run_subconscious(content: &str, exclude_iri: Option<&str>, conn: &Connect
     for (iri, score) in &concept_hits {
         if exclude_iri.map_or(false, |ex| ex == iri) { continue; }
         if !seen_iris.insert(iri.clone()) { continue; }
-        match enrich(conn, iri, *score, false) {
+        match enrich(conn, iri, *score) {
             Some(entity) => entities.push(entity),
             None => crate::commands::log_backend("debug", &format!(
                 "[subconscious] enrich failed for {} (score={:.3})", iri, score
@@ -81,7 +79,7 @@ pub fn run_subconscious(content: &str, exclude_iri: Option<&str>, conn: &Connect
     for (iri, score) in &scored {
         if exclude_iri.map_or(false, |ex| ex == iri) { continue; }
         if !seen_iris.insert(iri.clone()) { continue; }
-        match enrich(conn, iri, *score, false) {
+        match enrich(conn, iri, *score) {
             Some(entity) => entities.push(entity),
             None => crate::commands::log_backend("debug", &format!(
                 "[subconscious] enrich failed for {} (score={:.3})", iri, score
@@ -89,24 +87,10 @@ pub fn run_subconscious(content: &str, exclude_iri: Option<&str>, conn: &Connect
         }
     }
 
-    let open_loops = query_open_loops(conn);
-    crate::commands::log_backend("debug", &format!(
-        "[subconscious] open loops: {}", open_loops.len()
-    ));
-    for iri in open_loops {
-        if entities.iter().any(|e| e.iri == iri) {
-            continue;
-        }
-        if let Some(entity) = enrich(conn, &iri, 1.0, true) {
-            entities.push(entity);
-        }
-    }
-
     entities
 }
 
 const MESSAGE_LABEL_LEN: usize = 120;
-const OPEN_LOOPS_LIMIT: usize = 10;
 const PROPERTY_TRUNCATE_LEN: usize = 255;
 const TRUNCATE_SUFFIX: &str = "...[truncated content]";
 
@@ -199,12 +183,7 @@ fn fetch_properties(conn: &Connection, iri: &str) -> Vec<(String, String)> {
     }).collect()
 }
 
-fn enrich(
-    conn: &Connection,
-    iri: &str,
-    score: f32,
-    is_open_loop: bool,
-) -> Option<SubconsciousEntity> {
+fn enrich(conn: &Connection, iri: &str, score: f32) -> Option<SubconsciousEntity> {
     let instance_type = conn.query_row(
         "SELECT object FROM triples
          WHERE subject = ?1 AND retracted = 0 AND predicate = 'rdf:type'
@@ -283,7 +262,6 @@ fn enrich(
         type_label,
         icon,
         score,
-        is_open_loop,
         properties,
     })
 }
@@ -306,109 +284,23 @@ fn extract_content_text(raw: &str) -> String {
     raw.to_string()
 }
 
-const CLOSED_ROOT_STATUSES: &[&str] = &["foundation:Completed", "foundation:Blocked"];
-
-fn closed_status_iris(conn: &Connection) -> Vec<String> {
-    let mut closed: std::collections::HashSet<String> =
-        CLOSED_ROOT_STATUSES.iter().map(|s| s.to_string()).collect();
-    loop {
-        let prev_len = closed.len();
-        let parents: Vec<String> = closed.iter().cloned().collect();
-        for parent in &parents {
-            let children: Vec<String> = conn.prepare(
-                "SELECT subject FROM triples
-                 WHERE predicate = 'foundation:parentStatus' AND object = ?1
-                   AND subject != ?1 AND retracted = 0",
-            ).ok()
-            .and_then(|mut stmt| {
-                stmt.query_map([parent], |r| r.get(0)).ok()
-                    .map(|iter| iter.filter_map(|r| r.ok()).collect())
-            })
-            .unwrap_or_default();
-            closed.extend(children);
-        }
-        if closed.len() == prev_len { break; }
-    }
-    closed.into_iter().collect()
-}
-
-fn query_open_loops(conn: &Connection) -> Vec<String> {
-    use chrono::Datelike;
-
-    let tomorrow = chrono::Local::now() + chrono::Duration::days(1);
-    let tomorrow_str = tomorrow.format("%Y-%m-%d").to_string();
-
-    let closed = closed_status_iris(conn);
-    let closed_refs: Vec<&str> = closed.iter().map(String::as_str).collect();
-
-    let props = &[
-        PropertyFilter::NotIn("foundation:hasStatus", &closed_refs),
-        PropertyFilter::Compare("foundation:dueDate", &tomorrow_str, "?<="),
-    ];
-
-    let mut results = Vec::new();
-    for class_iri in &["foundation:Task", "foundation:UserProblem"] {
-        if let Ok((iris, _)) = crate::owl::Individual::find_by_class_and_properties_with_options(
-            conn, class_iri, props, false, usize::MAX, 0,
-        ) {
-            results.extend(iris);
-        }
-    }
-
-    let today_day = chrono::Local::now().day().to_string();
-    let tomorrow_day = tomorrow.day().to_string();
-    for day_str in [today_day.as_str(), tomorrow_day.as_str()] {
-        let props = &[PropertyFilter::Compare("foundation:dueDayOfMonth", day_str, "=")];
-        if let Ok((iris, _)) = crate::owl::Individual::find_by_class_and_properties_with_options(
-            conn, "foundation:RecurringPurchase", props, false, usize::MAX, 0,
-        ) {
-            results.extend(iris);
-        }
-    }
-
-    results.truncate(OPEN_LOOPS_LIMIT);
-    results
-}
-
 pub fn format_context(entities: &[SubconsciousEntity]) -> Option<String> {
     if entities.is_empty() {
         return None;
     }
 
-    let relevant: Vec<_> = entities.iter().filter(|e| !e.is_open_loop).collect();
-    let open_loops: Vec<_> = entities.iter().filter(|e| e.is_open_loop).collect();
-
-    let mut parts: Vec<String> = Vec::new();
-
-    if !relevant.is_empty() {
-        let header = concat!(
-            "## Memory Context\n",
-            "Relevant entities from your knowledge graph (ranked by relevance):");
-        let mut lines = vec![header.to_string()];
-        for (i, e) in relevant.iter().enumerate() {
-            lines.push(format!("{}. \"{}\" [{}] — {}", i + 1, e.label, e.type_label, e.iri));
-            for (key, val) in &e.properties {
-                lines.push(format!("   - {}: {}", key, val));
-            }
+    let header = concat!(
+        "## Memory Context\n",
+        "Relevant entities from your knowledge graph (ranked by relevance):");
+    let mut lines = vec![header.to_string()];
+    for (i, e) in entities.iter().enumerate() {
+        lines.push(format!("{}. \"{}\" [{}] — {}", i + 1, e.label, e.type_label, e.iri));
+        for (key, val) in &e.properties {
+            lines.push(format!("   - {}: {}", key, val));
         }
-        parts.push(lines.join("\n"));
     }
 
-    if !open_loops.is_empty() {
-        let header = concat!(
-            "## Open Loops\n",
-            "Pending problems and tasks requiring your attention:");
-        let mut lines = vec![header.to_string()];
-        for e in &open_loops {
-            lines.push(format!("- [{}] \"{}\" — {}", e.type_label, e.label, e.iri));
-            for (key, val) in &e.properties {
-                lines.push(format!("   - {}: {}", key, val));
-            }
-        }
-        parts.push(lines.join("\n"));
-    }
-
-    Some(parts.join("\n\n"))
+    Some(lines.join("\n"))
 }
 
 #[cfg(test)]
