@@ -307,7 +307,7 @@ pub async fn run_conversation_loop(
         ).await?;
 
         log_backend("info", &format!("[ENGINE] Created assistant message: {}", assistant_msg_iri));
-        app.emit("chat-message-added", ()).ok();
+        app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
 
         let has_tool_use = !api_response.tool_calls.is_empty();
         if stop_reason == "tool_use" || (stop_reason == "max_tokens" && has_tool_use) {

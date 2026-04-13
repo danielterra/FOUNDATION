@@ -5,6 +5,8 @@
 	import { marked } from 'marked';
 	import { onMount, onDestroy } from 'svelte';
 	import moment from 'moment';
+	import { modal } from '$lib/stores/modal';
+	import MarkdownValue from './widgets/inspector/MarkdownValue.svelte';
 
 	function subconsciousSummary(entities) {
 		const relevant = entities.filter(e => !e.is_open_loop);
@@ -86,6 +88,32 @@
 	let copyTimeout = null;
 	let now = $state(Date.now());
 	let ticker;
+
+	function openSubconsciousModal(entities) {
+		const ctx = formatSubconsciousContext(entities);
+		modal.set({ title: 'Contexto de Memória', html: marked.parse(ctx) });
+	}
+
+	function openToolModal(group) {
+		const name = group.toolUse?.name ?? 'unknown';
+		const sections = [];
+		if (group.toolUse?.input) {
+			sections.push({ label: 'Request', content: JSON.stringify(group.toolUse.input, null, 2) });
+		}
+		if (group.toolResult) {
+			sections.push({
+				label: 'Response',
+				content: (() => {
+					const c = group.toolResult.content;
+					if (typeof c === 'object') return JSON.stringify(c, null, 2);
+					if (typeof c === 'string') { try { return JSON.stringify(JSON.parse(c), null, 2); } catch { return c; } }
+					return String(c);
+				})(),
+				isError: !!group.toolResult.is_error,
+			});
+		}
+		modal.set({ title: name, sections });
+	}
 
 	onMount(() => {
 		ticker = setInterval(() => { now = Date.now(); }, 30_000);
@@ -249,14 +277,11 @@
 	<div class="message-content">
 		{#if message.role === 'user' && message.subconscious_entities?.length > 0}
 			{@const ctx = formatSubconsciousContext(message.subconscious_entities)}
-			<details class="subconscious-chip">
-				<summary class="subconscious-chip-summary">
-					<span class="material-symbols-outlined subconscious-icon">neurology</span>
-					<span class="subconscious-summary-text">{subconsciousSummary(message.subconscious_entities)}</span>
-					<span class="subconscious-tokens">~{estimateTokens(ctx).toLocaleString()} tokens</span>
-				</summary>
-				<div class="subconscious-context markdown-body">{@html marked.parse(ctx)}</div>
-			</details>
+			<button class="subconscious-chip-summary" onclick={() => openSubconsciousModal(message.subconscious_entities)}>
+				<span class="material-symbols-outlined subconscious-icon">neurology</span>
+				<span class="subconscious-summary-text">{subconsciousSummary(message.subconscious_entities)}</span>
+				<span class="subconscious-tokens">~{estimateTokens(ctx).toLocaleString()} tokens</span>
+			</button>
 		{/if}
 		<div class="message-bubble" class:streaming={isStreaming}>
 		{#if message.isThinking}
@@ -299,7 +324,7 @@
 				{#if isStreaming}
 					<div class="message-text streaming-text">{displayText}<span class="stream-cursor">▋</span></div>
 				{:else}
-					<div class="message-text markdown-content">{@html renderMarkdown(displayText)}</div>
+					<div class="message-text"><MarkdownValue value={displayText} openEntityInspector={onEntityClick} /></div>
 				{/if}
 			{/if}
 			{#if hasQuestionOutput(message)}
@@ -311,9 +336,7 @@
 		{:else if message.role === 'user'}
 			{@const displayText = getDisplayText(message)}
 			{#if displayText}
-				<div class="message-text markdown-content">
-					{@html renderMarkdown(displayText)}
-				</div>
+				<div class="message-text"><MarkdownValue value={displayText} openEntityInspector={onEntityClick} /></div>
 			{/if}
 		{/if}
 
@@ -345,8 +368,11 @@
 							title="Click to open in default app"
 						>
 							<div class="pdf-preview">
-								<span class="material-symbols-outlined">picture_as_pdf</span>
-								<span class="pdf-label">PDF</span>
+								<iframe
+									src={convertFileSrc(attachment.filePath)}
+									scrolling="no"
+									title={attachment.fileName}
+								></iframe>
 							</div>
 							<div class="attachment-info">
 								<span class="attachment-name">{attachment.fileName}</span>
@@ -377,30 +403,17 @@
 			{#if toolGroups.length > 0}
 			<div class="tool-chips">
 				{#each toolGroups as group}
-					<details class="tool-chip">
-						<summary class="tool-chip-summary {group.toolResult ? (group.toolResult.is_error ? 'error' : 'success') : 'pending'}">
-							<span class="material-symbols-outlined tool-chip-icon">
-								{group.toolResult
-									? (group.toolResult.is_error ? 'error' : 'check_circle')
-									: 'pending'}
-							</span>
-							<span class="tool-chip-name">{group.toolUse ? group.toolUse.name : 'unknown'}</span>
-						</summary>
-						<div class="tool-chip-content">
-							{#if group.toolUse?.input}
-								<div class="tool-chip-section">
-									<span class="tool-chip-label">Request</span>
-									<pre class="tool-chip-json">{@html highlightJson(JSON.stringify(group.toolUse.input, null, 2))}</pre>
-								</div>
-							{/if}
-							{#if group.toolResult}
-								<div class="tool-chip-section">
-									<span class="tool-chip-label {group.toolResult.is_error ? 'error' : ''}">Response</span>
-									<pre class="tool-chip-json tool-chip-result {group.toolResult.is_error ? 'error' : ''}">{@html highlightJson(formatJson(group.toolResult.content))}</pre>
-								</div>
-							{/if}
-						</div>
-					</details>
+					<button
+						class="tool-chip-summary {group.toolResult ? (group.toolResult.is_error ? 'error' : 'success') : 'pending'}"
+						onclick={() => openToolModal(group)}
+					>
+						<span class="material-symbols-outlined tool-chip-icon">
+							{group.toolResult
+								? (group.toolResult.is_error ? 'error' : 'check_circle')
+								: 'pending'}
+						</span>
+						<span class="tool-chip-name">{group.toolUse ? group.toolUse.name : 'unknown'}</span>
+					</button>
 				{/each}
 			</div>
 			{/if}
@@ -472,7 +485,6 @@
 		transition: opacity 0.15s;
 		z-index: 1;
 		background: color-mix(in srgb, var(--color-black) 75%, transparent);
-		border-radius: 6px;
 		padding: 2px;
 		backdrop-filter: blur(8px);
 	}
@@ -485,7 +497,6 @@
 	.action-btn {
 		width: 24px;
 		height: 24px;
-		border-radius: 4px;
 		background: transparent;
 		border: none;
 		color: var(--color-interactive);
@@ -517,27 +528,23 @@
 		gap: 8px;
 		min-width: 0;
 		padding: 8px 12px;
-		border-radius: 10px;
 	}
 
 	.message.user .message-bubble {
 		background: color-mix(in srgb, var(--color-white) 16%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-white) 28%, transparent);
 	}
 
 	.message.ai .message-bubble {
 		background: color-mix(in srgb, var(--color-white) 4%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
 	}
 
 	.message.ai .message-bubble.streaming {
 		background: color-mix(in srgb, var(--color-transition) 6%, transparent);
-		border-color: color-mix(in srgb, var(--color-transition) 25%, transparent);
 	}
 
 	.message-text {
 		line-height: 1.4;
-		font-size: 13px;
+		font-size: 14px;
 		color: var(--color-neutral-active);
 		word-wrap: break-word;
 		overflow-wrap: break-word;
@@ -564,7 +571,6 @@
 		gap: 6px;
 		background: color-mix(in srgb, var(--color-white) 8%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-		border-radius: 8px;
 		padding: 8px;
 		cursor: pointer;
 		transition: all 0.2s;
@@ -580,7 +586,6 @@
 	.attachment-image img {
 		width: 100%;
 		height: 120px;
-		border-radius: 6px;
 		object-fit: cover;
 		background: color-mix(in srgb, var(--color-black) 5%, transparent);
 	}
@@ -593,20 +598,18 @@
 		justify-content: center;
 		height: 120px;
 		background: color-mix(in srgb, var(--color-white) 5%, transparent);
-		border-radius: 6px;
 	}
 
-	.pdf-preview .material-symbols-outlined,
+	.pdf-preview iframe {
+		width: 100%;
+		height: 100%;
+		border: none;
+		pointer-events: none;
+	}
+
 	.file-preview .material-symbols-outlined {
 		font-size: 48px;
 		opacity: 0.4;
-	}
-
-	.pdf-label {
-		font-size: 14px;
-		font-weight: 600;
-		opacity: 0.6;
-		margin-top: 4px;
 	}
 
 	.attachment-info {
@@ -657,10 +660,8 @@
 		gap: 2px;
 		font-size: 9px;
 		font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
-		color: var(--color-neutral-disabled);
+		color: #989898;
 		background: color-mix(in srgb, var(--color-white) 6%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-		border-radius: 10px;
 		padding: 1px 6px;
 		line-height: 1.6;
 		opacity: 0.7;
@@ -673,7 +674,6 @@
 
 	.reasoning-block {
 		margin-bottom: 8px;
-		border-radius: 6px;
 		background: color-mix(in srgb, var(--color-white) 4%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
 		overflow: hidden;
@@ -709,7 +709,7 @@
 	.reasoning-content {
 		padding: 8px 12px 10px;
 		border-top: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
-		font-size: 13px;
+		font-size: 14px;
 		opacity: 0.75;
 	}
 
@@ -745,7 +745,6 @@
 	.thinking-dots span {
 		width: 8px;
 		height: 8px;
-		border-radius: 50%;
 		background: var(--color-interactive);
 		animation: thinking-bounce 1.4s infinite ease-in-out;
 	}
@@ -794,11 +793,6 @@
 		gap: 1px;
 	}
 
-	.tool-chip {
-		border-radius: 6px;
-		overflow: hidden;
-	}
-
 	.tool-chip-summary {
 		display: flex;
 		align-items: center;
@@ -806,11 +800,11 @@
 		padding: 2px 0;
 		cursor: pointer;
 		user-select: none;
-		list-style: none;
+		background: none;
+		border: none;
+		color: inherit;
 		width: fit-content;
 	}
-
-	.tool-chip-summary::-webkit-details-marker { display: none; }
 
 	.tool-chip-icon {
 		font-size: 12px;
@@ -819,7 +813,8 @@
 
 	.tool-chip-summary.success .tool-chip-icon { color: var(--color-success); opacity: 1; }
 	.tool-chip-summary.error .tool-chip-icon { color: var(--color-error); opacity: 1; }
-	.tool-chip-summary.pending .tool-chip-icon { color: var(--color-neutral); }
+	.tool-chip-summary.pending .tool-chip-icon { color: var(--color-transition); opacity: 1; animation: thinking-pulse 1.5s infinite ease-in-out; }
+	.tool-chip-summary.pending .tool-chip-name { color: var(--color-transition); animation: thinking-pulse 1.5s infinite ease-in-out; }
 
 	.tool-chip-name {
 		font-size: 11px;
@@ -827,85 +822,19 @@
 		font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
 	}
 
-	.tool-chip-content {
-		margin-top: 4px;
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-
-	.tool-chip-section {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-
-	.tool-chip-label {
-		font-size: 9px;
-		font-weight: 600;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--color-neutral-disabled);
-		padding-left: 2px;
-	}
-
-	.tool-chip-label.error {
-		color: var(--color-error);
-	}
-
-	.tool-chip-json {
-		margin: 0;
-		padding: 8px;
-		background: color-mix(in srgb, var(--color-white) 4%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
-		border-radius: 6px;
-		font-size: 10px;
-		font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
-		overflow-x: auto;
-		white-space: pre-wrap;
-		word-break: break-all;
-		max-height: 200px;
-		overflow-y: auto;
-		color: var(--color-neutral);
-		line-height: 1.5;
-	}
-
-	.tool-chip-result.error {
-		border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
-	}
-
-	.tool-chip-json :global(.json-key)     { color: #9cdcfe; }
-	.tool-chip-json :global(.json-string)  { color: #ce9178; }
-	.tool-chip-json :global(.json-number)  { color: #b5cea8; }
-	.tool-chip-json :global(.json-boolean) { color: #569cd6; }
-	.tool-chip-json :global(.json-null)    { color: #569cd6; }
-
-	.subconscious-chip {
-		margin-bottom: 2px;
-	}
 
 	.subconscious-chip-summary {
 		display: inline-flex;
 		align-items: center;
 		gap: 5px;
 		padding: 2px 8px 2px 5px;
-		border-radius: 12px;
-		border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
 		background: color-mix(in srgb, var(--color-interactive) 8%, transparent);
 		color: color-mix(in srgb, var(--color-interactive) 85%, var(--color-neutral-disabled));
 		cursor: pointer;
 		font-size: 10px;
 		line-height: 1.4;
-		list-style: none;
 		user-select: none;
-		transition: background 0.15s, border-color 0.15s;
-	}
-
-	.subconscious-chip-summary::-webkit-details-marker { display: none; }
-
-	.subconscious-chip-summary:hover {
-		background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-		border-color: color-mix(in srgb, var(--color-interactive) 55%, transparent);
+		border: none;
 	}
 
 	.subconscious-icon {
@@ -925,74 +854,5 @@
 		font-weight: 500;
 	}
 
-	.subconscious-context {
-		margin: 4px 0 0;
-		padding: 8px 10px;
-		border-radius: 6px;
-		background: color-mix(in srgb, var(--color-interactive) 5%, var(--color-surface-2, #0f172a));
-		border: 1px solid color-mix(in srgb, var(--color-interactive) 20%, transparent);
-		font-size: 10px;
-		line-height: 1.6;
-		color: var(--color-neutral);
-		word-break: break-word;
-		overflow-x: auto;
-		max-height: 400px;
-		overflow-y: auto;
-	}
-
-	.subconscious-context :global(h1),
-	.subconscious-context :global(h2),
-	.subconscious-context :global(h3) {
-		font-size: 11px;
-		font-weight: 600;
-		margin: 8px 0 2px;
-		color: color-mix(in srgb, var(--color-interactive) 85%, var(--color-neutral));
-	}
-
-	.subconscious-context :global(p) {
-		margin: 2px 0;
-	}
-
-	.subconscious-context :global(ul),
-	.subconscious-context :global(ol) {
-		margin: 2px 0;
-		padding-left: 16px;
-	}
-
-	.subconscious-context :global(li) {
-		margin: 1px 0;
-	}
-
-	.subconscious-context :global(code) {
-		font-family: monospace;
-		font-size: 9px;
-		background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
-		padding: 1px 3px;
-		border-radius: 3px;
-	}
-
-	.subconscious-context :global(pre) {
-		background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
-		padding: 6px 8px;
-		border-radius: 4px;
-		overflow-x: auto;
-		margin: 4px 0;
-	}
-
-	.subconscious-context :global(pre code) {
-		background: none;
-		padding: 0;
-	}
-
-	.subconscious-context :global(strong) {
-		font-weight: 600;
-		color: color-mix(in srgb, var(--color-neutral) 90%, var(--color-interactive));
-	}
-
-	.subconscious-context :global(hr) {
-		border: none;
-		border-top: 1px solid color-mix(in srgb, var(--color-interactive) 20%, transparent);
-		margin: 6px 0;
-	}
 
 </style>

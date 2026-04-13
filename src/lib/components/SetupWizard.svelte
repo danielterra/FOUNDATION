@@ -242,7 +242,6 @@
 		color: var(--color-neutral);
 		border: 1px solid var(--color-border);
 		padding: 0.75rem 1rem;
-		border-radius: 8px;
 		font-size: 1rem;
 		cursor: pointer;
 		transition: all 0.2s;
@@ -281,7 +280,6 @@
 		color: var(--color-neutral-on-interactive);
 		border: none;
 		padding: 1rem 3rem;
-		border-radius: 8px;
 		font-size: 1.125rem;
 		font-weight: 600;
 		text-transform: uppercase;

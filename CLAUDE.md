@@ -1,337 +1,157 @@
-# AI Assistant Guidelines for FOUNDATION Project
+# Diretrizes do Assistente de IA para o Projeto FOUNDATION
 
-This document contains specific instructions for AI assistants working on the FOUNDATION project.
+## Regra Meta
 
-## 📋 Meta Rule - Document Maintenance
+**CRÍTICO: Sempre que o usuário corrigir você ou indicar uma preferência, ATUALIZE IMEDIATAMENTE este CLAUDE.md.**
 
-**⚠️ CRITICAL RULE: Whenever the user corrects you or indicates a preference, IMMEDIATELY UPDATE this CLAUDE.md document to record the correction/preference.**
+Adicione regras explícitas para feedback negativo; documente diretivas "sempre faça X / nunca faça Y"; confirme ao usuário após atualizar.
 
-- When you receive negative feedback about an action taken → add an explicit rule
-- When the user indicates "always do X" or "never do Y" → document it here
-- When there is a behavior correction → create an appropriate section if necessary
-- This document should evolve continuously with the user's preferences
-- Always confirm to the user when you update this document
+## Depuração
 
-## Debugging Guide
+**Fluxo de trabalho:** logs → histórico de mensagens → banco de dados → código (nesta ordem). Nunca faça perguntas que você mesmo pode responder.
 
-### 🔍 Investigation Workflow
+### Logs da Aplicação
 
-When debugging or investigating problems, follow this systematic approach:
-
-1. **Check the centralized logs** (frontend + backend combined)
-2. **Query message history** to understand recent interactions
-3. **Inspect the database** for data-related issues
-4. **Review the code** only after gathering context from logs and data
-
-**⚠️ CRITICAL: Don't ask questions you can find the answer to yourself** - directly investigate logs, database, and code before asking the user.
-
-### 📋 Application Logs
-
-- **ALWAYS consult the centralized logs when investigating problems**
-- All frontend and backend errors are logged centrally in one place
-- Logs include timestamps, log levels, and full stack traces
-
-**Commands:**
 ```bash
-npm run logs          # View last 100 lines
-npm run logs 500      # View last 500 lines
-npm run logs 1000     # View last 1000 lines for deeper investigation
-```
-
-**Direct log access:**
-```bash
+npm run logs          # últimas 100 linhas
+npm run logs 500      # últimas 500 linhas
+npm run logs 1000     # últimas 1000 linhas
+# ou diretamente:
 tail -f ~/Library/Application\ Support/org.w3id.foundation/application.log
 ```
 
-### 💬 Message History
+### Histórico de Mensagens
 
-Chat messages are stored as RDF triples in the `triples` table using the `foundation:AIConversationMessage` class.
+As mensagens de chat usam a classe `foundation:AIConversationMessage` na tabela `triples`:
 
-**Triple properties per message:**
-- `rdf:type = foundation:AIConversationMessage`
-- `foundation:role`: `'user'` or `'assistant'` (literal in `object_value`)
-- `foundation:content`: message content JSON (literal in `object_value`)
-- `foundation:sentAt`: Unix timestamp in milliseconds — stored as `object_datetime` (integer), NOT `object_value`
-- `foundation:partOfConversation`: conversation IRI (in `object`)
-- `foundation:sender` / `foundation:receiver`: participant IRIs (in `object`)
+- `foundation:role` / `foundation:content` — literais em `object_value`
+- `foundation:sentAt` — timestamp Unix ms em `object_datetime` (integer), NÃO em `object_value`
+- `foundation:partOfConversation` / `foundation:sender` / `foundation:receiver` — IRIs em `object`
 
-**Common queries:**
+### Inspeção do Banco de Dados
 
 ```sql
--- View latest messages across all conversations
-sqlite3 ~/Documents/Foundation/FOUNDATION.db "
-SELECT datetime(t_time.object_datetime / 1000, 'unixepoch', 'localtime') as time,
-       t_role.object_value as role,
-       substr(t_content.object_value, 1, 80) || '...' as preview
-FROM triples t_time
-JOIN triples t_role ON t_role.subject = t_time.subject
-  AND t_role.predicate = 'foundation:role' AND t_role.retracted = 0
-JOIN triples t_content ON t_content.subject = t_time.subject
-  AND t_content.predicate = 'foundation:content' AND t_content.retracted = 0
-WHERE t_time.predicate = 'foundation:sentAt' AND t_time.retracted = 0
-ORDER BY t_time.object_datetime DESC
-LIMIT 20;"
-
--- View messages from a specific conversation (look up the conversation IRI first via search)
-sqlite3 ~/Documents/Foundation/FOUNDATION.db "
-SELECT datetime(t_time.object_datetime / 1000, 'unixepoch', 'localtime') as time,
-       t_role.object_value as role,
-       substr(t_content.object_value, 1, 100) || '...' as preview
-FROM triples t_time
-JOIN triples t_conv ON t_conv.subject = t_time.subject
-  AND t_conv.predicate = 'foundation:partOfConversation' AND t_conv.retracted = 0
-JOIN triples t_role ON t_role.subject = t_time.subject
-  AND t_role.predicate = 'foundation:role' AND t_role.retracted = 0
-JOIN triples t_content ON t_content.subject = t_time.subject
-  AND t_content.predicate = 'foundation:content' AND t_content.retracted = 0
-WHERE t_time.predicate = 'foundation:sentAt' AND t_time.retracted = 0
-  AND t_conv.object = '<conversation_iri>'
-ORDER BY t_time.object_datetime;"
-
--- Find messages containing specific text
-sqlite3 ~/Documents/Foundation/FOUNDATION.db "
-SELECT datetime(t_time.object_datetime / 1000, 'unixepoch', 'localtime') as time,
-       t_role.object_value as role,
-       t_content.object_value as content
-FROM triples t_time
-JOIN triples t_role ON t_role.subject = t_time.subject
-  AND t_role.predicate = 'foundation:role' AND t_role.retracted = 0
-JOIN triples t_content ON t_content.subject = t_time.subject
-  AND t_content.predicate = 'foundation:content' AND t_content.retracted = 0
-WHERE t_time.predicate = 'foundation:sentAt' AND t_time.retracted = 0
-  AND t_content.object_value LIKE '%search_term%'
-ORDER BY t_time.object_datetime DESC
-LIMIT 10;"
-
--- Count messages by role
-sqlite3 ~/Documents/Foundation/FOUNDATION.db "
-SELECT object_value as role, COUNT(DISTINCT subject) as count
-FROM triples
-WHERE predicate = 'foundation:role' AND retracted = 0
-  AND subject IN (
-    SELECT subject FROM triples
-    WHERE predicate = 'rdf:type' AND object = 'foundation:AIConversationMessage' AND retracted = 0
-  )
-GROUP BY object_value;"
-```
-
-### 🗄️ Database Inspection
-
-**Always use SELECT queries** to inspect data before making assumptions:
-
-```sql
--- List all tables
 sqlite3 ~/Documents/Foundation/FOUNDATION.db ".tables"
-
--- View table schema
 sqlite3 ~/Documents/Foundation/FOUNDATION.db ".schema table_name"
-
--- Count triples
-sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT COUNT(*) FROM triples;"
-
--- View recent triples
-sqlite3 ~/Documents/Foundation/FOUNDATION.db "
-SELECT subject, predicate, COALESCE(object, object_value) as value
-FROM triples
-ORDER BY rowid DESC
-LIMIT 20;"
+sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT subject, predicate, COALESCE(object, object_value) FROM triples ORDER BY rowid DESC LIMIT 20;"
 ```
 
-## Foundation MCP Tools
+## Banco de Dados & Armazenamento
 
-Current tools (22 total): `define_class`, `define_property`, `assert_individual`, `add_property_values`, `replace_property_values`, `remove_property_values`, `clear_property`, `retract_individual`, `retract_class`, `retract_property`, `restore_individual`, `restore_class`, `restore_property`, `search`, `describe_class`, `describe_individual`, `describe_property`, `head_file`, `read_lines`, `class_graph`, `get_automation`, `run_automation`
+- **DB**: `~/Documents/Foundation/FOUNDATION.db`
+- **Logs**: `~/Library/Application Support/org.w3id.foundation/application.log`
+- **NUNCA deletar o banco de dados** em nenhuma circunstância
+- **NUNCA executar INSERT/UPDATE/DELETE/DROP/TRUNCATE** sem confirmação explícita do usuário — apenas SELECT
 
-- **ALWAYS use MCP tools** to interact with Foundation data
-- **NEVER access the database directly** via SQL INSERT/UPDATE/DELETE — always go through MCP tools
-- If MCP tools are not available (app not running), report findings and wait for the user to start the app
+### Estrutura da Tabela `triples`
 
-### Looking Up Foundation IRIs
+- **`object`**: IRIs/blank nodes (`object_type = 'iri'` ou `'blank'`)
+- **`object_value`**: valor lexical literal (`object_type = 'literal'`)
+- **`object_datatype`**: ex. `xsd:string`, `xsd:integer`, `xsd:dateTime`
+- Use `COALESCE(object, object_value)` quando o tipo for desconhecido
 
-**⚠️ CRITICAL RULE: NEVER deduce or guess IRIs — ALWAYS look them up using MCP tools.**
+## Ferramentas MCP
 
-- IRIs like `foundation:Planned`, `foundation:Active`, etc. do NOT necessarily exist — never assume
-- To find individuals by property value: `search(concept_iri: "foundation:Status", filters: [{detail: "rdfs:label", value: "<label>"}])`
-- To find any individual by label or property: use `search` with a `filters` parameter
-- **NEVER use SQL SELECT to find IRIs** — use the appropriate MCP tool instead
-- **NEVER hardcode an IRI without first confirming it exists via MCP**
+**SEMPRE use ferramentas MCP** para todas as operações de dados do Foundation. Nunca use SQL INSERT/UPDATE/DELETE.  
+Se o app não estiver rodando, reporte os achados e aguarde o usuário iniciá-lo.
 
-## Database & Storage
+**NUNCA adivinhe ou deduza IRIs** — sempre consulte:
+- Buscar por label: `search(concept_iri: "foundation:Status", filters: [{detail: "rdfs:label", value: "<label>"}])`
+- Nunca hardcode um IRI sem confirmar que ele existe via MCP
 
-- **User database**: `~/Documents/Foundation/FOUNDATION.db`
-- **Application logs**: `~/Library/Application Support/org.w3id.foundation/application.log` (macOS)
-- For direct SQL queries: `sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT ..."`
-- **⚠️ INVIOLABLE RULE: NEVER, UNDER ANY CIRCUMSTANCES, DELETE THE DATABASE (`rm ~/Documents/Foundation/FOUNDATION.db`)**
-- **⚠️ NEVER execute commands that modify the database (UPDATE, DELETE, DROP, TRUNCATE, INSERT) without explicit user confirmation**
-- Only SELECT queries are allowed without prior confirmation
-- ALWAYS ask the user before modifying any data in the database
+### Operações de Ontologia
 
-### `triples` Table Structure
-
-**⚠️ IMPORTANT:** The `triples` table has a specific structure that you MUST understand to avoid mistakes:
-
-- **`object`**: Contains IRIs or blank nodes when `object_type = 'iri'` or `'blank'`
-- **`object_value`**: Contains the lexical value of literals when `object_type = 'literal'`
-- **`object_datatype`**: Type of the literal (e.g., `xsd:string`, `xsd:integer`, `xsd:dateTime`)
-
-**When writing SQL queries:**
-```sql
--- ❌ WRONG - Will return empty for literals
-SELECT predicate, object FROM triples WHERE subject = 'foundation:File_123'
-
--- ✅ CORRECT - Returns both IRIs and literal values
-SELECT predicate, object, object_value, object_type FROM triples WHERE subject = 'foundation:File_123'
-```
-
-**Practical examples:**
-- `foundation:fileName` is a literal → value is in `object_value`, `object` is NULL
-- `foundation:hasFileType` is an IRI → value is in `object`, `object_value` is NULL
-- If you want the value regardless of type, use `COALESCE(object, object_value)`
-
-## Project Structure
-
-- **Frontend**: Svelte + TypeScript (src/)
-- **Backend**: Rust + Tauri (src-tauri/)
-- **Ontology**: `core-ontology/ontology.sql` (source of truth, generated by `scripts/dump-ontology`)
-- **Database**: SQLite with RDF triples
-
-## Development Commands
-
-- `npm run tauri dev` - Start development server
-- `npm run logs` - View application logs (last 100 lines)
-- `npm run logs N` - View last N lines of logs
-- `cargo check --manifest-path src-tauri/Cargo.toml` - Check Rust code
-- `cargo build --manifest-path src-tauri/Cargo.toml` - Build Rust code
-
-**⚠️ EXECUTION RULES:**
-- **NEVER run `npm run tauri dev` or `npm run build`** - the user always runs this in their terminal
-- **NEVER kill Tauri processes** (pkill, killall, etc.) - the user manages this
-- Only run `cargo check` to validate Rust code
-- The user is responsible for starting and stopping the development server
-
-## Generated Files — Do Not Edit
-
-**⚠️ CRITICAL RULE: NEVER manually edit `core-ontology/ontology.sql`.**
-
-- `ontology.sql` is auto-generated by `scripts/dump-ontology/src/main.rs`, which dumps all ontology triples from the live Foundation database (`~/Documents/Foundation/FOUNDATION.db`)
-- It is called as part of the release workflow (`scripts/release/src/main.rs`) and committed to the repo
-- The file is embedded into the Tauri binary at compile time via `include_str!()` in `src-tauri/src/eavto/connection.rs`
-- Any manual changes will be overwritten on the next release
-- To change ontology content: use MCP tools (`define_class`, `define_property`, `assert_individual`, `retract_property`, etc.) on the live database — the dump will pick up the changes at release time
-
-## Version Management & Releases
-
-- **⚠️ When generating a new release/version of the project:**
-  1. Use MCP tools to create a new `foundation:SoftwareRelease` individual with: label, comment, releaseOf (`foundation:FoundationProduct`), versionNumber, licenseType, releaseDate, changelog
-  2. Run `scripts/dump-ontology` to regenerate `core-ontology/ontology.sql`
-  3. Update the version in `src-tauri/Cargo.toml`
-  4. Update the version in `package.json`
-
-## TODO Documentation
-
-When creating instruction documents in the `todo/` folder:
-
-- **Naming pattern:** `YYYYMMDD-HHMMSS-file-name.md`
-  - Example: `20260228-192519-layer-violations-fix.md`
-  - Use hyphen (-) to separate all parts
-  - Timestamp first, descriptive name last
-  - Timestamp format: `YYYYMMDD-HHMMSS`
-
-## AI Function Design
-
-### Simplicity Principle
-- **Avoid redundant functions**: If a function can be replaced by simple calls to other functions, it is not necessary
-
-## Communication
-
-- **ALWAYS communicate in English** - All responses, documentation, comments, and messages must be in English
-- Never use Portuguese or other languages unless explicitly requested by the user
-
-## Ontology Workflow
-
-**⚠️ CRITICAL RULE: ALWAYS use MCP tools to create or modify ontology classes and properties.**
+**SEMPRE use ferramentas MCP** para criar ou modificar ontologia. Sempre invoque a skill `/new-ontology`.
 
 - Classes → `define_class`
-- Properties → `define_property`
-- Calculated fields → `define_property` with a `formula` parameter
-- Individuals → `assert_individual`
-- Always invoke the `/new-ontology` skill to guide the process
+- Propriedades → `define_property` (use `formula` para campos calculados)
+- Indivíduos → `assert_individual`
 
-## Ontology Design Principles
+**Regra de domínio de propriedade:** defina `domain` para a classe que *possui* a propriedade, nunca para a classe range.
+- ✅ `foundation:hasStatus` → `domain: owl:Thing` (não `foundation:Status`)
+- ✅ `foundation:userRole` → `domain: foundation:UserStory` (não `foundation:Persona`)
 
-### Property Placement Rule
+**Use referências de ontologia em vez de primitivos:** prefira `owl:ObjectProperty` apontando para uma classe existente em vez de `xsd:string` etc.
 
-**⚠️ CRITICAL RULE: ALWAYS set `domain` to the class the property belongs to, never to the range class.**
+| Conceito | Uso |
+|---|---|
+| Cidade/Município | `foundation:City` |
+| Empresa/Organização | `foundation:Company` / `foundation:Organization` |
+| Email | `foundation:EmailAddress` |
+| Telefone | `foundation:PhoneNumber` |
+| Endereço | `foundation:Address` |
+| Pessoa | `foundation:Person` |
+| Moeda | `currency:BRL`, `currency:USD` (QUDT) |
 
-- A property with `rdfs:domain foundation:Task` is created with `domain: foundation:Task`
-- A property with `rdfs:domain owl:Thing` is universal and omits the domain parameter
+Use tipos primitivos para: números escalares/booleanos/datas, identificadores/códigos, texto livre, valores monetários.
 
-**Examples:**
+### Tipos de Datatype para Propriedades
 
-- ✅ `foundation:dependsOn` (domain: owl:Thing) → no domain parameter
-- ✅ `foundation:hasStatus` (domain: owl:Thing, range: foundation:Status) → no domain, NOT domain: foundation:Status
-- ✅ `foundation:userRole` (domain: foundation:UserStory) → domain: foundation:UserStory, NOT foundation:Persona
-- ❌ Never set domain to the range class just because the property references it
+Ao usar `define_property` com `property_type: "datatype"`, escolha o `range` adequado:
 
-### Use References Over Primitives
+| Range | Uso | Editor no Inspetor |
+|---|---|---|
+| `xsd:string` | Texto livre, identificadores, códigos | Textarea |
+| `xsd:integer` | Inteiros — **requer `unit`** (ex: `unit:Count`) | Input numérico (step=1) |
+| `xsd:decimal` | Decimais — **requer `unit`** (ex: `unit:Meter`) | Input numérico |
+| `xsd:date` | Data (sem hora) | Date picker |
+| `xsd:dateTime` | Data e hora | Datetime picker |
+| `xsd:boolean` | Verdadeiro/Falso | Sem editor (não suportado) |
+| `xsd:anyURI` | URLs e links externos | Texto + botão abrir |
+| `foundation:rrule` | Regra de recorrência iCalendar (RFC 5545) | Editor de recorrência inline |
 
-**⚠️ CRITICAL RULE: When creating or modifying ontologies, ALWAYS use references to existing ontology classes instead of primitive types (xsd:string, xsd:decimal, etc.) whenever a corresponding ontology exists.**
+`foundation:rrule` armazena strings no formato `FREQ=WEEKLY;INTERVAL=1;BYDAY=MO`. O Inspector renderiza automaticamente um editor visual de recorrência para qualquer propriedade com este tipo.
 
-- **Always review if an ontology already exists** before using primitive types
-- Use `owl:ObjectProperty` with `rdfs:range` pointing to the ontology class
-- Add appropriate `owl:imports` declarations for referenced ontologies
+### Ícones de Entidades
 
-**Common cases:**
+**Única propriedade:** `foundation:hasIcon` — usada para TODOS os ícones de qualquer entidade.
 
-- ✅ **Cities/Municipalities**: Use `foundation:City` instead of `xsd:string`
-  ```turtle
-  foundation:municipality a owl:ObjectProperty ;
-      rdfs:range foundation:City .
-  # NOT: foundation:municipality a owl:DatatypeProperty ; rdfs:range xsd:string .
-  ```
+| Tipo | Formato no banco | Como obter |
+|---|---|---|
+| Material Symbol | IRI `foundation:icon-material-symbols-name-{name}` | nome do símbolo, ex: `"person"` |
+| Arquivo local | Literal `file:///caminho/imagem.png` | caminho completo |
+| URL | Literal `https://...` | URL direta |
 
-- ✅ **Companies/Organizations**: Use `foundation:Company` or `foundation:Organization`
-  ```turtle
-  foundation:employer a owl:ObjectProperty ;
-      rdfs:range foundation:Company .
-  ```
+**Criação** (`assert_individual`): campo `icon` aceita nome do símbolo ou path/URL — a função `icon_store_value` converte corretamente para IRI ou literal.
 
-- ✅ **Email addresses**: Use `foundation:EmailAddress`
-  ```turtle
-  foundation:contactEmail a owl:ObjectProperty ;
-      rdfs:range foundation:EmailAddress .
-  ```
+**Atualização via `replace_property_values`:** funciona para Material Symbols passando o IRI completo (`foundation:icon-material-symbols-name-{name}`). **Não funciona para `file://` ou URLs** — a ferramenta armazena como IRI (objeto), não como literal, e `icon_iri_to_display` não reconhece o padrão. Para alterar ícone de arquivo em entidade existente, use `assert_individual` recriando a entidade ou um comando Tauri interno.
 
-- ✅ **Phone numbers**: Use `foundation:PhoneNumber`
-  ```turtle
-  foundation:contactPhone a owl:ObjectProperty ;
-      rdfs:range foundation:PhoneNumber .
-  ```
+## Estrutura do Projeto
 
-- ✅ **Addresses**: Use `foundation:Address`
-- ✅ **Financial institutions**: Use `foundation:FinancialInstitution`
-- ✅ **Geographic locations**: Use `foundation:Country`, `foundation:State`, `foundation:City`, etc.
-- ✅ **People**: Use `foundation:Person`
-- ✅ **Currencies**: Use QUDT `currency:*` (e.g., `currency:BRL`, `currency:USD`)
+- **Frontend**: Svelte + TypeScript (`src/`)
+- **Backend**: Rust + Tauri (`src-tauri/`)
+- **Ontologia**: `core-ontology/ontology.sql` — gerado automaticamente, **nunca edite manualmente**
 
-**When to use primitive types:**
+`ontology.sql` é gerado por `scripts/dump-ontology`, embutido em tempo de compilação via `include_str!()` em `src-tauri/src/eavto/connection.rs`. Para alterar o conteúdo da ontologia: use ferramentas MCP no DB live — o dump captura as mudanças no momento do release.
 
-- Simple scalar values (numbers, booleans, dates)
-- Identifiers and codes (CNPJ, CPF, tax codes)
-- Free-text descriptions and notes
-- Amounts and quantities (combined with currency/unit references)
+## Comandos de Desenvolvimento
 
+```bash
+npm run tauri dev                               # inicia o servidor de desenvolvimento (o usuário executa)
+npm run logs [N]                                # exibe as últimas N linhas de log
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo build --manifest-path src-tauri/Cargo.toml
+```
 
-## Code Comments
+**Nunca execute `npm run tauri dev`/`npm run build`** — o usuário gerencia isso.  
+**Nunca mate processos Tauri** (pkill, killall, etc.).  
+Use apenas `cargo check` para validar o código Rust.
 
-Only *why* comments are acceptable. Flag and remove:
-- Comments describing *what* the code does
-- Commented-out code blocks
-- TODO/FIXME/HACK/XXX markers
+## Releases de Versão
 
-## Best Practices
+Use a skill `/release`.
 
-- NEVER suppress warnings or errors
-- When finishing a task, always review what was done to identify and resolve redundancies and ambiguities
-- Always check the logs before making assumptions about problems
-- Use SELECT queries to investigate the database before proposing changes
-- **ALWAYS use RUST to create scripts** - Don't use Node.js, Python, or other languages for automation scripts
+## Documentação TODO
+
+Nomenclatura de arquivos: `YYYYMMDD-HHMMSS-descricao.md` (ex. `20260228-192519-layer-violations-fix.md`)
+
+## Código & Scripts
+
+- **Scripts devem ser escritos em Rust** — sem Node.js, Python ou shell scripts
+- **Comentários de código**: apenas comentários de *por quê* — remova comentários de *o quê*, código comentado e marcadores TODO/FIXME
+- **Evite funções redundantes**: se uma função pode ser substituída por chamadas a funções existentes, remova-a
+- **NUNCA suprimir avisos ou erros**
+
+## Comunicação
+
+Todas as respostas, documentação e comentários devem estar em **português**.

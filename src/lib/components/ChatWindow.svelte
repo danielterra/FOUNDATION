@@ -203,7 +203,8 @@
 			}
 		});
 
-		const unlistenMessages = await listen('chat-message-added', async () => {
+		const unlistenMessages = await listen('chat-message-added', async (event) => {
+			if (event.payload?.conversationId && event.payload.conversationId !== activeConversationIri) return;
 			const msgs = await invoke('chat__get_recent_messages', {
 				limit: messageLimit,
 				conversationId: activeConversationIri
@@ -894,6 +895,10 @@
 		onNewConversation={createConversation}
 		onDownloadChat={downloadChat}
 		onOpenSettings={() => showSettings = true}
+		{cameraEnabled}
+		onToggleCamera={toggleCamera}
+		{thinkingEnabled}
+		onToggleThinking={toggleThinking}
 	/>
 	{#if showSettings}
 		<SettingsPanel onClose={() => showSettings = false} />
@@ -939,10 +944,6 @@
 					{editingMessageIri}
 					onCancelEdit={cancelEdit}
 					onCancelAI={cancelAI}
-					{cameraEnabled}
-					onToggleCamera={toggleCamera}
-					{thinkingEnabled}
-					onToggleThinking={toggleThinking}
 				/>
 			{/if}
 		{/if}

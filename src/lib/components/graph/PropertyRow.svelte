@@ -100,11 +100,10 @@
 		align-items: center;
 		gap: 8px;
 		padding: 6px 10px;
-		font-size: 13px;
+		font-size: 14px;
 		line-height: 1.4;
 		word-break: break-word;
 		max-width: 100%;
-		border-radius: 8px;
 		background: color-mix(in srgb, var(--color-neutral) 12%, black);
 		border: 1px solid color-mix(in srgb, var(--color-neutral) 20%, black);
 		color: var(--color-neutral);
@@ -141,7 +140,6 @@
 		width: 100%;
 		height: 100%;
 		object-fit: cover;
-		border-radius: 50%;
 	}
 
 	.value-icon .material-symbols-outlined {
@@ -158,7 +156,6 @@
 		color: var(--color-neutral);
 		padding: 2px 6px;
 		background: color-mix(in srgb, var(--color-white) 5%, transparent);
-		border-radius: 4px;
 		flex-shrink: 0;
 	}
 </style>

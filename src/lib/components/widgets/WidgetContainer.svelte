@@ -1,14 +1,16 @@
 <script>
+  import { convertFileSrc } from '@tauri-apps/api/core';
+
   let {
     icon = 'widgets',
+    iconSrc = null,
     title = '',
     windowState = 'normal',
     onWindowStateChange,
     onClose,
     canExpand = false,
-    headerExtra,
     headerActions,
-    overrideActions,
+    headerSubtitle,
     children,
   } = $props();
 
@@ -19,20 +21,35 @@
   function toggleExpanded() {
     onWindowStateChange?.(windowState === 'maximized' ? 'normal' : 'maximized');
   }
+
+  function resolveIconSrc(src) {
+    if (!src) return '';
+    if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:')) return src;
+    if (src.startsWith('file://')) return convertFileSrc(src.replace(/^file:\/\//, ''));
+    if (src.startsWith('/')) return convertFileSrc(src);
+    return src;
+  }
 </script>
 
 <div class="widget" class:minimized={windowState === 'minimized'}>
   <div class="widget-header">
-    <div class="header-left">
-      <span class="material-symbols-outlined header-icon">{icon}</span>
-      <span class="header-title">{title}</span>
-      {@render headerExtra?.()}
-    </div>
-    <div class="header-actions">
-      {#if overrideActions}
-        {@render overrideActions()}
-      {:else}
-        {@render headerActions?.()}
+    <div class="header-top">
+      <div class="header-left">
+        <div class="header-icon-wrap">
+          {#if iconSrc}
+            <img src={resolveIconSrc(iconSrc)} alt="" class="header-icon-img" />
+          {:else}
+            <span class="material-symbols-outlined header-icon">{icon}</span>
+          {/if}
+        </div>
+        <div class="header-title-block">
+          <span class="header-title">{title}</span>
+          {#if headerSubtitle}
+            <div class="header-subtitle">{@render headerSubtitle()}</div>
+          {/if}
+        </div>
+      </div>
+      <div class="header-controls">
         {#if canExpand}
           <button class="action-btn" onclick={toggleExpanded} title={windowState === 'maximized' ? 'Restore' : 'Expand'}>
             <span class="material-symbols-outlined">{windowState === 'maximized' ? 'close_fullscreen' : 'open_in_full'}</span>
@@ -44,8 +61,13 @@
         <button class="close-btn" onclick={onClose}>
           <span class="material-symbols-outlined">close</span>
         </button>
-      {/if}
+      </div>
     </div>
+    {#if headerActions}
+      <div class="header-actions">
+        {@render headerActions()}
+      </div>
+    {/if}
   </div>
   <div class="content-wrapper">
     <div class="widget-content">
@@ -60,26 +82,24 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    background: color-mix(in srgb, var(--color-black) 85%, transparent);
-    backdrop-filter: blur(20px);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.5);
     overflow: hidden;
     box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
+    backdrop-filter: blur(5px);
   }
 
   .widget-header {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+    flex-direction: column;
     flex-shrink: 0;
   }
 
-  .widget.minimized .widget-header {
-    border-bottom: none;
+  .header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    gap: 8px;
   }
 
   .header-left {
@@ -88,12 +108,40 @@
     gap: 10px;
     min-width: 0;
     overflow: hidden;
+    flex: 1;
+  }
+
+  .header-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .header-icon-wrap {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .header-icon {
-    font-size: 22px;
+    font-size: 34px;
     color: var(--color-interactive);
-    flex-shrink: 0;
+  }
+
+  .header-icon-img {
+    width: 34px;
+    height: 34px;
+    object-fit: cover;
+  }
+
+  .header-title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .header-title {
@@ -106,11 +154,18 @@
     text-overflow: ellipsis;
   }
 
-  .header-actions {
+  .header-subtitle {
     display: flex;
     align-items: center;
+  }
+
+  .header-actions {
+    background-color: rgba(255, 140, 66, 0.09);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
     gap: 4px;
-    flex-shrink: 0;
+    padding: 0px;
   }
 
   .action-btn {
@@ -119,11 +174,10 @@
     padding: 4px;
     cursor: pointer;
     color: var(--color-interactive);
-    border-radius: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s;
+    transition: color 0.15s, background 0.15s;
   }
 
   .action-btn:hover {
@@ -141,11 +195,10 @@
     padding: 4px;
     cursor: pointer;
     color: var(--color-interactive);
-    border-radius: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s;
+    transition: color 0.15s, background 0.15s;
   }
 
   .close-btn:hover {
@@ -157,18 +210,17 @@
     font-size: 20px;
   }
 
-  /* Applies to snippet-provided buttons inside the header actions area */
+  /* Styles for action buttons provided via headerActions snippet */
   .header-actions :global(.action-btn) {
     background: none;
     border: none;
     padding: 4px;
     cursor: pointer;
     color: var(--color-interactive);
-    border-radius: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s;
+    transition: color 0.15s, background 0.15s;
   }
 
   .header-actions :global(.action-btn:hover) {
@@ -180,6 +232,24 @@
     font-size: 18px;
   }
 
+  .header-actions :global(.action-btn--locked) {
+    color: var(--color-warning, #f59e0b);
+  }
+
+  .header-actions :global(.action-btn--locked:hover) {
+    background: color-mix(in srgb, var(--color-warning, #f59e0b) 15%, transparent);
+    color: var(--color-warning, #f59e0b);
+  }
+
+  .header-actions :global(.action-btn--danger) {
+    color: var(--color-danger, #ef4444);
+  }
+
+  .header-actions :global(.action-btn--danger:hover) {
+    background: color-mix(in srgb, var(--color-danger, #ef4444) 15%, transparent);
+    color: var(--color-danger, #ef4444);
+  }
+
   .content-wrapper {
     flex: 1;
     min-height: 0;
@@ -187,10 +257,6 @@
     grid-template-rows: 1fr;
     transition: grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1);
     overflow: hidden;
-  }
-
-  .widget.minimized .content-wrapper {
-    grid-template-rows: 0fr;
   }
 
   .content-wrapper > .widget-content {

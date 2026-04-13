@@ -61,11 +61,12 @@ impl Individual {
             .find(|t| t.predicate == rdfs::LABEL)
             .and_then(|t| t.object.as_literal());
 
-        let icon = all_triples.triples.iter()
-            .find(|t| t.predicate == "foundation:hasIcon")
-            .and_then(|t| match &t.object {
-                Object::Iri(iri) => crate::owl::icon_iri_to_display(conn, iri),
-                Object::Literal { value, .. } => Some(value.clone()),
+        let icon = query::get_by_entity_predicate(conn, &iri, "foundation:hasIcon")
+            .ok()
+            .and_then(|r| r.triples.into_iter().next())
+            .and_then(|t| match t.object {
+                Object::Iri(iri) => crate::owl::icon_iri_to_display(conn, &iri),
+                Object::Literal { value, .. } => Some(value),
                 _ => None,
             });
 
@@ -116,7 +117,8 @@ impl Individual {
     ///   IRIs that this entity references via `(this_iri, propIRI, target)` (parent references children)
     pub fn retract(conn: &mut Connection, iri: &str, origin: &str) -> Result<()> {
         let mut summary = Vec::new();
-        Self::retract_inner(conn, iri, origin, &mut summary)
+        let mut retracted = Vec::new();
+        Self::retract_inner(conn, iri, origin, &mut summary, &mut retracted)
     }
 
     /// Retract an individual and return a per-rule cascade summary: `(property_iri, direction, count)`.
@@ -126,8 +128,21 @@ impl Individual {
         origin: &str,
     ) -> Result<Vec<(String, String, usize)>> {
         let mut summary: Vec<(String, String, usize)> = Vec::new();
-        Self::retract_inner(conn, iri, origin, &mut summary)?;
+        let mut retracted = Vec::new();
+        Self::retract_inner(conn, iri, origin, &mut summary, &mut retracted)?;
         Ok(summary)
+    }
+
+    /// Retract an individual and return all IRIs that were retracted (root + cascade children).
+    pub fn retract_collecting(
+        conn: &mut Connection,
+        iri: &str,
+        origin: &str,
+    ) -> Result<Vec<String>> {
+        let mut summary = Vec::new();
+        let mut retracted = Vec::new();
+        Self::retract_inner(conn, iri, origin, &mut summary, &mut retracted)?;
+        Ok(retracted)
     }
 
     fn retract_inner(
@@ -135,8 +150,10 @@ impl Individual {
         iri: &str,
         origin: &str,
         summary: &mut Vec<(String, String, usize)>,
+        retracted: &mut Vec<String>,
     ) -> Result<()> {
         crate::owl::check_system_locked(conn, iri, None)?;
+        retracted.push(iri.to_string());
 
         let type_iris: Vec<String> = query::get_by_entity_predicate(conn, iri, rdf::TYPE)
             .map(|r| r.triples.into_iter()
@@ -159,7 +176,7 @@ impl Individual {
                         .unwrap_or_default();
                 let count = children.len();
                 for child in children {
-                    Self::retract_inner(conn, &child, origin, summary)?;
+                    Self::retract_inner(conn, &child, origin, summary, retracted)?;
                 }
                 if count > 0 {
                     summary.push((prop.clone(), "domain".to_string(), count));
@@ -182,7 +199,7 @@ impl Individual {
                         .unwrap_or_default();
                 let count = targets.len();
                 for target in targets {
-                    Self::retract_inner(conn, &target, origin, summary)?;
+                    Self::retract_inner(conn, &target, origin, summary, retracted)?;
                 }
                 if count > 0 {
                     summary.push((prop.clone(), "range".to_string(), count));
@@ -196,6 +213,19 @@ impl Individual {
             store::retract_triples(conn, &triples, origin)?;
         }
         Ok(())
+    }
+
+    /// Compute the cascade delete impact without performing any writes.
+    /// Returns `(cascade_items, backlink_count)` where:
+    /// - `cascade_items`: list of `(iri, label, type_label)` for each individual cascade-retracted
+    /// - `backlink_count`: triples from other entities pointing to this IRI (references cleaned up,
+    ///   those entities are NOT deleted)
+    pub fn compute_delete_impact(conn: &Connection, iri: &str) -> Result<(Vec<(String, String, String)>, usize)> {
+        let mut visited = std::collections::HashSet::new();
+        let mut cascade_items: Vec<(String, String, String)> = Vec::new();
+        compute_impact_inner(conn, iri, &mut visited, &mut cascade_items)?;
+        let backlink_count = query::get_by_object_iri(conn, iri)?.triples.len();
+        Ok((cascade_items, backlink_count))
     }
 
     pub fn restore(conn: &mut Connection, iri: &str, origin: &str) -> Result<()> {
@@ -259,6 +289,87 @@ impl Individual {
         query::batch_load_retracted_triples_for_subjects(conn, iris)
             .map_err(|e| OwlError::DatabaseError(e.to_string()))
     }
+}
+
+fn entity_label_and_type(conn: &Connection, iri: &str) -> (String, String) {
+    let label = query::get_by_entity_predicate(conn, iri, rdfs::LABEL)
+        .ok()
+        .and_then(|r| r.triples.into_iter().next())
+        .and_then(|t| t.object.as_literal().map(|s| s.to_string()))
+        .unwrap_or_else(|| iri.to_string());
+    let type_label = query::get_by_entity_predicate(conn, iri, rdf::TYPE)
+        .ok()
+        .and_then(|r| r.triples.into_iter().next())
+        .and_then(|t| t.object.as_iri().map(|s| s.to_string()))
+        .and_then(|class_iri| {
+            query::get_by_entity_predicate(conn, &class_iri, rdfs::LABEL)
+                .ok()
+                .and_then(|r| r.triples.into_iter().next())
+                .and_then(|t| t.object.as_literal().map(|s| s.to_string()))
+        })
+        .unwrap_or_default();
+    (label, type_label)
+}
+
+fn compute_impact_inner(
+    conn: &Connection,
+    iri: &str,
+    visited: &mut std::collections::HashSet<String>,
+    cascade_items: &mut Vec<(String, String, String)>,
+) -> Result<()> {
+    if !visited.insert(iri.to_string()) {
+        return Ok(());
+    }
+
+    let type_iris: Vec<String> = query::get_by_entity_predicate(conn, iri, rdf::TYPE)
+        .map(|r| r.triples.into_iter()
+            .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+            .collect())
+        .unwrap_or_default();
+
+    for class_iri in &type_iris {
+        let domain_props: Vec<String> =
+            query::get_by_entity_predicate(conn, class_iri, "foundation:cascadeDeleteDomain")
+                .map(|r| r.triples.into_iter()
+                    .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+                    .collect())
+                .unwrap_or_default();
+
+        for prop in &domain_props {
+            let children: Vec<String> =
+                query::get_by_predicate_object(conn, prop, iri)
+                    .map(|r| r.triples.into_iter().map(|t| t.subject).collect())
+                    .unwrap_or_default();
+            for child in children {
+                let (label, type_label) = entity_label_and_type(conn, &child);
+                cascade_items.push((child.clone(), label, type_label));
+                compute_impact_inner(conn, &child, visited, cascade_items)?;
+            }
+        }
+
+        let range_props: Vec<String> =
+            query::get_by_entity_predicate(conn, class_iri, "foundation:cascadeDeleteRange")
+                .map(|r| r.triples.into_iter()
+                    .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+                    .collect())
+                .unwrap_or_default();
+
+        for prop in &range_props {
+            let targets: Vec<String> =
+                query::get_by_entity_predicate(conn, iri, prop)
+                    .map(|r| r.triples.into_iter()
+                        .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+                        .collect())
+                    .unwrap_or_default();
+            for target in targets {
+                let (label, type_label) = entity_label_and_type(conn, &target);
+                cascade_items.push((target.clone(), label, type_label));
+                compute_impact_inner(conn, &target, visited, cascade_items)?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -459,6 +570,91 @@ mod tests {
 
         let child = Individual::get(&conn, "foundation:Child1").unwrap();
         assert!(child.is_none(), "Child must be cascade-retracted via cascadeDeleteRange");
+    }
+
+    #[test]
+    fn test_compute_delete_impact_zero_for_isolated_entity() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Orphan", rdf::TYPE, Object::Iri("foundation:Thing".to_string())),
+        ], "test").unwrap();
+
+        let (items, backlinks) = Individual::compute_delete_impact(&conn, "foundation:Orphan").unwrap();
+        assert_eq!(items.len(), 0, "No cascade rules → cascade count must be 0");
+        assert_eq!(backlinks, 0, "No references to this entity → backlink count must be 0");
+    }
+
+    #[test]
+    fn test_compute_delete_impact_cascade_domain() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Parent", rdf::TYPE, Object::Iri("foundation:Container".to_string())),
+            Triple::new("foundation:Child1", rdf::TYPE, Object::Iri("foundation:Item".to_string())),
+            Triple::new("foundation:Child2", rdf::TYPE, Object::Iri("foundation:Item".to_string())),
+            Triple::new("foundation:Child1", "foundation:partOf", Object::Iri("foundation:Parent".to_string())),
+            Triple::new("foundation:Child2", "foundation:partOf", Object::Iri("foundation:Parent".to_string())),
+            Triple::new("foundation:Container", "foundation:cascadeDeleteDomain",
+                Object::Iri("foundation:partOf".to_string())),
+        ], "test").unwrap();
+
+        let (items, _) = Individual::compute_delete_impact(&conn, "foundation:Parent").unwrap();
+        assert_eq!(items.len(), 2, "Two children via cascadeDeleteDomain → cascade count must be 2");
+    }
+
+    #[test]
+    fn test_compute_delete_impact_cascade_range() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Parent", rdf::TYPE, Object::Iri("foundation:Container".to_string())),
+            Triple::new("foundation:Child1", rdf::TYPE, Object::Iri("foundation:Item".to_string())),
+            Triple::new("foundation:Child2", rdf::TYPE, Object::Iri("foundation:Item".to_string())),
+            Triple::new("foundation:Parent", "foundation:hasChild", Object::Iri("foundation:Child1".to_string())),
+            Triple::new("foundation:Parent", "foundation:hasChild", Object::Iri("foundation:Child2".to_string())),
+            Triple::new("foundation:Container", "foundation:cascadeDeleteRange",
+                Object::Iri("foundation:hasChild".to_string())),
+        ], "test").unwrap();
+
+        let (items, _) = Individual::compute_delete_impact(&conn, "foundation:Parent").unwrap();
+        assert_eq!(items.len(), 2, "Two targets via cascadeDeleteRange → cascade count must be 2");
+    }
+
+    #[test]
+    fn test_compute_delete_impact_backlinks_no_cascade() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Target", rdf::TYPE, Object::Iri("foundation:TypeA".to_string())),
+            Triple::new("foundation:Ref1", "foundation:linksTo", Object::Iri("foundation:Target".to_string())),
+            Triple::new("foundation:Ref2", "foundation:linksTo", Object::Iri("foundation:Target".to_string())),
+            Triple::new("foundation:Ref3", "foundation:linksTo", Object::Iri("foundation:Target".to_string())),
+        ], "test").unwrap();
+
+        let (items, backlinks) = Individual::compute_delete_impact(&conn, "foundation:Target").unwrap();
+        assert_eq!(items.len(), 0, "TypeA has no cascade rules → cascade count must be 0");
+        assert_eq!(backlinks, 3, "Three entities reference this target → backlink count must be 3");
+    }
+
+    #[test]
+    fn test_compute_delete_impact_transitive_cascade() {
+        let mut conn = setup_test_db();
+
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Grandparent", rdf::TYPE, Object::Iri("foundation:Level0".to_string())),
+            Triple::new("foundation:Parent", rdf::TYPE, Object::Iri("foundation:Level1".to_string())),
+            Triple::new("foundation:Child", rdf::TYPE, Object::Iri("foundation:Level2".to_string())),
+            Triple::new("foundation:Parent", "foundation:partOf", Object::Iri("foundation:Grandparent".to_string())),
+            Triple::new("foundation:Child", "foundation:partOf", Object::Iri("foundation:Parent".to_string())),
+            Triple::new("foundation:Level0", "foundation:cascadeDeleteDomain",
+                Object::Iri("foundation:partOf".to_string())),
+            Triple::new("foundation:Level1", "foundation:cascadeDeleteDomain",
+                Object::Iri("foundation:partOf".to_string())),
+        ], "test").unwrap();
+
+        let (items, _) = Individual::compute_delete_impact(&conn, "foundation:Grandparent").unwrap();
+        assert_eq!(items.len(), 2, "Parent + Child via transitive cascade → cascade count must be 2");
     }
 
     #[test]

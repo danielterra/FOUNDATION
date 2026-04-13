@@ -202,7 +202,6 @@
     align-items: flex-start;
     gap: 8px;
     padding: 8px 10px;
-    border-radius: 6px;
     background: color-mix(in srgb, var(--color-white) 4%, transparent);
     font-size: 12px;
   }

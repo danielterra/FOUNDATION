@@ -695,6 +695,8 @@ fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResul
             ));
         }
 
+        Individual::clear_property(conn, iri, property_iri, "ai")?;
+
         let individual = Individual::new(iri);
         individual.add_property(conn, property_iri, objects, "ai")?;
 

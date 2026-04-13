@@ -63,10 +63,9 @@
     min-height: 36px;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
-    border-radius: 6px;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.5;
     padding: 8px;
     resize: none;
@@ -92,7 +91,6 @@
     gap: 4px;
     padding: 4px 10px;
     border: none;
-    border-radius: 4px;
     cursor: pointer;
     font-family: var(--font-body);
     font-size: 12px;

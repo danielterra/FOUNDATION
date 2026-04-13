@@ -40,7 +40,6 @@
 		padding: 1rem 1.25rem;
 		background: var(--color-black);
 		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-		border-radius: 8px;
 		color: var(--color-neutral-active);
 		font-size: 1.125rem;
 		text-align: center;

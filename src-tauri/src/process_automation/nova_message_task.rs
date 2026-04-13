@@ -77,7 +77,7 @@ pub async fn execute_nova_message_task(
         .await?;
 
     crate::commands::create_user_message(&executor, &conv_id, &final_message).await?;
-    app.emit("chat-message-added", ()).ok();
+    app.emit("chat-message-added", serde_json::json!({"conversationId": conv_id})).ok();
 
     let app_spawn = app.clone();
     tokio::spawn(async move {

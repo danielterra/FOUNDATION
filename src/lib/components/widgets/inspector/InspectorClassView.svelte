@@ -216,7 +216,6 @@
     gap: 8px;
     padding: 8px 12px;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border-radius: 6px;
     transition: all 0.2s;
   }
 
@@ -231,7 +230,6 @@
 
   .clickable:hover {
     background: color-mix(in srgb, var(--color-interactive) 20%, transparent) !important;
-    transform: translateX(2px);
   }
 
   .clickable:active {
@@ -260,13 +258,12 @@
   .item-icon-image {
     width: 28px;
     height: 28px;
-    border-radius: 5px;
     object-fit: cover;
   }
 
   .item-label {
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     color: var(--color-neutral-active);
   }
 
@@ -294,7 +291,6 @@
     padding: 3px 8px;
     background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
-    border-radius: 5px;
     color: var(--color-interactive);
     font-family: var(--font-body);
     font-size: 11px;
@@ -317,7 +313,6 @@
     padding: 12px;
     background: color-mix(in srgb, var(--color-warning, #f59e0b) 8%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 30%, transparent);
-    border-radius: 8px;
     margin-bottom: 8px;
   }
 
@@ -359,7 +354,6 @@
     padding: 4px 10px;
     background: color-mix(in srgb, var(--color-error, #ef4444) 20%, transparent);
     border: none;
-    border-radius: 4px;
     color: var(--color-error, #ef4444);
     font-family: var(--font-body);
     font-size: 11px;
@@ -376,7 +370,6 @@
     padding: 4px 10px;
     background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
     border: none;
-    border-radius: 4px;
     color: var(--color-neutral);
     font-family: var(--font-body);
     font-size: 11px;

@@ -20,7 +20,6 @@
 		padding: 12px 14px;
 		background: color-mix(in srgb, var(--color-danger) 15%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
-		border-radius: 8px;
 		margin-bottom: 12px;
 		flex-shrink: 0;
 	}
@@ -34,7 +33,7 @@
 
 	.error-text {
 		flex: 1;
-		font-size: 13px;
+		font-size: 14px;
 		color: var(--color-danger-active);
 		line-height: 1.4;
 		word-break: break-word;

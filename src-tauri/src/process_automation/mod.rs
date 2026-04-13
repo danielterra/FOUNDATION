@@ -5,3 +5,7 @@ pub mod trigger;
 pub mod agent_task;
 pub mod request_task;
 pub mod nova_message_task;
+pub mod task_manager;
+pub mod task_scheduler;
+pub mod task_blocker;
+pub mod recurrence;

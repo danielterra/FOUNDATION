@@ -68,7 +68,7 @@
 		overflow-x: hidden;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: 12px;
 		margin-bottom: 12px;
 		min-height: 0;
 	}
@@ -95,9 +95,8 @@
 		gap: 8px;
 		padding: 12px;
 		color: var(--color-neutral);
-		font-size: 13px;
+		font-size: 14px;
 		background: color-mix(in srgb, var(--color-white) 5%, transparent);
-		border-radius: 8px;
 		margin-bottom: 12px;
 	}
 
@@ -128,7 +127,6 @@
 
 	.chat-messages::-webkit-scrollbar-thumb {
 		background: color-mix(in srgb, var(--color-white) 20%, transparent);
-		border-radius: 3px;
 	}
 
 	.chat-messages::-webkit-scrollbar-thumb:hover {

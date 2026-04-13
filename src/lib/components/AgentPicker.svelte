@@ -79,7 +79,6 @@
 		min-width: 220px;
 		background: var(--color-surface, #1e1e1e);
 		border: 1px solid color-mix(in srgb, var(--color-white) 12%, transparent);
-		border-radius: 10px;
 		padding: 6px;
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 	}
@@ -99,7 +98,6 @@
 		gap: 10px;
 		width: 100%;
 		padding: 8px 10px;
-		border-radius: 7px;
 		border: none;
 		background: transparent;
 		color: var(--color-neutral-active);
@@ -125,7 +123,6 @@
 	.agent-icon {
 		width: 28px;
 		height: 28px;
-		border-radius: 50%;
 		background: color-mix(in srgb, var(--color-white) 8%, transparent);
 		display: flex;
 		align-items: center;
@@ -146,7 +143,7 @@
 
 	.agent-label {
 		flex: 1;
-		font-size: 13px;
+		font-size: 14px;
 		font-weight: 500;
 		white-space: nowrap;
 		overflow: hidden;
@@ -163,6 +160,5 @@
 		color: var(--color-neutral);
 		background: color-mix(in srgb, var(--color-white) 8%, transparent);
 		padding: 2px 5px;
-		border-radius: 4px;
 	}
 </style>

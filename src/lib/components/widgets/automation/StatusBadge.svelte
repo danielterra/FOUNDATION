@@ -24,8 +24,7 @@
     font-size: 9px;
     font-weight: 700;
     padding: 2px 7px 2px 4px;
-    border-radius: 10px;
-    border: 1px solid;
+    border: none;
     letter-spacing: 0.4px;
     white-space: nowrap;
     text-transform: uppercase;

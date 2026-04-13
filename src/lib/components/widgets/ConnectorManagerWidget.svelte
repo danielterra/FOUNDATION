@@ -181,7 +181,6 @@
     align-items: flex-start;
     gap: 8px;
     padding: 8px 10px;
-    border-radius: 6px;
     font-size: 12px;
   }
 
@@ -217,7 +216,6 @@
     padding: 14px 8px;
     background: color-mix(in srgb, var(--color-white) 6%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-white) 12%, transparent);
-    border-radius: 8px;
     cursor: pointer;
     transition: all 0.2s;
     text-align: center;
@@ -275,7 +273,6 @@
     gap: 4px;
     background: none;
     border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-    border-radius: 4px;
     padding: 4px 8px;
     font-size: 11px;
     color: var(--color-interactive);
@@ -294,7 +291,6 @@
   .json-preview {
     background: color-mix(in srgb, var(--color-black) 60%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-    border-radius: 6px;
     padding: 10px;
     font-family: var(--font-mono, monospace);
     font-size: 11px;
@@ -325,7 +321,6 @@
     min-height: 160px;
     background: color-mix(in srgb, var(--color-white) 6%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-    border-radius: 6px;
     padding: 10px;
     font-family: var(--font-mono, monospace);
     font-size: 12px;
@@ -349,7 +344,6 @@
     gap: 6px;
     padding: 8px 16px;
     border: none;
-    border-radius: 6px;
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;

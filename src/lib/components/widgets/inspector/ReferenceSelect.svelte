@@ -207,21 +207,19 @@
     padding: 3px 6px 3px 8px;
     background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
-    border-radius: 12px;
     font-family: var(--font-body);
     font-size: 12px;
     color: var(--color-neutral-active);
   }
 
   .chip-icon {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--color-interactive);
   }
 
   .chip-img {
     width: 14px;
     height: 14px;
-    border-radius: 2px;
     object-fit: cover;
   }
 
@@ -240,7 +238,6 @@
     color: var(--color-neutral);
     display: flex;
     align-items: center;
-    border-radius: 50%;
     transition: color 0.15s;
   }
 
@@ -249,7 +246,7 @@
   }
 
   .chip-remove .material-symbols-outlined {
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .search-row {
@@ -262,10 +259,9 @@
     flex: 1;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
-    border-radius: 6px;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     padding: 6px 8px;
     outline: none;
     transition: border-color 0.15s;
@@ -286,7 +282,6 @@
   .dropdown {
     background: color-mix(in srgb, var(--color-black) 90%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-    border-radius: 6px;
     overflow: hidden;
     max-height: 200px;
     overflow-y: auto;
@@ -303,7 +298,7 @@
     cursor: pointer;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     text-align: left;
     transition: background 0.1s;
   }
@@ -326,7 +321,6 @@
   .item-img {
     width: 18px;
     height: 18px;
-    border-radius: 3px;
     object-fit: cover;
     flex-shrink: 0;
   }
@@ -371,7 +365,6 @@
     gap: 4px;
     padding: 4px 10px;
     border: none;
-    border-radius: 4px;
     cursor: pointer;
     font-family: var(--font-body);
     font-size: 12px;

@@ -97,6 +97,7 @@ pub async fn initialize_app(
     super::log_backend("debug", "[STARTUP] recover_executions=spawned (background)");
 
     tauri::async_runtime::spawn(crate::process_automation::scheduler::reload(app.clone()));
+    tauri::async_runtime::spawn(crate::process_automation::task_scheduler::start(app.clone()));
     super::log_backend("debug", &format!("[STARTUP] total_before_emit={}ms", t0.elapsed().as_millis()));
 
     let _ = app.emit("import-complete", ());

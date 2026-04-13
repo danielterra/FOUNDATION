@@ -5,6 +5,7 @@
   import PropertyEditForm from './PropertyEditForm.svelte';
   import PropertyValuesGroup from './PropertyValuesGroup.svelte';
   import ReferenceSelect from './ReferenceSelect.svelte';
+  import RecurrenceEditor from './RecurrenceEditor.svelte';
   import { focus } from '$lib/utils/actions';
 
   let {
@@ -112,6 +113,25 @@
     return `${minStr}..${maxStr}`;
   }
 
+  function isRruleType(datatype) {
+    return datatype === 'foundation:rrule';
+  }
+
+  function rruleLabel(rrule) {
+    if (!rrule) return 'Nunca';
+    if (rrule.includes('FREQ=HOURLY')) return 'A Cada Hora';
+    if (rrule.includes('BYDAY=MO,TU,WE,TH,FR')) return 'Dias de Semana';
+    if (rrule.includes('BYDAY=SA,SU')) return 'Fins de Semana';
+    if (rrule.includes('FREQ=DAILY')) return 'Diariamente';
+    if (rrule.includes('FREQ=WEEKLY') && rrule.includes('INTERVAL=2')) return 'Quinzenalmente';
+    if (rrule.includes('FREQ=WEEKLY')) return 'Semanalmente';
+    if (rrule.includes('FREQ=MONTHLY') && rrule.includes('INTERVAL=6')) return 'A Cada 6 Meses';
+    if (rrule.includes('FREQ=MONTHLY') && rrule.includes('INTERVAL=3')) return 'A Cada 3 Meses';
+    if (rrule.includes('FREQ=MONTHLY')) return 'Mensalmente';
+    if (rrule.includes('FREQ=YEARLY')) return 'Anualmente';
+    return 'Personalizada';
+  }
+
   function isStringType(datatype) {
     return !datatype || datatype === 'xsd:string' || datatype === 'rdf:langString';
   }
@@ -120,11 +140,25 @@
     return datatype === 'xsd:date' || datatype === 'xsd:dateTime';
   }
 
+  function isNumericType(datatype) {
+    return datatype === 'xsd:decimal' || datatype === 'xsd:integer' ||
+           datatype === 'xsd:int' || datatype === 'xsd:long' ||
+           datatype === 'xsd:float' || datatype === 'xsd:double' ||
+           datatype === 'xsd:nonNegativeInteger' || datatype === 'xsd:positiveInteger';
+  }
+
+  function numericStep(datatype) {
+    return (datatype === 'xsd:integer' || datatype === 'xsd:int' ||
+            datatype === 'xsd:long' || datatype === 'xsd:nonNegativeInteger' ||
+            datatype === 'xsd:positiveInteger') ? '1' : 'any';
+  }
+
   function toInputValue(value, datatype) {
-    if (!value) return '';
-    if (datatype === 'xsd:date') return value;
+    if (datatype === 'xsd:date') return value || '';
     if (datatype === 'xsd:dateTime') {
-      const d = new Date(isNaN(Number(value)) ? value : Number(value));
+      const d = value
+        ? new Date(isNaN(Number(value)) ? value : Number(value))
+        : new Date();
       if (isNaN(d.getTime())) return '';
       const pad = n => String(n).padStart(2, '0');
       return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}` +
@@ -143,17 +177,90 @@
 
   function formatDatatype(datatype) {
     if (!datatype || datatype === 'xsd:string' || datatype === 'rdf:langString') return 'String';
+    if (datatype === 'foundation:rrule') return 'Recorrência';
     const parts = datatype.split(':');
     const typeName = parts.length > 1 ? parts[1] : datatype;
     return typeName.charAt(0).toUpperCase() + typeName.slice(1);
+  }
+
+  function datePart(v) { return v?.split('T')[0] ?? ''; }
+  function timePart(v) { return v?.split('T')[1] ?? ''; }
+  function combineDatetime(d, t) {
+    if (!d) return '';
+    return t ? `${d}T${t}` : `${d}T00:00`;
   }
 </script>
 
 {#snippet dateEditor(propertyIri, inputType)}
   <div class="date-edit-container">
+    {#if inputType === 'datetime-local'}
+      <div class="datetime-pair">
+        <input
+          class="date-input"
+          type="date"
+          value={datePart(draftValue)}
+          oninput={(e) => draftValue = combineDatetime(e.currentTarget.value, timePart(draftValue))}
+          onchange={(e) => draftValue = combineDatetime(e.currentTarget.value, timePart(draftValue))}
+          use:focus
+        />
+        <input
+          class="date-input"
+          type="time"
+          value={timePart(draftValue)}
+          oninput={(e) => draftValue = combineDatetime(datePart(draftValue), e.currentTarget.value)}
+          onchange={(e) => draftValue = combineDatetime(datePart(draftValue), e.currentTarget.value)}
+          onkeydown={(e) => {
+            if (e.key === 'Escape') cancelEdit();
+            else if (e.key === 'Enter') saveEdit(propertyIri);
+          }}
+        />
+      </div>
+    {:else}
+      <input
+        class="date-input"
+        type="date"
+        value={draftValue}
+        oninput={(e) => draftValue = e.currentTarget.value}
+        onchange={(e) => draftValue = e.currentTarget.value}
+        onkeydown={(e) => {
+          if (e.key === 'Escape') cancelEdit();
+          else if (e.key === 'Enter') saveEdit(propertyIri);
+        }}
+        use:focus
+      />
+    {/if}
+    <div class="edit-actions">
+      <button
+        class="edit-save-btn"
+        onmousedown={(e) => e.preventDefault()}
+        onclick={() => saveEdit(propertyIri)}
+        disabled={saving}
+      >
+        {#if saving}
+          <span class="material-symbols-outlined spinning-small">progress_activity</span>
+        {:else}
+          <span class="material-symbols-outlined">check</span>
+        {/if}
+        Save
+      </button>
+      <button
+        class="edit-cancel-btn"
+        onmousedown={(e) => e.preventDefault()}
+        onclick={cancelEdit}
+      >
+        <span class="material-symbols-outlined">close</span>
+        Cancel
+      </button>
+    </div>
+  </div>
+{/snippet}
+
+{#snippet numericEditor(propertyIri)}
+  <div class="date-edit-container">
     <input
       class="date-input"
-      type={inputType}
+      type="number"
+      step={numericStep(editingDatatype)}
       bind:value={draftValue}
       onkeydown={(e) => {
         if (e.key === 'Escape') cancelEdit();
@@ -220,7 +327,7 @@
         <span class="cardinality-badge">{formatCardinality(detailGroup.minCount, detailGroup.maxCount)}</span>
       {/if}
     </div>
-    {#if onSave && !detailGroup.isObjectProperty && !detailGroup.isCalculated && (isStringType(detailGroup.datatype) || isDateType(detailGroup.datatype)) && (detailGroup.isEmpty || detailGroup.values.length <= 1)}
+    {#if onSave && !detailGroup.isObjectProperty && !detailGroup.isCalculated && (isStringType(detailGroup.datatype) || isDateType(detailGroup.datatype) || isNumericType(detailGroup.datatype) || isRruleType(detailGroup.datatype)) && (detailGroup.isEmpty || detailGroup.values.length <= 1)}
       <button
         class="edit-btn"
         title="Edit"
@@ -350,6 +457,14 @@
     <div class="detail-value">
       {#if isDateType(editingDatatype)}
         {@render dateEditor(detailGroup.property, editingDatatype === 'xsd:dateTime' ? 'datetime-local' : 'date')}
+      {:else if isNumericType(editingDatatype)}
+        {@render numericEditor(detailGroup.property)}
+      {:else if isRruleType(editingDatatype)}
+        <RecurrenceEditor
+          value={detailGroup.values[0]?.value ?? ''}
+          onconfirm={(rrule) => { draftValue = rrule; saveEdit(detailGroup.property); }}
+          oncancel={cancelEdit}
+        />
       {:else}
         <PropertyEditForm
           propertyIri={detailGroup.property}
@@ -379,10 +494,7 @@
 
 <style>
   .detail-item {
-    padding: 10px 12px;
-    background: color-mix(in srgb, var(--color-white) 3%, transparent);
-    border-radius: 8px;
-    border-left: 3px solid color-mix(in srgb, var(--color-neutral) 30%, transparent);
+    padding: 15px 0px;
   }
 
   .detail-header {
@@ -406,7 +518,7 @@
   }
 
   .prop-info {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--color-neutral);
     opacity: 0.45;
     cursor: default;
@@ -423,7 +535,6 @@
     padding: 2px 6px;
     background: color-mix(in srgb, var(--color-neutral) 20%, transparent);
     color: var(--color-neutral);
-    border-radius: 4px;
     font-weight: 600;
   }
 
@@ -442,7 +553,6 @@
     padding: 2px 6px;
     background: color-mix(in srgb, var(--color-accent) 20%, transparent);
     color: var(--color-accent);
-    border-radius: 4px;
     font-weight: 600;
   }
 
@@ -451,7 +561,6 @@
     padding: 2px 6px;
     background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
     color: var(--color-interactive);
-    border-radius: 4px;
     font-weight: 600;
     font-family: var(--font-mono, monospace);
   }
@@ -459,7 +568,6 @@
   .cardinality-edit-form {
     padding: 8px;
     background: color-mix(in srgb, var(--color-white) 4%, transparent);
-    border-radius: 6px;
     margin-bottom: 8px;
     display: flex;
     flex-direction: column;
@@ -485,9 +593,8 @@
     width: 70px;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     border: 1px solid var(--color-interactive);
-    border-radius: 6px;
     padding: 4px 8px;
-    font-size: 13px;
+    font-size: 14px;
     color: var(--color-neutral-active);
     outline: none;
     text-align: center;
@@ -502,12 +609,11 @@
     background: none;
     border: none;
     cursor: pointer;
-    color: var(--color-neutral);
+    color: var(--color-interactive);
     opacity: 0;
     padding: 2px;
     display: flex;
     align-items: center;
-    border-radius: 4px;
     transition: color 0.15s, opacity 0.15s;
     flex-shrink: 0;
   }
@@ -542,7 +648,7 @@
 
   .empty-value {
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     color: var(--color-neutral);
     opacity: 0.35;
     padding: 2px 0;
@@ -553,8 +659,6 @@
     align-items: center;
     gap: 8px;
     padding: 8px;
-    background: color-mix(in srgb, var(--color-black) 30%, transparent);
-    border-radius: 6px;
   }
 
   .calculated-badge {
@@ -564,9 +668,18 @@
     padding: 2px 6px;
     background: color-mix(in srgb, var(--color-accent) 15%, transparent);
     color: var(--color-accent);
-    border-radius: 4px;
     line-height: 1;
     cursor: default;
+  }
+
+  .datetime-pair {
+    display: flex;
+    gap: 6px;
+  }
+
+  .datetime-pair .date-input {
+    flex: 1;
+    min-width: 0;
   }
 
   .date-edit-container {
@@ -580,10 +693,9 @@
   .date-input {
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
-    border-radius: 6px;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     padding: 6px 8px;
     outline: none;
     transition: border-color 0.15s;
@@ -606,7 +718,6 @@
     gap: 4px;
     padding: 4px 10px;
     border: none;
-    border-radius: 4px;
     cursor: pointer;
     font-family: var(--font-body);
     font-size: 12px;

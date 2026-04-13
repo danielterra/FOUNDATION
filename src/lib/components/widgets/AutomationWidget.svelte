@@ -121,8 +121,8 @@
           style: isErrorEdge ? 'stroke:#ef4444;stroke-dasharray:5,4;stroke-width:1.5px;' : undefined,
           label: isErrorEdge ? (e.label ?? 'on error') : (conditionLabel ?? undefined),
           labelStyle: isErrorEdge
-            ? 'background:#450a0a;color:#fca5a5;padding:2px 7px;border-radius:4px;border:1px solid #ef4444;font-size:11px;font-weight:500;'
-            : conditionLabel ? 'background:#1e293b;color:#f1f5f9;padding:2px 7px;border-radius:4px;border:1px solid #475569;font-size:11px;font-weight:500;' : undefined,
+            ? 'background:#450a0a;color:#fca5a5;padding:2px 7px;border:1px solid #ef4444;font-size:11px;font-weight:500;'
+            : conditionLabel ? 'background:#1e293b;color:#f1f5f9;padding:2px 7px;border:1px solid #475569;font-size:11px;font-weight:500;' : undefined,
         }
       })
 
@@ -317,7 +317,6 @@
     padding: 4px;
     cursor: pointer;
     color: #43A047;
-    border-radius: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -374,7 +373,7 @@
     height: 100%;
     gap: 8px;
     color: var(--color-error, #ef4444);
-    font-size: 13px;
+    font-size: 14px;
     padding: 24px;
     text-align: center;
   }

@@ -373,13 +373,11 @@
 		height: 24px;
 		object-fit: contain;
 		flex-shrink: 0;
-		border-radius: 4px;
 	}
 
 	.result-placeholder {
 		width: 24px;
 		height: 24px;
-		border-radius: 50%;
 		background: color-mix(in srgb, var(--color-interactive) 30%, transparent);
 		flex-shrink: 0;
 	}

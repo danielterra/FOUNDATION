@@ -22,7 +22,14 @@ alongside the content. Use that IRI to reference the file in tool calls (e.g. he
 - foundation:File — base class; properties: fileName, filePath, fileSize, fileHash, uploadDate, aiSummary\n\
 - foundation:CSVFile (subclass of File) — created automatically for CSV attachments; \
 adds csvColumns (one value per header), csvDelimiter, csvRowCount\n\
-Use describe_individual on the file IRI to inspect its metadata before processing.";
+Use describe_individual on the file IRI to inspect its metadata before processing.\n\n\
+## Persistent Behavior Rules\n\
+Any class, individual, or property in the knowledge graph may carry a `foundation:aiBehaviorRules` \
+value — a free-text field containing instructions and learnings about how to work with that entity. \
+These rules are returned by `describe_class`, `describe_individual`, and `describe_property` and \
+must be followed whenever you interact with that entity. \
+Use `replace_property_values` with predicate `foundation:aiBehaviorRules` to record new learnings \
+or correct existing rules whenever you discover something that should guide future interactions.";
 
 use providers::{MessageContent, ContentBlock};
 

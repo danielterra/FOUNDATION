@@ -33,7 +33,6 @@
     align-items: stretch;
     width: 220px;
     cursor: pointer;
-    border-radius: 8px;
     background: #1a0a2e;
     border: 2px solid #7B1FA2;
     color: #ce93d8;

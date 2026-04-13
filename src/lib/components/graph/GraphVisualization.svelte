@@ -608,12 +608,11 @@
 							.style('justify-content', 'center')
 							.style('background', 'var(--color-black)')
 							.style('border', `2px solid ${iconColor}`)
-							.style('border-radius', '50%')
 							.style('overflow', 'hidden')
 							.style('pointer-events', 'none')
 							.html(
 							`<img src="${resolveIconUrl(d.icon)}" ` +
-							'style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%; pointer-events: none;" />'
+							'style="width: 100%; height: 100%; object-fit: cover; pointer-events: none;" />'
 						);
 					} else {
 						// Render Material Symbols icon
@@ -632,7 +631,6 @@
 							.style('justify-content', 'center')
 							.style('background', 'var(--color-black)')
 							.style('border', `2px solid ${iconColor}`)
-							.style('border-radius', '50%')
 							.style('pointer-events', 'none')
 							.html(
 							`<span class="material-symbols-outlined" ` +

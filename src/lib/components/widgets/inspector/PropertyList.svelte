@@ -261,7 +261,6 @@
     cursor: pointer;
     width: 100%;
     text-align: left;
-    border-radius: 4px;
     transition: background 0.15s;
   }
 
@@ -297,7 +296,6 @@
     color: color-mix(in srgb, var(--color-neutral) 70%, transparent);
     padding: 1px 6px;
     background: color-mix(in srgb, var(--color-neutral) 15%, transparent);
-    border-radius: 10px;
   }
 
   .section-body {

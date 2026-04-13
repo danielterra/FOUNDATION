@@ -117,7 +117,16 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             let status = resolve_status_for_entity(conn, &value);
             (Some(target_thing.label), target_thing.icon, None, status)
         } else {
-            (None, None, value_obj.datatype().map(|s| s.to_string()), None)
+            let stored_dt = value_obj.datatype().map(|s| s.to_string());
+            let declared_dt = prop_ranges.first()
+                .filter(|r| r.as_str() != "xsd:string")
+                .cloned();
+            let effective_dt = if stored_dt.as_deref().map(|dt| dt != "xsd:string").unwrap_or(false) {
+                stored_dt
+            } else {
+                declared_dt.or(stored_dt)
+            };
+            (None, None, effective_dt, None)
         };
 
         let (range_class_iri, range_class_label, range_class_icon) = if is_object_property {
@@ -255,7 +264,13 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         source_class_icon,
                         unit,
                         unit_label,
-                        datatype: None,
+                        datatype: if !is_object_property {
+                            prop.ranges.first()
+                                .filter(|r| r.starts_with("xsd:"))
+                                .cloned()
+                        } else {
+                            None
+                        },
                         value_status: None,
                         group_total: None,
                         is_calculated: false,

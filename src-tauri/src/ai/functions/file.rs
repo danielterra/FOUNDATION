@@ -4,6 +4,41 @@ use rusqlite::Connection;
 use super::ToolResult;
 
 const DEFAULT_MAX_LINE_CHARS: usize = 4096;
+const FALLBACK_MAX_BINARY_BYTES: u64 = 500 * 1024; // 500 KB if model config unavailable
+
+/// Compute the max raw bytes allowed based on 80% of the configured max input tokens.
+/// Approximation: base64 tokenizes at ~2 chars/token, and base64 expands raw bytes by 4/3,
+/// so max_raw_bytes = budget_tokens × 2 × 3/4 = budget_tokens × 1.5.
+fn max_binary_bytes(conn: &Connection) -> u64 {
+    let max_tokens = resolve_max_input_tokens(conn).unwrap_or(0);
+    if max_tokens == 0 {
+        return FALLBACK_MAX_BINARY_BYTES;
+    }
+    let budget = (max_tokens as u64) * 80 / 100;
+    budget * 3 / 2
+}
+
+fn resolve_max_input_tokens(conn: &Connection) -> Option<usize> {
+    use crate::owl::{Individual, Object};
+
+    if let Ok(Some(setting)) = Individual::get(conn, "foundation:DefaultMaxInputTokensSetting") {
+        if let Some((_, Object::Literal { value, .. })) = setting.properties.iter()
+            .find(|(k, _)| k == "foundation:settingValue") {
+            if let Ok(n) = value.parse::<usize>() {
+                return Some(n);
+            }
+        }
+    }
+
+    let model_iri = crate::commands::chat::settings::get_ai_model_iri(conn).ok()??;
+    let model = Individual::get(conn, &model_iri).ok()??;
+    if let Some((_, Object::Integer(n))) = model.properties.iter()
+        .find(|(k, _)| k == "foundation:maxInputTokens") {
+        return Some(*n as usize);
+    }
+
+    None
+}
 
 fn resolve_file_path(conn: &Connection, file_iri: &str) -> Result<String, ToolResult> {
     let uri = match crate::owl::get_literal_property(conn, file_iri, "foundation:filePath") {
@@ -24,7 +59,7 @@ fn resolve_file_path(conn: &Connection, file_iri: &str) -> Result<String, ToolRe
     Ok(uri.strip_prefix("file://").unwrap_or(&uri).to_string())
 }
 
-fn open_file(path: &str) -> Result<std::fs::File, ToolResult> {
+fn open_text_file(path: &str) -> Result<std::fs::File, ToolResult> {
     std::fs::File::open(path).map_err(|e| ToolResult {
         success: false,
         result: None,
@@ -44,7 +79,87 @@ fn slice_line(line: &str, start_char: usize, end_char: usize) -> (String, usize,
     (content, total_chars, truncated)
 }
 
-pub fn head_file(conn: &Connection, args: &Value) -> ToolResult {
+fn detect_mime_type(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(b"%PDF") {
+        return "application/pdf";
+    }
+    if bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
+        return "image/jpeg";
+    }
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return "image/png";
+    }
+    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        return "image/webp";
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return "image/gif";
+    }
+    "application/octet-stream"
+}
+
+pub fn read_binary_file(conn: &Connection, args: &Value) -> ToolResult {
+    let file_iri = match args.get("file_iri").and_then(|v| v.as_str()) {
+        Some(iri) if !iri.is_empty() => iri,
+        _ => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: file_iri".to_string()),
+            concept: None,
+        },
+    };
+
+    let file_path = match resolve_file_path(conn, file_iri) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+
+    let file_size = match std::fs::metadata(&file_path) {
+        Ok(m) => m.len(),
+        Err(e) => return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!("Failed to read file metadata '{}': {}", file_path, e)),
+            concept: None,
+        },
+    };
+    let limit = max_binary_bytes(conn);
+    if file_size > limit {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!(
+                "File too large to read: {} bytes (limit is {} bytes, ~80% of the model's max input tokens). Use a text tool or pre-process the file first.",
+                file_size, limit
+            )),
+            concept: None,
+        };
+    }
+
+    let raw = match std::fs::read(&file_path) {
+        Ok(bytes) => bytes,
+        Err(e) => return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!("Failed to read file '{}': {}", file_path, e)),
+            concept: None,
+        },
+    };
+
+    let media_type = detect_mime_type(&raw);
+
+    use base64::Engine;
+    let data = base64::engine::general_purpose::STANDARD.encode(&raw);
+
+    ToolResult {
+        success: true,
+        result: Some(serde_json::json!({ "media_type": media_type, "data": data })),
+        error: None,
+        concept: None,
+    }
+}
+
+pub fn head_text_file(conn: &Connection, args: &Value) -> ToolResult {
     let file_iri = match args.get("file_iri").and_then(|v| v.as_str()) {
         Some(iri) if !iri.is_empty() => iri,
         _ => return ToolResult {
@@ -65,7 +180,7 @@ pub fn head_file(conn: &Connection, args: &Value) -> ToolResult {
         Ok(p) => p,
         Err(e) => return e,
     };
-    let file = match open_file(&file_path) {
+    let file = match open_text_file(&file_path) {
         Ok(f) => f,
         Err(e) => return e,
     };
@@ -110,7 +225,7 @@ pub fn head_file(conn: &Connection, args: &Value) -> ToolResult {
     }
 }
 
-pub fn read_lines(conn: &Connection, args: &Value) -> ToolResult {
+pub fn read_text_lines(conn: &Connection, args: &Value) -> ToolResult {
     let file_iri = match args.get("file_iri").and_then(|v| v.as_str()) {
         Some(iri) if !iri.is_empty() => iri,
         _ => return ToolResult {
@@ -162,7 +277,7 @@ pub fn read_lines(conn: &Connection, args: &Value) -> ToolResult {
         Ok(p) => p,
         Err(e) => return e,
     };
-    let file = match open_file(&file_path) {
+    let file = match open_text_file(&file_path) {
         Ok(f) => f,
         Err(e) => return e,
     };
@@ -259,16 +374,166 @@ mod tests {
         }], "test").expect("add filePath");
     }
 
-    // ── head_file ────────────────────────────────────────────────────────────
+    // ── detect_mime_type ─────────────────────────────────────────────────────
 
     #[test]
-    fn head_file_returns_first_n_lines_with_1_based_numbers() {
+    fn detect_mime_type_identifies_pdf_by_magic_bytes() {
+        assert_eq!(detect_mime_type(b"%PDF-1.4 content"), "application/pdf");
+    }
+
+    #[test]
+    fn detect_mime_type_identifies_jpeg_by_magic_bytes() {
+        let jpeg: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0];
+        assert_eq!(detect_mime_type(jpeg), "image/jpeg");
+    }
+
+    #[test]
+    fn detect_mime_type_identifies_png_by_magic_bytes() {
+        let png: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        assert_eq!(detect_mime_type(png), "image/png");
+    }
+
+    #[test]
+    fn detect_mime_type_identifies_webp_by_magic_bytes() {
+        let mut webp = b"RIFF\x00\x00\x00\x00WEBP".to_vec();
+        webp.extend_from_slice(b"extra");
+        assert_eq!(detect_mime_type(&webp), "image/webp");
+    }
+
+    #[test]
+    fn detect_mime_type_identifies_gif_by_magic_bytes() {
+        assert_eq!(detect_mime_type(b"GIF89a\x01\x00"), "image/gif");
+        assert_eq!(detect_mime_type(b"GIF87a\x01\x00"), "image/gif");
+    }
+
+    #[test]
+    fn detect_mime_type_returns_octet_stream_for_unknown_bytes() {
+        assert_eq!(detect_mime_type(&[0x00, 0x01, 0x02, 0x03]), "application/octet-stream");
+    }
+
+    // ── read_binary_file ─────────────────────────────────────────────────────
+
+    #[test]
+    fn read_binary_file_returns_pdf_media_type_for_pdf_content() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let pdf_bytes = b"%PDF-1.4 minimal test content";
+        let mut tmp = NamedTempFile::new().expect("create temp file");
+        tmp.write_all(pdf_bytes).expect("write pdf");
+        register_file(&mut conn, "foundation:File_bin_pdf", tmp.path().to_str().unwrap());
+
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_pdf" }));
+
+        assert!(result.success, "Expected success but got error: {:?}", result.error);
+        let data = result.result.unwrap();
+        assert_eq!(data["media_type"].as_str().unwrap(), "application/pdf");
+        assert!(data["data"].as_str().is_some());
+    }
+
+    #[test]
+    fn read_binary_file_returns_jpeg_media_type_for_jpeg_content() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let jpeg: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+        let mut tmp = NamedTempFile::new().expect("create temp file");
+        tmp.write_all(jpeg).expect("write jpeg");
+        register_file(&mut conn, "foundation:File_bin_jpeg", tmp.path().to_str().unwrap());
+
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_jpeg" }));
+
+        assert!(result.success);
+        assert_eq!(result.result.unwrap()["media_type"].as_str().unwrap(), "image/jpeg");
+    }
+
+    #[test]
+    fn read_binary_file_base64_decodes_back_to_original_bytes() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let original = b"%PDF-1.4 round-trip test";
+        let mut tmp = NamedTempFile::new().expect("create temp file");
+        tmp.write_all(original).expect("write bytes");
+        register_file(&mut conn, "foundation:File_bin_rt", tmp.path().to_str().unwrap());
+
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_rt" }));
+
+        assert!(result.success);
+        let encoded = result.result.unwrap()["data"].as_str().unwrap().to_string();
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn read_binary_file_returns_octet_stream_for_unknown_format() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let unknown: &[u8] = &[0x00, 0x01, 0x02, 0x03, 0x04];
+        let mut tmp = NamedTempFile::new().expect("create temp file");
+        tmp.write_all(unknown).expect("write bytes");
+        register_file(&mut conn, "foundation:File_bin_unk", tmp.path().to_str().unwrap());
+
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_unk" }));
+
+        assert!(result.success);
+        assert_eq!(result.result.unwrap()["media_type"].as_str().unwrap(), "application/octet-stream");
+    }
+
+    #[test]
+    fn read_binary_file_returns_error_when_no_file_path_property() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let ind = Individual::new("foundation:File_bin_no_path");
+        ind.assert(&mut conn, "foundation:File", "no path", "https://example.com/icon.png", "test").unwrap();
+
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_no_path" }));
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("foundation:filePath"));
+    }
+
+    #[test]
+    fn read_binary_file_returns_error_when_file_exceeds_size_limit() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        // No model config in test DB → falls back to FALLBACK_MAX_BINARY_BYTES (500 KB).
+        let oversized = vec![0u8; (FALLBACK_MAX_BINARY_BYTES + 1) as usize];
+        let mut tmp = NamedTempFile::new().expect("create temp file");
+        tmp.write_all(&oversized).expect("write oversized bytes");
+        register_file(&mut conn, "foundation:File_bin_oversized", tmp.path().to_str().unwrap());
+
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_oversized" }));
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("too large"));
+    }
+
+    #[test]
+    fn read_binary_file_returns_error_when_file_does_not_exist_on_disk() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let ind = Individual::new("foundation:File_bin_missing");
+        ind.assert(&mut conn, "foundation:File", "missing", "https://example.com/icon.png", "test").unwrap();
+        ind.add_property(&mut conn, "foundation:filePath", vec![Object::Literal {
+            value: "file:///nonexistent/path/to/file.bin".to_string(),
+            datatype: Some("xsd:anyURI".to_string()),
+            language: None,
+        }], "test").unwrap();
+
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_missing" }));
+
+        assert!(!result.success);
+    }
+
+    // ── head_text_file ───────────────────────────────────────────────────────
+
+    #[test]
+    fn head_text_file_returns_first_n_lines_with_1_based_numbers() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["alpha", "beta", "gamma", "delta", "epsilon"]);
         register_file(&mut conn, "foundation:File_h1", tmp.path().to_str().unwrap());
 
-        let result = head_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_h1", "n": 3 }));
+        let result = head_text_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_h1", "n": 3 }));
 
         assert!(result.success);
         let data = result.result.unwrap();
@@ -281,13 +546,13 @@ mod tests {
     }
 
     #[test]
-    fn head_file_returns_all_lines_when_file_shorter_than_n() {
+    fn head_text_file_returns_all_lines_when_file_shorter_than_n() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["one", "two", "three", "four"]);
         register_file(&mut conn, "foundation:File_h2", tmp.path().to_str().unwrap());
 
-        let result = head_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_h2", "n": 20 }));
+        let result = head_text_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_h2", "n": 20 }));
 
         assert!(result.success);
         let data = result.result.unwrap();
@@ -296,7 +561,7 @@ mod tests {
     }
 
     #[test]
-    fn head_file_uses_default_n_10_when_omitted() {
+    fn head_text_file_uses_default_n_10_when_omitted() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let content: Vec<String> = (1..=15).map(|i| format!("line{}", i)).collect();
@@ -304,7 +569,7 @@ mod tests {
         let tmp = write_temp_file(&refs);
         register_file(&mut conn, "foundation:File_h3", tmp.path().to_str().unwrap());
 
-        let result = head_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_h3" }));
+        let result = head_text_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_h3" }));
 
         assert!(result.success);
         let data = result.result.unwrap();
@@ -313,28 +578,28 @@ mod tests {
     }
 
     #[test]
-    fn head_file_returns_error_when_no_file_path_property() {
+    fn head_text_file_returns_error_when_no_file_path_property() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let ind = Individual::new("foundation:File_no_path");
         ind.assert(&mut conn, "foundation:File", "no path", "https://example.com/icon.png", "test").unwrap();
 
-        let result = head_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_no_path" }));
+        let result = head_text_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_no_path" }));
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("foundation:filePath"));
     }
 
-    // ── read_lines ───────────────────────────────────────────────────────────
+    // ── read_text_lines ──────────────────────────────────────────────────────
 
     #[test]
-    fn read_lines_returns_requested_range_with_correct_line_numbers() {
+    fn read_text_lines_returns_requested_range_with_correct_line_numbers() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["a", "b", "c", "d", "e", "f"]);
         register_file(&mut conn, "foundation:File_r1", tmp.path().to_str().unwrap());
 
-        let result = read_lines(&conn, &serde_json::json!({
+        let result = read_text_lines(&conn, &serde_json::json!({
             "file_iri": "foundation:File_r1", "start_line": 2, "end_line": 4
         }));
 
@@ -349,13 +614,13 @@ mod tests {
     }
 
     #[test]
-    fn read_lines_clips_to_end_of_file_when_end_line_exceeds_length() {
+    fn read_text_lines_clips_to_end_of_file_when_end_line_exceeds_length() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["a", "b", "c", "d", "e"]);
         register_file(&mut conn, "foundation:File_r2", tmp.path().to_str().unwrap());
 
-        let result = read_lines(&conn, &serde_json::json!({
+        let result = read_text_lines(&conn, &serde_json::json!({
             "file_iri": "foundation:File_r2", "start_line": 3, "end_line": 100
         }));
 
@@ -367,7 +632,7 @@ mod tests {
     }
 
     #[test]
-    fn read_lines_always_returns_total_lines_for_pagination_planning() {
+    fn read_text_lines_always_returns_total_lines_for_pagination_planning() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let content: Vec<String> = (1..=10).map(|i| format!("row{}", i)).collect();
@@ -375,7 +640,7 @@ mod tests {
         let tmp = write_temp_file(&refs);
         register_file(&mut conn, "foundation:File_r3", tmp.path().to_str().unwrap());
 
-        let result = read_lines(&conn, &serde_json::json!({
+        let result = read_text_lines(&conn, &serde_json::json!({
             "file_iri": "foundation:File_r3", "start_line": 1, "end_line": 2
         }));
 
@@ -386,13 +651,13 @@ mod tests {
     }
 
     #[test]
-    fn read_lines_returns_empty_lines_when_start_exceeds_file_length() {
+    fn read_text_lines_returns_empty_lines_when_start_exceeds_file_length() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["a", "b", "c", "d", "e"]);
         register_file(&mut conn, "foundation:File_r4", tmp.path().to_str().unwrap());
 
-        let result = read_lines(&conn, &serde_json::json!({
+        let result = read_text_lines(&conn, &serde_json::json!({
             "file_iri": "foundation:File_r4", "start_line": 50, "end_line": 60
         }));
 
@@ -403,13 +668,13 @@ mod tests {
     }
 
     #[test]
-    fn read_lines_returns_error_when_start_line_greater_than_end_line() {
+    fn read_text_lines_returns_error_when_start_line_greater_than_end_line() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["a", "b", "c"]);
         register_file(&mut conn, "foundation:File_r5", tmp.path().to_str().unwrap());
 
-        let result = read_lines(&conn, &serde_json::json!({
+        let result = read_text_lines(&conn, &serde_json::json!({
             "file_iri": "foundation:File_r5", "start_line": 5, "end_line": 2
         }));
 
@@ -418,14 +683,14 @@ mod tests {
     }
 
     #[test]
-    fn read_lines_truncates_long_lines_and_reports_total_chars() {
+    fn read_text_lines_truncates_long_lines_and_reports_total_chars() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let long_line = "x".repeat(8000);
         let tmp = write_temp_file(&[&long_line]);
         register_file(&mut conn, "foundation:File_r6", tmp.path().to_str().unwrap());
 
-        let result = read_lines(&conn, &serde_json::json!({
+        let result = read_text_lines(&conn, &serde_json::json!({
             "file_iri": "foundation:File_r6", "start_line": 1, "end_line": 1
         }));
 
@@ -439,13 +704,13 @@ mod tests {
     }
 
     #[test]
-    fn read_lines_returns_char_slice_when_start_char_and_end_char_are_provided() {
+    fn read_text_lines_returns_char_slice_when_start_char_and_end_char_are_provided() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["abcdefghij"]);
         register_file(&mut conn, "foundation:File_r7", tmp.path().to_str().unwrap());
 
-        let result = read_lines(&conn, &serde_json::json!({
+        let result = read_text_lines(&conn, &serde_json::json!({
             "file_iri": "foundation:File_r7", "start_line": 1, "end_line": 1,
             "start_char": 5, "end_char": 10
         }));
@@ -458,14 +723,14 @@ mod tests {
     }
 
     #[test]
-    fn read_lines_supports_iterative_reading_of_long_line_via_start_char() {
+    fn read_text_lines_supports_iterative_reading_of_long_line_via_start_char() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let long_line = (0..10000u32).map(|i| char::from_digit(i % 10, 10).unwrap()).collect::<String>();
         let tmp = write_temp_file(&[&long_line]);
         register_file(&mut conn, "foundation:File_r8", tmp.path().to_str().unwrap());
 
-        let result = read_lines(&conn, &serde_json::json!({
+        let result = read_text_lines(&conn, &serde_json::json!({
             "file_iri": "foundation:File_r8", "start_line": 1, "end_line": 1,
             "start_char": 4097, "end_char": 8192
         }));

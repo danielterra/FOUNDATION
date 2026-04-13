@@ -1,7 +1,7 @@
 <script>
-  import { marked } from 'marked';
+  import MarkdownValue from './MarkdownValue.svelte';
 
-  let { label, comment, onSave } = $props();
+  let { label, comment, onSave, openEntityInspector = null } = $props();
 
   let editingMeta = $state(null);
   let metaDraft = $state('');
@@ -41,15 +41,6 @@
     commentTextareaEl.style.height = 'auto';
     commentTextareaEl.style.height = Math.min(commentTextareaEl.scrollHeight, 400) + 'px';
   });
-
-  function parseMarkdown(text) {
-    if (!text || typeof text !== 'string') return '';
-    try {
-      return marked.parse(text);
-    } catch {
-      return text;
-    }
-  }
 
   function focusOnMount(node) {
     node.focus();
@@ -102,7 +93,7 @@
       onkeydown={(e) => e.key === 'Enter' && startMetaEdit('comment')}
     >
       {#if comment}
-        <div class="markdown-content">{@html parseMarkdown(comment)}</div>
+        <MarkdownValue value={comment} {openEntityInspector} />
       {:else}
         <span class="meta-empty-hint">Add description…</span>
       {/if}
@@ -110,7 +101,7 @@
   {:else}
     <div class="description" class:empty={!comment} title="Entity is system-locked">
       {#if comment}
-        <div class="markdown-content">{@html parseMarkdown(comment)}</div>
+        <MarkdownValue value={comment} {openEntityInspector} />
       {:else}
         <span class="meta-empty-hint">Add description…</span>
       {/if}
@@ -135,7 +126,6 @@
   .entity-full-name.editable,
   .description.editable {
     cursor: text;
-    border-radius: 6px;
     padding: 4px 6px;
     margin: 0 -6px;
     transition: background 0.15s;
@@ -151,7 +141,6 @@
     box-sizing: border-box;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     border: 1px solid var(--color-interactive);
-    border-radius: 6px;
     padding: 6px 10px;
     font-family: var(--font-title);
     font-size: 16px;
@@ -166,7 +155,6 @@
     box-sizing: border-box;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     border: 1px solid var(--color-interactive);
-    border-radius: 6px;
     padding: 8px 10px;
     font-family: inherit;
     font-size: 14px;
@@ -186,7 +174,7 @@
   }
 
   .meta-empty-hint {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--color-neutral);
     opacity: 0.35;
     font-style: italic;

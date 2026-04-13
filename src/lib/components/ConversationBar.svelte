@@ -232,7 +232,6 @@
 		z-index: 100;
 		background: color-mix(in srgb, var(--color-white) 6%, var(--color-black));
 		border: 1px solid color-mix(in srgb, var(--color-white) 12%, transparent);
-		border-radius: 6px;
 		box-shadow: 0 8px 24px color-mix(in srgb, var(--color-black) 60%, transparent);
 		display: flex;
 		flex-direction: column;
@@ -354,7 +353,6 @@
 	.item-icon-btn {
 		width: 22px;
 		height: 22px;
-		border-radius: 4px;
 		background: transparent;
 		border: none;
 		color: var(--color-neutral-disabled);

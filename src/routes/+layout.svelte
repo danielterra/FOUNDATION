@@ -8,6 +8,30 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { openUrl } from '@tauri-apps/plugin-opener';
+  import { deleteConfirm } from '$lib/stores/deleteConfirm';
+  import GlobalModal from '$lib/components/GlobalModal.svelte';
+
+  type TaskCompletedEvent = {
+    task_iri: string;
+    label: string;
+    result_summary: string;
+  };
+
+  type TaskNotification = TaskCompletedEvent & { id: number };
+
+  const TASK_NOTIFICATION_DURATION_MS = 8000;
+  const TOAST_SUMMARY_MAX_CHARS = 80;
+
+  function openTaskInspector(taskIri: string) {
+    invoke('widget_blackboard__add_widget', {
+      widgetType: 'inspector', entityId: taskIri,
+      position: null, size: null, conversationId: null
+    }).catch(e => console.error('[toast] Failed to open inspector:', e));
+  }
+
+  let taskNotifications = $state<TaskNotification[]>([]);
+  let unlistenTaskCompleted: (() => void) | undefined;
+  let taskNotifCounter = 0;
 
   type AutomationStepEvent = {
     executionIri: string;
@@ -126,6 +150,15 @@
       }
     });
 
+    unlistenTaskCompleted = await listen<TaskCompletedEvent>('task-completed', (event) => {
+      const id = ++taskNotifCounter;
+      const notif: TaskNotification = { ...event.payload, id };
+      taskNotifications = [...taskNotifications, notif];
+      setTimeout(() => {
+        taskNotifications = taskNotifications.filter(n => n.id !== id);
+      }, TASK_NOTIFICATION_DURATION_MS);
+    });
+
     unlistenRecalc = await listen<FormulaProgressEvent>('formula-recalc-progress', (event) => {
       const { jobId, classLabel, percent, status } = event.payload;
 
@@ -148,6 +181,7 @@
 
   onDestroy(() => {
     document.removeEventListener('click', handleLinkClick, true);
+    unlistenTaskCompleted?.();
     unlistenRecalc?.();
     unlistenRetentionStarted?.();
     unlistenRetentionComplete?.();
@@ -169,7 +203,48 @@
 
 {@render children()}
 
-{#if automationRuns.length > 0 || retentionRunning || recalcJobs.length > 0}
+{#if $deleteConfirm}
+  {@const dialog = $deleteConfirm}
+  {@const hasCascade = dialog.cascade_items.length > 0}
+  {@const hasImpact = hasCascade || dialog.backlink_count > 0}
+  <div class="global-overlay" role="dialog" aria-modal="true">
+    <div class="global-dialog">
+      <span class="material-symbols-outlined dialog-icon">delete_forever</span>
+      <p class="dialog-title">Excluir "{dialog.entityLabel}"?</p>
+      {#if hasImpact}
+        <div class="dialog-impact">
+          {#if hasCascade}
+            <p class="impact-heading">Também será excluído:</p>
+            <ul class="impact-list">
+              {#each dialog.cascade_items as item}
+                <li>
+                  <span class="impact-item-label">{item.label}</span>
+                  {#if item.type_label}<span class="impact-item-type">{item.type_label}</span>{/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+          {#if dialog.backlink_count > 0}
+            <p class="backlink-note">
+              {dialog.backlink_count} {dialog.backlink_count === 1 ? 'referência' : 'referências'} a esta entidade {dialog.backlink_count === 1 ? 'será removida' : 'serão removidas'} de outras entidades (que não serão excluídas).
+            </p>
+          {/if}
+          <p class="impact-warning">Esta ação não pode ser desfeita pela interface.</p>
+        </div>
+      {:else}
+        <p class="dialog-warning">Esta ação não pode ser desfeita pela interface.</p>
+      {/if}
+      <div class="dialog-actions">
+        <button class="dialog-cancel-btn" onclick={dialog.onCancel}>Cancelar</button>
+        <button class="dialog-confirm-btn" onclick={dialog.onConfirm}>Excluir</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<GlobalModal />
+
+{#if automationRuns.length > 0 || retentionRunning || recalcJobs.length > 0 || taskNotifications.length > 0}
   <div class="toast-stack">
     {#each automationRuns as run (run.executionIri)}
       <div
@@ -210,6 +285,27 @@
       </div>
     {/if}
 
+    {#each taskNotifications as notif (notif.id)}
+      <div class="automation-toast done task-toast">
+        <span class="material-symbols-outlined toast-icon">task_alt</span>
+        <div class="toast-body">
+          <span class="toast-label"><strong>{notif.label}</strong> concluída</span>
+          {#if notif.result_summary}
+            <span class="toast-detail">{notif.result_summary.slice(0, TOAST_SUMMARY_MAX_CHARS)}{notif.result_summary.length > TOAST_SUMMARY_MAX_CHARS ? '…' : ''}</span>
+          {/if}
+          <button
+            class="toast-action-btn"
+            onclick={() => openTaskInspector(notif.task_iri)}
+          >
+            Ver tarefa
+          </button>
+        </div>
+        <button class="toast-close" onclick={() => { taskNotifications = taskNotifications.filter(n => n.id !== notif.id); }}>
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+    {/each}
+
     {#each recalcJobs as job (job.jobId)}
       <div class="system-toast" class:done={job.status !== 'running'}>
         <span class="recalc-label">Recalculating <strong>{job.classLabel}</strong></span>
@@ -246,6 +342,150 @@
     to { transform: rotate(360deg); }
   }
 
+  .global-overlay {
+    position: fixed;
+    inset: 0;
+    background: color-mix(in srgb, var(--color-black) 70%, transparent);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 99999;
+  }
+
+  .global-dialog {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 28px 24px;
+    background: color-mix(in srgb, var(--color-black) 92%, transparent);
+    border: 1px solid color-mix(in srgb, #ef4444 40%, transparent);
+    max-width: 340px;
+    width: 90vw;
+    text-align: center;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+  }
+
+  .dialog-icon {
+    font-size: 36px;
+    color: #ef4444;
+  }
+
+  .dialog-title {
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-neutral-active);
+    margin: 0;
+    word-break: break-word;
+  }
+
+  .dialog-warning {
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--color-neutral);
+    margin: 0;
+    opacity: 0.7;
+  }
+
+  .dialog-impact {
+    width: 100%;
+    background: color-mix(in srgb, #ef4444 8%, transparent);
+    border: 1px solid color-mix(in srgb, #ef4444 25%, transparent);
+    padding: 10px 14px;
+    text-align: left;
+  }
+
+  .impact-heading {
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 700;
+    color: color-mix(in srgb, #ef4444 80%, white);
+    margin: 0 0 6px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .impact-list {
+    margin: 0 0 8px 0;
+    padding-left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .impact-list li {
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--color-neutral-active);
+    line-height: 1.4;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .impact-item-label {
+    font-weight: 500;
+  }
+
+  .impact-item-type {
+    font-size: 10px;
+    color: var(--color-neutral);
+    opacity: 0.8;
+    font-style: italic;
+  }
+
+  .backlink-note {
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--color-neutral);
+    margin: 0 0 6px 0;
+    line-height: 1.4;
+    opacity: 0.85;
+  }
+
+  .impact-warning {
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--color-neutral);
+    margin: 0;
+    opacity: 0.7;
+  }
+
+  .dialog-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .dialog-cancel-btn {
+    padding: 7px 18px;
+    background: color-mix(in srgb, var(--color-white) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+    color: var(--color-neutral-active);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .dialog-confirm-btn {
+    padding: 7px 18px;
+    background: color-mix(in srgb, #ef4444 20%, transparent);
+    border: 1px solid color-mix(in srgb, #ef4444 50%, transparent);
+    color: #ef4444;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .dialog-confirm-btn:active {
+    background: color-mix(in srgb, #ef4444 35%, transparent);
+    color: var(--color-neutral-active);
+  }
+
   .toast-stack {
     position: fixed;
     bottom: 16px;
@@ -261,7 +501,6 @@
     backdrop-filter: blur(12px);
     border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
     color: var(--color-neutral);
-    border-radius: 10px;
     padding: 10px 14px;
     display: flex;
     align-items: flex-start;
@@ -315,6 +554,27 @@
     word-break: break-word;
   }
 
+  .toast-detail {
+    font-size: 11px;
+    color: var(--color-neutral);
+    opacity: 0.8;
+    word-break: break-word;
+    line-height: 1.4;
+  }
+
+  .toast-action-btn {
+    margin-top: 4px;
+    background: none;
+    border: 1px solid color-mix(in srgb, var(--color-success) 40%, transparent);
+    color: var(--color-success);
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    cursor: pointer;
+    align-self: flex-start;
+  }
+
   .toast-error {
     font-size: 11px;
     color: color-mix(in srgb, var(--color-danger) 80%, white);
@@ -330,7 +590,6 @@
     flex-shrink: 0;
     display: flex;
     align-items: center;
-    border-radius: 4px;
     align-self: flex-start;
   }
 
@@ -343,7 +602,6 @@
     backdrop-filter: blur(12px);
     border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
     color: var(--color-neutral);
-    border-radius: 10px;
     padding: 8px 14px;
     display: flex;
     align-items: center;

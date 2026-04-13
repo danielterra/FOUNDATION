@@ -65,71 +65,92 @@ fn content_to_json(content: &MessageContent) -> String {
     }
 }
 
-async fn persist_conversation(
+pub async fn create_conversation(
+    executor: &DbExecutor,
+    step_iri: &str,
+    task_label: &str,
+    agent_iri: Option<&str>,
+) -> String {
+    let conv_iri = format!("foundation:AIConversation_{}", chrono::Utc::now().timestamp_millis());
+    let conv_label = format!("{} — Execution", task_label);
+    let step = step_iri.to_string();
+    let conv = conv_iri.clone();
+    let agent = agent_iri.map(|s| s.to_string());
+    executor.write(move |conn| {
+        let ind = Individual::new(&conv);
+        ind.assert(conn, "foundation:AIConversation", &conv_label, "smart_toy", "process_automation")
+            .map_err(|e| e.to_string())?;
+        let mut triples = vec![
+            crate::eavto::Triple::new(&conv, "foundation:generatedByStep", Object::Iri(step)),
+        ];
+        if let Some(a) = agent {
+            triples.push(crate::eavto::Triple::new(&conv, "foundation:handledBy", Object::Iri(a)));
+        }
+        crate::eavto::store::assert_triples(conn, &triples, "process_automation")
+            .map_err(|e| e.to_string())?;
+        Ok(conv)
+    }).await.unwrap_or_default()
+}
+
+pub async fn append_message(
+    executor: &DbExecutor,
+    conv_iri: &str,
+    msg: &ChatMessage,
+    model: &str,
+    index: usize,
+) {
+    let msg_iri = format!("foundation:AIConversationMessage_{}_{}", chrono::Utc::now().timestamp_millis(), index);
+    let role = msg.role.clone();
+    let content_json = content_to_json(&msg.content);
+    let conv = conv_iri.to_string();
+    let model_str = model.to_string();
+
+    let result = executor.write(move |conn| {
+        let ind = Individual::new(&msg_iri);
+        ind.assert(conn, "foundation:AIConversationMessage", &role, "chat", "process_automation")
+            .map_err(|e| e.to_string())?;
+
+        let mut triples = vec![
+            crate::eavto::Triple::new(
+                &msg_iri, "foundation:role",
+                Object::Literal { value: role.clone(), datatype: Some("xsd:string".to_string()), language: None },
+            ),
+            crate::eavto::Triple::new(
+                &msg_iri, "foundation:content",
+                Object::Literal { value: content_json, datatype: Some("xsd:string".to_string()), language: None },
+            ),
+            crate::eavto::Triple::new(
+                &msg_iri, "foundation:partOfConversation",
+                Object::Iri(conv),
+            ),
+        ];
+        if role == "assistant" && !model_str.is_empty() {
+            triples.push(crate::eavto::Triple::new(
+                &msg_iri, "foundation:model",
+                Object::Literal { value: model_str, datatype: Some("xsd:string".to_string()), language: None },
+            ));
+        }
+
+        crate::eavto::store::assert_triples(conn, &triples, "process_automation")
+            .map_err(|e| e.to_string())?;
+        Ok(msg_iri)
+    }).await;
+    if let Err(e) = &result {
+        crate::commands::log_backend("error", &format!("[agent_task] append_message failed: {}", e));
+    }
+}
+
+pub async fn persist_conversation(
     executor: &DbExecutor,
     step_iri: &str,
     task_label: &str,
     model: &str,
+    agent_iri: Option<&str>,
     messages: &[ChatMessage],
 ) {
-    let base_ms = chrono::Utc::now().timestamp_millis();
-    let conv_iri = format!("foundation:AIConversation_{}", base_ms);
-    let conv_label = format!("{} — Execution", task_label);
-
-    let step = step_iri.to_string();
-    let conv = conv_iri.clone();
-    let label = conv_label.clone();
-    executor.write(move |conn| {
-        let ind = Individual::new(&conv);
-        ind.assert(conn, "foundation:AIConversation", &label, "smart_toy", "process_automation")
-            .map_err(|e| e.to_string())?;
-        let link = crate::eavto::Triple::new(
-            &step,
-            "foundation:hasConversation",
-            Object::Iri(conv.clone()),
-        );
-        crate::eavto::store::assert_triples(conn, &[link], "process_automation")
-            .map_err(|e| e.to_string())?;
-        Ok(conv)
-    }).await.ok();
-
+    let conv_iri = create_conversation(executor, step_iri, task_label, agent_iri).await;
     for (i, msg) in messages.iter().enumerate() {
-        let msg_iri = format!("foundation:AIConversationMessage_{}", base_ms + 1 + i as i64);
-        let role = msg.role.clone();
-        let content_json = content_to_json(&msg.content);
-        let conv_iri_for_msg = conv_iri.clone();
-        let model_str = model.to_string();
-
-        executor.write(move |conn| {
-            let ind = Individual::new(&msg_iri);
-            ind.assert(conn, "foundation:AIConversationMessage", &role, "chat", "process_automation")
-                .map_err(|e| e.to_string())?;
-
-            let mut triples = vec![
-                crate::eavto::Triple::new(
-                    &msg_iri, "foundation:role",
-                    Object::Literal { value: role.clone(), datatype: Some("xsd:string".to_string()), language: None },
-                ),
-                crate::eavto::Triple::new(
-                    &msg_iri, "foundation:content",
-                    Object::Literal { value: content_json, datatype: Some("xsd:string".to_string()), language: None },
-                ),
-                crate::eavto::Triple::new(
-                    &msg_iri, "foundation:partOfConversation",
-                    Object::Iri(conv_iri_for_msg),
-                ),
-            ];
-            if role == "assistant" && !model_str.is_empty() {
-                triples.push(crate::eavto::Triple::new(
-                    &msg_iri, "foundation:model",
-                    Object::Literal { value: model_str, datatype: Some("xsd:string".to_string()), language: None },
-                ));
-            }
-
-            crate::eavto::store::assert_triples(conn, &triples, "process_automation")
-                .map_err(|e| e.to_string())?;
-            Ok(msg_iri)
-        }).await.ok();
+        append_message(executor, &conv_iri, msg, model, i).await;
     }
 }
 
@@ -478,7 +499,7 @@ pub async fn execute_agent_task(
         }
     }
 
-    persist_conversation(&executor, step_iri, &label, &model_identifier, &messages).await;
+    persist_conversation(&executor, step_iri, &label, &model_identifier, Some(&agent_iri), &messages).await;
 
     match task_completion {
         Some((output_iri, message)) => Ok(if !output_iri.is_empty() { output_iri } else { message }),

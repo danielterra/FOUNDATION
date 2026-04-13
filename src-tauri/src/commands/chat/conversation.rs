@@ -254,7 +254,7 @@ pub async fn chat__list_agents(
             let is_active = crate::owl::get_iri_property(conn, iri, "foundation:hasStatus")
                 .ok()
                 .flatten()
-                .map(|s| s == "foundation:Status_1772755611667")
+                .map(|s| s == "foundation:Status_1773183515321")
                 .unwrap_or(false);
             serde_json::json!({
                 "iri": iri,

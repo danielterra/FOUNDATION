@@ -245,7 +245,6 @@
 	.panel {
 		background: var(--color-surface, #1e1e2e);
 		border: 1px solid color-mix(in srgb, var(--color-white, #fff) 12%, transparent);
-		border-radius: 12px;
 		width: 420px;
 		max-width: 95vw;
 		max-height: 85vh;
@@ -278,7 +277,6 @@
 		align-items: center;
 		justify-content: center;
 		padding: 2px;
-		border-radius: 4px;
 	}
 
 	.close-btn .material-symbols-outlined {
@@ -309,7 +307,7 @@
 	}
 
 	.hint {
-		font-size: 13px;
+		font-size: 14px;
 		color: var(--color-neutral, #888);
 		margin: 0;
 	}
@@ -337,9 +335,8 @@
 		flex: 1;
 		background: color-mix(in srgb, var(--color-white, #fff) 6%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-white, #fff) 12%, transparent);
-		border-radius: 6px;
 		color: var(--color-neutral-active, #e0e0e0);
-		font-size: 13px;
+		font-size: 14px;
 		padding: 7px 10px;
 		outline: none;
 	}
@@ -357,9 +354,8 @@
 		background: var(--color-interactive, #7c6fff);
 		color: #fff;
 		border: none;
-		border-radius: 6px;
 		padding: 7px 14px;
-		font-size: 13px;
+		font-size: 14px;
 		font-weight: 500;
 		cursor: pointer;
 		white-space: nowrap;
@@ -375,9 +371,8 @@
 		background: color-mix(in srgb, #e53935 15%, transparent);
 		color: #e57373;
 		border: 1px solid color-mix(in srgb, #e53935 30%, transparent);
-		border-radius: 6px;
 		padding: 7px 14px;
-		font-size: 13px;
+		font-size: 14px;
 		font-weight: 500;
 		cursor: pointer;
 	}

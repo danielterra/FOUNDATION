@@ -244,12 +244,21 @@ pub async fn widget_inspector__update_property(
     let entity_id_clone = entity_id.clone();
     let property_iri_clone = property_iri.clone();
     let job_ids_json = executor.write(move |conn| {
-        let individual = Individual::new(&entity_id_clone);
-        individual.add_property(conn, &property_iri_clone, vec![Object::Literal {
-            value,
-            datatype: Some(datatype.unwrap_or_else(|| "xsd:string".to_string())),
-            language: None,
-        }], "user").map_err(|e| e.to_string())?;
+        if !value.is_empty() {
+            let effective_datatype = datatype.unwrap_or_else(|| {
+                Property::get(conn, &property_iri_clone)
+                    .ok()
+                    .flatten()
+                    .and_then(|p| p.ranges.into_iter().find(|r| r.starts_with("xsd:")))
+                    .unwrap_or_else(|| "xsd:string".to_string())
+            });
+            let individual = Individual::new(&entity_id_clone);
+            individual.add_property(conn, &property_iri_clone, vec![Object::Literal {
+                value,
+                datatype: Some(effective_datatype),
+                language: None,
+            }], "user").map_err(|e| e.to_string())?;
+        }
         let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
             conn, &entity_id_clone, &property_iri_clone,
         );
@@ -311,19 +320,46 @@ pub async fn widget_inspector__update_status(
 
 #[tauri::command]
 #[allow(non_snake_case)]
+pub async fn widget_inspector__get_delete_impact(
+    entity_id: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor.read(move |conn| {
+        let (cascade_items, backlink_count) =
+            Individual::compute_delete_impact(conn, &entity_id)
+                .map_err(|e| e.to_string())?;
+        let items_json: Vec<serde_json::Value> = cascade_items.into_iter()
+            .map(|(iri, label, type_label)| serde_json::json!({
+                "iri": iri,
+                "label": label,
+                "type_label": type_label,
+            }))
+            .collect();
+        serde_json::to_string(&serde_json::json!({
+            "cascade_items": items_json,
+            "backlink_count": backlink_count,
+        })).map_err(|e| e.to_string())
+    }).await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
 pub async fn widget_inspector__delete_individual(
     entity_id: String,
     app: tauri::AppHandle,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
-    executor.write(move |conn| {
-        Individual::retract(conn, &entity_id_clone, "user")
+    let retracted_json = executor.write(move |conn| {
+        let iris = Individual::retract_collecting(conn, &entity_id_clone, "user")
             .map_err(|e| e.to_string())?;
-        Ok("retracted".to_string())
+        serde_json::to_string(&iris).map_err(|e| e.to_string())
     }).await?;
+    let all_retracted: Vec<String> = serde_json::from_str(&retracted_json).unwrap_or_default();
+    for iri in &all_retracted {
+        app.emit("entity-deleted", serde_json::json!({ "entityId": iri })).ok();
+    }
     app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
-    app.emit("entity-deleted", serde_json::json!({ "entityId": entity_id })).ok();
     Ok(())
 }
 
@@ -1016,4 +1052,109 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
         nodes,
         links,
     })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IriResolution {
+    pub label: String,
+    pub icon: Option<String>,
+}
+
+pub fn resolve_iris_batch(conn: &owl::Connection, iris: Vec<String>) -> HashMap<String, IriResolution> {
+    use crate::eavto::query;
+    use crate::owl::vocabulary::rdfs;
+
+    if iris.is_empty() {
+        return HashMap::new();
+    }
+
+    let predicates = &[rdfs::LABEL, "foundation:hasIcon", "rdf:type"];
+    let rows = match query::get_predicates_for_subjects(conn, &iris, predicates) {
+        Ok(r) => r,
+        Err(_) => return HashMap::new(),
+    };
+
+    struct Raw { label: Option<String>, icon: Option<String> }
+    let mut raw: HashMap<String, Raw> = HashMap::new();
+
+    for (subject, predicate, object) in rows {
+        let entry = raw.entry(subject).or_insert(Raw { label: None, icon: None });
+        match predicate.as_str() {
+            p if p == rdfs::LABEL => {
+                if entry.label.is_none() { entry.label = object.as_literal(); }
+            }
+            "foundation:hasIcon" => {
+                if entry.icon.is_none() {
+                    entry.icon = match &object {
+                        crate::eavto::Object::Iri(icon_iri) =>
+                            crate::owl::icon_iri_to_display(conn, icon_iri),
+                        crate::eavto::Object::Literal { value, .. } => Some(value.clone()),
+                        _ => None,
+                    };
+                }
+            }
+            _ => {}
+        }
+    }
+
+    raw.into_iter().map(|(iri, r)| {
+        let label = r.label.unwrap_or_else(|| iri.clone());
+        (iri, IriResolution { label, icon: r.icon })
+    }).collect()
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn entity__resolve_iris(
+    iris: Vec<String>,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor.read(move |conn| {
+        let result = resolve_iris_batch(conn, iris);
+        serde_json::to_string(&result).map_err(|e| e.to_string())
+    }).await
+}
+
+#[cfg(test)]
+mod resolve_iris_tests {
+    use super::*;
+    use crate::eavto::{store, test_helpers::setup_test_db, Triple, Object};
+    use crate::owl::vocabulary::rdfs;
+
+    #[test]
+    fn test_resolve_iris_empty_returns_empty_map() {
+        let conn = setup_test_db();
+        let result = resolve_iris_batch(&conn, vec![]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_iris_unknown_iri_not_included() {
+        let conn = setup_test_db();
+        let result = resolve_iris_batch(&conn, vec!["foundation:Unknown_999".to_string()]);
+        assert!(!result.contains_key("foundation:Unknown_999"));
+    }
+
+    #[test]
+    fn test_resolve_iris_returns_label_and_icon() {
+        let mut conn = setup_test_db();
+        store::assert_triples(&mut conn, &[
+            Triple::new("foundation:Known_123", rdfs::LABEL, Object::Literal {
+                value: "Known Entity".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            Triple::new("foundation:Known_123", "foundation:hasIcon", Object::Literal {
+                value: "star".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ], "test").unwrap();
+
+        let result = resolve_iris_batch(&conn, vec!["foundation:Known_123".to_string()]);
+        let entry = result.get("foundation:Known_123").unwrap();
+        assert_eq!(entry.label, "Known Entity");
+        assert_eq!(entry.icon.as_deref(), Some("star"));
+    }
 }

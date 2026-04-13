@@ -147,7 +147,7 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "range".to_string(),
                     param_type: "string".to_string(),
-                    description: "For 'object': target class IRI. For 'datatype': xsd type. Omit to keep existing.".to_string(),
+                    description: "For 'object': target class IRI. For 'datatype': xsd type (e.g. 'xsd:string', 'xsd:integer', 'xsd:decimal', 'xsd:date', 'xsd:dateTime', 'xsd:boolean', 'xsd:anyURI') or custom type 'foundation:rrule' (iCalendar recurrence rule — renders inline recurrence editor in the Inspector). Omit to keep existing.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -586,9 +586,24 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
 
         ToolTemplate {
-            name: "head_file".to_string(),
+            name: "read_binary_file".to_string(),
             array_mode: false,
-            description: "Return the first N lines of a foundation:File individual. Also returns the total line count so the agent knows the file's full size. Ideal for inspecting CSV headers and structure before choosing a processing strategy.".to_string(),
+            description: "Read a binary file stored in FOUNDATION and return its bytes as base64 with the detected MIME type. Supports PDF (application/pdf), JPEG, PNG, WebP, GIF — detected from magic bytes. Unknown formats return application/octet-stream. The result can be passed directly to Claude as a document or image content block.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "file_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the foundation:File individual (e.g. 'foundation:File_1234567890')".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "head_text_file".to_string(),
+            array_mode: false,
+            description: "Return the first N lines of a text-based foundation:File individual. Also returns the total line count so the agent knows the file's full size. Ideal for inspecting CSV headers and structure before choosing a processing strategy.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "file_iri".to_string(),
@@ -608,9 +623,9 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
         },
 
         ToolTemplate {
-            name: "read_lines".to_string(),
+            name: "read_text_lines".to_string(),
             array_mode: false,
-            description: "Read a specific line range from a foundation:File individual. Returns lines with 1-based numbers, total line count, and character metadata. Lines exceeding the character window are truncated — use start_char/end_char to iterate over long lines.".to_string(),
+            description: "Read a specific line range from a text-based foundation:File individual. Returns lines with 1-based numbers, total line count, and character metadata. Lines exceeding the character window are truncated — use start_char/end_char to iterate over long lines.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "file_iri".to_string(),

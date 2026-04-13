@@ -72,7 +72,6 @@
 		flex-direction: column;
 		gap: 8px;
 		padding: 10px 12px;
-		border-radius: 8px;
 		background: color-mix(in srgb, var(--color-neutral-active) 6%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-neutral-active) 15%, transparent);
 		margin-top: 4px;
@@ -98,7 +97,7 @@
 	}
 
 	.question-text {
-		font-size: 13px;
+		font-size: 14px;
 		color: var(--color-neutral-active);
 		line-height: 1.5;
 	}
@@ -112,7 +111,6 @@
 	.option-btn {
 		text-align: left;
 		padding: 6px 10px;
-		border-radius: 6px;
 		border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
 		background: color-mix(in srgb, var(--color-interactive) 8%, transparent);
 		color: var(--color-neutral-active);
@@ -148,7 +146,6 @@
 		width: 100%;
 		min-height: 72px;
 		padding: 8px 10px;
-		border-radius: 6px;
 		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
 		background: color-mix(in srgb, var(--color-black) 20%, transparent);
 		color: var(--color-neutral-active);
@@ -166,7 +163,6 @@
 	.question-submit {
 		align-self: flex-end;
 		padding: 5px 14px;
-		border-radius: 6px;
 		border: 1px solid color-mix(in srgb, var(--color-interactive) 40%, transparent);
 		background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
 		color: var(--color-interactive);
@@ -188,10 +184,9 @@
 	}
 
 	.question-answer {
-		font-size: 13px;
+		font-size: 14px;
 		color: var(--color-neutral-active);
 		padding: 6px 10px;
-		border-radius: 6px;
 		background: color-mix(in srgb, var(--color-neutral-active) 8%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-neutral-active) 15%, transparent);
 	}
@@ -201,7 +196,6 @@
 		background: transparent;
 		border: 1px solid color-mix(in srgb, var(--color-neutral-disabled) 40%, transparent);
 		color: var(--color-neutral-disabled);
-		border-radius: 6px;
 		padding: 4px 10px;
 		font-size: 11px;
 		cursor: pointer;

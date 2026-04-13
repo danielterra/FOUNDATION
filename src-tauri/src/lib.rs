@@ -111,6 +111,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(process_automation::scheduler::SchedulerState::new())
+        .manage(process_automation::task_scheduler::TaskSchedulerState::new())
+        .manage(process_automation::task_manager::TaskExecutionState::new())
         .manage(commands::AiCancellationState::new())
         .setup(|app| {
             // Setup is intentionally minimal - initialization happens via initialize_app command
@@ -119,7 +121,11 @@ pub fn run() {
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(mcp::serve(app_handle.clone()));
             process_automation::trigger::register_listeners(app_handle.clone());
-            process_automation::scheduler::listen_for_new_timers(app_handle);
+            process_automation::scheduler::listen_for_new_timers(app_handle.clone());
+            process_automation::task_scheduler::listen_for_scheduled_tasks(app_handle.clone());
+            process_automation::task_blocker::listen_for_blocking(app_handle.clone());
+            process_automation::task_manager::listen_for_in_progress(app_handle.clone());
+            process_automation::task_manager::listen_for_recurrence(app_handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -136,6 +142,7 @@ pub fn run() {
             commands::widget_inspector__update_property,
             commands::widget_inspector__set_references,
             commands::widget_inspector__update_status,
+            commands::widget_inspector__get_delete_impact,
             commands::widget_inspector__delete_individual,
             commands::widget_inspector__define_class_property,
             commands::widget_inspector__check_property_usage,
@@ -181,7 +188,9 @@ pub fn run() {
             commands::automation__get_graph,
             commands::automation__run,
             commands::automation__find_for_types,
-            commands::automation__get_execution
+            commands::automation__get_execution,
+            commands::task__delegate,
+            commands::entity__resolve_iris
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

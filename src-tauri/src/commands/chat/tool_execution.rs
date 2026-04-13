@@ -79,7 +79,7 @@ pub async fn execute_tools_from_message(
         .map_err(|e| format!("Failed to serialize tool results: {}", e))?;
 
     let iri = create_message(executor, conversation_id, "user", &content_json, None, None, None).await?;
-    app.emit("chat-message-added", ()).ok();
+    app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
     Ok((iri, had_successful_speak))
 }
 

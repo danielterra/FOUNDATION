@@ -17,7 +17,7 @@
 
   const BASE_WIDGET_Z_INDEX = 100;
   const WIDGET_FLY_DURATION = 600;
-  const MINIMIZED_HEIGHT = 70;
+  const MINIMIZED_HEIGHT = 80;
   const MIN_WIDGET_WIDTH = 200;
   const MIN_WIDGET_HEIGHT = 100;
   const TOP_BAR_HEIGHT = 44;
@@ -352,6 +352,7 @@
   .widget-container {
     position: absolute;
     transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s;
+    box-shadow: 0px 0px 10px #000;
   }
 
   .widget-container.dragging,

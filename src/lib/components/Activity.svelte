@@ -55,7 +55,6 @@
 		height: 32px;
 		border: 3px solid var(--color-black);
 		border-top-color: var(--color-transition);
-		border-radius: 50%;
 		flex-shrink: 0;
 		animation: spin 0.8s linear infinite, glow 2s ease-in-out infinite;
 	}
@@ -79,14 +78,12 @@
 		width: 200px;
 		height: 8px;
 		background: var(--color-black);
-		border-radius: 4px;
 		overflow: hidden;
 	}
 
 	.progress-fill {
 		height: 100%;
 		background: var(--color-transition);
-		border-radius: 4px;
 		transition: width 0.3s ease;
 		position: relative;
 		overflow: hidden;

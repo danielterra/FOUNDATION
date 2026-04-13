@@ -14,10 +14,6 @@
 		editingMessageIri = null,
 		onCancelEdit = null,
 		onCancelAI = null,
-		cameraEnabled = true,
-		onToggleCamera = null,
-		thinkingEnabled = true,
-		onToggleThinking = null,
 	} = $props();
 
 	function openFilePicker() {
@@ -74,32 +70,6 @@
 	>
 		<span class="material-symbols-outlined">attach_file</span>
 	</button>
-	{#if onToggleCamera}
-		<button
-			class="attach-btn"
-			class:camera-off={!cameraEnabled}
-			onclick={onToggleCamera}
-			aria-label={cameraEnabled ? 'Disable camera vision' : 'Enable camera vision'}
-			title={cameraEnabled ? 'Camera vision on' : 'Camera vision off'}
-		>
-			<span class="material-symbols-outlined">
-				{cameraEnabled ? 'videocam' : 'videocam_off'}
-			</span>
-		</button>
-	{/if}
-	{#if onToggleThinking}
-		<button
-			class="attach-btn"
-			class:thinking-off={!thinkingEnabled}
-			onclick={onToggleThinking}
-			aria-label={thinkingEnabled ? 'Disable extended thinking' : 'Enable extended thinking'}
-			title={thinkingEnabled ? 'Extended thinking on' : 'Extended thinking off'}
-		>
-			<span class="material-symbols-outlined">
-				{thinkingEnabled ? 'psychology' : 'psychology_alt'}
-			</span>
-		</button>
-	{/if}
 	<textarea
 		bind:this={textareaElement}
 		bind:value={inputText}
@@ -130,7 +100,6 @@
 		margin-bottom: 12px;
 		background: color-mix(in srgb, var(--color-transition) 10%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-transition) 30%, transparent);
-		border-radius: 12px;
 		animation: fadeIn 0.3s;
 	}
 
@@ -186,7 +155,6 @@
 	.thinking-dots span {
 		width: 8px;
 		height: 8px;
-		border-radius: 50%;
 		background: var(--color-transition);
 		animation: thinking-bounce 1.4s infinite ease-in-out;
 	}
@@ -219,8 +187,7 @@
 		margin-bottom: 8px;
 		background: color-mix(in srgb, var(--color-interactive) 10%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
-		border-radius: 8px;
-		font-size: 13px;
+		font-size: 14px;
 		color: var(--color-interactive);
 		animation: fadeIn 0.2s;
 	}
@@ -262,7 +229,6 @@
 	.attach-btn {
 		width: 40px;
 		height: 40px;
-		border-radius: 50%;
 		background: transparent;
 		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
 		color: var(--color-neutral);
@@ -278,21 +244,6 @@
 		cursor: not-allowed;
 	}
 
-	.attach-btn.camera-off {
-		background: transparent;
-		color: var(--color-interactive);
-		border: 2px solid var(--color-interactive);
-		opacity: 0.5;
-	}
-
-	.attach-btn.thinking-off {
-		background: transparent;
-		color: var(--color-interactive);
-		border: 2px solid var(--color-interactive);
-		opacity: 0.5;
-	}
-
-
 	.attach-btn .material-symbols-outlined {
 		font-size: 20px;
 	}
@@ -300,7 +251,6 @@
 	.chat-input textarea {
 		flex: 1;
 		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-		border-radius: 20px;
 		padding: 10px 16px;
 		font-family: inherit;
 		font-size: 14px;
@@ -332,7 +282,6 @@
 	.chat-input button {
 		width: 40px;
 		height: 40px;
-		border-radius: 50%;
 		background: var(--color-interactive);
 		color: var(--color-neutral-on-interactive);
 		border: none;

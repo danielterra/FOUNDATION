@@ -4,6 +4,7 @@
   import NumberFlow from '@number-flow/svelte';
   import MarkdownValue from './MarkdownValue.svelte';
   import PropertyEditForm from './PropertyEditForm.svelte';
+  import RecurrenceEditor from './RecurrenceEditor.svelte';
   import { focus } from '$lib/utils/actions';
 
   let {
@@ -26,12 +27,44 @@
     return datatype === 'xsd:anyURI';
   }
 
+  function isRruleType(datatype) {
+    return datatype === 'foundation:rrule';
+  }
+
+  function rruleLabel(rrule) {
+    if (!rrule) return 'Nunca';
+    if (rrule.includes('FREQ=HOURLY')) return 'A Cada Hora';
+    if (rrule.includes('BYDAY=MO,TU,WE,TH,FR')) return 'Dias de Semana';
+    if (rrule.includes('BYDAY=SA,SU')) return 'Fins de Semana';
+    if (rrule.includes('FREQ=DAILY')) return 'Diariamente';
+    if (rrule.includes('FREQ=WEEKLY') && rrule.includes('INTERVAL=2')) return 'Quinzenalmente';
+    if (rrule.includes('FREQ=WEEKLY')) return 'Semanalmente';
+    if (rrule.includes('FREQ=MONTHLY') && rrule.includes('INTERVAL=6')) return 'A Cada 6 Meses';
+    if (rrule.includes('FREQ=MONTHLY') && rrule.includes('INTERVAL=3')) return 'A Cada 3 Meses';
+    if (rrule.includes('FREQ=MONTHLY')) return 'Mensalmente';
+    if (rrule.includes('FREQ=YEARLY')) return 'Anualmente';
+    return 'Personalizada';
+  }
+
   function isStringType(datatype) {
     return !datatype || datatype === 'xsd:string' || datatype === 'rdf:langString';
   }
 
   function isDateType(datatype) {
     return datatype === 'xsd:date' || datatype === 'xsd:dateTime';
+  }
+
+  function isNumericType(datatype) {
+    return datatype === 'xsd:decimal' || datatype === 'xsd:integer' ||
+           datatype === 'xsd:int' || datatype === 'xsd:long' ||
+           datatype === 'xsd:float' || datatype === 'xsd:double' ||
+           datatype === 'xsd:nonNegativeInteger' || datatype === 'xsd:positiveInteger';
+  }
+
+  function numericStep(datatype) {
+    return (datatype === 'xsd:integer' || datatype === 'xsd:int' ||
+            datatype === 'xsd:long' || datatype === 'xsd:nonNegativeInteger' ||
+            datatype === 'xsd:positiveInteger') ? '1' : 'any';
   }
 
   async function openUrl_(url) {
@@ -70,27 +103,34 @@
 
     if (dateDay.getTime() === yesterday.getTime()) {
       const timeStr = date.toLocaleTimeString(
-        'en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        'en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
       return `Yesterday at ${timeStr}`;
     }
 
     if (diffDays < 7) {
       const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
       const timeStr = date.toLocaleTimeString(
-        'en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        'en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
       return `${dayName} at ${timeStr}`;
     }
 
     if (date.getFullYear() === nowDate.getFullYear()) {
       return date.toLocaleDateString('en-US', {
-        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
       });
     }
 
     return date.toLocaleDateString('en-US', {
       year: 'numeric', month: 'short', day: 'numeric',
-      hour: 'numeric', minute: '2-digit', hour12: true
+      hour: '2-digit', minute: '2-digit', hour12: false
     });
+  }
+
+  function datePart(v) { return v?.split('T')[0] ?? ''; }
+  function timePart(v) { return v?.split('T')[1] ?? ''; }
+  function combineDatetime(d, t) {
+    if (!d) return '';
+    return t ? `${d}T${t}` : `${d}T00:00`;
   }
 
   function isIconUrl(icon) {
@@ -109,11 +149,12 @@
   }
 </script>
 
-{#snippet dateEditor(propertyIri, inputType)}
+{#snippet numericEditor(propertyIri, step)}
   <div class="date-edit-container">
     <input
       class="date-input"
-      type={inputType}
+      type="number"
+      {step}
       bind:value={draftValue}
       onkeydown={(e) => {
         if (e.key === 'Escape') onCancelEdit();
@@ -121,6 +162,70 @@
       }}
       use:focus
     />
+    <div class="edit-actions">
+      <button
+        class="edit-save-btn"
+        onmousedown={(e) => e.preventDefault()}
+        onclick={() => onSaveEdit(propertyIri)}
+        disabled={saving}
+      >
+        {#if saving}
+          <span class="material-symbols-outlined spinning-small">progress_activity</span>
+        {:else}
+          <span class="material-symbols-outlined">check</span>
+        {/if}
+        Save
+      </button>
+      <button
+        class="edit-cancel-btn"
+        onmousedown={(e) => e.preventDefault()}
+        onclick={onCancelEdit}
+      >
+        <span class="material-symbols-outlined">close</span>
+        Cancel
+      </button>
+    </div>
+  </div>
+{/snippet}
+
+{#snippet dateEditor(propertyIri, inputType)}
+  <div class="date-edit-container">
+    {#if inputType === 'datetime-local'}
+      <div class="datetime-pair">
+        <input
+          class="date-input"
+          type="date"
+          value={datePart(draftValue)}
+          oninput={(e) => draftValue = combineDatetime(e.currentTarget.value, timePart(draftValue))}
+          onchange={(e) => draftValue = combineDatetime(e.currentTarget.value, timePart(draftValue))}
+          use:focus
+        />
+        <input
+          class="date-input"
+          type="time"
+          value={timePart(draftValue)}
+          oninput={(e) => draftValue = combineDatetime(datePart(draftValue), e.currentTarget.value)}
+          onchange={(e) => draftValue = combineDatetime(datePart(draftValue), e.currentTarget.value)}
+          onkeydown={(e) => {
+            if (e.key === 'Escape') onCancelEdit();
+            else if (e.key === 'Enter') onSaveEdit(propertyIri);
+          }}
+        />
+      </div>
+    {:else}
+      <input
+        class="date-input"
+        type="date"
+        value={draftValue}
+        oninput={(e) => draftValue = e.currentTarget.value}
+        onchange={(e) => draftValue = e.currentTarget.value}
+        onkeydown={(e) => {
+          if (e.key === 'Escape') onCancelEdit();
+          else if (e.key === 'Enter') onSaveEdit(propertyIri);
+        }}
+        use:focus
+      />
+    {/if}
     <div class="edit-actions">
       <button
         class="edit-save-btn"
@@ -195,9 +300,9 @@
             {@const date = new Date(val.value)}
             <div class="timestamp-display">
               <span class="value-text">
-                {date.toLocaleString('en-US', {
+                {date.toLocaleString('pt-BR', {
                   year: 'numeric', month: 'short', day: 'numeric',
-                  hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true
+                  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
                 })}
               </span>
               <span class="timestamp-relative">{formatDate(date.getTime())}</span>
@@ -235,7 +340,30 @@
               </button>
             </div>
           {:else}
-            <MarkdownValue value={val.value} />
+            <MarkdownValue value={val.value} {openEntityInspector} />
+          {/if}
+        {:else if isNumericType(val.datatype)}
+          {#if editingKey === editKey(detailGroup.property, idx)}
+            {@render numericEditor(detailGroup.property, numericStep(val.datatype))}
+          {:else}
+            {#if val.unitLabel}
+              <span class="unit">{val.unitLabel}</span>
+            {/if}
+            {#if detailGroup.isCalculated && !isNaN(Number(val.value)) && val.value !== ''}
+              <NumberFlow class="value-text" value={Number(val.value)} />
+            {:else}
+              <span class="value-text">{val.valueLabel || val.value}</span>
+            {/if}
+          {/if}
+        {:else if isRruleType(val.datatype)}
+          {#if editingKey === editKey(detailGroup.property, idx)}
+            <RecurrenceEditor
+              value={val.value}
+              onconfirm={(rrule) => { draftValue = rrule; onSaveEdit(detailGroup.property); }}
+              oncancel={onCancelEdit}
+            />
+          {:else}
+            <span class="value-text">{rruleLabel(val.value)}</span>
           {/if}
         {:else}
           {#if val.unitLabel}
@@ -279,9 +407,8 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px;
+    padding: 3px 0px;
     background: color-mix(in srgb, var(--color-black) 30%, transparent);
-    border-radius: 6px;
   }
 
   .value-large {
@@ -297,7 +424,6 @@
     font-size: 11px;
     color: var(--color-neutral-active);
     background: color-mix(in srgb, var(--color-black) 40%, transparent);
-    border-radius: 4px;
     padding: 8px;
     max-height: 200px;
     overflow-y: auto;
@@ -315,7 +441,6 @@
     padding: 2px;
     display: flex;
     align-items: center;
-    border-radius: 4px;
     transition: color 0.15s;
   }
 
@@ -334,7 +459,6 @@
 
   .clickable:hover {
     background: color-mix(in srgb, var(--color-interactive) 20%, transparent) !important;
-    transform: translateX(2px);
   }
 
   .clickable:active {
@@ -349,13 +473,12 @@
   .value-icon-image {
     width: 24px;
     height: 24px;
-    border-radius: 4px;
     object-fit: cover;
   }
 
   .value-text {
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     color: var(--color-neutral-active);
     flex: 1;
   }
@@ -365,7 +488,6 @@
     color: var(--color-neutral);
     padding: 2px 6px;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border-radius: 4px;
   }
 
   .timestamp-display {
@@ -412,8 +534,7 @@
     gap: 3px;
     padding: 2px 7px 2px 4px;
     background: color-mix(in srgb, var(--status-color) 18%, transparent);
-    border: 1px solid color-mix(in srgb, var(--status-color) 40%, transparent);
-    border-radius: 20px;
+    border: none;
     flex-shrink: 0;
     margin-left: auto;
   }
@@ -449,7 +570,6 @@
     padding: 4px 6px;
     background: color-mix(in srgb, var(--color-error, #ef4444) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent);
-    border-radius: 4px;
     width: 100%;
     margin-top: 4px;
     box-sizing: border-box;
@@ -469,6 +589,16 @@
     line-height: 1.4;
   }
 
+  .datetime-pair {
+    display: flex;
+    gap: 6px;
+  }
+
+  .datetime-pair .date-input {
+    flex: 1;
+    min-width: 0;
+  }
+
   .date-edit-container {
     display: flex;
     flex-direction: column;
@@ -480,10 +610,9 @@
   .date-input {
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
-    border-radius: 6px;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     padding: 6px 8px;
     outline: none;
     transition: border-color 0.15s;
@@ -506,7 +635,6 @@
     gap: 4px;
     padding: 4px 10px;
     border: none;
-    border-radius: 4px;
     cursor: pointer;
     font-family: var(--font-body);
     font-size: 12px;

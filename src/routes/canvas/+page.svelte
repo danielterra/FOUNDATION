@@ -304,7 +304,6 @@
 		gap: 8px;
 		background: rgba(0, 0, 0, 0.6);
 		border: 1px solid color-mix(in srgb, var(--color-neutral) 20%, black);
-		border-radius: 8px;
 		padding: 6px 12px;
 	}
 
@@ -316,7 +315,6 @@
 		font-weight: 700;
 		cursor: pointer;
 		padding: 4px 8px;
-		border-radius: 4px;
 		transition: background 0.2s;
 		min-width: 28px;
 		display: flex;
@@ -349,11 +347,10 @@
 		background: rgba(0, 0, 0, 0.6);
 		border: 1px solid color-mix(in srgb, var(--color-neutral) 20%, black);
 		color: var(--color-neutral);
-		font-size: 13px;
+		font-size: 14px;
 		font-weight: 600;
 		cursor: pointer;
 		padding: 8px 16px;
-		border-radius: 8px;
 		transition: background 0.2s, border-color 0.2s;
 	}
 

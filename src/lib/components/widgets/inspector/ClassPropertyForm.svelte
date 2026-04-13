@@ -247,7 +247,6 @@
     padding: 10px;
     background: color-mix(in srgb, var(--color-interactive) 6%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-interactive) 25%, transparent);
-    border-radius: 8px;
   }
 
   .cpf-row {
@@ -272,10 +271,9 @@
     min-width: 0;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
-    border-radius: 5px;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     padding: 5px 8px;
     outline: none;
     transition: border-color 0.15s;
@@ -290,10 +288,9 @@
     min-width: 0;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
-    border-radius: 5px;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     padding: 5px 8px;
     outline: none;
     resize: vertical;
@@ -308,10 +305,9 @@
     flex: 1;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
-    border-radius: 5px;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     padding: 5px 8px;
     outline: none;
     cursor: pointer;
@@ -329,7 +325,6 @@
     gap: 4px;
     padding: 4px 10px;
     border: 1px solid color-mix(in srgb, var(--color-neutral) 20%, transparent);
-    border-radius: 5px;
     background: transparent;
     color: var(--color-neutral);
     font-family: var(--font-body);
@@ -384,8 +379,7 @@
     padding: 5px 8px;
     background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
-    border-radius: 5px;
-    font-size: 13px;
+    font-size: 14px;
     color: var(--color-neutral-active);
   }
 
@@ -419,7 +413,6 @@
     right: 0;
     background: var(--color-bg-elevated, var(--color-black));
     border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
-    border-radius: 6px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     z-index: 100;
     max-height: 180px;
@@ -436,7 +429,7 @@
     border: none;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     cursor: pointer;
     text-align: left;
   }
@@ -463,7 +456,6 @@
     gap: 4px;
     padding: 5px 12px;
     border: none;
-    border-radius: 5px;
     cursor: pointer;
     font-family: var(--font-body);
     font-size: 12px;

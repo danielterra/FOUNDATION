@@ -229,7 +229,7 @@ pub async fn chat__send_and_reply(
         }).await?;
     }
 
-    app.emit("chat-message-added", ()).ok();
+    app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
 
     let content_for_subconscious = content.clone();
     let exclude_iri = user_msg_iri.clone();
@@ -250,7 +250,7 @@ pub async fn chat__send_and_reply(
             }], "chat").map_err(|e| format!("Failed to set subconsciousContext: {}", e))?;
             Ok(String::new())
         }).await.ok();
-        app.emit("chat-message-added", ()).ok();
+        app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
     }
 
     let subconscious_context = subconscious::format_context(&subconscious_entities);
@@ -322,19 +322,40 @@ pub async fn chat__get_recent_messages(
             let content_blocks: Vec<ContentBlock> = serde_json::from_str(&content_json)
                 .unwrap_or_else(|_| vec![ContentBlock::Text { text: content_json.clone() }]);
 
+            let file_ref_count = content_blocks.iter().filter(|b| matches!(b, ContentBlock::FileRef { .. })).count();
+            if file_ref_count > 0 {
+                super::log_backend("debug", &format!("[CHAT] Message {} has {} FileRef block(s)", iri, file_ref_count));
+            }
+
             let attachments: Vec<serde_json::Value> = content_blocks.iter()
                 .filter_map(|block| {
                     if let ContentBlock::FileRef { file_iri, file_name, .. } = block {
-                        let file_entity = Individual::get(conn, file_iri).ok().flatten()?;
+                        let file_entity = match Individual::get(conn, file_iri) {
+                            Ok(Some(e)) => e,
+                            Ok(None) => {
+                                super::log_backend("warn", &format!("[CHAT] FileRef {} — entity not found", file_iri));
+                                return None;
+                            }
+                            Err(e) => {
+                                super::log_backend("warn", &format!("[CHAT] FileRef {} — lookup error: {}", file_iri, e));
+                                return None;
+                            }
+                        };
 
-                        let file_path = file_entity.properties.iter()
+                        let file_path = match file_entity.properties.iter()
                             .find(|(k, _)| k == "foundation:filePath")
                             .and_then(|(_, v)| match v {
                                 Object::Literal { value, .. } => {
                                     Some(value.trim_start_matches("file://").to_string())
                                 },
                                 _ => None,
-                            })?;
+                            }) {
+                            Some(p) => p,
+                            None => {
+                                super::log_backend("warn", &format!("[CHAT] FileRef {} — no filePath property (props: {:?})", file_iri, file_entity.properties.iter().map(|(k,_)| k).collect::<Vec<_>>()));
+                                return None;
+                            }
+                        };
 
                         let file_size = file_entity.properties.iter()
                             .find(|(k, _)| k == "foundation:fileSize")
@@ -371,6 +392,10 @@ pub async fn chat__get_recent_messages(
                     }
                 })
                 .collect();
+
+            if !attachments.is_empty() {
+                super::log_backend("debug", &format!("[CHAT] Message {} has {} attachment(s): {:?}", iri, attachments.len(), attachments));
+            }
 
             let input_tokens = msg.properties.iter()
                 .find(|(k, _)| k == "foundation:inputTokens")
@@ -516,7 +541,7 @@ pub async fn chat__edit_and_retry(
         Ok(String::new())
     }).await?;
 
-    app.emit("chat-message-added", ()).ok();
+    app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
 
     let app_clone = app.clone();
     let executor_clone = executor.inner().clone();
@@ -583,7 +608,7 @@ pub async fn chat__retry_from_message(
         Ok(String::new())
     }).await?;
 
-    app.emit("chat-message-added", ()).ok();
+    app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
 
     let app_clone = app.clone();
     let executor_clone = executor.inner().clone();
@@ -707,7 +732,7 @@ pub async fn chat__recover_pending_tools(
             "info",
             &format!("[RECOVERY] Executed tools, created message: {}", tool_result_msg_iri),
         );
-        app.emit("chat-message-added", ()).ok();
+        app.emit("chat-message-added", serde_json::json!({"conversationId": conv_id})).ok();
     }
 
     run_conversation_from_current_state(app.clone(), executor.inner().clone(), conv_id, &cancellation, true).await?;
@@ -740,7 +765,7 @@ pub async fn chat__dismiss_question(
         .map_err(|e| format!("Failed to serialize dismiss result: {}", e))?;
 
     super::chat_storage::create_user_message_raw(&executor, &conversation_id, &result_json).await?;
-    app.emit("chat-message-added", ()).ok();
+    app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
 
     Ok(())
 }
@@ -768,7 +793,7 @@ pub async fn chat__answer_question(
         .map_err(|e| format!("Failed to serialize answer: {}", e))?;
 
     super::chat_storage::create_user_message_raw(&executor, &conversation_id, &result_json).await?;
-    app.emit("chat-message-added", ()).ok();
+    app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
 
     let app_clone = app.clone();
     let executor_clone = executor.inner().clone();

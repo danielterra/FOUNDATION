@@ -20,6 +20,9 @@ pub fn icon_iri_to_display(conn: &Connection, iri: &str) -> Option<String> {
     if iri.starts_with("foundation:icon-file-") {
         return crate::owl::get_literal_property(conn, iri, "foundation:iconKey").ok().flatten();
     }
+    if iri.starts_with("file://") || iri.starts_with("https://") || iri.starts_with("http://") || iri.starts_with("data:") {
+        return Some(iri.to_string());
+    }
     None
 }
 
@@ -163,6 +166,27 @@ mod tests {
     fn test_icon_iri_to_display_non_icon_iri_returns_none() {
         let conn = setup_test_db();
         assert_eq!(icon_iri_to_display(&conn, "foundation:SomethingElse"), None);
+    }
+
+    #[test]
+    fn test_icon_iri_to_display_url_schemes_passthrough() {
+        let conn = setup_test_db();
+        assert_eq!(
+            icon_iri_to_display(&conn, "file:///path/to/icon.png"),
+            Some("file:///path/to/icon.png".to_string())
+        );
+        assert_eq!(
+            icon_iri_to_display(&conn, "https://example.com/icon.png"),
+            Some("https://example.com/icon.png".to_string())
+        );
+        assert_eq!(
+            icon_iri_to_display(&conn, "http://example.com/icon.png"),
+            Some("http://example.com/icon.png".to_string())
+        );
+        assert_eq!(
+            icon_iri_to_display(&conn, "data:image/png;base64,abc"),
+            Some("data:image/png;base64,abc".to_string())
+        );
     }
 
     // ── icon_store_value ────────────────────────────────────────────────────

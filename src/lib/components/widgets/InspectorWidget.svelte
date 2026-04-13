@@ -2,22 +2,19 @@
   import { onMount, onDestroy, untrack } from 'svelte';
 
   import { invoke } from '@tauri-apps/api/core';
+  import { convertFileSrc } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import { deleteConfirm } from '$lib/stores/deleteConfirm';
   import FilePreview from './inspector/FilePreview.svelte';
   import MetaFields from './inspector/MetaFields.svelte';
   import PropertyList from './inspector/PropertyList.svelte';
-  import InspectorHeader from './inspector/InspectorHeader.svelte';
   import InspectorClassView from './inspector/InspectorClassView.svelte';
+  import WidgetContainer from './WidgetContainer.svelte';
 
   let {
     entityId, widgetId, refreshKey = 0, windowState = 'normal',
     onWindowStateChange, conversationIri = null
   } = $props();
-
-  function toggleMinimize() {
-    onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized');
-  }
-
 
   let entityData = $state(null);
   let loading = $state(true);
@@ -34,7 +31,6 @@
   let togglingLock = $state(false);
   let showStatusPicker = $state(false);
   let statusBadgeWrapperEl = $state(null);
-  let showDeleteConfirm = $state(false);
   let deleteSuccess = $state(false);
   let showAddPropertyForm = $state(false);
   let savingClassProperty = $state(false);
@@ -120,6 +116,27 @@
       setTimeout(() => closeWidget(), 1500);
     } catch (err) {
       console.error('Failed to delete individual:', err);
+    }
+  }
+
+  async function initiateDelete() {
+    if (!entityData?.id) return;
+    try {
+      const raw = await invoke('widget_inspector__get_delete_impact', { entityId: entityData.id });
+      const impact = JSON.parse(raw);
+      deleteConfirm.set({
+        entityId: entityData.id,
+        entityLabel: entityData.label ?? entityData.id,
+        cascade_items: impact.cascade_items ?? [],
+        backlink_count: impact.backlink_count,
+        onConfirm: () => {
+          deleteConfirm.set(null);
+          deleteIndividual();
+        },
+        onCancel: () => deleteConfirm.set(null),
+      });
+    } catch (err) {
+      console.error('Failed to get delete impact:', err);
     }
   }
 
@@ -275,6 +292,20 @@
     }
   }
 
+  function isIconUrl(icon) {
+    if (!icon) return false;
+    return icon.startsWith('http://') || icon.startsWith('https://') ||
+           icon.startsWith('data:') || icon.startsWith('file://') || icon.startsWith('/');
+  }
+
+  function getIconSrc(icon) {
+    if (!icon) return null;
+    if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:')) return icon;
+    if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
+    if (icon.startsWith('/')) return convertFileSrc(icon);
+    return null;
+  }
+
   const isAutomationWithoutInputClass = $derived(
     entityData?.types?.some(t => t.iri === 'foundation:Automation') &&
     !entityData?.properties?.some(p => p.property === 'foundation:inputClass')
@@ -351,27 +382,89 @@
   });
 </script>
 
-<div class="inspector-widget" class:minimized={windowState === 'minimized'}>
-  <InspectorHeader
-    {entityData}
-    {widgetDefinitions}
+<div class="inspector-wrapper">
+  <WidgetContainer
+    icon={entityData?.icon && !isIconUrl(entityData.icon) ? entityData.icon : 'info'}
+    iconSrc={entityData?.icon && isIconUrl(entityData.icon) ? getIconSrc(entityData.icon) : null}
+    title={entityData?.label ?? 'Inspector'}
     {windowState}
-    {isLocked}
-    {togglingLock}
-    bind:showStatusPicker
-    bind:statusBadgeWrapperEl
-    onToggleMinimize={toggleMinimize}
+    {onWindowStateChange}
     onClose={closeWidget}
-    onDelete={() => showDeleteConfirm = true}
-    onCopyIri={copyEntityIri}
-    onToggleLock={toggleSystemLock}
-    onOpenEntityInspector={openEntityInspector}
-    onOpenWidget={openWidgetForEntity}
-    onUpdateStatus={updateStatus}
-  />
+  >
+    {#snippet headerSubtitle()}
+      {#if entityData?.types?.length > 0}
+        <div class="header-types">
+          {#each entityData.types as type, idx}
+            {#if idx > 0}<span class="type-separator">·</span>{/if}
+            <button class="type-link" onclick={() => openEntityInspector(type.iri)}>{type.label}</button>
+          {/each}
+        </div>
+      {/if}
+    {/snippet}
 
-  <div class="content-wrapper">
-    <div class="widget-content">
+    {#snippet headerActions()}
+      {#each widgetDefinitions as def}
+        <button class="action-btn" onclick={() => openWidgetForEntity(def.widget_type)} title={def.description}>
+          <span class="material-symbols-outlined">{def.icon || 'open_in_new'}</span>
+        </button>
+      {/each}
+      {#if entityData}
+        <button
+          class="action-btn"
+          class:action-btn--locked={isLocked}
+          onclick={toggleSystemLock}
+          disabled={togglingLock}
+          title={isLocked ? 'Unlock entity' : 'Lock entity'}
+        >
+          <span class="material-symbols-outlined">{isLocked ? 'lock' : 'lock_open'}</span>
+        </button>
+      {/if}
+      {#if entityData && !entityData.isClass && !isLocked}
+        <button class="action-btn action-btn--danger" onclick={initiateDelete} title="Delete">
+          <span class="material-symbols-outlined">delete_forever</span>
+        </button>
+      {/if}
+      <button class="action-btn" onclick={copyEntityIri} title="Copy IRI">
+        <span class="material-symbols-outlined">content_copy</span>
+      </button>
+      {#if entityData?.status}
+        <div class="status-badge-wrapper" bind:this={statusBadgeWrapperEl}>
+          <button
+            class="status-badge"
+            class:clickable={entityData.allowedStatuses?.length > 0 && !isLocked}
+            style="--status-color: {entityData.status.color || 'var(--color-neutral)'}"
+            title={isLocked ? 'Entity is system-locked' : entityData.status.iri}
+            onclick={() => {
+              if (entityData.allowedStatuses?.length > 0 && !isLocked) showStatusPicker = !showStatusPicker;
+            }}
+          >
+            <span class="material-symbols-outlined status-badge-icon">{entityData.status.icon || 'radio_button_checked'}</span>
+            <span class="status-badge-label">{entityData.status.label}</span>
+            {#if entityData.allowedStatuses?.length > 0}
+              <span class="material-symbols-outlined status-badge-chevron">expand_more</span>
+            {/if}
+          </button>
+          {#if showStatusPicker}
+            <div class="status-picker" role="listbox">
+              {#each entityData.allowedStatuses as s}
+                <button
+                  class="status-picker-item"
+                  class:active={s.iri === entityData.status.iri}
+                  style="--status-color: {s.color || 'var(--color-neutral)'}"
+                  role="option"
+                  aria-selected={s.iri === entityData.status.iri}
+                  onclick={() => updateStatus(s.iri)}
+                >
+                  <span class="material-symbols-outlined status-badge-icon">{s.icon || 'radio_button_checked'}</span>
+                  <span class="status-badge-label">{s.label}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
+    {/snippet}
+
     {#if loading && !entityData}
       <div class="loading">
         <span class="material-symbols-outlined spinning">progress_activity</span>
@@ -397,6 +490,7 @@
           label={entityData?.label}
           comment={entityData?.comment}
           onSave={isLocked ? null : saveProperty}
+          {openEntityInspector}
         />
 
         <FilePreview {entityData} />
@@ -430,7 +524,6 @@
           onRemoveProperty={entityData.isClass && !isLocked ? initiateRemoveProperty : null}
           onSaveCardinality={entityData.isClass && !isLocked ? saveCardinality : null}
         />
-
       </div>
 
       {#if !entityData.isClass && (isAutomationWithoutInputClass || applicableAutomations.length > 0)}
@@ -465,22 +558,7 @@
         </div>
       {/if}
     {/if}
-    </div>
-  </div>
-
-  {#if showDeleteConfirm}
-    <div class="delete-overlay" role="dialog" aria-modal="true">
-      <div class="delete-dialog">
-        <span class="material-symbols-outlined delete-dialog-icon">delete_forever</span>
-        <p class="delete-dialog-title">Delete "{entityData?.label}"?</p>
-        <p class="delete-dialog-warning">This cannot be undone from the UI.</p>
-        <div class="delete-dialog-actions">
-          <button class="delete-cancel-btn" onclick={() => showDeleteConfirm = false}>Cancel</button>
-          <button class="delete-confirm-btn" onclick={() => { showDeleteConfirm = false; deleteIndividual(); }}>Delete</button>
-        </div>
-      </div>
-    </div>
-  {/if}
+  </WidgetContainer>
 
   {#if deleteSuccess}
     <div class="delete-toast">
@@ -488,56 +566,105 @@
       "{entityData?.label}" deleted
     </div>
   {/if}
-
 </div>
 
 <style>
-  .inspector-widget {
+  .inspector-wrapper {
     width: 100%;
     height: 100%;
-    display: flex;
-    flex-direction: column;
-    background: color-mix(in srgb, var(--color-black) 85%, transparent);
-    backdrop-filter: blur(20px);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-    border-radius: 12px;
-    box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
     position: relative;
   }
 
-  .content-wrapper {
-    display: grid;
-    grid-template-rows: 1fr;
-    transition: grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1);
-    overflow: hidden;
-    flex: 1;
-    min-height: 0;
+  .header-types {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
   }
 
-  .inspector-widget.minimized .content-wrapper {
-    grid-template-rows: 0fr;
+  .type-link {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--color-interactive);
+    opacity: 0.7;
   }
 
-  .inspector-widget.minimized :global(.widget-header) {
-    border-bottom: none;
+  .type-separator {
+    color: var(--color-neutral);
+    opacity: 0.4;
+    font-size: 11px;
   }
 
-  .inspector-widget.minimized :global(.header-top) {
-    padding: 8px 12px;
+  .status-badge-wrapper {
+    position: relative;
   }
 
-  .inspector-widget.minimized :global(.header-actions) {
-    gap: 2px;
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px 3px 5px;
+    background: color-mix(in srgb, var(--status-color) 18%, transparent);
+    border: none;
+    cursor: default;
   }
 
-  .content-wrapper > .widget-content {
-    min-height: 0;
+  .status-badge.clickable {
+    cursor: pointer;
   }
 
-  .widget-content {
+  .status-badge-icon {
+    font-size: 14px;
+    color: var(--status-color);
+  }
+
+  .status-badge-label {
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--status-color);
+    white-space: nowrap;
+  }
+
+  .status-badge-chevron {
+    font-size: 14px;
+    color: var(--status-color);
+    opacity: 0.7;
+  }
+
+  .status-picker {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 1000;
+    background: color-mix(in srgb, var(--color-black) 90%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+    padding: 4px;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    gap: 2px;
+    min-width: 160px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .status-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    width: 100%;
+    text-align: left;
+  }
+
+  .status-picker-item.active {
+    background: color-mix(in srgb, var(--status-color) 30%, transparent);
   }
 
   .content-scroll {
@@ -554,7 +681,6 @@
     margin-bottom: 14px;
     background: color-mix(in srgb, var(--color-warning, #f59e0b) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 35%, transparent);
-    border-radius: 8px;
   }
 
   .locked-banner-icon {
@@ -612,33 +738,29 @@
 
   .actions-bar {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 6px;
-    padding: 10px 12px;
+    padding: 0px;
     border-top: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
     background: color-mix(in srgb, var(--color-black) 60%, transparent);
-    flex-shrink: 0;
+    flex-wrap: 1;
   }
 
   .action-bar-btn {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
     gap: 6px;
-    width: 100%;
     padding: 8px 12px;
     background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
-    border-radius: 6px;
+    border: none;
     color: var(--color-interactive);
     font-family: var(--font-body);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
-    overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex-shrink: 0;
+    overflow: hidden;
   }
 
   .action-bar-btn .material-symbols-outlined {
@@ -657,94 +779,6 @@
     cursor: default;
   }
 
-  .delete-overlay {
-    position: absolute;
-    inset: 0;
-    background: color-mix(in srgb, var(--color-black) 75%, transparent);
-    backdrop-filter: blur(4px);
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-  }
-
-  .delete-dialog {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    padding: 24px 20px;
-    background: color-mix(in srgb, var(--color-black) 92%, transparent);
-    border: 1px solid color-mix(in srgb, #ef4444 40%, transparent);
-    border-radius: 10px;
-    max-width: 220px;
-    text-align: center;
-  }
-
-  .delete-dialog-icon {
-    font-size: 32px;
-    color: #ef4444;
-  }
-
-  .delete-dialog-title {
-    font-family: var(--font-body);
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--color-neutral-active);
-    margin: 0;
-    word-break: break-word;
-  }
-
-  .delete-dialog-warning {
-    font-family: var(--font-body);
-    font-size: 11px;
-    color: var(--color-neutral);
-    margin: 0;
-    opacity: 0.7;
-  }
-
-  .delete-dialog-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 4px;
-  }
-
-  .delete-cancel-btn {
-    padding: 6px 14px;
-    background: color-mix(in srgb, var(--color-white) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
-    border-radius: 6px;
-    color: var(--color-neutral-active);
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .delete-cancel-btn:hover {
-    background: color-mix(in srgb, var(--color-white) 15%, transparent);
-  }
-
-  .delete-confirm-btn {
-    padding: 6px 14px;
-    background: color-mix(in srgb, #ef4444 20%, transparent);
-    border: 1px solid color-mix(in srgb, #ef4444 50%, transparent);
-    border-radius: 6px;
-    color: #ef4444;
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .delete-confirm-btn:hover {
-    background: color-mix(in srgb, #ef4444 35%, transparent);
-    color: var(--color-neutral-active);
-  }
-
   .delete-toast {
     position: absolute;
     bottom: 12px;
@@ -756,7 +790,6 @@
     padding: 8px 14px;
     background: color-mix(in srgb, #22c55e 20%, var(--color-black));
     border: 1px solid color-mix(in srgb, #22c55e 50%, transparent);
-    border-radius: 20px;
     font-family: var(--font-body);
     font-size: 12px;
     font-weight: 600;

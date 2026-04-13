@@ -89,7 +89,6 @@
     gap: 6px;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-white) 12%, transparent);
-    border-radius: 8px;
     padding: 8px;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s, transform 0.15s;
@@ -105,7 +104,6 @@
   .file-grid-preview {
     width: 100%;
     aspect-ratio: 4 / 3;
-    border-radius: 5px;
     overflow: hidden;
     background: color-mix(in srgb, var(--color-white) 3%, transparent);
     display: flex;

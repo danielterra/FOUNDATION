@@ -10,6 +10,7 @@ pub mod widget;
 mod connector;
 mod connector_package;
 pub mod automation;
+pub mod task;
 
 pub use setup::*;
 pub use entity::*;
@@ -21,3 +22,4 @@ pub use widget::*;
 pub use connector::*;
 pub use connector_package::*;
 pub use automation::*;
+pub use task::*;

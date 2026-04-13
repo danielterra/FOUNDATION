@@ -36,7 +36,6 @@
 .markdown-content code {
   background: color-mix(in srgb, var(--color-black) 30%, transparent);
   padding: 2px 5px;
-  border-radius: 3px;
   font-family: var(--font-code);
   font-size: 0.9em;
 }
@@ -44,7 +43,6 @@
 .markdown-content pre {
   background: color-mix(in srgb, var(--color-black) 40%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
-  border-radius: 6px;
   padding: 10px;
   overflow-x: auto;
   margin: 0.5em 0;
@@ -53,7 +51,6 @@
 .markdown-content pre code {
   background: transparent;
   padding: 0;
-  border-radius: 0;
 }
 
 .markdown-content ul,

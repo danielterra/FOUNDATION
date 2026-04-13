@@ -121,7 +121,6 @@
     gap: 12px;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-    border-radius: 8px;
     padding: 12px;
     cursor: pointer;
     transition: all 0.2s;
@@ -136,7 +135,6 @@
   .file-image-preview {
     width: 100%;
     height: 200px;
-    border-radius: 6px;
     overflow: hidden;
     background: color-mix(in srgb, var(--color-white) 3%, transparent);
   }
@@ -155,7 +153,6 @@
     justify-content: center;
     min-height: 400px;
     background: color-mix(in srgb, var(--color-white) 3%, transparent);
-    border-radius: 6px;
     gap: 8px;
     overflow: hidden;
   }
@@ -164,7 +161,6 @@
     width: 100%;
     height: 400px;
     border: none;
-    border-radius: 6px;
   }
 
   .file-generic-preview .material-symbols-outlined {
@@ -187,7 +183,7 @@
 
   .file-preview-name {
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
     color: var(--color-neutral-active);
     word-break: break-word;

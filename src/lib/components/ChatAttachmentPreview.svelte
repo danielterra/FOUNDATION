@@ -40,7 +40,6 @@
 		padding: 12px;
 		background: color-mix(in srgb, var(--color-white) 5%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-		border-radius: 8px;
 	}
 
 	.attachment-item {
@@ -49,8 +48,7 @@
 		gap: 8px;
 		padding: 8px;
 		background: color-mix(in srgb, var(--color-white) 8%, transparent);
-		border-radius: 6px;
-		font-size: 13px;
+		font-size: 14px;
 	}
 
 	.attachment-item .material-symbols-outlined {
@@ -74,7 +72,6 @@
 	.remove-attachment {
 		width: 24px;
 		height: 24px;
-		border-radius: 4px;
 		background: transparent;
 		border: none;
 		color: var(--color-neutral);

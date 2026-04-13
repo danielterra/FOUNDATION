@@ -334,7 +334,6 @@
     padding: 4px;
     cursor: pointer;
     color: var(--color-interactive);
-    border-radius: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -391,7 +390,7 @@
     resize: none;
     padding: 16px;
     font-family: var(--font-mono, monospace);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.6;
     color: var(--color-neutral-active);
     box-sizing: border-box;
@@ -454,7 +453,6 @@
     padding: 12px;
     background: color-mix(in srgb, var(--color-error, #ef4444) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent);
-    border-radius: 6px;
     color: var(--color-error, #ef4444);
     font-size: 12px;
     z-index: 1;

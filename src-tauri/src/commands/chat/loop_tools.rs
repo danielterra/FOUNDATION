@@ -167,7 +167,7 @@ pub async fn handle_speak(
         usage.map(|u| u.cache_creation_input_tokens as usize).unwrap_or(0),
         usage.map(|u| u.cache_read_input_tokens as usize).unwrap_or(0),
     ).await?;
-    app.emit("chat-message-added", ()).ok();
+    app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
 
     Ok(SpeakOutcome::Success)
 }
@@ -211,7 +211,7 @@ pub async fn handle_ask_question(
         usage.map(|u| u.cache_creation_input_tokens as usize).unwrap_or(0),
         usage.map(|u| u.cache_read_input_tokens as usize).unwrap_or(0),
     ).await?;
-    app.emit("chat-message-added", ()).ok();
+    app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
     log_backend("info", "[ENGINE] ask_question saved — conversation paused awaiting user answer");
 
     Ok(())

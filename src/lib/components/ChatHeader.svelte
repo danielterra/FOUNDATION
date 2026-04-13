@@ -9,7 +9,11 @@
 		onSwitchAgent,
 		onNewConversation,
 		onDownloadChat,
-		onOpenSettings
+		onOpenSettings,
+		cameraEnabled = true,
+		onToggleCamera = null,
+		thinkingEnabled = true,
+		onToggleThinking = null,
 	} = $props();
 
 	function resolveIcon(icon) {
@@ -65,6 +69,30 @@
 		</div>
 	</div>
 	<div class="chat-header-right">
+		{#if onToggleCamera}
+			<button
+				class="header-action-btn"
+				class:toggle-off={!cameraEnabled}
+				onclick={onToggleCamera}
+				title={cameraEnabled ? 'Camera vision on' : 'Camera vision off'}
+			>
+				<span class="material-symbols-outlined">
+					{cameraEnabled ? 'videocam' : 'videocam_off'}
+				</span>
+			</button>
+		{/if}
+		{#if onToggleThinking}
+			<button
+				class="header-action-btn"
+				class:toggle-off={!thinkingEnabled}
+				onclick={onToggleThinking}
+				title={thinkingEnabled ? 'Extended thinking on' : 'Extended thinking off'}
+			>
+				<span class="material-symbols-outlined">
+					{thinkingEnabled ? 'psychology' : 'psychology_alt'}
+				</span>
+			</button>
+		{/if}
 		<button class="header-action-btn" onclick={onNewConversation} title="New conversation">
 			<span class="material-symbols-outlined">add</span>
 		</button>
@@ -107,7 +135,6 @@
 	.agent-avatar {
 		width: 36px;
 		height: 36px;
-		border-radius: 50%;
 		background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
 		color: var(--color-interactive);
@@ -138,7 +165,6 @@
 		width: 100%;
 		height: 100%;
 		object-fit: cover;
-		border-radius: 50%;
 	}
 
 	.agent-name-btn {
@@ -174,10 +200,9 @@
 	.header-action-btn {
 		width: 32px;
 		height: 32px;
-		border-radius: 6px;
 		background: transparent;
 		border: none;
-		color: var(--color-neutral);
+		color: var(--color-interactive);
 		cursor: pointer;
 		display: flex;
 		align-items: center;
@@ -187,5 +212,9 @@
 
 	.header-action-btn .material-symbols-outlined {
 		font-size: 18px;
+	}
+
+	.header-action-btn.toggle-off {
+		opacity: 0.5;
 	}
 </style>

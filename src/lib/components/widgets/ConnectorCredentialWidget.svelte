@@ -234,9 +234,8 @@
   .field-select {
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
-    border-radius: 6px;
     padding: 8px 10px;
-    font-size: 13px;
+    font-size: 14px;
     color: var(--color-neutral-active);
     outline: none;
     transition: border-color 0.15s;
@@ -258,7 +257,6 @@
     align-items: flex-start;
     gap: 8px;
     padding: 8px 10px;
-    border-radius: 6px;
     font-size: 12px;
   }
 
@@ -300,7 +298,6 @@
     gap: 6px;
     padding: 8px 16px;
     border: none;
-    border-radius: 6px;
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;

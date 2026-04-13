@@ -143,7 +143,6 @@
     gap: 6px;
     padding: 6px 10px;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border-radius: 8px;
     border: none;
     width: 100%;
     cursor: pointer;
@@ -209,7 +208,6 @@
     color: var(--color-neutral);
     padding: 1px 6px;
     background: color-mix(in srgb, var(--color-neutral) 15%, transparent);
-    border-radius: 10px;
     flex-shrink: 0;
   }
 
@@ -226,7 +224,6 @@
     gap: 10px;
     padding: 8px 10px;
     background: color-mix(in srgb, var(--color-white) 3%, transparent);
-    border-radius: 6px;
     border: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
     transition: all 0.2s;
   }
@@ -238,7 +235,6 @@
 
   .clickable:hover {
     background: color-mix(in srgb, var(--color-interactive) 20%, transparent) !important;
-    transform: translateX(2px);
   }
 
   .clickable:active {
@@ -254,7 +250,6 @@
   .entity-icon-image {
     width: 28px;
     height: 28px;
-    border-radius: 5px;
     object-fit: cover;
     flex-shrink: 0;
   }
@@ -286,8 +281,7 @@
     gap: 3px;
     padding: 2px 7px 2px 4px;
     background: color-mix(in srgb, var(--status-color) 18%, transparent);
-    border: 1px solid color-mix(in srgb, var(--status-color) 40%, transparent);
-    border-radius: 20px;
+    border: none;
     flex-shrink: 0;
   }
 

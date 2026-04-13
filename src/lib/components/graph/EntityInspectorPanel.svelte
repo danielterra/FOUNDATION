@@ -412,7 +412,6 @@
 		width: 28px;
 		height: 28px;
 		object-fit: cover;
-		border-radius: 50%;
 	}
 
 	.entity-icon .material-symbols-outlined {
@@ -445,7 +444,6 @@
 		cursor: pointer;
 		padding: 4px;
 		line-height: 1;
-		border-radius: 4px;
 		transition: background 0.2s, color 0.2s;
 		flex-shrink: 0;
 		display: flex;

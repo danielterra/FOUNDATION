@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
-use crate::owl::{DbExecutor, get_literal_property, get_all_iri_properties, get_iri_property};
+use crate::owl::{DbExecutor, get_literal_property, get_all_iri_properties, get_iri_property, find_entities_with_property};
 use crate::owl::vocabulary::{rdf, rdfs};
 use rusqlite::Connection;
 
@@ -614,8 +614,9 @@ pub async fn automation__get_execution(
             let error = get_literal_property(conn, &step_iri, "foundation:stepError")
                 .map_err(|e| e.to_string())?;
 
-            let conversation_iri = get_iri_property(conn, &step_iri, "foundation:hasConversation")
-                .map_err(|e| e.to_string())?;
+            let conversation_iri = find_entities_with_property(conn, "foundation:generatedByStep", &step_iri)
+                .map_err(|e| e.to_string())?
+                .into_iter().next();
 
             let messages = if let Some(ref conv_iri) = conversation_iri {
                 load_step_messages(conn, conv_iri)?

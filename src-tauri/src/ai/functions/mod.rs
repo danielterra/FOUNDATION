@@ -165,8 +165,9 @@ pub fn execute_tool(
         "describe_individual" => individual::describe_individual(conn, args),
         "describe_property" => property::describe_property(conn, args),
         "class_graph" => class_graph::get_class_graph(conn, args),
-        "head_file" => file::head_file(conn, args),
-        "read_lines" => file::read_lines(conn, args),
+        "read_binary_file" => file::read_binary_file(conn, args),
+        "head_text_file" => file::head_text_file(conn, args),
+        "read_text_lines" => file::read_text_lines(conn, args),
         "get_automation" => get_automation_tool(conn, args),
         "run_automation" => run_automation_tool(conn, args, app),
         _ => ToolResult {

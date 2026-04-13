@@ -70,7 +70,6 @@
 		padding: 0.25rem;
 		display: flex;
 		align-items: center;
-		border-radius: 4px;
 		transition: color 0.15s, background 0.15s;
 		margin-left: 0.25rem;
 	}

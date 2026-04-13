@@ -92,3 +92,15 @@ pub fn find_entities_with_property(
     let result = query::get_by_predicate_object(conn, predicate, object)?;
     Ok(result.triples.into_iter().map(|t| t.subject).collect())
 }
+
+pub fn find_entities_with_predicate(
+    conn: &Connection,
+    predicate: &str,
+) -> Result<Vec<String>> {
+    let result = query::get_by_predicate(conn, predicate)?;
+    let mut seen = std::collections::HashSet::new();
+    Ok(result.triples.into_iter()
+        .map(|t| t.subject)
+        .filter(|s| seen.insert(s.clone()))
+        .collect())
+}
