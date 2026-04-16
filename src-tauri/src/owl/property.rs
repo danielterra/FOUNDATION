@@ -25,6 +25,7 @@ pub struct Property {
     pub inverse_of: Option<String>,
     pub unit: Option<String>,
     pub formula: Option<String>,
+    pub aggregation: Option<String>,
     pub domain_labels: Vec<DomainLabel>,
     pub ai_behavior_rules: Option<String>,
 }
@@ -45,6 +46,7 @@ impl Property {
             inverse_of: None,
             unit: None,
             formula: None,
+            aggregation: None,
             domain_labels: vec![],
             ai_behavior_rules: None,
         }
@@ -216,6 +218,9 @@ impl Property {
         let formula = triples.iter()
             .find(|t| t.predicate == "foundation:formula")
             .and_then(|t| t.object.as_literal());
+        let aggregation = triples.iter()
+            .find(|t| t.predicate == "foundation:aggregation")
+            .and_then(|t| t.object.as_literal());
         let ai_behavior_rules = triples.iter()
             .find(|t| t.predicate == "foundation:aiBehaviorRules")
             .and_then(|t| t.object.as_literal());
@@ -234,6 +239,7 @@ impl Property {
             inverse_of,
             unit,
             formula,
+            aggregation,
             domain_labels: vec![],
             ai_behavior_rules,
         })

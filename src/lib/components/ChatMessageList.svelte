@@ -7,8 +7,8 @@
 		isLoadingMessages,
 		isLoadingMore,
 		chatContainer = $bindable(null),
+		contentEl = $bindable(null),
 		onScroll,
-		shouldDisplayMessage,
 		onEdit,
 		onRetry,
 		onEntityClick = null
@@ -17,39 +17,39 @@
 </script>
 
 <div class="chat-messages" bind:this={chatContainer} onscroll={onScroll}>
-	{#if isLoadingMore}
-		<div class="loading-more">
-			<span class="material-symbols-outlined spinning">refresh</span>
-			<span>Loading more messages...</span>
-		</div>
-	{/if}
-	{#if isLoadingMessages}
-		<div class="empty-state">
-			<span class="material-symbols-outlined spinning">progress_activity</span>
-			<p>Loading messages...</p>
-		</div>
-	{:else if messages.length === 0}
-		<div class="empty-state">
-			<span class="material-symbols-outlined">chat_bubble</span>
-			<p>Start a conversation with the AI assistant</p>
-		</div>
-	{:else}
-		{#each messages as message (message.iri)}
-			{#if shouldDisplayMessage(message)}
+	<div bind:this={contentEl} class="chat-messages-inner">
+		{#if isLoadingMore}
+			<div class="loading-more">
+				<span class="material-symbols-outlined spinning">refresh</span>
+				<span>Loading more messages...</span>
+			</div>
+		{/if}
+		{#if isLoadingMessages}
+			<div class="empty-state">
+				<span class="material-symbols-outlined spinning">progress_activity</span>
+				<p>Loading messages...</p>
+			</div>
+		{:else if messages.length === 0}
+			<div class="empty-state">
+				<span class="material-symbols-outlined">chat_bubble</span>
+				<p>Start a conversation with the AI assistant</p>
+			</div>
+		{:else}
+			{#each messages as unit (unit.iri)}
 				<div class="message-enter">
 					<ChatMessageBubble
-						{message}
-						{messages}
+						{unit}
+						isLast={unit.iri === messages[messages.length - 1].iri}
 						{conversationId}
-						isStreaming={message.iri === '__streaming__'}
-						onEdit={onEdit}
-						onRetry={onRetry}
-						onEntityClick={onEntityClick}
+						isStreaming={unit.iri === '__streaming__'}
+						{onEdit}
+						{onRetry}
+						{onEntityClick}
 					/>
 				</div>
-			{/if}
-		{/each}
-	{/if}
+			{/each}
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -66,11 +66,14 @@
 		flex: 1;
 		overflow-y: auto;
 		overflow-x: hidden;
+		min-height: 0;
+	}
+
+	.chat-messages-inner {
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
-		margin-bottom: 12px;
-		min-height: 0;
+		padding-bottom: 12px;
 	}
 
 	.empty-state {

@@ -62,7 +62,7 @@
     width: 100%;
     min-height: 36px;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
+    border: none;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 14px;
@@ -72,11 +72,6 @@
     box-sizing: border-box;
     outline: none;
     overflow-y: auto;
-    transition: border-color 0.15s;
-  }
-
-  .edit-textarea:focus {
-    border-color: var(--color-interactive);
   }
 
   .edit-actions {

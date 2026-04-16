@@ -46,7 +46,6 @@
     z-index: 2147483647;
     transform: translate(-50%, -100%);
     background: color-mix(in srgb, var(--color-black) 88%, var(--color-white) 12%);
-    border: 1px solid color-mix(in srgb, var(--color-neutral) 22%, transparent);
     padding: 8px 10px;
     min-width: 160px;
     max-width: 260px;
@@ -80,7 +79,6 @@
   :global(.prop-hint-source.with-sep) {
     margin-top: 6px;
     padding-top: 6px;
-    border-top: 1px solid color-mix(in srgb, var(--color-neutral) 15%, transparent);
   }
 
   :global(.prop-hint-chip) {
@@ -89,7 +87,6 @@
     gap: 4px;
     padding: 2px 7px 2px 5px;
     background: color-mix(in srgb, var(--color-neutral) 14%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-neutral) 20%, transparent);
     font-size: 10px;
     font-weight: 600;
     color: var(--color-neutral);

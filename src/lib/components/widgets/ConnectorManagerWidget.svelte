@@ -186,13 +186,11 @@
 
   .status-msg.ok {
     background: color-mix(in srgb, var(--color-success, #22c55e) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-success, #22c55e) 30%, transparent);
     color: var(--color-success, #22c55e);
   }
 
   .status-msg.fail {
     background: color-mix(in srgb, var(--color-error, #ef4444) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent);
     color: var(--color-error, #ef4444);
   }
 
@@ -215,15 +213,13 @@
     gap: 6px;
     padding: 14px 8px;
     background: color-mix(in srgb, var(--color-white) 6%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 12%, transparent);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.2s;
     text-align: center;
   }
 
   .action-card:hover:not(:disabled) {
     background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
-    border-color: color-mix(in srgb, var(--color-interactive) 40%, transparent);
   }
 
   .action-card:disabled {
@@ -272,12 +268,12 @@
     align-items: center;
     gap: 4px;
     background: none;
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+    border: none;
     padding: 4px 8px;
     font-size: 11px;
     color: var(--color-interactive);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.2s;
   }
 
   .copy-btn:hover {
@@ -290,7 +286,6 @@
 
   .json-preview {
     background: color-mix(in srgb, var(--color-black) 60%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
     padding: 10px;
     font-family: var(--font-mono, monospace);
     font-size: 11px;
@@ -320,17 +315,13 @@
     flex: 1;
     min-height: 160px;
     background: color-mix(in srgb, var(--color-white) 6%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+    border: none;
     padding: 10px;
     font-family: var(--font-mono, monospace);
     font-size: 12px;
     color: var(--color-neutral-active);
     outline: none;
     resize: vertical;
-  }
-
-  .json-input:focus {
-    border-color: var(--color-interactive);
   }
 
   .import-actions {
@@ -371,7 +362,6 @@
   .btn-secondary {
     background: color-mix(in srgb, var(--color-white) 10%, transparent);
     color: var(--color-neutral-active);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
   }
 
   .btn-secondary:hover:not(:disabled) {

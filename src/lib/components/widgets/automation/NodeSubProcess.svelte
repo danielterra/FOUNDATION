@@ -51,10 +51,7 @@
     width: 220px;
     cursor: pointer;
     background: #002030;
-    border: 2px solid #00ACC1;
     color: #80deea;
-    outline: 3px solid #00ACC133;
-    outline-offset: 2px;
     overflow: hidden;
   }
   .side-tab {

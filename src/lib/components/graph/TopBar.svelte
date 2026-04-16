@@ -59,7 +59,6 @@
 		font-size: 0.875rem;
 		color: var(--color-neutral);
 		padding-left: 0.75rem;
-		border-left: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
 	}
 
 	.search-trigger {

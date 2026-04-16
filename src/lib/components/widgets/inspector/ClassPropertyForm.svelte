@@ -246,7 +246,6 @@
     gap: 8px;
     padding: 10px;
     background: color-mix(in srgb, var(--color-interactive) 6%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 25%, transparent);
   }
 
   .cpf-row {
@@ -270,41 +269,31 @@
     flex: 1;
     min-width: 0;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
+    border: none;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 14px;
     padding: 5px 8px;
     outline: none;
-    transition: border-color 0.15s;
-  }
-
-  .cpf-input:focus {
-    border-color: var(--color-interactive);
   }
 
   .cpf-textarea {
     flex: 1;
     min-width: 0;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
+    border: none;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 14px;
     padding: 5px 8px;
     outline: none;
     resize: vertical;
-    transition: border-color 0.15s;
-  }
-
-  .cpf-textarea:focus {
-    border-color: var(--color-interactive);
   }
 
   .cpf-select {
     flex: 1;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
+    border: none;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 14px;
@@ -324,18 +313,17 @@
     align-items: center;
     gap: 4px;
     padding: 4px 10px;
-    border: 1px solid color-mix(in srgb, var(--color-neutral) 20%, transparent);
+    border: none;
     background: transparent;
     color: var(--color-neutral);
     font-family: var(--font-body);
     font-size: 12px;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    transition: background 0.15s, color 0.15s;
   }
 
   .cpf-type-btn.active {
     background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
-    border-color: color-mix(in srgb, var(--color-interactive) 50%, transparent);
     color: var(--color-interactive);
   }
 
@@ -378,7 +366,6 @@
     gap: 6px;
     padding: 5px 8px;
     background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
     font-size: 14px;
     color: var(--color-neutral-active);
   }
@@ -412,7 +399,6 @@
     left: 0;
     right: 0;
     background: var(--color-bg-elevated, var(--color-black));
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     z-index: 100;
     max-height: 180px;

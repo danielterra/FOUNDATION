@@ -159,13 +159,25 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         params!["cleanup_orphans", now],
     )?;
     let tx_id = tx.last_insert_rowid();
-    let _origin_id = get_or_create_origin(&tx, "cleanup_orphans")?;
+    let origin_id = get_or_create_origin(&tx, "cleanup_orphans")?;
 
     let mut total_retracted: usize = 0;
     for (subject, _) in &orphans {
+        // Immutable model: insert one retracted row per predicate (latest tx as template)
+        // so that MAX(tx) for each (subject, predicate) points to a retracted row.
         let n = tx.execute(
-            "UPDATE triples SET retracted = 1, tx = ? WHERE subject = ? AND retracted = 0",
-            params![tx_id, subject],
+            "INSERT INTO triples (subject, predicate, object, object_value, object_datatype,
+                                  object_language, object_type, object_number, object_integer,
+                                  object_boolean, tx, origin_id, retracted, created_at)
+             SELECT subject, predicate, object, object_value, object_datatype,
+                    object_language, object_type, object_number, object_integer,
+                    object_boolean, ?1, ?2, 1, ?3
+             FROM triples t
+             WHERE t.subject = ?4 AND t.retracted = 0
+               AND t.tx = (SELECT MAX(t2.tx) FROM triples t2
+                           WHERE t2.subject = ?4 AND t2.predicate = t.predicate)
+             GROUP BY t.predicate",
+            params![tx_id, origin_id, now, subject],
         )?;
         total_retracted += n;
     }

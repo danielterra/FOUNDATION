@@ -12,6 +12,7 @@
   import AutomationWidget from './AutomationWidget.svelte';
   import WorkflowExecutionWidget from './WorkflowExecutionWidget.svelte';
   import GraphWidget from './GraphWidget.svelte';
+  import AIConversationWidget from './AIConversationWidget.svelte';
 
   let { activeConversationIri = null } = $props();
 
@@ -344,6 +345,8 @@
       <WorkflowExecutionWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {:else if widget.widget_type === 'graph'}
       <GraphWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
+    {:else if widget.widget_type === 'ai_conversation'}
+      <AIConversationWidget widgetId={widget.id} entityId={widget.entity_id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {/if}
   </div>
 {/each}

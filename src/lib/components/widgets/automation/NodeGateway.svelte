@@ -34,7 +34,6 @@
     width: 220px;
     cursor: pointer;
     background: #1a0a2e;
-    border: 2px solid #7B1FA2;
     color: #ce93d8;
     overflow: hidden;
   }

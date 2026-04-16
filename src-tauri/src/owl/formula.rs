@@ -102,8 +102,11 @@ pub fn evaluate_formula_for_instance_raw(
 
     for ref_iri in &refs {
         let value: Option<String> = conn.query_row(
-            "SELECT object_value FROM triples WHERE subject = ? AND predicate = ? AND retracted = 0 LIMIT 1",
-            rusqlite::params![instance_iri, ref_iri],
+            "SELECT object_value FROM triples \
+             WHERE subject = ? AND predicate = ? AND retracted = 0 \
+             AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ? AND predicate = ?) \
+             LIMIT 1",
+            rusqlite::params![instance_iri, ref_iri, instance_iri, ref_iri],
             |row| row.get::<_, Option<String>>(0),
         ).unwrap_or(None);
 
@@ -231,9 +234,28 @@ pub fn eval_expr(expr: &str) -> Result<f64, String> {
     Err(format!("Cannot evaluate: '{}'", expr))
 }
 
+/// Returns true if the string contains an aggregation function call (SOMA, MÉDIA, etc.).
+/// Used to reject aggregation syntax in `foundation:formula` fields.
+pub fn contains_aggregation_call(s: &str) -> bool {
+    const PREFIXES: &[&str] = &[
+        "SOMA(", "SUM(",
+        "MÉDIA(", "MEDIA(", "AVG(",
+        "MÍNIMO(", "MINIMO(", "MIN(",
+        "MÁXIMO(", "MAXIMO(", "MAX(",
+        "CONTAR(", "COUNT(",
+    ];
+    PREFIXES.iter().any(|p| s.contains(p))
+}
+
 /// Validate that the formula expression is syntactically correct by substituting all
 /// `{{ref}}` placeholders with `1` and performing a dry-run evaluation.
 pub fn validate_expression(formula: &str) -> Result<(), crate::owl::OwlError> {
+    if contains_aggregation_call(formula) {
+        return Err(crate::owl::OwlError::ValidationError(
+            "Fórmulas aritméticas não suportam chamadas de agregação (SOMA, MÉDIA, etc.). \
+             Use o campo 'aggregation' para definir propriedades de agregação.".to_string()
+        ));
+    }
     let mut expr = formula.to_string();
     for ref_iri in extract_references(formula) {
         let placeholder = format!("{{{{{}}}}}", ref_iri);
@@ -533,6 +555,16 @@ mod tests {
     #[test]
     fn test_eval_expr_mod_by_zero() {
         assert!(eval_expr("5 % 0").is_err());
+    }
+
+    #[test]
+    fn test_validate_expression_rejects_aggregation_call() {
+        let err = validate_expression("SOMA({{p:items}}.p:value)").unwrap_err();
+        assert!(
+            err.to_string().contains("aggregation") || err.to_string().contains("agrega"),
+            "error should mention aggregation: {}",
+            err
+        );
     }
 
     #[test]

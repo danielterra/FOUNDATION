@@ -766,9 +766,27 @@ fn remove_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult
             conn, iri, property_iri, current_count.saturating_sub(remove_count),
         )?;
 
+        // Collect class IRIs being removed from the domain before mutating.
+        let domain_classes_removed: Vec<String> = if property_iri == "rdfs:domain" {
+            values_to_remove.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         for val in values_to_remove {
             if let Some(val_str) = val.as_str() {
                 Individual::remove_property_value(conn, iri, property_iri, val_str, "ai")?;
+            }
+        }
+
+        // Cascade: retract all values of this property from instances of the removed domain class.
+        for class_iri in &domain_classes_removed {
+            let instances = crate::owl::find_entities_with_property(conn, "rdf:type", class_iri)
+                .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
+            for instance_iri in instances {
+                Individual::clear_property(conn, &instance_iri, iri, "ai")?;
             }
         }
 
@@ -848,16 +866,19 @@ fn retract_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
         },
     };
 
-    match Individual::retract_with_summary(conn, iri, "ai") {
-        Ok(cascade) => {
-            super::batch::queue_event("entity-deleted", serde_json::json!({"entityId": iri}));
-            let message = if cascade.is_empty() {
+    match Individual::retract_collecting_with_summary(conn, iri, "ai") {
+        Ok((all_retracted, cascade_summary)) => {
+            crate::search::remove_from_index(&all_retracted);
+            for retracted_iri in &all_retracted {
+                super::batch::queue_event("entity-deleted", serde_json::json!({"entityId": retracted_iri}));
+            }
+            let message = if cascade_summary.is_empty() {
                 format!("Individual '{}' retracted.", iri)
             } else {
-                let parts: Vec<String> = cascade.iter()
+                let parts: Vec<String> = cascade_summary.iter()
                     .map(|(prop, dir, count)| format!("{} via {} ({})", count, prop, dir))
                     .collect();
-                format!("Individual '{}' retracted. Cascade: {}.", iri, parts.join(", "))
+                format!("Individual '{}' retracted. Cascade: {}.", iri, parts.join("; "))
             };
             ToolResult {
                 success: true,

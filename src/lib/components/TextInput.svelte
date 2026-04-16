@@ -39,7 +39,7 @@
 		width: 100%;
 		padding: 1rem 1.25rem;
 		background: var(--color-black);
-		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+		border: none;
 		color: var(--color-neutral-active);
 		font-size: 1.125rem;
 		text-align: center;
@@ -48,7 +48,6 @@
 
 	input:focus {
 		outline: none;
-		border-color: var(--color-interactive);
 		background: var(--color-black);
 	}
 

@@ -53,8 +53,7 @@
 	.spinner {
 		width: 32px;
 		height: 32px;
-		border: 3px solid var(--color-black);
-		border-top-color: var(--color-transition);
+		border: none;
 		flex-shrink: 0;
 		animation: spin 0.8s linear infinite, glow 2s ease-in-out infinite;
 	}

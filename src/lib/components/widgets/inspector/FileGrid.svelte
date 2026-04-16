@@ -88,16 +88,14 @@
     flex-direction: column;
     gap: 6px;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 12%, transparent);
     padding: 8px;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, transform 0.15s;
+    transition: background 0.15s, transform 0.15s;
     text-align: left;
   }
 
   .file-grid-card:hover {
     background: color-mix(in srgb, var(--color-white) 10%, transparent);
-    border-color: color-mix(in srgb, var(--color-white) 22%, transparent);
     transform: translateY(-1px);
   }
 

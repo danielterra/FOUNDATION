@@ -145,6 +145,18 @@ impl Individual {
         Ok(retracted)
     }
 
+    /// Retract an individual and return both all retracted IRIs and the cascade summary.
+    pub fn retract_collecting_with_summary(
+        conn: &mut Connection,
+        iri: &str,
+        origin: &str,
+    ) -> Result<(Vec<String>, Vec<(String, String, usize)>)> {
+        let mut summary = Vec::new();
+        let mut retracted = Vec::new();
+        Self::retract_inner(conn, iri, origin, &mut summary, &mut retracted)?;
+        Ok((retracted, summary))
+    }
+
     fn retract_inner(
         conn: &mut Connection,
         iri: &str,

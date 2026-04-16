@@ -8,6 +8,53 @@
 	import { modal } from '$lib/stores/modal';
 	import MarkdownValue from './widgets/inspector/MarkdownValue.svelte';
 
+	marked.setOptions({ breaks: true, gfm: true });
+
+	let { unit, isLast = false, conversationId = '', isStreaming = false, onEdit = null, onRetry = null, onEntityClick = null } = $props();
+
+	let copySuccess = $state(false);
+	let copyTimeout = null;
+	let now = $state(Date.now());
+	let ticker;
+
+	onMount(() => {
+		ticker = setInterval(() => { now = Date.now(); }, 30_000);
+	});
+
+	onDestroy(() => {
+		clearInterval(ticker);
+	});
+
+	function renderMarkdown(text) {
+		if (!text) return '';
+		return marked.parse(text)
+			.replace(/<table>/g, '<div class="table-wrapper"><table>')
+			.replace(/<\/table>/g, '</table></div>');
+	}
+
+	function formatJson(content) {
+		if (typeof content === 'object') return JSON.stringify(content, null, 2);
+		if (typeof content === 'string') {
+			try { return JSON.stringify(JSON.parse(content), null, 2); } catch { return content; }
+		}
+		return String(content);
+	}
+
+	function openToolModal(tc) {
+		const sections = [];
+		if (tc.input) {
+			sections.push({ label: 'Request', content: JSON.stringify(tc.input, null, 2) });
+		}
+		if (tc.result !== null && tc.result !== undefined) {
+			sections.push({
+				label: 'Response',
+				content: formatJson(tc.result),
+				isError: !!tc.is_error,
+			});
+		}
+		modal.set({ title: tc.name, sections });
+	}
+
 	function subconsciousSummary(entities) {
 		const relevant = entities.filter(e => !e.is_open_loop);
 		const openLoops = entities.filter(e => e.is_open_loop);
@@ -50,148 +97,23 @@
 		return lines.join('\n');
 	}
 
-	marked.setOptions({
-		breaks: true,
-		gfm: true,
-	});
-
-	function highlightJson(json) {
-		return json
-			.replace(/&/g, '&amp;')
-			.replace(/</g, '&lt;')
-			.replace(/>/g, '&gt;')
-			.replace(
-				/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
-				(match) => {
-					if (/^"/.test(match)) {
-						if (/:$/.test(match)) return `<span class="json-key">${match}</span>`;
-						return `<span class="json-string">${match}</span>`;
-					}
-					if (/true|false/.test(match)) return `<span class="json-boolean">${match}</span>`;
-					if (/null/.test(match)) return `<span class="json-null">${match}</span>`;
-					return `<span class="json-number">${match}</span>`;
-				}
-			);
-	}
-
-	function formatJson(content) {
-		if (typeof content === 'object') return JSON.stringify(content, null, 2);
-		if (typeof content === 'string') {
-			try { return JSON.stringify(JSON.parse(content), null, 2); } catch { return content; }
-		}
-		return String(content);
-	}
-
-	let { message, messages, conversationId = '', isStreaming = false, onEdit = null, onRetry = null, onEntityClick = null } = $props();
-
-	let copySuccess = $state(false);
-	let copyTimeout = null;
-	let now = $state(Date.now());
-	let ticker;
-
 	function openSubconsciousModal(entities) {
 		const ctx = formatSubconsciousContext(entities);
 		modal.set({ title: 'Contexto de Memória', html: marked.parse(ctx) });
 	}
 
-	function openToolModal(group) {
-		const name = group.toolUse?.name ?? 'unknown';
-		const sections = [];
-		if (group.toolUse?.input) {
-			sections.push({ label: 'Request', content: JSON.stringify(group.toolUse.input, null, 2) });
-		}
-		if (group.toolResult) {
-			sections.push({
-				label: 'Response',
-				content: (() => {
-					const c = group.toolResult.content;
-					if (typeof c === 'object') return JSON.stringify(c, null, 2);
-					if (typeof c === 'string') { try { return JSON.stringify(JSON.parse(c), null, 2); } catch { return c; } }
-					return String(c);
-				})(),
-				isError: !!group.toolResult.is_error,
-			});
-		}
-		modal.set({ title: name, sections });
-	}
-
-	onMount(() => {
-		ticker = setInterval(() => { now = Date.now(); }, 30_000);
-	});
-
-	onDestroy(() => {
-		clearInterval(ticker);
-	});
-
-	function getDisplayText(msg) {
-		if (!Array.isArray(msg.content)) return '';
-		if (msg.role === 'assistant') {
-			const speak = msg.content.find(b => b.type === 'speak_output');
-			return speak?.text ?? '';
-		}
-		return msg.content
-			.filter(b => b.type === 'text')
-			.map(b => b.text ?? '')
-			.join('\n\n');
-	}
-
-	function getPreSpeakText(msg) {
-		if (!Array.isArray(msg.content)) return '';
-		return msg.content
-			.filter(b => b.type === 'text')
-			.map(b => b.text ?? '')
-			.join('\n\n');
-	}
-
-	function extractToolUses(content) {
-		if (!Array.isArray(content)) return [];
-		return content.filter(block => block.type === 'tool_use');
-	}
-
-	function hasToolUses(msg) {
-		return Array.isArray(msg.content) &&
-		       msg.content.some(block => block.type === 'tool_use' && block.name !== 'speak' && block.name !== 'ask_question');
-	}
-
-	function hasQuestionOutput(msg) {
-		return Array.isArray(msg.content) && msg.content.some(b => b.type === 'question_output');
-	}
-
-	function getQuestionOutput(msg) {
-		if (!Array.isArray(msg.content)) return null;
-		return msg.content.find(b => b.type === 'question_output') ?? null;
-	}
-
-	function getQuestionAnswer(q, currentMsg) {
-		const msgIndex = messages.findIndex(m => m.iri === currentMsg.iri);
-		if (msgIndex < 0 || msgIndex >= messages.length - 1) return null;
-		const nextMsg = messages[msgIndex + 1];
-		if (!Array.isArray(nextMsg?.content)) return null;
-		const result = nextMsg.content.find(b => b.type === 'tool_result' && b.tool_use_id === q.id);
-		return result?.content ?? null;
-	}
-
-	function isLastMessage(msg) {
-		return messages.length > 0 && messages[messages.length - 1].iri === msg.iri;
-	}
-
-	function hasReasoningContent(msg) {
-		if (!Array.isArray(msg.content)) return false;
-		return msg.content.some(b => b.type === 'thinking' || b.type === 'redacted_thinking');
-	}
-
-	function getReasoningText(msg) {
-		if (!Array.isArray(msg.content)) return '';
-		return msg.content
-			.filter(b => b.type === 'thinking')
-			.map(b => b.thinking ?? '')
-			.join('\n\n');
-	}
-
 	async function copyMessage() {
-		const parts = [getPreSpeakText(message), getDisplayText(message)].filter(Boolean);
+		let text = '';
+		if (unit.type === 'user') {
+			text = unit.text ?? '';
+		} else if (unit.type === 'speak') {
+			const parts = [unit.reasoning, unit.text].filter(Boolean);
+			text = parts.join('\n\n');
+		} else if (unit.type === 'question') {
+			text = unit.question ?? '';
+		}
 		try {
-			await navigator.clipboard.writeText(parts.join('\n\n'));
+			await navigator.clipboard.writeText(text);
 			copySuccess = true;
 			if (copyTimeout) clearTimeout(copyTimeout);
 			copyTimeout = setTimeout(() => { copySuccess = false; }, 2000);
@@ -201,41 +123,11 @@
 	}
 
 	function handleEdit() {
-		onEdit?.(message.iri, getDisplayText(message));
+		onEdit?.(unit.iri, unit.text ?? '');
 	}
 
 	function handleRetry() {
-		onRetry?.(message.iri);
-	}
-
-	function renderMarkdown(text) {
-		if (!text) return '';
-		return marked.parse(text)
-			.replace(/<table>/g, '<div class="table-wrapper"><table>')
-			.replace(/<\/table>/g, '</table></div>');
-	}
-
-	function groupToolUsesWithResults(msg, allMessages) {
-		const toolUses = extractToolUses(msg.content);
-
-		const msgIndex = allMessages.findIndex(m => m.iri === msg.iri);
-		const nextMessage = msgIndex >= 0 && msgIndex < allMessages.length - 1
-			? allMessages[msgIndex + 1]
-			: null;
-
-		const toolResults = nextMessage && Array.isArray(nextMessage.content)
-			? nextMessage.content.filter(block => block.type === 'tool_result')
-			: [];
-
-		const resultsMap = new Map();
-		for (const result of toolResults) {
-			resultsMap.set(result.tool_use_id, result);
-		}
-
-		return toolUses.map(toolUse => ({
-			toolUse,
-			toolResult: resultsMap.get(toolUse.id) || null
-		}));
+		onRetry?.(unit.iri);
 	}
 
 	function formatFileSize(bytes) {
@@ -255,186 +147,149 @@
 		}
 	}
 
-	function formatRelativeTime(sentAt) {
-		if (!sentAt || isNaN(new Date(sentAt).getTime())) return '';
-		now; // reactive dependency — recomputes every 30s
-		const m = moment(sentAt);
+	function formatRelativeTime(ts) {
+		if (!ts || isNaN(new Date(ts).getTime())) return '';
+		now;
+		const m = moment(ts);
 		return m.isSame(moment(), 'day') ? m.fromNow() : m.calendar();
 	}
 
-	function formatAbsoluteTime(sentAt) {
-		if (!sentAt || isNaN(new Date(sentAt).getTime())) return '';
-		return new Date(sentAt).toLocaleString(undefined, {
+	function formatAbsoluteTime(ts) {
+		if (!ts || isNaN(new Date(ts).getTime())) return '';
+		return new Date(ts).toLocaleString(undefined, {
 			day: 'numeric', month: 'short', year: 'numeric',
 			hour: '2-digit', minute: '2-digit'
 		});
 	}
 </script>
 
-<div
-	class="message {message.role === 'user' ? 'user' : 'ai'} {message.isThinking ? 'thinking' : ''}"
->
+<div class="message {unit.type === 'user' ? 'user' : 'ai'}">
 	<div class="message-content">
-		{#if message.role === 'user' && message.subconscious_entities?.length > 0}
-			{@const ctx = formatSubconsciousContext(message.subconscious_entities)}
-			<button class="subconscious-chip-summary" onclick={() => openSubconsciousModal(message.subconscious_entities)}>
+		{#if unit.type === 'user' && unit.subconscious_entities?.length > 0}
+			{@const ctx = formatSubconsciousContext(unit.subconscious_entities)}
+			<button class="subconscious-chip-summary" onclick={() => openSubconsciousModal(unit.subconscious_entities)}>
 				<span class="material-symbols-outlined subconscious-icon">neurology</span>
-				<span class="subconscious-summary-text">{subconsciousSummary(message.subconscious_entities)}</span>
+				<span class="subconscious-summary-text">{subconsciousSummary(unit.subconscious_entities)}</span>
 				<span class="subconscious-tokens">~{estimateTokens(ctx).toLocaleString()} tokens</span>
 			</button>
 		{/if}
 		<div class="message-bubble" class:streaming={isStreaming}>
-		{#if message.isThinking}
-			<div class="thinking-indicator">
-				<div class="thinking-dots">
-					<span></span>
-					<span></span>
-					<span></span>
-				</div>
-				<span class="thinking-text">AI is thinking...</span>
-			</div>
-		{:else if message.role === 'assistant'}
-			{#if hasReasoningContent(message)}
-				<details class="reasoning-block">
-					<summary class="reasoning-summary">
-						<span class="material-symbols-outlined reasoning-icon">psychology</span>
-						<span class="reasoning-label">Reasoning</span>
-					</summary>
-					<div class="reasoning-content markdown-content">
-						{@html renderMarkdown(getReasoningText(message))}
-					</div>
-				</details>
-			{/if}
-			{@const preSpeakText = getPreSpeakText(message)}
-			{#if preSpeakText}
-				<details class="reasoning-block" open={isStreaming || undefined}>
-					<summary class="reasoning-summary">
-						<span class="material-symbols-outlined reasoning-icon">psychology</span>
-						<span class="reasoning-label">Reasoning</span>
-					</summary>
-					{#if isStreaming}
-						<div class="reasoning-content streaming-text">{preSpeakText}<span class="stream-cursor">▋</span></div>
-					{:else}
-						<div class="reasoning-content markdown-content">{@html renderMarkdown(preSpeakText)}</div>
-					{/if}
-				</details>
-			{/if}
-			{@const displayText = getDisplayText(message)}
-			{#if displayText}
-				{#if isStreaming}
-					<div class="message-text streaming-text">{displayText}<span class="stream-cursor">▋</span></div>
-				{:else}
-					<div class="message-text"><MarkdownValue value={displayText} openEntityInspector={onEntityClick} /></div>
+			{#if unit.type === 'user'}
+				{#if unit.text}
+					<div class="message-text"><MarkdownValue value={unit.text} openEntityInspector={onEntityClick} /></div>
 				{/if}
-			{/if}
-			{#if hasQuestionOutput(message)}
-				{@const q = getQuestionOutput(message)}
-				{#if q}
-					<ChatQuestionBlock {q} answer={getQuestionAnswer(q, message)} isLast={isLastMessage(message)} {conversationId} />
-				{/if}
-			{/if}
-		{:else if message.role === 'user'}
-			{@const displayText = getDisplayText(message)}
-			{#if displayText}
-				<div class="message-text"><MarkdownValue value={displayText} openEntityInspector={onEntityClick} /></div>
-			{/if}
-		{/if}
-
-		{#if message.attachments && message.attachments.length > 0}
-			<div class="message-attachments">
-				{#each message.attachments as attachment}
-					{#if attachment.mimeType.startsWith('image/')}
-						<button
-							class="attachment-thumbnail attachment-image"
-							onclick={() => openFile(attachment.filePath)}
-							title="Click to open in default app"
-						>
-							{#if attachment.filePath}
-								<img
-									src={convertFileSrc(attachment.filePath)}
-									alt={attachment.fileName}
-								/>
+				{#if unit.attachments?.length > 0}
+					<div class="message-attachments">
+						{#each unit.attachments as attachment}
+							{#if attachment.mimeType.startsWith('image/')}
+								<button
+									class="attachment-thumbnail attachment-image"
+									onclick={() => openFile(attachment.filePath)}
+									title="Click to open in default app"
+								>
+									{#if attachment.filePath}
+										<img src={convertFileSrc(attachment.filePath)} alt={attachment.fileName} />
+									{/if}
+									<div class="attachment-info">
+										<span class="material-symbols-outlined">image</span>
+										<span class="attachment-name">{attachment.fileName}</span>
+										<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
+									</div>
+								</button>
+							{:else if attachment.mimeType === 'application/pdf'}
+								<button
+									class="attachment-thumbnail attachment-pdf"
+									onclick={() => openFile(attachment.filePath)}
+									title="Click to open in default app"
+								>
+									<div class="pdf-preview">
+										<iframe src={convertFileSrc(attachment.filePath)} scrolling="no" title={attachment.fileName}></iframe>
+									</div>
+									<div class="attachment-info">
+										<span class="attachment-name">{attachment.fileName}</span>
+										<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
+									</div>
+								</button>
+							{:else}
+								<button
+									class="attachment-thumbnail attachment-file"
+									onclick={() => openFile(attachment.filePath)}
+									title="Click to open in default app"
+								>
+									<div class="file-preview">
+										<span class="material-symbols-outlined">attach_file</span>
+									</div>
+									<div class="attachment-info">
+										<span class="attachment-name">{attachment.fileName}</span>
+										<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
+									</div>
+								</button>
 							{/if}
-							<div class="attachment-info">
-								<span class="material-symbols-outlined">image</span>
-								<span class="attachment-name">{attachment.fileName}</span>
-								<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
-							</div>
-						</button>
-					{:else if attachment.mimeType === 'application/pdf'}
-						<button
-							class="attachment-thumbnail attachment-pdf"
-							onclick={() => openFile(attachment.filePath)}
-							title="Click to open in default app"
-						>
-							<div class="pdf-preview">
-								<iframe
-									src={convertFileSrc(attachment.filePath)}
-									scrolling="no"
-									title={attachment.fileName}
-								></iframe>
-							</div>
-							<div class="attachment-info">
-								<span class="attachment-name">{attachment.fileName}</span>
-								<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
-							</div>
-						</button>
+						{/each}
+					</div>
+				{/if}
+			{:else if unit.type === 'speak'}
+				{#if unit.reasoning}
+					<details class="reasoning-block" open={isStreaming || undefined}>
+						<summary class="reasoning-summary">
+							<span class="material-symbols-outlined reasoning-icon">psychology</span>
+							<span class="reasoning-label">Reasoning</span>
+						</summary>
+						{#if isStreaming}
+							<div class="reasoning-content streaming-text">{unit.reasoning}<span class="stream-cursor">▋</span></div>
+						{:else}
+							<div class="reasoning-content markdown-content">{@html renderMarkdown(unit.reasoning)}</div>
+						{/if}
+					</details>
+				{/if}
+				{#if unit.text || isStreaming}
+					{#if isStreaming}
+						<div class="message-text streaming-text">{unit.text}<span class="stream-cursor">▋</span></div>
 					{:else}
-						<button
-							class="attachment-thumbnail attachment-file"
-							onclick={() => openFile(attachment.filePath)}
-							title="Click to open in default app"
-						>
-							<div class="file-preview">
-								<span class="material-symbols-outlined">attach_file</span>
-							</div>
-							<div class="attachment-info">
-								<span class="attachment-name">{attachment.fileName}</span>
-								<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
-							</div>
-						</button>
+						<div class="message-text"><MarkdownValue value={unit.text} openEntityInspector={onEntityClick} /></div>
 					{/if}
-				{/each}
-			</div>
-		{/if}
-
-		{#if hasToolUses(message)}
-			{@const toolGroups = groupToolUsesWithResults(message, messages)}
-			{#if toolGroups.length > 0}
-			<div class="tool-chips">
-				{#each toolGroups as group}
-					<button
-						class="tool-chip-summary {group.toolResult ? (group.toolResult.is_error ? 'error' : 'success') : 'pending'}"
-						onclick={() => openToolModal(group)}
-					>
-						<span class="material-symbols-outlined tool-chip-icon">
-							{group.toolResult
-								? (group.toolResult.is_error ? 'error' : 'check_circle')
-								: 'pending'}
-						</span>
-						<span class="tool-chip-name">{group.toolUse ? group.toolUse.name : 'unknown'}</span>
-					</button>
-				{/each}
-			</div>
+				{/if}
+			{:else if unit.type === 'tool_use'}
+				{#if unit.tool_calls?.length > 0}
+					<div class="tool-chips">
+						{#each unit.tool_calls as tc}
+							{@const hasResult = tc.result !== null && tc.result !== undefined}
+							<button
+								class="tool-chip-summary {hasResult ? (tc.is_error ? 'error' : 'success') : 'pending'}"
+								onclick={() => openToolModal(tc)}
+							>
+								<span class="material-symbols-outlined tool-chip-icon">
+									{hasResult ? (tc.is_error ? 'error' : 'check_circle') : 'pending'}
+								</span>
+								<span class="tool-chip-name">{tc.name}</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+			{:else if unit.type === 'question'}
+				<ChatQuestionBlock
+					q={{ id: unit.id, question: unit.question, question_type: unit.question_type, options: unit.options }}
+					answer={unit.answer}
+					{isLast}
+					{conversationId}
+				/>
 			{/if}
-		{/if}
 
-		{#if !message.isThinking}
 			<div class="message-bubble-footer">
-				<span class="message-time" title={formatAbsoluteTime(message.timestamp)}>{formatRelativeTime(message.timestamp)}</span>
-				{#if message.role === 'assistant' && message.input_tokens != null}
+				<span class="message-time" title={formatAbsoluteTime(unit.timestamp)}>{formatRelativeTime(unit.timestamp)}</span>
+				{#if unit.type === 'speak' && unit.input_tokens != null}
 					<span class="token-pill" title="Input tokens">
-						<span class="material-symbols-outlined token-pill-icon">arrow_upward</span>{(message.input_tokens / 1000).toFixed(1)}k
+						<span class="material-symbols-outlined token-pill-icon">arrow_upward</span>{(unit.input_tokens / 1000).toFixed(1)}k
 					</span>
 				{/if}
-				{#if message.role === 'assistant' && message.output_tokens != null}
+				{#if unit.type === 'speak' && unit.output_tokens != null}
 					<span class="token-pill" title="Output tokens">
-						<span class="material-symbols-outlined token-pill-icon">arrow_downward</span>{message.output_tokens.toLocaleString()}
+						<span class="material-symbols-outlined token-pill-icon">arrow_downward</span>{unit.output_tokens.toLocaleString()}
 					</span>
 				{/if}
-				{#if message.role === 'assistant' && message.estimated_cost != null}
+				{#if unit.type === 'speak' && unit.estimated_cost != null}
 					<span class="token-pill" title="Estimated cost">
-						<span class="material-symbols-outlined token-pill-icon">attach_money</span>{message.estimated_cost < 0.01 ? '<$0.01' : '$' + message.estimated_cost.toFixed(2)}
+						<span class="material-symbols-outlined token-pill-icon">attach_money</span>{unit.estimated_cost < 0.01 ? '<$0.01' : '$' + unit.estimated_cost.toFixed(2)}
 					</span>
 				{/if}
 			</div>
@@ -442,7 +297,7 @@
 				<button class="action-btn" onclick={copyMessage} title="Copy message">
 					<span class="material-symbols-outlined">{copySuccess ? 'check' : 'content_copy'}</span>
 				</button>
-				{#if message.role === 'user' && onEdit}
+				{#if unit.type === 'user' && onEdit}
 					<button class="action-btn" onclick={handleEdit} title="Edit message">
 						<span class="material-symbols-outlined">edit</span>
 					</button>
@@ -453,7 +308,6 @@
 					</button>
 				{/if}
 			</div>
-		{/if}
 		</div>
 	</div>
 </div>
@@ -570,7 +424,6 @@
 		flex-direction: column;
 		gap: 6px;
 		background: color-mix(in srgb, var(--color-white) 8%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
 		padding: 8px;
 		cursor: pointer;
 		transition: all 0.2s;
@@ -675,7 +528,6 @@
 	.reasoning-block {
 		margin-bottom: 8px;
 		background: color-mix(in srgb, var(--color-white) 4%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
 		overflow: hidden;
 	}
 
@@ -708,7 +560,6 @@
 
 	.reasoning-content {
 		padding: 8px 12px 10px;
-		border-top: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
 		font-size: 14px;
 		opacity: 0.75;
 	}
@@ -727,64 +578,6 @@
 		animation: blink 0.8s step-start infinite;
 		color: var(--color-transition);
 		margin-left: 1px;
-	}
-
-	.thinking-indicator {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 8px 0;
-	}
-
-	.thinking-dots {
-		display: flex;
-		gap: 6px;
-		align-items: center;
-	}
-
-	.thinking-dots span {
-		width: 8px;
-		height: 8px;
-		background: var(--color-interactive);
-		animation: thinking-bounce 1.4s infinite ease-in-out;
-	}
-
-	.thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
-	.thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
-
-	@keyframes thinking-bounce {
-		0%, 80%, 100% {
-			transform: scale(0.8);
-			opacity: 0.5;
-		}
-		40% {
-			transform: scale(1.2);
-			opacity: 1;
-		}
-	}
-
-	.thinking-text {
-		font-size: 14px;
-		color: var(--color-neutral);
-		font-style: italic;
-		animation: thinking-pulse 1.5s infinite ease-in-out;
-	}
-
-	@keyframes thinking-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
-
-	.message.thinking {
-		animation: slide-in 0.3s ease-out;
-	}
-
-	@keyframes slide-in {
-		from {
-			opacity: 0;
-			transform: translateY(10px);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0);
-		}
 	}
 
 	.tool-chips {
@@ -822,6 +615,7 @@
 		font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
 	}
 
+	@keyframes thinking-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
 
 	.subconscious-chip-summary {
 		display: inline-flex;
@@ -853,6 +647,4 @@
 	.subconscious-summary-text {
 		font-weight: 500;
 	}
-
-
 </style>

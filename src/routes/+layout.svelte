@@ -10,6 +10,7 @@
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { deleteConfirm } from '$lib/stores/deleteConfirm';
   import GlobalModal from '$lib/components/GlobalModal.svelte';
+  import ThinkingDots from '$lib/components/ThinkingDots.svelte';
 
   type TaskCompletedEvent = {
     task_iri: string;
@@ -257,9 +258,13 @@
         onclick={() => invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, position: null, size: null, conversationId: null }).catch(e => console.error('[toast] Failed to open widget:', e))}
         onkeydown={(e) => e.key === 'Enter' && invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, position: null, size: null, conversationId: null }).catch(e => console.error('[toast] Failed to open widget:', e))}
       >
-        <span class="material-symbols-outlined toast-icon" class:spinning={run.status === 'running'}>
-          {#if run.status === 'running'}progress_activity{:else if run.status === 'completed'}check_circle{:else}error{/if}
-        </span>
+        {#if run.status === 'running'}
+          <div class="toast-thinking"><ThinkingDots /></div>
+        {:else}
+          <span class="material-symbols-outlined toast-icon">
+            {run.status === 'completed' ? 'check_circle' : 'error'}
+          </span>
+        {/if}
         <div class="toast-body">
           {#if run.status === 'failed'}
             <span class="toast-label">Automation failed: <strong>{run.currentStep}</strong></span>
@@ -334,14 +339,6 @@
     pointer-events: none;
   }
 
-  .spinning {
-    animation: spin 0.8s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
   .global-overlay {
     position: fixed;
     inset: 0;
@@ -360,7 +357,6 @@
     gap: 12px;
     padding: 28px 24px;
     background: color-mix(in srgb, var(--color-black) 92%, transparent);
-    border: 1px solid color-mix(in srgb, #ef4444 40%, transparent);
     max-width: 340px;
     width: 90vw;
     text-align: center;
@@ -392,7 +388,6 @@
   .dialog-impact {
     width: 100%;
     background: color-mix(in srgb, #ef4444 8%, transparent);
-    border: 1px solid color-mix(in srgb, #ef4444 25%, transparent);
     padding: 10px 14px;
     text-align: left;
   }
@@ -462,7 +457,6 @@
   .dialog-cancel-btn {
     padding: 7px 18px;
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 12px;
@@ -473,7 +467,6 @@
   .dialog-confirm-btn {
     padding: 7px 18px;
     background: color-mix(in srgb, #ef4444 20%, transparent);
-    border: 1px solid color-mix(in srgb, #ef4444 50%, transparent);
     color: #ef4444;
     font-family: var(--font-body);
     font-size: 12px;
@@ -499,7 +492,6 @@
   .automation-toast {
     background: color-mix(in srgb, var(--color-black) 85%, transparent);
     backdrop-filter: blur(12px);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
     color: var(--color-neutral);
     padding: 10px 14px;
     display: flex;
@@ -513,16 +505,7 @@
 
   .automation-toast.running {
     background: color-mix(in srgb, var(--color-transition) 10%, transparent);
-    border-color: color-mix(in srgb, var(--color-transition) 30%, transparent);
     animation: toast-pulse 1.5s ease-in-out infinite;
-  }
-
-  .automation-toast.failed {
-    border-color: var(--color-danger);
-  }
-
-  .automation-toast.done {
-    border-color: var(--color-success);
   }
 
   @keyframes toast-pulse {
@@ -536,7 +519,13 @@
     margin-top: 1px;
   }
 
-  .automation-toast.running .toast-icon { color: var(--color-transition); }
+  .toast-thinking {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    margin-top: 3px;
+  }
+
   .automation-toast.failed .toast-icon { color: var(--color-danger); }
   .automation-toast.done .toast-icon { color: var(--color-success); }
 
@@ -565,7 +554,6 @@
   .toast-action-btn {
     margin-top: 4px;
     background: none;
-    border: 1px solid color-mix(in srgb, var(--color-success) 40%, transparent);
     color: var(--color-success);
     font-family: var(--font-body);
     font-size: 11px;
@@ -600,7 +588,6 @@
   .system-toast {
     background: color-mix(in srgb, var(--color-black) 85%, transparent);
     backdrop-filter: blur(12px);
-    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
     color: var(--color-neutral);
     padding: 8px 14px;
     display: flex;

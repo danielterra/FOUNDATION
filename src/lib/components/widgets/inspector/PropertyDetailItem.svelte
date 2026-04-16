@@ -172,7 +172,7 @@
     if (datatype === 'xsd:dateTime') {
       return new Date(value).toISOString();
     }
-    return value;
+    return String(value);
   }
 
   function formatDatatype(datatype) {
@@ -318,7 +318,10 @@
         <span class="detail-type">{formatDatatype(detailGroup.datatype)}</span>
       {/if}
       {#if detailGroup.isCalculated}
-        <span class="calculated-badge" title="Calculated field">ƒ</span>
+        <span class="calculated-badge" title="Campo calculado automaticamente">
+          <span class="material-symbols-outlined calculated-icon">calculate</span>
+          Calculado
+        </span>
       {/if}
       {#if detailGroup.values.length > 1}
         <span class="detail-count">{detailGroup.values.length}</span>
@@ -592,7 +595,7 @@
   .cardinality-input {
     width: 70px;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border: 1px solid var(--color-interactive);
+    border: none;
     padding: 4px 8px;
     font-size: 14px;
     color: var(--color-neutral-active);
@@ -662,14 +665,22 @@
   }
 
   .calculated-badge {
-    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
     font-weight: 700;
-    font-style: italic;
-    padding: 2px 6px;
-    background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+    letter-spacing: 0.04em;
+    padding: 2px 8px 2px 5px;
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
     color: var(--color-accent);
     line-height: 1;
     cursor: default;
+  }
+
+  .calculated-icon {
+    font-size: 13px;
+    line-height: 1;
   }
 
   .datetime-pair {
@@ -692,18 +703,13 @@
 
   .date-input {
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
+    border: none;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 14px;
     padding: 6px 8px;
     outline: none;
-    transition: border-color 0.15s;
     color-scheme: dark;
-  }
-
-  .date-input:focus {
-    border-color: var(--color-interactive);
   }
 
   .edit-actions {

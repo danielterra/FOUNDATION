@@ -35,12 +35,13 @@
 	let isLoading = $derived(convLoading[activeConversationIri]?.isLoading ?? false);
 	let aiStatus = $derived(convLoading[activeConversationIri]?.aiStatus ?? null);
 	let hasPendingQuestion = $derived(
-		Array.isArray(messages) && (() => {
-			const last = [...messages].reverse().find(m => !m.isThinking);
-			return Array.isArray(last?.content) && last.content.some(b => b.type === 'question_output');
-		})()
+		messages.length > 0 &&
+		messages[messages.length - 1]?.type === 'question' &&
+		!messages[messages.length - 1]?.answer
 	);
 	let chatContainer = $state(null);
+	let contentEl = $state(null);
+	let autoScroll = true;
 	let userLocation = $state(null);
 	let apiKey = $state('');
 	let isInitialized = $state(false);
@@ -62,13 +63,18 @@
 	let agents = $state([]);
 	let streamingReasoning = $state('');
 	let streamingSpeak = $state('');
+	let activeModelInfo = $state(null);
 
 	let streamingMessage = $derived.by(() => {
 		if (!streamingReasoning && !streamingSpeak) return null;
-		const content = [];
-		if (streamingReasoning) content.push({ type: 'text', text: streamingReasoning });
-		if (streamingSpeak) content.push({ type: 'speak_output', text: streamingSpeak });
-		return { iri: '__streaming__', role: 'assistant', content, timestamp: Date.now() };
+		return {
+			type: 'speak',
+			iri: '__streaming__',
+			text: streamingSpeak || '',
+			reasoning: streamingReasoning || null,
+			tool_calls: [],
+			timestamp: Date.now()
+		};
 	});
 
 	let visibleMessages = $derived(streamingMessage ? [...messages, streamingMessage] : messages);
@@ -161,7 +167,8 @@
 			const t0 = performance.now();
 			console.debug('[INIT] initializeApp start');
 			try {
-				const storedKey = await invoke('ai__get_api_key');
+				loadActiveModelInfo();
+			const storedKey = await invoke('ai__get_api_key');
 				console.debug(`[INIT] ai__get_api_key=${Math.round(performance.now() - t0)}ms`);
 				if (storedKey) {
 					apiKey = storedKey;
@@ -203,24 +210,36 @@
 			}
 		});
 
-		const unlistenMessages = await listen('chat-message-added', async (event) => {
-			if (event.payload?.conversationId && event.payload.conversationId !== activeConversationIri) return;
-			const msgs = await invoke('chat__get_recent_messages', {
+		// entity-referenced fires (via the ontology notification pipeline) every time a new
+		// AIConversationMessage is created — because each message writes a
+		// foundation:partOfConversation triple that points to the conversation IRI, which
+		// lands in WRITTEN_IRI_OBJECTS and is emitted as entity-referenced.
+		// This means the chat stays in sync with the ontology regardless of which view the
+		// user is looking at when the engine runs.
+		const unlistenMessages = await listen('entity-referenced', async (event) => {
+			if (!activeConversationIri) return;
+			if (event.payload?.entityId !== activeConversationIri) return;
+
+			const version = ++loadMessagesVersion;
+			const result = await invoke('chat__get_recent_messages', {
 				limit: messageLimit,
 				conversationId: activeConversationIri
 			});
-			// Clear streaming and update messages in the same tick so Svelte
-			// replaces the __streaming__ entry with the real message in one render.
+			if (version !== loadMessagesVersion) return;
+
+			// Clear streaming and update messages in the same Svelte tick so the
+			// __streaming__ entry is replaced by the real message without a flash.
 			clearStreaming();
-			hasMoreMessages = msgs.length === messageLimit;
-			messages = msgs;
+			hasMoreMessages = result.messages.length === messageLimit;
+			messages = result.messages;
+			syncLoadingFromDb(result.is_processing, activeConversationIri);
 			scrollToBottom();
 			await loadConversations();
 		});
 
 		const unlistenAIProcessing = await listen('ai-processing-started', (event) => {
 			const iri = event.payload?.conversationId ?? activeConversationIri;
-			startAIStatus('Claude is thinking', iri);
+			startAIStatus('Pensando...', iri);
 		});
 
 		const unlistenAIStatus = await listen('ai-status', (event) => {
@@ -264,23 +283,6 @@
 		return marked.parse(text, { breaks: true, gfm: true });
 	}
 
-	function shouldDisplayMessage(message) {
-		if (!Array.isArray(message.content)) return true;
-		if (message.content.length === 0) return false;
-		if (message.content.every(block => block.type === 'tool_result')) return false;
-		if (message.role === 'assistant') {
-			return message.content.some(b =>
-				b.type === 'speak_output' ||
-				(b.type === 'text' && (b.text?.length ?? 0) > 0) ||
-				b.type === 'question_output' ||
-				(b.type === 'tool_use' && b.name !== 'speak' && b.name !== 'ask_question') ||
-				(b.type === 'thinking' && (b.thinking?.length ?? 0) > 0) ||
-				b.type === 'redacted_thinking'
-			);
-		}
-		return true;
-	}
-
 	function autoResizeTextarea() {
 		if (!textareaElement) return;
 		textareaElement.style.height = 'auto';
@@ -295,6 +297,14 @@
 			localStorage.setItem(`draft_${activeConversationIri}`, inputText);
 		}
 	});
+
+	async function loadActiveModelInfo() {
+		try {
+			activeModelInfo = await invoke('setup__get_active_model_info');
+		} catch {
+			// non-fatal
+		}
+	}
 
 	async function initializeAI(key) {
 		try {
@@ -442,13 +452,14 @@
 		if (!activeConversationIri) return;
 		const version = ++loadMessagesVersion;
 		try {
-			const msgs = await invoke('chat__get_recent_messages', {
+			const result = await invoke('chat__get_recent_messages', {
 				limit: messageLimit,
 				conversationId: activeConversationIri
 			});
 			if (version !== loadMessagesVersion) return;
-			hasMoreMessages = msgs.length === messageLimit;
-			messages = msgs;
+			hasMoreMessages = result.messages.length === messageLimit;
+			messages = result.messages;
+			syncLoadingFromDb(result.is_processing, activeConversationIri);
 			scrollToBottom();
 		} catch (err) {
 			if (version !== loadMessagesVersion) return;
@@ -467,12 +478,12 @@
 		try {
 			messageLimit += MESSAGE_PAGE_SIZE;
 
-			const msgs = await invoke('chat__get_recent_messages', {
+			const result = await invoke('chat__get_recent_messages', {
 				limit: messageLimit,
 				conversationId: activeConversationIri
 			});
-			hasMoreMessages = msgs.length === messageLimit;
-			messages = msgs;
+			hasMoreMessages = result.messages.length === messageLimit;
+			messages = result.messages;
 
 			setTimeout(() => {
 				if (chatContainer) {
@@ -488,11 +499,25 @@
 	}
 
 	function handleScroll() {
-		if (!chatContainer || isLoadingMore) return;
+		if (!chatContainer) return;
+		const distFromBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight;
+		autoScroll = distFromBottom < 50;
+		if (isLoadingMore) return;
 		if (chatContainer.scrollTop < SCROLL_LOAD_THRESHOLD) {
 			loadMoreMessages();
 		}
 	}
+
+	$effect(() => {
+		if (!contentEl || !chatContainer) return;
+		const obs = new ResizeObserver(() => {
+			if (autoScroll) {
+				chatContainer.scrollTop = chatContainer.scrollHeight;
+			}
+		});
+		obs.observe(contentEl);
+		return () => obs.disconnect();
+	});
 
 	function startAIStatus(status, iri = activeConversationIri) {
 		const existing = convLoading[iri];
@@ -512,6 +537,14 @@
 		if (!existing) return;
 		if (existing.elapsedInterval) clearInterval(existing.elapsedInterval);
 		convLoading[iri] = { isLoading: false, aiStatus: null, elapsedSeconds: 0, elapsedInterval: null };
+	}
+
+	function syncLoadingFromDb(is_processing, iri = activeConversationIri) {
+		if (!is_processing) {
+			stopAIStatus(iri);
+		} else if (!convLoading[iri]?.isLoading) {
+			startAIStatus('Pensando...', iri);
+		}
 	}
 
 	function showError(msg) {
@@ -545,7 +578,7 @@
 		if ((convLoading[convIri]?.isLoading ?? false) || !isInitialized) return;
 		if (iri.startsWith('optimistic_')) return;
 
-		startAIStatus('Claude is thinking', convIri);
+		startAIStatus('Pensando...', convIri);
 
 		invoke('chat__retry_from_message', { messageIri: iri, conversationId: convIri }).then(() => {
 			stopAIStatus(convIri);
@@ -571,7 +604,7 @@
 				textareaElement.style.height = 'auto';
 			}
 
-			startAIStatus('Claude is thinking', convIri);
+			startAIStatus('Pensando...', convIri);
 
 			invoke('chat__edit_and_retry', { messageIri: iri, newContent: content, conversationId: convIri }).then(() => {
 				stopAIStatus(convIri);
@@ -584,6 +617,12 @@
 		}
 
 		const attachmentIris = pendingAttachments.map(a => a.iri);
+		const optimisticAttachments = pendingAttachments.map(a => ({
+			fileName: a.fileName,
+			filePath: a.localPath,
+			fileSize: a.fileSize,
+			mimeType: a.mimeType,
+		}));
 		const cameraImages = cameraEnabled ? selectEvenly(capturedFrames, MAX_CAMERA_FRAMES_PER_MESSAGE) : [];
 		stopCapturing(false);
 
@@ -597,15 +636,17 @@
 		const optimisticIri = `optimistic_${Date.now()}`;
 		if (content) {
 			messages = [...messages, {
+				type: 'user',
 				iri: optimisticIri,
-				role: 'user',
-				content: [{ type: 'text', text: content }],
+				text: content,
+				attachments: optimisticAttachments,
+				subconscious_entities: null,
 				timestamp: Date.now(),
 			}];
 			scrollToBottom();
 		}
 
-		startAIStatus('Claude is thinking', convIri);
+		startAIStatus('Pensando...', convIri);
 
 		invoke('chat__send_and_reply', {
 			content,
@@ -627,10 +668,11 @@
 	}
 
 	function scrollToBottom() {
+		autoScroll = true;
 		if (chatContainer) {
-			setTimeout(() => {
+			requestAnimationFrame(() => {
 				chatContainer.scrollTop = chatContainer.scrollHeight;
-			}, 0);
+			});
 		}
 	}
 
@@ -787,7 +829,6 @@
 				fileName: file.name,
 				mimeType: file.type
 			});
-
 			pendingAttachments = [...pendingAttachments, {
 				iri: attachmentIri,
 				fileName: file.name,
@@ -795,7 +836,6 @@
 				fileSize: file.size,
 				localPath: filePath
 			}];
-
 		} catch (err) {
 			console.error('[ChatWindow] Failed to attach file:', err);
 			alert('Failed to attach file: ' + err);
@@ -899,9 +939,10 @@
 		onToggleCamera={toggleCamera}
 		{thinkingEnabled}
 		onToggleThinking={toggleThinking}
+		{activeModelInfo}
 	/>
 	{#if showSettings}
-		<SettingsPanel onClose={() => showSettings = false} />
+		<SettingsPanel onClose={() => { showSettings = false; loadActiveModelInfo(); }} />
 	{/if}
 	<ConversationBar bind:conversations bind:activeConversationIri onSwitch={switchConversation} onDelete={handleDeleteConversation} />
 	<div class="chat-content">
@@ -916,8 +957,8 @@
 				{isLoadingMessages}
 				{isLoadingMore}
 				bind:chatContainer
+				bind:contentEl
 				onScroll={handleScroll}
-				{shouldDisplayMessage}
 				onEdit={editMessage}
 				onRetry={retryMessage}
 				onEntityClick={openEntityInspector}

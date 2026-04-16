@@ -446,6 +446,31 @@ fn extract_content_text(raw: &str) -> String {
     raw.to_string()
 }
 
+pub fn remove_from_index(subjects: &[String]) {
+    if subjects.is_empty() {
+        return;
+    }
+    let mut guard = match SEARCH_INDEX.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    let idx = match guard.as_mut() {
+        Some(idx) => idx,
+        None => return,
+    };
+    for subject in subjects {
+        let term = Term::from_field_text(idx.f_iri, subject);
+        idx.writer.delete_term(term);
+    }
+    if let Err(e) = idx.writer.commit() {
+        log_backend("warn", &format!("Search index commit failed: {}", e));
+        return;
+    }
+    if let Err(e) = idx.reader.reload() {
+        log_backend("warn", &format!("Search index reader reload failed: {}", e));
+    }
+}
+
 pub fn reindex_subjects(conn: &Connection, subjects: &[String]) {
     if subjects.is_empty() {
         return;

@@ -7,6 +7,7 @@ mod graph_config;
 mod search;
 pub mod vocabulary;
 pub mod cardinality;
+pub mod aggregation;
 pub mod formula;
 pub mod formula_worker;
 

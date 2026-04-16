@@ -114,6 +114,7 @@ pub fn run() {
         .manage(process_automation::task_scheduler::TaskSchedulerState::new())
         .manage(process_automation::task_manager::TaskExecutionState::new())
         .manage(commands::AiCancellationState::new())
+        .manage(commands::ConversationProcessingState::new())
         .setup(|app| {
             // Setup is intentionally minimal - initialization happens via initialize_app command
             // This allows the app to start quickly and not block during build/CI
@@ -136,6 +137,11 @@ pub fn run() {
             commands::setup__list_ai_models,
             commands::setup__get_current_ai_model,
             commands::setup__save_ai_model,
+            commands::setup__get_active_model_info,
+            commands::setup__get_current_ai_service,
+            commands::setup__save_ai_service,
+            commands::agent__get_ai_config,
+            commands::agent__set_ai_config,
             commands::inspector__get_entity,
             commands::graph__search_entities,
             commands::graph__get_node_type_config,

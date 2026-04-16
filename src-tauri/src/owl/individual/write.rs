@@ -40,6 +40,32 @@ impl Individual {
         Ok(())
     }
 
+    /// Assert individual with only label — no icon stored on the instance.
+    /// Use when all instances of a class share the class icon and don't need individual icons.
+    pub fn assert_without_icon(
+        &self,
+        conn: &mut Connection,
+        class_iri: &str,
+        label: &str,
+        origin: &str,
+    ) -> Result<()> {
+        crate::owl::check_system_locked(conn, &self.iri, None)?;
+
+        let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(class_iri.to_string()));
+        store::assert_triples(conn, &[triple], origin)?;
+
+        let label_triple = Triple::new(&self.iri, rdfs::LABEL, Object::Literal {
+            value: label.to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        });
+        store::assert_triples(conn, &[label_triple], origin)?;
+
+        touch(conn, &self.iri.clone());
+
+        Ok(())
+    }
+
     pub fn add_property(
         &self,
         conn: &mut Connection,
@@ -47,7 +73,11 @@ impl Individual {
         values: Vec<Object>,
         origin: &str,
     ) -> Result<()> {
+        let t0 = std::time::Instant::now();
+
         crate::owl::check_system_locked(conn, &self.iri, Some(property))?;
+        let t_lock = t0.elapsed().as_millis();
+
         if values.is_empty() {
             return Err(OwlError::InvalidOperation(
                 format!("No values provided for property {}", property)
@@ -65,8 +95,10 @@ impl Individual {
                 )));
             }
         }
+        let t_formula = t0.elapsed().as_millis();
 
         let types_result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
+        let t_types = t0.elapsed().as_millis();
 
         if types_result.triples.is_empty() {
             return Err(OwlError::NotFound(format!("Individual {} has no rdf:type", self.iri)));
@@ -86,6 +118,7 @@ impl Individual {
                 ));
             }
         }
+        let t_has_prop = t0.elapsed().as_millis();
 
         if !is_meta_property {
             Self::validate_value_type(conn, property, &values)?;
@@ -96,6 +129,7 @@ impl Individual {
                 Self::validate_literal_datatype(property, value)?;
             }
         }
+        let t_validate = t0.elapsed().as_millis();
 
         crate::owl::cardinality::validate_property_cardinality(
             conn,
@@ -103,14 +137,26 @@ impl Individual {
             property,
             values.len()
         )?;
+        let t_cardinality = t0.elapsed().as_millis();
 
         let triples: Vec<Triple> = values.into_iter()
             .map(|v| Triple::new(&self.iri, property, v))
             .collect();
         store::assert_triples(conn, &triples, origin)?;
+        let t_assert = t0.elapsed().as_millis();
 
         if property != super::timestamps::LAST_UPDATED_AT {
             touch(conn, &self.iri.clone());
+        }
+        let t_touch = t0.elapsed().as_millis();
+
+        if t_touch > 20 {
+            crate::commands::log_backend("debug", &format!(
+                "[OWL] add_property({}) total={}ms [lock={}ms formula={}ms types={}ms has_prop={}ms validate={}ms cardinality={}ms assert={}ms touch={}ms]",
+                property, t_touch, t_lock, t_formula - t_lock, t_types - t_formula,
+                t_has_prop - t_types, t_validate - t_has_prop,
+                t_cardinality - t_validate, t_assert - t_cardinality, t_touch - t_assert
+            ));
         }
 
         Ok(())

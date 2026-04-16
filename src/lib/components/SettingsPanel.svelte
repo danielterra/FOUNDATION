@@ -15,6 +15,9 @@
 	let models = $state([]);
 	let selectedServiceIri = $state('');
 	let selectedModelIri = $state('');
+	let selectedServiceIsLocal = $derived(
+		services.find(s => s.iri === selectedServiceIri)?.isLocal ?? false
+	);
 	let currentModelLabel = $state('');
 	let modelSaving = $state(false);
 	let modelMessage = $state('');
@@ -48,17 +51,22 @@
 
 	async function loadModelData() {
 		try {
-			const [svcs, current] = await Promise.all([
+			const [svcs, current, currentSvc] = await Promise.all([
 				invoke('setup__list_ai_services'),
 				invoke('setup__get_current_ai_model'),
+				invoke('setup__get_current_ai_service'),
 			]);
 			services = svcs;
 			if (current) {
 				currentModelLabel = current.label;
 				selectedModelIri = current.iri;
 			}
-			if (services.length > 0) {
+			if (currentSvc) {
+				selectedServiceIri = currentSvc.iri;
+			} else if (services.length > 0) {
 				selectedServiceIri = services[0].iri;
+			}
+			if (selectedServiceIri) {
 				await loadModels(selectedServiceIri);
 			}
 		} catch {
@@ -101,10 +109,13 @@
 		modelMessage = '';
 		modelError = false;
 		try {
-			await invoke('setup__save_ai_model', { modelIri: selectedModelIri });
+			await Promise.all([
+				invoke('setup__save_ai_model', { modelIri: selectedModelIri }),
+				invoke('setup__save_ai_service', { serviceIri: selectedServiceIri }),
+			]);
 			const selected = models.find(m => m.iri === selectedModelIri);
 			currentModelLabel = selected?.label ?? '';
-			modelMessage = 'Model saved.';
+			modelMessage = 'Saved.';
 		} catch (e) {
 			modelMessage = String(e);
 			modelError = true;
@@ -157,6 +168,7 @@
 		</div>
 
 		<div class="panel-body">
+			{#if !selectedServiceIsLocal}
 			<section class="settings-section">
 				<h3 class="section-title">API Key</h3>
 				{#if apiKeyLoading}
@@ -178,6 +190,7 @@
 					{/if}
 				{/if}
 			</section>
+			{/if}
 
 			<section class="settings-section">
 				<h3 class="section-title">AI Model</h3>
@@ -244,7 +257,6 @@
 
 	.panel {
 		background: var(--color-surface, #1e1e2e);
-		border: 1px solid color-mix(in srgb, var(--color-white, #fff) 12%, transparent);
 		width: 420px;
 		max-width: 95vw;
 		max-height: 85vh;
@@ -258,7 +270,6 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 16px 18px 12px;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-white, #fff) 8%, transparent);
 		flex-shrink: 0;
 	}
 
@@ -334,16 +345,11 @@
 	.select-input {
 		flex: 1;
 		background: color-mix(in srgb, var(--color-white, #fff) 6%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-white, #fff) 12%, transparent);
+		border: none;
 		color: var(--color-neutral-active, #e0e0e0);
 		font-size: 14px;
 		padding: 7px 10px;
 		outline: none;
-	}
-
-	.text-input:focus,
-	.select-input:focus {
-		border-color: var(--color-interactive, #7c6fff);
 	}
 
 	.select-input option {
@@ -370,7 +376,7 @@
 	.danger-btn {
 		background: color-mix(in srgb, #e53935 15%, transparent);
 		color: #e57373;
-		border: 1px solid color-mix(in srgb, #e53935 30%, transparent);
+		border: none;
 		padding: 7px 14px;
 		font-size: 14px;
 		font-weight: 500;

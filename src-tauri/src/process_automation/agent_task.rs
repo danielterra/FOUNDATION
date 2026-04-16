@@ -433,7 +433,7 @@ pub async fn execute_agent_task(
                     if let Some(error_msg) = validation_error {
                         result_blocks.push(ContentBlock::ToolResult {
                             tool_use_id: tc.id.clone(),
-                            content: error_msg,
+                            content: serde_json::Value::String(error_msg),
                             is_error: Some(true),
                         });
                         break;
@@ -442,7 +442,7 @@ pub async fn execute_agent_task(
 
                 result_blocks.push(ContentBlock::ToolResult {
                     tool_use_id: tc.id.clone(),
-                    content: "Task completion acknowledged.".to_string(),
+                    content: serde_json::Value::String("Task completion acknowledged.".to_string()),
                     is_error: Some(false),
                 });
                 messages.push(ChatMessage {
@@ -486,7 +486,7 @@ pub async fn execute_agent_task(
 
             result_blocks.push(ContentBlock::ToolResult {
                 tool_use_id: tc_id,
-                content,
+                content: serde_json::Value::String(content),
                 is_error: Some(!tool_result.success),
             });
         }

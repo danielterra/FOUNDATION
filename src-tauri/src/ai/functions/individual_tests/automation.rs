@@ -131,8 +131,8 @@ fn test_find_things_by_detail_date_filter_with_operators() {
     let task_class = Class::new("foundation:Task");
     task_class.assert(&mut conn, ClassType::OwlClass, "Task", "https://example.com/task.svg", None, "test").unwrap();
 
-    Property::new("foundation:dueDate")
-        .assert(&mut conn, PropertyType::DatatypeProperty, "dueDate", None, &["foundation:Task"], Some("xsd:date"), None, "test")
+    Property::new("foundation:scheduledAt")
+        .assert(&mut conn, PropertyType::DatatypeProperty, "scheduledAt", None, &["foundation:Task"], Some("xsd:dateTime"), None, "test")
         .unwrap();
 
     Individual::new("foundation:TaskDue0307")
@@ -143,16 +143,16 @@ fn test_find_things_by_detail_date_filter_with_operators() {
         .assert(&mut conn, "foundation:Task", "Task Due 2026-03-09", "https://example.com/task.svg", "test").unwrap();
 
     for (iri, date_str) in [
-        ("foundation:TaskDue0307", "2026-03-07"),
-        ("foundation:TaskDue0308", "2026-03-08"),
-        ("foundation:TaskDue0309", "2026-03-09"),
+        ("foundation:TaskDue0307", "2026-03-07T00:00:00Z"),
+        ("foundation:TaskDue0308", "2026-03-08T00:00:00Z"),
+        ("foundation:TaskDue0309", "2026-03-09T00:00:00Z"),
     ] {
         Individual::new(iri).add_property(
             &mut conn,
-            "foundation:dueDate",
+            "foundation:scheduledAt",
             vec![crate::owl::Object::Literal {
                 value: date_str.to_string(),
-                datatype: Some("xsd:date".to_string()),
+                datatype: Some("xsd:dateTime".to_string()),
                 language: None,
             }],
             "test",
@@ -162,7 +162,7 @@ fn test_find_things_by_detail_date_filter_with_operators() {
     let args = serde_json::json!({
         "class_iri": "foundation:Task",
         "filters": [
-            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": "="}
+            {"detail": "foundation:scheduledAt", "value": "2026-03-08T00:00:00Z", "operator": "="}
         ]
     });
     let result = search(&conn, &args);
@@ -174,7 +174,7 @@ fn test_find_things_by_detail_date_filter_with_operators() {
     let args_gte = serde_json::json!({
         "class_iri": "foundation:Task",
         "filters": [
-            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": ">="}
+            {"detail": "foundation:scheduledAt", "value": "2026-03-08T00:00:00Z", "operator": ">="}
         ]
     });
     let result_gte = search(&conn, &args_gte);
@@ -188,7 +188,7 @@ fn test_find_things_by_detail_date_filter_with_operators() {
     let args_lte = serde_json::json!({
         "class_iri": "foundation:Task",
         "filters": [
-            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": "<="}
+            {"detail": "foundation:scheduledAt", "value": "2026-03-08T00:00:00Z", "operator": "<="}
         ]
     });
     let result_lte = search(&conn, &args_lte);
@@ -202,8 +202,8 @@ fn test_find_things_by_detail_date_filter_with_operators() {
     let args_range = serde_json::json!({
         "class_iri": "foundation:Task",
         "filters": [
-            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": ">="},
-            {"detail": "foundation:dueDate", "value": "2026-03-08", "operator": "<="}
+            {"detail": "foundation:scheduledAt", "value": "2026-03-08T00:00:00Z", "operator": ">="},
+            {"detail": "foundation:scheduledAt", "value": "2026-03-08T00:00:00Z", "operator": "<="}
         ]
     });
     let result_range = search(&conn, &args_range);

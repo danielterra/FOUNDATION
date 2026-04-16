@@ -42,38 +42,40 @@
   let { value, openEntityInspector = null } = $props();
 
   // Below this threshold, parse synchronously — it's fast enough
-  const SYNC_THRESHOLD = 200;
+  const SYNC_THRESHOLD = 1000;
   // Above this threshold, skip markdown entirely (catastrophic backtracking risk)
   const PRE_THRESHOLD = 50_000;
 
   const IRI_REGEX = /\b[a-zA-Z][a-zA-Z0-9_]*:(?!\/\/)([a-zA-Z][a-zA-Z0-9_.-]*)\b/g;
 
-  let html = $state('');
+  let _asyncHtml = $state('');
+  // For short texts (≤ SYNC_THRESHOLD), parse synchronously via $derived so the
+  // initial render already has content — avoids the one-frame empty-bubble flash
+  // that $effect would cause (effects run after paint in Svelte 5).
+  let html = $derived.by(() => {
+    const text = value ?? '';
+    if (text.length > PRE_THRESHOLD) return '';
+    if (text.length <= SYNC_THRESHOLD) return marked.parse(text);
+    return _asyncHtml;
+  });
   let loading = $state(false);
   let iriResolutions = $state({});
 
   $effect(() => {
     const text = value ?? '';
 
-    if (text.length > PRE_THRESHOLD) {
-      html = '';
-      loading = false;
-      return;
-    }
-
-    if (text.length <= SYNC_THRESHOLD) {
-      html = marked.parse(text);
+    if (text.length > PRE_THRESHOLD || text.length <= SYNC_THRESHOLD) {
       loading = false;
       return;
     }
 
     loading = true;
-    html = '';
+    _asyncHtml = '';
     let cancelled = false;
 
     parseAsync(text).then(result => {
       if (!cancelled) {
-        html = result;
+        _asyncHtml = result;
         loading = false;
       }
     });
@@ -172,7 +174,6 @@
     padding: 1px 6px;
     border-radius: 4px;
     background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 25%, transparent);
     color: var(--color-interactive);
     font-size: 13px;
     line-height: 1.4;

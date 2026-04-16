@@ -91,7 +91,6 @@
     align-items: center;
     justify-content: space-between;
     padding: 10px 14px;
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
     flex-shrink: 0;
   }
 
@@ -168,9 +167,6 @@
     line-height: 1.5;
   }
 
-  .modal-section-json.error {
-    border-left: 2px solid color-mix(in srgb, var(--color-error) 50%, transparent);
-  }
 
   .modal-section-json :global(.json-key)     { color: #9cdcfe; }
   .modal-section-json :global(.json-string)  { color: #ce9178; }

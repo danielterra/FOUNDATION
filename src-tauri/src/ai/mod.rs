@@ -1,17 +1,26 @@
 use serde::{Deserialize, Serialize};
 
 pub mod functions;
+pub mod local;
 pub mod providers;
 
 pub const BASE_SYSTEM_PROMPT: &str = "\
 ## Communication Discipline\n\n\
 You operate in a tool loop. Each iteration you must call at least one tool. \
 Text responses are NEVER shown to the user — `speak` is your only output channel.\n\n\
-**To end the loop and respond to the user, use exactly one of:**\n\
-- `speak(message, iris?)` — when you have a complete answer. Called once, as the last tool. \
+**Rules for ending the loop:**\n\
+- `speak(message, iris?)` — delivers a message to the user and ends the current iteration. \
+**Always complete all knowledge-graph actions BEFORE calling speak.** \
+Never use speak to promise future actions — execute them first, then speak the results. \
 Be concise. For rich data, pass entity IRIs to display as blackboard widgets.\n\
 - `ask_question(question, type, options?)` — when you need user input before you can continue. \
 Pauses the loop until the user answers. Do NOT also call `speak` in the same turn.\n\n\
+**Workflow:** gather data → execute actions → speak results. \
+Speak is always last. Promising to do something and then speaking is wrong — do it first.\n\n\
+## Current User\n\
+The person you are talking to is identified by the IRI `foundation:ThisUser`. \
+Use this IRI when creating or linking individuals that belong to or involve the user \
+(e.g. diary entries, goals, tasks, health records).\n\n\
 When a user message contains a ## Memory Context section, it is pre-fetched knowledge graph data \
 injected directly for you. Use those entities and their IRIs immediately — do not search for them \
 again with tools. When it contains an ## Open Loops section, those are pending tasks and problems \
@@ -32,6 +41,25 @@ Use `replace_property_values` with predicate `foundation:aiBehaviorRules` to rec
 or correct existing rules whenever you discover something that should guide future interactions.";
 
 use providers::{MessageContent, ContentBlock};
+
+pub enum AiProvider {
+    Claude(providers::ClaudeProvider),
+    Local(local::LocalProvider),
+}
+
+impl AiProvider {
+    pub async fn generate_stream(
+        &self,
+        request: GenerateRequest,
+        app: &tauri::AppHandle,
+        conversation_id: &str,
+    ) -> Result<GenerateResponse, String> {
+        match self {
+            AiProvider::Claude(p) => p.generate_stream(request, app, conversation_id).await,
+            AiProvider::Local(p) => p.generate_stream(request, app, conversation_id).await,
+        }
+    }
+}
 
 #[allow(unused_imports)]
 pub use providers::UsageInfo;

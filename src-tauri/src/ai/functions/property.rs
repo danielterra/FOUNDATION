@@ -80,6 +80,16 @@ fn define_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
     match (|| {
         Property::new(iri).assert(conn, property_type, label_str, comment, &domains, range, unit, "ai")?;
 
+        let has_formula = args.get("formula").and_then(|v| v.as_str()).is_some();
+        let has_aggregation = args.get("aggregation").and_then(|v| v.as_str()).is_some();
+
+        if has_formula && has_aggregation {
+            return Err(crate::owl::OwlError::ValidationError(
+                "Uma propriedade não pode ter 'formula' e 'aggregation' ao mesmo tempo. \
+                 Use apenas um dos dois campos.".to_string(),
+            ));
+        }
+
         if let Some(formula_str) = args.get("formula").and_then(|v| v.as_str()) {
             if property_type != PropertyType::DatatypeProperty {
                 return Err(crate::owl::OwlError::ValidationError(
@@ -92,6 +102,23 @@ fn define_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
             use crate::eavto::{store, Triple, Object};
             store::assert_triples(conn, &[Triple::new(iri, "foundation:formula", Object::Literal {
                 value: formula_str.to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            })], "ai")?;
+            super::batch::queue_formula_recalc(iri.to_string());
+        }
+
+        if let Some(aggregation_str) = args.get("aggregation").and_then(|v| v.as_str()) {
+            if property_type != PropertyType::DatatypeProperty {
+                return Err(crate::owl::OwlError::ValidationError(
+                    "aggregation is only supported on datatype properties".to_string(),
+                ));
+            }
+            crate::owl::aggregation::validate_aggregation(aggregation_str)?;
+            crate::owl::aggregation::validate_aggregation_references(conn, aggregation_str)?;
+            use crate::eavto::{store, Triple, Object};
+            store::assert_triples(conn, &[Triple::new(iri, "foundation:aggregation", Object::Literal {
+                value: aggregation_str.to_string(),
                 datatype: Some("xsd:string".to_string()),
                 language: None,
             })], "ai")?;
@@ -237,6 +264,7 @@ fn get_property_one(conn: &Connection, args: &Value) -> ToolResult {
             "ranges": prop.ranges,
             "unit": prop.unit,
             "formula": prop.formula,
+            "aggregation": prop.aggregation,
             "aiBehaviorRules": prop.ai_behavior_rules,
         }))
     })() {

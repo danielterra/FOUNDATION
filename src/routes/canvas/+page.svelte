@@ -303,7 +303,6 @@
 		align-items: center;
 		gap: 8px;
 		background: rgba(0, 0, 0, 0.6);
-		border: 1px solid color-mix(in srgb, var(--color-neutral) 20%, black);
 		padding: 6px 12px;
 	}
 
@@ -345,18 +344,16 @@
 		align-items: center;
 		gap: 6px;
 		background: rgba(0, 0, 0, 0.6);
-		border: 1px solid color-mix(in srgb, var(--color-neutral) 20%, black);
 		color: var(--color-neutral);
 		font-size: 14px;
 		font-weight: 600;
 		cursor: pointer;
 		padding: 8px 16px;
-		transition: background 0.2s, border-color 0.2s;
+		transition: background 0.2s;
 	}
 
 	.layout-controls button:hover:not(:disabled) {
 		background: color-mix(in srgb, var(--color-neutral) 10%, transparent);
-		border-color: color-mix(in srgb, var(--color-neutral) 30%, black);
 	}
 
 	.layout-controls button:disabled {

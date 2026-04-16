@@ -233,17 +233,11 @@
   .field-input,
   .field-select {
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+    border: none;
     padding: 8px 10px;
     font-size: 14px;
     color: var(--color-neutral-active);
     outline: none;
-    transition: border-color 0.15s;
-  }
-
-  .field-input:focus,
-  .field-select:focus {
-    border-color: var(--color-interactive);
   }
 
   .field-select option {
@@ -262,19 +256,16 @@
 
   .status-error {
     background: color-mix(in srgb, var(--color-error, #ef4444) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent);
     color: var(--color-error, #ef4444);
   }
 
   .status-result.ok {
     background: color-mix(in srgb, var(--color-success, #22c55e) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-success, #22c55e) 30%, transparent);
     color: var(--color-success, #22c55e);
   }
 
   .status-result.fail {
     background: color-mix(in srgb, var(--color-error, #ef4444) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent);
     color: var(--color-error, #ef4444);
   }
 
@@ -325,7 +316,6 @@
   .btn-secondary {
     background: color-mix(in srgb, var(--color-white) 10%, transparent);
     color: var(--color-neutral-active);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
   }
 
   .btn-secondary:hover:not(:disabled) {

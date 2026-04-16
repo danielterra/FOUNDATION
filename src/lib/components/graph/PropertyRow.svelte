@@ -19,7 +19,21 @@
 		return 'material-symbol';
 	}
 
-	const displayValue = valueLabel || value;
+	const CURRENCY_CODES = new Set(['BRL', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'ARS', 'CLP', 'MXN', 'PEN', 'COP', 'UYU']);
+
+	function isCurrencyCode(ul) {
+		return !!ul && CURRENCY_CODES.has(ul);
+	}
+
+	function formatCurrency(v, currency) {
+		const num = Number(v);
+		if (isNaN(num)) return String(v);
+		return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(num);
+	}
+
+	const displayValue = isCurrencyCode(unitLabel) && !isNaN(Number(value))
+		? formatCurrency(value, unitLabel)
+		: (valueLabel || value);
 	const iconType = valueIcon ? getIconType(valueIcon) : null;
 </script>
 
@@ -33,7 +47,7 @@
 			{/if}
 		</span>
 	{/if}
-	{#if unitLabel}
+	{#if unitLabel && !isCurrencyCode(unitLabel)}
 		<span class="unit-badge">{unitLabel}</span>
 	{/if}
 	<span class="value-text">{displayValue}</span>
@@ -67,11 +81,6 @@
 		flex-direction: column;
 		gap: 6px;
 		padding: 10px 0;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-border) 20%, transparent);
-	}
-
-	.property-row:last-child {
-		border-bottom: none;
 	}
 
 	.property-label {
@@ -105,7 +114,6 @@
 		word-break: break-word;
 		max-width: 100%;
 		background: color-mix(in srgb, var(--color-neutral) 12%, black);
-		border: 1px solid color-mix(in srgb, var(--color-neutral) 20%, black);
 		color: var(--color-neutral);
 	}
 

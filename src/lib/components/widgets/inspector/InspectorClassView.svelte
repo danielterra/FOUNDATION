@@ -236,13 +236,6 @@
     transform: translateX(1px);
   }
 
-  .item.instance {
-    border-left: 3px solid var(--color-interactive);
-  }
-
-  .item.status-item {
-    border-left: 3px solid var(--status-color);
-  }
 
   .status-dot {
     font-size: 16px;
@@ -290,7 +283,7 @@
     gap: 3px;
     padding: 3px 8px;
     background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
+    border: none;
     color: var(--color-interactive);
     font-family: var(--font-body);
     font-size: 11px;
@@ -312,7 +305,6 @@
     gap: 10px;
     padding: 12px;
     background: color-mix(in srgb, var(--color-warning, #f59e0b) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 30%, transparent);
     margin-bottom: 8px;
   }
 

@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import Card from './Card.svelte';
 	import TextInput from './TextInput.svelte';
+	import ThinkingDots from './ThinkingDots.svelte';
 
 	let { onComplete = () => {} } = $props();
 
@@ -121,7 +122,7 @@
 					<h2>AI Configuration</h2>
 
 					{#if isLoadingServices}
-						<p class="loading">Loading AI services...</p>
+						<div class="loading"><ThinkingDots /></div>
 					{:else}
 						<div class="form-group">
 							<label for="service-select">AI Service</label>
@@ -142,7 +143,7 @@
 							<div class="form-group">
 								<label for="model-select">AI Model</label>
 								{#if isLoadingModels}
-									<p class="loading">Loading models...</p>
+									<div class="loading"><ThinkingDots /></div>
 								{:else}
 									<select id="model-select" bind:value={selectedModel}>
 										<option value="">Select a model</option>
@@ -240,20 +241,15 @@
 	select {
 		background: var(--color-surface);
 		color: var(--color-neutral);
-		border: 1px solid var(--color-border);
+		border: none;
 		padding: 0.75rem 1rem;
 		font-size: 1rem;
 		cursor: pointer;
 		transition: all 0.2s;
 	}
 
-	select:hover:not(:disabled) {
-		border-color: var(--color-interactive);
-	}
-
 	select:focus {
 		outline: none;
-		border-color: var(--color-interactive);
 		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-interactive) 20%, transparent);
 	}
 
@@ -263,9 +259,9 @@
 	}
 
 	.loading {
-		text-align: center;
-		color: var(--color-neutral-muted);
-		font-style: italic;
+		display: flex;
+		justify-content: center;
+		padding: 0.5rem 0;
 	}
 
 	.button-group {
@@ -291,18 +287,13 @@
 	button.secondary {
 		background: var(--color-surface);
 		color: var(--color-neutral);
-		border: 1px solid var(--color-border);
+		border: none;
 	}
 
 	button:hover:not(:disabled) {
 		background: var(--color-interactive-hover);
 		transform: translateY(-2px);
 		box-shadow: 0 4px 16px color-mix(in srgb, var(--color-interactive) 40%, transparent);
-	}
-
-	button.secondary:hover:not(:disabled) {
-		background: var(--color-surface-hover);
-		border-color: var(--color-interactive);
 	}
 
 	button:disabled {

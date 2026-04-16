@@ -133,6 +133,18 @@
     return t ? `${d}T${t}` : `${d}T00:00`;
   }
 
+  const CURRENCY_CODES = new Set(['BRL', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'ARS', 'CLP', 'MXN', 'PEN', 'COP', 'UYU']);
+
+  function isCurrencyCode(unitLabel) {
+    return !!unitLabel && CURRENCY_CODES.has(unitLabel);
+  }
+
+  function formatCurrency(value, currency) {
+    const num = Number(value);
+    if (isNaN(num)) return String(value);
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(num);
+  }
+
   function isIconUrl(icon) {
     if (!icon) return false;
     return icon.startsWith('http://') || icon.startsWith('https://') ||
@@ -270,7 +282,7 @@
             <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
           {/if}
         {/if}
-        {#if val.unitLabel}
+        {#if val.unitLabel && !isCurrencyCode(val.unitLabel)}
           <span class="unit">{val.unitLabel}</span>
         {/if}
         <span class="value-text">{val.valueLabel || val.value}</span>
@@ -346,13 +358,19 @@
           {#if editingKey === editKey(detailGroup.property, idx)}
             {@render numericEditor(detailGroup.property, numericStep(val.datatype))}
           {:else}
-            {#if val.unitLabel}
+            {#if val.unitLabel && !isCurrencyCode(val.unitLabel)}
               <span class="unit">{val.unitLabel}</span>
             {/if}
             {#if detailGroup.isCalculated && !isNaN(Number(val.value)) && val.value !== ''}
-              <NumberFlow class="value-text" value={Number(val.value)} />
+              {#if isCurrencyCode(val.unitLabel)}
+                <NumberFlow class="value-text" value={Number(val.value)} locales="pt-BR" format={{ style: 'currency', currency: val.unitLabel }} />
+              {:else}
+                <NumberFlow class="value-text" value={Number(val.value)} />
+              {/if}
             {:else}
-              <span class="value-text">{val.valueLabel || val.value}</span>
+              <span class="value-text">
+                {isCurrencyCode(val.unitLabel) ? formatCurrency(val.value, val.unitLabel) : (val.valueLabel || val.value)}
+              </span>
             {/if}
           {/if}
         {:else if isRruleType(val.datatype)}
@@ -366,13 +384,19 @@
             <span class="value-text">{rruleLabel(val.value)}</span>
           {/if}
         {:else}
-          {#if val.unitLabel}
+          {#if val.unitLabel && !isCurrencyCode(val.unitLabel)}
             <span class="unit">{val.unitLabel}</span>
           {/if}
           {#if detailGroup.isCalculated && !isNaN(Number(val.value)) && val.value !== ''}
-            <NumberFlow class="value-text" value={Number(val.value)} />
+            {#if isCurrencyCode(val.unitLabel)}
+              <NumberFlow class="value-text" value={Number(val.value)} locales="pt-BR" format={{ style: 'currency', currency: val.unitLabel }} />
+            {:else}
+              <NumberFlow class="value-text" value={Number(val.value)} />
+            {/if}
           {:else}
-            <span class="value-text">{val.valueLabel || val.value}</span>
+            <span class="value-text">
+              {isCurrencyCode(val.unitLabel) ? formatCurrency(val.value, val.unitLabel) : (val.valueLabel || val.value)}
+            </span>
           {/if}
         {/if}
         {#if val.valueStatus}
@@ -554,13 +578,12 @@
 
   .detail-value.calculated {
     font-style: italic;
-    color: var(--color-neutral);
-    background: color-mix(in srgb, var(--color-black) 20%, transparent);
-    border-left: 2px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+    padding-left: 8px;
   }
 
   .detail-value.calculated .value-text {
-    color: var(--color-neutral);
+    color: var(--color-neutral-active);
   }
 
   .formula-error {
@@ -569,7 +592,6 @@
     gap: 4px;
     padding: 4px 6px;
     background: color-mix(in srgb, var(--color-error, #ef4444) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent);
     width: 100%;
     margin-top: 4px;
     box-sizing: border-box;
@@ -609,18 +631,13 @@
 
   .date-input {
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
+    border: none;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 14px;
     padding: 6px 8px;
     outline: none;
-    transition: border-color 0.15s;
     color-scheme: dark;
-  }
-
-  .date-input:focus {
-    border-color: var(--color-interactive);
   }
 
   .edit-actions {

@@ -356,6 +356,7 @@ pub async fn widget_inspector__delete_individual(
         serde_json::to_string(&iris).map_err(|e| e.to_string())
     }).await?;
     let all_retracted: Vec<String> = serde_json::from_str(&retracted_json).unwrap_or_default();
+    crate::search::remove_from_index(&all_retracted);
     for iri in &all_retracted {
         app.emit("entity-deleted", serde_json::json!({ "entityId": iri })).ok();
     }
@@ -604,7 +605,16 @@ pub(super) fn resolve_unit_label(conn: &Connection, unit_iri: &str) -> Option<St
     owl::get_literal_property(conn, unit_iri, "qudt:currencyCode")
         .ok()
         .flatten()
-        .or_else(|| Some(crate::owl::Thing::get(conn, unit_iri).label))
+        .or_else(|| {
+            let label = crate::owl::Thing::get(conn, unit_iri).label;
+            if label == unit_iri {
+                unit_iri.rsplit_once(':')
+                    .map(|(_, local)| local.to_string())
+                    .or(Some(label))
+            } else {
+                Some(label)
+            }
+        })
 }
 
 pub(super) fn resolve_entity_status(conn: &Connection, properties: &[PropertyValue]) -> Option<StatusInfo> {

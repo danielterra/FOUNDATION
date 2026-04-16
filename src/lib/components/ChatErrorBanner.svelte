@@ -19,7 +19,6 @@
 		gap: 10px;
 		padding: 12px 14px;
 		background: color-mix(in srgb, var(--color-danger) 15%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
 		margin-bottom: 12px;
 		flex-shrink: 0;
 	}

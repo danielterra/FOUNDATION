@@ -47,7 +47,7 @@ pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
             ContentBlock::ToolResult { tool_use_id, content, is_error } => Some(
                 ApiContentBlock::ToolResult {
                     tool_use_id: tool_use_id.clone(),
-                    content: content.clone(),
+                    content: tool_result_content_to_value(content),
                     is_error: *is_error,
                 }
             ),
@@ -100,14 +100,11 @@ pub fn inject_attachments_for_current_turn(
         return;
     }
 
-    let target = messages.iter_mut().rev().find(|msg| {
-        if msg.role != "user" { return false; }
-        match &msg.content {
-            MessageContent::ContentBlocks(blocks) =>
-                !blocks.iter().any(|b| matches!(b, ApiContentBlock::ToolResult { .. })),
-            MessageContent::Text(_) => true,
-        }
-    });
+    // Always target the last user message, even if it contains tool_result blocks.
+    // After a merge of consecutive user turns (tool_result message + new user text),
+    // the resulting message starts with tool_results followed by the current user content.
+    // Filtering out such messages would inject into the wrong (earlier) turn.
+    let target = messages.iter_mut().rev().find(|msg| msg.role == "user");
 
     let Some(msg) = target else { return };
 
@@ -198,9 +195,19 @@ pub fn inject_attachments_for_current_turn(
 
     match &mut msg.content {
         MessageContent::ContentBlocks(ref mut blocks) => {
-            let mut new_blocks = inject;
-            new_blocks.append(blocks);
-            *blocks = new_blocks;
+            // Remove FileRef text placeholders that were created by message_to_api_format —
+            // the actual vision/document blocks being injected supersede them.
+            if !attachment_binaries.is_empty() {
+                blocks.retain(|b| !matches!(b, ApiContentBlock::Text { text } if text.starts_with("[Attached file:")));
+            }
+            // Insert after any leading tool_result blocks so the API requirement
+            // (tool_results must precede other content in a user message) is preserved.
+            let insert_pos = blocks.iter()
+                .position(|b| !matches!(b, ApiContentBlock::ToolResult { .. }))
+                .unwrap_or(blocks.len());
+            for (i, block) in inject.into_iter().enumerate() {
+                blocks.insert(insert_pos + i, block);
+            }
         }
         MessageContent::Text(text) => {
             let mut new_blocks = inject;
@@ -234,30 +241,28 @@ pub fn inject_subconscious_context(messages: &mut Vec<ChatMessage>, context: &st
 /// Prepend current date/time as a text block to the last user message in the list.
 /// This keeps the system prompt fully static (cacheable) while still giving Claude
 /// temporal context on every request. No-op if the list is empty.
+///
+/// When the last user message starts with ToolResult blocks (e.g. after inject_speak_results
+/// wraps the user's reply as a speak tool result), the datetime is appended instead of
+/// prepended — the API requires tool_result blocks to come first in user messages.
 pub fn inject_datetime_context(messages: &mut Vec<ChatMessage>) {
     let date_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string();
     let datetime_block = ApiContentBlock::Text {
         text: format!("Current date/time: {}", date_time),
     };
 
-    // The Claude API requires tool_result messages to begin with tool_result blocks —
-    // injecting a Text block before them causes a 400 error.
-    let target = messages.iter_mut().rev().find(|msg| {
-        if msg.role != "user" {
-            return false;
-        }
-        match &msg.content {
-            MessageContent::ContentBlocks(blocks) => {
-                !blocks.iter().any(|b| matches!(b, ApiContentBlock::ToolResult { .. }))
-            }
-            MessageContent::Text(_) => true,
-        }
-    });
+    let target = messages.iter_mut().rev().find(|msg| msg.role == "user");
 
     if let Some(msg) = target {
         match &mut msg.content {
             MessageContent::ContentBlocks(ref mut blocks) => {
-                blocks.insert(0, datetime_block);
+                let starts_with_tool_result = blocks.first()
+                    .map_or(false, |b| matches!(b, ApiContentBlock::ToolResult { .. }));
+                if starts_with_tool_result {
+                    blocks.push(datetime_block);
+                } else {
+                    blocks.insert(0, datetime_block);
+                }
             }
             MessageContent::Text(text) => {
                 msg.content = MessageContent::ContentBlocks(vec![
@@ -267,6 +272,118 @@ pub fn inject_datetime_context(messages: &mut Vec<ChatMessage>) {
             }
         }
     }
+}
+
+/// Transform user messages that follow an unmatched assistant speak tool_use into ToolResults.
+///
+/// Speak results are not stored in the DB. Instead, the user's next message IS the result of
+/// the speak tool — they are responding to what the assistant said. This function detects
+/// unmatched speak tool_uses and wraps the following user message's content (text, images,
+/// documents) into a ToolResult, giving the API a properly matched tool_use / tool_result pair.
+pub fn inject_speak_results(messages: &mut Vec<ChatMessage>) {
+    let mut i = 0;
+    while i + 1 < messages.len() {
+        if messages[i].role != "assistant" {
+            i += 1;
+            continue;
+        }
+
+        let speak_ids: Vec<String> = if let MessageContent::ContentBlocks(ref blocks) = messages[i].content {
+            blocks.iter().filter_map(|b| match b {
+                ApiContentBlock::ToolUse { id, name, .. } if name == "speak" => Some(id.clone()),
+                _ => None,
+            }).collect()
+        } else {
+            i += 1;
+            continue;
+        };
+
+        if speak_ids.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        let next = i + 1;
+        if messages[next].role != "user" {
+            i += 1;
+            continue;
+        }
+
+        let already_has_result = if let MessageContent::ContentBlocks(ref blocks) = messages[next].content {
+            blocks.iter().any(|b| match b {
+                ApiContentBlock::ToolResult { tool_use_id, .. } => speak_ids.contains(tool_use_id),
+                _ => false,
+            })
+        } else {
+            false
+        };
+
+        if already_has_result {
+            i += 1;
+            continue;
+        }
+
+        let speak_id = speak_ids[0].clone();
+
+        let user_blocks = match std::mem::replace(
+            &mut messages[next].content,
+            MessageContent::ContentBlocks(Vec::new()),
+        ) {
+            MessageContent::ContentBlocks(blocks) => blocks,
+            MessageContent::Text(text) => vec![ApiContentBlock::Text { text }],
+        };
+
+        let result_content = blocks_to_speak_result_content(&user_blocks);
+
+        messages[next].content = MessageContent::ContentBlocks(vec![
+            ApiContentBlock::ToolResult {
+                tool_use_id: speak_id,
+                content: result_content,
+                is_error: None,
+            }
+        ]);
+
+        i += 1;
+    }
+}
+
+fn blocks_to_speak_result_content(blocks: &[ApiContentBlock]) -> serde_json::Value {
+    let transferable: Vec<&ApiContentBlock> = blocks.iter().filter(|b| {
+        matches!(b, ApiContentBlock::Text { .. } | ApiContentBlock::Image { .. } | ApiContentBlock::Document { .. })
+    }).collect();
+
+    if transferable.is_empty() {
+        return serde_json::Value::String(String::new());
+    }
+
+    if transferable.len() == 1 {
+        if let ApiContentBlock::Text { text } = transferable[0] {
+            return serde_json::Value::String(text.clone());
+        }
+    }
+
+    let arr: Vec<serde_json::Value> = transferable.iter().filter_map(|b| match b {
+        ApiContentBlock::Text { text } => Some(serde_json::json!({"type": "text", "text": text})),
+        ApiContentBlock::Image { source } => Some(serde_json::json!({
+            "type": "image",
+            "source": {
+                "type": source.source_type,
+                "media_type": source.media_type,
+                "data": source.data
+            }
+        })),
+        ApiContentBlock::Document { source } => Some(serde_json::json!({
+            "type": "document",
+            "source": {
+                "type": source.source_type,
+                "media_type": source.media_type,
+                "data": source.data
+            }
+        })),
+        _ => None,
+    }).collect();
+
+    serde_json::Value::Array(arr)
 }
 
 /// Sanitize tool pairs: ensure every ToolUse in an assistant message has a matching
@@ -334,7 +451,7 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
             for id in missing {
                 blocks.insert(pos, ApiContentBlock::ToolResult {
                     tool_use_id: id,
-                    content: "Tool result unavailable (conversation was interrupted)".to_string(),
+                    content: serde_json::Value::String("Tool result unavailable (conversation was interrupted)".to_string()),
                     is_error: Some(true),
                 });
                 pos += 1;
@@ -467,4 +584,19 @@ pub async fn extract_and_save_file_summaries(
     // Remove any text blocks that became empty after stripping
     blocks.retain(|b| !matches!(b, ContentBlock::Text { text } if text.is_empty()));
     blocks
+}
+
+/// Convert a stored tool-result content string to a `serde_json::Value`.
+///
+/// Image and PDF results are stored as a JSON array string, e.g.
+/// `[{"type":"image","source":{...}}]`. Parse those back into a `Value::Array`
+/// so the Claude API receives a proper content-block list (not a quoted string).
+/// Every other result is a plain string and is returned as `Value::String`.
+fn tool_result_content_to_value(s: &str) -> serde_json::Value {
+    if s.starts_with('[') {
+        if let Ok(v @ serde_json::Value::Array(_)) = serde_json::from_str(s) {
+            return v;
+        }
+    }
+    serde_json::Value::String(s.to_string())
 }

@@ -39,7 +39,7 @@
 
 	.api-key-setup input {
 		padding: 12px 16px;
-		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+		border: none;
 		background: color-mix(in srgb, var(--color-white) 5%, transparent);
 		color: var(--color-neutral-active);
 		font-family: inherit;
@@ -48,7 +48,6 @@
 
 	.api-key-setup input:focus {
 		outline: none;
-		border-color: var(--color-interactive);
 	}
 
 	.api-key-setup button {

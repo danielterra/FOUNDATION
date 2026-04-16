@@ -259,7 +259,7 @@
 
   .freq-select, .ordinal-select {
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+    border: none;
     border-radius: 6px;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
@@ -281,7 +281,7 @@
     width: 34px;
     height: 34px;
     border-radius: 50%;
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+    border: none;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     color: var(--color-neutral);
     font-family: var(--font-body);
@@ -292,7 +292,6 @@
 
   .wd-btn.selected {
     background: var(--color-interactive);
-    border-color: var(--color-interactive);
     color: var(--color-neutral-active);
   }
 
@@ -321,7 +320,7 @@
   .day-btn {
     padding: 4px 2px;
     border-radius: 4px;
-    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+    border: none;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     color: var(--color-neutral);
     font-family: var(--font-body);
@@ -332,7 +331,6 @@
 
   .day-btn.selected {
     background: var(--color-interactive);
-    border-color: var(--color-interactive);
     color: var(--color-neutral-active);
   }
 
@@ -345,7 +343,7 @@
   .month-btn {
     padding: 6px 4px;
     border-radius: 6px;
-    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+    border: none;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     color: var(--color-neutral);
     font-family: var(--font-body);
@@ -356,7 +354,6 @@
 
   .month-btn.selected {
     background: var(--color-interactive);
-    border-color: var(--color-interactive);
     color: var(--color-neutral-active);
   }
 
@@ -385,7 +382,7 @@
   .btn-cancel {
     padding: 7px 16px;
     border-radius: 7px;
-    border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+    border: none;
     background: transparent;
     color: var(--color-neutral);
     font-family: var(--font-body);

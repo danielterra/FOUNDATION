@@ -68,9 +68,6 @@ pub fn assert_triples(
         assert_triples_begin(conn, triples, origin)?
     };
     if tx_id != 0 {
-        let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
-        crate::search::reindex_subjects(conn, &subjects);
-
         WRITTEN_SUBJECTS.with(|v| {
             let mut buf = v.borrow_mut();
             for triple in triples {
@@ -242,9 +239,6 @@ pub fn append_triples(
         tx_id
     };
     if tx_id != 0 {
-        let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
-        crate::search::reindex_subjects(conn, &subjects);
-
         WRITTEN_SUBJECTS.with(|v| {
             let mut buf = v.borrow_mut();
             for triple in triples {
@@ -354,9 +348,6 @@ pub fn retract_triples(
         tx_id
     };
     if tx_id != 0 {
-        let subjects: Vec<String> = triples.iter().map(|t| t.subject.clone()).collect();
-        crate::search::reindex_subjects(conn, &subjects);
-
         WRITTEN_SUBJECTS.with(|v| {
             let mut buf = v.borrow_mut();
             for triple in triples {

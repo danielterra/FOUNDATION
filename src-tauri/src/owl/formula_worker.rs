@@ -27,13 +27,14 @@ pub struct FormulaProgressEvent {
 
 impl FormulaWorker {
     pub fn spawn(app: tauri::AppHandle, executor: crate::owl::DbExecutor) -> Self {
-        let (tx, mut rx) = mpsc::channel::<WorkerCommand>(64);
+        let (tx, mut rx) = mpsc::channel::<WorkerCommand>(1024);
+        let enqueue_tx = tx.clone();
 
         tauri::async_runtime::spawn(async move {
             while let Some(cmd) = rx.recv().await {
                 match cmd {
                     WorkerCommand::Enqueue { job_id } => {
-                        process_job(&app, &executor, &job_id).await;
+                        process_job(&app, &executor, &job_id, &enqueue_tx).await;
                     }
                     WorkerCommand::Cancel { property_iri } => {
                         cancel_jobs_for_property(&executor, &property_iri).await;
@@ -56,7 +57,7 @@ struct JobRecord {
     instance_iri: Option<String>,
 }
 
-async fn process_job(app: &tauri::AppHandle, executor: &crate::owl::DbExecutor, job_id: &str) {
+async fn process_job(app: &tauri::AppHandle, executor: &crate::owl::DbExecutor, job_id: &str, sender: &mpsc::Sender<WorkerCommand>) {
     let job_id_owned = job_id.to_string();
     let job = match executor.read(move |conn| {
         Ok(load_job(conn, &job_id_owned))
@@ -145,11 +146,14 @@ async fn process_job(app: &tauri::AppHandle, executor: &crate::owl::DbExecutor, 
             Ok(value) => {
                 let inst = instance_iri.clone();
                 let prop = job.property_iri.clone();
-                let now = now_millis();
-                let _ = executor.write(move |conn| {
-                    store_calculated_value(conn, &inst, &prop, &value, now);
-                    Ok(String::new())
-                }).await;
+                let dependent_jobs = executor.write(move |conn| {
+                    store_calculated_value(conn, &inst, &prop, &value);
+                    let jobs = create_instance_recalc_jobs(conn, &inst, &prop);
+                    Ok(jobs.join(","))
+                }).await.unwrap_or_default();
+                for jid in dependent_jobs.split(',').filter(|s| !s.is_empty()) {
+                    let _ = sender.try_send(WorkerCommand::Enqueue { job_id: jid.to_string() });
+                }
                 if job.instance_iri.is_some() {
                     app.emit("entity-updated", serde_json::json!({"entityId": instance_iri})).ok();
                 }
@@ -268,25 +272,33 @@ fn evaluate_formula_for_instance(
     instance_iri: &str,
     property_iri: &str,
 ) -> Result<String, String> {
-    crate::owl::formula::evaluate_formula_for_instance_raw(conn, instance_iri, property_iri)
+    let has_aggregation: bool = conn.query_row(
+        "SELECT COUNT(*) FROM triples \
+         WHERE subject = ? AND predicate = 'foundation:aggregation' AND retracted = 0",
+        rusqlite::params![property_iri],
+        |row| row.get::<_, i64>(0),
+    ).map(|c| c > 0).unwrap_or(false);
+
+    if has_aggregation {
+        crate::owl::aggregation::evaluate_aggregation_for_instance(conn, instance_iri, property_iri)
+    } else {
+        crate::owl::formula::evaluate_formula_for_instance_raw(conn, instance_iri, property_iri)
+    }
 }
 
 fn store_calculated_value(
-    conn: &Connection,
+    conn: &mut Connection,
     instance_iri: &str,
     property_iri: &str,
     value: &str,
-    now: i64,
 ) {
-    let _ = conn.execute(
-        "UPDATE triples SET retracted = 1 WHERE subject = ? AND predicate = ? AND retracted = 0",
-        rusqlite::params![instance_iri, property_iri],
+    use crate::eavto::{store, Triple, Object};
+    let triple = Triple::new(
+        instance_iri,
+        property_iri,
+        Object::Literal { value: value.to_string(), datatype: Some("xsd:string".to_string()), language: None },
     );
-    let _ = conn.execute(
-        "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted)
-         VALUES (?, ?, ?, 'literal', 'xsd:string', 1, 0, ?, 0)",
-        rusqlite::params![instance_iri, property_iri, value, now],
-    );
+    let _ = store::assert_triples(conn, &[triple], "formula");
     let _ = conn.execute(
         "DELETE FROM formula_instance_errors WHERE instance_iri = ? AND property_iri = ?",
         rusqlite::params![instance_iri, property_iri],
@@ -329,16 +341,20 @@ fn query_class_instances(conn: &Connection, class_iri: &str, offset: i64) -> Vec
 fn query_formula_properties_by_reference(
     conn: &Connection,
     placeholder: &str,
-) -> Vec<(String, String)> {
+) -> Vec<(String, String, String)> {
     conn.prepare(
-        "SELECT subject, object_value FROM triples
-         WHERE predicate = 'foundation:formula' AND retracted = 0",
+        "SELECT subject, object_value, predicate FROM triples \
+         WHERE predicate IN ('foundation:formula', 'foundation:aggregation') AND retracted = 0",
     )
     .map(|mut stmt| {
-        stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        stmt.query_map([], |row| Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        )))
             .map(|rows| {
                 rows.filter_map(|r| r.ok())
-                    .filter(|(_, formula)| formula.contains(placeholder))
+                    .filter(|(_, formula, _)| formula.contains(placeholder))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default()
@@ -388,6 +404,97 @@ pub fn cancel_and_create_property_job(
     result.ok().map(|_| job_id)
 }
 
+/// Find all (aggregation_property_iri, source_prop_iri) pairs where the aggregation formula
+/// references `subprop_iri` as its sub-property. Used to trigger reverse cache invalidation
+/// when a sub-property value changes on a related instance.
+fn find_aggregation_props_by_subprop(
+    conn: &Connection,
+    subprop_iri: &str,
+) -> Vec<(String, String)> {
+    conn.prepare(
+        "SELECT subject, object_value FROM triples \
+         WHERE predicate = 'foundation:aggregation' AND retracted = 0",
+    )
+    .map(|mut stmt| {
+        stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map(|rows| {
+                rows.filter_map(|r| r.ok())
+                    .filter_map(|(prop_iri, formula)| {
+                        crate::owl::aggregation::parse_aggregation_call(formula.trim())
+                            .ok()
+                            .filter(|call| call.sub_prop.as_deref() == Some(subprop_iri))
+                            .map(|call| (prop_iri, call.source_prop))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    })
+    .unwrap_or_default()
+}
+
+/// Create recalc jobs for all parent instances that aggregate a sub-property that just changed.
+///
+/// When `changed_subprop_iri` changes on `changed_instance_iri`, this function finds all
+/// aggregation properties whose sub-property is `changed_subprop_iri`, then for each one
+/// locates parent instances that link to `changed_instance_iri` via the source ObjectProperty,
+/// and creates recalc jobs for those parents.
+pub fn create_reverse_aggregation_recalc_jobs(
+    conn: &Connection,
+    changed_instance_iri: &str,
+    changed_subprop_iri: &str,
+) -> Vec<String> {
+    let agg_props = find_aggregation_props_by_subprop(conn, changed_subprop_iri);
+    let now = now_millis();
+    let mut job_ids = Vec::new();
+
+    for (agg_prop_iri, source_prop_iri) in agg_props {
+        let parent_iris: Vec<String> = conn.prepare(
+            "SELECT DISTINCT subject FROM triples \
+             WHERE predicate = ? AND object = ? AND retracted = 0",
+        )
+        .map(|mut stmt| {
+            stmt.query_map(rusqlite::params![source_prop_iri, changed_instance_iri], |row| {
+                row.get::<_, String>(0)
+            })
+            .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default()
+        })
+        .unwrap_or_default();
+
+        let property_label = fetch_label(conn, &agg_prop_iri);
+        let class_iri = fetch_domain(conn, &agg_prop_iri);
+        let class_label = if class_iri.is_empty() {
+            String::new()
+        } else {
+            fetch_label(conn, &class_iri)
+        };
+
+        for parent_iri in &parent_iris {
+            let job_id = format!(
+                "job_{}_{}_{}", now,
+                agg_prop_iri.replace(':', "_"),
+                parent_iri.replace(':', "_")
+            );
+            let ok = conn.execute(
+                "INSERT INTO formula_recalc_jobs
+                 (id, property_iri, property_label, class_iri, class_label,
+                  instance_iri, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+                rusqlite::params![
+                    job_id, agg_prop_iri, property_label, class_iri, class_label,
+                    parent_iri, now, now,
+                ],
+            ).is_ok();
+
+            if ok {
+                job_ids.push(job_id);
+            }
+        }
+    }
+
+    job_ids
+}
+
 pub fn create_instance_recalc_jobs(
     conn: &Connection,
     instance_iri: &str,
@@ -399,7 +506,39 @@ pub fn create_instance_recalc_jobs(
     let now = now_millis();
     let mut job_ids = Vec::new();
 
-    for (formula_prop_iri, _) in formula_rows {
+    let instance_type: Option<String> = conn.query_row(
+        "SELECT object FROM triples \
+         WHERE subject = ? AND predicate = 'rdf:type' AND retracted = 0 \
+         ORDER BY tx DESC LIMIT 1",
+        rusqlite::params![instance_iri],
+        |row| row.get(0),
+    ).ok();
+
+    for (formula_prop_iri, _, pred) in formula_rows {
+        let target_iri: String = if pred == "foundation:aggregation" {
+            let domain = fetch_domain(conn, &formula_prop_iri);
+            let is_inverse = match (&instance_type, domain.as_str()) {
+                (Some(t), d) if !d.is_empty() => t.as_str() != d,
+                _ => false,
+            };
+            if is_inverse {
+                match conn.query_row(
+                    "SELECT object FROM triples \
+                     WHERE subject = ? AND predicate = ? AND retracted = 0 \
+                     ORDER BY tx DESC LIMIT 1",
+                    rusqlite::params![instance_iri, changed_property_iri],
+                    |row| row.get::<_, String>(0),
+                ).ok() {
+                    Some(parent) => parent,
+                    None => continue,
+                }
+            } else {
+                instance_iri.to_string()
+            }
+        } else {
+            instance_iri.to_string()
+        };
+
         let property_label = fetch_label(conn, &formula_prop_iri);
         let class_iri = fetch_domain(conn, &formula_prop_iri);
         let class_label = if class_iri.is_empty() {
@@ -408,7 +547,11 @@ pub fn create_instance_recalc_jobs(
             fetch_label(conn, &class_iri)
         };
 
-        let job_id = format!("job_{}_{}", now, formula_prop_iri.replace(':', "_"));
+        let job_id = format!(
+            "job_{}_{}_{}", now,
+            formula_prop_iri.replace(':', "_"),
+            target_iri.replace(':', "_"),
+        );
         let ok = conn.execute(
             "INSERT INTO formula_recalc_jobs
              (id, property_iri, property_label, class_iri, class_label,
@@ -416,7 +559,7 @@ pub fn create_instance_recalc_jobs(
              VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
             rusqlite::params![
                 job_id, formula_prop_iri, property_label, class_iri, class_label,
-                instance_iri, now, now,
+                target_iri, now, now,
             ],
         ).is_ok();
 
@@ -424,6 +567,10 @@ pub fn create_instance_recalc_jobs(
             job_ids.push(job_id);
         }
     }
+
+    job_ids.extend(create_reverse_aggregation_recalc_jobs(
+        conn, instance_iri, changed_property_iri,
+    ));
 
     job_ids
 }
@@ -456,6 +603,15 @@ mod tests {
                 error_message   TEXT NOT NULL,
                 created_at      INTEGER NOT NULL,
                 PRIMARY KEY (instance_iri, property_iri)
+            );
+            CREATE TABLE transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                origin TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE origins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
             );
             CREATE TABLE triples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -535,45 +691,36 @@ mod tests {
 
     #[test]
     fn test_store_calculated_value_inserts_new_triple() {
-        let conn = setup_test_db();
-        store_calculated_value(&conn, "foundation:Instance1", "foundation:score", "42", 1000);
-
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = ? AND retracted = 0",
-            rusqlite::params!["foundation:Instance1", "foundation:score"],
-            |row| row.get(0),
-        ).unwrap();
-        assert_eq!(count, 1);
+        let mut conn = setup_test_db();
+        store_calculated_value(&mut conn, "foundation:Instance1", "foundation:score", "42");
 
         let value: String = conn.query_row(
-            "SELECT object_value FROM triples WHERE subject = ? AND predicate = ? AND retracted = 0",
-            rusqlite::params!["foundation:Instance1", "foundation:score"],
+            "SELECT object_value FROM triples WHERE subject = ? AND predicate = ?
+             AND retracted = 0 AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ? AND predicate = ?)",
+            rusqlite::params!["foundation:Instance1", "foundation:score", "foundation:Instance1", "foundation:score"],
             |row| row.get(0),
         ).unwrap();
         assert_eq!(value, "42");
     }
 
     #[test]
-    fn test_store_calculated_value_retracts_existing_before_insert() {
-        let conn = setup_test_db();
+    fn test_store_calculated_value_replaces_existing() {
+        let mut conn = setup_test_db();
+        // Insere uma transação prévia para que o autoincrement de transactions comece em 1,
+        // e o triple antigo usa tx=1; o próximo assert_triples vai criar tx=2 e vencer.
+        conn.execute("INSERT INTO transactions (origin, created_at) VALUES ('test', 0)", []).unwrap();
         conn.execute(
             "INSERT INTO triples (subject, predicate, object_value, object_type, origin_id, tx, created_at, retracted)
-             VALUES ('foundation:Instance1', 'foundation:score', 'old', 'literal', 1, 0, 0, 0)",
+             VALUES ('foundation:Instance1', 'foundation:score', 'old', 'literal', 1, 1, 0, 0)",
             [],
         ).unwrap();
 
-        store_calculated_value(&conn, "foundation:Instance1", "foundation:score", "new", 2000);
-
-        let retracted: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = ? AND retracted = 1",
-            rusqlite::params!["foundation:Instance1", "foundation:score"],
-            |row| row.get(0),
-        ).unwrap();
-        assert_eq!(retracted, 1);
+        store_calculated_value(&mut conn, "foundation:Instance1", "foundation:score", "new");
 
         let active: String = conn.query_row(
-            "SELECT object_value FROM triples WHERE subject = ? AND predicate = ? AND retracted = 0",
-            rusqlite::params!["foundation:Instance1", "foundation:score"],
+            "SELECT object_value FROM triples WHERE subject = ? AND predicate = ?
+             AND retracted = 0 AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ? AND predicate = ?)",
+            rusqlite::params!["foundation:Instance1", "foundation:score", "foundation:Instance1", "foundation:score"],
             |row| row.get(0),
         ).unwrap();
         assert_eq!(active, "new");
@@ -581,14 +728,14 @@ mod tests {
 
     #[test]
     fn test_store_calculated_value_clears_formula_errors() {
-        let conn = setup_test_db();
+        let mut conn = setup_test_db();
         conn.execute(
             "INSERT INTO formula_instance_errors (instance_iri, property_iri, error_message, created_at)
              VALUES ('foundation:Instance1', 'foundation:score', 'previous error', 0)",
             [],
         ).unwrap();
 
-        store_calculated_value(&conn, "foundation:Instance1", "foundation:score", "42", 1000);
+        store_calculated_value(&mut conn, "foundation:Instance1", "foundation:score", "42");
 
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM formula_instance_errors WHERE instance_iri = ? AND property_iri = ?",
@@ -609,5 +756,32 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(5));
         let t2 = now_millis();
         assert!(t2 >= t1);
+    }
+
+    #[test]
+    fn test_create_reverse_aggregation_recalc_jobs_creates_job_for_parent() {
+        let conn = setup_test_db();
+
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object_value, object_type, origin_id, tx, created_at, retracted) \
+             VALUES ('p:total', 'foundation:aggregation', 'SOMA({{p:hasItem}}.p:subVal)', 'literal', 1, 1, 0, 0)",
+            [],
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object, object_type, origin_id, tx, created_at, retracted) \
+             VALUES ('inst:parent', 'p:hasItem', 'inst:child1', 'iri', 1, 1, 0, 0)",
+            [],
+        ).unwrap();
+
+        let job_ids = create_reverse_aggregation_recalc_jobs(&conn, "inst:child1", "p:subVal");
+        assert!(!job_ids.is_empty(), "expected at least one recalc job for parent");
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM formula_recalc_jobs WHERE instance_iri = 'inst:parent' AND property_iri = 'p:total'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 1, "expected one job for inst:parent / p:total");
     }
 }

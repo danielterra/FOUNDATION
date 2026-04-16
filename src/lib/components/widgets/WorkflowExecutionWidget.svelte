@@ -316,7 +316,6 @@
     margin: 12px;
     padding: 10px 12px;
     background: color-mix(in srgb, #EF4444 12%, transparent);
-    border: 1px solid color-mix(in srgb, #EF4444 30%, transparent);
     font-size: 12px;
     color: #FCA5A5;
   }
@@ -363,11 +362,6 @@
   .step {
     overflow: hidden;
     background: color-mix(in srgb, var(--color-white) 3%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
-  }
-
-  .step.expanded {
-    border-color: color-mix(in srgb, var(--color-interactive) 30%, transparent);
   }
 
   .step-header {
@@ -450,7 +444,6 @@
     font-size: 11px;
     color: var(--color-neutral);
     background: color-mix(in srgb, var(--color-white) 4%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
     padding: 8px;
     white-space: pre-wrap;
     word-break: break-word;
@@ -462,7 +455,6 @@
 
   .error-section .detail-content {
     color: #FCA5A5;
-    border-color: color-mix(in srgb, #EF4444 25%, transparent);
     background: color-mix(in srgb, #EF4444 8%, transparent);
   }
 

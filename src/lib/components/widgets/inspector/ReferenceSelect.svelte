@@ -206,7 +206,6 @@
     gap: 4px;
     padding: 3px 6px 3px 8px;
     background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
     font-family: var(--font-body);
     font-size: 12px;
     color: var(--color-neutral-active);
@@ -258,17 +257,12 @@
   .search-input {
     flex: 1;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
+    border: none;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 14px;
     padding: 6px 8px;
     outline: none;
-    transition: border-color 0.15s;
-  }
-
-  .search-input:focus {
-    border-color: var(--color-interactive);
   }
 
   .search-spin {
@@ -281,7 +275,6 @@
 
   .dropdown {
     background: color-mix(in srgb, var(--color-black) 90%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
     overflow: hidden;
     max-height: 200px;
     overflow-y: auto;

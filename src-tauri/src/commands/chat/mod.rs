@@ -8,10 +8,11 @@ pub mod retention;
 pub mod conversation;
 mod loop_tools;
 mod engine;
+mod trace;
 
 pub use tool_execution::execute_tools_from_message;
-pub use cancellation::AiCancellationState;
-pub use recovery::run_conversation_from_current_state;
+pub use cancellation::{AiCancellationState, ConversationProcessingState};
+pub use recovery::{run_conversation_from_current_state, process_conversation_queue};
 
 use crate::owl::{Individual, Object, DbExecutor};
 use rusqlite::OptionalExtension;
@@ -190,9 +191,7 @@ pub async fn chat__send_and_reply(
         if !content.is_empty() {
             blocks.push(ContentBlock::Text { text: content.clone() });
         }
-        let content_json = serde_json::to_string(&blocks)
-            .map_err(|e| format!("Failed to serialize message content: {}", e))?;
-        create_message(&executor, &conversation_id, "user", &content_json, None, None, None).await?
+        create_message(&executor, &conversation_id, "user", blocks, None, None, None).await?
     } else {
         create_user_message(&executor, &conversation_id, &content).await?
     };
@@ -283,187 +282,347 @@ pub async fn chat__get_recent_messages(
     limit: usize,
     conversation_id: String,
     executor: State<'_, DbExecutor>,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<serde_json::Value, String> {
     let conv_id = conversation_id;
 
-    let messages = executor.read(move |conn| {
-        // Fetch one extra to include a tool_result companion that follows the window boundary.
-        let message_iris = Individual::find_messages_by_conversation(conn, &conv_id, limit + 1, 0)
+    let display_units = executor.read(move |conn| {
+        // Over-fetch raw messages to account for intermediate tool_result / tool_use messages
+        // that will be folded into display units and not counted toward `limit`.
+        let fetch_count = limit * 5 + 10;
+        let message_iris = Individual::find_messages_by_conversation(conn, &conv_id, fetch_count, 0)
             .map_err(|e| format!("Failed to query messages: {}", e))?;
 
-        let mut messages_with_ts: Vec<(i64, serde_json::Value)> = Vec::new();
+        // `find_messages_by_conversation` returns newest-first; reverse to chronological order.
+        let message_iris: Vec<String> = message_iris.into_iter().rev().collect();
 
-        for iri in message_iris {
-            let msg = Individual::get(conn, &iri)
-                .map_err(|e| format!("Failed to get message {}: {}", iri, e))?
-                .ok_or_else(|| format!("Message {} not found", iri))?;
+        // --- helpers ---
 
-            let role = msg.properties.iter()
+        fn load_props(conn: &crate::owl::Connection, iri: &str) -> Option<Individual> {
+            Individual::get(conn, iri).ok().flatten()
+        }
+
+        fn get_role(props: &Individual) -> String {
+            props.properties.iter()
                 .find(|(k, _)| k == "foundation:role")
-                .and_then(|(_, v)| match v {
-                    Object::Literal { value, .. } => Some(value.clone()),
-                    _ => None,
-                })
-                .unwrap_or_default();
+                .and_then(|(_, v)| v.as_literal())
+                .unwrap_or_default()
+        }
 
-            let content_json = msg.properties.iter()
-                .find(|(k, _)| k == "foundation:content")
-                .and_then(|(_, v)| match v {
-                    Object::Literal { value, .. } => Some(value.clone()),
-                    _ => None,
-                })
-                .unwrap_or_default();
+        fn get_content_blocks(conn: &crate::owl::Connection, iri: &str) -> Vec<ContentBlock> {
+            super::chat_storage::load_content_blocks(conn, iri).unwrap_or_default()
+        }
 
-            let timestamp = msg.properties.iter()
+        fn get_timestamp(props: &Individual) -> i64 {
+            props.properties.iter()
                 .find(|(k, _)| k == "foundation:sentAt")
                 .and_then(|(_, v)| parse_timestamp(v))
-                .unwrap_or(0);
+                .unwrap_or(0)
+        }
 
-            let content_blocks: Vec<ContentBlock> = serde_json::from_str(&content_json)
-                .unwrap_or_else(|_| vec![ContentBlock::Text { text: content_json.clone() }]);
-
-            let file_ref_count = content_blocks.iter().filter(|b| matches!(b, ContentBlock::FileRef { .. })).count();
+        fn resolve_attachments(
+            conn: &crate::owl::Connection,
+            msg_iri: &str,
+            blocks: &[ContentBlock],
+        ) -> Vec<serde_json::Value> {
+            let file_ref_count = blocks.iter().filter(|b| matches!(b, ContentBlock::FileRef { .. })).count();
             if file_ref_count > 0 {
-                super::log_backend("debug", &format!("[CHAT] Message {} has {} FileRef block(s)", iri, file_ref_count));
+                super::log_backend("debug", &format!("[CHAT] Message {} has {} FileRef block(s)", msg_iri, file_ref_count));
             }
 
-            let attachments: Vec<serde_json::Value> = content_blocks.iter()
-                .filter_map(|block| {
-                    if let ContentBlock::FileRef { file_iri, file_name, .. } = block {
-                        let file_entity = match Individual::get(conn, file_iri) {
-                            Ok(Some(e)) => e,
-                            Ok(None) => {
-                                super::log_backend("warn", &format!("[CHAT] FileRef {} — entity not found", file_iri));
-                                return None;
-                            }
-                            Err(e) => {
-                                super::log_backend("warn", &format!("[CHAT] FileRef {} — lookup error: {}", file_iri, e));
-                                return None;
-                            }
-                        };
+            blocks.iter().filter_map(|block| {
+                let ContentBlock::FileRef { file_iri, file_name, .. } = block else { return None; };
 
-                        let file_path = match file_entity.properties.iter()
-                            .find(|(k, _)| k == "foundation:filePath")
-                            .and_then(|(_, v)| match v {
-                                Object::Literal { value, .. } => {
-                                    Some(value.trim_start_matches("file://").to_string())
-                                },
-                                _ => None,
-                            }) {
-                            Some(p) => p,
-                            None => {
-                                super::log_backend("warn", &format!("[CHAT] FileRef {} — no filePath property (props: {:?})", file_iri, file_entity.properties.iter().map(|(k,_)| k).collect::<Vec<_>>()));
-                                return None;
-                            }
-                        };
-
-                        let file_size = file_entity.properties.iter()
-                            .find(|(k, _)| k == "foundation:fileSize")
-                            .and_then(|(_, v)| match v {
-                                Object::Integer(n) => Some(*n),
-                                _ => None,
-                            })
-                            .unwrap_or(0);
-
-                        let mime_type = file_entity.properties.iter()
-                            .find(|(k, _)| k == "foundation:hasFileType")
-                            .and_then(|(_, v)| match v {
-                                Object::Iri(iri) => Individual::get(conn, iri.as_str()).ok()
-                                    .flatten()
-                                    .and_then(|ft| ft.properties.into_iter()
-                                        .find(|(k, _)| k == "foundation:mimeType")
-                                        .and_then(|(_, v)| match v {
-                                            Object::Literal { value, .. } => Some(value),
-                                            _ => None,
-                                        })
-                                    ),
-                                _ => None,
-                            })
-                            .unwrap_or_else(|| "application/octet-stream".to_string());
-
-                        Some(serde_json::json!({
-                            "fileName": file_name,
-                            "filePath": file_path,
-                            "fileSize": file_size,
-                            "mimeType": mime_type,
-                        }))
-                    } else {
-                        None
+                let file_entity = match Individual::get(conn, file_iri) {
+                    Ok(Some(e)) => e,
+                    Ok(None) => {
+                        super::log_backend("warn", &format!("[CHAT] FileRef {} — entity not found", file_iri));
+                        return None;
                     }
-                })
-                .collect();
+                    Err(e) => {
+                        super::log_backend("warn", &format!("[CHAT] FileRef {} — lookup error: {}", file_iri, e));
+                        return None;
+                    }
+                };
 
-            if !attachments.is_empty() {
-                super::log_backend("debug", &format!("[CHAT] Message {} has {} attachment(s): {:?}", iri, attachments.len(), attachments));
+                let file_path = match file_entity.properties.iter()
+                    .find(|(k, _)| k == "foundation:filePath")
+                    .and_then(|(_, v)| match v {
+                        Object::Literal { value, .. } => Some(value.trim_start_matches("file://").to_string()),
+                        _ => None,
+                    }) {
+                    Some(p) => p,
+                    None => {
+                        super::log_backend("warn", &format!(
+                            "[CHAT] FileRef {} — no filePath property (props: {:?})",
+                            file_iri,
+                            file_entity.properties.iter().map(|(k, _)| k).collect::<Vec<_>>()
+                        ));
+                        return None;
+                    }
+                };
+
+                let file_size = file_entity.properties.iter()
+                    .find(|(k, _)| k == "foundation:fileSize")
+                    .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None })
+                    .unwrap_or(0);
+
+                let mime_type = file_entity.properties.iter()
+                    .find(|(k, _)| k == "foundation:hasFileType")
+                    .and_then(|(_, v)| match v {
+                        Object::Iri(ft_iri) => Individual::get(conn, ft_iri.as_str()).ok()
+                            .flatten()
+                            .and_then(|ft| ft.properties.into_iter()
+                                .find(|(k, _)| k == "foundation:mimeType")
+                                .and_then(|(_, v)| match v {
+                                    Object::Literal { value, .. } => Some(value),
+                                    _ => None,
+                                })
+                            ),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "application/octet-stream".to_string());
+
+                Some(serde_json::json!({
+                    "fileName": file_name,
+                    "filePath": file_path,
+                    "fileSize": file_size,
+                    "mimeType": mime_type,
+                }))
+            }).collect()
+        }
+
+        // --- walk messages and assemble display units ---
+
+        // Pre-build map: tool_use_id → (content, is_error)
+        let mut all_tool_results: std::collections::HashMap<String, (String, bool)> = std::collections::HashMap::new();
+        for iri in &message_iris {
+            for block in get_content_blocks(conn, iri) {
+                if let ContentBlock::ToolResult { tool_use_id, content, is_error } = block {
+                    all_tool_results.insert(tool_use_id, (content, is_error.unwrap_or(false)));
+                }
+            }
+        }
+
+        let mut units: Vec<serde_json::Value> = Vec::new();
+
+        for iri in &message_iris {
+            let props = match load_props(conn, iri) {
+                Some(p) => p,
+                None => continue,
+            };
+
+            let role = get_role(&props);
+            let blocks = get_content_blocks(conn, iri);
+            let timestamp = get_timestamp(&props);
+
+            if blocks.is_empty() {
+                continue;
             }
 
-            let input_tokens = msg.properties.iter()
-                .find(|(k, _)| k == "foundation:inputTokens")
-                .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
-
-            let output_tokens = msg.properties.iter()
-                .find(|(k, _)| k == "foundation:outputTokens")
-                .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
-
-            let estimated_cost = msg.properties.iter()
-                .find(|(k, _)| k == "foundation:estimatedCost")
-                .and_then(|(_, v)| match v {
-                    Object::Number(n) => Some(*n),
-                    Object::Literal { value, .. } => value.parse::<f64>().ok(),
-                    _ => None,
-                });
-
-            let subconscious_entities: Vec<subconscious::SubconsciousEntity> = msg.properties.iter()
-                .find(|(k, _)| k == "foundation:subconsciousContext")
-                .and_then(|(_, v)| match v {
-                    Object::Literal { value, .. } => serde_json::from_str(value).ok(),
-                    _ => None,
-                })
-                .unwrap_or_default();
-
-            let msg_json = serde_json::json!({
-                "iri": iri,
-                "role": role,
-                "content": content_blocks,
-                "timestamp": timestamp,
-                "attachments": attachments,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "estimated_cost": estimated_cost,
-                "subconscious_entities": subconscious_entities,
+            let has_text = blocks.iter().any(|b| matches!(b, ContentBlock::Text { .. }));
+            // Legacy: SpeakOutput block (old format). New format: ToolUse { name: "speak" }.
+            let has_speak_block = blocks.iter().any(|b| matches!(b, ContentBlock::SpeakOutput { .. }));
+            let has_speak_tool = blocks.iter().any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name == "speak"));
+            let has_speak = has_speak_block || has_speak_tool;
+            let has_question = blocks.iter().any(|b| match b {
+                ContentBlock::QuestionOutput { .. } => true,
+                ContentBlock::ToolUse { name, .. } => name == "ask_question",
+                _ => false,
             });
+            let has_non_speak_tool_use = blocks.iter().any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name != "speak" && name != "ask_question"));
+            let only_tool_results = blocks.iter().all(|b| matches!(b, ContentBlock::ToolResult { .. }));
 
-            messages_with_ts.push((timestamp, msg_json));
-        }
+            match role.as_str() {
+                "user" => {
+                    if only_tool_results {
+                        // Pure tool_result message — skip display; results already indexed in all_tool_results
+                        continue;
+                    }
+                    if !has_text {
+                        continue;
+                    }
 
-        let mut messages: Vec<serde_json::Value> = messages_with_ts
-            .into_iter()
-            .rev()
-            .map(|(_, msg)| msg)
-            .collect();
+                    let text = blocks.iter().filter_map(|b| {
+                        if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
+                    }).collect::<Vec<_>>().join(" ");
 
-        // The extra message is at index 0 (oldest). Only keep it if it's a pure tool_result
-        // companion — otherwise drop it so hasMoreMessages counting stays correct.
-        if messages.len() > limit {
-            let is_tool_result_only = messages[0]
-                .get("content")
-                .and_then(|c| c.as_array())
-                .map(|blocks| {
-                    !blocks.is_empty()
-                        && blocks.iter().all(|b| {
-                            b.get("type").and_then(|t| t.as_str()) == Some("tool_result")
+                    let attachments = resolve_attachments(conn, iri, &blocks);
+                    if !attachments.is_empty() {
+                        super::log_backend("debug", &format!("[CHAT] Message {} has {} attachment(s)", iri, attachments.len()));
+                    }
+
+                    let subconscious_entities: Vec<subconscious::SubconsciousEntity> = props.properties.iter()
+                        .find(|(k, _)| k == "foundation:subconsciousContext")
+                        .and_then(|(_, v)| match v {
+                            Object::Literal { value, .. } => serde_json::from_str(value).ok(),
+                            _ => None,
                         })
-                })
-                .unwrap_or(false);
-            if !is_tool_result_only {
-                messages.remove(0);
+                        .unwrap_or_default();
+
+                    units.push(serde_json::json!({
+                        "type": "user",
+                        "iri": iri,
+                        "text": text,
+                        "attachments": attachments,
+                        "timestamp": timestamp,
+                        "subconscious_entities": subconscious_entities,
+                    }));
+                }
+
+                "assistant" => {
+                    if has_speak {
+                        let speak_text = if has_speak_tool {
+                            blocks.iter().find_map(|b| {
+                                if let ContentBlock::ToolUse { name, input, .. } = b {
+                                    if name == "speak" {
+                                        input.get("message").and_then(|v| v.as_str()).map(String::from)
+                                    } else { None }
+                                } else { None }
+                            }).unwrap_or_default()
+                        } else {
+                            blocks.iter().find_map(|b| {
+                                if let ContentBlock::SpeakOutput { text } = b { Some(text.clone()) } else { None }
+                            }).unwrap_or_default()
+                        };
+
+                        let reasoning: Option<String> = {
+                            let mut parts: Vec<String> = Vec::new();
+                            for b in &blocks {
+                                match b {
+                                    ContentBlock::Thinking { thinking, .. } => parts.push(thinking.clone()),
+                                    ContentBlock::Text { text } => parts.push(text.clone()),
+                                    _ => {}
+                                }
+                            }
+                            if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
+                        };
+
+                        let input_tokens = props.properties.iter()
+                            .find(|(k, _)| k == "foundation:inputTokens")
+                            .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
+                        let output_tokens = props.properties.iter()
+                            .find(|(k, _)| k == "foundation:outputTokens")
+                            .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
+                        let estimated_cost = props.properties.iter()
+                            .find(|(k, _)| k == "foundation:estimatedCost")
+                            .and_then(|(_, v)| match v {
+                                Object::Number(n) => Some(*n),
+                                Object::Literal { value, .. } => value.parse::<f64>().ok(),
+                                _ => None,
+                            });
+
+                        units.push(serde_json::json!({
+                            "type": "speak",
+                            "iri": iri,
+                            "text": speak_text,
+                            "reasoning": reasoning,
+                            "timestamp": timestamp,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "estimated_cost": estimated_cost,
+                        }));
+
+                    } else if has_question {
+                        let question_block = blocks.iter().find_map(|b| match b {
+                            ContentBlock::ToolUse { id, name, input, .. } if name == "ask_question" => {
+                                let question = input.get("question").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let qtype = input.get("type").and_then(|v| v.as_str()).unwrap_or("text").to_string();
+                                let options: Vec<String> = input.get("options")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                                    .unwrap_or_default();
+                                Some((id.clone(), question, qtype, options))
+                            }
+                            ContentBlock::QuestionOutput { id, question, question_type, options } => {
+                                Some((id.clone(), question.clone(), question_type.clone(), options.clone()))
+                            }
+                            _ => None,
+                        });
+
+                        if let Some((q_id, question, question_type, options)) = question_block {
+                            let answer: Option<String> = all_tool_results.get(&q_id).map(|(content, _)| content.clone());
+
+                            units.push(serde_json::json!({
+                                "type": "question",
+                                "iri": iri,
+                                "id": q_id,
+                                "question": question,
+                                "question_type": question_type,
+                                "options": options,
+                                "answer": answer,
+                                "timestamp": timestamp,
+                            }));
+                        }
+
+                    } else if has_non_speak_tool_use {
+                        let tool_calls: Vec<serde_json::Value> = blocks.iter().filter_map(|b| {
+                            let ContentBlock::ToolUse { id, name, input } = b else { return None; };
+                            if name == "speak" || name == "ask_question" {
+                                return None;
+                            }
+                            let (result, is_error) = all_tool_results.get(id)
+                                .map(|(c, e)| (Some(c.clone()), *e))
+                                .unwrap_or((None, false));
+                            Some(serde_json::json!({
+                                "name": name,
+                                "input": input,
+                                "result": result,
+                                "is_error": is_error,
+                            }))
+                        }).collect();
+
+                        if !tool_calls.is_empty() {
+                            units.push(serde_json::json!({
+                                "type": "tool_use",
+                                "iri": iri,
+                                "tool_calls": tool_calls,
+                                "timestamp": timestamp,
+                            }));
+                        }
+                    }
+                }
+
+                _ => {}
             }
         }
 
-        Ok(messages)
+        // is_processing: derived entirely from the last message in the conversation.
+        // True if the backend needs to do more work (tool execution or AI response).
+        let is_processing = message_iris.last().map(|iri| {
+            let props = match load_props(conn, iri) {
+                Some(p) => p,
+                None => return false,
+            };
+            let role = get_role(&props);
+            let blocks = get_content_blocks(conn, iri);
+            match role.as_str() {
+                "user" => {
+                    // Needs processing if there's text content (not just tool results)
+                    blocks.iter().any(|b| matches!(b, ContentBlock::Text { .. }))
+                }
+                "assistant" => {
+                    // Needs processing if there are non-speak tool calls without results yet
+                    blocks.iter().any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name != "speak" && name != "ask_question"))
+                }
+                _ => false,
+            }
+        }).unwrap_or(false);
+
+        // Return the last `limit` units.
+        let total = units.len();
+        let result = if total > limit {
+            units.split_off(total - limit - 1)
+        } else {
+            units
+        };
+
+        Ok(serde_json::json!({
+            "messages": result,
+            "is_processing": is_processing,
+        }))
     }).await?;
 
-    Ok(messages)
+    Ok(display_units)
 }
 
 /// Edit a user message and re-run the conversation from that point.
@@ -511,32 +670,22 @@ pub async fn chat__edit_and_retry(
     executor.write(move |conn| {
         delete_messages_from_timestamp(conn, &conv_id_for_write, timestamp, true)?;
 
-        let new_blocks = vec![ContentBlock::Text { text: new_content.clone() }];
-        let new_content_json = serde_json::to_string(&new_blocks)
-            .map_err(|e| format!("Failed to serialize content: {}", e))?;
-
         let ind = Individual::get(conn, &iri_clone)
             .map_err(|e| format!("Failed to reload message: {}", e))?
             .ok_or_else(|| format!("Message {} not found after delete", iri_clone))?;
 
-        for (k, v) in &ind.properties {
-            if k == "foundation:content" {
-                let value_str = match v {
-                    Object::Literal { value, .. } => value.clone(),
-                    _ => continue,
-                };
-                Individual::remove_property_value(conn, &iri_clone, "foundation:content", &value_str, "chat")
-                    .map_err(|e| format!("Failed to retract old content: {}", e))?;
-                break;
-            }
+        let old_block_iris: Vec<String> = ind.properties.iter()
+            .filter(|(k, _)| k == "foundation:hasContentBlock")
+            .filter_map(|(_, v)| if let Object::Iri(iri) = v { Some(iri.clone()) } else { None })
+            .collect();
+
+        for block_iri in &old_block_iris {
+            let _ = Individual::remove_property_value(conn, &iri_clone, "foundation:hasContentBlock", block_iri, "chat");
         }
 
-        let msg = Individual::new(&iri_clone);
-        msg.add_property(conn, "foundation:content", vec![Object::Literal {
-            value: new_content_json,
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        }], "chat").map_err(|e| format!("Failed to set new content: {}", e))?;
+        let new_blocks = vec![ContentBlock::Text { text: new_content.clone() }];
+        let new_ts = chrono::Utc::now().timestamp_millis();
+        super::chat_storage::save_content_blocks(conn, &iri_clone, new_ts, &new_blocks)?;
 
         Ok(String::new())
     }).await?;
@@ -687,8 +836,12 @@ pub async fn chat__recover_pending_tools(
         return Ok(0);
     };
 
+    // Speak tool results are never stored in the DB — they are delivered via inject_speak_results
+    // at API-payload build time using the user's next message. Treating a speak-only assistant
+    // message as "pending tool execution" causes the agent to re-deliver the same message on
+    // every app restart, creating an infinite recovery loop.
     let has_tool_use = last_msg.content.iter()
-        .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
+        .any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name != "ask_question" && name != "speak"));
 
     super::log_backend("info", &format!(
         "[RECOVERY] Last message: role={}, has_tool_use={}, content_blocks={}",
@@ -702,7 +855,8 @@ pub async fn chat__recover_pending_tools(
         && last_msg.content.iter().all(|b| matches!(
             b,
             ContentBlock::ToolResult { content, is_error, .. }
-            if content == "Delivered." && !matches!(is_error, Some(true))
+            if (content == "Delivered." || content == "[Question dismissed by user]")
+                && !matches!(is_error, Some(true))
         ));
 
     let needs_recovery = (last_msg.role == "assistant" && has_tool_use)
@@ -722,7 +876,7 @@ pub async fn chat__recover_pending_tools(
     );
 
     if last_msg.role == "assistant" && has_tool_use {
-        let (tool_result_msg_iri, _) = execute_tools_from_message(
+        let (tool_result_msg_iri, _, _, _) = execute_tools_from_message(
             &executor,
             &app,
             &conv_id,
@@ -757,7 +911,7 @@ pub async fn chat__dismiss_question(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let result_blocks = vec![ContentBlock::ToolResult {
-        tool_use_id,
+        tool_use_id: tool_use_id.clone(),
         content: "[Question dismissed by user]".to_string(),
         is_error: None,
     }];

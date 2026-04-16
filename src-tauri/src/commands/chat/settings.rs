@@ -5,6 +5,7 @@ const DEFAULT_TIMEOUT_SECS: u64 = 900;
 
 pub struct AgentConfig {
     pub api_key: String,
+    pub is_local: bool,
     pub model_identifier: String,
     pub system_prompt: String,
     pub max_tokens: usize,
@@ -20,19 +21,25 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
 
     let service_iri = crate::owl::get_iri_property(conn, &agent_iri, "foundation:usesService")
         .map_err(|e| format!("Failed to get service for agent: {}", e))?
-        .ok_or_else(|| format!("Agent {} has no usesService", agent_iri))?;
+        .or_else(|| get_ai_service_iri(conn).ok().flatten())
+        .ok_or_else(|| "No AI service configured. Please configure a service in Settings.".to_string())?;
 
-    let api_key_iri = crate::owl::get_iri_property(conn, &service_iri, "foundation:apiKey")
+    let (api_key, is_local) = match crate::owl::get_iri_property(conn, &service_iri, "foundation:apiKey")
         .map_err(|e| format!("Failed to get apiKey from service: {}", e))?
-        .ok_or_else(|| "API key not configured. Please add your API key in Settings.".to_string())?;
-
-    let api_key = crate::owl::get_literal_property(conn, &api_key_iri, "foundation:credentialValue")
-        .map_err(|e| format!("Failed to get credentialValue: {}", e))?
-        .ok_or_else(|| "API key has no value. Please reconfigure your API key.".to_string())?;
+    {
+        Some(api_key_iri) => {
+            let key = crate::owl::get_literal_property(conn, &api_key_iri, "foundation:credentialValue")
+                .map_err(|e| format!("Failed to get credentialValue: {}", e))?
+                .ok_or_else(|| "API key has no value. Please reconfigure your API key.".to_string())?;
+            (key, false)
+        }
+        None => (String::new(), true),
+    };
 
     let model_iri = crate::owl::get_iri_property(conn, &agent_iri, "foundation:usesModel")
         .map_err(|e| format!("Failed to get model for agent: {}", e))?
-        .ok_or_else(|| format!("Agent {} has no usesModel", agent_iri))?;
+        .or_else(|| get_ai_model_iri(conn).ok().flatten())
+        .ok_or_else(|| "No AI model configured. Please select a model in Settings.".to_string())?;
 
     let model_identifier = crate::owl::get_literal_property(conn, &model_iri, "foundation:modelIdentifier")
         .map_err(|e| format!("Failed to get modelIdentifier: {}", e))?
@@ -83,6 +90,7 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
 
     Ok(AgentConfig {
         api_key,
+        is_local,
         model_identifier,
         system_prompt,
         max_tokens,
@@ -141,5 +149,26 @@ pub fn get_ai_model_iri(conn: &Connection) -> Result<Option<String>, String> {
         }
     }
 
+    Ok(None)
+}
+
+/// Get AI service IRI from DefaultAIServiceSetting (searched by settingKey="aiService")
+pub fn get_ai_service_iri(conn: &Connection) -> Result<Option<String>, String> {
+    let setting_iris = crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:SoftwareSetting")
+        .map_err(|e| format!("Failed to query settings: {}", e))?;
+
+    for iri in setting_iris {
+        if let Ok(Some(setting)) = Individual::get(conn, &iri) {
+            let key = setting.properties.iter()
+                .find(|(k, _)| k == "foundation:settingKey")
+                .and_then(|(_, v)| v.as_literal());
+            if key.as_deref() == Some("aiService") {
+                return Ok(setting.properties.iter()
+                    .find(|(k, _)| k == "foundation:settingValue")
+                    .and_then(|(_, v)| v.as_literal())
+                    .map(|v| v.to_string()));
+            }
+        }
+    }
     Ok(None)
 }

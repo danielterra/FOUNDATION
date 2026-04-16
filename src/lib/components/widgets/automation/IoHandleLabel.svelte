@@ -20,7 +20,6 @@
     font-weight: 700;
     padding: 2px 6px;
     background: color-mix(in srgb, #64B5F6 18%, #000);
-    border: 1px solid color-mix(in srgb, #64B5F6 35%, transparent);
     color: #90CAF9;
     white-space: nowrap;
     pointer-events: none;

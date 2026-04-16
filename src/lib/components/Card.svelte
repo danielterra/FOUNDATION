@@ -16,6 +16,5 @@
 		backdrop-filter: blur(2px);
 		-webkit-backdrop-filter: blur(2px);
 		padding: 1rem;
-		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
 	}
 </style>

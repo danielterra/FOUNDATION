@@ -120,15 +120,13 @@
     flex-direction: column;
     gap: 12px;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
     padding: 12px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.2s, transform 0.2s;
   }
 
   .file-preview-card:hover {
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
-    border-color: color-mix(in srgb, var(--color-white) 25%, transparent);
     transform: translateY(-1px);
   }
 

@@ -39,7 +39,6 @@
 		margin-bottom: 12px;
 		padding: 12px;
 		background: color-mix(in srgb, var(--color-white) 5%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
 	}
 
 	.attachment-item {

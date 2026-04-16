@@ -31,75 +31,83 @@ impl TaskExecutionState {
     }
 }
 
+fn maybe_execute_task_for_entity(app: AppHandle, entity_id: String) {
+    tauri::async_runtime::spawn(async move {
+        let executor = match app.try_state::<DbExecutor>() {
+            Some(e) => e,
+            None => return,
+        };
+        let entity = entity_id.clone();
+        let (is_in_progress, has_agent) = executor
+            .read(move |conn| {
+                if !crate::owl::is_instance_of(conn, &entity, "foundation:Task") {
+                    return Ok((false, false));
+                }
+                let status = get_iri_property(conn, &entity, "foundation:hasStatus")
+                    .map_err(|e| e.to_string())?;
+                let in_progress = status
+                    .as_deref()
+                    .map(|s| super::task_scheduler::is_status_descendant_of(conn, s, STATUS_IN_PROGRESS))
+                    .unwrap_or(false);
+                if !in_progress {
+                    return Ok((false, false));
+                }
+                let assignee = get_iri_property(conn, &entity, "foundation:assignee")
+                    .map_err(|e| e.to_string())?;
+                let has_agent = assignee
+                    .map(|a| crate::owl::is_instance_of(conn, &a, "foundation:SoftwareAgent"))
+                    .unwrap_or(false);
+                Ok((true, has_agent))
+            })
+            .await
+            .unwrap_or((false, false));
+
+        if !is_in_progress || !has_agent {
+            return;
+        }
+
+        let execution_state = match app.try_state::<TaskExecutionState>() {
+            Some(s) => s,
+            None => return,
+        };
+        {
+            let mut running = execution_state.running.lock().unwrap_or_else(|e| e.into_inner());
+            if running.contains(&entity_id) {
+                return;
+            }
+            running.insert(entity_id.clone());
+        }
+
+        let app2 = app.clone();
+        let task_iri = entity_id.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = execute_task(&app2, &task_iri).await {
+                crate::commands::log_backend("error", &format!(
+                    "[task_manager] execute_task failed for {}: {}", task_iri, e
+                ));
+            }
+            if let Some(state) = app2.try_state::<TaskExecutionState>() {
+                let mut running = state.running.lock().unwrap_or_else(|e| e.into_inner());
+                running.remove(&task_iri);
+            }
+        });
+    });
+}
+
 pub fn listen_for_in_progress(app: AppHandle) {
     use tauri::Listener;
 
+    let app2 = app.clone();
     app.clone().listen("entity-updated", move |event| {
-        let entity_id = match parse_entity_id(event.payload()) {
-            Some(id) => id,
-            None => return,
-        };
-        let app2 = app.clone();
-        tauri::async_runtime::spawn(async move {
-            let executor = match app2.try_state::<DbExecutor>() {
-                Some(e) => e,
-                None => return,
-            };
-            let entity = entity_id.clone();
-            let (is_in_progress, has_agent) = executor
-                .read(move |conn| {
-                    if !crate::owl::is_instance_of(conn, &entity, "foundation:Task") {
-                        return Ok((false, false));
-                    }
-                    let status = get_iri_property(conn, &entity, "foundation:hasStatus")
-                        .map_err(|e| e.to_string())?;
-                    let in_progress = status
-                        .as_deref()
-                        .map(|s| super::task_scheduler::is_status_descendant_of(conn, s, STATUS_IN_PROGRESS))
-                        .unwrap_or(false);
-                    if !in_progress {
-                        return Ok((false, false));
-                    }
-                    let assignee = get_iri_property(conn, &entity, "foundation:assignee")
-                        .map_err(|e| e.to_string())?;
-                    let has_agent = assignee
-                        .map(|a| crate::owl::is_instance_of(conn, &a, "foundation:SoftwareAgent"))
-                        .unwrap_or(false);
-                    Ok((true, has_agent))
-                })
-                .await
-                .unwrap_or((false, false));
+        if let Some(entity_id) = parse_entity_id(event.payload()) {
+            maybe_execute_task_for_entity(app2.clone(), entity_id);
+        }
+    });
 
-            if !is_in_progress || !has_agent {
-                return;
-            }
-
-            let execution_state = match app2.try_state::<TaskExecutionState>() {
-                Some(s) => s,
-                None => return,
-            };
-            {
-                let mut running = execution_state.running.lock().unwrap_or_else(|e| e.into_inner());
-                if running.contains(&entity_id) {
-                    return;
-                }
-                running.insert(entity_id.clone());
-            }
-
-            let app3 = app2.clone();
-            let task_iri = entity_id.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = execute_task(&app3, &task_iri).await {
-                    crate::commands::log_backend("error", &format!(
-                        "[task_manager] execute_task failed for {}: {}", task_iri, e
-                    ));
-                }
-                if let Some(state) = app3.try_state::<TaskExecutionState>() {
-                    let mut running = state.running.lock().unwrap_or_else(|e| e.into_inner());
-                    running.remove(&task_iri);
-                }
-            });
-        });
+    app.clone().listen("entity-created", move |event| {
+        if let Some(entity_id) = parse_entity_id(event.payload()) {
+            maybe_execute_task_for_entity(app.clone(), entity_id);
+        }
     });
 }
 
@@ -197,9 +205,19 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
         .await?;
     app.emit("entity-updated", serde_json::json!({ "entityId": task_iri })).ok();
 
+    let conv_iri = super::agent_task::create_conversation(&executor, task_iri, &label, Some(&agent_iri)).await;
+
     let current_datetime = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let task_prompt = format!(
-        "currentDateTime: {}\n\nYou are executing the task: **{}**\n\n## Task Description\n{}\n\n## Required Final Step\nAfter completing the task, you MUST call `replace_property_values` with:\n- iri: `{}`\n- property_iri: `foundation:result`\n- values: [your detailed result]\n\nDo NOT modify `rdfs:comment` — that field contains the original instructions.",
+        "currentDateTime: {}\n\n\
+         You are executing the task: **{}**\n\n\
+         ## Task Description\n{}\n\n\
+         ## Required Final Step\n\
+         After completing the task, you MUST call `replace_property_values` with:\n\
+         - iri: `{}`\n\
+         - property_iri: `foundation:result`\n\
+         - values: [your detailed result]\n\n\
+         Do NOT modify `rdfs:comment` — that field contains the original instructions.",
         current_datetime, label, description, task_iri
     );
 
@@ -208,7 +226,6 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
         content: MessageContent::ContentBlocks(vec![ContentBlock::Text { text: task_prompt }]),
     }];
 
-    let conv_iri = super::agent_task::create_conversation(&executor, task_iri, &label, Some(&agent_iri)).await;
     super::agent_task::append_message(&executor, &conv_iri, &messages[0], &model_identifier, 0).await;
 
     let tools = get_claude_tools();
@@ -296,7 +313,7 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
 
             result_blocks.push(ContentBlock::ToolResult {
                 tool_use_id: tc_id,
-                content,
+                content: serde_json::Value::String(content),
                 is_error: Some(!tool_result.success),
             });
         }
@@ -309,11 +326,14 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
     }
 
     let task_iri_done = task_iri.to_string();
-    executor
+    let delegated_conv_iri = executor
         .write(move |conn| -> Result<String> {
             set_status(conn, &task_iri_done, STATUS_COMPLETED)?;
             super::task_blocker::check_and_unblock(conn, &task_iri_done);
-            Ok(String::new())
+            let conv = get_iri_property(conn, &task_iri_done, "foundation:delegatedFromConversation")
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default();
+            Ok(conv)
         })
         .await?;
 
@@ -324,7 +344,69 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
         "result_summary": last_text,
     })).ok();
 
+    if !delegated_conv_iri.is_empty() {
+        let result_text = executor
+            .read({
+                let task_iri = task_iri.to_string();
+                move |conn| {
+                    Ok(get_literal_property(conn, &task_iri, "foundation:result")
+                        .unwrap_or(None)
+                        .unwrap_or_default())
+                }
+            })
+            .await
+            .unwrap_or_default();
+
+        let result = if result_text.is_empty() { &last_text } else { &result_text };
+        inject_and_trigger_conversation(app, &delegated_conv_iri, task_iri, &label, result).await;
+    }
+
     Ok(last_text)
+}
+
+fn format_delegation_result(task_iri: &str, label: &str, result: &str) -> String {
+    format!("[Resultado da tarefa delegada: \"{}\" (`{}`)]\n\n{}", label, task_iri, result)
+}
+
+async fn inject_and_trigger_conversation(
+    app: &AppHandle,
+    conv_iri: &str,
+    task_iri: &str,
+    task_label: &str,
+    result: &str,
+) {
+    let executor = app.state::<DbExecutor>();
+    let queue_state = match app.try_state::<crate::commands::ConversationProcessingState>() {
+        Some(s) => s,
+        None => {
+            crate::commands::log_backend(
+                "warn",
+                "[task_manager] ConversationProcessingState not registered",
+            );
+            return;
+        }
+    };
+
+    let message = format_delegation_result(task_iri, task_label, result);
+    if let Err(e) = crate::commands::create_user_message(&executor, conv_iri, &message).await {
+        crate::commands::log_backend("error", &format!(
+            "[task_manager] Failed to inject delegation result into {}: {}", conv_iri, e
+        ));
+        return;
+    }
+
+    app.emit("chat-message-added", serde_json::json!({ "conversationId": conv_iri })).ok();
+
+    if queue_state.try_acquire(conv_iri) {
+        let app_clone = app.clone();
+        let executor_clone = executor.inner().clone();
+        let conv_iri_owned = conv_iri.to_string();
+        tokio::spawn(async move {
+            crate::commands::process_conversation_queue(
+                app_clone, executor_clone, conv_iri_owned,
+            ).await;
+        });
+    }
 }
 
 pub fn check_and_recur(conn: &mut rusqlite::Connection, task_iri: &str) {
@@ -593,6 +675,40 @@ mod tests {
         assert_eq!(status.as_deref(), Some("foundation:Pending"), "nova task deve ser Pendente");
         let label = get_literal_property(&conn, &new_task, "rdfs:label").unwrap();
         assert_eq!(label.as_deref(), Some("Reunião semanal"), "deve preservar o label");
+    }
+
+    #[test]
+    fn resultado_delegado_formatado_contem_label_e_resultado() {
+        let msg = format_delegation_result("foundation:Task_123", "Analisar dados", "Crescimento de 15%");
+        assert!(msg.contains("Analisar dados"));
+        assert!(msg.contains("Crescimento de 15%"));
+        assert!(msg.contains("foundation:Task_123"));
+    }
+
+    #[test]
+    fn task_sem_delegated_from_conversation_nao_tem_conv_iri() {
+        let mut conn = setup_test_db();
+        insert(&mut conn, &task_triples("foundation:Task_nodelegation", Some("foundation:Agent1")));
+
+        let conv_iri = get_iri_property(&conn, "foundation:Task_nodelegation", "foundation:delegatedFromConversation")
+            .unwrap();
+        assert!(conv_iri.is_none(), "task sem delegatedFromConversation deve retornar None");
+    }
+
+    #[test]
+    fn task_com_delegated_from_conversation_tem_conv_iri() {
+        let mut conn = setup_test_db();
+        let mut triples = task_triples("foundation:Task_delegated", Some("foundation:Agent1"));
+        triples.push(Triple::new(
+            "foundation:Task_delegated",
+            "foundation:delegatedFromConversation",
+            Object::Iri("foundation:AIConversation_test".to_string()),
+        ));
+        insert(&mut conn, &triples);
+
+        let conv_iri = get_iri_property(&conn, "foundation:Task_delegated", "foundation:delegatedFromConversation")
+            .unwrap();
+        assert_eq!(conv_iri.as_deref(), Some("foundation:AIConversation_test"));
     }
 
     #[test]

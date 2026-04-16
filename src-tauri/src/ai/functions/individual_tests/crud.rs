@@ -1,4 +1,5 @@
 use super::*;
+use crate::owl::Individual;
 
 #[test]
 fn test_update_thing_with_properties_updates_literal_property() {
@@ -274,4 +275,58 @@ fn test_retract_individual_response_no_cascade_no_summary() {
 
     let message = result.result.unwrap()["message"].as_str().unwrap().to_string();
     assert!(!message.contains("Cascade"), "No cascade must mean no summary; got: {}", message);
+}
+
+#[test]
+fn test_remove_domain_retracts_property_values_from_instances() {
+    let mut conn = setup_test_db();
+
+    // Classe e propriedade de teste
+    Class::new("foundation:Widget")
+        .assert(&mut conn, ClassType::OwlClass, "Widget", "https://example.com/widget.svg", None, "test")
+        .unwrap();
+    Property::new("foundation:widgetColor")
+        .assert(&mut conn, PropertyType::DatatypeProperty, "Widget Color", None,
+            &["foundation:Widget"], Some("xsd:string"), None, "test")
+        .unwrap();
+
+    // 3 instâncias com valor em widgetColor
+    for (iri, color) in [
+        ("foundation:Widget_A", "red"),
+        ("foundation:Widget_B", "green"),
+        ("foundation:Widget_C", "blue"),
+    ] {
+        Individual::new(iri)
+            .assert(&mut conn, "foundation:Widget", iri, "https://example.com/widget.svg", "test")
+            .unwrap();
+        Individual::new(iri)
+            .add_property(
+                &mut conn,
+                "foundation:widgetColor",
+                vec![Object::Literal { value: color.to_string(), datatype: Some("xsd:string".to_string()), language: None }],
+                "test",
+            )
+            .unwrap();
+    }
+
+    // Confirma que os valores existem antes do cascade
+    for iri in ["foundation:Widget_A", "foundation:Widget_B", "foundation:Widget_C"] {
+        let count = Individual::get_property_count(&conn, iri, "foundation:widgetColor").unwrap();
+        assert_eq!(count, 1, "{} deve ter 1 valor de widgetColor antes do cascade", iri);
+    }
+
+    // Remove foundation:Widget do domínio → deve cascatear e retrair os valores
+    let args = serde_json::json!({
+        "iri": "foundation:widgetColor",
+        "property_iri": "rdfs:domain",
+        "values": ["foundation:Widget"]
+    });
+    let result = remove_property_values_one(&mut conn, &args);
+    assert!(result.success, "remove_property_values deve ter sucesso: {:?}", result.error);
+
+    // Verifica que os valores foram retratados em todas as instâncias
+    for iri in ["foundation:Widget_A", "foundation:Widget_B", "foundation:Widget_C"] {
+        let count = Individual::get_property_count(&conn, iri, "foundation:widgetColor").unwrap();
+        assert_eq!(count, 0, "{} não deve ter valores de widgetColor após cascade", iri);
+    }
 }

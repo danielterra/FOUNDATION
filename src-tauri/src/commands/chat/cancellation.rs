@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::oneshot;
 
 struct ConvCancel {
@@ -45,5 +45,27 @@ impl AiCancellationState {
         self.convs.lock().unwrap()
             .get(conv_id)
             .map_or(false, |c| c.cancelled)
+    }
+}
+
+/// Tracks which conversations are currently being processed by process_conversation_queue.
+/// Prevents concurrent processing loops for the same conversation.
+pub struct ConversationProcessingState {
+    active: Mutex<HashSet<String>>,
+}
+
+impl ConversationProcessingState {
+    pub fn new() -> Self {
+        Self { active: Mutex::new(HashSet::new()) }
+    }
+
+    /// Mark conversation as active. Returns true if it was idle (caller should start processing).
+    pub fn try_acquire(&self, conv_id: &str) -> bool {
+        self.active.lock().unwrap_or_else(|e| e.into_inner()).insert(conv_id.to_string())
+    }
+
+    /// Release the active slot for this conversation.
+    pub fn release(&self, conv_id: &str) {
+        self.active.lock().unwrap_or_else(|e| e.into_inner()).remove(conv_id);
     }
 }

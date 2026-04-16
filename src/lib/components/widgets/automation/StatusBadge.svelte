@@ -6,7 +6,7 @@
 </script>
 
 {#if status}
-  <div class="status-badge" style="background:{color}22;color:{color};border-color:{color}55">
+  <div class="status-badge" style="background:{color}22;color:{color}">
     <span class="material-symbols-outlined icon">{icon}</span>
     <span class="label">{status}</span>
   </div>

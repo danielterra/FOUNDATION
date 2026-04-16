@@ -14,6 +14,7 @@
 		onToggleCamera = null,
 		thinkingEnabled = true,
 		onToggleThinking = null,
+		activeModelInfo = null,
 	} = $props();
 
 	function resolveIcon(icon) {
@@ -68,6 +69,12 @@
 			{/if}
 		</div>
 	</div>
+	{#if activeModelInfo?.modelLabel}
+		<span class="model-badge">
+			{activeModelInfo.modelLabel}
+			{#if activeModelInfo.isLocal}· Local{:else}· Remoto{/if}
+		</span>
+	{/if}
 	<div class="chat-header-right">
 		{#if onToggleCamera}
 			<button
@@ -111,7 +118,6 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 10px 14px;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
 		flex-shrink: 0;
 		gap: 8px;
 	}
@@ -136,7 +142,7 @@
 		width: 36px;
 		height: 36px;
 		background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-interactive) 35%, transparent);
+		border: none;
 		color: var(--color-interactive);
 		cursor: pointer;
 		display: flex;
@@ -147,7 +153,6 @@
 
 	.agent-avatar.picker-open {
 		background: color-mix(in srgb, var(--color-interactive) 28%, transparent);
-		border-color: var(--color-interactive);
 	}
 
 	.agent-avatar .material-symbols-outlined {
@@ -188,6 +193,15 @@
 
 	.agent-name-btn:hover .agent-name {
 		color: var(--color-interactive);
+	}
+
+	.model-badge {
+		font-size: 11px;
+		color: var(--color-neutral);
+		background: color-mix(in srgb, var(--color-white) 6%, transparent);
+		padding: 2px 8px;
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 
 	.chat-header-right {

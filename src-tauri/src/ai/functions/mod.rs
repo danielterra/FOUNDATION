@@ -135,7 +135,7 @@ pub fn execute_tool(
     conn: &mut Connection,
     call: &ToolCall,
     app: Option<&tauri::AppHandle>,
-    _conversation_id: Option<&str>,
+    conversation_id: Option<&str>,
 ) -> ToolResult {
     let is_array_mode = get_available_tools()
         .iter()
@@ -165,7 +165,7 @@ pub fn execute_tool(
         "describe_individual" => individual::describe_individual(conn, args),
         "describe_property" => property::describe_property(conn, args),
         "class_graph" => class_graph::get_class_graph(conn, args),
-        "read_binary_file" => file::read_binary_file(conn, args),
+        "read_binary_file" => file::read_binary_file(conn, args, conversation_id),
         "head_text_file" => file::head_text_file(conn, args),
         "read_text_lines" => file::read_text_lines(conn, args),
         "get_automation" => get_automation_tool(conn, args),

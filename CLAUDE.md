@@ -50,6 +50,28 @@ sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT subject, predicate, COALESC
 - **`object_datatype`**: ex. `xsd:string`, `xsd:integer`, `xsd:dateTime`
 - Use `COALESCE(object, object_value)` quando o tipo for desconhecido
 
+### Modelo de Imutabilidade (Datomic-style)
+
+**A camada OWL usa a maior transação (`tx`) como fonte da verdade — NÃO usa o campo `retracted`.**
+
+#### Atualização de valores — TX é a verdade
+
+- Para "atualizar" um valor: basta inserir um novo triple com `tx` maior. O valor mais recente vence.
+- **NUNCA** presuma que é necessário fazer `retracted = 1` no triple antigo antes de inserir o novo.
+- O campo `retracted` existe mas **não é o mecanismo de versionamento** — `tx DESC LIMIT 1` é.
+
+#### `retracted = 1` — somente para apagar fatos
+
+- `retracted` serve exclusivamente para **dizer que um fato deixou de ser verdade** (exclusão permanente).
+- **Nunca use `retracted` para "atualizar"** — atualizar significa inserir um novo TX com o valor correto.
+
+#### Propriedades multi-valoradas — o TX inteiro é a verdade
+
+- Para propriedades com múltiplos valores (ex: lista de obrigações vinculadas), **todo o conjunto do TX mais recente é a fonte da verdade**.
+- Exemplo: `TX1 = (A, B, C)` → `TX2 = (A, B)` significa que C foi removido — **sem precisar retrair C**.
+- Queries devem filtrar `AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ? AND predicate = ?)` para obter apenas os itens do TX atual, não todos os históricos com `retracted = 0`.
+- **Erro comum:** usar só `WHERE retracted = 0` retorna itens de todos os TXs históricos, incluindo removidos.
+
 ## Ferramentas MCP
 
 **SEMPRE use ferramentas MCP** para todas as operações de dados do Foundation. Nunca use SQL INSERT/UPDATE/DELETE.  

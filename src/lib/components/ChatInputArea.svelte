@@ -1,4 +1,6 @@
 <script>
+	import ThinkingDots from './ThinkingDots.svelte';
+
 	let {
 		inputText = $bindable(''),
 		isLoading,
@@ -35,11 +37,7 @@
 {#if aiStatus}
 	<div class="ai-status-indicator">
 		<div class="ai-status-content">
-			<div class="thinking-dots">
-				<span></span>
-				<span></span>
-				<span></span>
-			</div>
+			<ThinkingDots />
 			<span class="ai-status-text">{aiStatus.status} ({elapsedSeconds}s)</span>
 		</div>
 		{#if onCancelAI}
@@ -99,7 +97,6 @@
 		padding: 12px 16px;
 		margin-bottom: 12px;
 		background: color-mix(in srgb, var(--color-transition) 10%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-transition) 30%, transparent);
 		animation: fadeIn 0.3s;
 	}
 
@@ -146,38 +143,6 @@
 		to { opacity: 1; }
 	}
 
-	.thinking-dots {
-		display: flex;
-		gap: 6px;
-		align-items: center;
-	}
-
-	.thinking-dots span {
-		width: 8px;
-		height: 8px;
-		background: var(--color-transition);
-		animation: thinking-bounce 1.4s infinite ease-in-out;
-	}
-
-	.thinking-dots span:nth-child(1) {
-		animation-delay: -0.32s;
-	}
-
-	.thinking-dots span:nth-child(2) {
-		animation-delay: -0.16s;
-	}
-
-	@keyframes thinking-bounce {
-		0%, 80%, 100% {
-			transform: scale(0.8);
-			opacity: 0.5;
-		}
-		40% {
-			transform: scale(1.2);
-			opacity: 1;
-		}
-	}
-
 	/* Edit banner */
 	.edit-banner {
 		display: flex;
@@ -186,7 +151,6 @@
 		padding: 8px 12px;
 		margin-bottom: 8px;
 		background: color-mix(in srgb, var(--color-interactive) 10%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
 		font-size: 14px;
 		color: var(--color-interactive);
 		animation: fadeIn 0.2s;
@@ -230,7 +194,7 @@
 		width: 40px;
 		height: 40px;
 		background: transparent;
-		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+		border: none;
 		color: var(--color-neutral);
 		cursor: pointer;
 		display: flex;
@@ -250,7 +214,7 @@
 
 	.chat-input textarea {
 		flex: 1;
-		border: 1px solid color-mix(in srgb, var(--color-white) 20%, transparent);
+		border: none;
 		padding: 10px 16px;
 		font-family: inherit;
 		font-size: 14px;
@@ -258,7 +222,7 @@
 		resize: none;
 		min-height: 40px;
 		max-height: 300px;
-		transition: border-color 0.2s, height 0.1s;
+		transition: height 0.1s;
 		background: color-mix(in srgb, var(--color-white) 5%, transparent);
 		color: var(--color-neutral-active);
 		overflow-y: auto;
@@ -270,7 +234,6 @@
 
 	.chat-input textarea:focus {
 		outline: none;
-		border-color: var(--color-interactive);
 	}
 
 	.chat-input textarea:disabled {

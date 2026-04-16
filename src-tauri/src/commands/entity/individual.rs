@@ -152,7 +152,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         };
 
         let is_calculated = conn.query_row(
-            "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = 'foundation:formula' AND retracted = 0",
+            "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate IN ('foundation:formula', 'foundation:aggregation') AND retracted = 0",
             rusqlite::params![property_iri],
             |row| row.get::<_, i64>(0),
         ).unwrap_or(0) > 0;

@@ -18,7 +18,7 @@
 		try {
 			await invoke('chat__answer_question', { conversationId, toolUseId, answer });
 		} catch (err) {
-			console.error('Failed to answer question:', err);
+			console.error('[QUESTION] answerQuestion FAILED:', err);
 		}
 	}
 
@@ -26,7 +26,7 @@
 		try {
 			await invoke('chat__dismiss_question', { conversationId, toolUseId });
 		} catch (err) {
-			console.error('Failed to dismiss question:', err);
+			console.error('[QUESTION] dismissQuestion FAILED:', err);
 		}
 	}
 </script>
@@ -37,7 +37,7 @@
 		<span class="question-label">Question</span>
 	</div>
 	<div class="question-text">{q.question}</div>
-	{#if isLast}
+	{#if isLast && !answer}
 		{#if q.question_type === 'single'}
 			<div class="question-options">
 				{#each (q.options ?? []) as option}
@@ -59,6 +59,8 @@
 			<button class="question-submit" onclick={() => answerQuestion(q.id, textInput)}>Submit</button>
 		{/if}
 		<button class="question-dismiss" onclick={() => dismissQuestion(q.id)}>Cancel</button>
+	{:else if answer === '[Question dismissed by user]'}
+		<div class="question-answered">Cancelled</div>
 	{:else if answer}
 		<div class="question-answer">{formatAnswer(answer)}</div>
 	{:else}
@@ -73,7 +75,6 @@
 		gap: 8px;
 		padding: 10px 12px;
 		background: color-mix(in srgb, var(--color-neutral-active) 6%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-neutral-active) 15%, transparent);
 		margin-top: 4px;
 	}
 
@@ -111,17 +112,16 @@
 	.option-btn {
 		text-align: left;
 		padding: 6px 10px;
-		border: 1px solid color-mix(in srgb, var(--color-interactive) 30%, transparent);
+		border: none;
 		background: color-mix(in srgb, var(--color-interactive) 8%, transparent);
 		color: var(--color-neutral-active);
 		font-size: 12px;
 		cursor: pointer;
-		transition: background 0.15s, border-color 0.15s;
+		transition: background 0.15s;
 	}
 
 	.option-btn:active {
 		background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
-		border-color: color-mix(in srgb, var(--color-interactive) 50%, transparent);
 	}
 
 	.option-checkbox-label {
@@ -146,7 +146,7 @@
 		width: 100%;
 		min-height: 72px;
 		padding: 8px 10px;
-		border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
+		border: none;
 		background: color-mix(in srgb, var(--color-black) 20%, transparent);
 		color: var(--color-neutral-active);
 		font-size: 12px;
@@ -156,14 +156,10 @@
 		outline: none;
 	}
 
-	.question-textarea:focus {
-		border-color: color-mix(in srgb, var(--color-interactive) 50%, transparent);
-	}
-
 	.question-submit {
 		align-self: flex-end;
 		padding: 5px 14px;
-		border: 1px solid color-mix(in srgb, var(--color-interactive) 40%, transparent);
+		border: none;
 		background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
 		color: var(--color-interactive);
 		font-size: 12px;
@@ -188,13 +184,12 @@
 		color: var(--color-neutral-active);
 		padding: 6px 10px;
 		background: color-mix(in srgb, var(--color-neutral-active) 8%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-neutral-active) 15%, transparent);
 	}
 
 	.question-dismiss {
 		align-self: flex-end;
 		background: transparent;
-		border: 1px solid color-mix(in srgb, var(--color-neutral-disabled) 40%, transparent);
+		border: none;
 		color: var(--color-neutral-disabled);
 		padding: 4px 10px;
 		font-size: 11px;

@@ -64,6 +64,13 @@ impl DbExecutor {
 
         std::thread::spawn(move || {
             let mut write_conn = conn;
+            // Disable SQLite's built-in auto-checkpoint (default: 1000 pages).
+            // Without this, every `COMMIT` that crosses the 1000-page WAL threshold
+            // runs a passive checkpoint synchronously inside the commit, causing
+            // unpredictable multi-hundred-ms stalls on the write thread. Our own
+            // explicit checkpoints every WAL_PASSIVE_INTERVAL / WAL_TRUNCATE_INTERVAL
+            // writes replace this behaviour and run safely after each task completes.
+            let _ = write_conn.execute_batch("PRAGMA wal_autocheckpoint = 0;");
             let mut write_count: u32 = 0;
             while let Some(task) = write_rx.blocking_recv() {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

@@ -18,6 +18,10 @@ Cargo.lock
 **/Cargo.lock
 *.rs.bk
 
+# Local AI model files (large binaries, not versioned)
+*.gguf
+src-tauri/resources/models/*.gguf
+
 # Backup files
 *.backup
 

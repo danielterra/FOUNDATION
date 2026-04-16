@@ -384,13 +384,13 @@ mod tests {
         let mut conn = setup_test_db();
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskA", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskA", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-08".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
             }),
             Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskB", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskB", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-09".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
@@ -400,8 +400,8 @@ mod tests {
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
             &[
-                PropertyFilter::Compare("foundation:dueDate", "2026-03-08", ">="),
-                PropertyFilter::Compare("foundation:dueDate", "2026-03-08", "<="),
+                PropertyFilter::Compare("foundation:scheduledAt", "2026-03-08", ">="),
+                PropertyFilter::Compare("foundation:scheduledAt", "2026-03-08", "<="),
             ],
             false, 100, 0,
         None,
@@ -420,13 +420,13 @@ mod tests {
         let mut conn = setup_test_db();
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskA", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskA", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-08T12:00:00-03:00".to_string(),
                 datatype: Some("xsd:dateTime".to_string()),
                 language: None,
             }),
             Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskB", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskB", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-09T12:00:00-03:00".to_string(),
                 datatype: Some("xsd:dateTime".to_string()),
                 language: None,
@@ -436,8 +436,8 @@ mod tests {
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
             &[
-                PropertyFilter::Compare("foundation:dueDate", "2026-03-08", ">="),
-                PropertyFilter::Compare("foundation:dueDate", "2026-03-08", "<="),
+                PropertyFilter::Compare("foundation:scheduledAt", "2026-03-08", ">="),
+                PropertyFilter::Compare("foundation:scheduledAt", "2026-03-08", "<="),
             ],
             false, 100, 0,
         None,
@@ -453,13 +453,13 @@ mod tests {
         let mut conn = setup_test_db();
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskA", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskA", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-08T12:00:00-03:00".to_string(),
                 datatype: Some("xsd:dateTime".to_string()),
                 language: None,
             }),
             Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskB", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskB", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-09T12:00:00-03:00".to_string(),
                 datatype: Some("xsd:dateTime".to_string()),
                 language: None,
@@ -472,8 +472,8 @@ mod tests {
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
             &[
-                PropertyFilter::Compare("foundation:dueDate", "2026-03-08T00:00:00-03:00", ">="),
-                PropertyFilter::Compare("foundation:dueDate", "2026-03-08T23:59:59-03:00", "<="),
+                PropertyFilter::Compare("foundation:scheduledAt", "2026-03-08T00:00:00-03:00", ">="),
+                PropertyFilter::Compare("foundation:scheduledAt", "2026-03-08T23:59:59-03:00", "<="),
             ],
             false, 100, 0,
         None,
@@ -489,13 +489,13 @@ mod tests {
         let mut conn = setup_test_db();
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskA", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskA", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-08".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
             }),
             Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskB", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskB", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-09".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
@@ -505,7 +505,7 @@ mod tests {
         // Strict `>` excludes the boundary value
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[PropertyFilter::Compare("foundation:dueDate", "2026-03-08", ">")],
+            &[PropertyFilter::Compare("foundation:scheduledAt", "2026-03-08", ">")],
             false, 100, 0,
         None,
         ).unwrap();
@@ -529,7 +529,7 @@ mod tests {
 
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskA", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskA", "foundation:scheduledAt", Object::Literal {
                 value: local_rfc3339,
                 datatype: Some("xsd:dateTime".to_string()),
                 language: None,
@@ -538,7 +538,7 @@ mod tests {
 
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[PropertyFilter::Compare("foundation:dueDate", "2026-03-08T12:00:00", "=")],
+            &[PropertyFilter::Compare("foundation:scheduledAt", "2026-03-08T12:00:00", "=")],
             false, 100, 0,
         None,
         ).unwrap();
@@ -575,13 +575,13 @@ mod tests {
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
             Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskB", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskB", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-10".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
             }),
             Triple::new("foundation:TaskC", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskC", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskC", "foundation:scheduledAt", Object::Literal {
                 value: "2099-12-31".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
@@ -591,15 +591,15 @@ mod tests {
         let boundary = "2026-12-31";
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[PropertyFilter::Compare("foundation:dueDate", boundary, "?<=")],
+            &[PropertyFilter::Compare("foundation:scheduledAt", boundary, "?<=")],
             false, 100, 0,
         None,
         ).unwrap();
 
-        assert_eq!(total, 2, "Should include task without dueDate and task with dueDate <= boundary");
-        assert!(results.contains(&"foundation:TaskA".to_string()), "Task without dueDate should be included");
-        assert!(results.contains(&"foundation:TaskB".to_string()), "Task with dueDate <= boundary should be included");
-        assert!(!results.contains(&"foundation:TaskC".to_string()), "Task with dueDate > boundary should be excluded");
+        assert_eq!(total, 2, "Should include task without scheduledAt and task with scheduledAt <= boundary");
+        assert!(results.contains(&"foundation:TaskA".to_string()), "Task without scheduledAt should be included");
+        assert!(results.contains(&"foundation:TaskB".to_string()), "Task with scheduledAt <= boundary should be included");
+        assert!(!results.contains(&"foundation:TaskC".to_string()), "Task with scheduledAt > boundary should be excluded");
     }
 
     #[test]
@@ -612,7 +612,7 @@ mod tests {
             // Active, due date within boundary → open loop
             Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
             Triple::new("foundation:TaskB", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
-            Triple::new("foundation:TaskB", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskB", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-10".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
@@ -620,7 +620,7 @@ mod tests {
             // Active, due date beyond boundary → not an open loop
             Triple::new("foundation:TaskC", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
             Triple::new("foundation:TaskC", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
-            Triple::new("foundation:TaskC", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskC", "foundation:scheduledAt", Object::Literal {
                 value: "2099-12-31".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
@@ -635,16 +635,16 @@ mod tests {
             &conn, "foundation:Task",
             &[
                 PropertyFilter::Compare("foundation:hasStatus", "foundation:Completed", "!="),
-                PropertyFilter::Compare("foundation:dueDate", boundary, "?<="),
+                PropertyFilter::Compare("foundation:scheduledAt", boundary, "?<="),
             ],
             false, 100, 0,
         None,
         ).unwrap();
 
-        assert_eq!(total, 2, "Should return only tasks that are not Completed AND (no dueDate OR dueDate <= boundary)");
-        assert!(results.contains(&"foundation:TaskA".to_string()), "Active task without dueDate should be included");
-        assert!(results.contains(&"foundation:TaskB".to_string()), "Active task with dueDate <= boundary should be included");
-        assert!(!results.contains(&"foundation:TaskC".to_string()), "Active task with dueDate > boundary should be excluded");
+        assert_eq!(total, 2, "Should return only tasks that are not Completed AND (no scheduledAt OR scheduledAt <= boundary)");
+        assert!(results.contains(&"foundation:TaskA".to_string()), "Active task without scheduledAt should be included");
+        assert!(results.contains(&"foundation:TaskB".to_string()), "Active task with scheduledAt <= boundary should be included");
+        assert!(!results.contains(&"foundation:TaskC".to_string()), "Active task with scheduledAt > boundary should be excluded");
         assert!(!results.contains(&"foundation:TaskD".to_string()), "Completed task should be excluded");
     }
 
@@ -653,7 +653,7 @@ mod tests {
         let mut conn = setup_test_db();
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskA", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskA", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-08T15:00:00-03:00".to_string(),
                 datatype: Some("xsd:dateTime".to_string()),
                 language: None,
@@ -663,14 +663,14 @@ mod tests {
         // Filter with UTC equivalent: 2026-03-08T15:00:00-03:00 = 2026-03-08T18:00:00Z
         let (results_utc, _) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[PropertyFilter::Compare("foundation:dueDate", "2026-03-08T18:00:00Z", "=")],
+            &[PropertyFilter::Compare("foundation:scheduledAt", "2026-03-08T18:00:00Z", "=")],
             false, 100, 0,
         None,
         ).unwrap();
 
         let (results_local, _) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[PropertyFilter::Compare("foundation:dueDate", "2026-03-08T15:00:00-03:00", "=")],
+            &[PropertyFilter::Compare("foundation:scheduledAt", "2026-03-08T15:00:00-03:00", "=")],
             false, 100, 0,
         None,
         ).unwrap();
@@ -686,14 +686,14 @@ mod tests {
         let mut conn = setup_test_db();
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskA", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskA", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-10".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
             }),
             Triple::new("foundation:TaskB", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
             Triple::new("foundation:TaskC", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskC", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskC", "foundation:scheduledAt", Object::Literal {
                 value: "2099-12-31".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
@@ -702,15 +702,15 @@ mod tests {
 
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[PropertyFilter::Compare("foundation:dueDate", "", "exists")],
+            &[PropertyFilter::Compare("foundation:scheduledAt", "", "exists")],
             false, 100, 0,
         None,
         ).unwrap();
 
         assert_eq!(total, 2);
-        assert!(results.contains(&"foundation:TaskA".to_string()), "Task with dueDate should be included");
-        assert!(!results.contains(&"foundation:TaskB".to_string()), "Task without dueDate should be excluded");
-        assert!(results.contains(&"foundation:TaskC".to_string()), "Task with dueDate should be included");
+        assert!(results.contains(&"foundation:TaskA".to_string()), "Task with scheduledAt should be included");
+        assert!(!results.contains(&"foundation:TaskB".to_string()), "Task without scheduledAt should be excluded");
+        assert!(results.contains(&"foundation:TaskC".to_string()), "Task with scheduledAt should be included");
     }
 
     #[test]
@@ -718,7 +718,7 @@ mod tests {
         let mut conn = setup_test_db();
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:TaskA", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskA", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-10".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
@@ -729,15 +729,15 @@ mod tests {
 
         let (results, total) = Individual::find_by_class_and_properties_with_options(
             &conn, "foundation:Task",
-            &[PropertyFilter::Compare("foundation:dueDate", "", "not_exists")],
+            &[PropertyFilter::Compare("foundation:scheduledAt", "", "not_exists")],
             false, 100, 0,
         None,
         ).unwrap();
 
         assert_eq!(total, 2);
-        assert!(!results.contains(&"foundation:TaskA".to_string()), "Task with dueDate should be excluded");
-        assert!(results.contains(&"foundation:TaskB".to_string()), "Task without dueDate should be included");
-        assert!(results.contains(&"foundation:TaskC".to_string()), "Task without dueDate should be included");
+        assert!(!results.contains(&"foundation:TaskA".to_string()), "Task with scheduledAt should be excluded");
+        assert!(results.contains(&"foundation:TaskB".to_string()), "Task without scheduledAt should be included");
+        assert!(results.contains(&"foundation:TaskC".to_string()), "Task without scheduledAt should be included");
     }
 
     #[test]
@@ -746,7 +746,7 @@ mod tests {
         store::assert_triples(&mut conn, &[
             Triple::new("foundation:TaskA", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
             Triple::new("foundation:TaskA", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
-            Triple::new("foundation:TaskA", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskA", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-10".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
@@ -755,7 +755,7 @@ mod tests {
             Triple::new("foundation:TaskB", "foundation:hasStatus", Object::Iri("foundation:Active".to_string())),
             Triple::new("foundation:TaskC", rdf::TYPE, Object::Iri("foundation:Task".to_string())),
             Triple::new("foundation:TaskC", "foundation:hasStatus", Object::Iri("foundation:Completed".to_string())),
-            Triple::new("foundation:TaskC", "foundation:dueDate", Object::Literal {
+            Triple::new("foundation:TaskC", "foundation:scheduledAt", Object::Literal {
                 value: "2026-03-15".to_string(),
                 datatype: Some("xsd:date".to_string()),
                 language: None,
@@ -766,15 +766,15 @@ mod tests {
             &conn, "foundation:Task",
             &[
                 PropertyFilter::Compare("foundation:hasStatus", "foundation:Active", "="),
-                PropertyFilter::Compare("foundation:dueDate", "", "exists"),
+                PropertyFilter::Compare("foundation:scheduledAt", "", "exists"),
             ],
             false, 100, 0,
         None,
         ).unwrap();
 
         assert_eq!(total, 1);
-        assert!(results.contains(&"foundation:TaskA".to_string()), "Active task with dueDate should be included");
-        assert!(!results.contains(&"foundation:TaskB".to_string()), "Active task without dueDate should be excluded");
+        assert!(results.contains(&"foundation:TaskA".to_string()), "Active task with scheduledAt should be included");
+        assert!(!results.contains(&"foundation:TaskB".to_string()), "Active task without scheduledAt should be excluded");
         assert!(!results.contains(&"foundation:TaskC".to_string()), "Completed task should be excluded");
     }
 }

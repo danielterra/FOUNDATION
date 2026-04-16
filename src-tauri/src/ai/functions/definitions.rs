@@ -182,7 +182,14 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                 Parameter {
                     name: "formula".to_string(),
                     param_type: "string".to_string(),
-                    description: "Arithmetic formula using {{property_iri}} references. Operators: +, -, *, /, ** (power), % (modulo). DatatypeProperty only. References must be numeric properties (xsd:integer, xsd:decimal, xsd:float, xsd:double) of the same class. Circular dependencies are rejected.".to_string(),
+                    description: "Arithmetic formula using {{property_iri}} references. Operators: +, -, *, /, ** (power), % (modulo). DatatypeProperty only. References must be numeric properties (xsd:integer, xsd:decimal, xsd:float, xsd:double) of the same class. Circular dependencies are rejected. Cannot be used together with 'aggregation'.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "aggregation".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Aggregation over related individuals. DatatypeProperty only. Cannot be used together with 'formula'. Syntax: FUNC({{source_prop_iri}}.sub_prop_iri) or CONTAR({{source_prop_iri}}). CRITICAL: ALL property IRIs MUST include the full namespace prefix (e.g. 'foundation:hasTasks', NEVER just 'hasTasks'). source_prop_iri is an ObjectProperty that links to related instances. sub_prop_iri is a numeric DatatypeProperty on those instances. Functions: SOMA/SUM (sum), MÉDIA/AVG (average), MÍNIMO/MIN (minimum), MÁXIMO/MAX (maximum) — all require sub_prop. CONTAR/COUNT (count related instances) — no sub_prop. Examples: 'SOMA({{foundation:hasTasks}}.foundation:estimatedHours)', 'CONTAR({{foundation:hasMembers}})'.".to_string(),
                     required: false,
                     schema: None,
                 },

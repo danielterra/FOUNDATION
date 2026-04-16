@@ -42,7 +42,6 @@
 
 .markdown-content pre {
   background: color-mix(in srgb, var(--color-black) 40%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
   padding: 10px;
   overflow-x: auto;
   margin: 0.5em 0;
@@ -70,7 +69,6 @@
 }
 
 .markdown-content blockquote {
-  border-left: 3px solid var(--color-interactive);
   padding-left: 12px;
   margin: 0.5em 0;
   color: var(--color-neutral);
@@ -97,7 +95,6 @@
 
 .markdown-content hr {
   border: none;
-  border-top: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
   margin: 0.8em 0;
 }
 
@@ -121,7 +118,6 @@
 
 .markdown-content th,
 .markdown-content td {
-  border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
   padding: 6px 10px;
   text-align: left;
 }

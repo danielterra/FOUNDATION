@@ -140,7 +140,7 @@
     width: 100%;
     box-sizing: border-box;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border: 1px solid var(--color-interactive);
+    border: none;
     padding: 6px 10px;
     font-family: var(--font-title);
     font-size: 16px;
@@ -154,7 +154,7 @@
     min-height: 36px;
     box-sizing: border-box;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    border: 1px solid var(--color-interactive);
+    border: none;
     padding: 8px 10px;
     font-family: inherit;
     font-size: 14px;

@@ -452,7 +452,6 @@
     gap: 8px;
     padding: 12px;
     background: color-mix(in srgb, var(--color-error, #ef4444) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent);
     color: var(--color-error, #ef4444);
     font-size: 12px;
     z-index: 1;

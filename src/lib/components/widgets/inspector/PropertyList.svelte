@@ -2,6 +2,7 @@
   import { slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import PropertyDetailItem from './PropertyDetailItem.svelte';
+  import BigNumberCard from './BigNumberCard.svelte';
   import PropertyHint from './PropertyHint.svelte';
   import { sticky } from '$lib/utils/actions';
   import { onMount } from 'svelte';
@@ -70,6 +71,13 @@
 
   let optionalCollapsed = $state(true);
 
+  function isNumericType(datatype) {
+    return datatype === 'xsd:decimal' || datatype === 'xsd:integer' ||
+           datatype === 'xsd:int' || datatype === 'xsd:long' ||
+           datatype === 'xsd:float' || datatype === 'xsd:double' ||
+           datatype === 'xsd:nonNegativeInteger' || datatype === 'xsd:positiveInteger';
+  }
+
   const groupedDetails = $derived(
     (properties ?? []).reduce((acc, prop) => {
       if (!acc[prop.property]) {
@@ -137,13 +145,20 @@
         optionalCount: optional.length,
       };
     } else {
-      const filled = all.filter(g => !g.isEmpty);
-      const empty = all.filter(g => g.isEmpty);
-      const allItems = [...filled, ...empty];
+      const calculated = all.filter(g => g.isCalculated);
+      const nonCalculated = all.filter(g => !g.isCalculated);
+      const calculatedNumeric = calculated.filter(g => !g.isEmpty && isNumericType(g.datatype));
+      const calculatedOther = calculated.filter(g => g.isEmpty || !isNumericType(g.datatype));
+      const filled = nonCalculated.filter(g => !g.isEmpty);
+      const empty = nonCalculated.filter(g => g.isEmpty);
+      const regularItems = [...filled, ...empty];
       return {
         mode: 'instance',
-        all: [{ sourceClassLabel: null, items: allItems }],
-        allCount: allItems.length,
+        calculatedNumeric,
+        calculatedOther,
+        calculatedCount: calculated.length,
+        all: [{ sourceClassLabel: null, items: regularItems }],
+        allCount: regularItems.length,
       };
     }
   });
@@ -219,6 +234,39 @@
       {/if}
 
     {:else}
+
+      {#if sections.calculatedCount > 0}
+        <div class="section">
+          <div class="section-header" use:sticky={{ top: 0 }}>
+            <span class="material-symbols-outlined section-calc-icon">calculate</span>
+            <span class="section-title">Calculado</span>
+            <span class="section-count">{sections.calculatedCount}</span>
+          </div>
+          <div class="section-body">
+            {#if sections.calculatedNumeric.length > 0}
+              <div class="big-numbers-grid">
+                {#each sections.calculatedNumeric as detailGroup (detailGroup.property)}
+                  <BigNumberCard {detailGroup} />
+                {/each}
+              </div>
+            {/if}
+            {#each sections.calculatedOther as detailGroup (detailGroup.property)}
+              <PropertyDetailItem
+                {detailGroup}
+                {isClass}
+                {now}
+                {openEntityInspector}
+                {onSave}
+                {onSaveReference}
+                {onRemoveProperty}
+                {onSaveCardinality}
+                onShowHint={showHint}
+                onHideHint={hideHint}
+              />
+            {/each}
+          </div>
+        </div>
+      {/if}
 
       {#if sections.allCount > 0}
         <div class="section-body">
@@ -310,7 +358,6 @@
     font-weight: 600;
     color: color-mix(in srgb, var(--color-neutral) 40%, transparent);
     padding: 6px 2px 2px;
-    border-top: 1px solid color-mix(in srgb, var(--color-neutral) 12%, transparent);
     margin-top: 4px;
     z-index: 1;
     background: color-mix(in srgb, var(--color-black) 97%, transparent);
@@ -319,7 +366,19 @@
 
   .source-separator:first-child {
     margin-top: 0;
-    border-top: none;
     padding-top: 2px;
+  }
+
+  .section-calc-icon {
+    font-size: 14px;
+    color: var(--color-accent);
+    opacity: 0.8;
+    flex-shrink: 0;
+  }
+
+  .big-numbers-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
 </style>

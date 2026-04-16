@@ -326,11 +326,14 @@ pub(super) fn search_global(
 
     let filtered: Vec<&String> = iris.iter()
         .filter(|iri| {
+            let empty = vec![];
+            let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+            if triples.is_empty() {
+                return false;
+            }
             if entity_type_filter.is_none() {
                 return true;
             }
-            let empty = vec![];
-            let triples = batch.get(iri.as_str()).unwrap_or(&empty);
             let type_iri = triples.iter()
                 .find(|t| t.predicate == "rdf:type")
                 .and_then(|t| t.object.as_iri());

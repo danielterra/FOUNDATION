@@ -642,7 +642,6 @@
     right: 0;
     z-index: 1000;
     background: color-mix(in srgb, var(--color-black) 90%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 15%, transparent);
     padding: 4px;
     display: flex;
     flex-direction: column;
@@ -680,7 +679,6 @@
     padding: 10px 12px;
     margin-bottom: 14px;
     background: color-mix(in srgb, var(--color-warning, #f59e0b) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 35%, transparent);
   }
 
   .locked-banner-icon {
@@ -741,7 +739,6 @@
     flex-direction: row;
     gap: 6px;
     padding: 0px;
-    border-top: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
     background: color-mix(in srgb, var(--color-black) 60%, transparent);
     flex-wrap: 1;
   }
@@ -770,7 +767,6 @@
 
   .action-bar-btn:hover {
     background: color-mix(in srgb, var(--color-interactive) 22%, transparent);
-    border-color: color-mix(in srgb, var(--color-interactive) 60%, transparent);
     color: var(--color-neutral-active);
   }
 
@@ -789,7 +785,6 @@
     gap: 6px;
     padding: 8px 14px;
     background: color-mix(in srgb, #22c55e 20%, var(--color-black));
-    border: 1px solid color-mix(in srgb, #22c55e 50%, transparent);
     font-family: var(--font-body);
     font-size: 12px;
     font-weight: 600;

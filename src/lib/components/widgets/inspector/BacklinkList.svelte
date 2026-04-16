@@ -224,7 +224,6 @@
     gap: 10px;
     padding: 8px 10px;
     background: color-mix(in srgb, var(--color-white) 3%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
     transition: all 0.2s;
   }
 

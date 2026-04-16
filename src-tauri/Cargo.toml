@@ -52,6 +52,8 @@ pdf-extract = "0.10.0"
 image = "0.25.9"
 libc = "0.2"
 tantivy = "0.22"
+llama-cpp-2 = { version = "0.1.143", features = ["metal", "sampler"] }
+encoding_rs = "0.8"
 
 [dev-dependencies]
 tempfile = "3.8"  # Temporary files for tests

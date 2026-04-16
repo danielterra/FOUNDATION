@@ -4,23 +4,45 @@ use rusqlite::Connection;
 use super::ToolResult;
 
 const DEFAULT_MAX_LINE_CHARS: usize = 4096;
-const FALLBACK_MAX_BINARY_BYTES: u64 = 500 * 1024; // 500 KB if model config unavailable
+// Fallback when no model/agent/global config is available.
+const FALLBACK_MAX_BINARY_BYTES: u64 = 500 * 1024;
 
-/// Compute the max raw bytes allowed based on 80% of the configured max input tokens.
-/// Approximation: base64 tokenizes at ~2 chars/token, and base64 expands raw bytes by 4/3,
-/// so max_raw_bytes = budget_tokens × 2 × 3/4 = budget_tokens × 1.5.
-fn max_binary_bytes(conn: &Connection) -> u64 {
-    let max_tokens = resolve_max_input_tokens(conn).unwrap_or(0);
+/// Maximum bytes allowed for a binary file read, based on 70% of the conversation's
+/// context limit.
+///
+/// `read_binary_file` sends the file content as a base64-encoded JSON string inside a
+/// tool result (plain text — not a native image/document block). The token cost
+/// therefore scales with file size regardless of format:
+///   base64 expands raw bytes by 4/3; base64 chars tokenise at roughly 2 chars/token,
+///   so  raw_bytes → tokens ≈ raw_bytes × (4/3) / 2 = raw_bytes × 2/3
+///   → max_raw_bytes = budget_tokens × 3/2
+///
+/// Context limit lookup order (highest priority first):
+///   1. Agent's foundation:maxInputTokensPreference (per-conversation)
+///   2. foundation:DefaultMaxInputTokensSetting (global user override)
+///   3. foundation:AIModel.foundation:maxInputTokens (model default)
+///   4. Hardcoded fallback → 500 KB
+fn max_binary_bytes(conn: &Connection, conversation_id: Option<&str>) -> u64 {
+    let max_tokens = resolve_context_limit(conn, conversation_id).unwrap_or(0);
     if max_tokens == 0 {
         return FALLBACK_MAX_BINARY_BYTES;
     }
-    let budget = (max_tokens as u64) * 80 / 100;
+    let budget = (max_tokens as u64) * 70 / 100;
     budget * 3 / 2
 }
 
-fn resolve_max_input_tokens(conn: &Connection) -> Option<usize> {
+fn resolve_context_limit(conn: &Connection, conversation_id: Option<&str>) -> Option<usize> {
     use crate::owl::{Individual, Object};
 
+    // 1. Per-agent preference (highest priority — uses load_agent_config which applies the
+    //    full agent → model → default hierarchy internally).
+    if let Some(conv_iri) = conversation_id {
+        if let Ok(config) = crate::commands::chat::settings::load_agent_config(conn, conv_iri) {
+            return Some(config.max_tokens);
+        }
+    }
+
+    // 2. Global user-configured setting.
     if let Ok(Some(setting)) = Individual::get(conn, "foundation:DefaultMaxInputTokensSetting") {
         if let Some((_, Object::Literal { value, .. })) = setting.properties.iter()
             .find(|(k, _)| k == "foundation:settingValue") {
@@ -30,6 +52,7 @@ fn resolve_max_input_tokens(conn: &Connection) -> Option<usize> {
         }
     }
 
+    // 3. Model's maxInputTokens.
     let model_iri = crate::commands::chat::settings::get_ai_model_iri(conn).ok()??;
     let model = Individual::get(conn, &model_iri).ok()??;
     if let Some((_, Object::Integer(n))) = model.properties.iter()
@@ -98,7 +121,7 @@ fn detect_mime_type(bytes: &[u8]) -> &'static str {
     "application/octet-stream"
 }
 
-pub fn read_binary_file(conn: &Connection, args: &Value) -> ToolResult {
+pub fn read_binary_file(conn: &Connection, args: &Value, conversation_id: Option<&str>) -> ToolResult {
     let file_iri = match args.get("file_iri").and_then(|v| v.as_str()) {
         Some(iri) if !iri.is_empty() => iri,
         _ => return ToolResult {
@@ -123,13 +146,14 @@ pub fn read_binary_file(conn: &Connection, args: &Value) -> ToolResult {
             concept: None,
         },
     };
-    let limit = max_binary_bytes(conn);
+
+    let limit = max_binary_bytes(conn, conversation_id);
     if file_size > limit {
         return ToolResult {
             success: false,
             result: None,
             error: Some(format!(
-                "File too large to read: {} bytes (limit is {} bytes, ~80% of the model's max input tokens). Use a text tool or pre-process the file first.",
+                "File too large to read: {} bytes (limit is {} bytes, 70% of this conversation's context). Use a text tool or pre-process the file first.",
                 file_size, limit
             )),
             concept: None,
@@ -422,7 +446,7 @@ mod tests {
         tmp.write_all(pdf_bytes).expect("write pdf");
         register_file(&mut conn, "foundation:File_bin_pdf", tmp.path().to_str().unwrap());
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_pdf" }));
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_pdf" }), None);
 
         assert!(result.success, "Expected success but got error: {:?}", result.error);
         let data = result.result.unwrap();
@@ -439,7 +463,7 @@ mod tests {
         tmp.write_all(jpeg).expect("write jpeg");
         register_file(&mut conn, "foundation:File_bin_jpeg", tmp.path().to_str().unwrap());
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_jpeg" }));
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_jpeg" }), None);
 
         assert!(result.success);
         assert_eq!(result.result.unwrap()["media_type"].as_str().unwrap(), "image/jpeg");
@@ -454,7 +478,7 @@ mod tests {
         tmp.write_all(original).expect("write bytes");
         register_file(&mut conn, "foundation:File_bin_rt", tmp.path().to_str().unwrap());
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_rt" }));
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_rt" }), None);
 
         assert!(result.success);
         let encoded = result.result.unwrap()["data"].as_str().unwrap().to_string();
@@ -472,7 +496,7 @@ mod tests {
         tmp.write_all(unknown).expect("write bytes");
         register_file(&mut conn, "foundation:File_bin_unk", tmp.path().to_str().unwrap());
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_unk" }));
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_unk" }), None);
 
         assert!(result.success);
         assert_eq!(result.result.unwrap()["media_type"].as_str().unwrap(), "application/octet-stream");
@@ -485,7 +509,7 @@ mod tests {
         let ind = Individual::new("foundation:File_bin_no_path");
         ind.assert(&mut conn, "foundation:File", "no path", "https://example.com/icon.png", "test").unwrap();
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_no_path" }));
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_no_path" }), None);
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("foundation:filePath"));
@@ -501,7 +525,7 @@ mod tests {
         tmp.write_all(&oversized).expect("write oversized bytes");
         register_file(&mut conn, "foundation:File_bin_oversized", tmp.path().to_str().unwrap());
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_oversized" }));
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_oversized" }), None);
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("too large"));
@@ -519,7 +543,7 @@ mod tests {
             language: None,
         }], "test").unwrap();
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_missing" }));
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_missing" }), None);
 
         assert!(!result.success);
     }

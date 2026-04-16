@@ -315,7 +315,6 @@
 		justify-content: space-between;
 		padding-bottom: 16px;
 		margin-bottom: 16px;
-		border-bottom: 1px solid var(--color-border);
 		flex-shrink: 0;
 	}
 
@@ -359,7 +358,6 @@
 	.panel-wrapper:not(.folded) .panel-header {
 		padding: 0 0 12px 0;
 		margin-bottom: 12px;
-		border-bottom: 1px solid var(--color-border);
 	}
 
 	.panel-header-drag {

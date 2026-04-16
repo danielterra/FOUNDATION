@@ -101,7 +101,6 @@
     gap: 0.75rem;
     padding: 0.6rem 1.25rem;
     background: color-mix(in srgb, var(--color-black) 80%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
     z-index: 200;
     backdrop-filter: blur(8px);
   }
@@ -167,7 +166,6 @@
     width: 30%;
     min-width: 500px;
     height: 100vh;
-    border-left: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
     z-index: 250;
     display: flex;
     flex-direction: column;

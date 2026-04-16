@@ -17,6 +17,13 @@
 	let inputElement = $state();
 	let debounceTimer;
 
+	let activeClassFilter = $state(null);
+	let showClassAutocomplete = $state(false);
+	let classQuery = $state('');
+	let classResults = $state([]);
+	let classSelectedIndex = $state(-1);
+	let classDebounceTimer;
+
 	export function open() {
 		isOpen = true;
 		setTimeout(() => {
@@ -30,10 +37,32 @@
 		searchResults = [];
 		showResults = false;
 		selectedIndex = -1;
+		activeClassFilter = null;
+		showClassAutocomplete = false;
+		classResults = [];
+		classQuery = '';
+		classSelectedIndex = -1;
+	}
+
+	async function fetchClasses(query) {
+		try {
+			const json = await invoke('graph__search_entities', {
+				query: query.trim(),
+				limit: 50,
+				typeIri: 'owl:Class'
+			});
+			classResults = JSON.parse(json);
+			classSelectedIndex = classResults.length > 0 ? 0 : -1;
+		} catch (err) {
+			console.error('Class search failed:', err);
+			classResults = [];
+			classSelectedIndex = -1;
+		}
 	}
 
 	async function performSearch(query) {
-		if (!query || query.trim().length < 2) {
+		const trimmed = query.trim();
+		if (!activeClassFilter && trimmed.length < 2) {
 			searchResults = [];
 			showResults = false;
 			selectedIndex = -1;
@@ -42,14 +71,18 @@
 
 		isSearching = true;
 		try {
-			const resultsJson = await invoke('graph__search_entities', {
-				query: query.trim(),
+			const args = {
+				query: trimmed,
 				limit: 100
-			});
+			};
+			if (activeClassFilter) {
+				args.typeIri = activeClassFilter.iri;
+			}
+			const resultsJson = await invoke('graph__search_entities', args);
 			const results = JSON.parse(resultsJson);
 			searchResults = results;
 			showResults = results.length > 0;
-			selectedIndex = results.length > 0 ? 0 : -1; // Auto-select first result
+			selectedIndex = results.length > 0 ? 0 : -1;
 		} catch (err) {
 			console.error('Search failed:', err);
 			searchResults = [];
@@ -61,11 +94,24 @@
 	}
 
 	function handleInput() {
-		if (debounceTimer) {
-			clearTimeout(debounceTimer);
+		if (debounceTimer) clearTimeout(debounceTimer);
+		if (classDebounceTimer) clearTimeout(classDebounceTimer);
+
+		const isClassTrigger = searchQuery.startsWith('@');
+
+		if (isClassTrigger && !activeClassFilter) {
+			classQuery = searchQuery.slice(1);
+			showClassAutocomplete = true;
+			showResults = false;
+			classDebounceTimer = setTimeout(() => {
+				fetchClasses(classQuery);
+			}, 200);
+			return;
 		}
 
-		if (!searchQuery || searchQuery.trim().length < 2) {
+		showClassAutocomplete = false;
+
+		if (!activeClassFilter && searchQuery.trim().length < 2) {
 			searchResults = [];
 			showResults = false;
 			selectedIndex = -1;
@@ -74,10 +120,24 @@
 		}
 
 		isSearching = true;
-
 		debounceTimer = setTimeout(() => {
 			performSearch(searchQuery);
 		}, 500);
+	}
+
+	function selectClass(cls) {
+		activeClassFilter = { iri: cls.id, label: cls.label, icon: cls.icon ?? null };
+		searchQuery = '';
+		showClassAutocomplete = false;
+		classResults = [];
+		classQuery = '';
+		classSelectedIndex = -1;
+		performSearch(searchQuery);
+	}
+
+	function clearClassFilter() {
+		activeClassFilter = null;
+		performSearch(searchQuery);
 	}
 
 	function handleResultClick(result) {
@@ -87,8 +147,60 @@
 		close();
 	}
 
+	function scrollToClassSelected() {
+		setTimeout(() => {
+			const el = document.querySelector('.class-item.selected');
+			if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		}, 0);
+	}
+
 	function handleKeyDown(e) {
-		if (!showResults || searchResults.length === 0) return;
+		if (showClassAutocomplete && classResults.length > 0) {
+			switch (e.key) {
+				case 'ArrowDown':
+					e.preventDefault();
+					classSelectedIndex = (classSelectedIndex + 1) % classResults.length;
+					scrollToClassSelected();
+					return;
+				case 'ArrowUp':
+					e.preventDefault();
+					const last = classResults.length - 1;
+					classSelectedIndex = classSelectedIndex <= 0 ? last : classSelectedIndex - 1;
+					scrollToClassSelected();
+					return;
+				case 'Enter':
+					e.preventDefault();
+					if (classSelectedIndex >= 0 && classSelectedIndex < classResults.length) {
+						selectClass(classResults[classSelectedIndex]);
+					}
+					return;
+				case 'Escape':
+					e.preventDefault();
+					showClassAutocomplete = false;
+					classResults = [];
+					searchQuery = '';
+					return;
+				case 'Backspace':
+					if (classQuery === '') {
+						e.preventDefault();
+						showClassAutocomplete = false;
+						classResults = [];
+						searchQuery = '';
+					}
+					return;
+			}
+		}
+
+		if (!showResults || searchResults.length === 0) {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				close();
+			}
+			if (e.key === 'Backspace' && activeClassFilter && searchQuery === '') {
+				clearClassFilter();
+			}
+			return;
+		}
 
 		switch (e.key) {
 			case 'ArrowDown':
@@ -110,6 +222,11 @@
 			case 'Escape':
 				e.preventDefault();
 				close();
+				break;
+			case 'Backspace':
+				if (activeClassFilter && searchQuery === '') {
+					clearClassFilter();
+				}
 				break;
 		}
 	}
@@ -159,9 +276,8 @@
 	}
 
 	onDestroy(() => {
-		if (debounceTimer) {
-			clearTimeout(debounceTimer);
-		}
+		if (debounceTimer) clearTimeout(debounceTimer);
+		if (classDebounceTimer) clearTimeout(classDebounceTimer);
 	});
 </script>
 
@@ -171,11 +287,21 @@
 			<Card>
 				<div class="search-input-wrapper">
 					<span class="material-symbols-outlined search-icon">search</span>
+					{#if activeClassFilter}
+						<span class="class-filter-pill">
+							<span class="material-symbols-outlined pill-icon">
+								{activeClassFilter.icon ?? 'category'}
+							</span>
+							@{activeClassFilter.label}
+						</span>
+					{/if}
 					<input
 						bind:this={inputElement}
 						type="text"
 						bind:value={searchQuery}
-						placeholder="Search entities..."
+						placeholder={activeClassFilter
+								? `Buscar em ${activeClassFilter.label}...`
+								: 'Buscar entidades... (@ para filtrar por classe)'}
 						oninput={handleInput}
 						onfocus={handleFocus}
 						onblur={handleBlur}
@@ -191,6 +317,38 @@
 					{/if}
 				</div>
 			</Card>
+
+			{#if showClassAutocomplete && classResults.length > 0}
+				<div class="search-results">
+					<Card>
+						<div class="results-list">
+							{#each classResults as cls, index}
+								<button
+									type="button"
+									class="result-item class-item"
+									class:selected={index === classSelectedIndex}
+									onmousedown={(e) => { e.preventDefault(); selectClass(cls); }}
+								>
+									<div class="result-content">
+										{#if cls.icon}
+											{#if isIconUrl(cls.icon)}
+												<img src={getIconUrl(cls.icon)} alt="" class="result-icon-image" />
+											{:else}
+												<span class="material-symbols-outlined result-icon">{cls.icon}</span>
+											{/if}
+										{:else}
+											<span class="material-symbols-outlined result-icon">category</span>
+										{/if}
+										<div class="result-text">
+											<div class="result-label">@{cls.label}</div>
+										</div>
+									</div>
+								</button>
+							{/each}
+						</div>
+					</Card>
+				</div>
+			{/if}
 
 			{#if showResults && searchResults.length > 0}
 				<div class="search-results">
@@ -277,6 +435,7 @@
 		align-items: center;
 		gap: 0.5rem;
 		position: relative;
+		flex-wrap: wrap;
 	}
 
 	.search-icon {
@@ -285,8 +444,27 @@
 		flex-shrink: 0;
 	}
 
+	.class-filter-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.125rem 0.5rem;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
+		color: var(--color-interactive);
+		font-size: 0.75rem;
+		font-weight: 600;
+		flex-shrink: 0;
+		white-space: nowrap;
+	}
+
+	.pill-icon {
+		font-size: 14px;
+	}
+
 	.search-input {
 		flex: 1;
+		min-width: 120px;
 		background: transparent;
 		border: none;
 		color: var(--color-neutral-active);
@@ -339,21 +517,10 @@
 		cursor: pointer;
 		text-align: left;
 		transition: background 0.15s;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-white) 5%, transparent);
 	}
 
-	.result-item:last-child {
-		border-bottom: none;
-	}
-
-	.result-item:hover,
 	.result-item.selected {
 		background: color-mix(in srgb, var(--color-interactive) 10%, transparent);
-	}
-
-	.result-item.selected {
-		outline: 2px solid var(--color-interactive);
-		outline-offset: -2px;
 	}
 
 	.result-content {

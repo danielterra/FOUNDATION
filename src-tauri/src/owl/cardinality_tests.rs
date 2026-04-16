@@ -157,12 +157,12 @@ fn test_inherited_properties_accessible_after_set_required_fields() {
         Triple::new("foundation:transactionDate", "rdfs:domain", Object::Iri("foundation:FinancialTransaction".to_string())),
         Triple::new("foundation:InstallmentPayment", "rdf:type", Object::Iri("owl:Class".to_string())),
         Triple::new("foundation:InstallmentPayment", "rdfs:subClassOf", Object::Iri("foundation:FinancialTransaction".to_string())),
-        Triple::new("foundation:dueDate", "rdf:type", Object::Iri("owl:DatatypeProperty".to_string())),
-        Triple::new("foundation:dueDate", "rdfs:domain", Object::Iri("foundation:InstallmentPayment".to_string())),
+        Triple::new("foundation:scheduledAt", "rdf:type", Object::Iri("owl:DatatypeProperty".to_string())),
+        Triple::new("foundation:scheduledAt", "rdfs:domain", Object::Iri("foundation:InstallmentPayment".to_string())),
     ], "test").unwrap();
 
     set_class_required_fields(
-        &mut conn, "foundation:InstallmentPayment", &["foundation:dueDate"], "test",
+        &mut conn, "foundation:InstallmentPayment", &["foundation:scheduledAt"], "test",
     ).unwrap();
 
     let class = Class::get(&conn, "foundation:InstallmentPayment")
@@ -462,17 +462,17 @@ fn test_child_inherits_required_fields_from_parent() {
     ], "test").unwrap();
     set_class_required_fields(&mut conn, "foundation:ParentClass", &["foundation:title"], "test").unwrap();
 
-    // ChildClass extends ParentClass with its own required field "foundation:dueDate"
+    // ChildClass extends ParentClass with its own required field "foundation:scheduledAt"
     store::assert_triples(&mut conn, &[
         Triple::new("foundation:ChildClass", "rdf:type", Object::Iri("owl:Class".to_string())),
         Triple::new("foundation:ChildClass", "rdfs:subClassOf", Object::Iri("foundation:ParentClass".to_string())),
     ], "test").unwrap();
-    set_class_required_fields(&mut conn, "foundation:ChildClass", &["foundation:dueDate"], "test").unwrap();
+    set_class_required_fields(&mut conn, "foundation:ChildClass", &["foundation:scheduledAt"], "test").unwrap();
 
     let restrictions = get_class_cardinality_restrictions(&conn, "foundation:ChildClass").unwrap();
     let props: Vec<&str> = restrictions.iter().map(|r| r.property_iri.as_str()).collect();
 
-    assert!(props.contains(&"foundation:dueDate"), "own required field must be present");
+    assert!(props.contains(&"foundation:scheduledAt"), "own required field must be present");
     assert!(props.contains(&"foundation:title"), "inherited required field from parent must be present");
     assert_eq!(restrictions.len(), 2);
 }
