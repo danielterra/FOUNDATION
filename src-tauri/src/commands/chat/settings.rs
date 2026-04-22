@@ -7,6 +7,7 @@ pub struct AgentConfig {
     pub api_key: String,
     pub is_local: bool,
     pub model_identifier: String,
+    pub base_system_prompt: String,
     pub system_prompt: String,
     pub max_tokens: usize,
     pub max_output_tokens: u32,
@@ -88,10 +89,13 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
             .and_then(|v| v.parse::<u64>().ok()))
         .unwrap_or(DEFAULT_TIMEOUT_SECS);
 
+    let base_system_prompt = load_base_system_prompt(conn);
+
     Ok(AgentConfig {
         api_key,
         is_local,
         model_identifier,
+        base_system_prompt,
         system_prompt,
         max_tokens,
         max_output_tokens: max_output_tokens.unwrap_or(crate::commands::chat::MAX_OUTPUT_TOKENS),
@@ -150,6 +154,17 @@ pub fn get_ai_model_iri(conn: &Connection) -> Result<Option<String>, String> {
     }
 
     Ok(None)
+}
+
+pub fn load_base_system_prompt(conn: &Connection) -> String {
+    Individual::get(conn, "foundation:DefaultSystemPromptSetting")
+        .ok()
+        .flatten()
+        .and_then(|s| s.properties.iter()
+            .find(|(k, _)| k == "foundation:settingValue")
+            .and_then(|(_, v)| v.as_literal())
+            .map(|v| v.to_string()))
+        .unwrap_or_default()
 }
 
 /// Get AI service IRI from DefaultAIServiceSetting (searched by settingKey="aiService")

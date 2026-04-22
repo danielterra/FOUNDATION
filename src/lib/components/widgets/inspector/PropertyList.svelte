@@ -10,8 +10,11 @@
   let {
     properties, requiredFields = [], isClass = false,
     openEntityInspector, onSave, onSaveReference,
+    onClearProperty = null,
     onRemoveProperty = null,
     onSaveCardinality = null,
+    onSaveQueryConfig = null,
+    onLoadMoreBacklinks = null,
   } = $props();
 
   let now = $state(Date.now());
@@ -88,15 +91,19 @@
           isObjectProperty: prop.isObjectProperty,
           sourceClassLabel: prop.sourceClassLabel,
           sourceClassIcon: prop.sourceClassIcon,
+          sourceClassIri: prop.sourceClass ?? null,
           datatype: prop.datatype,
           unit: prop.unit ?? null,
           rangeClassIri: prop.rangeClassIri,
           rangeClassLabel: prop.rangeClassLabel,
           rangeClassIcon: prop.rangeClassIcon,
           isCalculated: prop.isCalculated ?? false,
+          isQueryProperty: prop.isQueryProperty ?? false,
+          queryConfig: prop.queryConfig ?? null,
           isEmpty: prop.isEmpty ?? false,
           minCount: prop.minCount ?? null,
           maxCount: prop.maxCount ?? null,
+          groupTotal: null,
           values: []
         };
       }
@@ -111,6 +118,10 @@
           formulaError: prop.formulaError ?? null,
           fileInfo: prop.fileInfo ?? null
         });
+        if (prop.groupTotal != null && acc[prop.property].groupTotal == null) {
+          acc[prop.property].groupTotal = prop.groupTotal;
+          acc[prop.property].sourceClassIri = prop.sourceClass ?? null;
+        }
       }
       return acc;
     }, {})
@@ -186,8 +197,11 @@
         {openEntityInspector}
         {onSave}
         {onSaveReference}
+        {onClearProperty}
         {onRemoveProperty}
         {onSaveCardinality}
+        {onSaveQueryConfig}
+        {onLoadMoreBacklinks}
         onShowHint={showHint}
         onHideHint={hideHint}
       />
@@ -260,6 +274,7 @@
                 {onSaveReference}
                 {onRemoveProperty}
                 {onSaveCardinality}
+                {onSaveQueryConfig}
                 onShowHint={showHint}
                 onHideHint={hideHint}
               />

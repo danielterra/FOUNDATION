@@ -126,7 +126,8 @@ pub fn run() {
             process_automation::task_scheduler::listen_for_scheduled_tasks(app_handle.clone());
             process_automation::task_blocker::listen_for_blocking(app_handle.clone());
             process_automation::task_manager::listen_for_in_progress(app_handle.clone());
-            process_automation::task_manager::listen_for_recurrence(app_handle);
+            process_automation::task_manager::listen_for_recurrence(app_handle.clone());
+            process_automation::script_validator::register_validator(app_handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -143,8 +144,10 @@ pub fn run() {
             commands::agent__get_ai_config,
             commands::agent__set_ai_config,
             commands::inspector__get_entity,
+            commands::inspector__get_backlink_page,
             commands::graph__search_entities,
             commands::graph__get_node_type_config,
+            commands::widget_inspector__clear_property,
             commands::widget_inspector__update_property,
             commands::widget_inspector__set_references,
             commands::widget_inspector__update_status,
@@ -155,6 +158,7 @@ pub fn run() {
             commands::widget_inspector__remove_class_property,
             commands::widget_inspector__set_system_locked,
             commands::widget_inspector__set_property_cardinality,
+            commands::widget_inspector__set_property_query_config,
             commands::log_frontend,
             commands::get_log_file_path_command,
             commands::clear_logs,

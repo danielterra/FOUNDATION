@@ -167,6 +167,14 @@
     }
   }
 
+  async function clearProperty(propertyIri) {
+    try {
+      await invoke('widget_inspector__clear_property', { entityId, propertyIri });
+    } catch (err) {
+      console.error('Failed to clear property:', err);
+    }
+  }
+
   async function saveReferences(propertyIri, iris) {
     try {
       await invoke('widget_inspector__set_references', { entityId, propertyIri, iris });
@@ -202,6 +210,24 @@
       minCount,
       maxCount,
     });
+  }
+
+  async function saveQueryConfig(propertyIri, queryConfigJson) {
+    await invoke('widget_inspector__set_property_query_config', {
+      classId: entityId,
+      propertyIri,
+      queryConfigJson,
+    });
+  }
+
+  async function loadMoreBacklinks(predicate, sourceClassIri, offset) {
+    const raw = await invoke('inspector__get_backlink_page', {
+      entityIri: entityId,
+      predicate,
+      sourceClass: sourceClassIri,
+      offset,
+    });
+    return JSON.parse(raw);
   }
 
   async function initiateRemoveProperty(propertyIri, propertyLabel) {
@@ -345,12 +371,8 @@
         scheduleLoad();
         return;
       }
-      if (entityData) {
-        const inBacklinks = entityData.backlinks?.some(b => b.value === updatedId);
-        const inProperties = entityData.properties?.some(p => p.value === updatedId);
-        if (inBacklinks || inProperties) {
-          scheduleLoad();
-        }
+      if (entityData?.properties?.some(p => p.value === updatedId)) {
+        scheduleLoad();
       }
     });
 
@@ -370,6 +392,10 @@
     unlistenEntityDeleted = await listen('entity-deleted', (event) => {
       if (event.payload.entityId === entityId) {
         closeWidget();
+        return;
+      }
+      if (entityData?.properties?.some(p => p.value === event.payload.entityId)) {
+        scheduleLoad();
       }
     });
 
@@ -427,19 +453,24 @@
       <button class="action-btn" onclick={copyEntityIri} title="Copy IRI">
         <span class="material-symbols-outlined">content_copy</span>
       </button>
-      {#if entityData?.status}
+      {#if entityData?.status || (entityData?.allowedStatuses?.length > 0 && !entityData?.isClass && !isLocked)}
         <div class="status-badge-wrapper" bind:this={statusBadgeWrapperEl}>
           <button
             class="status-badge"
             class:clickable={entityData.allowedStatuses?.length > 0 && !isLocked}
-            style="--status-color: {entityData.status.color || 'var(--color-neutral)'}"
-            title={isLocked ? 'Entity is system-locked' : entityData.status.iri}
+            style="--status-color: {entityData.status?.color || 'var(--color-neutral)'}"
+            title={isLocked ? 'Entity is system-locked' : (entityData.status?.iri ?? 'Definir status')}
             onclick={() => {
               if (entityData.allowedStatuses?.length > 0 && !isLocked) showStatusPicker = !showStatusPicker;
             }}
           >
-            <span class="material-symbols-outlined status-badge-icon">{entityData.status.icon || 'radio_button_checked'}</span>
-            <span class="status-badge-label">{entityData.status.label}</span>
+            {#if entityData.status}
+              <span class="material-symbols-outlined status-badge-icon">{entityData.status.icon || 'radio_button_checked'}</span>
+              <span class="status-badge-label">{entityData.status.label}</span>
+            {:else}
+              <span class="material-symbols-outlined status-badge-icon">radio_button_unchecked</span>
+              <span class="status-badge-label">Status</span>
+            {/if}
             {#if entityData.allowedStatuses?.length > 0}
               <span class="material-symbols-outlined status-badge-chevron">expand_more</span>
             {/if}
@@ -449,10 +480,10 @@
               {#each entityData.allowedStatuses as s}
                 <button
                   class="status-picker-item"
-                  class:active={s.iri === entityData.status.iri}
+                  class:active={s.iri === entityData.status?.iri}
                   style="--status-color: {s.color || 'var(--color-neutral)'}"
                   role="option"
-                  aria-selected={s.iri === entityData.status.iri}
+                  aria-selected={s.iri === entityData.status?.iri}
                   onclick={() => updateStatus(s.iri)}
                 >
                   <span class="material-symbols-outlined status-badge-icon">{s.icon || 'radio_button_checked'}</span>
@@ -521,8 +552,11 @@
           {openEntityInspector}
           onSave={entityData.isClass || isLocked ? null : saveProperty}
           onSaveReference={entityData.isClass || isLocked ? null : saveReferences}
+          onClearProperty={entityData.isClass || isLocked ? null : clearProperty}
           onRemoveProperty={entityData.isClass && !isLocked ? initiateRemoveProperty : null}
           onSaveCardinality={entityData.isClass && !isLocked ? saveCardinality : null}
+          onSaveQueryConfig={entityData.isClass && !isLocked ? saveQueryConfig : null}
+          onLoadMoreBacklinks={entityData.isClass ? null : loadMoreBacklinks}
         />
       </div>
 

@@ -4,7 +4,7 @@ use crate::commands::chat_storage::{
 };
 use crate::commands::chat::message_utils::{
     message_to_api_format, inject_datetime_context, inject_attachments_for_current_turn,
-    inject_subconscious_context, sanitize_tool_pairs, inject_speak_results,
+    inject_file_binaries_into_placeholders, inject_subconscious_context, sanitize_tool_pairs,
     response_content_to_blocks, extract_and_save_file_summaries,
 };
 use crate::commands::chat::loop_tools::{
@@ -71,6 +71,7 @@ pub async fn run_conversation_loop(
     let mut loop_count = 0;
     let mut strip_thinking = false;
     let mut is_first_iteration = true;
+    let mut none_stop_retries = 0usize;
     let mut tool_fingerprints: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     let loop_start = std::time::Instant::now();
@@ -165,13 +166,20 @@ pub async fn run_conversation_loop(
             .map(message_to_api_format)
             .collect();
 
-        // First-turn injections (attachments, subconscious, camera)
+        // File binaries: re-inject on every iteration. On iterations 2+ the history
+        // is reloaded from DB (which only stores FileRef, not the binary), so
+        // message_to_api_format produces an [Attached file:] placeholder. The function
+        // below finds that placeholder message and replaces it with the actual binary.
+        if let Some(ref ctx) = first_turn_ctx {
+            inject_file_binaries_into_placeholders(&mut api_messages, &ctx.attachment_binaries);
+        }
+
+        // Camera frames and system hints: first iteration only.
         if is_first_iteration {
             if let Some(ref ctx) = first_turn_ctx {
                 inject_attachments_for_current_turn(
                     &mut api_messages,
                     ctx.camera_images.as_deref(),
-                    &ctx.attachment_binaries,
                     &ctx.files_needing_summary,
                 );
                 if let Some(ref sc) = ctx.subconscious_context {
@@ -180,11 +188,6 @@ pub async fn run_conversation_loop(
             }
         }
 
-        // inject_speak_results first: wraps the user's reply to speak as a ToolResult,
-        // giving the API a matched pair without storing "Delivered." in the DB.
-        // sanitize_tool_pairs then sees properly matched pairs and handles only orphans.
-        // inject_datetime appends to (or prepends before) the last user message.
-        inject_speak_results(&mut api_messages);
         sanitize_tool_pairs(&mut api_messages);
         inject_datetime_context(&mut api_messages);
 
@@ -249,7 +252,7 @@ pub async fn run_conversation_loop(
             tools: Some(tools),
             supports_web_tools: agent_config.supports_web_tools,
             thinking: if thinking_enabled { Some(crate::ai::ThinkingConfig::Adaptive) } else { None },
-            tool_choice: Some(serde_json::json!({ "type": "any" })),
+            tool_choice: None,
         };
 
         if !silent {
@@ -287,8 +290,25 @@ pub async fn run_conversation_loop(
 
         is_first_iteration = false;
 
-        let stop_reason = api_response.stop_reason.clone()
-            .unwrap_or_else(|| "end_turn".to_string());
+        let stop_reason = match api_response.stop_reason.clone() {
+            Some(r) => {
+                none_stop_retries = 0;
+                r
+            }
+            None => {
+                none_stop_retries += 1;
+                if none_stop_retries >= 3 {
+                    loop_error = Some("API retornou resposta truncada (stop_reason=None) 3 vezes consecutivas".to_string());
+                    termination_reason = "error";
+                    break 'main;
+                }
+                log_backend("warn", &format!(
+                    "[ENGINE] stop_reason=None — resposta truncada, retentativa {}/3",
+                    none_stop_retries
+                ));
+                continue;
+            }
+        };
         log_backend("info", &format!("[ENGINE] Claude responded (stop_reason: {})", stop_reason));
 
         let usage = api_response.usage.as_ref();
@@ -307,6 +327,26 @@ pub async fn run_conversation_loop(
         if content_blocks.is_empty() && stop_reason == "end_turn" {
             log_backend("info", "[ENGINE] Empty end_turn — conversation complete, not saving");
             break 'main;
+        }
+
+        // Loop detection must run before saving the assistant message to avoid orphaned ToolUseBlocks.
+        for tc in &api_response.tool_calls {
+            if tc.name == "ask_question" { continue; }
+            let fingerprint = format!("{}:{}", tc.name, tc.input);
+            let count = tool_fingerprints.entry(fingerprint).or_insert(0);
+            *count += 1;
+            if *count >= 3 {
+                log_backend("warn", &format!(
+                    "[ENGINE] Loop detectado — '{}' chamada {} vezes com os mesmos argumentos",
+                    tc.name, count
+                ));
+                loop_error = Some(format!(
+                    "Loop detectado: a ferramenta '{}' foi chamada {} vezes consecutivas com os mesmos argumentos",
+                    tc.name, count
+                ));
+                termination_reason = "loop_detected";
+                break 'main;
+            }
         }
 
         let model = &agent_config.model_identifier;
@@ -343,27 +383,6 @@ pub async fn run_conversation_loop(
 
         let has_tool_use = !api_response.tool_calls.is_empty();
 
-        // Loop detection: track (tool_name + serialized_args) per conversation turn.
-        // speak and ask_question are excluded — they are terminal actions, not loops.
-        for tc in &api_response.tool_calls {
-            if tc.name == "speak" || tc.name == "ask_question" { continue; }
-            let fingerprint = format!("{}:{}", tc.name, tc.input);
-            let count = tool_fingerprints.entry(fingerprint).or_insert(0);
-            *count += 1;
-            if *count >= 3 {
-                log_backend("warn", &format!(
-                    "[ENGINE] Loop detectado — '{}' chamada {} vezes com os mesmos argumentos",
-                    tc.name, count
-                ));
-                loop_error = Some(format!(
-                    "Loop detectado: a ferramenta '{}' foi chamada {} vezes consecutivas com os mesmos argumentos",
-                    tc.name, count
-                ));
-                termination_reason = "loop_detected";
-                break 'main;
-            }
-        }
-
         if stop_reason == "tool_use" || (stop_reason == "max_tokens" && has_tool_use) {
             let iri = assistant_msg_iri.clone();
             let assistant_msg = executor.read(move |conn| {
@@ -381,7 +400,7 @@ pub async fn run_conversation_loop(
             }
 
             log_backend("info", "[ENGINE] Executing tools...");
-            let (tool_result_msg_iri, had_successful_speak, had_non_speak_tools, mut new_steps) =
+            let (tool_result_msg_iri, mut new_steps) =
                 execute_tools_from_message(executor, app, conversation_id, &assistant_msg).await?;
 
             for step in &mut new_steps {
@@ -391,15 +410,8 @@ pub async fn run_conversation_loop(
 
             log_backend("info", &format!("[ENGINE] Tool results saved: {}", tool_result_msg_iri));
 
-            // Break only when speak was the *only* action — the agent communicated with the user
-            // and there is nothing else to continue. If speak was paired with other tool calls,
-            // the loop continues so the remaining results are processed.
             if cancellation.is_cancelled(conversation_id) {
                 termination_reason = "cancelled";
-                break 'main;
-            }
-            if had_successful_speak && !had_non_speak_tools {
-                termination_reason = "speak_only";
                 break 'main;
             }
 

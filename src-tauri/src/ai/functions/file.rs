@@ -7,8 +7,8 @@ const DEFAULT_MAX_LINE_CHARS: usize = 4096;
 // Fallback when no model/agent/global config is available.
 const FALLBACK_MAX_BINARY_BYTES: u64 = 500 * 1024;
 
-/// Maximum bytes allowed for a binary file read, based on 70% of the conversation's
-/// context limit.
+/// Maximum bytes allowed for a binary file read, based on 70% of the model's actual
+/// context window (maxInputTokens), NOT the conversation history budget.
 ///
 /// `read_binary_file` sends the file content as a base64-encoded JSON string inside a
 /// tool result (plain text — not a native image/document block). The token cost
@@ -17,11 +17,10 @@ const FALLBACK_MAX_BINARY_BYTES: u64 = 500 * 1024;
 ///   so  raw_bytes → tokens ≈ raw_bytes × (4/3) / 2 = raw_bytes × 2/3
 ///   → max_raw_bytes = budget_tokens × 3/2
 ///
-/// Context limit lookup order (highest priority first):
-///   1. Agent's foundation:maxInputTokensPreference (per-conversation)
-///   2. foundation:DefaultMaxInputTokensSetting (global user override)
-///   3. foundation:AIModel.foundation:maxInputTokens (model default)
-///   4. Hardcoded fallback → 500 KB
+/// Context window lookup order (highest priority first):
+///   1. foundation:AIModel.foundation:maxInputTokens via conversation's agent
+///   2. foundation:AIModel.foundation:maxInputTokens via global default model
+///   3. Hardcoded fallback → 500 KB
 fn max_binary_bytes(conn: &Connection, conversation_id: Option<&str>) -> u64 {
     let max_tokens = resolve_context_limit(conn, conversation_id).unwrap_or(0);
     if max_tokens == 0 {
@@ -34,25 +33,26 @@ fn max_binary_bytes(conn: &Connection, conversation_id: Option<&str>) -> u64 {
 fn resolve_context_limit(conn: &Connection, conversation_id: Option<&str>) -> Option<usize> {
     use crate::owl::{Individual, Object};
 
-    // 1. Per-agent preference (highest priority — uses load_agent_config which applies the
-    //    full agent → model → default hierarchy internally).
-    if let Some(conv_iri) = conversation_id {
-        if let Ok(config) = crate::commands::chat::settings::load_agent_config(conn, conv_iri) {
-            return Some(config.max_tokens);
-        }
-    }
+    // Use the model's actual context window (maxInputTokens), NOT the conversation history
+    // budget (maxInputTokensPreference). The history budget controls how much prior context
+    // is sent per request (e.g. 30K) and is unrelated to the model's total capacity (e.g.
+    // 200K). Using the budget here would restrict binary reads to tiny sizes like 31 KB.
 
-    // 2. Global user-configured setting.
-    if let Ok(Some(setting)) = Individual::get(conn, "foundation:DefaultMaxInputTokensSetting") {
-        if let Some((_, Object::Literal { value, .. })) = setting.properties.iter()
-            .find(|(k, _)| k == "foundation:settingValue") {
-            if let Ok(n) = value.parse::<usize>() {
-                return Some(n);
+    // 1. Model's maxInputTokens via the conversation's agent.
+    if let Some(conv_iri) = conversation_id {
+        if let Ok(Some(agent_iri)) = crate::owl::get_iri_property(conn, conv_iri, "foundation:handledBy") {
+            if let Ok(Some(model_iri)) = crate::owl::get_iri_property(conn, &agent_iri, "foundation:usesModel") {
+                if let Ok(Some(model)) = Individual::get(conn, &model_iri) {
+                    if let Some((_, Object::Integer(n))) = model.properties.iter()
+                        .find(|(k, _)| k == "foundation:maxInputTokens") {
+                        return Some(*n as usize);
+                    }
+                }
             }
         }
     }
 
-    // 3. Model's maxInputTokens.
+    // 2. Model's maxInputTokens via the global default model.
     let model_iri = crate::commands::chat::settings::get_ai_model_iri(conn).ok()??;
     let model = Individual::get(conn, &model_iri).ok()??;
     if let Some((_, Object::Integer(n))) = model.properties.iter()

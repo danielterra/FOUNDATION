@@ -165,33 +165,6 @@ fn add_cache_breakpoint(message: &mut ClaudeMessage) {
     }
 }
 
-fn extract_speak_text(json: &str) -> &str {
-    for prefix in &["\"message\":\"", "\"message\": \""] {
-        if let Some(pos) = json.find(prefix) {
-            let after = &json[pos + prefix.len()..];
-            let bytes = after.as_bytes();
-            let mut i = 0;
-            while i < bytes.len() {
-                if bytes[i] == b'\\' {
-                    i += 2;
-                } else if bytes[i] == b'"' {
-                    return &after[..i];
-                } else {
-                    i += 1;
-                }
-            }
-            return after;
-        }
-    }
-    ""
-}
-
-fn unescape_json_string(s: &str) -> String {
-    s.replace("\\n", "\n")
-     .replace("\\t", "\t")
-     .replace("\\\"", "\"")
-     .replace("\\\\", "\\")
-}
 
 impl ClaudeProvider {
     /// Stream a request via SSE, emitting Tauri events for each delta.
@@ -327,7 +300,7 @@ impl ClaudeProvider {
             tool_id: String,
             tool_name: String,
             tool_input_json: String,
-            speak_text_emitted: usize,
+            signature: String,
         }
 
         let mut blocks: Vec<BlockState> = Vec::new();
@@ -411,28 +384,10 @@ impl ClaudeProvider {
                                         "input_json_delta" => {
                                             let partial = delta["partial_json"].as_str().unwrap_or("");
                                             block.tool_input_json.push_str(partial);
-                                            if block.tool_name == "speak" {
-                                                let full_text = extract_speak_text(&block.tool_input_json);
-                                                crate::commands::log_backend("debug", &format!(
-                                                    "[STREAM] speak delta conv={} full_text_len={} emitted={}",
-                                                    conv_id, full_text.len(), block.speak_text_emitted
-                                                ));
-                                                if full_text.len() > block.speak_text_emitted {
-                                                    let new_text = &full_text[block.speak_text_emitted..];
-                                                    let unescaped = unescape_json_string(new_text);
-                                                    if !unescaped.is_empty() {
-                                                        block.speak_text_emitted = full_text.len();
-                                                        crate::commands::log_backend("debug", &format!(
-                                                            "[STREAM] emitting speak delta: {:?}", &unescaped[..unescaped.len().min(40)]
-                                                        ));
-                                                        app.emit("chat-ai-delta", serde_json::json!({
-                                                            "conversationId": conv_id,
-                                                            "type": "speak",
-                                                            "text": unescaped,
-                                                        })).ok();
-                                                    }
-                                                }
-                                            }
+                                        }
+                                        "signature_delta" => {
+                                            let sig = delta["signature"].as_str().unwrap_or("");
+                                            block.signature.push_str(sig);
                                         }
                                         _ => {}
                                     }
@@ -497,7 +452,7 @@ impl ClaudeProvider {
                     crate::commands::log_backend("debug", "[CLAUDE API] Received thinking block");
                     thinking_blocks.push(crate::ai::ThinkingBlock::Thinking {
                         thinking: block.text,
-                        signature: String::new(),
+                        signature: block.signature,
                     });
                 }
                 "tool_use" => {

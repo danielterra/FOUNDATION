@@ -26,6 +26,7 @@ pub struct Property {
     pub unit: Option<String>,
     pub formula: Option<String>,
     pub aggregation: Option<String>,
+    pub query_config: Option<String>,
     pub domain_labels: Vec<DomainLabel>,
     pub ai_behavior_rules: Option<String>,
 }
@@ -47,6 +48,7 @@ impl Property {
             unit: None,
             formula: None,
             aggregation: None,
+            query_config: None,
             domain_labels: vec![],
             ai_behavior_rules: None,
         }
@@ -221,6 +223,9 @@ impl Property {
         let aggregation = triples.iter()
             .find(|t| t.predicate == "foundation:aggregation")
             .and_then(|t| t.object.as_literal());
+        let query_config = triples.iter()
+            .find(|t| t.predicate == "foundation:queryConfig")
+            .and_then(|t| t.object.as_literal());
         let ai_behavior_rules = triples.iter()
             .find(|t| t.predicate == "foundation:aiBehaviorRules")
             .and_then(|t| t.object.as_literal());
@@ -240,6 +245,7 @@ impl Property {
             unit,
             formula,
             aggregation,
+            query_config,
             domain_labels: vec![],
             ai_behavior_rules,
         })

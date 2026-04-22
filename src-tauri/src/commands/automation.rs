@@ -434,10 +434,12 @@ pub async fn automation__get_graph(
 pub async fn automation__run(
     automation_iri: String,
     input_iri: Option<String>,
+    dry_run: Option<bool>,
     app: AppHandle,
 ) -> Result<(), String> {
+    let dry_run = dry_run.unwrap_or(false);
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = crate::process_automation::executor::run_process(&app, &automation_iri, input_iri).await {
+        if let Err(e) = crate::process_automation::executor::run_process(&app, &automation_iri, input_iri, dry_run).await {
             crate::commands::log_backend("error", &format!("[automation] Run failed for {}: {}", automation_iri, e));
         }
     });
@@ -607,7 +609,7 @@ pub async fn automation__get_execution(
 
             let output_iri = get_iri_property(conn, &step_iri, "foundation:outputValue")
                 .map_err(|e| e.to_string())?;
-            let output_text = get_literal_property(conn, &step_iri, "rdfs:comment")
+            let output_text = get_literal_property(conn, &step_iri, "foundation:stepOutput")
                 .map_err(|e| e.to_string())?;
             let output = output_iri.or(output_text);
 

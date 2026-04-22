@@ -35,7 +35,7 @@ async fn fire_processes_for_event(app: &AppHandle, event_key: &str) -> Result<()
         .await?;
 
     for process_iri in process_iris {
-        if let Err(e) = super::executor::run_process(app, &process_iri, None).await {
+        if let Err(e) = super::executor::run_process(app, &process_iri, None, false).await {
             log_backend("error", &format!("[trigger] Error running process {}: {}", process_iri, e));
         }
     }

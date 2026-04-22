@@ -182,10 +182,11 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
                     })
                     .unwrap_or_default();
 
+                let base_system_prompt = crate::commands::chat::settings::load_base_system_prompt(conn);
                 let system_prompt = if base_prompt.is_empty() {
-                    crate::ai::BASE_SYSTEM_PROMPT.to_string()
+                    base_system_prompt
                 } else {
-                    format!("{}\n\n{}", crate::ai::BASE_SYSTEM_PROMPT, base_prompt)
+                    format!("{}\n\n{}", base_system_prompt, base_prompt)
                 };
 
                 let timeout_secs = get_literal_property(conn, &agent_iri, "foundation:requestTimeout")

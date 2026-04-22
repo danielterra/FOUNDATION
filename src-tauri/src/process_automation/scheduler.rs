@@ -5,6 +5,7 @@ use tauri::{AppHandle, Manager};
 use tokio::task::JoinHandle;
 
 use crate::commands::log_backend;
+use crate::eavto::{Object, Triple};
 use crate::owl::{DbExecutor, Individual};
 
 pub struct SchedulerState {
@@ -23,14 +24,21 @@ impl SchedulerState {
 
 const STATUS_PAUSED: &str = "foundation:Status_1773016842120";
 
+struct TimerDef {
+    process_iri: String,
+    cron_expr: String,
+    timer_def_iri: String,
+    last_run_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 fn collect_timer_definitions(
     conn: &rusqlite::Connection,
-) -> Result<Vec<(String, String)>, String> {
+) -> Result<Vec<TimerDef>, String> {
     let start_event_iris =
         crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:automation_TimerStartEvent")
             .map_err(|e| e.to_string())?;
 
-    let mut timers: Vec<(String, String)> = Vec::new();
+    let mut timers: Vec<TimerDef> = Vec::new();
     for start_event_iri in &start_event_iris {
         let start_event = match Individual::get(conn, start_event_iri.as_str()).map_err(|e| e.to_string())? {
             Some(i) => i,
@@ -75,9 +83,44 @@ fn collect_timer_definitions(
             continue;
         }
 
-        timers.push((process_iri, cron_expr));
+        let last_run_at = timer_def.properties.iter()
+            .filter(|(p, _)| p == "foundation:lastRunAt")
+            .filter_map(|(_, v)| {
+                let s = v.as_literal()?;
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+            })
+            .max();
+
+        timers.push(TimerDef { process_iri, cron_expr, timer_def_iri, last_run_at });
     }
     Ok(timers)
+}
+
+async fn record_last_run(app: &AppHandle, timer_def_iri: &str) {
+    let executor = match app.try_state::<DbExecutor>() {
+        Some(e) => e,
+        None => return,
+    };
+    let timer_def_iri = timer_def_iri.to_string();
+    let now_str = chrono::Utc::now().to_rfc3339();
+    if let Err(e) = executor.write(move |conn| {
+        let triple = Triple::new(
+            &timer_def_iri,
+            "foundation:lastRunAt",
+            Object::Literal {
+                value: now_str,
+                datatype: Some("xsd:dateTime".to_string()),
+                language: None,
+            },
+        );
+        crate::eavto::store::assert_triples(conn, &[triple], "scheduler")
+            .map_err(|e| e.to_string())?;
+        Ok(String::new())
+    }).await {
+        log_backend("warn", &format!("[scheduler] Failed to record lastRunAt: {}", e));
+    }
 }
 
 /// Collects all active TimerEventDefinitions with a timeCycle, spawns one tokio task per schedule.
@@ -106,7 +149,7 @@ pub async fn start(app: AppHandle) {
         Ok(h) => h,
         Err(e) => e.into_inner(),
     };
-    for (process_iri, cron_expr) in timer_defs {
+    for TimerDef { process_iri, cron_expr, timer_def_iri, last_run_at } in timer_defs {
         let schedule = match Schedule::from_str(&cron_expr) {
             Ok(s) => s,
             Err(e) => {
@@ -117,13 +160,33 @@ pub async fn start(app: AppHandle) {
 
         let app_clone = app.clone();
         let handle = tokio::spawn(async move {
+            // Catch-up: if the app was offline during a scheduled time, execute once.
+            // Only triggers when a previous run was recorded (last_run_at is set) and
+            // the next scheduled time after it already passed (with 60s grace margin).
+            if let Some(last) = last_run_at {
+                let catch_up_threshold = chrono::Utc::now() - chrono::Duration::seconds(60);
+                if let Some(missed) = schedule.after(&last).next() {
+                    if missed < catch_up_threshold {
+                        log_backend("info", &format!(
+                            "[scheduler] Catch-up: running missed execution of {} (was due at {})",
+                            process_iri, missed
+                        ));
+                        if let Err(e) = super::executor::run_process(&app_clone, &process_iri, None, false).await {
+                            log_backend("error", &format!("[scheduler] Catch-up error for {}: {}", process_iri, e));
+                        }
+                        record_last_run(&app_clone, &timer_def_iri).await;
+                    }
+                }
+            }
+
             for next in schedule.upcoming(chrono::Utc) {
                 let now = chrono::Utc::now();
                 let delay = (next - now).to_std().unwrap_or_default();
                 tokio::time::sleep(delay).await;
-                if let Err(e) = super::executor::run_process(&app_clone, &process_iri, None).await {
+                if let Err(e) = super::executor::run_process(&app_clone, &process_iri, None, false).await {
                     log_backend("error", &format!("[scheduler] Error running process {}: {}", process_iri, e));
                 }
+                record_last_run(&app_clone, &timer_def_iri).await;
             }
         });
         handles.push(handle);
@@ -251,9 +314,9 @@ mod scheduler_tests {
 
         let timers = collect_timer_definitions(&conn).unwrap();
         assert_eq!(timers.len(), 1);
-        let (process_iri, cron_expr) = &timers[0];
-        assert_eq!(process_iri, "foundation:Process1");
-        assert_eq!(cron_expr, "0 * * * * *");
+        assert_eq!(timers[0].process_iri, "foundation:Process1");
+        assert_eq!(timers[0].cron_expr, "0 * * * * *");
+        assert!(timers[0].last_run_at.is_none());
     }
 
     #[test]
@@ -274,7 +337,6 @@ mod scheduler_tests {
         insert_triples(&mut conn, &[
             Triple::new("foundation:Start3", "rdf:type", Object::Iri("foundation:automation_TimerStartEvent".to_string())),
             Triple::new("foundation:Start3", "foundation:eventDefinition", Object::Iri("foundation:Timer3".to_string())),
-            // No partOfProcess on Start3
             Triple::new("foundation:Timer3", "rdf:type", Object::Iri("foundation:automation_TimerEventDefinition".to_string())),
             Triple::new("foundation:Timer3", "foundation:timeCycle", Object::Literal {
                 value: "0 * * * * *".to_string(),
@@ -312,7 +374,7 @@ mod scheduler_tests {
 
         let timers = collect_timer_definitions(&conn).unwrap();
         assert_eq!(timers.len(), 1);
-        assert_eq!(timers[0].0, "foundation:ProcessAct");
+        assert_eq!(timers[0].process_iri, "foundation:ProcessAct");
     }
 
     #[test]
@@ -331,9 +393,33 @@ mod scheduler_tests {
         let timers = collect_timer_definitions(&conn).unwrap();
         assert_eq!(timers.len(), 2);
 
-        let process_iris: Vec<&str> = timers.iter().map(|(p, _)| p.as_str()).collect();
+        let process_iris: Vec<&str> = timers.iter().map(|t| t.process_iri.as_str()).collect();
         assert!(process_iris.contains(&"foundation:ProcessA"));
         assert!(process_iris.contains(&"foundation:ProcessB"));
+    }
+
+    #[test]
+    fn test_collect_timer_definitions_reads_last_run_at() {
+        let mut conn = setup_test_db();
+        let triples = timer_start_event_triples(
+            "foundation:StartLR", "foundation:TimerLR", "foundation:ProcessLR",
+            Some("0 0 9 * * *"), false,
+        );
+        insert_triples(&mut conn, &triples);
+        insert_triples(&mut conn, &[Triple::new(
+            "foundation:TimerLR",
+            "foundation:lastRunAt",
+            Object::Literal {
+                value: "2024-01-15T09:00:00Z".to_string(),
+                datatype: Some("xsd:dateTime".to_string()),
+                language: None,
+            },
+        )]);
+
+        let timers = collect_timer_definitions(&conn).unwrap();
+        assert_eq!(timers.len(), 1);
+        let last = timers[0].last_run_at.expect("should have last_run_at");
+        assert_eq!(last.to_rfc3339(), "2024-01-15T09:00:00+00:00");
     }
 }
 

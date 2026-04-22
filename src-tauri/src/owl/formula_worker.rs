@@ -272,17 +272,24 @@ fn evaluate_formula_for_instance(
     instance_iri: &str,
     property_iri: &str,
 ) -> Result<String, String> {
-    let has_aggregation: bool = conn.query_row(
-        "SELECT COUNT(*) FROM triples \
-         WHERE subject = ? AND predicate = 'foundation:aggregation' AND retracted = 0",
+    // Respect the immutable TX model: the predicate with the highest tx is the current intent.
+    // A property may have historical aggregation triples with retracted=0 that predate a formula
+    // update — checking COUNT(*) would incorrectly prefer the stale aggregation.
+    let mode: Option<String> = conn.query_row(
+        "SELECT predicate FROM triples \
+         WHERE subject = ? AND predicate IN ('foundation:formula', 'foundation:aggregation') \
+         AND retracted = 0 \
+         ORDER BY tx DESC LIMIT 1",
         rusqlite::params![property_iri],
-        |row| row.get::<_, i64>(0),
-    ).map(|c| c > 0).unwrap_or(false);
+        |row| row.get(0),
+    ).ok();
 
-    if has_aggregation {
-        crate::owl::aggregation::evaluate_aggregation_for_instance(conn, instance_iri, property_iri)
-    } else {
-        crate::owl::formula::evaluate_formula_for_instance_raw(conn, instance_iri, property_iri)
+    match mode.as_deref() {
+        Some("foundation:aggregation") =>
+            crate::owl::aggregation::evaluate_aggregation_for_instance(conn, instance_iri, property_iri),
+        Some("foundation:formula") =>
+            crate::owl::formula::evaluate_formula_for_instance_raw(conn, instance_iri, property_iri),
+        _ => Err(format!("Property '{}' has no formula or aggregation", property_iri)),
     }
 }
 
@@ -306,27 +313,25 @@ fn store_calculated_value(
 }
 
 fn fetch_label(conn: &Connection, iri: &str) -> String {
-    conn.query_row(
-        "SELECT COALESCE(object_value, '') FROM triples \
-         WHERE subject = ? AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1",
-        rusqlite::params![iri],
-        |row| row.get(0),
-    ).unwrap_or_default()
+    crate::eavto::query::get_by_entity_predicate(conn, iri, "rdfs:label")
+        .ok()
+        .and_then(|r| r.triples.into_iter().next())
+        .and_then(|t| t.object.as_literal().map(|s| s.to_string()))
+        .unwrap_or_default()
 }
 
 fn fetch_domain(conn: &Connection, iri: &str) -> String {
-    conn.query_row(
-        "SELECT COALESCE(object, '') FROM triples \
-         WHERE subject = ? AND predicate = 'rdfs:domain' AND retracted = 0 LIMIT 1",
-        rusqlite::params![iri],
-        |row| row.get(0),
-    ).unwrap_or_default()
+    crate::eavto::query::get_by_entity_predicate(conn, iri, "rdfs:domain")
+        .ok()
+        .and_then(|r| r.triples.into_iter().next())
+        .and_then(|t| t.object.as_iri().map(|s| s.to_string()))
+        .unwrap_or_default()
 }
 
 fn query_class_instances(conn: &Connection, class_iri: &str, offset: i64) -> Vec<String> {
     conn.prepare(
-        "SELECT DISTINCT subject FROM triples
-         WHERE predicate = 'rdf:type' AND object = ? AND retracted = 0
+        "SELECT DISTINCT subject FROM triples_current
+         WHERE predicate = 'rdf:type' AND object = ?
          ORDER BY subject
          LIMIT -1 OFFSET ?",
     )
@@ -343,8 +348,8 @@ fn query_formula_properties_by_reference(
     placeholder: &str,
 ) -> Vec<(String, String, String)> {
     conn.prepare(
-        "SELECT subject, object_value, predicate FROM triples \
-         WHERE predicate IN ('foundation:formula', 'foundation:aggregation') AND retracted = 0",
+        "SELECT subject, object_value, predicate FROM triples_current \
+         WHERE predicate IN ('foundation:formula', 'foundation:aggregation')",
     )
     .map(|mut stmt| {
         stmt.query_map([], |row| Ok((

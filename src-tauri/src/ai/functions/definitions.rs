@@ -193,6 +193,26 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     required: false,
                     schema: None,
                 },
+                Parameter {
+                    name: "query_config".to_string(),
+                    param_type: "string".to_string(),
+                    description: r#"JSON string defining a dynamic query property. ObjectProperty only. Cannot be combined with formula or aggregation. The resolved set is stored eagerly and kept up-to-date in real time by a background worker. Values are read-only and cannot be set directly.
+
+Format: {"targetClass":"<class_iri>","filters":[...]}
+
+Each filter: {"propertyIri":"<prop_iri>","operator":"<op>","value":"<literal>"}
+Operators: eq, neq, gt, lt, gte, lte, between, exists, not_exists
+- eq/neq/gt/lt/gte/lte: compare property value to "value" (literal or {{self.prop_iri}} to read from the owner instance)
+- between: requires "valueFrom" and "valueTo" instead of "value"
+- exists / not_exists: no "value" needed — checks presence/absence of the property
+
+Self-reference: use "{{self.foundation:myProp}}" in "value"/"valueFrom"/"valueTo" to resolve the owner's property at query time. If the owner lacks that property, the query returns an empty set.
+
+Example — find all active Tasks whose due date is before this Project's deadline:
+{"targetClass":"foundation:Task","filters":[{"propertyIri":"foundation:hasStatus","operator":"eq","value":"foundation:StatusActive"},{"propertyIri":"foundation:dueDate","operator":"lt","value":"{{self.foundation:deadline}}"}]}"#.to_string(),
+                    required: false,
+                    schema: None,
+                },
             ],
         },
 
@@ -728,6 +748,13 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     name: "input_iri".to_string(),
                     param_type: "string".to_string(),
                     description: "IRI of the input individual required by the automation's start event. Omit only if the automation has no inputClass.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "dry_run".to_string(),
+                    param_type: "boolean".to_string(),
+                    description: "If true, executes the automation in read-only mode: all reads and searches run normally, but write operations (assert_individual, replace_property_values, etc.) are intercepted and return mock success responses without touching the database. Use this to test scripts safely before committing data.".to_string(),
                     required: false,
                     schema: None,
                 },

@@ -122,10 +122,10 @@ mod tests {
 
     #[test]
     fn make_step_nao_trunca_entrada_curta() {
-        let input = serde_json::json!({"message": "hello"});
-        let step = make_step(1, "speak", &input, "Delivered.", false, 10);
+        let input = serde_json::json!({"query": "hello"});
+        let step = make_step(1, "search", &input, "3 results", false, 10);
         assert!(!step.input_snippet.ends_with('…'), "não deve truncar entradas curtas");
-        assert_eq!(step.tool, "speak");
+        assert_eq!(step.tool, "search");
         assert_eq!(step.iteration, 1);
         assert_eq!(step.duration_ms, 10);
         assert!(!step.is_error);
@@ -146,12 +146,12 @@ mod tests {
 
         let steps = vec![
             make_step(1, "search", &serde_json::json!({"query": "tasks"}), "3 results", false, 120),
-            make_step(1, "speak", &serde_json::json!({"message": "Found 3 tasks."}), "Delivered.", false, 5),
+            make_step(1, "describe_individual", &serde_json::json!({"iris": ["foundation:Task_1"]}), "Task details.", false, 5),
         ];
 
         let result = save_trace(
             &executor, "foundation:Conv_test_123",
-            &steps, "speak_only", 1, 100, 50, 500,
+            &steps, "end_turn", 1, 100, 50, 500,
         ).await;
         assert!(result.is_ok(), "save_trace falhou: {:?}", result.err());
     }

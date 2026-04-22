@@ -221,11 +221,8 @@ fn finish_step_record(
                 vec![Object::Iri(val.to_string())], "process_automation")
                 .map_err(|e| e.to_string())?;
         } else {
-            let comment_triple = crate::eavto::Triple::new(
-                step_iri, "rdfs:comment",
-                Object::Literal { value: val.to_string(), datatype: Some("xsd:string".to_string()), language: None },
-            );
-            crate::eavto::store::assert_triples(conn, &[comment_triple], "process_automation")
+            ind.add_property(conn, "foundation:stepOutput",
+                vec![lit_str(val)], "process_automation")
                 .map_err(|e| e.to_string())?;
         }
     }
@@ -257,10 +254,14 @@ fn finish_execution_record(
 }
 
 /// Runs a BPMN process from the start, threading outputs through an ExecutionContext.
-pub async fn run_process(app: &AppHandle, process_iri: &str, input_iri: Option<String>) -> Result<()> {
+/// Set `dry_run = true` to execute read operations normally but skip all writes in CodeTask scripts.
+pub async fn run_process(app: &AppHandle, process_iri: &str, input_iri: Option<String>, dry_run: bool) -> Result<()> {
     let mut ctx = ExecutionContext::new();
     if let Some(iri) = input_iri {
         ctx.insert("inputIRIs".to_string(), iri);
+    }
+    if dry_run {
+        ctx.insert("dryRun".to_string(), "true".to_string());
     }
     run_process_with_context(app, process_iri, &mut ctx).await.map(|_| ())
 }
@@ -316,6 +317,22 @@ pub async fn run_process_with_context(
         })
         .await?;
 
+    if let Some(error_msg) = run_result.as_ref().err() {
+        let error_msg = error_msg.clone();
+        let exec_iri_notif = exec_iri.clone();
+        let process_iri_notif = process_iri.clone();
+        executor
+            .write(move |conn| {
+                let label = crate::owl::get_literal_property(conn, &process_iri_notif, "rdfs:label")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| process_iri_notif.clone());
+                create_failure_notification(conn, &exec_iri_notif, &label, &error_msg)
+            })
+            .await
+            .ok();
+    }
+
     let finished_status = if run_result.is_ok() { "completed" } else { "failed" };
     if let Err(e) = app.emit("automation-execution-finished", serde_json::json!({
         "processIri": process_iri,
@@ -327,6 +344,35 @@ pub async fn run_process_with_context(
     }
 
     run_result
+}
+
+fn create_failure_notification(
+    conn: &mut rusqlite::Connection,
+    exec_iri: &str,
+    process_label: &str,
+    error: &str,
+) -> Result<String> {
+    let notif_iri = format!("foundation:AINotification_{}", chrono::Utc::now().timestamp_millis());
+    let title = format!("Automation failed: {}", process_label);
+    let ind = Individual::new(&notif_iri);
+    ind.assert(conn, "foundation:AINotification", &title, "notifications_active", "process_automation")
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, "foundation:notificationType",
+        vec![lit_str("error")], "process_automation")
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, "foundation:notificationTitle",
+        vec![lit_str(&title)], "process_automation")
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, "foundation:notificationBody",
+        vec![lit_str(error)], "process_automation")
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, "foundation:notificationSource",
+        vec![Object::Iri(exec_iri.to_string())], "process_automation")
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, "foundation:hasStatus",
+        vec![Object::Iri("foundation:Pending".to_string())], "process_automation")
+        .map_err(|e| e.to_string())?;
+    Ok(notif_iri)
 }
 
 /// Looks up an ErrorHandler individual whose `foundation:appliesTo` points to `node_iri`.
@@ -467,6 +513,9 @@ async fn execute_nodes(
         let step_result = match kind {
             "RequestTask" => {
                 super::request_task::execute_request_task(app, &node_iri, ctx).await
+            }
+            "CodeTask" => {
+                super::code_task::execute_code_task(app, &node_iri, ctx).await
             }
             "ServiceTask" | "ScriptTask" => {
                 dispatch_ai_task(app, process_iri, &node_iri, &node_type, ctx).await

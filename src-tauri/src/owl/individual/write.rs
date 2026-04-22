@@ -6,6 +6,11 @@ pub(super) fn is_formula_property(conn: &Connection, property_iri: &str) -> Resu
     Ok(!result.triples.is_empty())
 }
 
+pub(super) fn is_query_property(conn: &Connection, property_iri: &str) -> Result<bool> {
+    let result = query::get_by_entity_predicate(conn, property_iri, "foundation:queryConfig")?;
+    Ok(!result.triples.is_empty())
+}
+
 impl Individual {
     /// Assert individual with required metadata (label and icon)
     /// This is the recommended way to create individuals
@@ -104,16 +109,31 @@ impl Individual {
             return Err(OwlError::NotFound(format!("Individual {} has no rdf:type", self.iri)));
         }
 
-        if !is_meta_property {
+        let subject_is_property_def = types_result.triples.iter()
+            .filter_map(|t| t.object.as_iri())
+            .any(|iri| iri == "owl:DatatypeProperty" || iri == "owl:ObjectProperty");
+
+        if !is_meta_property && !subject_is_property_def {
             let property_is_valid = types_result.triples.iter()
                 .filter_map(|t| t.object.as_iri())
                 .any(|class_iri| Class::has_property(conn, class_iri, property));
 
             if !property_is_valid {
+                let individual_class = types_result.triples.first()
+                    .and_then(|t| t.object.as_iri())
+                    .unwrap_or("unknown");
+                let domains: Vec<String> = query::get_by_entity_predicate(conn, property, "rdfs:domain")
+                    .map(|r| r.triples.iter().filter_map(|t| t.object.as_iri()).map(String::from).collect())
+                    .unwrap_or_default();
+                let domain_hint = if domains.is_empty() {
+                    " (no domain defined)".to_string()
+                } else {
+                    format!(" (domain: {})", domains.join(", "))
+                };
                 return Err(OwlError::InvalidOperation(
                     format!(
-                        "Property {} is not defined in any class of individual {}",
-                        property, self.iri
+                        "Property {}{} is not defined for {}. Use define_property to add {} to the domain, then retry.",
+                        property, domain_hint, individual_class, individual_class
                     )
                 ));
             }
@@ -186,6 +206,12 @@ impl Individual {
                     property
                 )));
             }
+            if let Ok(true) = is_query_property(conn, property) {
+                return Err(OwlError::ValidationError(format!(
+                    "Property '{}' is a query property and cannot be set directly",
+                    property
+                )));
+            }
         }
 
         let types_result = query::get_by_entity_predicate(conn, &self.iri, rdf::TYPE)?;
@@ -200,10 +226,21 @@ impl Individual {
                 .any(|class_iri| Class::has_property(conn, class_iri, property));
 
             if !property_is_valid {
+                let individual_class = types_result.triples.first()
+                    .and_then(|t| t.object.as_iri())
+                    .unwrap_or("unknown");
+                let domains: Vec<String> = query::get_by_entity_predicate(conn, property, "rdfs:domain")
+                    .map(|r| r.triples.iter().filter_map(|t| t.object.as_iri()).map(String::from).collect())
+                    .unwrap_or_default();
+                let domain_hint = if domains.is_empty() {
+                    " (no domain defined)".to_string()
+                } else {
+                    format!(" (domain: {})", domains.join(", "))
+                };
                 return Err(OwlError::InvalidOperation(
                     format!(
-                        "Property {} is not defined in any class of individual {}",
-                        property, self.iri
+                        "Property {}{} is not defined for {}. Use define_property to add {} to the domain, then retry.",
+                        property, domain_hint, individual_class, individual_class
                     )
                 ));
             }

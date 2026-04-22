@@ -28,12 +28,18 @@ pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
                     }
                 }
             ),
-            ContentBlock::FileRef { file_iri, file_name, .. } => Some(
-                ApiContentBlock::Text {
-                    text: format!(
-                        "[Attached file: {} | Knowledge base IRI: {}]",
-                        file_name, file_iri
-                    ),
+            ContentBlock::FileRef { file_iri, file_name, ai_summary, .. } => Some(
+                if let Some(summary) = ai_summary {
+                    ApiContentBlock::Text {
+                        text: format!("[File: {} | IRI: {}]\n{}", file_name, file_iri, summary),
+                    }
+                } else {
+                    ApiContentBlock::Text {
+                        text: format!(
+                            "[Attached file: {} | Knowledge base IRI: {}]",
+                            file_name, file_iri
+                        ),
+                    }
                 }
             ),
             ContentBlock::CameraRef { .. } => None,
@@ -62,9 +68,6 @@ pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
                     data: data.clone(),
                 }
             ),
-            ContentBlock::SpeakOutput { text } => Some(
-                ApiContentBlock::Text { text: text.clone() }
-            ),
             ContentBlock::QuestionOutput { id, question, question_type, options } => Some(
                 ApiContentBlock::ToolUse {
                     id: id.clone(),
@@ -85,48 +88,36 @@ pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
     }
 }
 
-/// Inject camera frames and file attachment binaries into the last user message.
-/// Called only on the first loop iteration — subsequent turns receive no binary content.
-pub fn inject_attachments_for_current_turn(
+/// Re-inject file attachment binaries into every user message that still has an
+/// `[Attached file:]` text placeholder (created by `message_to_api_format` from a `FileRef`).
+///
+/// Called on every loop iteration so the model always receives the actual binary content
+/// (image / PDF / text) rather than a text stub. On iteration 1 the target is typically
+/// the last user message; on iterations 2+ it is an earlier message, because the most
+/// recent user-role message is the tool-result wrapper from the previous tool execution.
+pub fn inject_file_binaries_into_placeholders(
     messages: &mut Vec<ChatMessage>,
-    camera_frames: Option<&[String]>,
     attachment_binaries: &[(String, String)],
-    files_needing_summary: &[(String, String)],
 ) {
-    if camera_frames.map_or(true, |f| f.is_empty())
-        && attachment_binaries.is_empty()
-        && files_needing_summary.is_empty()
-    {
-        return;
-    }
+    if attachment_binaries.is_empty() { return; }
 
-    // Always target the last user message, even if it contains tool_result blocks.
-    // After a merge of consecutive user turns (tool_result message + new user text),
-    // the resulting message starts with tool_results followed by the current user content.
-    // Filtering out such messages would inject into the wrong (earlier) turn.
-    let target = messages.iter_mut().rev().find(|msg| msg.role == "user");
-
-    let Some(msg) = target else { return };
-
-    let mut inject: Vec<ApiContentBlock> = Vec::new();
-
-    for (mime_type, data) in attachment_binaries {
+    let inject: Vec<ApiContentBlock> = attachment_binaries.iter().filter_map(|(mime_type, data)| {
         if mime_type.starts_with("image/") {
-            inject.push(ApiContentBlock::Image {
+            Some(ApiContentBlock::Image {
                 source: ApiImageSource {
                     source_type: "base64".to_string(),
                     media_type: mime_type.clone(),
                     data: data.clone(),
                 },
-            });
+            })
         } else if mime_type == "application/pdf" {
-            inject.push(ApiContentBlock::Document {
+            Some(ApiContentBlock::Document {
                 source: ApiDocumentSource {
                     source_type: "base64".to_string(),
                     media_type: mime_type.clone(),
                     data: data.clone(),
                 },
-            });
+            })
         } else if mime_type.starts_with("text/") {
             use base64::Engine as _;
             let decoded = base64::engine::general_purpose::STANDARD
@@ -134,11 +125,61 @@ pub fn inject_attachments_for_current_turn(
                 .ok()
                 .and_then(|b| String::from_utf8(b).ok())
                 .unwrap_or_default();
-            inject.push(ApiContentBlock::Text {
+            Some(ApiContentBlock::Text {
                 text: format!("<file_content mime_type=\"{}\">\n{}\n</file_content>", mime_type, decoded),
-            });
+            })
+        } else {
+            None
+        }
+    }).collect();
+
+    if inject.is_empty() { return; }
+
+    let target_idx = messages.iter().rposition(|msg| {
+        if msg.role != "user" { return false; }
+        match &msg.content {
+            MessageContent::ContentBlocks(blocks) => blocks.iter().any(|b| {
+                if let ApiContentBlock::Text { text } = b {
+                    text.starts_with("[Attached file:")
+                } else {
+                    false
+                }
+            }),
+            _ => false,
+        }
+    });
+
+    let Some(idx) = target_idx else { return };
+
+    if let MessageContent::ContentBlocks(ref mut blocks) = messages[idx].content {
+        blocks.retain(|b| !matches!(b, ApiContentBlock::Text { text } if text.starts_with("[Attached file:")));
+        let insert_pos = blocks.iter()
+            .position(|b| !matches!(b, ApiContentBlock::ToolResult { .. }))
+            .unwrap_or(blocks.len());
+        for (i, block) in inject.into_iter().enumerate() {
+            blocks.insert(insert_pos + i, block);
         }
     }
+}
+
+/// Inject camera frames and the files-needing-summary hint into the last user message.
+/// Called only on the first loop iteration. File binary injection is handled separately
+/// by `inject_file_binaries_into_placeholders` which runs on every iteration.
+pub fn inject_attachments_for_current_turn(
+    messages: &mut Vec<ChatMessage>,
+    camera_frames: Option<&[String]>,
+    files_needing_summary: &[(String, String)],
+) {
+    if camera_frames.map_or(true, |f| f.is_empty()) && files_needing_summary.is_empty() {
+        return;
+    }
+
+    // Always target the last user message, even if it contains tool_result blocks.
+    let target = messages.iter_mut().rev().find(|msg| msg.role == "user");
+
+    let Some(msg) = target else { return };
+
+    let mut inject: Vec<ApiContentBlock> = Vec::new();
 
     if let Some(frames) = camera_frames {
         for frame_data in frames {
@@ -195,11 +236,6 @@ pub fn inject_attachments_for_current_turn(
 
     match &mut msg.content {
         MessageContent::ContentBlocks(ref mut blocks) => {
-            // Remove FileRef text placeholders that were created by message_to_api_format —
-            // the actual vision/document blocks being injected supersede them.
-            if !attachment_binaries.is_empty() {
-                blocks.retain(|b| !matches!(b, ApiContentBlock::Text { text } if text.starts_with("[Attached file:")));
-            }
             // Insert after any leading tool_result blocks so the API requirement
             // (tool_results must precede other content in a user message) is preserved.
             let insert_pos = blocks.iter()
@@ -240,11 +276,9 @@ pub fn inject_subconscious_context(messages: &mut Vec<ChatMessage>, context: &st
 
 /// Prepend current date/time as a text block to the last user message in the list.
 /// This keeps the system prompt fully static (cacheable) while still giving Claude
-/// temporal context on every request. No-op if the list is empty.
-///
-/// When the last user message starts with ToolResult blocks (e.g. after inject_speak_results
-/// wraps the user's reply as a speak tool result), the datetime is appended instead of
-/// prepended — the API requires tool_result blocks to come first in user messages.
+/// temporal context on every request. No-op if the list is empty or if the last
+/// user message contains only ToolResult blocks (tool-loop iterations — the model
+/// already has the datetime from the first turn's injection).
 pub fn inject_datetime_context(messages: &mut Vec<ChatMessage>) {
     let date_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string();
     let datetime_block = ApiContentBlock::Text {
@@ -256,13 +290,14 @@ pub fn inject_datetime_context(messages: &mut Vec<ChatMessage>) {
     if let Some(msg) = target {
         match &mut msg.content {
             MessageContent::ContentBlocks(ref mut blocks) => {
-                let starts_with_tool_result = blocks.first()
-                    .map_or(false, |b| matches!(b, ApiContentBlock::ToolResult { .. }));
-                if starts_with_tool_result {
-                    blocks.push(datetime_block);
-                } else {
-                    blocks.insert(0, datetime_block);
+                let insert_pos = blocks.iter()
+                    .position(|b| !matches!(b, ApiContentBlock::ToolResult { .. }))
+                    .unwrap_or(blocks.len());
+                if insert_pos == blocks.len() {
+                    // All blocks are tool_results — skip injection
+                    return;
                 }
+                blocks.insert(insert_pos, datetime_block);
             }
             MessageContent::Text(text) => {
                 msg.content = MessageContent::ContentBlocks(vec![
@@ -274,117 +309,6 @@ pub fn inject_datetime_context(messages: &mut Vec<ChatMessage>) {
     }
 }
 
-/// Transform user messages that follow an unmatched assistant speak tool_use into ToolResults.
-///
-/// Speak results are not stored in the DB. Instead, the user's next message IS the result of
-/// the speak tool — they are responding to what the assistant said. This function detects
-/// unmatched speak tool_uses and wraps the following user message's content (text, images,
-/// documents) into a ToolResult, giving the API a properly matched tool_use / tool_result pair.
-pub fn inject_speak_results(messages: &mut Vec<ChatMessage>) {
-    let mut i = 0;
-    while i + 1 < messages.len() {
-        if messages[i].role != "assistant" {
-            i += 1;
-            continue;
-        }
-
-        let speak_ids: Vec<String> = if let MessageContent::ContentBlocks(ref blocks) = messages[i].content {
-            blocks.iter().filter_map(|b| match b {
-                ApiContentBlock::ToolUse { id, name, .. } if name == "speak" => Some(id.clone()),
-                _ => None,
-            }).collect()
-        } else {
-            i += 1;
-            continue;
-        };
-
-        if speak_ids.is_empty() {
-            i += 1;
-            continue;
-        }
-
-        let next = i + 1;
-        if messages[next].role != "user" {
-            i += 1;
-            continue;
-        }
-
-        let already_has_result = if let MessageContent::ContentBlocks(ref blocks) = messages[next].content {
-            blocks.iter().any(|b| match b {
-                ApiContentBlock::ToolResult { tool_use_id, .. } => speak_ids.contains(tool_use_id),
-                _ => false,
-            })
-        } else {
-            false
-        };
-
-        if already_has_result {
-            i += 1;
-            continue;
-        }
-
-        let speak_id = speak_ids[0].clone();
-
-        let user_blocks = match std::mem::replace(
-            &mut messages[next].content,
-            MessageContent::ContentBlocks(Vec::new()),
-        ) {
-            MessageContent::ContentBlocks(blocks) => blocks,
-            MessageContent::Text(text) => vec![ApiContentBlock::Text { text }],
-        };
-
-        let result_content = blocks_to_speak_result_content(&user_blocks);
-
-        messages[next].content = MessageContent::ContentBlocks(vec![
-            ApiContentBlock::ToolResult {
-                tool_use_id: speak_id,
-                content: result_content,
-                is_error: None,
-            }
-        ]);
-
-        i += 1;
-    }
-}
-
-fn blocks_to_speak_result_content(blocks: &[ApiContentBlock]) -> serde_json::Value {
-    let transferable: Vec<&ApiContentBlock> = blocks.iter().filter(|b| {
-        matches!(b, ApiContentBlock::Text { .. } | ApiContentBlock::Image { .. } | ApiContentBlock::Document { .. })
-    }).collect();
-
-    if transferable.is_empty() {
-        return serde_json::Value::String(String::new());
-    }
-
-    if transferable.len() == 1 {
-        if let ApiContentBlock::Text { text } = transferable[0] {
-            return serde_json::Value::String(text.clone());
-        }
-    }
-
-    let arr: Vec<serde_json::Value> = transferable.iter().filter_map(|b| match b {
-        ApiContentBlock::Text { text } => Some(serde_json::json!({"type": "text", "text": text})),
-        ApiContentBlock::Image { source } => Some(serde_json::json!({
-            "type": "image",
-            "source": {
-                "type": source.source_type,
-                "media_type": source.media_type,
-                "data": source.data
-            }
-        })),
-        ApiContentBlock::Document { source } => Some(serde_json::json!({
-            "type": "document",
-            "source": {
-                "type": source.source_type,
-                "media_type": source.media_type,
-                "data": source.data
-            }
-        })),
-        _ => None,
-    }).collect();
-
-    serde_json::Value::Array(arr)
-}
 
 /// Sanitize tool pairs: ensure every ToolUse in an assistant message has a matching
 /// ToolResult in the next user message. Injects synthetic error results for any orphaned

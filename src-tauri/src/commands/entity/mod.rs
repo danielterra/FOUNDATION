@@ -96,6 +96,7 @@ pub struct PropertyValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_total: Option<usize>,
     pub is_calculated: bool,
+    pub is_query_property: bool,
     pub formula_error: Option<String>,
     pub is_empty: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,6 +113,8 @@ pub struct PropertyValue {
     pub max_count: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ai_behavior_rules: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query_config: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -165,6 +168,75 @@ pub async fn graph__search_entities(
     }).await
 }
 
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BacklinkPageItem {
+    pub value: String,
+    pub value_label: Option<String>,
+    pub value_icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_status: Option<StatusInfo>,
+}
+
+/// Returns a page of backlink subjects for a given entity + predicate + source_class group.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn inspector__get_backlink_page(
+    entity_iri: String,
+    predicate: String,
+    source_class: Option<String>,
+    offset: usize,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    const PAGE_SIZE: usize = 15;
+    executor.read(move |conn| {
+        let subjects = crate::eavto::query::get_backlinks_page(
+            conn, &entity_iri, &predicate, source_class.as_deref(), offset, PAGE_SIZE,
+        ).map_err(|e| e.to_string())?;
+
+        let things = crate::owl::Thing::get_batch(conn, &subjects);
+
+        let status_iris = crate::eavto::query::get_first_iri_property_batch(
+            conn, &subjects, "foundation:hasStatus",
+        ).unwrap_or_default();
+
+        let unique_status_iris: Vec<String> = status_iris.values()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let mut status_cache: std::collections::HashMap<String, StatusInfo> = std::collections::HashMap::new();
+        for status_iri in unique_status_iris {
+            if crate::owl::is_instance_of(conn, &status_iri, "foundation:Status") {
+                let thing = crate::owl::Thing::get(conn, &status_iri);
+                let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri);
+                status_cache.insert(status_iri.clone(), StatusInfo {
+                    iri: status_iri,
+                    label: thing.label,
+                    icon,
+                    color,
+                });
+            }
+        }
+
+        let items: Vec<BacklinkPageItem> = subjects.iter().map(|iri| {
+            let thing = things.get(iri).cloned().unwrap_or_else(|| crate::owl::Thing::get(conn, iri));
+            let value_status = status_iris.get(iri)
+                .and_then(|siri| status_cache.get(siri))
+                .cloned();
+            BacklinkPageItem {
+                value: iri.clone(),
+                value_label: Some(thing.label),
+                value_icon: thing.icon,
+                value_status,
+            }
+        }).collect();
+
+        serde_json::to_string(&items).map_err(|e| e.to_string())
+    }).await
+}
 
 /// Get entity data with its complete neighborhood for visualization
 #[tauri::command]
@@ -233,6 +305,29 @@ pub async fn graph__get_node_type_config(
 
 #[tauri::command]
 #[allow(non_snake_case)]
+pub async fn widget_inspector__clear_property(
+    entity_id: String,
+    property_iri: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let entity_id_clone = entity_id.clone();
+    let property_iri_clone = property_iri.clone();
+    let job_ids_json = executor.write(move |conn| {
+        Individual::clear_property(conn, &entity_id_clone, &property_iri_clone, "user")
+            .map_err(|e| e.to_string())?;
+        let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
+            conn, &entity_id_clone, &property_iri_clone,
+        );
+        serde_json::to_string(&job_ids).map_err(|e| e.to_string())
+    }).await?;
+    enqueue_formula_jobs(&app, &job_ids_json);
+    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
 pub async fn widget_inspector__update_property(
     entity_id: String,
     property_iri: String,
@@ -259,9 +354,17 @@ pub async fn widget_inspector__update_property(
                 language: None,
             }], "user").map_err(|e| e.to_string())?;
         }
-        let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
-            conn, &entity_id_clone, &property_iri_clone,
-        );
+        let job_ids = if property_iri_clone == "foundation:formula"
+            || property_iri_clone == "foundation:aggregation"
+        {
+            crate::owl::formula_worker::cancel_and_create_property_job(conn, &entity_id_clone)
+                .map(|id| vec![id])
+                .unwrap_or_default()
+        } else {
+            crate::owl::formula_worker::create_instance_recalc_jobs(
+                conn, &entity_id_clone, &property_iri_clone,
+            )
+        };
         serde_json::to_string(&job_ids).map_err(|e| e.to_string())
     }).await?;
     enqueue_formula_jobs(&app, &job_ids_json);
@@ -590,6 +693,67 @@ pub async fn widget_inspector__set_property_cardinality(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn widget_inspector__set_property_query_config(
+    class_id: String,
+    property_iri: String,
+    query_config_json: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let prop_iri = property_iri.clone();
+    let json = query_config_json.clone();
+
+    let domain_iris: Vec<String> = executor.write(move |conn| {
+        let config = crate::owl::query_property::parse_query_config(&json)
+            .map_err(|e| e.to_string())?;
+        crate::owl::query_property::validate_query_config(conn, &config)
+            .map_err(|e| e.to_string())?;
+
+        use crate::eavto::{store, Triple, Object};
+        store::assert_triples(conn, &[Triple::new(&prop_iri, "foundation:queryConfig", Object::Literal {
+            value: json.clone(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        })], "user").map_err(|e| e.to_string())?;
+
+        let domains: Vec<String> = conn
+            .prepare("SELECT DISTINCT object FROM triples_current WHERE subject = ? AND predicate = 'rdfs:domain'")
+            .ok()
+            .and_then(|mut stmt| {
+                stmt.query_map(rusqlite::params![prop_iri], |row| row.get::<_, String>(0))
+                    .ok()
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        Ok(domains.join(","))
+    }).await.map(|s| s.split(',').filter(|s| !s.is_empty()).map(String::from).collect())?;
+
+    for domain_iri in &domain_iris {
+        let dom = domain_iri.clone();
+        let instances: Vec<String> = executor.read(move |conn| {
+            let rows: Vec<String> = conn
+                .prepare("SELECT DISTINCT subject FROM triples_current WHERE predicate = 'rdf:type' AND object = ?")
+                .ok()
+                .and_then(|mut stmt| {
+                    stmt.query_map(rusqlite::params![dom], |row| row.get::<_, String>(0))
+                        .ok()
+                        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default();
+            Ok(rows.join(","))
+        }).await.map(|s| s.split(',').filter(|s| !s.is_empty()).map(String::from).collect())?;
+
+        for iri in instances {
+            app.emit("entity-updated", serde_json::json!({ "entityId": iri })).ok();
+        }
+    }
+
+    app.emit("entity-updated", serde_json::json!({ "entityId": class_id })).ok();
+    Ok(())
+}
+
 pub(super) fn sort_backlinks_by_recency(conn: &Connection, backlinks: &mut Vec<PropertyValue>) {
     let entity_iris: Vec<String> = backlinks.iter().map(|b| b.value.clone()).collect();
     let max_tx_map = crate::eavto::query::get_entities_max_tx(conn, &entity_iris)
@@ -799,6 +963,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             min_count: None,
             max_count: None,
             ai_behavior_rules: None,
+            is_query_property: false,
+            query_config: None,
         });
     }
 
@@ -829,6 +995,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             min_count: None,
             max_count: None,
             ai_behavior_rules: None,
+            is_query_property: false,
+            query_config: None,
         });
     }
 
@@ -898,6 +1066,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             min_count,
             max_count,
             ai_behavior_rules,
+            is_query_property: prop.query_config.is_some(),
+            query_config: prop.query_config.clone(),
         });
     }
 
@@ -947,6 +1117,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             min_count: None,
             max_count: None,
             ai_behavior_rules: None,
+            is_query_property: false,
+            query_config: None,
         });
     }
 
@@ -1021,6 +1193,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             min_count: None,
             max_count: None,
             ai_behavior_rules: None,
+            is_query_property: false,
+            query_config: None,
         });
     }
 

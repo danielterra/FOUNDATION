@@ -334,6 +334,53 @@ pub fn get_backlinks_grouped_limited(
     Ok(rows)
 }
 
+pub fn get_backlinks_page(
+    conn: &Connection,
+    object: &str,
+    predicate: &str,
+    source_class: Option<&str>,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<String>> {
+    let sql = "
+        WITH
+        backlinks_raw AS (
+            SELECT t.subject, MAX(t.tx) AS last_tx
+            FROM triples t
+            WHERE t.object = ?1
+              AND t.object_type = 'iri'
+              AND t.retracted = 0
+              AND t.predicate = ?2
+              AND t.subject != ?1
+              AND t.tx = (SELECT MAX(tx) FROM triples WHERE subject = t.subject AND predicate = t.predicate)
+            GROUP BY t.subject
+        ),
+        subject_class AS (
+            SELECT br.subject, MIN(tc.object) AS source_class
+            FROM backlinks_raw br
+            LEFT JOIN triples_current tc
+              ON tc.subject = br.subject
+             AND tc.predicate = 'rdf:type'
+             AND tc.object_type = 'iri'
+            GROUP BY br.subject
+        )
+        SELECT br.subject
+        FROM backlinks_raw br
+        LEFT JOIN subject_class sc ON sc.subject = br.subject
+        WHERE sc.source_class IS ?3
+        ORDER BY br.last_tx DESC
+        LIMIT ?4 OFFSET ?5
+    ";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt
+        .query_map(
+            rusqlite::params![object, predicate, source_class, limit as i64, offset as i64],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 pub fn get_predicates_for_subjects(
     conn: &Connection,
     subjects: &[String],

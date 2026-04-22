@@ -9,6 +9,7 @@
 
   let {
     detailGroup,
+    extraValues = [],
     editingKey,
     editingDatatype,
     draftValue = $bindable(),
@@ -265,7 +266,7 @@
 {/snippet}
 
 <div class="detail-values-group">
-  {#each detailGroup.values as val, idx (detailGroup.property + '_' + val.value + '_' + idx)}
+  {#each [...detailGroup.values, ...extraValues] as val, idx (detailGroup.property + '_' + val.value + '_' + idx)}
     {#if detailGroup.isObjectProperty}
       <div
         class="detail-value clickable"

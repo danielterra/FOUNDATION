@@ -34,13 +34,15 @@
 	});
 
 	async function loadAll() {
-		await Promise.all([loadApiKey(), loadModelData(), loadLogPath()]);
+		await Promise.all([loadModelData(), loadLogPath()]);
+		await loadApiKeyForService(selectedServiceIri);
 	}
 
-	async function loadApiKey() {
+	async function loadApiKeyForService(serviceIri) {
+		if (!serviceIri) return;
 		apiKeyLoading = true;
 		try {
-			const key = await invoke('ai__get_api_key');
+			const key = await invoke('ai__get_api_key', { serviceIri });
 			apiKey = key ?? '';
 		} catch {
 			// leave blank on error
@@ -85,7 +87,7 @@
 	async function onServiceChange(e) {
 		selectedServiceIri = e.target.value;
 		selectedModelIri = '';
-		await loadModels(selectedServiceIri);
+		await Promise.all([loadModels(selectedServiceIri), loadApiKeyForService(selectedServiceIri)]);
 	}
 
 	async function saveApiKey() {
@@ -93,7 +95,7 @@
 		apiKeyMessage = '';
 		apiKeyError = false;
 		try {
-			await invoke('ai__save_api_key', { apiKey });
+			await invoke('ai__save_api_key', { apiKey, serviceIri: selectedServiceIri });
 			apiKeyMessage = 'API key saved.';
 		} catch (e) {
 			apiKeyMessage = String(e);
@@ -190,7 +192,7 @@
 					{/if}
 				{/if}
 			</section>
-			{/if}
+		{/if}
 
 			<section class="settings-section">
 				<h3 class="section-title">AI Model</h3>
@@ -213,10 +215,13 @@
 									<option value={model.iri}>{model.label}</option>
 								{/each}
 							</select>
-							<button class="save-btn" onclick={saveModel} disabled={modelSaving || !selectedModelIri}>
+							<button class="save-btn" onclick={saveModel} disabled={modelSaving || !selectedModelIri || (!selectedServiceIsLocal && !apiKey.trim())}>
 								{modelSaving ? 'Saving…' : 'Save'}
 							</button>
 						</div>
+						{#if !selectedServiceIsLocal && !apiKey.trim()}
+							<p class="feedback error">Configure a chave de API acima antes de ativar este provedor.</p>
+						{/if}
 					{/if}
 					{#if modelMessage}
 						<p class="feedback" class:error={modelError}>{modelMessage}</p>

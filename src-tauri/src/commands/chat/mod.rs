@@ -30,8 +30,7 @@ use settings::{get_max_input_tokens, load_agent_config};
 use recovery::delete_messages_from_timestamp;
 use cancellation::AiCancellationState as CancellationState;
 
-pub const MAX_OUTPUT_TOKENS: u32 = 16000;
-pub const SPEAK_MAX_CHARS: usize = 288;
+pub const MAX_OUTPUT_TOKENS: u32 = 64000;
 
 pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor, conversation_id: &str) -> Option<String> {
     let conv_id = conversation_id.to_string();
@@ -172,6 +171,7 @@ pub async fn chat__send_and_reply(
                         file_iri: att.file_iri,
                         file_name: att.file_name,
                         token_estimate: att.token_estimate,
+                        ai_summary: None,
                     });
                     let iri_for_check = file_iri.clone();
                     let has_summary = executor.read(move |conn| {
@@ -282,8 +282,10 @@ pub async fn chat__get_recent_messages(
     limit: usize,
     conversation_id: String,
     executor: State<'_, DbExecutor>,
+    processing: State<'_, ConversationProcessingState>,
 ) -> Result<serde_json::Value, String> {
     let conv_id = conversation_id;
+    let actually_processing = processing.is_active(&conv_id);
 
     let display_units = executor.read(move |conn| {
         // Over-fetch raw messages to account for intermediate tool_result / tool_use messages
@@ -420,16 +422,13 @@ pub async fn chat__get_recent_messages(
             }
 
             let has_text = blocks.iter().any(|b| matches!(b, ContentBlock::Text { .. }));
-            // Legacy: SpeakOutput block (old format). New format: ToolUse { name: "speak" }.
-            let has_speak_block = blocks.iter().any(|b| matches!(b, ContentBlock::SpeakOutput { .. }));
-            let has_speak_tool = blocks.iter().any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name == "speak"));
-            let has_speak = has_speak_block || has_speak_tool;
             let has_question = blocks.iter().any(|b| match b {
                 ContentBlock::QuestionOutput { .. } => true,
                 ContentBlock::ToolUse { name, .. } => name == "ask_question",
                 _ => false,
             });
-            let has_non_speak_tool_use = blocks.iter().any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name != "speak" && name != "ask_question"));
+            let has_tool_use = blocks.iter().any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name != "ask_question"));
+            let has_thinking = blocks.iter().any(|b| matches!(b, ContentBlock::Thinking { .. }));
             let only_tool_results = blocks.iter().all(|b| matches!(b, ContentBlock::ToolResult { .. }));
 
             match role.as_str() {
@@ -470,59 +469,7 @@ pub async fn chat__get_recent_messages(
                 }
 
                 "assistant" => {
-                    if has_speak {
-                        let speak_text = if has_speak_tool {
-                            blocks.iter().find_map(|b| {
-                                if let ContentBlock::ToolUse { name, input, .. } = b {
-                                    if name == "speak" {
-                                        input.get("message").and_then(|v| v.as_str()).map(String::from)
-                                    } else { None }
-                                } else { None }
-                            }).unwrap_or_default()
-                        } else {
-                            blocks.iter().find_map(|b| {
-                                if let ContentBlock::SpeakOutput { text } = b { Some(text.clone()) } else { None }
-                            }).unwrap_or_default()
-                        };
-
-                        let reasoning: Option<String> = {
-                            let mut parts: Vec<String> = Vec::new();
-                            for b in &blocks {
-                                match b {
-                                    ContentBlock::Thinking { thinking, .. } => parts.push(thinking.clone()),
-                                    ContentBlock::Text { text } => parts.push(text.clone()),
-                                    _ => {}
-                                }
-                            }
-                            if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
-                        };
-
-                        let input_tokens = props.properties.iter()
-                            .find(|(k, _)| k == "foundation:inputTokens")
-                            .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
-                        let output_tokens = props.properties.iter()
-                            .find(|(k, _)| k == "foundation:outputTokens")
-                            .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
-                        let estimated_cost = props.properties.iter()
-                            .find(|(k, _)| k == "foundation:estimatedCost")
-                            .and_then(|(_, v)| match v {
-                                Object::Number(n) => Some(*n),
-                                Object::Literal { value, .. } => value.parse::<f64>().ok(),
-                                _ => None,
-                            });
-
-                        units.push(serde_json::json!({
-                            "type": "speak",
-                            "iri": iri,
-                            "text": speak_text,
-                            "reasoning": reasoning,
-                            "timestamp": timestamp,
-                            "input_tokens": input_tokens,
-                            "output_tokens": output_tokens,
-                            "estimated_cost": estimated_cost,
-                        }));
-
-                    } else if has_question {
+                    if has_question {
                         let question_block = blocks.iter().find_map(|b| match b {
                             ContentBlock::ToolUse { id, name, input, .. } if name == "ask_question" => {
                                 let question = input.get("question").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -541,7 +488,6 @@ pub async fn chat__get_recent_messages(
 
                         if let Some((q_id, question, question_type, options)) = question_block {
                             let answer: Option<String> = all_tool_results.get(&q_id).map(|(content, _)| content.clone());
-
                             units.push(serde_json::json!({
                                 "type": "question",
                                 "iri": iri,
@@ -554,12 +500,10 @@ pub async fn chat__get_recent_messages(
                             }));
                         }
 
-                    } else if has_non_speak_tool_use {
+                    } else if has_tool_use {
                         let tool_calls: Vec<serde_json::Value> = blocks.iter().filter_map(|b| {
                             let ContentBlock::ToolUse { id, name, input } = b else { return None; };
-                            if name == "speak" || name == "ask_question" {
-                                return None;
-                            }
+                            if name == "ask_question" { return None; }
                             let (result, is_error) = all_tool_results.get(id)
                                 .map(|(c, e)| (Some(c.clone()), *e))
                                 .unwrap_or((None, false));
@@ -571,42 +515,67 @@ pub async fn chat__get_recent_messages(
                             }))
                         }).collect();
 
+                        let reasoning: Option<String> = {
+                            let parts: Vec<String> = blocks.iter().filter_map(|b| match b {
+                                ContentBlock::Thinking { thinking, .. } => Some(thinking.clone()),
+                                ContentBlock::Text { text } if !text.is_empty() => Some(text.clone()),
+                                _ => None,
+                            }).collect();
+                            if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
+                        };
+
                         if !tool_calls.is_empty() {
                             units.push(serde_json::json!({
                                 "type": "tool_use",
                                 "iri": iri,
                                 "tool_calls": tool_calls,
+                                "reasoning": reasoning,
                                 "timestamp": timestamp,
                             }));
                         }
+
+                    } else if has_text || has_thinking {
+                        let text = blocks.iter().filter_map(|b| {
+                            if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
+                        }).collect::<Vec<_>>().join("\n\n");
+
+                        let reasoning: Option<String> = {
+                            let parts: Vec<String> = blocks.iter().filter_map(|b| {
+                                if let ContentBlock::Thinking { thinking, .. } = b { Some(thinking.clone()) } else { None }
+                            }).collect();
+                            if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
+                        };
+
+                        let input_tokens = props.properties.iter()
+                            .find(|(k, _)| k == "foundation:inputTokens")
+                            .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
+                        let output_tokens = props.properties.iter()
+                            .find(|(k, _)| k == "foundation:outputTokens")
+                            .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
+                        let estimated_cost = props.properties.iter()
+                            .find(|(k, _)| k == "foundation:estimatedCost")
+                            .and_then(|(_, v)| match v {
+                                Object::Number(n) => Some(*n),
+                                Object::Literal { value, .. } => value.parse::<f64>().ok(),
+                                _ => None,
+                            });
+
+                        units.push(serde_json::json!({
+                            "type": "text",
+                            "iri": iri,
+                            "text": text,
+                            "reasoning": reasoning,
+                            "timestamp": timestamp,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "estimated_cost": estimated_cost,
+                        }));
                     }
                 }
 
                 _ => {}
             }
         }
-
-        // is_processing: derived entirely from the last message in the conversation.
-        // True if the backend needs to do more work (tool execution or AI response).
-        let is_processing = message_iris.last().map(|iri| {
-            let props = match load_props(conn, iri) {
-                Some(p) => p,
-                None => return false,
-            };
-            let role = get_role(&props);
-            let blocks = get_content_blocks(conn, iri);
-            match role.as_str() {
-                "user" => {
-                    // Needs processing if there's text content (not just tool results)
-                    blocks.iter().any(|b| matches!(b, ContentBlock::Text { .. }))
-                }
-                "assistant" => {
-                    // Needs processing if there are non-speak tool calls without results yet
-                    blocks.iter().any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name != "speak" && name != "ask_question"))
-                }
-                _ => false,
-            }
-        }).unwrap_or(false);
 
         // Return the last `limit` units.
         let total = units.len();
@@ -618,11 +587,19 @@ pub async fn chat__get_recent_messages(
 
         Ok(serde_json::json!({
             "messages": result,
-            "is_processing": is_processing,
         }))
     }).await?;
 
-    Ok(display_units)
+    // is_processing comes from in-memory state, not DB inference.
+    // DB-based heuristics (e.g. "last message is user text") incorrectly return true after
+    // app restart when nothing is actually running, blocking retry and edit buttons.
+    let result = display_units.as_object().map(|o| {
+        let mut m = o.clone();
+        m.insert("is_processing".to_string(), serde_json::Value::Bool(actually_processing));
+        serde_json::Value::Object(m)
+    }).unwrap_or(display_units);
+
+    Ok(result)
 }
 
 /// Edit a user message and re-run the conversation from that point.
@@ -836,16 +813,18 @@ pub async fn chat__recover_pending_tools(
         return Ok(0);
     };
 
-    // Speak tool results are never stored in the DB — they are delivered via inject_speak_results
-    // at API-payload build time using the user's next message. Treating a speak-only assistant
-    // message as "pending tool execution" causes the agent to re-deliver the same message on
-    // every app restart, creating an infinite recovery loop.
     let has_tool_use = last_msg.content.iter()
-        .any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name != "ask_question" && name != "speak"));
+        .any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name != "ask_question"));
+
+    let has_truncated_tool = has_tool_use && last_msg.content.iter().any(|b| matches!(b,
+        ContentBlock::ToolUse { input, name, .. }
+        if name != "ask_question" && input.as_object().map_or(false, |o| o.is_empty())
+    ));
+    let last_msg_timestamp = last_msg.timestamp;
 
     super::log_backend("info", &format!(
-        "[RECOVERY] Last message: role={}, has_tool_use={}, content_blocks={}",
-        last_msg.role, has_tool_use, last_msg.content.len()
+        "[RECOVERY] Last message: role={}, has_tool_use={}, has_truncated_tool={}, content_blocks={}",
+        last_msg.role, has_tool_use, has_truncated_tool, last_msg.content.len()
     ));
 
     let has_tool_results = last_msg.role == "user"
@@ -876,17 +855,30 @@ pub async fn chat__recover_pending_tools(
     );
 
     if last_msg.role == "assistant" && has_tool_use {
-        let (tool_result_msg_iri, _, _, _) = execute_tools_from_message(
-            &executor,
-            &app,
-            &conv_id,
-            last_msg,
-        ).await?;
-        super::log_backend(
-            "info",
-            &format!("[RECOVERY] Executed tools, created message: {}", tool_result_msg_iri),
-        );
-        app.emit("chat-message-added", serde_json::json!({"conversationId": conv_id})).ok();
+        if has_truncated_tool {
+            super::log_backend("warn", &format!(
+                "[RECOVERY] Tool call truncado detectado em {} — excluindo mensagem incompleta",
+                conv_id
+            ));
+            let conv_id_del = conv_id.clone();
+            executor.write(move |conn| {
+                delete_messages_from_timestamp(conn, &conv_id_del, last_msg_timestamp, false)?;
+                Ok(String::new())
+            }).await?;
+            app.emit("chat-message-added", serde_json::json!({"conversationId": conv_id})).ok();
+        } else {
+            let (tool_result_msg_iri, _) = execute_tools_from_message(
+                &executor,
+                &app,
+                &conv_id,
+                last_msg,
+            ).await?;
+            super::log_backend(
+                "info",
+                &format!("[RECOVERY] Executed tools, created message: {}", tool_result_msg_iri),
+            );
+            app.emit("chat-message-added", serde_json::json!({"conversationId": conv_id})).ok();
+        }
     }
 
     run_conversation_from_current_state(app.clone(), executor.inner().clone(), conv_id, &cancellation, true).await?;

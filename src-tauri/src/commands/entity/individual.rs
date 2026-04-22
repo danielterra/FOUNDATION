@@ -151,13 +151,19 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             None
         };
 
-        let is_calculated = conn.query_row(
-            "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate IN ('foundation:formula', 'foundation:aggregation') AND retracted = 0",
-            rusqlite::params![property_iri],
-            |row| row.get::<_, i64>(0),
-        ).unwrap_or(0) > 0;
+        let is_query_prop = crate::eavto::query::get_by_entity_predicate(conn, property_iri, "foundation:queryConfig")
+            .map(|r| !r.triples.is_empty())
+            .unwrap_or(false);
 
-        let formula_error: Option<String> = if is_calculated {
+        let is_calculated = is_query_prop
+            || crate::eavto::query::get_by_entity_predicate(conn, property_iri, "foundation:formula")
+                .map(|r| !r.triples.is_empty())
+                .unwrap_or(false)
+            || crate::eavto::query::get_by_entity_predicate(conn, property_iri, "foundation:aggregation")
+                .map(|r| !r.triples.is_empty())
+                .unwrap_or(false);
+
+        let formula_error: Option<String> = if is_calculated && !is_query_prop {
             conn.query_row(
                 "SELECT error_message FROM formula_instance_errors WHERE instance_iri = ? AND property_iri = ?",
                 rusqlite::params![individual_id, property_iri],
@@ -184,6 +190,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             value_status,
             group_total: None,
             is_calculated,
+            is_query_property: is_query_prop,
             formula_error,
             is_empty: false,
             range_class_iri,
@@ -193,6 +200,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             min_count: None,
             max_count: None,
             ai_behavior_rules,
+            query_config: None,
         });
     }
 
@@ -273,9 +281,10 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         },
                         value_status: None,
                         group_total: None,
-                        is_calculated: false,
+                        is_calculated: prop.query_config.is_some(),
+                        is_query_property: prop.query_config.is_some(),
                         formula_error: None,
-                        is_empty: true,
+                        is_empty: prop.query_config.is_none(),
                         range_class_iri,
                         range_class_label,
                         range_class_icon,
@@ -283,6 +292,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         min_count: None,
                         max_count: None,
                         ai_behavior_rules,
+                        query_config: None,
                     });
                 }
             }
@@ -560,6 +570,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             value_status,
             group_total: Some(b.group_total),
             is_calculated: false,
+            is_query_property: false,
             formula_error: None,
             is_empty: false,
             range_class_iri: None,
@@ -569,6 +580,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             min_count: None,
             max_count: None,
             ai_behavior_rules: None,
+            query_config: None,
         });
     }
 

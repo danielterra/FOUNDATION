@@ -37,7 +37,11 @@
 		<span class="question-label">Question</span>
 	</div>
 	<div class="question-text">{q.question}</div>
-	{#if isLast && !answer}
+	{#if answer === '[Question dismissed by user]'}
+		<div class="question-answered">Cancelled</div>
+	{:else if answer}
+		<div class="question-answer">{formatAnswer(answer)}</div>
+	{:else if isLast}
 		{#if q.question_type === 'single'}
 			<div class="question-options">
 				{#each (q.options ?? []) as option}
@@ -59,10 +63,6 @@
 			<button class="question-submit" onclick={() => answerQuestion(q.id, textInput)}>Submit</button>
 		{/if}
 		<button class="question-dismiss" onclick={() => dismissQuestion(q.id)}>Cancel</button>
-	{:else if answer === '[Question dismissed by user]'}
-		<div class="question-answered">Cancelled</div>
-	{:else if answer}
-		<div class="question-answer">{formatAnswer(answer)}</div>
 	{:else}
 		<div class="question-answered">Answered</div>
 	{/if}

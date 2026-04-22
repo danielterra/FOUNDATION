@@ -226,10 +226,11 @@ pub async fn execute_agent_task(
                             .and_then(|(_, v)| v.as_literal())
                     })
                     .unwrap_or_default();
+                let base_system_prompt = crate::commands::chat::settings::load_base_system_prompt(conn);
                 let system_prompt = if agent_base_prompt.is_empty() {
-                    crate::ai::BASE_SYSTEM_PROMPT.to_string()
+                    base_system_prompt
                 } else {
-                    format!("{}\n\n{}", crate::ai::BASE_SYSTEM_PROMPT, agent_base_prompt)
+                    format!("{}\n\n{}", base_system_prompt, agent_base_prompt)
                 };
 
                 let timeout_secs = get_literal_property(conn, &agent_iri, "foundation:requestTimeout")

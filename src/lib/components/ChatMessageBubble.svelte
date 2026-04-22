@@ -16,6 +16,13 @@
 	let copyTimeout = null;
 	let now = $state(Date.now());
 	let ticker;
+	let streamingTextEl = $state(null);
+
+	$effect(() => {
+		if (streamingTextEl && unit.text) {
+			streamingTextEl.scrollTop = streamingTextEl.scrollHeight;
+		}
+	});
 
 	onMount(() => {
 		ticker = setInterval(() => { now = Date.now(); }, 30_000);
@@ -102,11 +109,16 @@
 		modal.set({ title: 'Contexto de Memória', html: marked.parse(ctx) });
 	}
 
+	function openReasoningModal() {
+		if (!unit.reasoning) return;
+		modal.set({ title: 'Pensamentos', html: renderMarkdown(unit.reasoning) });
+	}
+
 	async function copyMessage() {
 		let text = '';
 		if (unit.type === 'user') {
 			text = unit.text ?? '';
-		} else if (unit.type === 'speak') {
+		} else if (unit.type === 'text') {
 			const parts = [unit.reasoning, unit.text].filter(Boolean);
 			text = parts.join('\n\n');
 		} else if (unit.type === 'question') {
@@ -228,28 +240,31 @@
 						{/each}
 					</div>
 				{/if}
-			{:else if unit.type === 'speak'}
-				{#if unit.reasoning}
-					<details class="reasoning-block" open={isStreaming || undefined}>
-						<summary class="reasoning-summary">
-							<span class="material-symbols-outlined reasoning-icon">psychology</span>
-							<span class="reasoning-label">Reasoning</span>
-						</summary>
-						{#if isStreaming}
-							<div class="reasoning-content streaming-text">{unit.reasoning}<span class="stream-cursor">▋</span></div>
-						{:else}
-							<div class="reasoning-content markdown-content">{@html renderMarkdown(unit.reasoning)}</div>
-						{/if}
-					</details>
+			{:else if unit.type === 'text'}
+				{#if unit.reasoning && !isStreaming}
+					<button class="tool-chip-summary success" onclick={openReasoningModal}>
+						<span class="material-symbols-outlined tool-chip-icon">psychology</span>
+						<span class="tool-chip-name">Pensamentos</span>
+					</button>
 				{/if}
 				{#if unit.text || isStreaming}
 					{#if isStreaming}
-						<div class="message-text streaming-text">{unit.text}<span class="stream-cursor">▋</span></div>
+						<div class="streaming-header">
+							<span class="material-symbols-outlined streaming-header-icon">psychology</span>
+							<span>Pensando...</span>
+						</div>
+						<div bind:this={streamingTextEl} class="message-text streaming-text">{unit.text}<span class="stream-cursor">▋</span></div>
 					{:else}
 						<div class="message-text"><MarkdownValue value={unit.text} openEntityInspector={onEntityClick} /></div>
 					{/if}
 				{/if}
 			{:else if unit.type === 'tool_use'}
+				{#if unit.reasoning}
+					<button class="tool-chip-summary success" onclick={openReasoningModal}>
+						<span class="material-symbols-outlined tool-chip-icon">psychology</span>
+						<span class="tool-chip-name">Pensamentos</span>
+					</button>
+				{/if}
 				{#if unit.tool_calls?.length > 0}
 					<div class="tool-chips">
 						{#each unit.tool_calls as tc}
@@ -277,17 +292,17 @@
 
 			<div class="message-bubble-footer">
 				<span class="message-time" title={formatAbsoluteTime(unit.timestamp)}>{formatRelativeTime(unit.timestamp)}</span>
-				{#if unit.type === 'speak' && unit.input_tokens != null}
+				{#if unit.type === 'text' && unit.input_tokens != null}
 					<span class="token-pill" title="Input tokens">
 						<span class="material-symbols-outlined token-pill-icon">arrow_upward</span>{(unit.input_tokens / 1000).toFixed(1)}k
 					</span>
 				{/if}
-				{#if unit.type === 'speak' && unit.output_tokens != null}
+				{#if unit.type === 'text' && unit.output_tokens != null}
 					<span class="token-pill" title="Output tokens">
 						<span class="material-symbols-outlined token-pill-icon">arrow_downward</span>{unit.output_tokens.toLocaleString()}
 					</span>
 				{/if}
-				{#if unit.type === 'speak' && unit.estimated_cost != null}
+				{#if unit.type === 'text' && unit.estimated_cost != null}
 					<span class="token-pill" title="Estimated cost">
 						<span class="material-symbols-outlined token-pill-icon">attach_money</span>{unit.estimated_cost < 0.01 ? '<$0.01' : '$' + unit.estimated_cost.toFixed(2)}
 					</span>
@@ -393,7 +408,7 @@
 	}
 
 	.message.ai .message-bubble.streaming {
-		background: color-mix(in srgb, var(--color-transition) 6%, transparent);
+		background: color-mix(in srgb, var(--color-transition) 14%, transparent);
 	}
 
 	.message-text {
@@ -525,48 +540,29 @@
 		line-height: 1;
 	}
 
-	.reasoning-block {
-		margin-bottom: 8px;
-		background: color-mix(in srgb, var(--color-white) 4%, transparent);
-		overflow: hidden;
-	}
-
-	.reasoning-summary {
+	.streaming-header {
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		padding: 6px 10px;
-		cursor: pointer;
-		user-select: none;
-		font-size: 12px;
-		color: var(--color-neutral);
-		list-style: none;
+		font-size: 0.75em;
+		color: var(--color-transition);
+		opacity: 0.8;
+		margin-bottom: 6px;
+		animation: thinking-pulse 1.5s infinite ease-in-out;
 	}
 
-	.reasoning-summary::-webkit-details-marker {
-		display: none;
-	}
-
-	.reasoning-icon {
+	.streaming-header-icon {
 		font-size: 14px;
-		opacity: 0.6;
-	}
-
-	.reasoning-label {
-		font-size: 12px;
-		font-style: italic;
-		opacity: 0.7;
-	}
-
-	.reasoning-content {
-		padding: 8px 12px 10px;
-		font-size: 14px;
-		opacity: 0.75;
 	}
 
 	.streaming-text {
 		white-space: pre-wrap;
 		line-height: 1.5;
+		font-size: 0.78em;
+		max-height: 200px;
+		overflow-y: auto;
+		color: color-mix(in srgb, var(--color-neutral) 70%, transparent);
+		font-family: monospace;
 	}
 
 	@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }

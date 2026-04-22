@@ -280,6 +280,8 @@ fn run_automation_tool(conn: &Connection, args: &Value, app: Option<&tauri::AppH
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
+    let dry_run = args["dry_run"].as_bool().unwrap_or(false);
+
     let input_class_iri: Option<String> = (|| -> Option<String> {
         let node_iris = find_entities_with_property(conn, "foundation:partOfProcess", &automation_iri)
             .ok()?;
@@ -358,7 +360,7 @@ fn run_automation_tool(conn: &Connection, args: &Value, app: Option<&tauri::AppH
     }
 
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = crate::process_automation::executor::run_process(&app, &automation_iri, input_iri).await {
+        if let Err(e) = crate::process_automation::executor::run_process(&app, &automation_iri, input_iri, dry_run).await {
             crate::commands::log_backend(
                 "error",
                 &format!("[run_automation] Error running {}: {}", automation_iri, e),

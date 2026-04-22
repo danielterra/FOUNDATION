@@ -51,10 +51,17 @@ fn dfs_cycle_check(
 
         stack.push(dep.clone());
 
-        let dep_formula = query_formula(conn, dep);
-        if let Some(f) = dep_formula {
+        if let Some(f) = query_formula(conn, dep) {
             let sub_deps = extract_references(&f);
             dfs_cycle_check(conn, root, &sub_deps, stack)?;
+        }
+
+        if let Some(agg) = query_aggregation(conn, dep) {
+            if let Ok(call) = crate::owl::aggregation::parse_aggregation_call(&agg) {
+                if let Some(sub_prop) = call.sub_prop {
+                    dfs_cycle_check(conn, root, &[sub_prop], stack)?;
+                }
+            }
         }
 
         stack.pop();
@@ -63,11 +70,17 @@ fn dfs_cycle_check(
 }
 
 fn query_formula(conn: &Connection, property_iri: &str) -> Option<String> {
-    conn.query_row(
-        "SELECT object_value FROM triples WHERE subject = ? AND predicate = 'foundation:formula' AND retracted = 0 LIMIT 1",
-        rusqlite::params![property_iri],
-        |row| row.get::<_, String>(0),
-    ).ok()
+    crate::eavto::query::get_by_entity_predicate(conn, property_iri, "foundation:formula")
+        .ok()
+        .and_then(|r| r.triples.into_iter().next())
+        .and_then(|t| t.object.as_literal().map(|s| s.to_string()))
+}
+
+fn query_aggregation(conn: &Connection, property_iri: &str) -> Option<String> {
+    crate::eavto::query::get_by_entity_predicate(conn, property_iri, "foundation:aggregation")
+        .ok()
+        .and_then(|r| r.triples.into_iter().next())
+        .and_then(|t| t.object.as_literal().map(|s| s.to_string()))
 }
 
 /// Evaluate a formula for a specific instance, substituting property values and computing the result.
@@ -81,6 +94,36 @@ pub fn evaluate_formula_for_instance(
     evaluate_formula_for_instance_raw(conn, instance_iri, property_iri)
 }
 
+/// Resolve the value of a property for a given instance.
+///
+/// Tries the stored literal first. If absent, computes on-the-fly for aggregation
+/// or formula properties so that formulas can reference other calculated fields
+/// regardless of whether their cached value has been persisted yet.
+fn resolve_ref_value(conn: &Connection, instance_iri: &str, ref_iri: &str) -> Option<String> {
+    let stored = conn.query_row(
+        "SELECT object_value FROM triples \
+         WHERE subject = ? AND predicate = ? AND retracted = 0 \
+         AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ? AND predicate = ?) \
+         LIMIT 1",
+        rusqlite::params![instance_iri, ref_iri, instance_iri, ref_iri],
+        |row| row.get::<_, Option<String>>(0),
+    ).ok().flatten();
+
+    if stored.is_some() {
+        return stored;
+    }
+
+    if query_aggregation(conn, ref_iri).is_some() {
+        return crate::owl::aggregation::evaluate_aggregation_for_instance(conn, instance_iri, ref_iri).ok();
+    }
+
+    if query_formula(conn, ref_iri).is_some() {
+        return evaluate_formula_for_instance_raw(conn, instance_iri, ref_iri).ok();
+    }
+
+    None
+}
+
 /// Evaluate a formula for a specific instance using a raw `rusqlite::Connection`.
 ///
 /// Loads the `foundation:formula` triple for `property_iri`, substitutes all `{{ref}}` tokens
@@ -91,26 +134,14 @@ pub fn evaluate_formula_for_instance_raw(
     instance_iri: &str,
     property_iri: &str,
 ) -> Result<String, String> {
-    let formula = conn.query_row(
-        "SELECT object_value FROM triples WHERE subject = ? AND predicate = 'foundation:formula' AND retracted = 0 LIMIT 1",
-        rusqlite::params![property_iri],
-        |row| row.get::<_, String>(0),
-    ).map_err(|e| format!("Failed to load formula for {}: {}", property_iri, e))?;
+    let formula = query_formula(conn, property_iri)
+        .ok_or_else(|| format!("Failed to load formula for {}", property_iri))?;
 
     let refs = extract_references(&formula);
     let mut expr = formula.clone();
 
     for ref_iri in &refs {
-        let value: Option<String> = conn.query_row(
-            "SELECT object_value FROM triples \
-             WHERE subject = ? AND predicate = ? AND retracted = 0 \
-             AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ? AND predicate = ?) \
-             LIMIT 1",
-            rusqlite::params![instance_iri, ref_iri, instance_iri, ref_iri],
-            |row| row.get::<_, Option<String>>(0),
-        ).unwrap_or(None);
-
-        match value {
+        match resolve_ref_value(conn, instance_iri, ref_iri) {
             Some(v) => {
                 let placeholder = format!("{{{{{}}}}}", ref_iri);
                 expr = expr.replace(&placeholder, &v);
@@ -273,16 +304,17 @@ const NUMERIC_RANGES: &[&str] = &[
 ];
 
 /// Validate that every `{{ref}}` in the formula points to an existing property with a numeric range.
+///
+/// Aggregation and formula properties are always considered numeric regardless of their
+/// declared `rdfs:range`, since their computed values are always numbers.
 pub fn validate_references_numeric(
     conn: &Connection,
     formula: &str,
 ) -> Result<(), crate::owl::OwlError> {
     for ref_iri in extract_references(formula) {
-        let exists: bool = conn.query_row(
-            "SELECT COUNT(*) FROM triples WHERE subject = ?1 AND predicate = 'rdf:type' AND retracted = 0",
-            rusqlite::params![ref_iri],
-            |row| row.get::<_, i64>(0),
-        ).map(|c| c > 0).unwrap_or(false);
+        let exists = crate::eavto::query::get_by_entity_predicate(conn, &ref_iri, "rdf:type")
+            .map(|r| !r.triples.is_empty())
+            .unwrap_or(false);
 
         if !exists {
             return Err(crate::owl::OwlError::ValidationError(format!(
@@ -291,11 +323,17 @@ pub fn validate_references_numeric(
             )));
         }
 
-        let range: Option<String> = conn.query_row(
-            "SELECT object FROM triples WHERE subject = ?1 AND predicate = 'rdfs:range' AND retracted = 0 LIMIT 1",
-            rusqlite::params![ref_iri],
-            |row| row.get::<_, Option<String>>(0),
-        ).unwrap_or(None);
+        let is_computed = query_aggregation(conn, &ref_iri).is_some()
+            || query_formula(conn, &ref_iri).is_some();
+
+        if is_computed {
+            continue;
+        }
+
+        let range: Option<String> = crate::eavto::query::get_by_entity_predicate(conn, &ref_iri, "rdfs:range")
+            .ok()
+            .and_then(|r| r.triples.into_iter().next())
+            .and_then(|t| t.object.as_iri().map(|s| s.to_string()));
 
         if let Some(r) = range.as_deref() {
             if !NUMERIC_RANGES.contains(&r) {

@@ -7,7 +7,6 @@
 	import ChatInputArea from './ChatInputArea.svelte';
 	import ConversationBar from './ConversationBar.svelte';
 	import ChatHeader from './ChatHeader.svelte';
-	import ChatApiKeySetup from './ChatApiKeySetup.svelte';
 	import SettingsPanel from './SettingsPanel.svelte';
 	import ChatErrorBanner from './ChatErrorBanner.svelte';
 	import ChatMessageList from './ChatMessageList.svelte';
@@ -43,9 +42,7 @@
 	let contentEl = $state(null);
 	let autoScroll = true;
 	let userLocation = $state(null);
-	let apiKey = $state('');
 	let isInitialized = $state(false);
-	let showApiKeyInput = $state(false);
 	let showSettings = $state(false);
 	let messageLimit = $state(MESSAGE_PAGE_SIZE);
 	let isLoadingMore = $state(false);
@@ -68,60 +65,40 @@
 	let streamingMessage = $derived.by(() => {
 		if (!streamingReasoning && !streamingSpeak) return null;
 		return {
-			type: 'speak',
+			type: 'text',
 			iri: '__streaming__',
-			text: streamingSpeak || '',
+			text: streamingSpeak,
 			reasoning: streamingReasoning || null,
 			tool_calls: [],
-			timestamp: Date.now()
 		};
 	});
 
 	let visibleMessages = $derived(streamingMessage ? [...messages, streamingMessage] : messages);
-	let reasoningQueue = '';
-	let speakQueue = '';
-	let typewriterTimer = null;
 
-	const TYPEWRITER_INTERVAL_MS = 16;
+	// Non-reactive buffers: chunks accumulate here from Tauri callbacks,
+	// then are flushed into $state in a single setTimeout tick to avoid
+	// per-chunk re-renders while preserving Svelte 5 reactivity guarantees.
+	let reasoningBuf = '';
+	let speakBuf = '';
+	let flushTimer = null;
 
-	function drainQueues() {
-		let changed = false;
-		if (reasoningQueue.length > 0) {
-			streamingReasoning += reasoningQueue[0];
-			reasoningQueue = reasoningQueue.slice(1);
-			changed = true;
-		}
-		if (speakQueue.length > 0) {
-			streamingSpeak += speakQueue[0];
-			speakQueue = speakQueue.slice(1);
-			changed = true;
-		}
-		if (changed) scrollToBottom();
-		if (reasoningQueue.length > 0 || speakQueue.length > 0) {
-			typewriterTimer = setTimeout(drainQueues, TYPEWRITER_INTERVAL_MS);
-		} else {
-			typewriterTimer = null;
-		}
+	function onStreamChunk(type, text) {
+		if (type === 'thinking') reasoningBuf += text;
+		else speakBuf += text;
+		if (!flushTimer) flushTimer = setTimeout(flushStream, 0);
 	}
 
-	function enqueueStreamChunk(type, text) {
-		if (type === 'text') {
-			reasoningQueue += text;
-		} else {
-			speakQueue += text;
-		}
-		if (!typewriterTimer) {
-			typewriterTimer = setTimeout(drainQueues, TYPEWRITER_INTERVAL_MS);
-		}
+	function flushStream() {
+		flushTimer = null;
+		if (reasoningBuf) { streamingReasoning += reasoningBuf; reasoningBuf = ''; }
+		if (speakBuf) { streamingSpeak += speakBuf; speakBuf = ''; }
+		scrollToBottom();
 	}
 
 	function clearStreaming() {
-		clearTimeout(typewriterTimer);
-		typewriterTimer = null;
-		reasoningQueue = '';
-		speakQueue = '';
-		streamingReasoning = '';
-		streamingSpeak = '';
+		if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+		reasoningBuf = speakBuf = '';
+		streamingReasoning = streamingSpeak = '';
 	}
 	let loadMessagesVersion = 0;
 	let cameraEnabled = $state(localStorage.getItem('camera_vision_enabled') !== 'false');
@@ -167,19 +144,14 @@
 			const t0 = performance.now();
 			console.debug('[INIT] initializeApp start');
 			try {
-				loadActiveModelInfo();
-			const storedKey = await invoke('ai__get_api_key');
+				await loadActiveModelInfo();
+				console.debug(`[INIT] loadActiveModelInfo=${Math.round(performance.now() - t0)}ms`);
+				const storedKey = await invoke('ai__get_api_key');
 				console.debug(`[INIT] ai__get_api_key=${Math.round(performance.now() - t0)}ms`);
-				if (storedKey) {
-					apiKey = storedKey;
-					await initializeAI(storedKey);
-					console.debug(`[INIT] initializeAI=${Math.round(performance.now() - t0)}ms`);
-				} else {
-					showApiKeyInput = true;
-				}
+				await initializeAI(storedKey ?? '');
+				console.debug(`[INIT] initializeAI=${Math.round(performance.now() - t0)}ms`);
 			} catch (err) {
-				console.error('Failed to get API key:', err);
-				showApiKeyInput = true;
+				console.error('Failed to initialize AI:', err);
 			}
 			await loadConversations();
 			console.debug(`[INIT] loadConversations=${Math.round(performance.now() - t0)}ms`);
@@ -203,10 +175,10 @@
 		const unlistenDelta = await listen('chat-ai-delta', (event) => {
 			const { conversationId, type, text } = event.payload;
 			if (conversationId !== activeConversationIri) return;
-			if (type === 'text') {
-				enqueueStreamChunk('text', text);
-			} else if (type === 'speak') {
-				enqueueStreamChunk('speak', text);
+			if (type === 'thinking') {
+				onStreamChunk('thinking', text);
+			} else if (type === 'speak' || type === 'text') {
+				onStreamChunk('speak', text);
 			}
 		});
 
@@ -232,7 +204,6 @@
 			clearStreaming();
 			hasMoreMessages = result.messages.length === messageLimit;
 			messages = result.messages;
-			syncLoadingFromDb(result.is_processing, activeConversationIri);
 			scrollToBottom();
 			await loadConversations();
 		});
@@ -310,23 +281,9 @@
 		try {
 			await invoke('ai__initialize', { apiKey: key });
 			isInitialized = true;
-			showApiKeyInput = false;
 		} catch (err) {
 			console.error('Failed to initialize AI:', err);
-			alert('Failed to initialize AI. Please check your API key.');
 			isInitialized = false;
-		}
-	}
-
-	async function saveApiKey() {
-		if (!apiKey.trim()) return;
-
-		try {
-			await invoke('ai__save_api_key', { apiKey: apiKey });
-			await initializeAI(apiKey);
-		} catch (err) {
-			console.error('Failed to save API key:', err);
-			alert('Failed to save API key: ' + err);
 		}
 	}
 
@@ -350,6 +307,8 @@
 		try {
 			const agent = await invoke('chat__get_conversation_agent', { conversationId: conversationIri });
 			conversationAgent = { iri: agent.iri, label: agent.label, icon: agent.icon };
+			const config = await invoke('agent__get_ai_config', { agentIri: agent.iri });
+			activeModelInfo = { modelLabel: config.modelLabel };
 		} catch {
 			conversationAgent = null;
 		}
@@ -946,47 +905,43 @@
 	{/if}
 	<ConversationBar bind:conversations bind:activeConversationIri onSwitch={switchConversation} onDelete={handleDeleteConversation} />
 	<div class="chat-content">
-		{#if showApiKeyInput}
-			<ChatApiKeySetup bind:apiKey onSave={saveApiKey} />
-		{:else}
-			<ChatErrorBanner {errorMessage} onDismiss={dismissError} />
+		<ChatErrorBanner {errorMessage} onDismiss={dismissError} />
 
-			<ChatMessageList
-				messages={visibleMessages}
-				conversationId={activeConversationIri}
-				{isLoadingMessages}
-				{isLoadingMore}
-				bind:chatContainer
-				bind:contentEl
-				onScroll={handleScroll}
-				onEdit={editMessage}
-				onRetry={retryMessage}
-				onEntityClick={openEntityInspector}
+		<ChatMessageList
+			messages={visibleMessages}
+			conversationId={activeConversationIri}
+			{isLoadingMessages}
+			{isLoadingMore}
+			bind:chatContainer
+			bind:contentEl
+			onScroll={handleScroll}
+			onEdit={editMessage}
+			onRetry={retryMessage}
+			onEntityClick={openEntityInspector}
+		/>
+
+		<ChatAttachmentPreview
+			pendingAttachments={pendingAttachments}
+			onRemove={removeAttachment}
+		/>
+
+		{#if !hasPendingQuestion}
+			<ChatInputArea
+				bind:inputText
+				{isLoading}
+				hasPendingAttachments={pendingAttachments.length > 0}
+				{aiStatus}
+				{elapsedSeconds}
+				onSend={sendMessage}
+				onKeydown={handleKeydown}
+				onFileSelect={handleFileSelect}
+				onPaste={handlePaste}
+				bind:textareaElement
+				bind:fileInputElement
+				{editingMessageIri}
+				onCancelEdit={cancelEdit}
+				onCancelAI={cancelAI}
 			/>
-
-			<ChatAttachmentPreview
-				pendingAttachments={pendingAttachments}
-				onRemove={removeAttachment}
-			/>
-
-			{#if !hasPendingQuestion}
-				<ChatInputArea
-					bind:inputText
-					{isLoading}
-					hasPendingAttachments={pendingAttachments.length > 0}
-					{aiStatus}
-					{elapsedSeconds}
-					onSend={sendMessage}
-					onKeydown={handleKeydown}
-					onFileSelect={handleFileSelect}
-					onPaste={handlePaste}
-					bind:textareaElement
-					bind:fileInputElement
-					{editingMessageIri}
-					onCancelEdit={cancelEdit}
-					onCancelAI={cancelAI}
-				/>
-			{/if}
 		{/if}
 	</div>
 </div>

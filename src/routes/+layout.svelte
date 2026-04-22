@@ -11,6 +11,7 @@
   import { deleteConfirm } from '$lib/stores/deleteConfirm';
   import GlobalModal from '$lib/components/GlobalModal.svelte';
   import ThinkingDots from '$lib/components/ThinkingDots.svelte';
+  import { appState } from '$lib/appState.svelte';
 
   type TaskCompletedEvent = {
     task_iri: string;
@@ -255,8 +256,8 @@
         class:running={run.status === 'running'}
         role="button"
         tabindex="0"
-        onclick={() => invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, position: null, size: null, conversationId: null }).catch(e => console.error('[toast] Failed to open widget:', e))}
-        onkeydown={(e) => e.key === 'Enter' && invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, position: null, size: null, conversationId: null }).catch(e => console.error('[toast] Failed to open widget:', e))}
+        onclick={() => invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, position: null, size: null, conversationId: appState.activeConversationIri }).catch(e => console.error('[toast] Failed to open widget:', e))}
+        onkeydown={(e) => e.key === 'Enter' && invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, position: null, size: null, conversationId: appState.activeConversationIri }).catch(e => console.error('[toast] Failed to open widget:', e))}
       >
         {#if run.status === 'running'}
           <div class="toast-thinking"><ThinkingDots /></div>

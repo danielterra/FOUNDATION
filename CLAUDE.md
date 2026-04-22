@@ -138,6 +138,15 @@ Ao usar `define_property` com `property_type: "datatype"`, escolha o `range` ade
 
 **Atualização via `replace_property_values`:** funciona para Material Symbols passando o IRI completo (`foundation:icon-material-symbols-name-{name}`). **Não funciona para `file://` ou URLs** — a ferramenta armazena como IRI (objeto), não como literal, e `icon_iri_to_display` não reconhece o padrão. Para alterar ícone de arquivo em entidade existente, use `assert_individual` recriando a entidade ou um comando Tauri interno.
 
+## System Prompt do Agente
+
+O prompt base do agente **não está hardcoded no código** — é carregado em runtime do indivíduo `foundation:DefaultSystemPromptSetting` (propriedade `foundation:settingValue`).
+
+- **Para editar o prompt base:** use `replace_property_values` no indivíduo `foundation:DefaultSystemPromptSetting`, campo `foundation:settingValue`. A mudança tem efeito imediato (sem recompilar).
+- **Ponto de carga no código:** `src-tauri/src/commands/chat/settings.rs` → função `load_base_system_prompt(conn)`, chamada por `load_agent_config` e pelos executores de `AgentTask`/`Task`.
+- **Fallback:** se o setting não existir, retorna string vazia.
+- **Prompt de persona do agente** (ex: personalidade da NOVA) vem separadamente do campo `foundation:basePrompt` no indivíduo do agente — é concatenado após o prompt base.
+
 ## Estrutura do Projeto
 
 - **Frontend**: Svelte + TypeScript (`src/`)

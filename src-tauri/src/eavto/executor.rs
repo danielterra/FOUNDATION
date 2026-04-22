@@ -13,6 +13,7 @@
 // ============================================================================
 
 use rusqlite::Connection;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
@@ -27,8 +28,8 @@ const WAL_PASSIVE_INTERVAL: u32 = 50;
 pub struct DbExecutor {
     write_tx: mpsc::UnboundedSender<WriteTask>,
     db_path: PathBuf,
-    /// Sends (subjects, iri_objects) written by each transaction so callers can emit events.
-    notify_tx: Option<mpsc::UnboundedSender<(Vec<String>, Vec<String>)>>,
+    /// Sends (subject_predicates, iri_objects) written by each transaction so callers can emit events.
+    notify_tx: Option<mpsc::UnboundedSender<(HashMap<String, Vec<String>>, Vec<String>)>>,
     read_pool: Arc<Mutex<Vec<Connection>>>,
 }
 
@@ -45,12 +46,12 @@ impl DbExecutor {
         Self::new_with_notify(conn, db_path, None)
     }
 
-    /// Like `new`, but also sends (subjects, iri_objects) to `notify_tx` after each write.
+    /// Like `new`, but also sends (subject_predicates, iri_objects) to `notify_tx` after each write.
     /// The receiver emits `entity-updated` for subjects and `entity-referenced` for iri_objects.
     pub fn new_with_notify(
         conn: Connection,
         db_path: PathBuf,
-        notify_tx: Option<mpsc::UnboundedSender<(Vec<String>, Vec<String>)>>,
+        notify_tx: Option<mpsc::UnboundedSender<(HashMap<String, Vec<String>>, Vec<String>)>>,
     ) -> Self {
         let (write_tx, mut write_rx) = mpsc::unbounded_channel::<WriteTask>();
         let notify_tx_thread = notify_tx.clone();
@@ -82,10 +83,10 @@ impl DbExecutor {
                     Err(format!("write operation panicked: {}", msg))
                 });
                 if let Some(ref tx) = notify_tx_thread {
-                    let subjects = crate::eavto::store::drain_written_subjects();
+                    let subject_predicates = crate::eavto::store::drain_written_subject_predicates();
                     let iri_objects = crate::eavto::store::drain_written_iri_objects();
-                    if !subjects.is_empty() || !iri_objects.is_empty() {
-                        let _ = tx.send((subjects, iri_objects));
+                    if !subject_predicates.is_empty() || !iri_objects.is_empty() {
+                        let _ = tx.send((subject_predicates, iri_objects));
                     }
                 }
                 let _ = task.result_tx.send(result);

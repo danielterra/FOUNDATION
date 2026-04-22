@@ -1,4 +1,5 @@
 mod setup;
+mod setup_ai;
 mod setup_system_info;
 mod entity;
 mod logging;
@@ -13,6 +14,7 @@ pub mod automation;
 pub mod task;
 
 pub use setup::*;
+pub use setup_ai::*;
 pub use entity::*;
 pub use logging::*;
 pub use ai::*;

@@ -5,29 +5,6 @@ pub fn build_conversation_tools() -> Vec<ClaudeTool> {
     let mut tools = crate::ai::functions::get_claude_tools();
 
     tools.push(ClaudeTool {
-        name: "speak".to_string(),
-        description: format!(
-            "Send a message to the user. Your only output channel. Maximum {} characters.",
-            super::SPEAK_MAX_CHARS
-        ),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string",
-                    "description": format!("The message to deliver to the user. Maximum {} characters.", super::SPEAK_MAX_CHARS)
-                },
-                "iris": {
-                    "type": "array",
-                    "description": "IRIs of entities to display as widgets on the blackboard. The best widget type for each entity will be selected automatically.",
-                    "items": { "type": "string" }
-                }
-            },
-            "required": ["message"]
-        }),
-    });
-
-    tools.push(ClaudeTool {
         name: "ask_question".to_string(),
         description: "Ask the user a structured question and wait for their answer. Use only when a user decision is required to proceed. The conversation pauses until the user responds.".to_string(),
         input_schema: serde_json::json!({
@@ -74,7 +51,7 @@ pub fn build_system_prompt(
 
     let base = format!(
         "{}\n\n{}\n\n{}\n\n{}",
-        crate::ai::BASE_SYSTEM_PROMPT,
+        agent_config.base_system_prompt,
         widget_context,
         agent_config.system_prompt,
         delegation_section,

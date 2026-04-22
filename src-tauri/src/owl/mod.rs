@@ -10,6 +10,8 @@ pub mod cardinality;
 pub mod aggregation;
 pub mod formula;
 pub mod formula_worker;
+pub mod query_property;
+pub mod query_worker;
 
 pub use graph_config::{load_graph_node_groups, get_graph_node_type_config, GraphNodeTypeConfig};
 

@@ -9,7 +9,15 @@ pub enum ContentBlock {
     Image { source: ImageSource },
     CameraRef { file_path: String, token_estimate: usize },
     Document { source: DocumentSource },
-    FileRef { file_iri: String, file_name: String, token_estimate: usize },
+    FileRef {
+        file_iri: String,
+        file_name: String,
+        token_estimate: usize,
+        /// AI-generated summary populated at load time from `foundation:aiSummary`.
+        /// Not persisted — derived from the knowledge base on every history load.
+        #[serde(skip, default)]
+        ai_summary: Option<String>,
+    },
     ToolUse { id: String, name: String, input: serde_json::Value },
     ToolResult {
         tool_use_id: String,
@@ -23,9 +31,6 @@ pub enum ContentBlock {
     },
     RedactedThinking {
         data: String,
-    },
-    SpeakOutput {
-        text: String,
     },
     QuestionOutput {
         id: String,
@@ -255,7 +260,6 @@ pub fn save_content_blocks(
             ContentBlock::RedactedThinking { .. } => ("anthropic:RedactedThinkingBlock", "RedactedThinkingBlock"),
             ContentBlock::Image { .. }          => ("anthropic:ImageBlock", "ImageBlock"),
             ContentBlock::Document { .. }       => ("anthropic:DocumentBlock", "DocumentBlock"),
-            ContentBlock::SpeakOutput { .. }    => ("foundation:SpeakOutputBlock", "SpeakOutputBlock"),
             ContentBlock::QuestionOutput { .. } => ("foundation:QuestionOutputBlock", "QuestionOutputBlock"),
             ContentBlock::CameraRef { .. }      => ("foundation:CameraRefBlock", "CameraRefBlock"),
             ContentBlock::FileRef { .. }        => ("foundation:FileRefBlock", "FileRefBlock"),
@@ -386,14 +390,6 @@ pub fn save_content_blocks(
                 }], "ai").map_err(|e| format!("Failed to set documentData: {}", e))?;
             }
 
-            ContentBlock::SpeakOutput { text } => {
-                ind.add_property(conn, "foundation:speakText", vec![Object::Literal {
-                    value: text.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set speakText: {}", e))?;
-            }
-
             ContentBlock::QuestionOutput { id, question, question_type, options } => {
                 let options_json = serde_json::to_string(options).unwrap_or_else(|_| "[]".to_string());
                 ind.add_property(conn, "foundation:questionToolUseId", vec![Object::Literal {
@@ -429,7 +425,7 @@ pub fn save_content_blocks(
                     .map_err(|e| format!("Failed to set tokenEstimate: {}", e))?;
             }
 
-            ContentBlock::FileRef { file_iri, file_name, token_estimate } => {
+            ContentBlock::FileRef { file_iri, file_name, token_estimate, .. } => {
                 ind.add_property(conn, "foundation:fileRef",
                     vec![Object::Iri(file_iri.clone())], "ai")
                     .map_err(|e| format!("Failed to set fileRef: {}", e))?;
@@ -568,11 +564,6 @@ pub fn load_content_blocks(
                 }
             }
 
-            "foundation:SpeakOutputBlock" => {
-                let text = get_str("foundation:speakText").unwrap_or_default();
-                ContentBlock::SpeakOutput { text }
-            }
-
             "foundation:QuestionOutputBlock" => {
                 let id = get_str("foundation:questionToolUseId").unwrap_or_default();
                 let question = get_str("foundation:questionText").unwrap_or_default();
@@ -602,7 +593,7 @@ pub fn load_content_blocks(
                     .find(|(k, _)| k == "foundation:tokenEstimate")
                     .and_then(|(_, v)| if let Object::Integer(n) = v { Some(*n as usize) } else { None })
                     .unwrap_or(0);
-                ContentBlock::FileRef { file_iri, file_name, token_estimate }
+                ContentBlock::FileRef { file_iri, file_name, token_estimate, ai_summary: None }
             }
 
             _ => continue,
@@ -676,6 +667,18 @@ pub async fn load_conversation_history(
             selected.len(), iris_desc.len().saturating_sub(i), failed_count,
         ));
 
+        // Enrich FileRef blocks with AI summaries so the API receives text descriptions
+        // instead of binary blobs for files that have already been summarised.
+        for msg in &mut selected {
+            for block in &mut msg.content {
+                if let ContentBlock::FileRef { ref file_iri, ref mut ai_summary, .. } = block {
+                    *ai_summary = crate::owl::get_literal_property(conn, file_iri, "foundation:aiSummary")
+                        .ok()
+                        .flatten();
+                }
+            }
+        }
+
         selected.reverse();
         Ok::<(Vec<AIConversationMessage>, usize), String>((selected, total_tokens))
     }).await?;
@@ -717,12 +720,14 @@ pub async fn load_conversation_history(
                         "[CHAT] Stripping tool_use and thinking blocks from {} — tool_results not after",
                         prev.iri
                     ));
-                    prev.content.retain(|b| !matches!(
-                        b,
-                        ContentBlock::ToolUse { .. } | ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. }
-                    ));
+                    prev.content.retain(|b| match b {
+                        ContentBlock::ToolUse { .. } => false,
+                        ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => false,
+                        _ => true,
+                    });
                 }
 
+                // Strip all orphaned tool_results (no matching tool_use).
                 let clean_content: Vec<ContentBlock> = msg.content.iter()
                     .filter(|b| !matches!(b, ContentBlock::ToolResult { .. }))
                     .cloned()
@@ -742,14 +747,18 @@ pub async fn load_conversation_history(
             if msg.role == "user"
                 && msg.content.iter().any(|b| matches!(b, ContentBlock::ToolResult { .. }))
             {
+                // Strip all orphaned tool_results that have no matching tool_use in prev.
                 let clean_content: Vec<ContentBlock> = msg.content.iter()
                     .filter(|b| !matches!(b, ContentBlock::ToolResult { .. }))
                     .cloned()
                     .collect();
 
-                super::log_backend(
-                    "warn", "[CHAT] Stripping orphaned tool_result blocks (no preceding tool_use)",
-                );
+                let had_orphan = msg.content.len() > clean_content.len();
+                if had_orphan {
+                    super::log_backend(
+                        "warn", "[CHAT] Stripping orphaned tool_result blocks (no preceding tool_use)",
+                    );
+                }
 
                 if !clean_content.is_empty() {
                     let mut clean_msg = msg;
@@ -1021,7 +1030,6 @@ pub fn calculate_content_tokens(blocks: &[ContentBlock]) -> usize {
             ContentBlock::FileRef { token_estimate, .. } => *token_estimate,
             ContentBlock::Thinking { thinking, .. } => bpe.encode_with_special_tokens(thinking).len(),
             ContentBlock::RedactedThinking { .. } => 0,
-            ContentBlock::SpeakOutput { text } => bpe.encode_with_special_tokens(text).len(),
             ContentBlock::QuestionOutput { question, options, .. } => {
                 let opts = options.join(", ");
                 bpe.encode_with_special_tokens(question).len() +

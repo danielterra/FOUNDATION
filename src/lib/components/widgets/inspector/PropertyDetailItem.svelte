@@ -5,7 +5,9 @@
   import PropertyEditForm from './PropertyEditForm.svelte';
   import PropertyValuesGroup from './PropertyValuesGroup.svelte';
   import ReferenceSelect from './ReferenceSelect.svelte';
+  import ReferenceSingleSelect from './ReferenceSingleSelect.svelte';
   import RecurrenceEditor from './RecurrenceEditor.svelte';
+  import QueryConfigEditor from './QueryConfigEditor.svelte';
   import { focus } from '$lib/utils/actions';
 
   let {
@@ -15,8 +17,11 @@
     openEntityInspector,
     onSave = null,
     onSaveReference = null,
+    onClearProperty = null,
     onRemoveProperty = null,
     onSaveCardinality = null,
+    onSaveQueryConfig = null,
+    onLoadMoreBacklinks = null,
     onShowHint,
     onHideHint,
   } = $props();
@@ -28,9 +33,51 @@
   let editingRefKey = $state(null);
   let savingRef = $state(false);
   let editingCardinalityKey = $state(null);
+  let extraValues = $state([]);
+  let loadingMore = $state(false);
+
+  $effect(() => {
+    void detailGroup.values;
+    extraValues = [];
+  });
+
+  const hasMore = $derived(
+    detailGroup.groupTotal != null &&
+    (detailGroup.values.length + extraValues.length) < detailGroup.groupTotal
+  );
+
+  async function loadMore() {
+    if (!onLoadMoreBacklinks || loadingMore) return;
+    loadingMore = true;
+    try {
+      const offset = detailGroup.values.length + extraValues.length;
+      const items = await onLoadMoreBacklinks(
+        detailGroup.property,
+        detailGroup.sourceClassIri,
+        offset
+      );
+      extraValues = [...extraValues, ...items];
+    } finally {
+      loadingMore = false;
+    }
+  }
   let cardinalityDraftMin = $state('');
   let cardinalityDraftMax = $state('');
   let savingCardinality = $state(false);
+
+  let editingQueryConfigKey = $state(null);
+  let savingQueryConfig = $state(false);
+
+  async function saveQueryConfigEdit(propertyIri, json) {
+    if (!onSaveQueryConfig || savingQueryConfig) return;
+    savingQueryConfig = true;
+    try {
+      await onSaveQueryConfig(propertyIri, json);
+    } finally {
+      savingQueryConfig = false;
+      editingQueryConfigKey = null;
+    }
+  }
 
   function editKey(propertyIri, valueIdx) {
     return `${propertyIri}::${valueIdx}`;
@@ -115,6 +162,35 @@
 
   function isRruleType(datatype) {
     return datatype === 'foundation:rrule';
+  }
+
+  function isQueryConfigProperty(propertyIri) {
+    return propertyIri === 'foundation:queryConfig';
+  }
+
+  function iriShort(iri) {
+    if (!iri) return '';
+    const i = iri.lastIndexOf(':');
+    return i >= 0 ? iri.slice(i + 1) : iri;
+  }
+
+  function queryConfigSummary(json) {
+    if (!json) return null;
+    try {
+      const c = JSON.parse(json);
+      return { targetClass: c.targetClass || '', filters: c.filters || [] };
+    } catch {
+      return null;
+    }
+  }
+
+  function filterLabel(f) {
+    const prop = iriShort(f.propertyIri);
+    const ops = { eq: '=', neq: '≠', gt: '>', lt: '<', gte: '≥', lte: '≤' };
+    if (f.operator === 'exists') return `${prop} existe`;
+    if (f.operator === 'not_exists') return `${prop} não existe`;
+    if (f.operator === 'between') return `${prop} entre ${f.valueFrom ?? '?'} e ${f.valueTo ?? '?'}`;
+    return `${prop} ${ops[f.operator] ?? f.operator} ${f.value ?? ''}`;
   }
 
   function rruleLabel(rrule) {
@@ -317,37 +393,38 @@
       {:else}
         <span class="detail-type">{formatDatatype(detailGroup.datatype)}</span>
       {/if}
-      {#if detailGroup.isCalculated}
+      {#if detailGroup.isQueryProperty}
+        <span class="calculated-badge query-badge" title="Coleção derivada — valores resolvidos automaticamente por filtros">
+          <span class="material-symbols-outlined calculated-icon">manage_search</span>
+          Query
+        </span>
+      {:else if detailGroup.isCalculated}
         <span class="calculated-badge" title="Campo calculado automaticamente">
           <span class="material-symbols-outlined calculated-icon">calculate</span>
           Calculado
         </span>
       {/if}
-      {#if detailGroup.values.length > 1}
-        <span class="detail-count">{detailGroup.values.length}</span>
+      {#if (detailGroup.values.length + extraValues.length) > 1}
+        <span class="detail-count">{detailGroup.values.length + extraValues.length}{#if detailGroup.groupTotal && (detailGroup.values.length + extraValues.length) < detailGroup.groupTotal}/{detailGroup.groupTotal}{/if}</span>
       {/if}
       {#if isClass && (detailGroup.minCount !== null || detailGroup.maxCount !== null)}
         <span class="cardinality-badge">{formatCardinality(detailGroup.minCount, detailGroup.maxCount)}</span>
       {/if}
     </div>
-    {#if onSave && !detailGroup.isObjectProperty && !detailGroup.isCalculated && (isStringType(detailGroup.datatype) || isDateType(detailGroup.datatype) || isNumericType(detailGroup.datatype) || isRruleType(detailGroup.datatype)) && (detailGroup.isEmpty || detailGroup.values.length <= 1)}
-      <button
-        class="edit-btn"
-        title="Edit"
-        onclick={() => startEdit(detailGroup.property, detailGroup.values[0]?.value ?? '', 0, detailGroup.datatype ?? null)}
-      >
-        <span class="material-symbols-outlined">edit</span>
-      </button>
-    {:else if onSaveReference && detailGroup.isObjectProperty && !detailGroup.isCalculated && !detailGroup.sourceClass}
-      <button
-        class="edit-btn"
-        title="Edit"
-        onclick={() => startRefEdit(detailGroup.property)}
-      >
-        <span class="material-symbols-outlined">edit</span>
-      </button>
-    {:else if isClass}
+    {#if isClass}
       <div class="class-prop-actions">
+        {#if onSaveQueryConfig && detailGroup.isQueryProperty && !detailGroup.sourceClassLabel}
+          <button
+            class="edit-btn"
+            class:active={editingQueryConfigKey === detailGroup.property}
+            title="Editar query config"
+            onclick={() => {
+              editingQueryConfigKey = editingQueryConfigKey === detailGroup.property ? null : detailGroup.property;
+            }}
+          >
+            <span class="material-symbols-outlined">manage_search</span>
+          </button>
+        {/if}
         {#if onSaveCardinality && !detailGroup.sourceClassLabel}
           <button
             class="edit-btn"
@@ -378,6 +455,35 @@
             onclick={() => onRemoveProperty(detailGroup.property, detailGroup.propertyLabel)}
           >
             <span class="material-symbols-outlined">delete</span>
+          </button>
+        {/if}
+      </div>
+    {:else}
+      <div class="prop-actions">
+        {#if onSave && !detailGroup.isObjectProperty && !detailGroup.isCalculated && (isStringType(detailGroup.datatype) || isDateType(detailGroup.datatype) || isNumericType(detailGroup.datatype) || isRruleType(detailGroup.datatype) || isQueryConfigProperty(detailGroup.property)) && (detailGroup.isEmpty || detailGroup.values.length <= 1)}
+          <button
+            class="edit-btn"
+            title="Edit"
+            onclick={() => startEdit(detailGroup.property, detailGroup.values[0]?.value ?? '', 0, detailGroup.datatype ?? null)}
+          >
+            <span class="material-symbols-outlined">edit</span>
+          </button>
+        {:else if onSaveReference && detailGroup.isObjectProperty && !detailGroup.isCalculated && !detailGroup.sourceClass}
+          <button
+            class="edit-btn"
+            title="Edit"
+            onclick={() => startRefEdit(detailGroup.property)}
+          >
+            <span class="material-symbols-outlined">edit</span>
+          </button>
+        {/if}
+        {#if onClearProperty && !detailGroup.isCalculated && !detailGroup.isEmpty}
+          <button
+            class="edit-btn clear-btn"
+            title="Limpar valor"
+            onclick={() => onClearProperty(detailGroup.property)}
+          >
+            <span class="material-symbols-outlined">backspace</span>
           </button>
         {/if}
       </div>
@@ -438,27 +544,59 @@
     </div>
   {/if}
 
+  {#if editingQueryConfigKey === detailGroup.property}
+    <div class="query-config-edit-container">
+      <QueryConfigEditor
+        value={detailGroup.queryConfig ?? ''}
+        onconfirm={(json) => saveQueryConfigEdit(detailGroup.property, json)}
+        oncancel={() => { editingQueryConfigKey = null; }}
+      />
+    </div>
+  {/if}
+
   {#if editingRefKey === detailGroup.property}
-    <ReferenceSelect
-      propertyIri={detailGroup.property}
-      rangeClassIri={detailGroup.rangeClassIri}
-      rangeClassLabel={detailGroup.rangeClassLabel}
-      currentValues={detailGroup.values.map(v => ({
-        iri: v.value,
-        label: v.valueLabel ?? v.value,
-        icon: v.valueIcon ?? null,
-      }))}
-      minCount={detailGroup.minCount}
-      maxCount={detailGroup.maxCount}
-      saving={savingRef}
-      onsave={saveRefEdit}
-      oncancel={cancelRefEdit}
-    />
+    {#if detailGroup.maxCount === 1}
+      <ReferenceSingleSelect
+        propertyIri={detailGroup.property}
+        rangeClassIri={detailGroup.rangeClassIri}
+        rangeClassLabel={detailGroup.rangeClassLabel}
+        currentValue={detailGroup.values[0] ? {
+          iri: detailGroup.values[0].value,
+          label: detailGroup.values[0].valueLabel ?? detailGroup.values[0].value,
+          icon: detailGroup.values[0].valueIcon ?? null,
+        } : null}
+        saving={savingRef}
+        onsave={saveRefEdit}
+        oncancel={cancelRefEdit}
+      />
+    {:else}
+      <ReferenceSelect
+        propertyIri={detailGroup.property}
+        rangeClassIri={detailGroup.rangeClassIri}
+        rangeClassLabel={detailGroup.rangeClassLabel}
+        currentValues={detailGroup.values.map(v => ({
+          iri: v.value,
+          label: v.valueLabel ?? v.value,
+          icon: v.valueIcon ?? null,
+        }))}
+        minCount={detailGroup.minCount}
+        maxCount={detailGroup.maxCount}
+        saving={savingRef}
+        onsave={saveRefEdit}
+        oncancel={cancelRefEdit}
+      />
+    {/if}
   {:else if detailGroup.isEmpty && editingKey !== editKey(detailGroup.property, 0)}
     <div class="empty-value">—</div>
   {:else if detailGroup.isEmpty && editingKey === editKey(detailGroup.property, 0)}
     <div class="detail-value">
-      {#if isDateType(editingDatatype)}
+      {#if isQueryConfigProperty(detailGroup.property)}
+        <QueryConfigEditor
+          value={detailGroup.values[0]?.value ?? ''}
+          onconfirm={(json) => { draftValue = json; saveEdit(detailGroup.property); }}
+          oncancel={cancelEdit}
+        />
+      {:else if isDateType(editingDatatype)}
         {@render dateEditor(detailGroup.property, editingDatatype === 'xsd:dateTime' ? 'datetime-local' : 'date')}
       {:else if isNumericType(editingDatatype)}
         {@render numericEditor(detailGroup.property)}
@@ -478,11 +616,60 @@
         />
       {/if}
     </div>
+  {:else if isQueryConfigProperty(detailGroup.property)}
+    {#if editingKey === editKey(detailGroup.property, 0)}
+      <div class="detail-value">
+        <QueryConfigEditor
+          value={detailGroup.values[0]?.value ?? ''}
+          onconfirm={(json) => { draftValue = json; saveEdit(detailGroup.property); }}
+          oncancel={cancelEdit}
+        />
+      </div>
+    {:else}
+      {@const cfg = queryConfigSummary(detailGroup.values[0]?.value ?? '')}
+      {#if cfg}
+        <div class="qc-display">
+          <div class="qc-target">
+            <span class="material-symbols-outlined qc-icon">manage_search</span>
+            <span class="qc-class">{iriShort(cfg.targetClass)}</span>
+          </div>
+          {#if cfg.filters.length > 0}
+            <div class="qc-filters">
+              {#each cfg.filters as f}
+                <div class="qc-filter-line">{filterLabel(f)}</div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {:else}
+        <div class="empty-value">—</div>
+      {/if}
+    {/if}
+  {:else if isClass && detailGroup.isQueryProperty}
+    {@const cfg = queryConfigSummary(detailGroup.queryConfig ?? '')}
+    {#if cfg}
+      <div class="qc-display">
+        <div class="qc-target">
+          <span class="material-symbols-outlined qc-icon">manage_search</span>
+          <span class="qc-class">{iriShort(cfg.targetClass)}</span>
+        </div>
+        {#if cfg.filters.length > 0}
+          <div class="qc-filters">
+            {#each cfg.filters as f}
+              <div class="qc-filter-line">{filterLabel(f)}</div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <div class="empty-value">—</div>
+    {/if}
   {:else if detailGroup.rangeClassIri === 'foundation:File'}
     <FileGrid values={detailGroup.values} {openEntityInspector} />
   {:else}
     <PropertyValuesGroup
       {detailGroup}
+      {extraValues}
       {editingKey}
       {editingDatatype}
       bind:draftValue
@@ -492,6 +679,16 @@
       onCancelEdit={cancelEdit}
       {openEntityInspector}
     />
+    {#if hasMore && onLoadMoreBacklinks}
+      <button class="load-more-btn" onclick={loadMore} disabled={loadingMore}>
+        {#if loadingMore}
+          <span class="material-symbols-outlined spinning-small">progress_activity</span>
+        {:else}
+          <span class="material-symbols-outlined">expand_more</span>
+          Carregar mais ({detailGroup.groupTotal - detailGroup.values.length - extraValues.length})
+        {/if}
+      </button>
+    {/if}
   {/if}
 </div>
 
@@ -639,6 +836,12 @@
     background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
   }
 
+  .prop-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
   .class-prop-actions {
     display: flex;
     gap: 2px;
@@ -664,6 +867,50 @@
     padding: 8px;
   }
 
+  .query-config-edit-container {
+    padding: 8px;
+    background: color-mix(in srgb, var(--color-white) 4%, transparent);
+    margin-bottom: 8px;
+  }
+
+  .qc-display {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 2px 0;
+  }
+
+  .qc-target {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .qc-icon {
+    font-size: 14px;
+    color: var(--color-interactive);
+  }
+
+  .qc-class {
+    font-family: var(--font-mono, monospace);
+    font-size: 13px;
+    color: var(--color-neutral-active);
+    font-weight: 600;
+  }
+
+  .qc-filters {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding-left: 19px;
+  }
+
+  .qc-filter-line {
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    color: var(--color-neutral);
+  }
+
   .calculated-badge {
     display: inline-flex;
     align-items: center;
@@ -681,6 +928,11 @@
   .calculated-icon {
     font-size: 13px;
     line-height: 1;
+  }
+
+  .query-badge {
+    background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
+    color: var(--color-interactive);
   }
 
   .datetime-pair {
@@ -766,5 +1018,30 @@
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  .load-more-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 6px;
+    padding: 4px 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-interactive);
+    opacity: 0.7;
+  }
+
+  .load-more-btn:disabled {
+    cursor: default;
+    opacity: 0.4;
+  }
+
+  .load-more-btn .material-symbols-outlined {
+    font-size: 14px;
   }
 </style>

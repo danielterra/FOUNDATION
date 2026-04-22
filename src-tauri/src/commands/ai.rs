@@ -7,13 +7,18 @@ use tauri::{AppHandle, Emitter, Manager, State};
 pub async fn ai__save_api_key(
     _app: AppHandle,
     api_key: String,
+    service_iri: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
 
     executor.write(move |conn| {
-        let service_iri = owl::get_iri_property(conn, "foundation:LocalAIAssistant", "foundation:usesService")
-            .map_err(|e| format!("Failed to get service: {}", e))?
-            .ok_or_else(|| "LocalAIAssistant has no usesService".to_string())?;
+        let service_iri = if let Some(iri) = service_iri {
+            iri
+        } else {
+            owl::get_iri_property(conn, "foundation:LocalAIAssistant", "foundation:usesService")
+                .map_err(|e| format!("Failed to get service: {}", e))?
+                .ok_or_else(|| "LocalAIAssistant has no usesService".to_string())?
+        };
 
         // Retract previous API key if one is linked to the service
         if let Ok(Some(old_key_iri)) = owl::get_iri_property(conn, &service_iri, "foundation:apiKey") {
@@ -71,14 +76,17 @@ pub async fn ai__save_api_key(
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn ai__get_api_key(
+    service_iri: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Option<String>, String> {
-    executor.read(|conn| {
-        let service_iri = owl::get_iri_property(conn, "foundation:LocalAIAssistant", "foundation:usesService")
-            .ok().flatten();
+    executor.read(move |conn| {
+        let resolved = service_iri.or_else(|| {
+            owl::get_iri_property(conn, "foundation:LocalAIAssistant", "foundation:usesService")
+                .ok().flatten()
+        });
 
-        if let Some(service_iri) = service_iri {
-            if let Ok(Some(api_key_iri)) = owl::get_iri_property(conn, &service_iri, "foundation:apiKey") {
+        if let Some(svc_iri) = resolved {
+            if let Ok(Some(api_key_iri)) = owl::get_iri_property(conn, &svc_iri, "foundation:apiKey") {
                 if let Ok(Some(value)) = owl::get_literal_property(conn, &api_key_iri, "foundation:credentialValue") {
                     return Ok(Some(value));
                 }

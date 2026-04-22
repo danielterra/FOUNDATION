@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 use crate::eavto::Connection;
 use crate::owl::{Property, PropertyType};
+use rusqlite;
 use super::ToolResult;
 
 #[cfg(test)]
@@ -123,6 +124,42 @@ fn define_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
                 language: None,
             })], "ai")?;
             super::batch::queue_formula_recalc(iri.to_string());
+        }
+
+        if let Some(query_config_str) = args.get("query_config").and_then(|v| v.as_str()) {
+            if property_type != PropertyType::ObjectProperty {
+                return Err(crate::owl::OwlError::ValidationError(
+                    "query_config is only supported on object properties".to_string(),
+                ));
+            }
+            if has_formula || has_aggregation {
+                return Err(crate::owl::OwlError::ValidationError(
+                    "query_config cannot be combined with formula or aggregation".to_string(),
+                ));
+            }
+            let config = crate::owl::query_property::parse_query_config(query_config_str)
+                .map_err(|e| crate::owl::OwlError::ValidationError(e))?;
+            crate::owl::query_property::validate_query_config(conn, &config)?;
+            use crate::eavto::{store, Triple, Object};
+            store::assert_triples(conn, &[Triple::new(iri, "foundation:queryConfig", Object::Literal {
+                value: query_config_str.to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            })], "ai")?;
+            for domain_iri in &domain_strings {
+                let instance_iris: Vec<String> = conn
+                    .prepare("SELECT DISTINCT subject FROM triples_current WHERE predicate = 'rdf:type' AND object = ?")
+                    .ok()
+                    .and_then(|mut stmt| {
+                        stmt.query_map(rusqlite::params![domain_iri], |row| row.get::<_, String>(0))
+                            .ok()
+                            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                    })
+                    .unwrap_or_default();
+                for instance_iri in instance_iris {
+                    super::batch::queue_event("entity-updated", json!({"entityId": instance_iri}));
+                }
+            }
         }
 
         // Create DomainLabel entries for domain-specific labels
@@ -265,6 +302,7 @@ fn get_property_one(conn: &Connection, args: &Value) -> ToolResult {
             "unit": prop.unit,
             "formula": prop.formula,
             "aggregation": prop.aggregation,
+            "query_config": prop.query_config,
             "aiBehaviorRules": prop.ai_behavior_rules,
         }))
     })() {

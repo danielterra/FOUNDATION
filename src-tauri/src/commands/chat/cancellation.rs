@@ -68,4 +68,8 @@ impl ConversationProcessingState {
     pub fn release(&self, conv_id: &str) {
         self.active.lock().unwrap_or_else(|e| e.into_inner()).remove(conv_id);
     }
+
+    pub fn is_active(&self, conv_id: &str) -> bool {
+        self.active.lock().unwrap_or_else(|e| e.into_inner()).contains(conv_id)
+    }
 }

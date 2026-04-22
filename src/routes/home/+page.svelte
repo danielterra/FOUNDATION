@@ -3,11 +3,14 @@
   import ChatWindow from '$lib/components/ChatWindow.svelte';
   import WidgetManager from '$lib/components/widgets/WidgetManager.svelte';
   import Search from '$lib/components/graph/Search.svelte';
+  import { appState } from '$lib/appState.svelte';
 
   let isChatOpen = $state(true);
   let searchComponent = $state();
   let widgetManager = $state();
   let activeConversationIri = $state(null);
+
+  $effect(() => { appState.activeConversationIri = activeConversationIri; });
 
   async function handleSearchResult(entityId) {
     try {

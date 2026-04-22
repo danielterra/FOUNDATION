@@ -3,6 +3,7 @@
 /// Functions for asserting and retracting triples (append-only, immutable)
 
 use rusqlite::Connection;
+use std::collections::HashMap;
 use super::triple_type::Triple;
 use super::object_type::Object;
 use crate::commands::log_backend;
@@ -16,19 +17,19 @@ std::thread_local! {
     /// so that all operations participate in the same atomic transaction.
     static IN_BATCH_TX: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 
-    /// Accumulates subjects written during assert_triples on the write thread.
+    /// Accumulates subject→predicates written during assert_triples on the write thread.
     /// Drained by DbExecutor after each write to emit entity-updated notifications.
-    static WRITTEN_SUBJECTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    static WRITTEN_SUBJECT_PREDICATES: std::cell::RefCell<HashMap<String, Vec<String>>> = std::cell::RefCell::new(HashMap::new());
 
     /// Accumulates IRI objects written during assert_triples on the write thread.
     /// Drained by DbExecutor after each write to emit entity-referenced notifications.
     static WRITTEN_IRI_OBJECTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Returns all subjects accumulated since the last drain, removing them from the buffer.
+/// Returns all subject→predicates accumulated since the last drain, removing them from the buffer.
 /// Only meaningful when called from the write thread.
-pub fn drain_written_subjects() -> Vec<String> {
-    WRITTEN_SUBJECTS.with(|v| std::mem::take(&mut *v.borrow_mut()))
+pub fn drain_written_subject_predicates() -> HashMap<String, Vec<String>> {
+    WRITTEN_SUBJECT_PREDICATES.with(|v| std::mem::take(&mut *v.borrow_mut()))
 }
 
 /// Returns all IRI objects accumulated since the last drain, removing them from the buffer.
@@ -68,11 +69,13 @@ pub fn assert_triples(
         assert_triples_begin(conn, triples, origin)?
     };
     if tx_id != 0 {
-        WRITTEN_SUBJECTS.with(|v| {
-            let mut buf = v.borrow_mut();
+        WRITTEN_SUBJECT_PREDICATES.with(|v| {
+            let mut map = v.borrow_mut();
             for triple in triples {
                 if !is_vocabulary_iri(&triple.subject) {
-                    buf.push(triple.subject.clone());
+                    map.entry(triple.subject.clone())
+                        .or_default()
+                        .push(triple.predicate.clone());
                 }
             }
         });
@@ -239,11 +242,13 @@ pub fn append_triples(
         tx_id
     };
     if tx_id != 0 {
-        WRITTEN_SUBJECTS.with(|v| {
-            let mut buf = v.borrow_mut();
+        WRITTEN_SUBJECT_PREDICATES.with(|v| {
+            let mut map = v.borrow_mut();
             for triple in triples {
                 if !is_vocabulary_iri(&triple.subject) {
-                    buf.push(triple.subject.clone());
+                    map.entry(triple.subject.clone())
+                        .or_default()
+                        .push(triple.predicate.clone());
                 }
             }
         });
@@ -348,11 +353,13 @@ pub fn retract_triples(
         tx_id
     };
     if tx_id != 0 {
-        WRITTEN_SUBJECTS.with(|v| {
-            let mut buf = v.borrow_mut();
+        WRITTEN_SUBJECT_PREDICATES.with(|v| {
+            let mut map = v.borrow_mut();
             for triple in triples {
                 if !is_vocabulary_iri(&triple.subject) {
-                    buf.push(triple.subject.clone());
+                    map.entry(triple.subject.clone())
+                        .or_default()
+                        .push(triple.predicate.clone());
                 }
             }
         });

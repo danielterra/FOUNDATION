@@ -57,6 +57,9 @@
 			</button>
 			<button class="agent-name-btn" onclick={onOpenAgentInspector} title="Open in inspector">
 				<span class="agent-name">{conversationAgent?.label || 'AI Assistant'}</span>
+				{#if activeModelInfo?.modelLabel}
+					<span class="agent-model">{activeModelInfo.modelLabel}</span>
+				{/if}
 			</button>
 
 			{#if pickerOpen}
@@ -69,12 +72,6 @@
 			{/if}
 		</div>
 	</div>
-	{#if activeModelInfo?.modelLabel}
-		<span class="model-badge">
-			{activeModelInfo.modelLabel}
-			{#if activeModelInfo.isLocal}· Local{:else}· Remoto{/if}
-		</span>
-	{/if}
 	<div class="chat-header-right">
 		{#if onToggleCamera}
 			<button
@@ -179,6 +176,9 @@
 		cursor: pointer;
 		min-width: 0;
 		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
 	}
 
 	.agent-name {
@@ -191,17 +191,14 @@
 		text-overflow: ellipsis;
 	}
 
-	.agent-name-btn:hover .agent-name {
-		color: var(--color-interactive);
+	.agent-model {
+		font-size: 10px;
+		color: var(--color-neutral);
+		white-space: nowrap;
 	}
 
-	.model-badge {
-		font-size: 11px;
-		color: var(--color-neutral);
-		background: color-mix(in srgb, var(--color-white) 6%, transparent);
-		padding: 2px 8px;
-		white-space: nowrap;
-		flex-shrink: 0;
+	.agent-name-btn:hover .agent-name {
+		color: var(--color-interactive);
 	}
 
 	.chat-header-right {
