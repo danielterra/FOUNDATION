@@ -121,7 +121,21 @@ fn resolve_ref_value(conn: &Connection, instance_iri: &str, ref_iri: &str) -> Op
         return evaluate_formula_for_instance_raw(conn, instance_iri, ref_iri).ok();
     }
 
+    // Propriedades numéricas sem valor armazenado valem zero — evita falha na fórmula
+    if is_numeric_property(conn, ref_iri) {
+        return Some("0".to_string());
+    }
+
     None
+}
+
+fn is_numeric_property(conn: &Connection, property_iri: &str) -> bool {
+    let range: Option<String> = crate::eavto::query::get_by_entity_predicate(conn, property_iri, "rdfs:range")
+        .ok()
+        .and_then(|r| r.triples.into_iter().next())
+        .and_then(|t| t.object.as_iri().map(|s| s.to_string()));
+
+    range.as_deref().map(|r| NUMERIC_RANGES.contains(&r)).unwrap_or(false)
 }
 
 /// Evaluate a formula for a specific instance using a raw `rusqlite::Connection`.

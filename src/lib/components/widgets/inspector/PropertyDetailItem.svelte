@@ -244,7 +244,7 @@
   }
 
   function fromInputValue(value, datatype) {
-    if (!value) return '';
+    if (value === '' || value === null || value === undefined) return '';
     if (datatype === 'xsd:dateTime') {
       return new Date(value).toISOString();
     }
