@@ -1,4 +1,5 @@
 <script lang="ts">
+  import '$lib/base.css';
   import '$lib/fonts.css';
   import '$lib/colors.css';
   import '$lib/markdown.css';

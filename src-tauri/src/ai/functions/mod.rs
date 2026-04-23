@@ -170,6 +170,9 @@ pub fn execute_tool(
         "read_text_lines" => file::read_text_lines(conn, args),
         "get_automation" => get_automation_tool(conn, args),
         "run_automation" => run_automation_tool(conn, args, app),
+        "list_blackboard_widgets" => list_blackboard_widgets_tool(conn, args, conversation_id),
+        "add_widget_to_blackboard" => add_widget_to_blackboard_tool(conn, args, app, conversation_id),
+        "remove_widget_from_blackboard" => remove_widget_from_blackboard_tool(conn, args, app),
         _ => ToolResult {
             success: false,
             result: None,
@@ -371,6 +374,192 @@ fn run_automation_tool(conn: &Connection, args: &Value, app: Option<&tauri::AppH
     ToolResult {
         success: true,
         result: None,
+        error: None,
+        concept: None,
+    }
+}
+
+fn list_blackboard_widgets_tool(
+    conn: &Connection,
+    args: &Value,
+    conversation_id: Option<&str>,
+) -> ToolResult {
+    let conv_iri = args["conversation_iri"].as_str()
+        .filter(|s| !s.is_empty())
+        .or(conversation_id);
+
+    let conv_iri = match conv_iri {
+        Some(c) => c,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("conversation_iri is required when called outside the Foundation chat engine".to_string()),
+            concept: None,
+        },
+    };
+
+    let widgets = match crate::commands::widget::owl_get_widgets_for_conversation(conn, conv_iri) {
+        Ok(w) => w,
+        Err(e) => return ToolResult {
+            success: false,
+            result: None,
+            error: Some(e),
+            concept: None,
+        },
+    };
+
+    let list: Vec<Value> = widgets.iter().map(|w| {
+        serde_json::json!({
+            "widget_iri": w.id,
+            "widget_type": w.widget_type,
+            "entity_iri": w.entity_id,
+        })
+    }).collect();
+
+    ToolResult {
+        success: true,
+        result: Some(Value::Array(list)),
+        error: None,
+        concept: None,
+    }
+}
+
+fn add_widget_to_blackboard_tool(
+    conn: &mut Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+    conversation_id: Option<&str>,
+) -> ToolResult {
+    use crate::commands::widget::{Widget, Position, WindowState, owl_insert_widget, owl_get_widgets_for_conversation, resolve_widget_type, blackboard__list_widget_types};
+    use tauri::Emitter;
+
+    let entity_iri = match args["entity_iri"].as_str().filter(|s| !s.is_empty()) {
+        Some(e) => e.to_string(),
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("entity_iri is required".to_string()),
+            concept: None,
+        },
+    };
+
+    let conv_iri = args["conversation_iri"].as_str()
+        .filter(|s| !s.is_empty())
+        .or(conversation_id);
+
+    let conv_iri = match conv_iri {
+        Some(c) => c.to_string(),
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("conversation_iri is required when called outside the Foundation chat engine".to_string()),
+            concept: None,
+        },
+    };
+
+    let requested_type = args["widget_type"].as_str().unwrap_or("").to_string();
+
+    // Check for existing widget for same entity in this conversation
+    match owl_get_widgets_for_conversation(conn, &conv_iri) {
+        Ok(existing) => {
+            if let Some(w) = existing.into_iter().find(|w| w.entity_id == entity_iri) {
+                return ToolResult {
+                    success: true,
+                    result: Some(serde_json::json!({ "widget_iri": w.id, "widget_type": w.widget_type, "entity_iri": w.entity_id, "reused": true })),
+                    error: None,
+                    concept: None,
+                };
+            }
+        }
+        Err(e) => return ToolResult {
+            success: false,
+            result: None,
+            error: Some(e),
+            concept: None,
+        },
+    }
+
+    let widget_type = resolve_widget_type(conn, &entity_iri, &requested_type);
+
+    // Validate widget_type against available types
+    let valid_types = blackboard__list_widget_types(conn);
+    let default_size = match valid_types.into_iter().find(|t| t.id == widget_type) {
+        Some(t) => t.default_size,
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!("Invalid widget type: {}", widget_type)),
+            concept: None,
+        },
+    };
+
+    let sanitized_entity = entity_iri.replace([':', '/', '#', ' '], "_");
+    let sanitized_conv = conv_iri.replace([':', '/', '#', ' '], "_");
+    let widget = Widget {
+        id: format!("foundation:Widget_{widget_type}_{sanitized_entity}_{sanitized_conv}"),
+        widget_type: widget_type.clone(),
+        entity_id: entity_iri.clone(),
+        position: Position { x: 100.0, y: 100.0 },
+        size: default_size,
+        window_state: WindowState::Normal,
+        conversation_iri: Some(conv_iri),
+    };
+
+    if let Err(e) = owl_insert_widget(conn, &widget) {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(e),
+            concept: None,
+        };
+    }
+
+    if let Some(app) = app {
+        app.emit("widget-added", widget.clone()).ok();
+    }
+
+    ToolResult {
+        success: true,
+        result: Some(serde_json::json!({ "widget_iri": widget.id, "widget_type": widget.widget_type, "entity_iri": widget.entity_id, "reused": false })),
+        error: None,
+        concept: None,
+    }
+}
+
+fn remove_widget_from_blackboard_tool(
+    conn: &mut Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    use crate::commands::widget::owl_delete_widget;
+    use tauri::Emitter;
+
+    let widget_iri = match args["widget_iri"].as_str().filter(|s| !s.is_empty()) {
+        Some(w) => w.to_string(),
+        None => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("widget_iri is required".to_string()),
+            concept: None,
+        },
+    };
+
+    if let Err(e) = owl_delete_widget(conn, &widget_iri) {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(e),
+            concept: None,
+        };
+    }
+
+    if let Some(app) = app {
+        app.emit("widget-removed", widget_iri.clone()).ok();
+    }
+
+    ToolResult {
+        success: true,
+        result: Some(serde_json::json!({ "removed": widget_iri })),
         error: None,
         concept: None,
     }

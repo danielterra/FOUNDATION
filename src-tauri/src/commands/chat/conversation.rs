@@ -245,12 +245,18 @@ pub async fn chat__list_agents(
         .filter_map(|r| r.ok())
         .collect();
 
+        let default_service_available = crate::commands::chat::settings::get_ai_service_iri(conn)
+            .ok()
+            .flatten()
+            .is_some();
+
         let agents = iris.iter().map(|iri| {
             let thing = crate::owl::Thing::get(conn, iri);
             let has_service = crate::owl::get_iri_property(conn, iri, "foundation:usesService")
                 .ok()
                 .flatten()
-                .is_some();
+                .is_some()
+                || default_service_available;
             let is_active = crate::owl::get_iri_property(conn, iri, "foundation:hasStatus")
                 .ok()
                 .flatten()

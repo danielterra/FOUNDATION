@@ -15,6 +15,73 @@ pub struct SubconsciousEntity {
 const INSTANCE_SEARCH_LIMIT: usize = 10;
 const CONCEPT_SEARCH_LIMIT: usize = 5;
 
+const POSSESSIVE_PRONOUNS: &[&str] = &[
+    "meu", "minha", "meus", "minhas", // PT
+    "my",                              // EN
+    "mi", "mis",                       // ES
+];
+
+fn resolve_possessive_entities(content: &str, conn: &rusqlite::Connection) -> Vec<(String, f32, String)> {
+    let lower_words: Vec<String> = content
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    if !lower_words.iter().any(|w| POSSESSIVE_PRONOUNS.contains(&w.as_str())) {
+        return vec![];
+    }
+
+    let this_user_props: Vec<(String, String)> = conn
+        .prepare(
+            "SELECT predicate, object FROM triples \
+             WHERE subject = 'foundation:ThisUser' AND retracted = 0 \
+               AND object_type = 'iri' \
+               AND predicate NOT IN ('rdf:type', 'foundation:hasStatus', 'foundation:hasIcon')",
+        )
+        .map(|mut stmt| {
+            stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default()
+        })
+        .unwrap_or_default();
+
+    let mut results = vec![];
+    for (predicate, obj_iri) in &this_user_props {
+        let pred_label: Option<String> = conn.query_row(
+            "SELECT object_value FROM triples \
+             WHERE subject = ?1 AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1",
+            [predicate.as_str()],
+            |row| row.get(0),
+        ).ok();
+
+        if let Some(label) = pred_label {
+            if lower_words.iter().any(|w| *w == label.to_lowercase()) {
+                // Use inverseLabel (from DomainLabel) when available — it describes
+                // the relationship from the matched entity's perspective (e.g. "filho" for "mãe").
+                let inverse_label: Option<String> = conn.query_row(
+                    "SELECT object_value FROM triples
+                     WHERE predicate = 'foundation:inverseLabel' AND retracted = 0
+                       AND subject IN (
+                           SELECT subject FROM triples
+                           WHERE predicate = 'foundation:onProperty'
+                             AND object = ?1 AND retracted = 0
+                       )
+                     ORDER BY tx DESC LIMIT 1",
+                    [predicate.as_str()],
+                    |row| row.get(0),
+                ).ok();
+                let rel_label = inverse_label.unwrap_or(label);
+                results.push((obj_iri.clone(), 10.0_f32, rel_label));
+            }
+        }
+    }
+
+    results
+}
+
 fn split_into_chunks(content: &str) -> Vec<String> {
     content
         .split(|c| matches!(c, '.' | '!' | '?' | '\n' | ';' | ','))
@@ -28,7 +95,12 @@ fn extract_chunk_query(chunk: &str) -> String {
     chunk
         .split_whitespace()
         .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
-        .filter(|w| !w.is_empty() && (w.chars().count() >= 4 || w.chars().any(|c| c.is_ascii_digit())))
+        .filter(|w| {
+            !w.is_empty()
+                && (w.chars().all(|c| c.is_uppercase())
+                    || !super::stopwords::STOPWORDS.contains(&w.to_lowercase().as_str()))
+                && (w.chars().count() >= 3 || w.chars().any(|c| c.is_ascii_digit()))
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -36,6 +108,23 @@ fn extract_chunk_query(chunk: &str) -> String {
 pub fn run_subconscious(content: &str, exclude_iri: Option<&str>, conn: &Connection) -> Vec<SubconsciousEntity> {
     let mut entities: Vec<SubconsciousEntity> = Vec::new();
     let mut seen_iris: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Resolve possessive pronouns → ThisUser properties (e.g. "minha mãe" → Andrea Terra)
+    for (iri, score, rel_label) in resolve_possessive_entities(content, conn) {
+        if exclude_iri.map_or(false, |ex| ex == iri) { continue; }
+        if !seen_iris.insert(iri.clone()) { continue; }
+        if let Some(mut entity) = enrich(conn, &iri, score) {
+            let user_label: String = conn.query_row(
+                "SELECT object_value FROM triples \
+                 WHERE subject = 'foundation:ThisUser' AND predicate = 'rdfs:label' \
+                   AND retracted = 0 LIMIT 1",
+                [],
+                |row| row.get(0),
+            ).unwrap_or_else(|_| "foundation:ThisUser".to_string());
+            entity.properties.insert(0, (rel_label, format!("{user_label} (foundation:ThisUser)")));
+            entities.push(entity);
+        }
+    }
 
     let full_query = extract_chunk_query(content);
     let concept_query = if full_query.is_empty() { content } else { &full_query };
@@ -50,7 +139,12 @@ pub fn run_subconscious(content: &str, exclude_iri: Option<&str>, conn: &Connect
         if exclude_iri.map_or(false, |ex| ex == iri) { continue; }
         if !seen_iris.insert(iri.clone()) { continue; }
         match enrich(conn, iri, *score) {
-            Some(entity) => entities.push(entity),
+            Some(entity) => {
+                if matches!(entity.type_iri.as_str(),
+                    "owl:ObjectProperty" | "owl:DatatypeProperty" | "owl:AnnotationProperty"
+                ) { continue; }
+                entities.push(entity);
+            }
             None => crate::commands::log_backend("debug", &format!(
                 "[subconscious] enrich failed for {} (score={:.3})", iri, score
             )),
@@ -64,6 +158,7 @@ pub fn run_subconscious(content: &str, exclude_iri: Option<&str>, conn: &Connect
         if query.is_empty() { continue; }
         for (iri, score) in crate::search::search_with_scores(&query, None, INSTANCE_SEARCH_LIMIT * 3) {
             if iri.starts_with("foundation:AIConversationMessage_") { continue; }
+            if iri.contains(":TextBlock_") { continue; }
             let entry = score_map.entry(iri).or_insert(0.0);
             if score > *entry { *entry = score; }
         }
@@ -329,6 +424,13 @@ mod tests {
     fn test_extract_chunk_query_filters_short_words() {
         let q = extract_chunk_query("falei com a Mariana ela vai passar");
         assert_eq!(q, "falei Mariana passar");
+    }
+
+    #[test]
+    fn test_extract_chunk_query_keeps_short_meaningful_words() {
+        let q = extract_chunk_query("quando minha mãe precisa me pagar");
+        assert!(q.contains("mãe"), "deve manter 'mãe' (3 chars, não é stopword)");
+        assert!(!q.contains(" me ") && !q.ends_with(" me"), "deve filtrar 'me' (2 chars)");
     }
 
     #[test]

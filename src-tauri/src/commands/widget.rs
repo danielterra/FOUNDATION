@@ -101,6 +101,26 @@ fn prop_iri(ind: &Individual, pred: &str) -> Option<String> {
         .and_then(|(_, v)| v.as_iri().map(String::from))
 }
 
+pub fn resolve_widget_type(conn: &Connection, entity_id: &str, requested_type: &str) -> String {
+    if !requested_type.is_empty() {
+        return requested_type.to_string();
+    }
+    let class_iri = crate::owl::get_iri_property(conn, entity_id, "rdf:type")
+        .ok()
+        .flatten();
+    if let Some(class_iri) = class_iri {
+        let default = crate::owl::get_literal_property(conn, &class_iri, "foundation:defaultWidgetType")
+            .ok()
+            .flatten();
+        if let Some(t) = default {
+            if !t.is_empty() {
+                return t;
+            }
+        }
+    }
+    "inspector".to_string()
+}
+
 fn individual_to_widget(ind: Individual) -> Option<Widget> {
     let widget_type = prop_str(&ind, PRED_WIDGET_TYPE)?;
     let entity_id = prop_str(&ind, PRED_ENTITY_ID)?;
@@ -422,12 +442,15 @@ pub async fn widget_blackboard__add_widget(
     executor: State<'_, DbExecutor>
 ) -> Result<Widget, String> {
     let widget_type_check = widget_type.clone();
-    let default_size = executor.read(move |conn| {
+    let entity_id_check = entity_id.clone();
+    let (resolved_type, default_size) = executor.read(move |conn| {
+        let resolved = resolve_widget_type(conn, &entity_id_check, &widget_type_check);
         let valid_types = blackboard__list_widget_types(conn);
-        valid_types.into_iter()
-            .find(|t| t.id == widget_type_check)
+        let size = valid_types.into_iter()
+            .find(|t| t.id == resolved)
             .map(|t| t.default_size)
-            .ok_or_else(|| format!("Invalid widget type: {}", widget_type_check))
+            .ok_or_else(|| format!("Invalid widget type: {}", resolved.clone()))?;
+        Ok((resolved, size))
     }).await?;
 
     let sanitized_entity = entity_id.replace([':', '/', '#', ' '], "_");
@@ -436,8 +459,8 @@ pub async fn widget_blackboard__add_widget(
         .unwrap_or_default();
 
     let widget = Widget {
-        id: format!("foundation:Widget_{widget_type}_{sanitized_entity}{conv_suffix}"),
-        widget_type,
+        id: format!("foundation:Widget_{resolved_type}_{sanitized_entity}{conv_suffix}"),
+        widget_type: resolved_type,
         entity_id,
         position: position.unwrap_or(Position { x: DEFAULT_POS_X, y: DEFAULT_POS_Y }),
         size: size.unwrap_or(default_size),

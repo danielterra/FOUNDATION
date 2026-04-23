@@ -390,6 +390,41 @@ fn build_document(idx: &SearchIndex, conn: &Connection, subject: &str, is_class:
         }
     }
 
+    // Index IRI-valued properties: predicate label + object label.
+    // e.g. foundation:mother → Person makes "Mãe Andrea Terra Borlino" searchable.
+    if let Ok(mut iri_stmt) = conn.prepare(
+        "SELECT t.predicate, t.object FROM triples t
+         WHERE t.subject = ?1 AND t.retracted = 0 AND t.object_type = 'iri'
+           AND t.predicate NOT IN (
+               'rdf:type', 'rdfs:subClassOf', 'owl:inverseOf',
+               'rdfs:domain', 'rdfs:range', 'owl:inverseOf',
+               'foundation:hasIcon', 'foundation:partOfConversation',
+               'foundation:sender', 'foundation:receiver'
+           )",
+    ) {
+        let iri_rows: Vec<(String, String)> = iri_stmt
+            .query_map([subject], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
+
+        for (predicate, obj_iri) in &iri_rows {
+            let pred_label: Option<String> = conn.query_row(
+                "SELECT object_value FROM triples \
+                 WHERE subject = ?1 AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1",
+                [predicate.as_str()],
+                |row| row.get(0),
+            ).ok();
+            let obj_label: Option<String> = conn.query_row(
+                "SELECT object_value FROM triples \
+                 WHERE subject = ?1 AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1",
+                [obj_iri.as_str()],
+                |row| row.get(0),
+            ).ok();
+            if let Some(l) = pred_label { props.push(l); }
+            if let Some(l) = obj_label  { props.push(l); }
+        }
+    }
+
     let content_text = if content_raw.is_empty() {
         String::new()
     } else {

@@ -761,5 +761,67 @@ Example — find all active Tasks whose due date is before this Project's deadli
             ],
         },
 
+        // ----------------------------------------------------------------
+        // BLACKBOARD TOOLS
+        // ----------------------------------------------------------------
+        ToolTemplate {
+            name: "list_blackboard_widgets".to_string(),
+            array_mode: false,
+            description: "List widgets currently open on the conversation blackboard. Returns widget_iri, widget_type, and entity_iri for each open widget. Returns empty list if the blackboard is empty.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "conversation_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the conversation whose blackboard to inspect. Required when called outside the Foundation chat engine (e.g. via Claude Desktop MCP).".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "add_widget_to_blackboard".to_string(),
+            array_mode: false,
+            description: "Open a widget on the conversation blackboard to display an entity. If a widget for the same entity already exists in this conversation, returns the existing widget instead of creating a duplicate. widget_type defaults to 'inspector' (universal). Use list_blackboard_widgets first to avoid duplicates.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "entity_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the entity to display (e.g. 'foundation:Task_123')".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "widget_type".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Widget type ID (e.g. 'inspector', 'mermaid', 'graph'). Omit to use the class default or fall back to 'inspector'.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "conversation_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the conversation whose blackboard to add the widget to. Required when called outside the Foundation chat engine.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "remove_widget_from_blackboard".to_string(),
+            array_mode: false,
+            description: "Remove a widget from the conversation blackboard. Only closes the widget — does not modify or delete the entity it displays. Returns an error if the widget IRI does not exist or is already closed.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "widget_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the Widget to remove (e.g. 'foundation:Widget_inspector_Task_123'). Use list_blackboard_widgets to find widget IRIs.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
     ]
 }

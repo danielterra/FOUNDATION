@@ -1,6 +1,10 @@
 [build]
 target-dir = "/Users/daniel/.cache/cargo-targets/FOUNDATION"
 
+[env]
+MACOSX_DEPLOYMENT_TARGET = "10.15"
+CMAKE_OSX_DEPLOYMENT_TARGET = "10.15"
+
 [profile.dev]
 incremental = false
 

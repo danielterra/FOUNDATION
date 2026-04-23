@@ -61,6 +61,46 @@ pub fn has_pending_user_message(conn: &Connection, conversation_iri: &str) -> bo
     )
 }
 
+fn build_recovery_first_turn_ctx(
+    conn: &Connection,
+    conversation_id: &str,
+) -> Option<super::engine::FirstTurnContext> {
+    let last_user_msg: String = conn.query_row(
+        "SELECT t_msg.subject FROM triples t_msg
+         JOIN triples t_role ON t_role.subject = t_msg.subject
+             AND t_role.predicate = 'foundation:role'
+             AND t_role.object_value = 'user' AND t_role.retracted = 0
+         JOIN triples t_ts ON t_ts.subject = t_msg.subject
+             AND t_ts.predicate = 'foundation:sentAt' AND t_ts.retracted = 0
+         WHERE t_msg.predicate = 'foundation:partOfConversation'
+             AND t_msg.object = ?1 AND t_msg.retracted = 0
+         ORDER BY t_ts.object_datetime DESC LIMIT 1",
+        [conversation_id],
+        |row| row.get(0),
+    ).ok()?;
+
+    let json: String = conn.query_row(
+        "SELECT object_value FROM triples
+         WHERE subject = ?1 AND predicate = 'foundation:subconsciousContext'
+           AND retracted = 0
+         ORDER BY tx DESC LIMIT 1",
+        [last_user_msg.as_str()],
+        |row| row.get(0),
+    ).ok()?;
+
+    let entities: Vec<super::subconscious::SubconsciousEntity> =
+        serde_json::from_str(&json).ok()?;
+    let formatted = super::subconscious::format_context(&entities)?;
+
+    Some(super::engine::FirstTurnContext {
+        camera_images: None,
+        attachment_binaries: vec![],
+        files_needing_summary: vec![],
+        subconscious_context: Some(formatted),
+        blackboard_context: None,
+    })
+}
+
 pub async fn run_conversation_from_current_state(
     app: tauri::AppHandle,
     executor: DbExecutor,
@@ -73,9 +113,15 @@ pub async fn run_conversation_from_current_state(
         load_agent_config(conn, &conv_id_for_config)
     }).await?;
 
+    // Re-inject stored subconscious context so retry/recovery behaves like a fresh send.
+    let conv_id_for_sc = conversation_id.clone();
+    let first_turn_ctx = executor.read(move |conn| {
+        Ok(build_recovery_first_turn_ctx(conn, &conv_id_for_sc))
+    }).await.ok().flatten();
+
     super::engine::run_conversation_loop(
         &app, &executor, &conversation_id,
-        &agent_config, None, silent, false, cancellation,
+        &agent_config, first_turn_ctx, silent, false, cancellation,
     ).await?;
 
     if !silent {

@@ -3,6 +3,7 @@ mod message_utils;
 pub mod settings;
 mod recovery;
 mod cancellation;
+mod stopwords;
 mod subconscious;
 pub mod retention;
 pub mod conversation;
@@ -602,6 +603,46 @@ pub async fn chat__get_recent_messages(
     Ok(result)
 }
 
+fn recompute_subconscious_for_message(conn: &mut rusqlite::Connection, message_iri: &str) {
+    let blocks = super::chat_storage::load_content_blocks(conn, message_iri).unwrap_or_default();
+    let text: String = blocks.iter()
+        .filter_map(|b| if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.is_empty() { return; }
+
+    let entities = subconscious::run_subconscious(&text, Some(message_iri), conn);
+    if entities.is_empty() { return; }
+
+    let json = serde_json::to_string(&entities).unwrap_or_else(|_| "[]".to_string());
+    let msg = Individual::new(message_iri);
+    msg.add_property(conn, "foundation:subconsciousContext", vec![Object::Literal {
+        value: json,
+        datatype: Some("xsd:string".to_string()),
+        language: None,
+    }], "chat").ok();
+}
+
+fn find_last_user_message(conn: &rusqlite::Connection, conversation_id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT t_msg.subject FROM triples t_msg
+         JOIN triples t_role ON t_role.subject = t_msg.subject
+             AND t_role.predicate = 'foundation:role'
+             AND t_role.object_value = 'user'
+             AND t_role.retracted = 0
+         JOIN triples t_ts ON t_ts.subject = t_msg.subject
+             AND t_ts.predicate = 'foundation:sentAt'
+             AND t_ts.retracted = 0
+         WHERE t_msg.predicate = 'foundation:partOfConversation'
+             AND t_msg.object = ?1
+             AND t_msg.retracted = 0
+         ORDER BY t_ts.object_datetime DESC
+         LIMIT 1",
+        [conversation_id],
+        |row| row.get(0),
+    ).ok()
+}
+
 /// Edit a user message and re-run the conversation from that point.
 /// All messages after the edited message are deleted before re-running.
 #[tauri::command]
@@ -664,6 +705,8 @@ pub async fn chat__edit_and_retry(
         let new_ts = chrono::Utc::now().timestamp_millis();
         super::chat_storage::save_content_blocks(conn, &iri_clone, new_ts, &new_blocks)?;
 
+        recompute_subconscious_for_message(conn, &iri_clone);
+
         Ok(String::new())
     }).await?;
 
@@ -701,6 +744,7 @@ pub async fn chat__retry_from_message(
 ) -> Result<Vec<serde_json::Value>, String> {
     let _cancel_rx = cancellation.begin(&conversation_id);
 
+    let message_iri_for_sc = message_iri.clone();
     let (msg_timestamp, is_user_message) = executor.read(move |conn| {
         let ind = Individual::get(conn, &message_iri)
             .map_err(|e| format!("Failed to load message: {}", e))?
@@ -731,6 +775,16 @@ pub async fn chat__retry_from_message(
         // For user messages: keep the message, delete everything after it.
         // For assistant messages: delete from that message onward.
         delete_messages_from_timestamp(conn, &conv_id_for_write, msg_timestamp, is_user_message)?;
+
+        let target_iri = if is_user_message {
+            Some(message_iri_for_sc)
+        } else {
+            find_last_user_message(conn, &conv_id_for_write)
+        };
+        if let Some(iri) = target_iri {
+            recompute_subconscious_for_message(conn, &iri);
+        }
+
         Ok(String::new())
     }).await?;
 

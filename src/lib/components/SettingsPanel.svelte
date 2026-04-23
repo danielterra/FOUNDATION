@@ -23,6 +23,17 @@
 	let modelMessage = $state('');
 	let modelError = $state(false);
 
+	// --- Local Model ---
+	let localModelExists = $state(false);
+	let localModelSizeHuman = $state('~4.9 GB');
+	let localModelIsDownloading = $state(false);
+	let localModelProgress = $state(0);
+	let localModelDownloadedBytes = $state(0);
+	let localModelTotalBytes = $state(0);
+	let localModelMessage = $state('');
+	let localModelError = $state(false);
+	let localModelUnlisten = $state(null);
+
 	// --- Logs ---
 	let logPath = $state('');
 	let logClearing = $state(false);
@@ -31,11 +42,88 @@
 
 	$effect(() => {
 		loadAll();
+		return () => { localModelUnlisten?.(); };
 	});
 
 	async function loadAll() {
-		await Promise.all([loadModelData(), loadLogPath()]);
+		await Promise.all([loadModelData(), loadLogPath(), loadLocalModelStatus()]);
 		await loadApiKeyForService(selectedServiceIri);
+	}
+
+	async function loadLocalModelStatus() {
+		try {
+			const status = await invoke('setup__get_local_model_status');
+			localModelExists = status.exists;
+			localModelSizeHuman = status.sizeHuman;
+			localModelIsDownloading = status.isDownloading;
+		} catch {
+			// ignore
+		}
+	}
+
+	async function startModelDownload() {
+		localModelError = false;
+		localModelMessage = '';
+		localModelIsDownloading = true;
+		localModelProgress = 0;
+
+		const { listen } = await import('@tauri-apps/api/event');
+
+		const unlistenProgress = await listen('local-model-download-progress', (event) => {
+			localModelProgress = event.payload.percentage;
+			localModelDownloadedBytes = event.payload.downloadedBytes;
+			localModelTotalBytes = event.payload.totalBytes;
+		});
+
+		const unlistenComplete = await listen('local-model-download-complete', () => {
+			localModelIsDownloading = false;
+			localModelExists = true;
+			localModelMessage = 'Modelo instalado com sucesso.';
+			localModelProgress = 100;
+			unlistenProgress();
+			unlistenComplete();
+			unlistenError();
+			loadLocalModelStatus();
+		});
+
+		const unlistenError = await listen('local-model-download-error', (event) => {
+			localModelIsDownloading = false;
+			localModelError = !event.payload.cancelled;
+			localModelMessage = event.payload.error;
+			unlistenProgress();
+			unlistenComplete();
+			unlistenError();
+		});
+
+		localModelUnlisten = () => {
+			unlistenProgress();
+			unlistenComplete();
+			unlistenError();
+		};
+
+		try {
+			await invoke('setup__download_local_model');
+		} catch (e) {
+			localModelIsDownloading = false;
+			localModelError = true;
+			localModelMessage = String(e);
+		}
+	}
+
+	async function cancelModelDownload() {
+		try {
+			await invoke('setup__cancel_local_model_download');
+		} catch {
+			// ignore
+		}
+	}
+
+	function formatBytes(bytes) {
+		if (bytes === 0) return '0 B';
+		const gb = bytes / 1_073_741_824;
+		if (gb >= 1) return `${gb.toFixed(1)} GB`;
+		const mb = bytes / 1_048_576;
+		return `${mb.toFixed(0)} MB`;
 	}
 
 	async function loadApiKeyForService(serviceIri) {
@@ -231,6 +319,38 @@
 				{/if}
 			</section>
 
+			{#if selectedServiceIsLocal}
+			<section class="settings-section">
+				<h3 class="section-title">Modelo Local</h3>
+				{#if localModelExists}
+					<p class="hint">
+						<span class="material-symbols-outlined model-status-icon installed">check_circle</span>
+						Instalado · {localModelSizeHuman}
+					</p>
+				{:else if localModelIsDownloading}
+					<p class="hint">Baixando… {localModelProgress.toFixed(1)}%</p>
+					<div class="progress-bar-track">
+						<div class="progress-bar-fill" style="width: {localModelProgress}%"></div>
+					</div>
+					<p class="progress-detail">{formatBytes(localModelDownloadedBytes)} / {formatBytes(localModelTotalBytes)}</p>
+					<div class="field-row">
+						<button class="danger-btn" onclick={cancelModelDownload}>Cancelar</button>
+					</div>
+				{:else}
+					<p class="hint">Modelo não instalado · {localModelSizeHuman}</p>
+					<div class="field-row">
+						<button class="save-btn" onclick={startModelDownload}>
+							<span class="material-symbols-outlined btn-icon">download</span>
+							Baixar modelo
+						</button>
+					</div>
+				{/if}
+				{#if localModelMessage}
+					<p class="feedback" class:error={localModelError}>{localModelMessage}</p>
+				{/if}
+			</section>
+			{/if}
+
 			<section class="settings-section">
 				<h3 class="section-title">Logs</h3>
 				{#if logPath}
@@ -401,5 +521,39 @@
 
 	.feedback.error {
 		color: #e57373;
+	}
+
+	.model-status-icon {
+		font-size: 14px;
+		vertical-align: middle;
+		margin-right: 4px;
+	}
+
+	.model-status-icon.installed {
+		color: #66bb6a;
+	}
+
+	.progress-bar-track {
+		height: 4px;
+		background: color-mix(in srgb, var(--color-white, #fff) 10%, transparent);
+		width: 100%;
+	}
+
+	.progress-bar-fill {
+		height: 100%;
+		background: var(--color-interactive, #7c6fff);
+		transition: width 0.25s linear;
+	}
+
+	.progress-detail {
+		font-size: 11px;
+		color: var(--color-neutral, #888);
+		margin: 0;
+	}
+
+	.btn-icon {
+		font-size: 16px;
+		vertical-align: middle;
+		margin-right: 4px;
 	}
 </style>

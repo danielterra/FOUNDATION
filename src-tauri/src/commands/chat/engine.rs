@@ -14,7 +14,6 @@ use crate::commands::chat::settings::AgentConfig;
 use crate::commands::chat::tool_execution::execute_tools_from_message;
 use crate::commands::chat::cancellation::AiCancellationState;
 use super::trace;
-use tauri::Manager;
 use crate::ai::{AiProvider};
 use crate::ai::local::LocalProvider;
 use crate::ai::providers::{ClaudeProvider, MessageContent, ContentBlock as ApiContentBlock};
@@ -50,13 +49,7 @@ pub async fn run_conversation_loop(
     let mut cancel_rx = cancellation.begin(conversation_id);
 
     let provider = if agent_config.is_local {
-        let resource_dir = app.path().resource_dir()
-            .ok()
-            .filter(|p| p.as_os_str() != "")
-            .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources"));
-        let model_path = resource_dir
-            .join("models")
-            .join(&agent_config.model_identifier)
+        let model_path = crate::commands::local_model::resolve_model_path(app)
             .to_string_lossy()
             .into_owned();
         AiProvider::Local(LocalProvider::new(model_path))

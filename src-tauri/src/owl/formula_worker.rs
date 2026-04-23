@@ -452,19 +452,51 @@ pub fn create_reverse_aggregation_recalc_jobs(
     let now = now_millis();
     let mut job_ids = Vec::new();
 
+    let instance_type: Option<String> = conn.query_row(
+        "SELECT object FROM triples \
+         WHERE subject = ? AND predicate = 'rdf:type' AND retracted = 0 \
+         ORDER BY tx DESC LIMIT 1",
+        rusqlite::params![changed_instance_iri],
+        |row| row.get(0),
+    ).ok();
+
     for (agg_prop_iri, source_prop_iri) in agg_props {
-        let parent_iris: Vec<String> = conn.prepare(
-            "SELECT DISTINCT subject FROM triples \
-             WHERE predicate = ? AND object = ? AND retracted = 0",
-        )
-        .map(|mut stmt| {
-            stmt.query_map(rusqlite::params![source_prop_iri, changed_instance_iri], |row| {
-                row.get::<_, String>(0)
+        // Detect direction: if source_prop domain matches the changed instance's type,
+        // the property goes FROM changed_instance TO parent (e.g. Payment.settles → Obligation).
+        // Otherwise it goes FROM parent TO changed_instance (e.g. Project.hasTasks → Task).
+        let source_domain = fetch_domain(conn, &source_prop_iri);
+        let prop_from_instance = instance_type
+            .as_deref()
+            .map(|t| !source_domain.is_empty() && t == source_domain.as_str())
+            .unwrap_or(false);
+
+        let parent_iris: Vec<String> = if prop_from_instance {
+            conn.prepare(
+                "SELECT DISTINCT object FROM triples \
+                 WHERE subject = ? AND predicate = ? AND retracted = 0 AND object IS NOT NULL",
+            )
+            .map(|mut stmt| {
+                stmt.query_map(rusqlite::params![changed_instance_iri, source_prop_iri], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+                .unwrap_or_default()
             })
-            .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
             .unwrap_or_default()
-        })
-        .unwrap_or_default();
+        } else {
+            conn.prepare(
+                "SELECT DISTINCT subject FROM triples \
+                 WHERE predicate = ? AND object = ? AND retracted = 0",
+            )
+            .map(|mut stmt| {
+                stmt.query_map(rusqlite::params![source_prop_iri, changed_instance_iri], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+                .unwrap_or_default()
+            })
+            .unwrap_or_default()
+        };
 
         let property_label = fetch_label(conn, &agg_prop_iri);
         let class_iri = fetch_domain(conn, &agg_prop_iri);

@@ -115,6 +115,7 @@ pub fn run() {
         .manage(process_automation::task_manager::TaskExecutionState::new())
         .manage(commands::AiCancellationState::new())
         .manage(commands::ConversationProcessingState::new())
+        .manage(commands::LocalModelDownloadState::default())
         .setup(|app| {
             // Setup is intentionally minimal - initialization happens via initialize_app command
             // This allows the app to start quickly and not block during build/CI
@@ -200,7 +201,10 @@ pub fn run() {
             commands::automation__find_for_types,
             commands::automation__get_execution,
             commands::task__delegate,
-            commands::entity__resolve_iris
+            commands::entity__resolve_iris,
+            commands::local_model::setup__get_local_model_status,
+            commands::local_model::setup__download_local_model,
+            commands::local_model::setup__cancel_local_model_download
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

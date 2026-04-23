@@ -12,6 +12,7 @@ mod connector;
 mod connector_package;
 pub mod automation;
 pub mod task;
+pub mod local_model;
 
 pub use setup::*;
 pub use setup_ai::*;
@@ -25,3 +26,4 @@ pub use connector::*;
 pub use connector_package::*;
 pub use automation::*;
 pub use task::*;
+pub use local_model::LocalModelDownloadState;

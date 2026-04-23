@@ -37,6 +37,56 @@
 2. **Configure** your Claude API key (get one at [console.anthropic.com](https://console.anthropic.com/))
 3. **Start chatting** with your AI assistant that remembers everything!
 
+## MCP Server
+
+FOUNDATION exposes a local [Model Context Protocol](https://modelcontextprotocol.io) server on `http://127.0.0.1:47177/mcp` (Streamable HTTP transport). It starts automatically when the app is running.
+
+### Claude Desktop
+
+Claude Desktop requires [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) as a proxy. Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+
+```json
+{
+  "mcpServers": {
+    "foundation": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:47177/mcp",
+        "--allow-http",
+        "--transport",
+        "http-only"
+      ]
+    }
+  }
+}
+```
+
+### Claude Code (CLI)
+
+Add to `~/.claude.json` under the `mcpServers` key:
+
+```json
+{
+  "mcpServers": {
+    "foundation": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:47177/mcp",
+        "--allow-http",
+        "--transport",
+        "http-only"
+      ]
+    }
+  }
+}
+```
+
+Restart the client after editing. FOUNDATION must be running for the tools to be available.
+
 ## Documentation
 
 | Document | Description |

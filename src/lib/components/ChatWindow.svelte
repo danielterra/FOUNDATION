@@ -338,7 +338,7 @@
 	async function openEntityInspector(entityIri) {
 		try {
 			await invoke('widget_blackboard__add_widget', {
-				widgetType: 'inspector',
+				widgetType: '',
 				entityId: entityIri,
 				position: null,
 				size: null,
