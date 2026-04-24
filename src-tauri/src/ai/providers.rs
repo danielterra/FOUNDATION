@@ -507,8 +507,11 @@ impl ClaudeProvider {
                 "cache_control": { "type": "ephemeral" }
             }])),
             temperature: request.temperature,
-            tools: None,
-            tool_choice: None,
+            tools: request.tools.as_ref().map(|tools| {
+                tools.iter().map(|t| serde_json::to_value(t).unwrap_or_default()).collect()
+            }),
+            tool_choice: request.tool_choice.as_ref()
+                .map(|tc| serde_json::to_value(tc).unwrap_or_default()),
         }).map_err(|e| format!("Failed to serialize request: {}", e))?;
 
         let http_response = self.client
@@ -533,14 +536,23 @@ impl ClaudeProvider {
             .map_err(|e| format!("Failed to parse response: {}", e))?;
 
         let stop_reason = body["stop_reason"].as_str().map(String::from);
-        let content = body["content"]
-            .as_array()
-            .and_then(|blocks| blocks.iter()
-                .find(|b| b["type"] == "text")
-                .and_then(|b| b["text"].as_str())
-            )
+
+        let blocks = body["content"].as_array().map(|v| v.as_slice()).unwrap_or(&[]);
+        let content = blocks.iter()
+            .find(|b| b["type"] == "text")
+            .and_then(|b| b["text"].as_str())
             .unwrap_or("")
             .to_string();
+        let tool_calls: Vec<ToolCall> = blocks.iter()
+            .filter(|b| b["type"] == "tool_use")
+            .filter_map(|b| {
+                Some(ToolCall {
+                    id: b["id"].as_str()?.to_string(),
+                    name: b["name"].as_str()?.to_string(),
+                    input: b["input"].clone(),
+                })
+            })
+            .collect();
 
         let usage = body["usage"].as_object().map(|u| UsageInfo {
             input_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
@@ -551,7 +563,7 @@ impl ClaudeProvider {
 
         Ok(GenerateResponse {
             content,
-            tool_calls: vec![],
+            tool_calls,
             thinking_blocks: vec![],
             stop_reason,
             usage,

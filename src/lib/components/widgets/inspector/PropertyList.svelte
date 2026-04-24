@@ -1,6 +1,4 @@
 <script>
-  import { slide } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
   import PropertyDetailItem from './PropertyDetailItem.svelte';
   import BigNumberCard from './BigNumberCard.svelte';
   import PropertyHint from './PropertyHint.svelte';
@@ -72,8 +70,6 @@
     hintVisible = false;
   }
 
-  let optionalCollapsed = $state(true);
-
   function isNumericType(datatype) {
     return datatype === 'xsd:decimal' || datatype === 'xsd:integer' ||
            datatype === 'xsd:int' || datatype === 'xsd:long' ||
@@ -108,6 +104,7 @@
         };
       }
       if (!prop.isEmpty) {
+        acc[prop.property].isEmpty = false;
         acc[prop.property].values.push({
           value: prop.value,
           valueLabel: prop.valueLabel,
@@ -146,14 +143,10 @@
     }
 
     if (isClass) {
-      const required = all.filter(g => requiredFields.includes(g.property));
-      const optional = all.filter(g => !requiredFields.includes(g.property));
       return {
         mode: 'class',
-        required: groupBySource(required),
-        optional: groupBySource(optional),
-        requiredCount: required.length,
-        optionalCount: optional.length,
+        all: groupBySource(all),
+        allCount: all.length,
       };
     } else {
       const calculated = all.filter(g => g.isCalculated);
@@ -214,36 +207,9 @@
 
     {#if sections.mode === 'class'}
 
-      {#if sections.requiredCount > 0}
-        <div class="section">
-          <div class="section-header" use:sticky={{ top: 0 }}>
-            <span class="section-title">Required</span>
-            <span class="section-count">{sections.requiredCount}</span>
-          </div>
-          <div class="section-body">
-            {@render sourceGroups(sections.required, 28)}
-          </div>
-        </div>
-      {/if}
-
-      {#if sections.optionalCount > 0}
-        <div class="section">
-          <button
-            class="section-header collapsible"
-            use:sticky={{ top: 0 }}
-            onclick={() => optionalCollapsed = !optionalCollapsed}
-          >
-            <span class="material-symbols-outlined chevron" class:expanded={!optionalCollapsed}>
-              chevron_right
-            </span>
-            <span class="section-title">Optional</span>
-            <span class="section-count">{sections.optionalCount}</span>
-          </button>
-          {#if !optionalCollapsed}
-            <div class="section-body" transition:slide={{ duration: 300, easing: cubicOut }}>
-              {@render sourceGroups(sections.optional, 28)}
-            </div>
-          {/if}
+      {#if sections.allCount > 0}
+        <div class="section-body">
+          {@render sourceGroups(sections.all)}
         </div>
       {/if}
 

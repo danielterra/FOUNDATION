@@ -8,6 +8,7 @@ pub mod ai;
 mod mcp;
 pub mod search;
 pub mod process_automation;
+pub mod imap;
 
 #[derive(serde::Serialize)]
 pub struct TripleData {
@@ -204,7 +205,15 @@ pub fn run() {
             commands::entity__resolve_iris,
             commands::local_model::setup__get_local_model_status,
             commands::local_model::setup__download_local_model,
-            commands::local_model::setup__cancel_local_model_download
+            commands::local_model::setup__cancel_local_model_download,
+            commands::imap::imap__save_account,
+            commands::imap::imap__get_accounts,
+            commands::imap::imap__test_connection,
+            commands::imap::imap__list_folders,
+            commands::imap::imap__save_monitored_folders,
+            commands::imap::imap__get_sync_history,
+            commands::imap::imap__start_account_sync,
+            commands::imap::imap__delete_account
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

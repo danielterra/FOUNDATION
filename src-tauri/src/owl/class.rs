@@ -194,7 +194,7 @@ impl Class {
 
     /// Get all properties for this class (declared, used, and inherited)
     /// Returns Vec<(property_iri, source_class_iri)>
-    fn get_properties(
+    pub fn get_properties(
         conn: &Connection,
         class_iri: &str
     ) -> Result<Vec<(String, String)>> {

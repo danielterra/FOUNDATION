@@ -772,7 +772,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
                 Parameter {
                     name: "conversation_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "IRI of the conversation whose blackboard to inspect. Required when called outside the Foundation chat engine (e.g. via Claude Desktop MCP).".to_string(),
+                    description: "IRI of the conversation whose blackboard to inspect. Optional — if omitted, the most recent conversation is used automatically.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -801,7 +801,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
                 Parameter {
                     name: "conversation_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "IRI of the conversation whose blackboard to add the widget to. Required when called outside the Foundation chat engine.".to_string(),
+                    description: "IRI of the conversation whose blackboard to add the widget to. Optional — if omitted, the most recent conversation is used automatically.".to_string(),
                     required: false,
                     schema: None,
                 },

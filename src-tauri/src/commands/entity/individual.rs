@@ -527,6 +527,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             let resolved_label = b.source_class.as_deref()
                 .and_then(|cls| cached.and_then(|(_, _, dls)| {
                     dls.iter().find(|dl| dl.domain == cls)
+                        .or_else(|| dls.iter().find(|dl| dl.domain == "owl:Thing"))
                 }))
                 .map(|dl| dl.inverse_label.as_deref().unwrap_or(&dl.forward_label).to_string())
                 .or_else(|| cached.map(|(l, _, _)| l.clone()))

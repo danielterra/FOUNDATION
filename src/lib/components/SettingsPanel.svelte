@@ -40,13 +40,29 @@
 	let logMessage = $state('');
 	let logError = $state(false);
 
+	// --- IMAP ---
+	let imapAccounts = $state([]);
+	let imapEditing = $state(null); // null = hidden, 'new' = new form, iri = editing existing
+	let imapForm = $state({ label: '', host: '', port: 993, use_tls: true, username: '', password: '', sync_interval_minutes: 15 });
+	let imapTesting = $state(false);
+	let imapSaving = $state(false);
+	let imapDeleting = $state(false);
+	let imapMessage = $state('');
+	let imapError = $state(false);
+	let imapAvailableFolders = $state([]);
+	let imapSelectedFolders = $state([]);
+	let imapLoadingFolders = $state(false);
+	let imapSyncHistory = $state([]);
+	let imapHistoryAccountIri = $state(null);
+	let imapHasExistingPassword = $state(false);
+
 	$effect(() => {
 		loadAll();
 		return () => { localModelUnlisten?.(); };
 	});
 
 	async function loadAll() {
-		await Promise.all([loadModelData(), loadLogPath(), loadLocalModelStatus()]);
+		await Promise.all([loadModelData(), loadLogPath(), loadLocalModelStatus(), loadImapAccounts()]);
 		await loadApiKeyForService(selectedServiceIri);
 	}
 
@@ -237,6 +253,165 @@
 		}
 	}
 
+	async function loadImapAccounts() {
+		try {
+			imapAccounts = await invoke('imap__get_accounts');
+		} catch {
+			imapAccounts = [];
+		}
+	}
+
+	function startAddImapAccount() {
+		imapEditing = 'new';
+		imapHasExistingPassword = false;
+		imapForm = { label: '', host: '', port: 993, use_tls: true, username: '', password: '', sync_interval_minutes: 15 };
+		imapAvailableFolders = [];
+		imapSelectedFolders = [];
+		imapMessage = '';
+		imapError = false;
+	}
+
+	function startEditImapAccount(account) {
+		imapEditing = account.iri;
+		imapHasExistingPassword = true;
+		imapForm = {
+			label: account.label,
+			host: account.host,
+			port: account.port,
+			use_tls: account.use_tls,
+			username: account.username,
+			password: '',
+			sync_interval_minutes: account.sync_interval_minutes,
+		};
+		imapAvailableFolders = account.monitored_folders ?? [];
+		imapSelectedFolders = account.monitored_folders ?? [];
+		imapMessage = '';
+		imapError = false;
+	}
+
+	function cancelImapEdit() {
+		imapEditing = null;
+		imapHasExistingPassword = false;
+		imapAvailableFolders = [];
+		imapSelectedFolders = [];
+		imapMessage = '';
+		imapError = false;
+	}
+
+	function toggleImapFolder(folder) {
+		if (imapSelectedFolders.includes(folder)) {
+			imapSelectedFolders = imapSelectedFolders.filter(f => f !== folder);
+		} else {
+			imapSelectedFolders = [...imapSelectedFolders, folder];
+		}
+	}
+
+	async function testImapConnection() {
+		imapTesting = true;
+		imapLoadingFolders = false;
+		imapMessage = '';
+		imapError = false;
+		try {
+			const msg = await invoke('imap__test_connection', {
+				host: imapForm.host,
+				port: imapForm.port,
+				useTls: imapForm.use_tls,
+				username: imapForm.username,
+				password: imapForm.password,
+			});
+			imapMessage = msg;
+			imapLoadingFolders = true;
+			try {
+				imapAvailableFolders = await invoke('imap__list_folders', {
+					host: imapForm.host,
+					port: imapForm.port,
+					useTls: imapForm.use_tls,
+					username: imapForm.username,
+					password: imapForm.password,
+				});
+				if (imapSelectedFolders.length === 0) {
+					imapSelectedFolders = imapAvailableFolders.filter(f => f === 'INBOX');
+				}
+			} catch {
+				// ignore folder listing error
+			} finally {
+				imapLoadingFolders = false;
+			}
+		} catch (e) {
+			imapMessage = String(e);
+			imapError = true;
+		} finally {
+			imapTesting = false;
+		}
+	}
+
+	async function saveImapAccount() {
+		imapSaving = true;
+		imapMessage = '';
+		imapError = false;
+		try {
+			const savedIri = await invoke('imap__save_account', {
+				accountIri: imapEditing === 'new' ? null : imapEditing,
+				input: {
+					label: imapForm.label,
+					host: imapForm.host,
+					port: imapForm.port,
+					use_tls: imapForm.use_tls,
+					username: imapForm.username,
+					password: imapForm.password,
+					sync_interval_minutes: imapForm.sync_interval_minutes,
+				},
+			});
+			if (imapSelectedFolders.length > 0) {
+				await invoke('imap__save_monitored_folders', {
+					accountIri: savedIri,
+					folders: imapSelectedFolders,
+				});
+			}
+			imapMessage = 'Conta salva.';
+			imapEditing = null;
+			imapAvailableFolders = [];
+			imapSelectedFolders = [];
+			await loadImapAccounts();
+			invoke('imap__start_account_sync', { accountIri: savedIri });
+		} catch (e) {
+			imapMessage = String(e);
+			imapError = true;
+		} finally {
+			imapSaving = false;
+		}
+	}
+
+	async function toggleImapHistory(accountIri) {
+		if (imapHistoryAccountIri === accountIri) {
+			imapHistoryAccountIri = null;
+			imapSyncHistory = [];
+			return;
+		}
+		imapHistoryAccountIri = accountIri;
+		try {
+			imapSyncHistory = await invoke('imap__get_sync_history', { accountIri, limit: 20 });
+		} catch {
+			imapSyncHistory = [];
+		}
+	}
+
+	async function deleteImapAccount(iri) {
+		imapDeleting = true;
+		imapMessage = '';
+		imapError = false;
+		try {
+			await invoke('imap__delete_account', { accountIri: iri });
+			if (imapEditing === iri) imapEditing = null;
+			await loadImapAccounts();
+		} catch (e) {
+			imapMessage = String(e);
+			imapError = true;
+		} finally {
+			imapDeleting = false;
+		}
+	}
+
 	function handleBackdropClick(e) {
 		if (e.target === e.currentTarget) onClose?.();
 	}
@@ -350,6 +525,126 @@
 				{/if}
 			</section>
 			{/if}
+
+			<section class="settings-section">
+				<h3 class="section-title">Contas de Email (IMAP)</h3>
+
+				{#each imapAccounts as account}
+					<div class="imap-account-row">
+						<span class="material-symbols-outlined imap-status-icon" class:connected={account.is_connected}>
+							{account.is_connected ? 'check_circle' : 'radio_button_unchecked'}
+						</span>
+						<div class="imap-account-info">
+							<span class="imap-account-label">{account.label}</span>
+							<span class="imap-account-host">{account.username}@{account.host}</span>
+						</div>
+						<button class="icon-btn" onclick={() => toggleImapHistory(account.iri)} title="Histórico de sincronização">
+							<span class="material-symbols-outlined">history</span>
+						</button>
+						<button class="icon-btn" onclick={() => startEditImapAccount(account)} title="Editar">
+							<span class="material-symbols-outlined">edit</span>
+						</button>
+						<button class="icon-btn danger" onclick={() => deleteImapAccount(account.iri)} disabled={imapDeleting} title="Remover">
+							<span class="material-symbols-outlined">delete</span>
+						</button>
+					</div>
+					{#if imapHistoryAccountIri === account.iri}
+						<div class="sync-history">
+							{#if imapSyncHistory.length === 0}
+								<p class="hint">Nenhuma sincronização registrada.</p>
+							{:else}
+								<table class="sync-table">
+									<thead>
+										<tr>
+											<th>Data</th>
+											<th>Importados</th>
+											<th>Status</th>
+										</tr>
+									</thead>
+									<tbody>
+										{#each imapSyncHistory as entry}
+											<tr>
+												<td>{entry.started_at.replace('T', ' ').replace('Z', '')}</td>
+												<td>{entry.emails_imported}</td>
+												<td class:sync-error={!!entry.error}>{entry.error ?? 'OK'}</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							{/if}
+						</div>
+					{/if}
+				{/each}
+
+				{#if imapEditing !== null}
+					<div class="imap-form">
+						<input class="text-input" type="text" placeholder="Rótulo (ex: Gmail Pessoal)" bind:value={imapForm.label} />
+						<div class="field-row">
+							<input class="text-input" type="text" placeholder="Host (ex: imap.gmail.com)" bind:value={imapForm.host} style="flex:3" />
+							<input class="text-input" type="number" placeholder="993" bind:value={imapForm.port} style="flex:1;min-width:60px" min="1" max="65535" />
+						</div>
+						<input class="text-input" type="text" placeholder="Usuário" bind:value={imapForm.username} autocomplete="off" />
+						<input
+							class="text-input"
+							type="password"
+							placeholder={imapHasExistingPassword ? '••••••••' : 'Senha'}
+							bind:value={imapForm.password}
+							autocomplete="new-password"
+						/>
+						{#if imapHasExistingPassword}
+							<p class="hint" style="margin-top:2px">Deixe em branco para manter a senha salva.</p>
+						{/if}
+						<div class="field-row imap-options-row">
+							<label class="checkbox-label">
+								<input type="checkbox" bind:checked={imapForm.use_tls} />
+								Usar TLS
+							</label>
+							<label class="checkbox-label" style="margin-left:auto">
+								Sincronizar a cada
+								<input class="text-input interval-input" type="number" bind:value={imapForm.sync_interval_minutes} min="1" max="1440" />
+								min
+							</label>
+						</div>
+						{#if imapAvailableFolders.length > 0}
+						<div class="imap-folders">
+							<p class="hint" style="margin-bottom:4px">Pastas monitoradas:</p>
+							{#each imapAvailableFolders as folder}
+								<label class="checkbox-label folder-label">
+									<input type="checkbox" checked={imapSelectedFolders.includes(folder)} onchange={() => toggleImapFolder(folder)} />
+									{folder}
+								</label>
+							{/each}
+						</div>
+					{:else if imapLoadingFolders}
+						<p class="hint">Carregando pastas…</p>
+					{/if}
+					<div class="field-row">
+							<button class="save-btn ghost" onclick={testImapConnection} disabled={imapTesting || !imapForm.host || !imapForm.username || !imapForm.password}>
+								{imapTesting ? 'Testando…' : 'Testar conexão'}
+							</button>
+							<button class="save-btn" onclick={saveImapAccount} disabled={imapSaving || !imapForm.label || !imapForm.host || !imapForm.username || (!imapHasExistingPassword && !imapForm.password)}>
+								{imapSaving ? 'Salvando…' : 'Salvar'}
+							</button>
+							<button class="icon-btn" onclick={cancelImapEdit} title="Cancelar">
+								<span class="material-symbols-outlined">close</span>
+							</button>
+						</div>
+					</div>
+				{/if}
+
+				{#if imapMessage}
+					<p class="feedback" class:error={imapError}>{imapMessage}</p>
+				{/if}
+
+				{#if imapEditing === null}
+					<div class="field-row">
+						<button class="save-btn ghost" onclick={startAddImapAccount}>
+							<span class="material-symbols-outlined btn-icon">add</span>
+							Adicionar conta
+						</button>
+					</div>
+				{/if}
+			</section>
 
 			<section class="settings-section">
 				<h3 class="section-title">Logs</h3>
@@ -555,5 +850,151 @@
 		font-size: 16px;
 		vertical-align: middle;
 		margin-right: 4px;
+	}
+
+	.save-btn.ghost {
+		background: color-mix(in srgb, var(--color-interactive, #7c6fff) 15%, transparent);
+		color: var(--color-interactive, #7c6fff);
+	}
+
+	.save-btn.ghost:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.icon-btn {
+		background: none;
+		border: none;
+		color: var(--color-neutral, #888);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 4px;
+		flex-shrink: 0;
+	}
+
+	.icon-btn .material-symbols-outlined {
+		font-size: 18px;
+	}
+
+	.icon-btn.danger {
+		color: #e57373;
+	}
+
+	.icon-btn:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.imap-account-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 0;
+	}
+
+	.imap-status-icon {
+		font-size: 16px;
+		color: var(--color-neutral, #888);
+		flex-shrink: 0;
+	}
+
+	.imap-status-icon.connected {
+		color: #66bb6a;
+	}
+
+	.sync-history {
+		padding: 8px 0 4px 28px;
+	}
+
+	.sync-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 12px;
+	}
+
+	.sync-table th, .sync-table td {
+		text-align: left;
+		padding: 3px 8px;
+		color: var(--color-text-secondary, #aaa);
+	}
+
+	.sync-table th {
+		font-weight: 600;
+		color: var(--color-text-muted, #888);
+	}
+
+	.sync-table .sync-error {
+		color: var(--color-error, #e57373);
+		max-width: 300px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.imap-account-info {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+
+	.imap-account-label {
+		font-size: 13px;
+		color: var(--color-neutral-active, #e0e0e0);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.imap-account-host {
+		font-size: 11px;
+		color: var(--color-neutral, #888);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.imap-form {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 10px 0 4px;
+	}
+
+	.imap-options-row {
+		flex-wrap: wrap;
+		gap: 12px;
+	}
+
+	.checkbox-label {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 13px;
+		color: var(--color-neutral, #888);
+		cursor: pointer;
+	}
+
+	.interval-input {
+		flex: none;
+		width: 52px;
+		display: inline-block;
+		padding: 4px 6px;
+	}
+
+	.imap-folders {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		max-height: 160px;
+		overflow-y: auto;
+		padding: 6px 0;
+	}
+
+	.folder-label {
+		font-size: 12px;
 	}
 </style>

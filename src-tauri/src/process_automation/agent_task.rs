@@ -507,3 +507,105 @@ pub async fn execute_agent_task(
         None => Ok(last_text),
     }
 }
+
+/// Non-streaming tool loop for background tasks.
+/// Runs up to `max_loops` iterations: generate → execute tool calls → loop until end_turn.
+/// Returns the final text response.
+pub async fn run_headless_tool_loop(
+    executor: &DbExecutor,
+    provider: &crate::ai::providers::ClaudeProvider,
+    system_prompt: String,
+    initial_message: String,
+    tools: Vec<ClaudeTool>,
+    max_loops: usize,
+) -> Result<String> {
+    use crate::ai::{GenerateRequest, ChatMessage};
+
+    let mut messages = vec![ChatMessage::text("user", initial_message)];
+    let mut final_text = String::new();
+
+    for _ in 0..max_loops {
+        let request = GenerateRequest {
+            messages: messages.clone(),
+            max_tokens: Some(DEFAULT_MAX_TOKENS),
+            temperature: Some(DEFAULT_TEMPERATURE),
+            system: Some(system_prompt.clone()),
+            blackboard_context: None,
+            tools: Some(tools.clone()),
+            supports_web_tools: false,
+            thinking: None,
+            tool_choice: None,
+        };
+
+        let response = provider.generate(request).await
+            .map_err(|e| format!("headless tool loop: {}", e))?;
+
+        let stop_reason = response.stop_reason.clone().unwrap_or_default();
+        final_text = response.content.clone();
+
+        let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
+        if !response.content.is_empty() {
+            assistant_blocks.push(ContentBlock::Text { text: response.content.clone() });
+        }
+        for tc in &response.tool_calls {
+            assistant_blocks.push(ContentBlock::ToolUse {
+                id: tc.id.clone(),
+                name: tc.name.clone(),
+                input: tc.input.clone(),
+            });
+        }
+        messages.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: MessageContent::ContentBlocks(assistant_blocks),
+        });
+
+        if stop_reason != "tool_use" {
+            break;
+        }
+
+        let mut result_blocks: Vec<ContentBlock> = Vec::new();
+        for tc in &response.tool_calls {
+            let call = FunctionToolCall {
+                name: tc.name.clone(),
+                arguments: tc.input.clone(),
+            };
+            let tc_id = tc.id.clone();
+            let result_json = executor
+                .write(move |conn| {
+                    let r = execute_fn(conn, &call, None, None);
+                    serde_json::to_string(&r).map_err(|e| e.to_string())
+                })
+                .await
+                .unwrap_or_else(|e| format!("\"{}\"", e));
+
+            let tool_result: crate::ai::functions::ToolResult =
+                serde_json::from_str(&result_json).unwrap_or(crate::ai::functions::ToolResult {
+                    success: false,
+                    result: None,
+                    error: Some(result_json.clone()),
+                    concept: None,
+                });
+
+            let content = if tool_result.success {
+                tool_result.result
+                    .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| v.to_string()))
+                    .unwrap_or_default()
+            } else {
+                tool_result.error.unwrap_or_default()
+            };
+
+            result_blocks.push(ContentBlock::ToolResult {
+                tool_use_id: tc_id,
+                content: serde_json::Value::String(content),
+                is_error: Some(!tool_result.success),
+            });
+        }
+
+        messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: MessageContent::ContentBlocks(result_blocks),
+        });
+    }
+
+    Ok(final_text)
+}
