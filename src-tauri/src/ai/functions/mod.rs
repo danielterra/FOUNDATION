@@ -379,24 +379,62 @@ fn run_automation_tool(conn: &Connection, args: &Value, app: Option<&tauri::AppH
     }
 }
 
+fn find_most_recent_conversation_iri(conn: &Connection) -> Option<String> {
+    conn.query_row(
+        "SELECT c.subject FROM triples c
+         LEFT JOIN (
+             SELECT tp.object AS conv, MAX(ts.object_value) AS last_msg
+             FROM triples tp
+             JOIN triples ts ON ts.subject = tp.subject
+                 AND ts.predicate = 'foundation:sentAt'
+                 AND ts.retracted = 0
+             WHERE tp.predicate = 'foundation:partOfConversation'
+               AND tp.retracted = 0
+             GROUP BY tp.object
+         ) m ON m.conv = c.subject
+         LEFT JOIN triples ca ON ca.subject = c.subject
+             AND ca.predicate = 'foundation:createdAt'
+             AND ca.retracted = 0
+         WHERE c.predicate = 'rdf:type'
+           AND c.object = 'foundation:AIConversation'
+           AND c.retracted = 0
+         ORDER BY COALESCE(m.last_msg, ca.object_value, '') DESC, c.subject DESC
+         LIMIT 1",
+        [],
+        |row| row.get::<_, String>(0),
+    ).ok()
+}
+
+fn resolve_conversation_iri(
+    conn: &Connection,
+    args: &Value,
+    conversation_id: Option<&str>,
+) -> Result<String, String> {
+    if let Some(c) = args["conversation_iri"].as_str().filter(|s| !s.is_empty()) {
+        return Ok(c.to_string());
+    }
+    if let Some(c) = conversation_id {
+        return Ok(c.to_string());
+    }
+    find_most_recent_conversation_iri(conn)
+        .ok_or_else(|| "No conversations exist; conversation_iri could not be inferred".to_string())
+}
+
 fn list_blackboard_widgets_tool(
     conn: &Connection,
     args: &Value,
     conversation_id: Option<&str>,
 ) -> ToolResult {
-    let conv_iri = args["conversation_iri"].as_str()
-        .filter(|s| !s.is_empty())
-        .or(conversation_id);
-
-    let conv_iri = match conv_iri {
-        Some(c) => c,
-        None => return ToolResult {
+    let conv_iri = match resolve_conversation_iri(conn, args, conversation_id) {
+        Ok(c) => c,
+        Err(e) => return ToolResult {
             success: false,
             result: None,
-            error: Some("conversation_iri is required when called outside the Foundation chat engine".to_string()),
+            error: Some(e),
             concept: None,
         },
     };
+    let conv_iri = conv_iri.as_str();
 
     let widgets = match crate::commands::widget::owl_get_widgets_for_conversation(conn, conv_iri) {
         Ok(w) => w,
@@ -443,16 +481,12 @@ fn add_widget_to_blackboard_tool(
         },
     };
 
-    let conv_iri = args["conversation_iri"].as_str()
-        .filter(|s| !s.is_empty())
-        .or(conversation_id);
-
-    let conv_iri = match conv_iri {
-        Some(c) => c.to_string(),
-        None => return ToolResult {
+    let conv_iri = match resolve_conversation_iri(conn, args, conversation_id) {
+        Ok(c) => c,
+        Err(e) => return ToolResult {
             success: false,
             result: None,
-            error: Some("conversation_iri is required when called outside the Foundation chat engine".to_string()),
+            error: Some(e),
             concept: None,
         },
     };

@@ -13,6 +13,7 @@ mod connector_package;
 pub mod automation;
 pub mod task;
 pub mod local_model;
+pub mod imap;
 
 pub use setup::*;
 pub use setup_ai::*;

@@ -15,7 +15,7 @@ pub use timestamps::{touch, LAST_UPDATED_AT};
 
 pub use properties::{
     get_all_iri_properties, replace_all_property_iris,
-    get_literal_property, get_iri_property,
+    get_literal_property, get_all_literal_properties, get_iri_property,
     has_property_iri, has_property_literal,
     is_instance_of, find_entities_with_property, find_entities_with_predicate,
 };

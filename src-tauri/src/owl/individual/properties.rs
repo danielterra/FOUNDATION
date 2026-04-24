@@ -46,6 +46,19 @@ pub fn get_literal_property(
     Ok(result.triples.first().and_then(|t| t.object.as_literal()).map(|s| s.to_string()))
 }
 
+/// Returns all literal values for a predicate on an entity
+pub fn get_all_literal_properties(
+    conn: &Connection,
+    entity: &str,
+    predicate: &str,
+) -> Result<Vec<String>> {
+    let result = query::get_by_entity_predicate(conn, entity, predicate)?;
+    Ok(result.triples.iter()
+        .filter_map(|t| t.object.as_literal())
+        .map(|s| s.to_string())
+        .collect())
+}
+
 /// Returns the first IRI value of a property for an entity
 pub fn get_iri_property(
     conn: &Connection,
