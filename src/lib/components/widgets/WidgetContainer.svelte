@@ -1,5 +1,6 @@
 <script>
   import { convertFileSrc } from '@tauri-apps/api/core';
+  import Button from '../Button.svelte';
 
   let {
     icon = 'widgets',
@@ -51,16 +52,18 @@
       </div>
       <div class="header-controls">
         {#if canExpand}
-          <button class="action-btn" onclick={toggleExpanded} title={windowState === 'maximized' ? 'Restore' : 'Expand'}>
-            <span class="material-symbols-outlined">{windowState === 'maximized' ? 'close_fullscreen' : 'open_in_full'}</span>
-          </button>
+          <Button
+            icon={windowState === 'maximized' ? 'close_fullscreen' : 'open_in_full'}
+            title={windowState === 'maximized' ? 'Restore' : 'Expand'}
+            onclick={toggleExpanded}
+          />
         {/if}
-        <button class="action-btn" onclick={toggleMinimize} title={windowState === 'minimized' ? 'Expand' : 'Minimize'}>
-          <span class="material-symbols-outlined">{windowState === 'minimized' ? 'expand_more' : 'expand_less'}</span>
-        </button>
-        <button class="close-btn" onclick={onClose}>
-          <span class="material-symbols-outlined">close</span>
-        </button>
+        <Button
+          icon={windowState === 'minimized' ? 'expand_more' : 'expand_less'}
+          title={windowState === 'minimized' ? 'Expand' : 'Minimize'}
+          onclick={toggleMinimize}
+        />
+        <Button icon="close" title="Close" onclick={onClose} />
       </div>
     </div>
     {#if headerActions}
@@ -82,10 +85,10 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--color-surface-1);
+    border-radius: var(--radius-md);
     overflow: hidden;
     box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
-    backdrop-filter: blur(5px);
   }
 
   .widget-header {
@@ -168,27 +171,6 @@
     padding: 0px;
   }
 
-  .action-btn {
-    background: none;
-    border: none;
-    padding: 4px;
-    cursor: pointer;
-    color: var(--color-interactive);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: color 0.15s, background 0.15s;
-  }
-
-  .action-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    color: var(--color-neutral-active);
-  }
-
-  .action-btn :global(.material-symbols-outlined) {
-    font-size: 18px;
-  }
-
   .close-btn {
     background: none;
     border: none;
@@ -210,36 +192,7 @@
     font-size: 20px;
   }
 
-  /* Styles for action buttons provided via headerActions snippet */
-  .header-actions :global(.action-btn) {
-    background: none;
-    border: none;
-    padding: 4px;
-    cursor: pointer;
-    color: var(--color-interactive);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: color 0.15s, background 0.15s;
-  }
-
-  .header-actions :global(.action-btn:hover) {
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    color: var(--color-neutral-active);
-  }
-
-  .header-actions :global(.action-btn .material-symbols-outlined) {
-    font-size: 18px;
-  }
-
-  .header-actions :global(.action-btn--locked) {
-    color: var(--color-warning, #f59e0b);
-  }
-
-  .header-actions :global(.action-btn--locked:hover) {
-    background: color-mix(in srgb, var(--color-warning, #f59e0b) 15%, transparent);
-    color: var(--color-warning, #f59e0b);
-  }
+  /* headerActions buttons now use <Button>; styles come from that component. */
 
   .header-actions :global(.action-btn--danger) {
     color: var(--color-danger, #ef4444);

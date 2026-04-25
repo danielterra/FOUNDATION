@@ -78,20 +78,48 @@ fn build_objects(
         .and_then(|p| p.ranges.first().cloned())
         .unwrap_or_else(|| "xsd:string".to_string());
 
-    Ok(raw_values.iter()
-        .filter_map(|v| v.as_str())
-        .map(|value| {
-            if is_iri {
-                Object::Iri(value.to_string())
-            } else {
-                Object::Literal {
-                    value: value.to_string(),
-                    datatype: Some(datatype.clone()),
-                    language: None,
-                }
-            }
+    raw_values.iter()
+        .filter(|v| !v.is_null())
+        .map(|v| coerce_value(v, is_iri, &datatype, property_iri))
+        .collect()
+}
+
+fn coerce_value(
+    v: &Value,
+    is_iri: bool,
+    datatype: &str,
+    property_iri: &str,
+) -> Result<Object, crate::owl::OwlError> {
+    let lexical = match v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        _ => return Err(crate::owl::OwlError::ValidationError(format!(
+            "Property '{}': unsupported value type {}; expected string, number or boolean",
+            property_iri, type_name(v),
+        ))),
+    };
+
+    if is_iri {
+        Ok(Object::Iri(lexical))
+    } else {
+        Ok(Object::Literal {
+            value: lexical,
+            datatype: Some(datatype.to_string()),
+            language: None,
         })
-        .collect())
+    }
+}
+
+fn type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 pub fn search(conn: &Connection, args: &Value) -> ToolResult {
@@ -398,7 +426,7 @@ pub fn assert_individual(
     super::batch::run_atomic(conn, args, app, assert_individual_one)
 }
 
-fn assert_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
+pub(crate) fn assert_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
     let class_iri = match args.get("class_iri").and_then(|v| v.as_str()) {
         Some(class_iri) => class_iri,
         None => return ToolResult {
@@ -418,6 +446,20 @@ fn assert_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
             concept: load_class_context(conn,class_iri),
         },
     };
+
+    if !crate::owl::Class::exists(conn, class_iri) {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!(
+                "Class '{}' does not exist in the ontology. \
+                 Create it first with define_class (check class_graph and search for an \
+                 existing equivalent before creating), or use an existing class IRI.",
+                class_iri,
+            )),
+            concept: None,
+        };
+    }
 
     let icon = if let Some(icon_str) = args.get("icon").and_then(|v| v.as_str()) {
         icon_str.to_string()
@@ -485,7 +527,7 @@ fn assert_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
                 if objects.is_empty() {
                     return Err(crate::owl::OwlError::ValidationError(
                         format!(
-                            "Property '{}' values contain no valid string entries",
+                            "Property '{}' values array contains only null entries",
                             property_iri,
                         )
                     ));
@@ -608,7 +650,7 @@ fn add_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult {
         let objects = build_objects(conn, property_iri, raw_values)?;
         if objects.is_empty() {
             return Err(crate::owl::OwlError::ValidationError(
-                format!("Property '{}' values contain no valid string entries", property_iri)
+                format!("Property '{}' values array contains only null entries", property_iri)
             ));
         }
 
@@ -691,7 +733,7 @@ fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResul
         let objects = build_objects(conn, property_iri, raw_values)?;
         if objects.is_empty() {
             return Err(crate::owl::OwlError::ValidationError(
-                format!("Property '{}' values contain no valid string entries", property_iri)
+                format!("Property '{}' values array contains only null entries", property_iri)
             ));
         }
 

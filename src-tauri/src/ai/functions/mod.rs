@@ -8,7 +8,7 @@ mod class_graph;
 mod definitions;
 mod file;
 mod property;
-mod individual;
+pub(crate) mod individual;
 
 pub use definitions::{get_available_tools, get_claude_tools};
 

@@ -10,6 +10,7 @@
   import PropertyList from './inspector/PropertyList.svelte';
   import InspectorClassView from './inspector/InspectorClassView.svelte';
   import WidgetContainer from './WidgetContainer.svelte';
+  import Button from '../Button.svelte';
 
   let {
     entityId, widgetId, refreshKey = 0, windowState = 'normal',
@@ -430,29 +431,29 @@
 
     {#snippet headerActions()}
       {#each widgetDefinitions as def}
-        <button class="action-btn" onclick={() => openWidgetForEntity(def.widget_type)} title={def.description}>
-          <span class="material-symbols-outlined">{def.icon || 'open_in_new'}</span>
-        </button>
+        <Button
+          icon={def.icon || 'open_in_new'}
+          title={def.description}
+          onclick={() => openWidgetForEntity(def.widget_type)}
+        />
       {/each}
       {#if entityData}
-        <button
-          class="action-btn"
-          class:action-btn--locked={isLocked}
-          onclick={toggleSystemLock}
-          disabled={togglingLock}
+        <Button
+          icon={isLocked ? 'lock' : 'lock_open'}
           title={isLocked ? 'Unlock entity' : 'Lock entity'}
-        >
-          <span class="material-symbols-outlined">{isLocked ? 'lock' : 'lock_open'}</span>
-        </button>
+          disabled={togglingLock}
+          onclick={toggleSystemLock}
+        />
       {/if}
       {#if entityData && !entityData.isClass && !isLocked}
-        <button class="action-btn action-btn--danger" onclick={initiateDelete} title="Delete">
-          <span class="material-symbols-outlined">delete_forever</span>
-        </button>
+        <Button
+          variant="danger"
+          icon="delete_forever"
+          title="Delete"
+          onclick={initiateDelete}
+        />
       {/if}
-      <button class="action-btn" onclick={copyEntityIri} title="Copy IRI">
-        <span class="material-symbols-outlined">content_copy</span>
-      </button>
+      <Button icon="content_copy" title="Copy IRI" onclick={copyEntityIri} />
       {#if entityData?.status || (entityData?.allowedStatuses?.length > 0 && !entityData?.isClass && !isLocked)}
         <div class="status-badge-wrapper" bind:this={statusBadgeWrapperEl}>
           <button

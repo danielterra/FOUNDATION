@@ -216,8 +216,11 @@ pub async fn run_conversation_loop(
             break 'main;
         }
 
-        let widget_context = executor.read(|conn| {
-            Ok(crate::commands::widget::widget_system_context(conn))
+        let (foundation_context, widget_context) = executor.read(|conn| {
+            Ok((
+                super::foundation_context::foundation_architecture_context(conn),
+                crate::commands::widget::widget_system_context(conn),
+            ))
         }).await.unwrap_or_default();
 
         let camera_count = first_turn_ctx.as_ref()
@@ -225,7 +228,9 @@ pub async fn run_conversation_loop(
             .filter(|f| !f.is_empty())
             .map(|f| f.len());
 
-        let system_prompt = build_system_prompt(agent_config, &widget_context, camera_count, conversation_id);
+        let system_prompt = build_system_prompt(
+            agent_config, &foundation_context, &widget_context, camera_count, conversation_id,
+        );
 
         let blackboard_context = if is_first_iteration {
             first_turn_ctx.as_ref()

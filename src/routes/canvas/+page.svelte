@@ -281,8 +281,7 @@
 		align-items: center;
 		gap: 24px;
 		padding: 16px 24px;
-		background: linear-gradient(to bottom, rgba(0, 0, 0, 0.8), transparent);
-		backdrop-filter: blur(8px);
+		background: var(--color-surface-1);
 	}
 
 	.logo {
@@ -302,7 +301,8 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		background: rgba(0, 0, 0, 0.6);
+		background: var(--color-surface-2);
+		border-radius: var(--radius-md);
 		padding: 6px 12px;
 	}
 
@@ -343,7 +343,8 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		background: rgba(0, 0, 0, 0.6);
+		background: var(--color-surface-2);
+		border-radius: var(--radius-md);
 		color: var(--color-neutral);
 		font-size: 14px;
 		font-weight: 600;

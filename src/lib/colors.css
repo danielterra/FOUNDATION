@@ -82,4 +82,23 @@
 
 	--color-error-base: #f44336;
 	--color-error: var(--color-error-base);
+
+	/* ========================================
+	 * SURFACE - Camadas de superfície
+	 * Cada nível é ~7% mais claro que o anterior. Use para criar hierarquia
+	 * visual sutil entre fundo, painéis, cards/controles e modais elevados.
+	 * ======================================== */
+
+	--color-surface-0: var(--color-black);                                                /* Fundo da aplicação */
+	--color-surface-1: color-mix(in srgb, var(--color-white) 5%, var(--color-black));     /* Painéis: widgets, chat, headers */
+	--color-surface-2: color-mix(in srgb, var(--color-white) 10%, var(--color-black));    /* Cards, controles dentro de painéis */
+	--color-surface-3: color-mix(in srgb, var(--color-white) 15%, var(--color-black));    /* Elevações: modais, dropdowns */
+	--color-surface-4: color-mix(in srgb, var(--color-white) 20%, var(--color-black));    /* Itens dentro de elevações: linhas de lista no modal, inputs */
+
+	/* ========================================
+	 * RADIUS - Raios de borda padronizados
+	 * ======================================== */
+	--radius-sm: 6px;
+	--radius-md: 10px;
+	--radius-lg: 16px;
 }

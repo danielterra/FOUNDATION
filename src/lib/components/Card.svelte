@@ -12,9 +12,8 @@
 
 <style>
 	.card {
-		background: rgba(0, 0, 0, 0.8);
-		backdrop-filter: blur(2px);
-		-webkit-backdrop-filter: blur(2px);
+		background: var(--color-surface-1);
+		border-radius: var(--radius-md);
 		padding: 1rem;
 	}
 </style>

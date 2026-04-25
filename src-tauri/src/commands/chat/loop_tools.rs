@@ -34,6 +34,7 @@ pub fn build_conversation_tools() -> Vec<ClaudeTool> {
 
 pub fn build_system_prompt(
     agent_config: &AgentConfig,
+    foundation_context: &str,
     widget_context: &str,
     camera_count: Option<usize>,
     conversation_id: &str,
@@ -50,7 +51,8 @@ pub fn build_system_prompt(
     );
 
     let base = format!(
-        "{}\n\n{}\n\n{}\n\n{}",
+        "{}\n\n{}\n\n{}\n\n{}\n\n{}",
+        foundation_context,
         agent_config.base_system_prompt,
         widget_context,
         agent_config.system_prompt,

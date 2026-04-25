@@ -7,7 +7,6 @@
 	import ChatInputArea from './ChatInputArea.svelte';
 	import ConversationBar from './ConversationBar.svelte';
 	import ChatHeader from './ChatHeader.svelte';
-	import SettingsPanel from './SettingsPanel.svelte';
 	import ChatErrorBanner from './ChatErrorBanner.svelte';
 	import ChatMessageList from './ChatMessageList.svelte';
 
@@ -43,7 +42,6 @@
 	let autoScroll = true;
 	let userLocation = $state(null);
 	let isInitialized = $state(false);
-	let showSettings = $state(false);
 	let messageLimit = $state(MESSAGE_PAGE_SIZE);
 	let isLoadingMore = $state(false);
 	let isLoadingMessages = $state(true);
@@ -137,6 +135,9 @@
 
 	onMount(async () => {
 		requestLocation();
+
+		const onSettingsClosed = () => loadActiveModelInfo();
+		window.addEventListener('foundation:settings-closed', onSettingsClosed);
 
 		const { listen } = await import('@tauri-apps/api/event');
 
@@ -893,16 +894,12 @@
 		onSwitchAgent={switchAgent}
 		onNewConversation={createConversation}
 		onDownloadChat={downloadChat}
-		onOpenSettings={() => showSettings = true}
 		{cameraEnabled}
 		onToggleCamera={toggleCamera}
 		{thinkingEnabled}
 		onToggleThinking={toggleThinking}
 		{activeModelInfo}
 	/>
-	{#if showSettings}
-		<SettingsPanel onClose={() => { showSettings = false; loadActiveModelInfo(); }} />
-	{/if}
 	<ConversationBar bind:conversations bind:activeConversationIri onSwitch={switchConversation} onDelete={handleDeleteConversation} />
 	<div class="chat-content">
 		<ChatErrorBanner {errorMessage} onDismiss={dismissError} />
@@ -952,8 +949,7 @@
 		height: 100%;
 		display: flex;
 		flex-direction: column;
-		background: color-mix(in srgb, var(--color-black) 50%, transparent);
-		backdrop-filter: blur(5px);
+		background: var(--color-surface-1);
 	}
 
 	.chat-content {

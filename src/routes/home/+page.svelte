@@ -3,12 +3,20 @@
   import ChatWindow from '$lib/components/ChatWindow.svelte';
   import WidgetManager from '$lib/components/widgets/WidgetManager.svelte';
   import Search from '$lib/components/graph/Search.svelte';
+  import SettingsPanel from '$lib/components/SettingsPanel.svelte';
+  import Button from '$lib/components/Button.svelte';
   import { appState } from '$lib/appState.svelte';
 
   let isChatOpen = $state(true);
   let searchComponent = $state();
   let widgetManager = $state();
   let activeConversationIri = $state(null);
+  let showSettings = $state(false);
+
+  function closeSettings() {
+    showSettings = false;
+    window.dispatchEvent(new Event('foundation:settings-closed'));
+  }
 
   $effect(() => { appState.activeConversationIri = activeConversationIri; });
 
@@ -66,15 +74,11 @@
 
   <div class="top-bar">
     <span class="logo">FOUNDATION</span>
-    <button class="search-trigger" onclick={openSearch} aria-label="Search (/)">
-      <span class="material-symbols-outlined">search</span>
-    </button>
-    <button class="top-bar-btn" onclick={() => widgetManager?.minimizeAll()} title="Minimize all widgets">
-      <span class="material-symbols-outlined">collapse_all</span>
-    </button>
-    <button class="top-bar-btn" onclick={() => widgetManager?.expandAll()} title="Expand all widgets">
-      <span class="material-symbols-outlined">expand_all</span>
-    </button>
+    <Button icon="search" title="Search (/)" onclick={openSearch} />
+    <Button icon="collapse_all" title="Minimize all widgets" onclick={() => widgetManager?.minimizeAll()} />
+    <Button icon="expand_all" title="Expand all widgets" onclick={() => widgetManager?.expandAll()} />
+    <span class="top-bar-spacer"></span>
+    <Button icon="settings" title="Configurações" onclick={() => showSettings = true} />
   </div>
 
   <div class="canvas-area">
@@ -84,6 +88,10 @@
   <div class="chat-overlay" class:hidden={!isChatOpen}>
     <ChatWindow bind:activeConversationIri />
   </div>
+
+  {#if showSettings}
+    <SettingsPanel onClose={closeSettings} />
+  {/if}
 </div>
 
 <style>
@@ -103,9 +111,8 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.6rem 1.25rem;
-    background: color-mix(in srgb, var(--color-black) 80%, transparent);
+    background: var(--color-surface-1);
     z-index: 200;
-    backdrop-filter: blur(8px);
   }
 
   .logo {
@@ -115,44 +122,8 @@
     letter-spacing: 0.08em;
   }
 
-  .search-trigger {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-neutral);
-    padding: 0.2rem;
-    display: flex;
-    align-items: center;
-    transition: color 0.15s, background 0.15s;
-  }
-
-  .search-trigger:hover {
-    color: var(--color-neutral-active);
-    background: color-mix(in srgb, var(--color-white) 8%, transparent);
-  }
-
-  .search-trigger span {
-    font-size: 20px;
-  }
-
-  .top-bar-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-neutral);
-    padding: 0.2rem;
-    display: flex;
-    align-items: center;
-    transition: color 0.15s, background 0.15s;
-  }
-
-  .top-bar-btn:hover {
-    color: var(--color-neutral-active);
-    background: color-mix(in srgb, var(--color-white) 8%, transparent);
-  }
-
-  .top-bar-btn span {
-    font-size: 20px;
+  .top-bar-spacer {
+    flex: 1;
   }
 
   .canvas-area {

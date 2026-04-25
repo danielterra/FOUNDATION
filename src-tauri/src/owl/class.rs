@@ -39,6 +39,23 @@ impl Class {
         }
     }
 
+    /// Cheap existence check: returns true iff `iri` is a known class in the graph.
+    /// Accepts OWL/RDFS built-in roots that may not have explicit triples.
+    pub fn exists(conn: &Connection, iri: &str) -> bool {
+        if matches!(iri, "owl:Thing" | "rdfs:Resource" | "rdfs:Class" | "owl:Class") {
+            return true;
+        }
+        let types_result = match query::get_by_entity_predicate(conn, iri, rdf::TYPE) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        types_result.triples.iter().any(|t| {
+            t.object.as_iri()
+                .map(|type_iri| type_iri == rdfs::CLASS || type_iri == owl::CLASS)
+                .unwrap_or(false)
+        })
+    }
+
     /// Parse an RDF list (rdf:first/rdf:rest) into a Vec of IRIs
     pub(crate) fn parse_rdf_list(conn: &Connection, list_head: &str) -> Result<Vec<String>> {
         let mut values = Vec::new();

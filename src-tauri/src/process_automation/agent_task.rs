@@ -518,6 +518,7 @@ pub async fn run_headless_tool_loop(
     initial_message: String,
     tools: Vec<ClaudeTool>,
     max_loops: usize,
+    temperature: f32,
 ) -> Result<String> {
     use crate::ai::{GenerateRequest, ChatMessage};
 
@@ -528,7 +529,7 @@ pub async fn run_headless_tool_loop(
         let request = GenerateRequest {
             messages: messages.clone(),
             max_tokens: Some(DEFAULT_MAX_TOKENS),
-            temperature: Some(DEFAULT_TEMPERATURE),
+            temperature: Some(temperature),
             system: Some(system_prompt.clone()),
             blackboard_context: None,
             tools: Some(tools.clone()),

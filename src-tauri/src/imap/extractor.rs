@@ -1,4 +1,5 @@
 use rusqlite;
+use sha2::{Sha256, Digest};
 use crate::eavto::Connection;
 use crate::owl::{Individual, Object};
 
@@ -11,7 +12,13 @@ pub struct ParsedEmail {
     pub subject: String,
     pub date: Option<String>,
     pub body: String,
-    pub attachment_names: Vec<String>,
+    pub attachments: Vec<ParsedAttachment>,
+}
+
+pub struct ParsedAttachment {
+    pub file_name: String,
+    pub mime_type: String,
+    pub content: Vec<u8>,
 }
 
 pub fn store_email(
@@ -73,17 +80,102 @@ pub fn store_email(
     )
     .map_err(|e| format!("account: {}", e))?;
 
-    for name in &email.attachment_names {
-        let att_ts = chrono::Utc::now().timestamp_millis();
-        let att_iri = format!("foundation:EmailAttachment_{}", att_ts);
-        let att = Individual::new(&att_iri);
-        att.assert(conn, "owl:Thing", name, "attach_file", "imap")
-            .map_err(|e| format!("attachment: {}", e))?;
-        ind.add_property(conn, "foundation:emailHasAttachment", vec![Object::Iri(att_iri)], "imap")
-            .map_err(|e| format!("attach link: {}", e))?;
+    for (i, att) in email.attachments.iter().enumerate() {
+        match persist_attachment(conn, att, i) {
+            Ok(att_iri) => {
+                ind.add_property(
+                    conn, "foundation:emailHasAttachment",
+                    vec![Object::Iri(att_iri)], "imap",
+                ).map_err(|e| format!("attach link: {}", e))?;
+            }
+            Err(e) => {
+                crate::imap::log_error(&format!(
+                    "IMAP: failed to persist attachment '{}': {}", att.file_name, e,
+                ));
+            }
+        }
     }
 
     Ok(Some(email_iri))
+}
+
+fn persist_attachment(
+    conn: &mut Connection,
+    att: &ParsedAttachment,
+    index: usize,
+) -> Result<String, String> {
+    let attachments_dir = dirs::document_dir()
+        .ok_or_else(|| "no documents directory".to_string())?
+        .join("Foundation")
+        .join("attachments");
+    std::fs::create_dir_all(&attachments_dir)
+        .map_err(|e| format!("create dir: {}", e))?;
+
+    let ts = chrono::Utc::now().timestamp_millis() + index as i64;
+    let safe_name = sanitize_filename(&att.file_name);
+    let target_path = attachments_dir.join(format!("{}_{}", ts, safe_name));
+    std::fs::write(&target_path, &att.content)
+        .map_err(|e| format!("write file: {}", e))?;
+    let target_path_str = target_path.to_string_lossy().into_owned();
+
+    let hash = format!("sha256:{:x}", Sha256::digest(&att.content));
+    let size = att.content.len() as i64;
+    let is_csv = is_csv_attachment(&att.mime_type, &att.file_name);
+    let (class_iri, icon) = if is_csv {
+        ("foundation:CSVFile", "csv")
+    } else {
+        ("foundation:File", "attach_file")
+    };
+    let att_iri = format!("foundation:EmailAttachment_{}", ts);
+    let att_ind = Individual::new(&att_iri);
+
+    att_ind.assert(conn, class_iri, &att.file_name, icon, "imap")
+        .map_err(|e| format!("assert: {}", e))?;
+    att_ind.add_property(conn, "foundation:fileName", vec![str_lit(&att.file_name)], "imap")
+        .map_err(|e| format!("fileName: {}", e))?;
+    att_ind.add_property(conn, "foundation:filePath", vec![Object::Literal {
+        value: format!("file://{}", target_path_str),
+        datatype: Some("xsd:anyURI".to_string()),
+        language: None,
+    }], "imap").map_err(|e| format!("filePath: {}", e))?;
+    att_ind.add_property(conn, "foundation:fileSize", vec![Object::Integer(size)], "imap")
+        .map_err(|e| format!("fileSize: {}", e))?;
+    att_ind.add_property(conn, "foundation:fileHash", vec![str_lit(&hash)], "imap")
+        .map_err(|e| format!("fileHash: {}", e))?;
+
+    if let Some(ft_iri) = mime_to_file_type_iri(&att.mime_type) {
+        att_ind.add_property(conn, "foundation:hasFileType",
+            vec![Object::Iri(ft_iri.to_string())], "imap")
+            .map_err(|e| format!("hasFileType: {}", e))?;
+    }
+
+    Ok(att_iri)
+}
+
+fn sanitize_filename(name: &str) -> String {
+    let cleaned = name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+    if cleaned.trim().is_empty() { "attachment".to_string() } else { cleaned }
+}
+
+fn is_csv_attachment(mime_type: &str, file_name: &str) -> bool {
+    matches!(mime_type,
+        "text/csv" | "application/csv" | "application/vnd.ms-excel")
+        || file_name.to_lowercase().ends_with(".csv")
+}
+
+fn mime_to_file_type_iri(mime_type: &str) -> Option<&'static str> {
+    match mime_type {
+        "image/jpeg" => Some("foundation:FileType_JPEG"),
+        "image/png"  => Some("foundation:FileType_PNG"),
+        "image/gif"  => Some("foundation:FileType_GIF"),
+        "image/webp" => Some("foundation:FileType_WEBP"),
+        "image/bmp"  => Some("foundation:FileType_BMP"),
+        "image/tiff" => Some("foundation:FileType_TIFF"),
+        "image/svg+xml" => Some("foundation:FileType_SVG"),
+        "application/pdf" => Some("foundation:FileType_PDF"),
+        "text/plain" => Some("foundation:FileType_TXT"),
+        _ => None,
+    }
 }
 
 pub fn email_exists(conn: &Connection, message_id: &str) -> bool {

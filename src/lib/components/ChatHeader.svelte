@@ -1,5 +1,6 @@
 <script>
 	import AgentPicker from './AgentPicker.svelte';
+	import Button from './Button.svelte';
 	import { convertFileSrc } from '@tauri-apps/api/core';
 
 	let {
@@ -9,7 +10,6 @@
 		onSwitchAgent,
 		onNewConversation,
 		onDownloadChat,
-		onOpenSettings,
 		cameraEnabled = true,
 		onToggleCamera = null,
 		thinkingEnabled = true,
@@ -74,38 +74,25 @@
 	</div>
 	<div class="chat-header-right">
 		{#if onToggleCamera}
-			<button
-				class="header-action-btn"
-				class:toggle-off={!cameraEnabled}
-				onclick={onToggleCamera}
-				title={cameraEnabled ? 'Camera vision on' : 'Camera vision off'}
-			>
-				<span class="material-symbols-outlined">
-					{cameraEnabled ? 'videocam' : 'videocam_off'}
-				</span>
-			</button>
+			<span class:toggle-off={!cameraEnabled}>
+				<Button
+					icon={cameraEnabled ? 'videocam' : 'videocam_off'}
+					title={cameraEnabled ? 'Camera vision on' : 'Camera vision off'}
+					onclick={onToggleCamera}
+				/>
+			</span>
 		{/if}
 		{#if onToggleThinking}
-			<button
-				class="header-action-btn"
-				class:toggle-off={!thinkingEnabled}
-				onclick={onToggleThinking}
-				title={thinkingEnabled ? 'Extended thinking on' : 'Extended thinking off'}
-			>
-				<span class="material-symbols-outlined">
-					{thinkingEnabled ? 'psychology' : 'psychology_alt'}
-				</span>
-			</button>
+			<span class:toggle-off={!thinkingEnabled}>
+				<Button
+					icon={thinkingEnabled ? 'psychology' : 'psychology_alt'}
+					title={thinkingEnabled ? 'Extended thinking on' : 'Extended thinking off'}
+					onclick={onToggleThinking}
+				/>
+			</span>
 		{/if}
-		<button class="header-action-btn" onclick={onNewConversation} title="New conversation">
-			<span class="material-symbols-outlined">add</span>
-		</button>
-		<button class="header-action-btn" onclick={onDownloadChat} title="Download chat">
-			<span class="material-symbols-outlined">download</span>
-		</button>
-		<button class="header-action-btn" onclick={onOpenSettings} title="Settings">
-			<span class="material-symbols-outlined">settings</span>
-		</button>
+		<Button icon="add" title="New conversation" onclick={onNewConversation} />
+		<Button icon="download" title="Download chat" onclick={onDownloadChat} />
 	</div>
 </div>
 
@@ -208,24 +195,5 @@
 		flex-shrink: 0;
 	}
 
-	.header-action-btn {
-		width: 32px;
-		height: 32px;
-		background: transparent;
-		border: none;
-		color: var(--color-interactive);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: all 0.15s;
-	}
-
-	.header-action-btn .material-symbols-outlined {
-		font-size: 18px;
-	}
-
-	.header-action-btn.toggle-off {
-		opacity: 0.5;
-	}
+	.toggle-off { opacity: 0.5; }
 </style>

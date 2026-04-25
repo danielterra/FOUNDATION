@@ -62,14 +62,14 @@
     />
   {:else if onSave}
     <div
-      class="entity-full-name editable"
+      class="entity-full-name section-title editable"
       role="button"
       tabindex="0"
       onclick={() => startMetaEdit('label')}
       onkeydown={(e) => e.key === 'Enter' && startMetaEdit('label')}
     >{label || '—'}</div>
   {:else}
-    <div class="entity-full-name" title="Entity is system-locked">{label || '—'}</div>
+    <div class="entity-full-name section-title" title="Entity is system-locked">{label || '—'}</div>
   {/if}
 </div>
 
@@ -115,10 +115,6 @@
   }
 
   .entity-full-name {
-    font-family: var(--font-title);
-    font-size: 16px;
-    font-weight: 700;
-    color: var(--color-neutral-active);
     line-height: 1.4;
     word-break: break-word;
   }

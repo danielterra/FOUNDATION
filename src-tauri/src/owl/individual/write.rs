@@ -11,6 +11,19 @@ pub(super) fn is_query_property(conn: &Connection, property_iri: &str) -> Result
     Ok(!result.triples.is_empty())
 }
 
+fn ensure_class_exists(conn: &Connection, class_iri: &str) -> Result<()> {
+    if crate::owl::Class::exists(conn, class_iri) {
+        Ok(())
+    } else {
+        Err(OwlError::ValidationError(format!(
+            "Class '{}' does not exist in the ontology. \
+             Create it first with define_class (check class_graph and search for an existing \
+             equivalent before creating), or use an existing class IRI.",
+            class_iri,
+        )))
+    }
+}
+
 impl Individual {
     /// Assert individual with required metadata (label and icon)
     /// This is the recommended way to create individuals
@@ -23,6 +36,7 @@ impl Individual {
         origin: &str
     ) -> Result<()> {
         crate::owl::check_system_locked(conn, &self.iri, None)?;
+        ensure_class_exists(conn, class_iri)?;
         crate::owl::validate_icon(conn, icon)?;
 
         let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(class_iri.to_string()));
@@ -55,6 +69,7 @@ impl Individual {
         origin: &str,
     ) -> Result<()> {
         crate::owl::check_system_locked(conn, &self.iri, None)?;
+        ensure_class_exists(conn, class_iri)?;
 
         let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(class_iri.to_string()));
         store::assert_triples(conn, &[triple], origin)?;
