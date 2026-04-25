@@ -353,9 +353,9 @@
 		pointer-events: none;
 		transition: opacity 0.15s;
 		z-index: 1;
-		background: color-mix(in srgb, var(--color-black) 75%, transparent);
+		background: var(--color-surface-2);
+		border-radius: var(--radius-sm);
 		padding: 2px;
-		backdrop-filter: blur(8px);
 	}
 
 	.message:hover .message-action-bar {

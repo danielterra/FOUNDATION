@@ -10,6 +10,7 @@ pub mod conversation;
 mod loop_tools;
 mod engine;
 mod trace;
+mod foundation_context;
 
 pub use tool_execution::execute_tools_from_message;
 pub use cancellation::{AiCancellationState, ConversationProcessingState};

@@ -199,8 +199,7 @@
     margin-bottom: 6px;
     z-index: 2;
     padding: 6px 0 4px;
-    background: color-mix(in srgb, var(--color-black) 97%, transparent);
-    backdrop-filter: blur(12px);
+    background: var(--color-surface-1);
   }
 
   .item-list {

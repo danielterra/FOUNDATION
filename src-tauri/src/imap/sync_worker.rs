@@ -1,10 +1,10 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use mailparse::MailHeaderMap;
 
-use crate::imap::extractor::{ParsedEmail, store_email};
+use crate::imap::extractor::{ParsedAttachment, ParsedEmail, store_email};
 use crate::owl::{DbExecutor, Individual, Object};
 
 const DEFAULT_IMAP_PORT: u16 = 993;
@@ -14,6 +14,7 @@ const MAX_FAILURES_BEFORE_ALERT: usize = 3;
 const SYNC_SLEEP_MILLIS: u64 = 500;
 const TCP_CONNECT_TIMEOUT_SECS: u64 = 20;
 const TCP_SESSION_READ_TIMEOUT_SECS: u64 = 120;
+const IDLE_TCP_READ_TIMEOUT_SECS: u64 = 29 * 60 + 30;
 
 #[derive(Clone)]
 struct AccountConfig {
@@ -76,6 +77,11 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
     let mut failure_count: usize = 0;
 
     loop {
+        let _ = app.emit("imap-sync-started", serde_json::json!({
+            "accountIri": account.iri,
+            "accountLabel": account.username,
+        }));
+
         let account_clone = account.clone();
         let result =
             tokio::task::spawn_blocking(move || sync_account_blocking(&account_clone)).await;
@@ -102,6 +108,7 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
                 for email in emails {
                     let account_iri = account.iri.clone();
                     let email_from = email.from.clone();
+                    let email_to = email.to.clone();
                     let email_subject = email.subject.clone();
                     let email_body = email.body.clone();
                     let subject_log = email.subject.chars().take(40).collect::<String>();
@@ -123,11 +130,17 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
                         tauri::async_runtime::spawn(async move {
                             crate::imap::ai_extraction::extract_email_entities(
                                 &app_clone, &executor_clone,
-                                iri, email_subject, email_body, email_from,
+                                iri, email_subject, email_body, email_from, email_to,
                             ).await;
                         });
                     }
                 }
+
+                let _ = app.emit("imap-sync-finished", serde_json::json!({
+                    "accountIri": account.iri,
+                    "accountLabel": account.username,
+                    "storedCount": stored_count,
+                }));
 
                 let account_iri = account.iri.clone();
                 executor
@@ -147,6 +160,12 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
                 };
 
                 failure_count += 1;
+
+                let _ = app.emit("imap-sync-finished", serde_json::json!({
+                    "accountIri": account.iri,
+                    "accountLabel": account.username,
+                    "error": msg,
+                }));
 
                 if failure_count >= MAX_FAILURES_BEFORE_ALERT {
                     failure_count = 0;
@@ -313,6 +332,8 @@ fn fetch_plain(account: &AccountConfig) -> Result<Vec<ParsedEmail>, String> {
 
 fn idle_tls(account: &AccountConfig) -> Result<(), String> {
     let tcp = tcp_connect(&account.host, account.port)?;
+    tcp.set_read_timeout(Some(Duration::from_secs(IDLE_TCP_READ_TIMEOUT_SECS))).ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
     let tls = native_tls::TlsConnector::new().map_err(|e| e.to_string())?;
     let tls_stream = tls.connect(&account.host, tcp).map_err(|e| format!("TLS: {}", e))?;
     let mut session = imap::Client::new(tls_stream)
@@ -328,6 +349,8 @@ fn idle_tls(account: &AccountConfig) -> Result<(), String> {
 
 fn idle_plain(account: &AccountConfig) -> Result<(), String> {
     let tcp = tcp_connect(&account.host, account.port)?;
+    tcp.set_read_timeout(Some(Duration::from_secs(IDLE_TCP_READ_TIMEOUT_SECS))).ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
     let mut session = imap::Client::new(tcp)
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
@@ -469,9 +492,9 @@ fn parse_raw_email(raw: &[u8]) -> Result<ParsedEmail, String> {
         });
 
     let body = extract_body_text(&parsed);
-    let attachment_names = collect_attachment_names(&parsed);
+    let attachments = collect_attachments(&parsed);
 
-    Ok(ParsedEmail { message_id, from, to, subject, date, body, attachment_names })
+    Ok(ParsedEmail { message_id, from, to, subject, date, body, attachments })
 }
 
 fn extract_body_text(mail: &mailparse::ParsedMail) -> String {
@@ -492,26 +515,82 @@ fn extract_body_text(mail: &mailparse::ParsedMail) -> String {
         .unwrap_or_default()
 }
 
-fn collect_attachment_names(mail: &mailparse::ParsedMail) -> Vec<String> {
-    mail.subparts
-        .iter()
-        .filter_map(|part| {
-            let disp = part.headers.get_first_value("Content-Disposition")?;
-            if !disp.to_lowercase().starts_with("attachment") {
-                return None;
+fn collect_attachments(mail: &mailparse::ParsedMail) -> Vec<ParsedAttachment> {
+    let mut out = Vec::new();
+    collect_attachments_recursive(mail, &mut out);
+    out
+}
+
+fn collect_attachments_recursive(
+    mail: &mailparse::ParsedMail,
+    out: &mut Vec<ParsedAttachment>,
+) {
+    for part in &mail.subparts {
+        if part_is_attachment(part) {
+            if let Some(name) = extract_attachment_filename(part) {
+                match part.get_body_raw() {
+                    Ok(content) => {
+                        out.push(ParsedAttachment {
+                            file_name: name,
+                            mime_type: part.ctype.mimetype.clone(),
+                            content,
+                        });
+                    }
+                    Err(e) => {
+                        crate::imap::log_error(&format!(
+                            "IMAP: attachment body decode failed for '{}': {}", name, e,
+                        ));
+                    }
+                }
             }
-            disp.split(';')
-                .find(|s| s.trim().to_lowercase().starts_with("filename="))
+        }
+        if !part.subparts.is_empty() {
+            collect_attachments_recursive(part, out);
+        }
+    }
+}
+
+fn part_is_attachment(part: &mailparse::ParsedMail) -> bool {
+    match part.headers.get_first_value("Content-Disposition") {
+        Some(disp) => disp.to_lowercase().trim_start().starts_with("attachment"),
+        None => false,
+    }
+}
+
+fn extract_attachment_filename(part: &mailparse::ParsedMail) -> Option<String> {
+    let disp = part.headers.get_first_value("Content-Disposition")?;
+    let from_disp = disp.split(';')
+        .find(|s| s.trim().to_lowercase().starts_with("filename="))
+        .map(|s| {
+            s.trim()
+                .splitn(2, '=')
+                .nth(1)
+                .unwrap_or("")
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string()
+        })
+        .filter(|s| !s.is_empty());
+
+    if from_disp.is_some() {
+        return from_disp;
+    }
+
+    part.headers.get_first_value("Content-Type")
+        .and_then(|ct| {
+            ct.split(';')
+                .find(|s| s.trim().to_lowercase().starts_with("name="))
                 .map(|s| {
                     s.trim()
                         .splitn(2, '=')
                         .nth(1)
                         .unwrap_or("")
                         .trim_matches('"')
+                        .trim_matches('\'')
                         .to_string()
                 })
         })
-        .collect()
+        .filter(|s| !s.is_empty())
 }
 
 fn load_account_configs(
@@ -575,4 +654,50 @@ fn load_account_configs(
     }
 
     Ok(configs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MULTIPART_WITH_CSV: &[u8] = b"From: alice@example.com\r\n\
+To: bob@example.com\r\n\
+Subject: Extrato\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"BOUNDARY42\"\r\n\
+\r\n\
+--BOUNDARY42\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Segue o extrato em anexo.\r\n\
+--BOUNDARY42\r\n\
+Content-Type: text/csv; name=\"extrato.csv\"\r\n\
+Content-Disposition: attachment; filename=\"extrato.csv\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+RGF0ZSxBbW91bnQKMjAyNi0wNC0wOSwxMDAuMDAK\r\n\
+--BOUNDARY42--\r\n";
+
+    #[test]
+    fn test_parse_raw_email_extracts_attachment_bytes() {
+        // Regression for Bug_1777034520503: attachments were parsed by name only,
+        // with no body content persisted — so downstream read_binary_file failed.
+        let parsed = parse_raw_email(MULTIPART_WITH_CSV).expect("parse should succeed");
+        assert_eq!(parsed.attachments.len(), 1, "must collect one attachment");
+        let att = &parsed.attachments[0];
+        assert_eq!(att.file_name, "extrato.csv");
+        assert_eq!(att.mime_type, "text/csv");
+        let decoded = String::from_utf8(att.content.clone()).unwrap();
+        assert!(decoded.contains("Date,Amount"), "body bytes must be decoded; got: {}", decoded);
+        assert!(decoded.contains("2026-04-09,100.00"), "body bytes must be decoded");
+    }
+
+    #[test]
+    fn test_parse_raw_email_inline_part_is_not_attachment() {
+        let parsed = parse_raw_email(MULTIPART_WITH_CSV).expect("parse should succeed");
+        assert!(
+            parsed.attachments.iter().all(|a| a.file_name == "extrato.csv"),
+            "inline text/plain part must not be collected as attachment"
+        );
+    }
 }

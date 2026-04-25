@@ -85,19 +85,40 @@
   let recalcJobs = $state<RecalcJob[]>([]);
   let unlistenRecalc: (() => void) | undefined;
 
+  type ImapSyncEvent = {
+    accountIri: string;
+    accountLabel: string;
+    storedCount?: number;
+    error?: string;
+  };
+
+  type ImapSyncToast = {
+    accountIri: string;
+    accountLabel: string;
+    status: 'running' | 'done' | 'error';
+    message: string;
+  };
+
+  type ImapExtractionStartedEvent = { emailIri: string; subject: string };
+  type ImapExtractionFinishedEvent = { emailIri: string; subject: string; entitiesCount: number | null; error: string | null };
+
+  type ImapExtractionToast = {
+    emailIri: string;
+    subject: string;
+    status: 'running' | 'done' | 'error';
+    message: string;
+  };
+
+  let imapSyncs = $state<ImapSyncToast[]>([]);
+  let imapExtractions = $state<ImapExtractionToast[]>([]);
+  let unlistenImapSyncStarted: (() => void) | undefined;
+  let unlistenImapSyncFinished: (() => void) | undefined;
+  let unlistenImapExtractionStarted: (() => void) | undefined;
+  let unlistenImapExtractionFinished: (() => void) | undefined;
+
   let retentionRunning = $state(false);
   let unlistenRetentionStarted: (() => void) | undefined;
   let unlistenRetentionComplete: (() => void) | undefined;
-
-  const backgroundVideos = [
-    '/background-space.mp4',
-    '/background-code.mp4',
-    '/background-dust.mp4',
-    '/background-edges.mp4',
-    '/background-particles.mp4'
-  ];
-
-  const selectedVideo = backgroundVideos[Math.floor(Math.random() * backgroundVideos.length)];
 
   function handleLinkClick(event: MouseEvent) {
     const anchor = (event.target as Element).closest('a');
@@ -162,6 +183,66 @@
       }, TASK_NOTIFICATION_DURATION_MS);
     });
 
+    unlistenImapSyncStarted = await listen<ImapSyncEvent>('imap-sync-started', (event) => {
+      const { accountIri, accountLabel } = event.payload;
+      const entry: ImapSyncToast = {
+        accountIri, accountLabel,
+        status: 'running',
+        message: `Verificando emails de ${accountLabel}`,
+      };
+      const existing = imapSyncs.findIndex(s => s.accountIri === accountIri);
+      if (existing >= 0) imapSyncs[existing] = entry;
+      else imapSyncs = [...imapSyncs, entry];
+    });
+
+    unlistenImapSyncFinished = await listen<ImapSyncEvent>('imap-sync-finished', (event) => {
+      const { accountIri, accountLabel, storedCount, error } = event.payload;
+      const toast: ImapSyncToast = error
+        ? { accountIri, accountLabel, status: 'error', message: `Falha em ${accountLabel}: ${error}` }
+        : (storedCount && storedCount > 0)
+          ? { accountIri, accountLabel, status: 'done', message: `${storedCount} ${storedCount === 1 ? 'email novo' : 'emails novos'} em ${accountLabel}` }
+          : { accountIri, accountLabel, status: 'done', message: `Sem novos emails em ${accountLabel}` };
+
+      const existing = imapSyncs.findIndex(s => s.accountIri === accountIri);
+      if (existing >= 0) imapSyncs[existing] = toast;
+      else imapSyncs = [...imapSyncs, toast];
+
+      const dismissAfter = error ? 6000 : (storedCount && storedCount > 0 ? 4000 : 2000);
+      setTimeout(() => {
+        imapSyncs = imapSyncs.filter(s => !(s.accountIri === accountIri && s.status !== 'running'));
+      }, dismissAfter);
+    });
+
+    unlistenImapExtractionStarted = await listen<ImapExtractionStartedEvent>('imap-extraction-started', (event) => {
+      const { emailIri, subject } = event.payload;
+      const entry: ImapExtractionToast = {
+        emailIri, subject,
+        status: 'running',
+        message: `Extraindo dados: ${subject || '(sem assunto)'}`,
+      };
+      if (!imapExtractions.some(e => e.emailIri === emailIri)) {
+        imapExtractions = [...imapExtractions, entry];
+      }
+    });
+
+    unlistenImapExtractionFinished = await listen<ImapExtractionFinishedEvent>('imap-extraction-finished', (event) => {
+      const { emailIri, subject, entitiesCount, error } = event.payload;
+      const toast: ImapExtractionToast = error
+        ? { emailIri, subject, status: 'error', message: `Erro extraindo "${subject}": ${error}` }
+        : (entitiesCount && entitiesCount > 0)
+          ? { emailIri, subject, status: 'done', message: `${entitiesCount} ${entitiesCount === 1 ? 'entidade extraída' : 'entidades extraídas'} de "${subject}"` }
+          : { emailIri, subject, status: 'done', message: `Sem entidades em "${subject}"` };
+
+      const idx = imapExtractions.findIndex(e => e.emailIri === emailIri);
+      if (idx >= 0) imapExtractions[idx] = toast;
+      else imapExtractions = [...imapExtractions, toast];
+
+      const dismissAfter = error ? 6000 : (entitiesCount && entitiesCount > 0 ? 4000 : 1500);
+      setTimeout(() => {
+        imapExtractions = imapExtractions.filter(e => !(e.emailIri === emailIri && e.status !== 'running'));
+      }, dismissAfter);
+    });
+
     unlistenRecalc = await listen<FormulaProgressEvent>('formula-recalc-progress', (event) => {
       const { jobId, classLabel, percent, status } = event.payload;
 
@@ -191,18 +272,12 @@
     unlistenAutomationStarted?.();
     unlistenAutomationStep?.();
     unlistenAutomationFinished?.();
+    unlistenImapSyncStarted?.();
+    unlistenImapSyncFinished?.();
+    unlistenImapExtractionStarted?.();
+    unlistenImapExtractionFinished?.();
   });
 </script>
-
-<video
-  autoplay
-  loop
-  muted
-  playsinline
-  class="background-video"
->
-  <source src={selectedVideo} type="video/mp4" />
-</video>
 
 {@render children()}
 
@@ -247,7 +322,7 @@
 
 <GlobalModal />
 
-{#if automationRuns.length > 0 || retentionRunning || recalcJobs.length > 0 || taskNotifications.length > 0}
+{#if automationRuns.length > 0 || retentionRunning || recalcJobs.length > 0 || taskNotifications.length > 0 || imapSyncs.length > 0 || imapExtractions.length > 0}
   <div class="toast-stack">
     {#each automationRuns as run (run.executionIri)}
       <div
@@ -313,6 +388,46 @@
       </div>
     {/each}
 
+    {#each imapSyncs as sync (sync.accountIri)}
+      <div class="automation-toast" class:failed={sync.status === 'error'} class:done={sync.status === 'done'} class:running={sync.status === 'running'}>
+        {#if sync.status === 'running'}
+          <div class="toast-thinking"><ThinkingDots /></div>
+        {:else}
+          <span class="material-symbols-outlined toast-icon">
+            {sync.status === 'done' ? 'mark_email_read' : 'error'}
+          </span>
+        {/if}
+        <div class="toast-body">
+          <span class="toast-label">{sync.message}</span>
+        </div>
+        {#if sync.status !== 'running'}
+          <button class="toast-close" onclick={() => { imapSyncs = imapSyncs.filter(s => s.accountIri !== sync.accountIri); }}>
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        {/if}
+      </div>
+    {/each}
+
+    {#each imapExtractions as ext (ext.emailIri)}
+      <div class="automation-toast" class:failed={ext.status === 'error'} class:done={ext.status === 'done'} class:running={ext.status === 'running'}>
+        {#if ext.status === 'running'}
+          <div class="toast-thinking"><ThinkingDots /></div>
+        {:else}
+          <span class="material-symbols-outlined toast-icon">
+            {ext.status === 'done' ? 'psychology' : 'error'}
+          </span>
+        {/if}
+        <div class="toast-body">
+          <span class="toast-label">{ext.message}</span>
+        </div>
+        {#if ext.status !== 'running'}
+          <button class="toast-close" onclick={() => { imapExtractions = imapExtractions.filter(e => e.emailIri !== ext.emailIri); }}>
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        {/if}
+      </div>
+    {/each}
+
     {#each recalcJobs as job (job.jobId)}
       <div class="system-toast" class:done={job.status !== 'running'}>
         <span class="recalc-label">Recalculating <strong>{job.classLabel}</strong></span>
@@ -327,18 +442,7 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
-  }
-
-  .background-video {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    object-fit: cover;
-    z-index: 0;
-    opacity: 0.2;
-    pointer-events: none;
+    background: var(--color-surface-0);
   }
 
   .global-overlay {
@@ -358,7 +462,8 @@
     align-items: center;
     gap: 12px;
     padding: 28px 24px;
-    background: color-mix(in srgb, var(--color-black) 92%, transparent);
+    background: var(--color-surface-3);
+    border-radius: var(--radius-lg);
     max-width: 340px;
     width: 90vw;
     text-align: center;
@@ -492,8 +597,8 @@
   }
 
   .automation-toast {
-    background: color-mix(in srgb, var(--color-black) 85%, transparent);
-    backdrop-filter: blur(12px);
+    background: var(--color-surface-2);
+    border-radius: var(--radius-md);
     color: var(--color-neutral);
     padding: 10px 14px;
     display: flex;
@@ -506,13 +611,13 @@
   }
 
   .automation-toast.running {
-    background: color-mix(in srgb, var(--color-transition) 10%, transparent);
+    background: color-mix(in srgb, var(--color-transition) 10%, var(--color-surface-2));
     animation: toast-pulse 1.5s ease-in-out infinite;
   }
 
   @keyframes toast-pulse {
-    0%, 100% { background: color-mix(in srgb, var(--color-transition) 10%, transparent); }
-    50% { background: color-mix(in srgb, var(--color-transition) 18%, transparent); }
+    0%, 100% { background: color-mix(in srgb, var(--color-transition) 10%, var(--color-surface-2)); }
+    50% { background: color-mix(in srgb, var(--color-transition) 18%, var(--color-surface-2)); }
   }
 
   .toast-icon {
@@ -588,8 +693,8 @@
   }
 
   .system-toast {
-    background: color-mix(in srgb, var(--color-black) 85%, transparent);
-    backdrop-filter: blur(12px);
+    background: var(--color-surface-2);
+    border-radius: var(--radius-md);
     color: var(--color-neutral);
     padding: 8px 14px;
     display: flex;

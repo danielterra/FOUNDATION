@@ -219,7 +219,7 @@
         <div class="section">
           <div class="section-header" use:sticky={{ top: 0 }}>
             <span class="material-symbols-outlined section-calc-icon">calculate</span>
-            <span class="section-title">Calculado</span>
+            <span class="section-divider">Calculado</span>
             <span class="section-count">{sections.calculatedCount}</span>
           </div>
           <div class="section-body">
@@ -280,21 +280,15 @@
     padding: 6px 2px;
     margin-bottom: 6px;
     z-index: 2;
-    background: color-mix(in srgb, var(--color-black) 97%, transparent);
-    backdrop-filter: blur(12px);
+    background: var(--color-surface-1);
   }
 
   .section-header.collapsible {
-    background: color-mix(in srgb, var(--color-black) 97%, transparent);
+    background: var(--color-surface-1);
     border: none;
     cursor: pointer;
     width: 100%;
     text-align: left;
-    transition: background 0.15s;
-  }
-
-  .section-header.collapsible:hover {
-    background: color-mix(in srgb, var(--color-black) 92%, var(--color-white) 4%);
   }
 
   .chevron {
@@ -309,14 +303,14 @@
     transform: rotate(90deg);
   }
 
-  .section-title {
+  .section-divider {
+    flex: 1;
     font-family: var(--font-body);
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.6px;
     color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
-    flex: 1;
   }
 
   .section-count {
@@ -341,8 +335,7 @@
     padding: 6px 2px 2px;
     margin-top: 4px;
     z-index: 1;
-    background: color-mix(in srgb, var(--color-black) 97%, transparent);
-    backdrop-filter: blur(12px);
+    background: var(--color-surface-1);
   }
 
   .source-separator:first-child {

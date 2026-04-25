@@ -372,7 +372,7 @@
 
 <div class="detail-item" transition:slide={{ duration: 300, easing: cubicOut }}>
   <div class="detail-header">
-    <div class="detail-name">
+    <div class="detail-name field-label">
       {detailGroup.propertyLabel}
       {#if detailGroup.propertyComment || detailGroup.sourceClassLabel}
         <span
@@ -705,16 +705,10 @@
     gap: 4px;
   }
 
+  /* .detail-name layout-only adjustments; typography comes from global .field-label */
   .detail-name {
-    font-family: var(--font-title);
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--color-neutral-active);
-    display: flex;
-    align-items: center;
-    gap: 6px;
+    flex: 1;
+    min-width: 0;
   }
 
   .prop-info {

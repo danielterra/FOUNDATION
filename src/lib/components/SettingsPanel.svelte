@@ -1,5 +1,7 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
+	import Button from './Button.svelte';
+	import Modal from './Modal.svelte';
 
 	let { onClose } = $props();
 
@@ -427,42 +429,17 @@
 	<div class="panel" role="dialog" aria-modal="true" aria-label="Settings">
 		<div class="panel-header">
 			<span class="panel-title">Settings</span>
-			<button class="close-btn" onclick={onClose} title="Close">
-				<span class="material-symbols-outlined">close</span>
-			</button>
+			<Button icon="close" title="Close" onclick={onClose} />
 		</div>
 
 		<div class="panel-body">
-			{#if !selectedServiceIsLocal}
 			<section class="settings-section">
-				<h3 class="section-title">API Key</h3>
-				{#if apiKeyLoading}
-					<p class="hint">Loading…</p>
-				{:else}
-					<div class="field-row">
-						<input
-							class="text-input"
-							type="password"
-							placeholder="sk-ant-…"
-							bind:value={apiKey}
-						/>
-						<button class="save-btn" onclick={saveApiKey} disabled={apiKeySaving || !apiKey}>
-							{apiKeySaving ? 'Saving…' : 'Save'}
-						</button>
-					</div>
-					{#if apiKeyMessage}
-						<p class="feedback" class:error={apiKeyError}>{apiKeyMessage}</p>
-					{/if}
-				{/if}
-			</section>
-		{/if}
-
-			<section class="settings-section">
-				<h3 class="section-title">AI Model</h3>
-				{#if currentModelLabel}
-					<p class="hint">Current: <strong>{currentModelLabel}</strong></p>
-				{/if}
+				<h3 class="section-title">
+					<span class="material-symbols-outlined">psychology</span>
+					AI Model
+				</h3>
 				{#if services.length > 0}
+					<label class="field-label">Provedor</label>
 					<div class="field-row">
 						<select class="select-input" value={selectedServiceIri} onchange={onServiceChange}>
 							{#each services as svc}
@@ -471,6 +448,7 @@
 						</select>
 					</div>
 					{#if models.length > 0}
+						<label class="field-label">Modelo</label>
 						<div class="field-row">
 							<select class="select-input" bind:value={selectedModelIri}>
 								<option value="">Select a model…</option>
@@ -478,16 +456,38 @@
 									<option value={model.iri}>{model.label}</option>
 								{/each}
 							</select>
-							<button class="save-btn" onclick={saveModel} disabled={modelSaving || !selectedModelIri || (!selectedServiceIsLocal && !apiKey.trim())}>
+							<Button onclick={saveModel} disabled={modelSaving || !selectedModelIri || (!selectedServiceIsLocal && !apiKey.trim())}>
 								{modelSaving ? 'Saving…' : 'Save'}
-							</button>
+							</Button>
 						</div>
 						{#if !selectedServiceIsLocal && !apiKey.trim()}
-							<p class="feedback error">Configure a chave de API acima antes de ativar este provedor.</p>
+							<p class="feedback error">Configure a chave de API abaixo antes de ativar este provedor.</p>
 						{/if}
 					{/if}
 					{#if modelMessage}
 						<p class="feedback" class:error={modelError}>{modelMessage}</p>
+					{/if}
+
+					{#if !selectedServiceIsLocal}
+						<label class="field-label">Chave de API</label>
+						{#if apiKeyLoading}
+							<p class="hint">Loading…</p>
+						{:else}
+							<div class="field-row">
+								<input
+									class="text-input"
+									type="password"
+									placeholder="sk-ant-…"
+									bind:value={apiKey}
+								/>
+								<Button onclick={saveApiKey} disabled={apiKeySaving || !apiKey}>
+									{apiKeySaving ? 'Saving…' : 'Save'}
+								</Button>
+							</div>
+							{#if apiKeyMessage}
+								<p class="feedback" class:error={apiKeyError}>{apiKeyMessage}</p>
+							{/if}
+						{/if}
 					{/if}
 				{:else}
 					<p class="hint">No AI services found.</p>
@@ -496,7 +496,10 @@
 
 			{#if selectedServiceIsLocal}
 			<section class="settings-section">
-				<h3 class="section-title">Modelo Local</h3>
+				<h3 class="section-title">
+					<span class="material-symbols-outlined">save</span>
+					Modelo Local
+				</h3>
 				{#if localModelExists}
 					<p class="hint">
 						<span class="material-symbols-outlined model-status-icon installed">check_circle</span>
@@ -509,15 +512,12 @@
 					</div>
 					<p class="progress-detail">{formatBytes(localModelDownloadedBytes)} / {formatBytes(localModelTotalBytes)}</p>
 					<div class="field-row">
-						<button class="danger-btn" onclick={cancelModelDownload}>Cancelar</button>
+						<Button variant="danger" onclick={cancelModelDownload}>Cancelar</Button>
 					</div>
 				{:else}
 					<p class="hint">Modelo não instalado · {localModelSizeHuman}</p>
 					<div class="field-row">
-						<button class="save-btn" onclick={startModelDownload}>
-							<span class="material-symbols-outlined btn-icon">download</span>
-							Baixar modelo
-						</button>
+						<Button icon="download" onclick={startModelDownload}>Baixar modelo</Button>
 					</div>
 				{/if}
 				{#if localModelMessage}
@@ -527,7 +527,10 @@
 			{/if}
 
 			<section class="settings-section">
-				<h3 class="section-title">Contas de Email (IMAP)</h3>
+				<h3 class="section-title">
+					<span class="material-symbols-outlined">mail</span>
+					Contas de Email (IMAP)
+				</h3>
 
 				{#each imapAccounts as account}
 					<div class="imap-account-row">
@@ -538,15 +541,9 @@
 							<span class="imap-account-label">{account.label}</span>
 							<span class="imap-account-host">{account.username}@{account.host}</span>
 						</div>
-						<button class="icon-btn" onclick={() => toggleImapHistory(account.iri)} title="Histórico de sincronização">
-							<span class="material-symbols-outlined">history</span>
-						</button>
-						<button class="icon-btn" onclick={() => startEditImapAccount(account)} title="Editar">
-							<span class="material-symbols-outlined">edit</span>
-						</button>
-						<button class="icon-btn danger" onclick={() => deleteImapAccount(account.iri)} disabled={imapDeleting} title="Remover">
-							<span class="material-symbols-outlined">delete</span>
-						</button>
+						<Button size="sm" icon="history" title="Histórico de sincronização" onclick={() => toggleImapHistory(account.iri)} />
+						<Button size="sm" icon="edit" title="Editar" onclick={() => startEditImapAccount(account)} />
+						<Button size="sm" variant="danger" icon="delete" title="Remover" disabled={imapDeleting} onclick={() => deleteImapAccount(account.iri)} />
 					</div>
 					{#if imapHistoryAccountIri === account.iri}
 						<div class="sync-history">
@@ -576,38 +573,74 @@
 					{/if}
 				{/each}
 
-				{#if imapEditing !== null}
-					<div class="imap-form">
-						<input class="text-input" type="text" placeholder="Rótulo (ex: Gmail Pessoal)" bind:value={imapForm.label} />
-						<div class="field-row">
-							<input class="text-input" type="text" placeholder="Host (ex: imap.gmail.com)" bind:value={imapForm.host} style="flex:3" />
-							<input class="text-input" type="number" placeholder="993" bind:value={imapForm.port} style="flex:1;min-width:60px" min="1" max="65535" />
-						</div>
-						<input class="text-input" type="text" placeholder="Usuário" bind:value={imapForm.username} autocomplete="off" />
-						<input
-							class="text-input"
-							type="password"
-							placeholder={imapHasExistingPassword ? '••••••••' : 'Senha'}
-							bind:value={imapForm.password}
-							autocomplete="new-password"
-						/>
-						{#if imapHasExistingPassword}
-							<p class="hint" style="margin-top:2px">Deixe em branco para manter a senha salva.</p>
-						{/if}
-						<div class="field-row imap-options-row">
-							<label class="checkbox-label">
-								<input type="checkbox" bind:checked={imapForm.use_tls} />
-								Usar TLS
-							</label>
-							<label class="checkbox-label" style="margin-left:auto">
-								Sincronizar a cada
-								<input class="text-input interval-input" type="number" bind:value={imapForm.sync_interval_minutes} min="1" max="1440" />
-								min
-							</label>
-						</div>
-						{#if imapAvailableFolders.length > 0}
+				{#if imapMessage && imapEditing === null}
+					<p class="feedback" class:error={imapError}>{imapMessage}</p>
+				{/if}
+
+				<div class="field-row">
+					<Button icon="add" onclick={startAddImapAccount}>Adicionar conta</Button>
+				</div>
+			</section>
+
+			<Modal
+				open={imapEditing !== null}
+				title={imapEditing === 'new' ? 'Nova conta de email' : 'Editar conta de email'}
+				icon="mail"
+				size="md"
+				onClose={cancelImapEdit}
+			>
+				<div class="form-field">
+					<label class="field-label" for="imap-label">Rótulo</label>
+					<input id="imap-label" class="text-input" type="text" placeholder="Gmail Pessoal" bind:value={imapForm.label} />
+				</div>
+
+				<div class="form-grid">
+					<div class="form-field" style="flex:3; min-width:0">
+						<label class="field-label" for="imap-host">Servidor IMAP</label>
+						<input id="imap-host" class="text-input" type="text" placeholder="imap.gmail.com" bind:value={imapForm.host} />
+					</div>
+					<div class="form-field" style="flex:1; min-width:80px">
+						<label class="field-label" for="imap-port">Porta</label>
+						<input id="imap-port" class="text-input" type="number" placeholder="993" bind:value={imapForm.port} min="1" max="65535" />
+					</div>
+				</div>
+
+				<div class="form-field">
+					<label class="field-label" for="imap-username">Usuário</label>
+					<input id="imap-username" class="text-input" type="text" placeholder="seu@email.com" bind:value={imapForm.username} autocomplete="off" />
+				</div>
+
+				<div class="form-field">
+					<label class="field-label" for="imap-password">Senha</label>
+					<input
+						id="imap-password"
+						class="text-input"
+						type="password"
+						placeholder={imapHasExistingPassword ? '••••••••' : 'Senha de aplicativo'}
+						bind:value={imapForm.password}
+						autocomplete="new-password"
+					/>
+					{#if imapHasExistingPassword}
+						<p class="hint">Deixe em branco para manter a senha salva.</p>
+					{/if}
+				</div>
+
+				<div class="field-row imap-options-row">
+					<label class="checkbox-label">
+						<input type="checkbox" bind:checked={imapForm.use_tls} />
+						Usar TLS
+					</label>
+					<label class="checkbox-label" style="margin-left:auto">
+						Sincronizar a cada
+						<input class="text-input interval-input" type="number" bind:value={imapForm.sync_interval_minutes} min="1" max="1440" />
+						min
+					</label>
+				</div>
+
+				{#if imapAvailableFolders.length > 0}
+					<div class="form-field">
+						<label class="field-label">Pastas monitoradas</label>
 						<div class="imap-folders">
-							<p class="hint" style="margin-bottom:4px">Pastas monitoradas:</p>
 							{#each imapAvailableFolders as folder}
 								<label class="checkbox-label folder-label">
 									<input type="checkbox" checked={imapSelectedFolders.includes(folder)} onchange={() => toggleImapFolder(folder)} />
@@ -615,46 +648,38 @@
 								</label>
 							{/each}
 						</div>
-					{:else if imapLoadingFolders}
-						<p class="hint">Carregando pastas…</p>
-					{/if}
-					<div class="field-row">
-							<button class="save-btn ghost" onclick={testImapConnection} disabled={imapTesting || !imapForm.host || !imapForm.username || !imapForm.password}>
-								{imapTesting ? 'Testando…' : 'Testar conexão'}
-							</button>
-							<button class="save-btn" onclick={saveImapAccount} disabled={imapSaving || !imapForm.label || !imapForm.host || !imapForm.username || (!imapHasExistingPassword && !imapForm.password)}>
-								{imapSaving ? 'Salvando…' : 'Salvar'}
-							</button>
-							<button class="icon-btn" onclick={cancelImapEdit} title="Cancelar">
-								<span class="material-symbols-outlined">close</span>
-							</button>
-						</div>
 					</div>
+				{:else if imapLoadingFolders}
+					<p class="hint">Carregando pastas…</p>
 				{/if}
 
 				{#if imapMessage}
 					<p class="feedback" class:error={imapError}>{imapMessage}</p>
 				{/if}
 
-				{#if imapEditing === null}
-					<div class="field-row">
-						<button class="save-btn ghost" onclick={startAddImapAccount}>
-							<span class="material-symbols-outlined btn-icon">add</span>
-							Adicionar conta
-						</button>
-					</div>
-				{/if}
-			</section>
+				{#snippet footer()}
+					<Button onclick={cancelImapEdit}>Cancelar</Button>
+					<Button onclick={testImapConnection} disabled={imapTesting || !imapForm.host || !imapForm.username || !imapForm.password}>
+						{imapTesting ? 'Testando…' : 'Testar conexão'}
+					</Button>
+					<Button onclick={saveImapAccount} disabled={imapSaving || !imapForm.label || !imapForm.host || !imapForm.username || (!imapHasExistingPassword && !imapForm.password)}>
+						{imapSaving ? 'Salvando…' : 'Salvar'}
+					</Button>
+				{/snippet}
+			</Modal>
 
 			<section class="settings-section">
-				<h3 class="section-title">Logs</h3>
+				<h3 class="section-title">
+					<span class="material-symbols-outlined">description</span>
+					Logs
+				</h3>
 				{#if logPath}
 					<p class="log-path">{logPath}</p>
 				{/if}
 				<div class="field-row">
-					<button class="danger-btn" onclick={clearLogs} disabled={logClearing}>
+					<Button variant="danger" onclick={clearLogs} disabled={logClearing}>
 						{logClearing ? 'Clearing…' : 'Clear logs'}
-					</button>
+					</Button>
 				</div>
 				{#if logMessage}
 					<p class="feedback" class:error={logError}>{logMessage}</p>
@@ -676,7 +701,8 @@
 	}
 
 	.panel {
-		background: var(--color-surface, #1e1e2e);
+		background: var(--color-surface-1);
+		border-radius: var(--radius-lg);
 		width: 420px;
 		max-width: 95vw;
 		max-height: 85vh;
@@ -699,21 +725,6 @@
 		color: var(--color-neutral-active, #e0e0e0);
 	}
 
-	.close-btn {
-		background: none;
-		border: none;
-		color: var(--color-neutral, #888);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 2px;
-	}
-
-	.close-btn .material-symbols-outlined {
-		font-size: 20px;
-	}
-
 	.panel-body {
 		overflow-y: auto;
 		padding: 18px;
@@ -728,14 +739,7 @@
 		gap: 10px;
 	}
 
-	.section-title {
-		font-size: 11px;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: var(--color-neutral, #888);
-		margin: 0;
-	}
+	/* .section-title and .field-label come from global base.css */
 
 	.hint {
 		font-size: 14px;
@@ -764,49 +768,35 @@
 	.text-input,
 	.select-input {
 		flex: 1;
-		background: color-mix(in srgb, var(--color-white, #fff) 6%, transparent);
+		background: var(--color-surface-3);
 		border: none;
+		border-radius: var(--radius-sm);
 		color: var(--color-neutral-active, #e0e0e0);
+		font-family: var(--font-body);
 		font-size: 14px;
 		padding: 7px 10px;
+		line-height: 1.4;
 		outline: none;
+		box-sizing: border-box;
+	}
+
+	.select-input {
+		appearance: none;
+		-webkit-appearance: none;
+		-moz-appearance: none;
+		padding-right: 32px;
+		background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23bfbfbf' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+		background-repeat: no-repeat;
+		background-position: right 10px center;
+		cursor: pointer;
 	}
 
 	.select-input option {
-		background: var(--color-surface, #1e1e2e);
+		background: var(--color-surface-2);
+		color: var(--color-neutral-active);
 	}
 
-	.save-btn {
-		background: var(--color-interactive, #7c6fff);
-		color: #fff;
-		border: none;
-		padding: 7px 14px;
-		font-size: 14px;
-		font-weight: 500;
-		cursor: pointer;
-		white-space: nowrap;
-		flex-shrink: 0;
-	}
-
-	.save-btn:disabled {
-		opacity: 0.45;
-		cursor: not-allowed;
-	}
-
-	.danger-btn {
-		background: color-mix(in srgb, #e53935 15%, transparent);
-		color: #e57373;
-		border: none;
-		padding: 7px 14px;
-		font-size: 14px;
-		font-weight: 500;
-		cursor: pointer;
-	}
-
-	.danger-btn:disabled {
-		opacity: 0.45;
-		cursor: not-allowed;
-	}
+	/* save-btn / danger-btn replaced by <Button> component */
 
 	.feedback {
 		font-size: 12px;
@@ -852,46 +842,14 @@
 		margin-right: 4px;
 	}
 
-	.save-btn.ghost {
-		background: color-mix(in srgb, var(--color-interactive, #7c6fff) 15%, transparent);
-		color: var(--color-interactive, #7c6fff);
-	}
-
-	.save-btn.ghost:disabled {
-		opacity: 0.45;
-		cursor: not-allowed;
-	}
-
-	.icon-btn {
-		background: none;
-		border: none;
-		color: var(--color-neutral, #888);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 4px;
-		flex-shrink: 0;
-	}
-
-	.icon-btn .material-symbols-outlined {
-		font-size: 18px;
-	}
-
-	.icon-btn.danger {
-		color: #e57373;
-	}
-
-	.icon-btn:disabled {
-		opacity: 0.45;
-		cursor: not-allowed;
-	}
-
 	.imap-account-row {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 6px 0;
+		padding: 8px 12px;
+		background: var(--color-surface-2);
+		border-radius: var(--radius-sm);
+		margin-bottom: 6px;
 	}
 
 	.imap-status-icon {
@@ -957,11 +915,15 @@
 		text-overflow: ellipsis;
 	}
 
-	.imap-form {
+	.form-field {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
-		padding: 10px 0 4px;
+		gap: 4px;
+	}
+
+	.form-grid {
+		display: flex;
+		gap: 10px;
 	}
 
 	.imap-options-row {

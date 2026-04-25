@@ -12,7 +12,7 @@
   }
 
   function isFile() {
-    return entityData?.types?.some(t => t.iri === 'foundation:File');
+    return entityData?.properties?.some(p => p.property === 'foundation:filePath');
   }
 
   function getRawFilePath() {
@@ -75,10 +75,9 @@
   {@const fileSize = getFileSize()}
 
   <div class="file-preview-section">
-    <button
+    <div
       class="file-preview-card"
-      onclick={() => openFile(rawFilePath)}
-      title="Click to open in default app"
+      role="group"
     >
       {#if mimeType?.startsWith('image/')}
         <div class="file-image-preview">
@@ -91,7 +90,6 @@
       {:else}
         <div class="file-generic-preview">
           <span class="material-symbols-outlined">description</span>
-          <span class="file-label">File</span>
         </div>
       {/if}
 
@@ -100,12 +98,17 @@
         {#if fileSize}
           <div class="file-preview-size">{formatFileSize(fileSize)}</div>
         {/if}
-        <div class="file-preview-action">
-          <span class="material-symbols-outlined">open_in_new</span>
-          <span>Open file</span>
-        </div>
       </div>
-    </button>
+
+      <button
+        class="file-preview-open"
+        onclick={() => openFile(rawFilePath)}
+        title="Abrir no app padrão"
+        aria-label="Abrir no app padrão"
+      >
+        <span class="material-symbols-outlined">open_in_new</span>
+      </button>
+    </div>
   </div>
 {/if}
 
@@ -117,53 +120,56 @@
   .file-preview-card {
     width: 100%;
     display: flex;
-    flex-direction: column;
-    gap: 12px;
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    padding: 12px;
-    cursor: pointer;
-    transition: background 0.2s, transform 0.2s;
-  }
-
-  .file-preview-card:hover {
-    background: color-mix(in srgb, var(--color-white) 8%, transparent);
-    transform: translateY(-1px);
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 10px;
+    background: var(--color-surface-2);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    text-align: left;
   }
 
   .file-image-preview {
-    width: 100%;
-    height: 200px;
+    width: 48px;
+    height: 48px;
     overflow: hidden;
-    background: color-mix(in srgb, var(--color-white) 3%, transparent);
+    background: var(--color-surface-3);
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
   }
 
   .file-image-preview img {
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: cover;
   }
 
   .file-pdf-preview,
   .file-generic-preview {
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: 400px;
-    background: color-mix(in srgb, var(--color-white) 3%, transparent);
-    gap: 8px;
-    overflow: hidden;
+    width: 48px;
+    height: 48px;
+    background: var(--color-surface-3);
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
   }
 
   .file-pdf-preview embed {
     width: 100%;
-    height: 400px;
+    height: 100%;
     border: none;
+    pointer-events: none;
   }
 
   .file-generic-preview .material-symbols-outlined {
-    font-size: 64px;
+    font-size: 28px;
     color: var(--color-neutral);
+  }
+
+  .file-label {
+    display: none;
   }
 
   .file-label {
@@ -176,33 +182,39 @@
   .file-preview-info {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+    text-align: left;
   }
 
   .file-preview-name {
     font-family: var(--font-body);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--color-neutral-active);
     word-break: break-word;
   }
 
   .file-preview-size {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--color-neutral);
   }
 
-  .file-preview-action {
+  .file-preview-open {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-top: 4px;
-    font-size: 12px;
-    font-weight: 500;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
     color: var(--color-interactive);
+    cursor: pointer;
+    flex-shrink: 0;
   }
 
-  .file-preview-action .material-symbols-outlined {
-    font-size: 16px;
+  .file-preview-open .material-symbols-outlined {
+    font-size: 18px;
   }
 </style>

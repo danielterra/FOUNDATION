@@ -330,3 +330,159 @@ fn test_remove_domain_retracts_property_values_from_instances() {
         assert_eq!(count, 0, "{} não deve ter valores de widgetColor após cascade", iri);
     }
 }
+
+fn setup_numeric_props(conn: &mut Connection) {
+    Property::new("foundation:dueDayOfMonth")
+        .assert(conn, PropertyType::DatatypeProperty, "Due Day", None,
+            &["foundation:Task"], Some("xsd:integer"), Some("unit:Count"), "test")
+        .unwrap();
+    Property::new("foundation:contractValue")
+        .assert(conn, PropertyType::DatatypeProperty, "Contract Value", None,
+            &["foundation:Task"], Some("xsd:decimal"), Some("currency:USD"), "test")
+        .unwrap();
+    Property::new("foundation:isActive")
+        .assert(conn, PropertyType::DatatypeProperty, "Is Active", None,
+            &["foundation:Task"], Some("xsd:boolean"), None, "test")
+        .unwrap();
+}
+
+#[test]
+fn test_add_property_values_accepts_json_integer() {
+    // Regression for Bug_1777034280520: numeric JSON values were silently dropped
+    // by `.filter_map(as_str)`, producing "no valid string entries" errors.
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+    setup_numeric_props(&mut conn);
+    create_task(&mut conn, "foundation:Task_num_001");
+
+    let args = serde_json::json!({
+        "iri": "foundation:Task_num_001",
+        "property_iri": "foundation:dueDayOfMonth",
+        "values": [5]
+    });
+
+    let result = add_property_values_one(&mut conn, &args);
+    assert!(result.success, "JSON integer must succeed: {:?}", result.error);
+
+    let stored = crate::owl::get_literal_property(
+        &conn, "foundation:Task_num_001", "foundation:dueDayOfMonth",
+    ).unwrap().unwrap();
+    assert_eq!(stored, "5", "Integer value must be stored as its lexical form");
+}
+
+#[test]
+fn test_replace_property_values_accepts_json_decimal() {
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+    setup_numeric_props(&mut conn);
+    create_task(&mut conn, "foundation:Task_num_002");
+
+    let args = serde_json::json!({
+        "iri": "foundation:Task_num_002",
+        "property_iri": "foundation:contractValue",
+        "values": [1234.56]
+    });
+
+    let result = replace_property_values_one(&mut conn, &args);
+    assert!(result.success, "JSON decimal must succeed: {:?}", result.error);
+
+    let stored = crate::owl::get_literal_property(
+        &conn, "foundation:Task_num_002", "foundation:contractValue",
+    ).unwrap().unwrap();
+    assert_eq!(stored, "1234.56", "Decimal value must be stored as its lexical form");
+}
+
+#[test]
+fn test_assert_individual_accepts_numeric_and_boolean_properties() {
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+    setup_numeric_props(&mut conn);
+
+    let args = serde_json::json!({
+        "class_iri": "foundation:Task",
+        "label": "Task with numeric fields",
+        "properties": [
+            {"property_iri": "foundation:dueDayOfMonth", "values": [15]},
+            {"property_iri": "foundation:contractValue", "values": [99.9]},
+            {"property_iri": "foundation:isActive", "values": [true]}
+        ]
+    });
+
+    let result = assert_individual_one(&mut conn, &args);
+    assert!(result.success, "mixed numeric/boolean values must succeed: {:?}", result.error);
+
+    let iri = result.result.unwrap()["iri"].as_str().unwrap().to_string();
+    assert_eq!(
+        crate::owl::get_literal_property(&conn, &iri, "foundation:dueDayOfMonth").unwrap().unwrap(),
+        "15"
+    );
+    assert_eq!(
+        crate::owl::get_literal_property(&conn, &iri, "foundation:contractValue").unwrap().unwrap(),
+        "99.9"
+    );
+    assert_eq!(
+        crate::owl::get_literal_property(&conn, &iri, "foundation:isActive").unwrap().unwrap(),
+        "true"
+    );
+}
+
+#[test]
+fn test_add_property_values_rejects_object_value_with_descriptive_error() {
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+    setup_numeric_props(&mut conn);
+    create_task(&mut conn, "foundation:Task_num_003");
+
+    let args = serde_json::json!({
+        "iri": "foundation:Task_num_003",
+        "property_iri": "foundation:dueDayOfMonth",
+        "values": [{"foo": "bar"}]
+    });
+
+    let result = add_property_values_one(&mut conn, &args);
+    assert!(!result.success, "Object values must be rejected");
+    let err = result.error.unwrap();
+    assert!(err.contains("unsupported value type"), "Error must be descriptive: {}", err);
+}
+
+#[test]
+fn test_assert_individual_rejects_nonexistent_class() {
+    // Regression for Bug observed with foundation:Extracted_1777066198582: the agent
+    // asserted individuals with invented class IRIs (e.g. foundation:PurchaseOrder)
+    // because the backend did not validate class existence.
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+
+    let args = serde_json::json!({
+        "class_iri": "foundation:ClassThatDoesNotExist",
+        "label": "Should fail"
+    });
+
+    let result = assert_individual_one(&mut conn, &args);
+    assert!(!result.success, "assert_individual with unknown class must fail");
+    let err = result.error.unwrap();
+    assert!(
+        err.contains("foundation:ClassThatDoesNotExist") && err.contains("does not exist"),
+        "Error must name the missing class: {}", err,
+    );
+    assert!(
+        err.contains("define_class"),
+        "Error must suggest creating the class: {}", err,
+    );
+}
+
+#[test]
+fn test_assert_individual_accepts_builtin_owl_thing() {
+    // owl:Thing is the implicit root class; it may have no explicit triples
+    // but must still be accepted as a valid type.
+    let mut conn = setup_test_db();
+
+    let args = serde_json::json!({
+        "class_iri": "owl:Thing",
+        "label": "Untyped thing",
+        "icon": "https://example.com/icon.svg"
+    });
+
+    let result = assert_individual_one(&mut conn, &args);
+    assert!(result.success, "owl:Thing must be accepted: {:?}", result.error);
+}
