@@ -300,16 +300,37 @@ fn store_calculated_value(
     value: &str,
 ) {
     use crate::eavto::{store, Triple, Object};
+    let datatype = resolve_calculated_datatype(conn, property_iri);
     let triple = Triple::new(
         instance_iri,
         property_iri,
-        Object::Literal { value: value.to_string(), datatype: Some("xsd:string".to_string()), language: None },
+        Object::Literal { value: value.to_string(), datatype: Some(datatype), language: None },
     );
     let _ = store::assert_triples(conn, &[triple], "formula");
     let _ = conn.execute(
         "DELETE FROM formula_instance_errors WHERE instance_iri = ? AND property_iri = ?",
         rusqlite::params![instance_iri, property_iri],
     );
+}
+
+/// Decide o `object_datatype` a gravar para um valor calculado, consultando
+/// `rdfs:range` da propriedade. Resultados de fórmula/agregação são sempre
+/// numéricos: ranges inteiros viram `xsd:integer`, demais ranges (xsd:decimal,
+/// xsd:float, xsd:double, sem range, etc.) viram `xsd:decimal` — assim downstream
+/// trata o literal como número e formata corretamente.
+fn resolve_calculated_datatype(conn: &Connection, property_iri: &str) -> String {
+    const INTEGER_RANGES: &[&str] = &[
+        "xsd:integer", "xsd:int", "xsd:long", "xsd:short", "xsd:byte",
+        "xsd:nonNegativeInteger", "xsd:positiveInteger",
+    ];
+    let range: Option<String> = crate::eavto::query::get_by_entity_predicate(conn, property_iri, "rdfs:range")
+        .ok()
+        .and_then(|r| r.triples.into_iter().next())
+        .and_then(|t| t.object.as_iri().map(|s| s.to_string()));
+    match range.as_deref() {
+        Some(r) if INTEGER_RANGES.contains(&r) => "xsd:integer".to_string(),
+        _ => "xsd:decimal".to_string(),
+    }
 }
 
 fn fetch_label(conn: &Connection, iri: &str) -> String {
@@ -668,6 +689,15 @@ mod tests {
                 created_at INTEGER NOT NULL DEFAULT 0,
                 retracted INTEGER NOT NULL DEFAULT 0
             );
+            CREATE VIEW IF NOT EXISTS triples_current AS
+            SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                   object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
+            FROM triples t
+            WHERE t.retracted = 0
+              AND t.tx = (
+                  SELECT MAX(tx) FROM triples
+                  WHERE subject = t.subject AND predicate = t.predicate
+              );
         ").unwrap();
         conn
     }
@@ -745,14 +775,16 @@ mod tests {
         let mut conn = setup_test_db();
         // Insere uma transação prévia para que o autoincrement de transactions comece em 1,
         // e o triple antigo usa tx=1; o próximo assert_triples vai criar tx=2 e vencer.
+        // Valores são numéricos pois store_calculated_value grava como xsd:decimal,
+        // que exige value parsável como f64.
         conn.execute("INSERT INTO transactions (origin, created_at) VALUES ('test', 0)", []).unwrap();
         conn.execute(
             "INSERT INTO triples (subject, predicate, object_value, object_type, origin_id, tx, created_at, retracted)
-             VALUES ('foundation:Instance1', 'foundation:score', 'old', 'literal', 1, 1, 0, 0)",
+             VALUES ('foundation:Instance1', 'foundation:score', '10', 'literal', 1, 1, 0, 0)",
             [],
         ).unwrap();
 
-        store_calculated_value(&mut conn, "foundation:Instance1", "foundation:score", "new");
+        store_calculated_value(&mut conn, "foundation:Instance1", "foundation:score", "20");
 
         let active: String = conn.query_row(
             "SELECT object_value FROM triples WHERE subject = ? AND predicate = ?
@@ -760,7 +792,49 @@ mod tests {
             rusqlite::params!["foundation:Instance1", "foundation:score", "foundation:Instance1", "foundation:score"],
             |row| row.get(0),
         ).unwrap();
-        assert_eq!(active, "new");
+        assert_eq!(active, "20");
+    }
+
+    #[test]
+    fn test_store_calculated_value_uses_xsd_decimal_by_default() {
+        // Regressão: Bug_1777120091054 — antes, o datatype era hardcoded como xsd:string
+        // mesmo para propriedades com range numérico no schema.
+        let mut conn = setup_test_db();
+        store_calculated_value(&mut conn, "foundation:Instance1", "foundation:score", "42.5");
+
+        let datatype: String = conn.query_row(
+            "SELECT object_datatype FROM triples WHERE subject = ? AND predicate = ?
+             AND retracted = 0 AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ? AND predicate = ?)",
+            rusqlite::params!["foundation:Instance1", "foundation:score", "foundation:Instance1", "foundation:score"],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(datatype, "xsd:decimal");
+    }
+
+    #[test]
+    fn test_store_calculated_value_uses_xsd_integer_when_range_is_integer() {
+        // Regressão: Bug_1777120091054 — propriedades com range xsd:integer devem
+        // ser gravadas como xsd:integer, não como xsd:string.
+        let mut conn = setup_test_db();
+        // Instala o range de foundation:itemCount via assert_triples para que a query
+        // de schema enxergue o triple (passando pela view triples_current corretamente).
+        use crate::eavto::{store, Triple, Object};
+        let range_triple = Triple::new(
+            "foundation:itemCount",
+            "rdfs:range",
+            Object::Iri("xsd:integer".to_string()),
+        );
+        store::assert_triples(&mut conn, &[range_triple], "test").unwrap();
+
+        store_calculated_value(&mut conn, "foundation:Instance1", "foundation:itemCount", "7");
+
+        let datatype: String = conn.query_row(
+            "SELECT object_datatype FROM triples WHERE subject = ? AND predicate = ?
+             AND retracted = 0 AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ? AND predicate = ?)",
+            rusqlite::params!["foundation:Instance1", "foundation:itemCount", "foundation:Instance1", "foundation:itemCount"],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(datatype, "xsd:integer");
     }
 
     #[test]

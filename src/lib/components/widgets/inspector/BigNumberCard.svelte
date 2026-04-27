@@ -5,6 +5,12 @@
 
   const CURRENCY_CODES = new Set(['BRL', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'ARS', 'CLP', 'MXN', 'PEN', 'COP', 'UYU']);
 
+  // Tauri injeta nonce em style-src; precisa repassar ao NumberFlow para o
+  // <style> do Shadow DOM não ser bloqueado pela CSP
+  const cspNonce = typeof document !== 'undefined'
+    ? document.querySelector('style[nonce]')?.nonce
+    : undefined;
+
   function isCurrencyCode(label) {
     return !!label && CURRENCY_CODES.has(label);
   }
@@ -26,9 +32,10 @@
           value={numericValue}
           locales="pt-BR"
           format={{ style: 'currency', currency: val.unitLabel }}
+          nonce={cspNonce}
         />
       {:else}
-        <NumberFlow class="big-number" value={numericValue} />
+        <NumberFlow class="big-number" value={numericValue} nonce={cspNonce} />
         {#if val?.unitLabel}
           <span class="card-unit">{val.unitLabel}</span>
         {/if}

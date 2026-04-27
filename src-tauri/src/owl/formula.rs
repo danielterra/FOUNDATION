@@ -170,14 +170,31 @@ pub fn evaluate_formula_for_instance_raw(
     }
 
     match eval_expr(expr.trim()) {
-        Ok(result) => {
-            if result.fract() == 0.0 && result.abs() < 1e15 {
-                Ok(format!("{}", result as i64))
-            } else {
-                Ok(format!("{}", result))
-            }
-        }
+        Ok(result) => Ok(format_calculated_number(result)),
         Err(reason) => Err(format!("Formula evaluation error: {}", reason)),
+    }
+}
+
+/// Format an `f64` resultado de fórmula/agregação como string limpa,
+/// suprimindo o ruído IEEE 754 característico de somas de decimais.
+///
+/// Inteiros (incluindo `42.0`) viram `"42"` sem casas. Não-inteiros são
+/// arredondados para 10 casas decimais e os zeros à direita são removidos
+/// — isso elimina caudas como `0.580000000024` mantendo precisão suficiente
+/// para a maioria dos casos (moeda, percentuais, ratios).
+pub fn format_calculated_number(value: f64) -> String {
+    if !value.is_finite() {
+        return format!("{}", value);
+    }
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        return format!("{}", value as i64);
+    }
+    let s = format!("{:.10}", value);
+    let trimmed = s.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() || trimmed == "-" {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -446,6 +463,40 @@ pub fn topological_sort_properties(
 mod tests {
     use super::*;
     use crate::eavto::test_helpers::setup_test_db;
+
+    #[test]
+    fn format_calculated_number_supresses_ieee_754_noise_on_decimal_sums() {
+        // Regressão: Bug_1777120091054 — somas em f64 vazam ruído IEEE 754
+        // (ex.: -100.50 + (-200.25) + ... = -20389.580000000024).
+        assert_eq!(format_calculated_number(-20389.580000000024_f64), "-20389.58");
+        assert_eq!(format_calculated_number(35554.910000000025_f64), "35554.91");
+        assert_eq!(format_calculated_number(1114.729999999974_f64), "1114.73");
+        assert_eq!(format_calculated_number(6062.209999999999_f64), "6062.21");
+        assert_eq!(format_calculated_number(1372.8600000000006_f64), "1372.86");
+    }
+
+    #[test]
+    fn format_calculated_number_preserves_integers_without_decimals() {
+        assert_eq!(format_calculated_number(0.0), "0");
+        assert_eq!(format_calculated_number(42.0), "42");
+        assert_eq!(format_calculated_number(-7.0), "-7");
+    }
+
+    #[test]
+    fn format_calculated_number_keeps_legitimate_fractional_precision() {
+        assert_eq!(format_calculated_number(0.5), "0.5");
+        assert_eq!(format_calculated_number(3.14159), "3.14159");
+        assert_eq!(format_calculated_number(-0.001), "-0.001");
+    }
+
+    #[test]
+    fn format_calculated_number_handles_non_finite() {
+        // NaN/Infinity caem no fallback de format!("{}", ...) ainda que o
+        // produto raramente os produza — o importante é não quebrar.
+        let nan = format_calculated_number(f64::NAN);
+        assert!(nan.contains("NaN"));
+        assert_eq!(format_calculated_number(f64::INFINITY), "inf");
+    }
 
     fn insert_tx(conn: &Connection) -> i64 {
         conn.execute(
