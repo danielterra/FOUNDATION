@@ -12,17 +12,44 @@ const EXCLUDED_IRIS: &[&str] = &[
     "foundation:ThisOperatingSystem",
     "foundation:ThisProcessor",
     "foundation:LocalAIAssistant",
-    // Example IRIs used in API description strings only (not real entity references)
+    // Example/placeholder IRIs in API description strings, docstrings, or test fixtures
+    "foundation:A",
+    "foundation:B",
+    "foundation:X",
+    "foundation:ClassName",
+    "foundation:Optional_If_Matched",
+    "foundation:File_1234567890",
+    "foundation:Project_42",
+    "foundation:Task_1",
+    "foundation:Task_A",
+    "foundation:Task_B",
     "foundation:Task_123",
     "foundation:Task_456",
     "foundation:Task_1234567890",
+    "foundation:Widget_inspector_Task_123",
     "foundation:bpmn_Process_123",
+    "foundation:myProp",
+    "foundation:propName",
+    // Doc-only example properties (referenced by name in MCP tool descriptions / examples,
+    // never as real predicates or class IRIs in production code paths)
+    "foundation:amount",
+    "foundation:price",
+    "foundation:deadline",
+    "foundation:hasItems",
+    "foundation:hasTasks",
+    "foundation:icon",
+    "foundation:rrule",
+    "foundation:StatusActive",
+    "foundation:automation_Process",
     // Instances that exist in the DB but with origin 'ai' instead of an ontology origin.
     // TODO: move these to setup.rs so they are created with origin 'setup' and seeded properly.
     "foundation:ClaudeAIService",
     "foundation:IconLibrary_1772733525675",
+    "foundation:SoftwareAgent_1773313705318",
     "foundation:Status_1772993026091",
     "foundation:Status_1773016842120",
+    "foundation:Status_1773183515321",
+    "foundation:Status_1776975614793",
 ];
 
 const EXCLUDED_PREFIXES: &[&str] = &[

@@ -5,6 +5,41 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-04-26
+
+### Added
+
+- **Identidade colaborativa, deduplicação de extração e design system**: identidade do usuário centralizada, dedup automática de entidades extraídas e atomização do design system
+- **Integração IMAP**: sincronização IMAP com extração agentic de emails para entidades da ontologia, e fix de backlinks
+- **Ferramentas MCP de lousa**: novas ferramentas MCP para manipular widgets da lousa, widget padrão por classe, e suporte a modelo local
+- **Local AI harness**: runtime `llama-cpp` embarcado, `AgentTrace` para registrar execuções, scheduler com catch-up de jobs perdidos e seletor de modelo no header do chat
+- **IRIs clicáveis nas bolhas de chat**: IRIs viram pílulas com navegação direta para o inspetor
+- **`restore_*` MCP tools**: `restore_individual`, `restore_class` e `restore_property` para reverter retractions do modelo append-only
+- **SSE streaming + `ask_question`**: respostas do agente em streaming, UI de perguntas dedicada, refator do engine e agent picker
+- **Toast system + thinking toggle**: notificações in-app, toggle do extended thinking, recuperação silenciosa de erros
+- **Cascade fixes**: correções em deleção em cascata para preservar consistência
+
+### Changed
+
+- **Modelo append-only Datomic-style**: store imutável com retração explícita; valores históricos preservados, queries usam tx mais recente como fonte da verdade
+- **Pesquisa consolidada via Tantivy**: substituição completa de buscas SQL `LIKE` por índice BM25 do Tantivy
+- **Tool loop e streaming nas bolhas de chat**: refator da execução de ferramentas e renderização incremental
+- **Licença AGPL-3.0**: troca de MIT para `GNU AGPL-3.0-only` para impedir fork proprietário/SaaS extrativo
+- **README e Development Guide**: features alinhadas ao registro `foundation:SoftwareFeature`, prerequisites explícitos (Rust + Tauri 2 system deps), Quick Start corrigido
+
+### Fixed
+
+- **Campos calculados — datatype e precisão IEEE 754**: resultados de fórmula/agregação eram gravados como `xsd:string` com ruído tipo `-20389.580000000024`; agora gravam `xsd:decimal`/`xsd:integer` (conforme `rdfs:range`) com arredondamento de 10 casas que suprime o ruído. 3 sites: `formula_worker.rs`, `formula.rs`, `aggregation.rs`
+- **NumberFlow renderizando dígitos crus em release builds**: CSP `style-src nonce-*` injetada pelo Tauri bloqueava o `<style>` do Shadow DOM; `BigNumberCard.svelte` agora repassa o nonce
+- **Propriedades numéricas vazias = zero**: cálculos antes falhavam quando uma referência estava ausente; agora considera `0` (e o inspetor permite gravar `0` explicitamente)
+- **Texto preservado em mensagens `speak`**: blocos de texto deixavam de ser renderizados quando havia answer associada
+- **Build limpo + DMG**: `tauri:build` gera `app,dmg`; `build:release` agora limpa o bundle dir antes de buildar (evita falha por DMG residual); versão centralizada em `package.json` e lida pelo `tauri.conf.json`; feature `devtools` habilitada em release; `LICENSE` (AGPL-3.0) criado
+
+### Refactored
+
+- **Code review compliance**: violações de camada corrigidas, hierarquia de classes ajustada, labels normalizadas para pt-BR
+- **`scripts/release-local`**: script Rust agora limpa o bundle dir, deps órfãs removidas; `scripts/build-release.sh` (caminho de target obsoleto) deletado
+
 ## [0.16.0] - 2026-03-31
 
 ### Added

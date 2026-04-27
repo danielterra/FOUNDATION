@@ -6,10 +6,10 @@
 
 ![FOUNDATION Screenshot](static/Screenshot1.png)
 
-**Version 0.16.0** — AI-powered ontology management system with long-term memory
+**Version 0.17.0** — AI-powered ontology management system with long-term memory
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=for-the-badge)](LICENSE)
-[![Changelog](https://img.shields.io/badge/Changelog-v0.16.0-informational?style=for-the-badge)](https://github.com/danielterra/FOUNDATION/blob/main/CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/Changelog-v0.17.0-informational?style=for-the-badge)](https://github.com/danielterra/FOUNDATION/blob/main/CHANGELOG.md)
 
 > **Status:** alpha. No prebuilt installers yet — build from source (see [Development Guide](docs/development.md)).
 
