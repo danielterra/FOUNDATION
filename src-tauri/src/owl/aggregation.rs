@@ -328,11 +328,7 @@ pub fn evaluate_aggregation_for_instance(
         AggregationFunc::Count => unreachable!(),
     };
 
-    if result.fract() == 0.0 && result.abs() < 1e15 {
-        Ok(format!("{}", result as i64))
-    } else {
-        Ok(format!("{}", result))
-    }
+    Ok(crate::owl::formula::format_calculated_number(result))
 }
 
 #[cfg(test)]

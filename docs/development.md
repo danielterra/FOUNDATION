@@ -1,5 +1,47 @@
 # Development Guide
 
+## Prerequisites
+
+FOUNDATION is a Tauri 2 desktop app. Before you can run or build it, install:
+
+| Tool | Version | Why |
+|------|---------|-----|
+| **Node.js** | 20 LTS or newer | Frontend (Vite + SvelteKit) and tooling |
+| **Rust toolchain** | 1.77.2 or newer | Tauri backend (`src-tauri`) and build scripts |
+| **Tauri 2 system dependencies** | platform-specific | Native windowing + webview |
+
+### Installing the basics
+
+```bash
+# Rust (any platform) — installs rustup, cargo, rustc
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Node.js — use your package manager of choice (nvm, brew, asdf, …)
+```
+
+### Platform-specific Tauri dependencies
+
+Follow the official guide that matches your OS — the toolchains change occasionally and the source of truth is upstream:
+
+➡️ **[v2.tauri.app/start/prerequisites](https://v2.tauri.app/start/prerequisites/)**
+
+Quick orientation:
+
+- **macOS**: Xcode Command Line Tools (`xcode-select --install`).
+- **Linux**: `webkit2gtk-4.1`, `build-essential`, `curl`, `wget`, `file`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev` (names vary by distro).
+- **Windows**: Microsoft C++ Build Tools + WebView2 runtime.
+
+### First run
+
+```bash
+git clone https://github.com/danielterra/FOUNDATION.git
+cd FOUNDATION
+npm install            # Frontend deps
+npm run tauri          # Compiles Rust on first run (slow), then opens the desktop app
+```
+
+The first `npm run tauri` will trigger a full Rust build and may take 5–15 minutes. Subsequent runs are incremental.
+
 ## Running the Project
 
 ```bash
@@ -11,19 +53,17 @@ npm run clear:chat    # Clear chat history
 ## Building Release Executables
 
 ```bash
-# Build for current platform
+# Build for current platform (cleans the bundle dir, runs vite + tauri build)
 npm run build:release
 
-# Build for specific platforms
-npm run tauri:build:mac      # macOS Universal (Apple Silicon + Intel)
-npm run tauri:build:windows  # Windows x64
-npm run tauri:build:linux    # Linux x64
-
-# Or use the script
-./scripts/build-release.sh
+# Or invoke targets directly
+npm run tauri:build           # current platform, app + dmg on macOS
+npm run tauri:build:mac       # macOS Universal (Apple Silicon + Intel)
+npm run tauri:build:windows   # Windows x64
+npm run tauri:build:linux     # Linux x64
 ```
 
-**Note**: To build for Windows and Linux from macOS, use GitHub Actions (push a tag like `v0.5.3`) or build on each platform natively.
+**Note**: To build for Windows and Linux from macOS, use GitHub Actions (push a tag like `v0.16.0`) or build on each platform natively.
 
 ## Important Paths
 

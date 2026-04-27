@@ -1,69 +1,7 @@
 use anyhow::{Context, Result};
-use regex::Regex;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
-
-#[derive(Debug, Clone, Copy)]
-enum BumpType {
-    Major,
-    Minor,
-    Patch,
-}
-
-impl BumpType {
-    fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
-            "major" => Ok(BumpType::Major),
-            "minor" => Ok(BumpType::Minor),
-            "patch" => Ok(BumpType::Patch),
-            _ => anyhow::bail!("Invalid bump type. Use: major, minor, or patch"),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Version {
-    major: u32,
-    minor: u32,
-    patch: u32,
-}
-
-impl Version {
-    fn from_str(s: &str) -> Result<Self> {
-        let parts: Vec<&str> = s.split('.').collect();
-        if parts.len() != 3 {
-            anyhow::bail!("Invalid version format. Expected: X.Y.Z");
-        }
-
-        Ok(Version {
-            major: parts[0].parse().context("Invalid major version")?,
-            minor: parts[1].parse().context("Invalid minor version")?,
-            patch: parts[2].parse().context("Invalid patch version")?,
-        })
-    }
-
-    fn bump(&mut self, bump_type: BumpType) {
-        match bump_type {
-            BumpType::Major => {
-                self.major += 1;
-                self.minor = 0;
-                self.patch = 0;
-            }
-            BumpType::Minor => {
-                self.minor += 1;
-                self.patch = 0;
-            }
-            BumpType::Patch => {
-                self.patch += 1;
-            }
-        }
-    }
-
-    fn to_string(&self) -> String {
-        format!("{}.{}.{}", self.major, self.minor, self.patch)
-    }
-}
 
 fn main() -> Result<()> {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -76,162 +14,83 @@ fn main() -> Result<()> {
     println!("🔨 FOUNDATION Local Build");
     println!("=========================\n");
 
-    // Get current version just for display
     println!("📖 Current version...");
-    let current_version = get_current_version(&project_root)?;
-    println!("   Version: {}\n", current_version.to_string());
+    let version = read_package_version(&project_root)?;
+    println!("   Version: {version}\n");
 
-    // Build release
-    println!("🔨 Building Tauri release...");
+    println!("🧹 Cleaning previous bundle output...");
+    clean_bundle(&project_root)?;
+
+    println!("\n🔨 Building Tauri release...");
     run_tauri_build(&project_root)?;
-    println!("   ✅ Build completed\n");
 
-    println!("🎉 Build successful!");
-    println!("\n📦 Executable location:");
-    println!("   macOS: src-tauri/target/release/bundle/macos/");
-    println!("   Linux: src-tauri/target/release/bundle/appimage/");
-    println!("   Windows: src-tauri/target/release/bundle/msi/");
-
+    println!("\n🎉 Build successful!");
+    println!("\n📦 Bundle location: <cargo target-dir>/release/bundle/");
     Ok(())
 }
 
-fn get_current_version(project_root: &PathBuf) -> Result<Version> {
-    let package_json_path = project_root.join("package.json");
-    let content = fs::read_to_string(&package_json_path)
-        .context("Failed to read package.json")?;
-
-    let json: serde_json::Value = serde_json::from_str(&content)
-        .context("Failed to parse package.json")?;
-
-    let version_str = json["version"]
+fn read_package_version(project_root: &Path) -> Result<String> {
+    let path = project_root.join("package.json");
+    let content = fs::read_to_string(&path).context("Failed to read package.json")?;
+    let json: serde_json::Value =
+        serde_json::from_str(&content).context("Failed to parse package.json")?;
+    json["version"]
         .as_str()
-        .context("Version field not found in package.json")?;
-
-    Version::from_str(version_str)
+        .map(|s| s.to_string())
+        .context("Version field not found in package.json")
 }
 
-fn update_package_json(project_root: &PathBuf, version: &Version) -> Result<()> {
-    let package_json_path = project_root.join("package.json");
-    let content = fs::read_to_string(&package_json_path)?;
+fn run_tauri_build(project_root: &Path) -> Result<()> {
+    let status = Command::new("npm")
+        .args(["run", "tauri:build"])
+        .current_dir(project_root)
+        .status()
+        .context("Failed to run Tauri build")?;
 
-    let mut json: serde_json::Value = serde_json::from_str(&content)?;
-    json["version"] = serde_json::Value::String(version.to_string());
-
-    let updated_content = serde_json::to_string_pretty(&json)?;
-    fs::write(&package_json_path, updated_content + "\n")?;
-
-    Ok(())
-}
-
-fn update_cargo_toml(project_root: &PathBuf, version: &Version) -> Result<()> {
-    let cargo_toml_path = project_root.join("src-tauri/Cargo.toml");
-    let content = fs::read_to_string(&cargo_toml_path)?;
-
-    let mut doc = content.parse::<toml_edit::DocumentMut>()
-        .context("Failed to parse Cargo.toml")?;
-
-    doc["package"]["version"] = toml_edit::value(version.to_string());
-
-    fs::write(&cargo_toml_path, doc.to_string())?;
-
-    Ok(())
-}
-
-fn run_update_models(project_root: &PathBuf) -> Result<()> {
-    let update_models_dir = project_root.join("scripts/update-models");
-
-    let output = Command::new("cargo")
-        .args(&["run", "--release"])
-        .current_dir(&update_models_dir)
-        .output()
-        .context("Failed to run update-models script")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Update models failed: {}", stderr);
+    if !status.success() {
+        anyhow::bail!("Tauri build failed with exit code {:?}", status.code());
     }
 
     Ok(())
 }
 
-fn check_clean_working_tree() -> Result<()> {
-    let output = Command::new("git")
-        .args(&["status", "--porcelain"])
+fn clean_bundle(project_root: &Path) -> Result<()> {
+    let target_dir = resolve_cargo_target_dir(project_root)?;
+    let bundle_dir = target_dir.join("release").join("bundle");
+    if bundle_dir.exists() {
+        fs::remove_dir_all(&bundle_dir)
+            .with_context(|| format!("Failed to remove {}", bundle_dir.display()))?;
+        println!("   Removed: {}", bundle_dir.display());
+    } else {
+        println!("   Nothing to clean: {}", bundle_dir.display());
+    }
+    Ok(())
+}
+
+fn resolve_cargo_target_dir(project_root: &Path) -> Result<PathBuf> {
+    if let Ok(env_dir) = std::env::var("CARGO_TARGET_DIR") {
+        if !env_dir.is_empty() {
+            return Ok(PathBuf::from(env_dir));
+        }
+    }
+
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(project_root.join("src-tauri"))
         .output()
-        .context("Failed to check git status")?;
+        .context("Failed to invoke cargo metadata")?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Filter out expected changes (version files and models)
-    let re = Regex::new(r"(?m)^\s*[MAD]\s+(package\.json|src-tauri/Cargo\.toml)$")?;
-    let unexpected_changes: Vec<&str> = stdout
-        .lines()
-        .filter(|line| !line.is_empty() && !re.is_match(line))
-        .collect();
-
-    if !unexpected_changes.is_empty() {
+    if !output.status.success() {
         anyhow::bail!(
-            "Working tree has unexpected uncommitted changes:\n{}",
-            unexpected_changes.join("\n")
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 
-    Ok(())
-}
-
-fn git_add_all() -> Result<()> {
-    let output = Command::new("git")
-        .args(&["add", "package.json", "src-tauri/Cargo.toml"])
-        .output()
-        .context("Failed to stage changes")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Git add failed: {}", stderr);
-    }
-
-    Ok(())
-}
-
-fn git_commit(message: &str) -> Result<()> {
-    let output = Command::new("git")
-        .args(&["commit", "-m", message])
-        .output()
-        .context("Failed to commit")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Git commit failed: {}", stderr);
-    }
-
-    Ok(())
-}
-
-fn git_tag(tag_name: &str, message: &str) -> Result<()> {
-    let output = Command::new("git")
-        .args(&["tag", "-a", tag_name, "-m", message])
-        .output()
-        .context("Failed to create tag")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Git tag failed: {}", stderr);
-    }
-
-    Ok(())
-}
-
-fn run_tauri_build(project_root: &PathBuf) -> Result<()> {
-    let output = Command::new("npm")
-        .args(&["run", "tauri", "build"])
-        .current_dir(project_root)
-        .output()
-        .context("Failed to run Tauri build")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Tauri build failed: {}", stderr);
-    }
-
-    Ok(())
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("Failed to parse cargo metadata")?;
+    let target_dir = metadata["target_directory"]
+        .as_str()
+        .context("target_directory not found in cargo metadata")?;
+    Ok(PathBuf::from(target_dir))
 }

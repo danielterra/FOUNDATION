@@ -6,36 +6,62 @@
 
 ![FOUNDATION Screenshot](static/Screenshot1.png)
 
-**Version 0.16.0** - AI-powered ontology management system with long-term memory
+**Version 0.16.0** — AI-powered ontology management system with long-term memory
 
-<!-- installers not yet available for this release
-[![Download for macOS](https://img.shields.io/badge/Download-macOS-blue?style=for-the-badge&logo=apple)](https://github.com/danielterra/FOUNDATION/releases/latest/download/FOUNDATION_0.13.0_universal.dmg)
-[![Download for Windows](https://img.shields.io/badge/Download-Windows-blue?style=for-the-badge&logo=windows)](https://github.com/danielterra/FOUNDATION/releases/latest/download/FOUNDATION_0.13.0_x64_en-US.msi)
-[![Download for Linux](https://img.shields.io/badge/Download-Linux-blue?style=for-the-badge&logo=linux)](https://github.com/danielterra/FOUNDATION/releases/latest/download/foundation_0.13.0_amd64.AppImage)
--->
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=for-the-badge)](LICENSE)
 [![Changelog](https://img.shields.io/badge/Changelog-v0.16.0-informational?style=for-the-badge)](https://github.com/danielterra/FOUNDATION/blob/main/CHANGELOG.md)
+
+> **Status:** alpha. No prebuilt installers yet — build from source (see [Development Guide](docs/development.md)).
 
 ## Features
 
-- **Automation**: A BPMN 2.0-based workflow engine that lets users and the AI model, schedule, and execute automated multi-step processes triggered by timers or internal events. `[em desenvolvimento]`
-- **Calculated Fields**: Read-only properties whose values are automatically computed from formulas referencing other instance properties, with cascading recalculation on change. `[em desenvolvimento]`
-- **Camera Vision**: Optionally captures a webcam photo on each message send, extracting facial expression and body language context to enrich long-term conversation memory. `[finalizado]`
-- **Dynamic Blackboard with Widgets**: A visual canvas where multiple widgets display entities and their relationships simultaneously, providing rich interactive context beyond text. `[em desenvolvimento]`
-- **Integrated AI Chat**: A built-in AI chat interface with full real-time access to the user's personal knowledge base, persistent across sessions and deeply integrated with the ontology. `[em desenvolvimento]`
-- **Local MCP Server**: Exposes a local Model Context Protocol server so external AI clients (e.g. Claude Code) can use the same memory and tools as the internal assistant. `[finalizado]`
-- **Ontology**: Structures data through formal relationships between entities via a shared base ontology that keeps data meaningful and interoperable as the system evolves. `[em desenvolvimento]`
-- **Open Source and Free**: FOUNDATION is released under GNU GPL — no vendor lock-in, no subscriptions, built by the community for everyone. `[finalizado]`
-- **Ownership**: Runs entirely on the user's own machine with no external servers required, ensuring full data ownership and control. `[finalizado]`
-- **Settings**: A settings panel for viewing and editing user preferences (language, locale, AI model, theme) stored as typed `SoftwareSetting` instances. `[em desenvolvimento]`
-- **Subconscious**: An automatic background memory mechanism that surfaces 5–10 relevant ontology entities as scored chips on every user message, enriching AI context without explicit search. `[finalizado]`
+Status reflete o registro autoritativo no próprio FOUNDATION (`foundation:SoftwareFeature` instances).
+
+Legend: ✅ stable · 🚧 in development · 🛣️ planned
+
+### Stable
+
+- ✅ **Camera Vision** — optionally captures a webcam photo on each message send, extracting facial expression and body language context to enrich long-term conversation memory.
+- ✅ **Calculated Fields** — read-only properties whose values are automatically computed from formulas referencing other instance properties, with cascading recalculation on change.
+- ✅ **Dynamic Blackboard with Widgets** — visual canvas where multiple widgets display entities and their relationships simultaneously, providing rich interactive context beyond text.
+- ✅ **Integrated AI Chat** — built-in AI chat interface with full real-time access to the user's personal knowledge base, persistent across sessions and deeply integrated with the ontology.
+- ✅ **Local AI** — bundled `llama-cpp` runtime for running models entirely on-device. Cloud (Claude API) is the default for power users; the local model option is fully wired up and ready to use.
+- ✅ **Local MCP Server** — exposes a local Model Context Protocol server so external AI clients (e.g. Claude Code) can use the same memory and tools as the internal assistant.
+- ✅ **Open Source and Free** — released under GNU AGPL-3.0: no vendor lock-in, no subscriptions, no SaaS extraction. Forks must stay free.
+- ✅ **Ownership** — runs entirely on the user's own machine with no external servers required, ensuring full data ownership and control.
+- ✅ **Settings** — settings panel for viewing and editing user preferences (language, locale, AI model, theme) stored as typed `SoftwareSetting` instances.
+- ✅ **Subconscious** — automatic background memory mechanism that surfaces 5–10 relevant ontology entities as scored chips on every user message, enriching AI context without explicit search.
+- ✅ **Task Management** — first-class tasks with status, dependencies, and links into automation processes and AI agents.
+
+### In development
+
+- 🚧 **Automation** — BPMN 2.0-based workflow engine that lets users and the AI model schedule and execute automated multi-step processes triggered by timers or internal events.
+- 🚧 **Ontology** — formal relationships between entities via a shared base ontology that keeps data meaningful and interoperable as the system evolves. Core works; vocabulary is still expanding.
+
+### Planned
+
+- 🛣️ **Collaboration** — multi-user workflows on top of the immutable store, with conflict-free merging.
+- 🛣️ **Distributed Power** — peer-to-peer sync between FOUNDATION instances on different machines.
+- 🛣️ **External AI Providers** — pluggable backends beyond Claude (OpenAI, local OpenAI-compatible servers, etc.).
+- 🛣️ **Integrations** — first-party connectors for common external services.
+- 🛣️ **System Inspector** — visualizer for processes, automation runs, and queue state.
 
 ## Quick Start
 
-> **Note:** Installers are not yet available for this release. To run FOUNDATION, build from source (see [Development](docs/development.md)).
+FOUNDATION is a Tauri desktop app — no prebuilt installers yet, so today you build from source.
 
-1. **Clone** the repository and run `npm run tauri dev`
-2. **Configure** your Claude API key (get one at [console.anthropic.com](https://console.anthropic.com/))
-3. **Start chatting** with your AI assistant that remembers everything!
+1. **Install prerequisites** — Node.js 20+, the Rust toolchain (via [rustup](https://rustup.rs/)), and the Tauri 2 system dependencies for your OS. Full list and links: [Development Guide → Prerequisites](docs/development.md#prerequisites).
+2. **Clone and run**:
+   ```bash
+   git clone https://github.com/danielterra/FOUNDATION.git
+   cd FOUNDATION
+   npm install
+   npm run tauri        # first run compiles Rust — 5–15 min
+   ```
+3. **Pick a model** in the in-app settings:
+   - Cloud: configure a Claude API key from [console.anthropic.com](https://console.anthropic.com/) — best quality and longest context.
+   - Local: use the bundled `llama-cpp` runtime — no API key required; quality and speed depend on your hardware.
+4. **Start chatting** with an AI assistant that remembers everything you tell it.
 
 ## MCP Server
 
@@ -109,13 +135,13 @@ What if you could receive data from other systems natively, without integrations
 
 What if your data could act on its own? FOUNDATION reacts to every change with real automation. Connect to APIs, orchestrate multi-step processes, and trigger complex workflows without manual intervention. Your data becomes a living, responsive system.
 
-### DISTRIBUTED POWER
+### DISTRIBUTED POWER 🛣️ *(roadmap)*
 
-What if you could scale without begging cloud providers? Just open FOUNDATION on another computer and synchronize it. FOUNDATION orchestrates data across your devices — your laptop, your friend's server, your spare machine, or yes, even a cloud server if you want one. Each node contributes storage and processing power. Together they act as one powerful system. Distributed by design. Resilient by nature.
+What if you could scale without begging cloud providers? The vision is for FOUNDATION instances on different machines to synchronize peer-to-peer — your laptop, a spare machine, a friend's server, even a cloud VM if you want — each node contributing storage and processing, together acting as one resilient system. *Multi-device synchronization is not yet implemented.* Today, FOUNDATION runs on a single machine; the immutable Datomic-style store was designed with distributed reconciliation in mind, but the sync layer is future work.
 
-### COLLABORATION
+### COLLABORATION 🛣️ *(roadmap)*
 
-What if working together didn't mean conflicts and overwrites? FOUNDATION uses an immutable database, conflict-free by nature. Nothing is altered — new facts are stored, nothing is lost, history is immutable. When information from different sources diverges, it's your choice which source to trust. Every change is traceable, every contributor accountable through full audit trails.
+What if working together didn't mean conflicts and overwrites? FOUNDATION's immutable, Datomic-style store is conflict-free by design — nothing is altered, new facts are stored, history is immutable, and every change is traceable. The foundation is in place; the **multi-user collaboration layer on top of it is future work**. When information from different sources diverges, the model lets you choose which source to trust.
 
 ### OWNERSHIP
 
@@ -127,7 +153,7 @@ What if you had intelligent assistance without subscriptions or external service
 
 ### OPEN SOURCE AND FREE
 
-What if software worked for humanity instead of shareholders? FOUNDATION is open source (GNU GPL) — no corporation owns it, no vendor locks you in, no subscription extracts rent from your work. Built by the community, for everyone. These ideas only benefit society when they're free, shared, and owned collectively by all of us (humans and our robot friends 🤖).
+What if software worked for humanity instead of shareholders? FOUNDATION is open source under the **GNU AGPL-3.0** — no corporation owns it, no vendor locks you in, no subscription extracts rent from your work, and no SaaS provider can fork it into a closed cloud product. Built by the community, for everyone. These ideas only benefit society when they're free, shared, and owned collectively by all of us (humans and our robot friends 🤖).
 
 **This is not just software. This is a statement:** Your data is not a commodity. Your computing power is not something to be rented back to you. Your freedom should not require a subscription.
 
