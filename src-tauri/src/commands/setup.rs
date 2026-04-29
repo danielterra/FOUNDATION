@@ -111,11 +111,22 @@ pub async fn initialize_app(
     crate::owl::query_worker::register_listener(app.clone());
     super::log_backend("debug", &format!("[STARTUP] query_worker={}ms", t0.elapsed().as_millis()));
 
+    app.manage(crate::process_automation::executor::ActiveExecutions::new());
+
     let app_for_executions = app.clone();
     tauri::async_runtime::spawn(async move {
         crate::process_automation::executor::recover_interrupted_executions(&app_for_executions).await;
     });
     super::log_backend("debug", "[STARTUP] recover_executions=spawned (background)");
+
+    let app_watchdog = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(600)).await;
+            crate::process_automation::executor::recover_interrupted_executions(&app_watchdog).await;
+        }
+    });
+    super::log_backend("debug", "[STARTUP] execution_watchdog=spawned (10min interval)");
 
     tauri::async_runtime::spawn(crate::process_automation::scheduler::reload(app.clone()));
     tauri::async_runtime::spawn(crate::process_automation::task_scheduler::start(app.clone()));

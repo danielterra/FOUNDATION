@@ -32,26 +32,38 @@
     return NODE_TYPE_ICONS[nodeType] ?? 'smart_toy'
   }
 
-  function parseContent(contentJson) {
+  function parseBlocks(contentJson) {
+    if (!contentJson) return []
     try {
       const parsed = JSON.parse(contentJson)
-      if (Array.isArray(parsed)) return parsed
+      if (Array.isArray(parsed)) return parsed.filter(b => b != null)
     } catch {}
-    return [{ type: 'text', text: contentJson ?? '' }]
+    return [{ type: 'text', text: contentJson }]
   }
 
-  function toMessageObjects(messages) {
-    return messages.map((msg, i) => ({
-      iri: `_msg_${i}`,
-      role: msg.role,
-      content: parseContent(msg.content),
-      sentAt: null,
-    }))
-  }
-
-  function isDisplayable(msg) {
-    if (!Array.isArray(msg.content)) return false
-    return msg.content.some(b => b.type === 'text' || b.type === 'tool_use')
+  function messagesToUnits(messages) {
+    const units = []
+    for (const msg of messages) {
+      const blocks = parseBlocks(msg.content)
+      if (msg.role === 'user') {
+        const text = blocks.filter(b => b?.type === 'text').map(b => b.text).join('\n')
+        if (text.trim()) units.push({ type: 'user', text, sentAt: null })
+      } else if (msg.role === 'assistant') {
+        const textBlocks = blocks.filter(b => b?.type === 'text' && b.text?.trim())
+        const toolBlocks = blocks.filter(b => b?.type === 'tool_use')
+        if (textBlocks.length > 0) {
+          units.push({ type: 'text', text: textBlocks.map(b => b.text).join('\n'), sentAt: null })
+        }
+        if (toolBlocks.length > 0) {
+          units.push({
+            type: 'tool_use',
+            tool_calls: toolBlocks.map(b => ({ id: b.id, name: b.name, input: b.input })),
+            sentAt: null,
+          })
+        }
+      }
+    }
+    return units
   }
 
   function formatDuration(startedAt, finishedAt) {
@@ -110,29 +122,32 @@
   onMount(async () => {
     await loadDetail()
 
-    if (detail && isInProgress(detail.status_label)) {
-      const unlistenProgress = await listen('automation-step-progress', async (event) => {
-        if (event.payload.executionIri === entityId) {
-          await loadDetail()
-        }
-      })
-      const unlistenFinished = await listen('automation-execution-finished', async (event) => {
-        if (event.payload.executionIri === entityId) {
-          await loadDetail()
-        }
-      })
-      const unlistenMessage = await listen('automation-step-message', (event) => {
-        if (event.payload.executionIri !== entityId || !detail) return
-        const { stepIri, role, content } = event.payload
-        const stepIndex = detail.steps.findIndex(s => s.iri === stepIri)
-        if (stepIndex === -1) return
-        const msg = { role, content }
-        detail.steps[stepIndex].messages = [...detail.steps[stepIndex].messages, msg]
-        detail = detail
-        expandedStep = stepIri
-      })
-      unlisteners.push(unlistenProgress, unlistenFinished, unlistenMessage)
-    }
+    const unlistenProgress = await listen('automation-step-progress', async (event) => {
+      if (event.payload.executionIri === entityId) {
+        await loadDetail()
+      }
+    })
+    const unlistenFinished = await listen('automation-execution-finished', async (event) => {
+      if (event.payload.executionIri === entityId) {
+        await loadDetail()
+      }
+    })
+    const unlistenMessage = await listen('automation-step-message', (event) => {
+      if (event.payload.executionIri !== entityId || !detail) return
+      const { stepIri, role, content } = event.payload
+      const stepIndex = detail.steps.findIndex(s => s.iri === stepIri)
+      if (stepIndex === -1) return
+      const msg = { role, content }
+      detail.steps[stepIndex].messages = [...detail.steps[stepIndex].messages, msg]
+      detail = detail
+      expandedStep = stepIri
+    })
+    const unlistenEntityUpdated = await listen('entity-updated', async (event) => {
+      if (event.payload.entityId === entityId) {
+        await loadDetail()
+      }
+    })
+    unlisteners.push(unlistenProgress, unlistenFinished, unlistenMessage, unlistenEntityUpdated)
   })
 
   onDestroy(() => {
@@ -231,12 +246,12 @@
                     </div>
                   {/if}
                   {#if step.messages.length > 0}
-                    {@const msgObjects = toMessageObjects(step.messages)}
+                    {@const units = messagesToUnits(step.messages)}
                     <div class="detail-section">
                       <span class="detail-label">Conversation</span>
                       <div class="messages">
-                        {#each msgObjects.filter(isDisplayable) as msg (msg.iri)}
-                          <ChatMessageBubble message={msg} messages={msgObjects} />
+                        {#each units as unit, i (i)}
+                          <ChatMessageBubble {unit} />
                         {/each}
                       </div>
                     </div>
@@ -470,6 +485,7 @@
     overflow-y: auto;
     padding: 4px 0;
   }
+
 
   .detail-meta {
     display: flex;

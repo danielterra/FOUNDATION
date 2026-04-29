@@ -1,10 +1,31 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
 use chrono::Utc;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::log_backend;
 use crate::eavto::query;
 use crate::owl::{DbExecutor, Individual, Object};
+
+pub struct ActiveExecutions(Arc<Mutex<HashSet<String>>>);
+
+impl ActiveExecutions {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(HashSet::new())))
+    }
+
+    fn insert(&self, iri: &str) {
+        if let Ok(mut set) = self.0.lock() { set.insert(iri.to_string()); }
+    }
+
+    fn remove(&self, iri: &str) {
+        if let Ok(mut set) = self.0.lock() { set.remove(iri); }
+    }
+
+    fn contains(&self, iri: &str) -> bool {
+        self.0.lock().map(|s| s.contains(iri)).unwrap_or(false)
+    }
+}
 
 use super::context::{evaluate_condition, reachable_from};
 pub use super::context::{ExecutionContext, FlowMap, interpolate, interpolate_with_db};
@@ -300,6 +321,10 @@ pub async fn run_process_with_context(
         log_backend("warn", &format!("[executor] Failed to emit automation-execution-started for {}: {}", process_iri, e));
     }
 
+    if let Some(active) = app.try_state::<ActiveExecutions>() {
+        active.insert(&exec_iri);
+    }
+
     let (nodes, adjacency) = executor
         .read({
             let process_iri = process_iri.clone();
@@ -308,6 +333,10 @@ pub async fn run_process_with_context(
         .await?;
 
     let run_result = execute_nodes(app, &process_iri, &exec_iri, nodes, adjacency, ctx, HashSet::new(), None).await;
+
+    if let Some(active) = app.try_state::<ActiveExecutions>() {
+        active.remove(&exec_iri);
+    }
 
     executor
         .write({
@@ -824,6 +853,10 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
         "resumed": true,
     })).ok();
 
+    if let Some(active) = app.try_state::<ActiveExecutions>() {
+        active.insert(exec_iri);
+    }
+
     let (nodes, adjacency) = executor
         .read({
             let process_iri = process_iri.clone();
@@ -837,6 +870,10 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
     )
     .await;
 
+    if let Some(active) = app.try_state::<ActiveExecutions>() {
+        active.remove(exec_iri);
+    }
+
     executor
         .write({
             let exec_iri = exec_iri.to_string();
@@ -844,6 +881,14 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
             move |conn| finish_execution_record(conn, &exec_iri, error.as_deref())
         })
         .await?;
+
+    let finished_status = if run_result.is_ok() { "completed" } else { "failed" };
+    app.emit("automation-execution-finished", serde_json::json!({
+        "processIri": process_iri,
+        "executionIri": exec_iri,
+        "status": finished_status,
+        "error": run_result.as_ref().err().map(|e| e.as_str()),
+    })).ok();
 
     run_result.map(|_| ())
 }
@@ -870,6 +915,15 @@ pub async fn recover_interrupted_executions(app: &AppHandle) {
         })
         .await
         .unwrap_or_default();
+
+    let exec_iris: Vec<String> = exec_iris
+        .into_iter()
+        .filter(|iri| {
+            app.try_state::<ActiveExecutions>()
+                .map(|a| !a.contains(iri))
+                .unwrap_or(true)
+        })
+        .collect();
 
     if exec_iris.is_empty() {
         return;
