@@ -25,7 +25,8 @@ pub fn get_foundation_dir(app: &tauri::AppHandle) -> PathBuf {
         }
     }
     dirs::document_dir()
-        .expect("Não foi possível determinar o diretório Documentos")
+        .or_else(|| dirs::home_dir().map(|h| h.join("Documents")))
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("Foundation")
 }
 
