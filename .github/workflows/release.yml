@@ -29,12 +29,22 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            xvfb
+
+      - name: Start Xvfb (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: Xvfb :99 -screen 0 1024x768x24 &
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
 
       - name: Install frontend dependencies
         run: npm install
@@ -43,6 +53,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISPLAY: ${{ matrix.platform == 'ubuntu-22.04' && ':99.0' || '' }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'FOUNDATION ${{ github.ref_name }}'
