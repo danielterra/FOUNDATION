@@ -40,11 +40,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
+          cache: 'npm'
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          env-vars: 'CARGO_INCREMENTAL'
 
       - name: Install frontend dependencies
         run: npm install
@@ -54,6 +56,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISPLAY: ${{ matrix.platform == 'ubuntu-22.04' && ':99.0' || '' }}
+          CARGO_INCREMENTAL: '0'
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'FOUNDATION ${{ github.ref_name }}'
