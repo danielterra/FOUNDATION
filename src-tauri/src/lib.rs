@@ -120,11 +120,6 @@ pub fn run() {
         .manage(commands::ConversationProcessingState::new())
         .manage(commands::LocalModelDownloadState::default())
         .setup(|app| {
-            // Tauri CLI runs the binary with "build" as first arg to collect plugin schemas.
-            // Skip all setup in this mode so the process can exit cleanly.
-            if std::env::args().nth(1).as_deref() == Some("build") {
-                return Ok(());
-            }
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(mcp::serve(app_handle.clone()));
             process_automation::trigger::register_listeners(app_handle.clone());
