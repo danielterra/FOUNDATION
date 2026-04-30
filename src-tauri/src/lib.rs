@@ -9,6 +9,7 @@ mod mcp;
 pub mod search;
 pub mod process_automation;
 pub mod imap;
+pub mod config;
 
 #[derive(serde::Serialize)]
 pub struct TripleData {
@@ -111,6 +112,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(process_automation::scheduler::SchedulerState::new())
         .manage(process_automation::task_scheduler::TaskSchedulerState::new())
         .manage(process_automation::task_manager::TaskExecutionState::new())
@@ -213,7 +215,11 @@ pub fn run() {
             commands::imap::imap__save_monitored_folders,
             commands::imap::imap__get_sync_history,
             commands::imap::imap__start_account_sync,
-            commands::imap::imap__delete_account
+            commands::imap::imap__delete_account,
+            commands::settings__is_folder_configured,
+            commands::settings__get_foundation_dir,
+            commands::settings__save_foundation_dir,
+            commands::settings__set_foundation_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

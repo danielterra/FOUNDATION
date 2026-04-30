@@ -5,6 +5,18 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.1] - 2026-04-29
+
+### Added
+
+- **Pasta de dados configurável**: primeiro acesso exibe wizard para o usuário selecionar a pasta de dados; configuração persistida em `config.json`; comandos Tauri `settings__is_folder_configured`, `settings__get_foundation_dir`, `settings__save_foundation_dir` e `settings__set_foundation_dir`
+- **Servidor MCP dual (HTTP + HTTPS)**: porta 47177 HTTPS com certificado TLS auto-gerado e persistido; porta 47178 HTTP plain para clientes locais como Claude Code; README e docs atualizados com instruções para Claude Desktop Windows/macOS
+
+### Fixed
+
+- **Resiliência de execuções de automação**: watchdog periódico (10 min) retoma execuções travadas sem necessidade de restart; `ActiveExecutions` evita recuperação dupla; `resume_workflow_execution` agora emite `automation-execution-finished` para o frontend
+- **WorkflowExecutionWidget**: listeners sempre registrados independente do status inicial; listener `entity-updated` como fallback de reload; crash ao renderizar mensagens corrigido (prop `unit` vs `message`); conversor `messagesToUnits` transforma blocos brutos no formato esperado pelo `ChatMessageBubble` com suporte a markdown
+
 ## [0.17.0] - 2026-04-26
 
 ### Added

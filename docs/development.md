@@ -29,7 +29,21 @@ Quick orientation:
 
 - **macOS**: Xcode Command Line Tools (`xcode-select --install`).
 - **Linux**: `webkit2gtk-4.1`, `build-essential`, `curl`, `wget`, `file`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev` (names vary by distro).
-- **Windows**: Microsoft C++ Build Tools + WebView2 runtime.
+- **Windows**: Microsoft C++ Build Tools + WebView2 runtime + **LLVM** (required by `bindgen`).
+
+  **LLVM no Windows** — obrigatório para compilar o backend Rust:
+  1. Baixe o instalador em [releases.llvm.org](https://releases.llvm.org/) (ex: `LLVM-18.x.x-win64.exe`).
+  2. Durante a instalação, selecione **"Add LLVM to the system PATH"**.
+  3. Verifique: `clang --version` deve retornar a versão instalada.
+
+  Sem o LLVM, o build falha com `Unable to find libclang: couldn't find any valid shared libraries matching: ['clang.dll', 'libclang.dll']`.
+
+  **CMake no Windows** — obrigatório para compilar o `llama-cpp`:
+  1. Baixe o instalador em [cmake.org/download](https://cmake.org/download/) (ex: `cmake-3.x.x-windows-x86_64.msi`).
+  2. Durante a instalação, selecione **"Add CMake to the system PATH for all users"**.
+  3. Verifique: `cmake --version` deve retornar a versão instalada.
+
+  Sem o CMake, o build falha com `failed to execute command: program not found — is cmake not installed?`.
 
 ### First run
 

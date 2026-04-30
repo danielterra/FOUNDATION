@@ -42,6 +42,12 @@
 	let logMessage = $state('');
 	let logError = $state(false);
 
+	// --- Foundation Dir ---
+	let foundationDir = $state('');
+	let foundationDirSaving = $state(false);
+	let foundationDirMessage = $state('');
+	let foundationDirError = $state(false);
+
 	// --- IMAP ---
 	let imapAccounts = $state([]);
 	let imapEditing = $state(null); // null = hidden, 'new' = new form, iri = editing existing
@@ -64,8 +70,35 @@
 	});
 
 	async function loadAll() {
-		await Promise.all([loadModelData(), loadLogPath(), loadLocalModelStatus(), loadImapAccounts()]);
+		await Promise.all([loadModelData(), loadLogPath(), loadLocalModelStatus(), loadImapAccounts(), loadFoundationDir()]);
 		await loadApiKeyForService(selectedServiceIri);
+	}
+
+	async function loadFoundationDir() {
+		try {
+			foundationDir = await invoke('settings__get_foundation_dir');
+		} catch {
+			// ignore
+		}
+	}
+
+	async function browseFoundationDir() {
+		const { open } = await import('@tauri-apps/plugin-dialog');
+		const selected = await open({ directory: true, title: 'Selecionar pasta do Foundation' });
+		if (selected) foundationDir = selected;
+	}
+
+	async function saveFoundationDir() {
+		foundationDirSaving = true;
+		foundationDirMessage = '';
+		foundationDirError = false;
+		try {
+			await invoke('settings__set_foundation_dir', { path: foundationDir });
+		} catch (e) {
+			foundationDirMessage = String(e);
+			foundationDirError = true;
+			foundationDirSaving = false;
+		}
 	}
 
 	async function loadLocalModelStatus() {
@@ -667,6 +700,35 @@
 					</Button>
 				{/snippet}
 			</Modal>
+
+			<section class="settings-section">
+				<h3 class="section-title">
+					<span class="material-symbols-outlined">folder_open</span>
+					Pasta de Dados
+				</h3>
+				<p class="hint">Pasta onde o banco de dados do Foundation é armazenado. O app será reiniciado ao salvar.</p>
+				<div class="field-row">
+					<input
+						class="text-input"
+						type="text"
+						placeholder="/caminho/para/pasta"
+						bind:value={foundationDir}
+					/>
+					<Button icon="folder_open" title="Selecionar pasta" onclick={browseFoundationDir} />
+				</div>
+				<div class="field-row">
+					<Button
+						icon="restart_alt"
+						onclick={saveFoundationDir}
+						disabled={foundationDirSaving || !foundationDir.trim()}
+					>
+						{foundationDirSaving ? 'Salvando…' : 'Salvar e reiniciar'}
+					</Button>
+				</div>
+				{#if foundationDirMessage}
+					<p class="feedback" class:error={foundationDirError}>{foundationDirMessage}</p>
+				{/if}
+			</section>
 
 			<section class="settings-section">
 				<h3 class="section-title">

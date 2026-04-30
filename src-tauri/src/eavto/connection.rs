@@ -47,22 +47,22 @@ impl From<std::io::Error> for DbError {
 }
 
 pub fn get_db_path() -> Result<PathBuf, DbError> {
-    let documents_dir = dirs::document_dir()
+    let foundation_dir = dirs::document_dir()
         .ok_or_else(|| DbError::IoError(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "Could not determine Documents directory"
-        )))?;
+        )))?
+        .join("Foundation");
+    get_db_path_for_dir(&foundation_dir)
+}
 
-    let foundation_dir = documents_dir.join("Foundation");
-
+pub fn get_db_path_for_dir(foundation_dir: &std::path::Path) -> Result<PathBuf, DbError> {
     if !foundation_dir.exists() {
         log_backend("info", &format!("Creating Foundation directory: {:?}", foundation_dir));
-        fs::create_dir_all(&foundation_dir)?;
+        fs::create_dir_all(foundation_dir)?;
     }
-
     let db_path = foundation_dir.join("FOUNDATION.db");
     log_backend("info", &format!("Using database: {:?}", db_path));
-
     Ok(db_path)
 }
 
@@ -361,7 +361,8 @@ fn run_migrations(conn: &Connection) -> Result<(), DbError> {
 }
 
 pub fn initialize_with_progress(app: tauri::AppHandle) -> Result<(Connection, PathBuf), DbError> {
-    let db_path = get_db_path()?;
+    let foundation_dir = crate::config::get_foundation_dir(&app);
+    let db_path = get_db_path_for_dir(&foundation_dir)?;
     let conn = initialize_db_with_progress(&db_path, Some(&app))?;
     Ok((conn, db_path))
 }

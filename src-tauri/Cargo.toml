@@ -1,6 +1,6 @@
 [package]
 name = "FOUNDATION"
-version = "0.17.0"
+version = "0.17.1"
 description = "A Tauri App"
 authors = ["daniel_terra@icloud.com"]
 edition = "2021"
@@ -31,6 +31,7 @@ tauri = { version = "2", features = ["protocol-asset", "test", "devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-window-state = "2"
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -43,6 +44,8 @@ sysinfo = "0.32"  # For system information
 hostname = "0.4"  # For hostname detection
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "net", "io-util"] }  # For async executor and tests
 axum = { version = "0.7", features = ["json"] }  # For embedded MCP HTTP server
+axum-server = { version = "0.7", features = ["tls-rustls"] }  # HTTPS for MCP
+rcgen = "0.13"  # Self-signed TLS certificate generation
 reqwest = { version = "0.12", features = ["blocking", "json", "stream"] }  # For HTTP API calls
 futures-util = "0.3"  # For SSE stream processing
 async-trait = "0.1"  # For async trait definitions

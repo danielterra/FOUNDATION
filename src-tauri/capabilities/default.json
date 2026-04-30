@@ -21,6 +21,7 @@
     "fs:allow-temp-write",
     "fs:allow-temp-write-recursive",
     "fs:allow-home-write",
-    "fs:allow-home-write-recursive"
+    "fs:allow-home-write-recursive",
+    "dialog:allow-open"
   ]
 }

@@ -141,13 +141,6 @@
       retentionRunning = false;
     });
 
-    try {
-      await invoke('initialize_app');
-    } catch (err) {
-      console.error('[App] Failed to initialize database:', err);
-      alert('Failed to initialize database. Please check permissions and try again.');
-    }
-
     unlistenAutomationStarted = await listen<AutomationExecutionEvent>('automation-execution-started', (event) => {
       const { executionIri, processIri } = event.payload;
       automationRuns = [...automationRuns, { executionIri, processIri, currentStep: 'Starting…', status: 'running' }];

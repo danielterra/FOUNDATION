@@ -1,5 +1,7 @@
 use axum::{Router, extract::State, routing::post, Json, response::{IntoResponse, Response}};
 use axum::http::StatusCode;
+use axum_server::tls_rustls::RustlsConfig;
+use rcgen::{generate_simple_self_signed, CertifiedKey};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
@@ -7,7 +9,8 @@ use tauri::{AppHandle, Manager};
 use crate::ai::functions::{ToolCall, ToolResult, execute_tool, get_available_tools};
 use crate::eavto::DbExecutor;
 
-const PORT: u16 = 47177;
+const PORT_HTTPS: u16 = 47177;
+const PORT_HTTP: u16 = 47178;
 const JSONRPC_METHOD_NOT_FOUND: i32 = -32601;
 const JSONRPC_INVALID_PARAMS: i32 = -32602;
 const JSONRPC_INTERNAL_ERROR: i32 = -32603;
@@ -17,25 +20,84 @@ struct McpState {
     app: Arc<AppHandle>,
 }
 
+fn generate_or_load_cert(config_dir: &std::path::Path) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let cert_path = config_dir.join("mcp-cert.pem");
+    let key_path = config_dir.join("mcp-key.pem");
+
+    if cert_path.exists() && key_path.exists() {
+        let cert = std::fs::read(&cert_path).map_err(|e| e.to_string())?;
+        let key = std::fs::read(&key_path).map_err(|e| e.to_string())?;
+        return Ok((cert, key));
+    }
+
+    let CertifiedKey { cert, key_pair } =
+        generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
+            .map_err(|e| e.to_string())?;
+
+    let cert_pem = cert.pem();
+    let key_pem = key_pair.serialize_pem();
+
+    std::fs::write(&cert_path, &cert_pem).map_err(|e| e.to_string())?;
+    std::fs::write(&key_path, &key_pem).map_err(|e| e.to_string())?;
+
+    Ok((cert_pem.into_bytes(), key_pem.into_bytes()))
+}
+
 pub async fn serve(app: AppHandle) {
+    let config_dir = match app.path().app_config_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            crate::commands::log_backend("error", &format!("MCP: cannot get config dir: {e}"));
+            return;
+        }
+    };
+
+    if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        crate::commands::log_backend("error", &format!("MCP: cannot create config dir: {e}"));
+        return;
+    }
+
+    let (cert_pem, key_pem) = match generate_or_load_cert(&config_dir) {
+        Ok(v) => v,
+        Err(e) => {
+            crate::commands::log_backend("error", &format!("MCP: TLS cert error: {e}"));
+            return;
+        }
+    };
+
+    let tls_config = match RustlsConfig::from_pem(cert_pem, key_pem).await {
+        Ok(c) => c,
+        Err(e) => {
+            crate::commands::log_backend("error", &format!("MCP: TLS config error: {e}"));
+            return;
+        }
+    };
+
     let state = McpState { app: Arc::new(app) };
     let router = Router::new()
         .route("/mcp", post(handle_mcp))
         .with_state(state);
 
-    let addr = format!("127.0.0.1:{PORT}");
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            crate::commands::log_backend(
-                "error", &format!("MCP server failed to bind on {addr}: {e}"),
-            );
-            return;
-        }
-    };
+    let https_addr: std::net::SocketAddr = format!("127.0.0.1:{PORT_HTTPS}").parse().unwrap();
+    let http_addr: std::net::SocketAddr = format!("127.0.0.1:{PORT_HTTP}").parse().unwrap();
 
-    crate::commands::log_backend("info", &format!("MCP server listening on http://{addr}/mcp"));
-    let _ = axum::serve(listener, router).await;
+    crate::commands::log_backend("info", &format!("MCP server listening on https://127.0.0.1:{PORT_HTTPS}/mcp and http://127.0.0.1:{PORT_HTTP}/mcp"));
+
+    let http_router = router.clone();
+    tokio::spawn(async move {
+        let listener = match tokio::net::TcpListener::bind(http_addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                crate::commands::log_backend("error", &format!("MCP HTTP bind error: {e}"));
+                return;
+            }
+        };
+        let _ = axum::serve(listener, http_router).await;
+    });
+
+    let _ = axum_server::bind_rustls(https_addr, tls_config)
+        .serve(router.into_make_service())
+        .await;
 }
 
 async fn handle_mcp(

@@ -6,10 +6,10 @@
 
 ![FOUNDATION Screenshot](static/Screenshot1.png)
 
-**Version 0.17.0** — AI-powered ontology management system with long-term memory
+**Version 0.17.1** — AI-powered ontology management system with long-term memory
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=for-the-badge)](LICENSE)
-[![Changelog](https://img.shields.io/badge/Changelog-v0.17.0-informational?style=for-the-badge)](https://github.com/danielterra/FOUNDATION/blob/main/CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/Changelog-v0.17.1-informational?style=for-the-badge)](https://github.com/danielterra/FOUNDATION/blob/main/CHANGELOG.md)
 
 > **Status:** alpha. No prebuilt installers yet — build from source (see [Development Guide](docs/development.md)).
 
@@ -65,31 +65,16 @@ FOUNDATION is a Tauri desktop app — no prebuilt installers yet, so today you b
 
 ## MCP Server
 
-FOUNDATION exposes a local [Model Context Protocol](https://modelcontextprotocol.io) server on `http://127.0.0.1:47177/mcp` (Streamable HTTP transport). It starts automatically when the app is running.
+FOUNDATION exposes a local [Model Context Protocol](https://modelcontextprotocol.io) server that starts automatically when the app is running. Two endpoints are available:
 
-### Claude Desktop
+| Endpoint | Port | TLS | Use case |
+|----------|------|-----|----------|
+| `http://127.0.0.1:47178/mcp` | 47178 | No | Claude Code, local clients |
+| `https://127.0.0.1:47177/mcp` | 47177 | Yes (self-signed) | Clients that require HTTPS |
 
-Claude Desktop requires [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) as a proxy. Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+> **Important:** Both endpoints are localhost-only. Cloud-based AI services (e.g. Claude.ai Cowork) connect from Anthropic's servers and cannot reach a local address — they require a publicly accessible URL. To expose FOUNDATION remotely, use a tunnel such as `ngrok http 47178`.
 
-```json
-{
-  "mcpServers": {
-    "foundation": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-remote",
-        "http://127.0.0.1:47177/mcp",
-        "--allow-http",
-        "--transport",
-        "http-only"
-      ]
-    }
-  }
-}
-```
-
-### Claude Code (CLI)
+### Claude Code
 
 Add to `~/.claude.json` under the `mcpServers` key:
 
@@ -97,15 +82,57 @@ Add to `~/.claude.json` under the `mcpServers` key:
 {
   "mcpServers": {
     "foundation": {
+      "type": "http",
+      "url": "http://127.0.0.1:47178/mcp"
+    }
+  }
+}
+```
+
+### Claude Desktop (Windows)
+
+Claude Desktop on Windows requires [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) as a proxy because it spawns MCP servers as local processes. Add to `%APPDATA%\Claude\claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "foundation": {
+      "command": "C:\\Program Files\\nodejs\\npx.cmd",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://127.0.0.1:47177/mcp",
+        "--transport",
+        "http-only"
+      ],
+      "env": {
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0",
+        "APPDATA": "C:\\Users\\<username>\\AppData\\Roaming\\"
+      }
+    }
+  }
+}
+```
+
+### Claude Desktop (macOS)
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "foundation": {
       "command": "npx",
       "args": [
         "-y",
         "mcp-remote",
-        "http://127.0.0.1:47177/mcp",
-        "--allow-http",
+        "https://127.0.0.1:47177/mcp",
         "--transport",
         "http-only"
-      ]
+      ],
+      "env": {
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+      }
     }
   }
 }

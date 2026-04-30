@@ -1,6 +1,6 @@
 {
   "name": "FOUNDATION",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "description": "Simple as a spreadsheet. Powerful as enterprise software",
   "type": "module",
   "scripts": {
@@ -20,11 +20,11 @@
     "release:patch": "cd scripts/release && cargo run --release patch",
     "build:local": "cd scripts/release-local && cargo run --release",
     "build:release": "npm run build:local",
-    "logs": "./scripts/show-logs.sh \"$@\"",
-    "logs:watch": "./scripts/show-logs.sh --watch",
-    "clear:chat": "./scripts/clear-chat-history.sh",
+    "logs": "node ./scripts/show-logs.js",
+    "logs:watch": "node ./scripts/show-logs.js --watch",
+    "clear:chat": "bash ./scripts/clear-chat-history.sh",
     "coverage": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --html",
-    "test:perf": "./scripts/perf-test.sh"
+    "test:perf": "bash ./scripts/perf-test.sh"
   },
   "license": "AGPL-3.0-only",
   "dependencies": {
@@ -33,6 +33,7 @@
     "@material-symbols/font-400": "^0.40.1",
     "@number-flow/svelte": "^0.4.0",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-fs": "^2.4.5",
     "@tauri-apps/plugin-opener": "^2",
     "@types/dagre": "^0.7.53",
