@@ -127,7 +127,7 @@
       <div class="folder-card">
         <span class="material-symbols-outlined folder-icon">folder_open</span>
         <h2>Onde salvar seus dados?</h2>
-        <p class="folder-hint">Escolha a pasta onde o Foundation vai armazenar seu banco de dados e arquivos.</p>
+        <p class="folder-hint">Escolha a pasta onde o FOUNDATION vai armazenar seu banco de dados e arquivos.</p>
         <div class="folder-row">
           <input
             class="folder-input"
@@ -165,7 +165,7 @@
     <SetupWizard onComplete={handleSetupComplete} />
 
   {:else}
-    <p class="redirecting">Redirecionando…</p>
+    <p class="redirecting">Carregando…</p>
   {/if}
 </main>
 
