@@ -53,13 +53,16 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Set macOS deployment target
+        if: matrix.platform == 'macos-latest'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> $GITHUB_ENV
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISPLAY: ${{ matrix.platform == 'ubuntu-22.04' && ':99.0' || '' }}
           CARGO_INCREMENTAL: '0'
-          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform == 'macos-latest' && '10.15' || '' }}
         with:
           tauriScript: npx tauri
           tagName: ${{ github.ref_name }}

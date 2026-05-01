@@ -42,6 +42,7 @@
     "category": "Productivity",
     "licenseFile": "../LICENSE",
     "macOS": {
+      "minimumSystemVersion": "11.0",
       "dmg": {
         "appPosition": {
           "x": 180,
