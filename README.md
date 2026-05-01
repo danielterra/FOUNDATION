@@ -11,7 +11,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=for-the-badge)](LICENSE)
 [![Changelog](https://img.shields.io/badge/Changelog-v0.17.1-informational?style=for-the-badge)](https://github.com/danielterra/FOUNDATION/blob/main/CHANGELOG.md)
 
-> **Status:** alpha. No prebuilt installers yet — build from source (see [Development Guide](docs/development.md)).
+> **Status:** alpha. Prebuilt installers available — see [Download](#download) below.
 
 ## Features
 
@@ -46,22 +46,39 @@ Legend: ✅ stable · 🚧 in development · 🛣️ planned
 - 🛣️ **Integrations** — first-party connectors for common external services.
 - 🛣️ **System Inspector** — visualizer for processes, automation runs, and queue state.
 
+## Download
+
+Download the latest release from the [GitHub Releases page](https://github.com/danielterra/FOUNDATION/releases/latest):
+
+| Platform | File to download | Notes |
+|----------|-----------------|-------|
+| **macOS** (Apple Silicon) | `FOUNDATION_x.x.x_aarch64.dmg` | Open the `.dmg`, drag FOUNDATION to Applications |
+| **Windows** | `FOUNDATION_x.x.x_x64-setup.exe` | Run the installer (recommended) |
+| **Windows** (alternative) | `FOUNDATION_x.x.x_x64_en-US.msi` | MSI package for enterprise/group policy |
+| **Linux** (most distros) | `FOUNDATION_x.x.x_amd64.AppImage` | `chmod +x` then run — no install needed |
+| **Linux** (Debian/Ubuntu) | `FOUNDATION_x.x.x_amd64.deb` | `sudo dpkg -i FOUNDATION_*.deb` |
+| **Linux** (Fedora/RHEL) | `FOUNDATION-x.x.x-1.x86_64.rpm` | `sudo rpm -i FOUNDATION-*.rpm` |
+
+> **macOS note:** On first launch, macOS may show a security warning because the app is not notarized yet. Go to **System Settings → Privacy & Security** and click **Open Anyway**.
+
 ## Quick Start
 
-FOUNDATION is a Tauri desktop app — no prebuilt installers yet, so today you build from source.
-
-1. **Install prerequisites** — Node.js 20+, the Rust toolchain (via [rustup](https://rustup.rs/)), and the Tauri 2 system dependencies for your OS. Full list and links: [Development Guide → Prerequisites](docs/development.md#prerequisites).
-2. **Clone and run**:
-   ```bash
-   git clone https://github.com/danielterra/FOUNDATION.git
-   cd FOUNDATION
-   npm install
-   npm run tauri        # first run compiles Rust — 5–15 min
-   ```
-3. **Pick a model** in the in-app settings:
+1. **Download and install** FOUNDATION for your platform (see [Download](#download) above).
+2. **Pick a model** in the in-app settings:
    - Cloud: configure a Claude API key from [console.anthropic.com](https://console.anthropic.com/) — best quality and longest context.
    - Local: use the bundled `llama-cpp` runtime — no API key required; quality and speed depend on your hardware.
-4. **Start chatting** with an AI assistant that remembers everything you tell it.
+3. **Start chatting** with an AI assistant that remembers everything you tell it.
+
+### Build from source
+
+Prefer to build yourself? You'll need Node.js 20+, the Rust toolchain (via [rustup](https://rustup.rs/)), and the Tauri 2 system dependencies for your OS. Full list: [Development Guide → Prerequisites](docs/development.md#prerequisites).
+
+```bash
+git clone https://github.com/danielterra/FOUNDATION.git
+cd FOUNDATION
+npm install
+npm run tauri        # first run compiles Rust — 5–15 min
+```
 
 ## MCP Server
 
