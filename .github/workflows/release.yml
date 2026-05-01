@@ -57,6 +57,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISPLAY: ${{ matrix.platform == 'ubuntu-22.04' && ':99.0' || '' }}
           CARGO_INCREMENTAL: '0'
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform == 'macos-latest' && '10.15' || '' }}
         with:
           tauriScript: npx tauri
           tagName: ${{ github.ref_name }}
