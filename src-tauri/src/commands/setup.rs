@@ -425,6 +425,21 @@ pub async fn setup__check(
     }).await
 }
 
+/// Apaga foundation:ThisFoundationInstance para forçar o wizard de setup na próxima abertura.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn setup__reset(
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    executor.write(|conn| {
+        Individual::retract(conn, "foundation:ThisFoundationInstance", "setup")
+            .map_err(|e| format!("Failed to retract setup: {}", e))
+            .map(|_| String::new())
+    }).await?;
+    app.restart();
+}
+
 /// Initialize setup: detect system, create instances, establish relationships
 /// Should only be called when setup__check returns false
 #[tauri::command]

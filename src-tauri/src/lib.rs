@@ -134,6 +134,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::initialize_app,
             commands::setup__check,
+            commands::setup__reset,
             commands::setup__init,
             commands::setup__list_ai_services,
             commands::setup__list_ai_models,

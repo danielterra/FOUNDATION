@@ -732,6 +732,22 @@
 
 			<section class="settings-section">
 				<h3 class="section-title">
+					<span class="material-symbols-outlined">developer_mode</span>
+					Desenvolvimento
+				</h3>
+				<p class="hint">Ferramentas para teste e depuração.</p>
+				<div class="field-row">
+					<Button
+						icon="refresh"
+						onclick={async () => { await invoke('setup__reset'); }}
+					>
+						Refazer setup inicial
+					</Button>
+				</div>
+			</section>
+
+			<section class="settings-section">
+				<h3 class="section-title">
 					<span class="material-symbols-outlined">description</span>
 					Logs
 				</h3>

@@ -1,11 +1,22 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
+  import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import ChatWindow from '$lib/components/ChatWindow.svelte';
   import WidgetManager from '$lib/components/widgets/WidgetManager.svelte';
   import Search from '$lib/components/graph/Search.svelte';
   import SettingsPanel from '$lib/components/SettingsPanel.svelte';
   import Button from '$lib/components/Button.svelte';
   import { appState } from '$lib/appState.svelte';
+
+  onMount(async () => {
+    try {
+      const setupDone = await invoke('setup__check');
+      if (!setupDone) goto('/');
+    } catch {
+      goto('/');
+    }
+  });
 
   let isChatOpen = $state(true);
   let searchComponent = $state();
