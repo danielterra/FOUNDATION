@@ -1,4 +1,3 @@
-pub mod ai_extraction;
 pub mod extractor;
 pub mod sync_worker;
 

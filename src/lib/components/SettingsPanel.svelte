@@ -2,6 +2,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import Button from './Button.svelte';
 	import Modal from './Modal.svelte';
+	import posthog from 'posthog-js';
 
 	let { onClose } = $props();
 
@@ -42,6 +43,30 @@
 	let logMessage = $state('');
 	let logError = $state(false);
 
+	// --- Analytics ---
+	let analyticsEnabled = $state(false);
+
+	function loadAnalyticsConsent() {
+		try {
+			analyticsEnabled = posthog.has_opted_in_capturing();
+		} catch {
+			analyticsEnabled = false;
+		}
+	}
+
+	function toggleAnalytics(enabled) {
+		try {
+			if (enabled) {
+				posthog.opt_in_capturing();
+			} else {
+				posthog.opt_out_capturing();
+			}
+			analyticsEnabled = enabled;
+		} catch {
+			// posthog não inicializado (chave ausente)
+		}
+	}
+
 	// --- Foundation Dir ---
 	let foundationDir = $state('');
 	let foundationDirSaving = $state(false);
@@ -72,6 +97,7 @@
 	async function loadAll() {
 		await Promise.all([loadModelData(), loadLogPath(), loadLocalModelStatus(), loadImapAccounts(), loadFoundationDir()]);
 		await loadApiKeyForService(selectedServiceIri);
+		loadAnalyticsConsent();
 	}
 
 	async function loadFoundationDir() {
@@ -732,6 +758,24 @@
 
 			<section class="settings-section">
 				<h3 class="section-title">
+					<span class="material-symbols-outlined">shield</span>
+					Privacidade
+				</h3>
+				<label class="analytics-toggle">
+					<input
+						type="checkbox"
+						checked={analyticsEnabled}
+						onchange={(e) => toggleAnalytics(e.target.checked)}
+					/>
+					<span class="analytics-toggle-text">
+						<strong>Compartilhar dados de uso anônimos</strong>
+						<span>Ajuda a melhorar o FOUNDATION. Nenhuma informação pessoal ou conteúdo de e-mail é enviado.</span>
+					</span>
+				</label>
+			</section>
+
+			<section class="settings-section">
+				<h3 class="section-title">
 					<span class="material-symbols-outlined">developer_mode</span>
 					Desenvolvimento
 				</h3>
@@ -1036,5 +1080,41 @@
 
 	.folder-label {
 		font-size: 12px;
+	}
+
+	.analytics-toggle {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 10px 12px;
+		background: var(--color-surface-2);
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+	}
+
+	.analytics-toggle input[type="checkbox"] {
+		margin-top: 2px;
+		flex-shrink: 0;
+		accent-color: var(--color-interactive);
+		width: 14px;
+		height: 14px;
+	}
+
+	.analytics-toggle-text {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.analytics-toggle-text strong {
+		font-size: 13px;
+		color: var(--color-neutral-active);
+		font-weight: 500;
+	}
+
+	.analytics-toggle-text span {
+		font-size: 12px;
+		color: var(--color-neutral);
+		line-height: 1.5;
 	}
 </style>

@@ -13,11 +13,9 @@ use super::setup_system_info::{get_cpu_info, get_memory_info, get_os_info, get_l
 pub async fn initialize_app(
     app: AppHandle,
 ) -> Result<(), String> {
-    // Skip initialization during CI/CD or build process
-    // The build process runs the app to collect metadata but doesn't need DB
+    // Skip initialization during CI/CD — the runner doesn't have a real user DB
     if std::env::var("CI").is_ok()
         || std::env::var("GITHUB_ACTIONS").is_ok()
-        || std::env::var("TAURI_ENV_DEBUG").is_ok() // Set during tauri build
     {
         super::log_backend("info", "Skipping database initialization (build/CI mode)");
         let dummy_conn = Connection::open_in_memory()
@@ -419,9 +417,16 @@ pub async fn setup__check(
     executor: State<'_, DbExecutor>,
 ) -> Result<bool, String> {
     executor.read(|conn| {
-        Individual::get(conn, "foundation:ThisFoundationInstance")
-            .map(|opt| opt.is_some())
-            .map_err(|e| format!("Failed to check setup status: {}", e))
+        // The ontology references foundation:ThisUser as an object, but never asserts
+        // rdf:type for it. setup__init creates ThisUser as foundation:Person — that
+        // triple is the reliable signal that the wizard was completed.
+        conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject='foundation:ThisUser' AND predicate='rdf:type' AND object='foundation:Person' AND retracted=0",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .map_err(|e| format!("Failed to check setup status: {}", e))
     }).await
 }
 

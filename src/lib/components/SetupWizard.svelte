@@ -1,6 +1,7 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
 	import { onMount } from 'svelte';
+	import posthog from 'posthog-js';
 
 	let { onComplete = () => {} } = $props();
 
@@ -153,6 +154,9 @@
 	let apiKey = $state('');
 	let showApiKey = $state(false);
 
+	// ── step 4: privacidade ────────────────────────────────────────────────────
+	let analyticsConsent = $state(false);
+
 	// ── finalização ────────────────────────────────────────────────────────────
 	async function finish() {
 		isSubmitting = true;
@@ -186,6 +190,12 @@
 					apiKey: apiKey.trim(),
 					serviceIri: 'foundation:ClaudeAIService',
 				});
+			}
+
+			if (analyticsConsent) {
+				posthog.opt_in_capturing();
+			} else {
+				posthog.opt_out_capturing();
 			}
 
 			onComplete();
@@ -450,6 +460,14 @@
 						<span>{aiChoice === 'chat' ? 'Chat interno com Claude' : 'Via MCP'}</span>
 					</div>
 				</div>
+
+				<label class="consent-row">
+					<input type="checkbox" bind:checked={analyticsConsent} />
+					<span>
+						Compartilhar dados de uso anônimos para nos ajudar a melhorar o FOUNDATION.
+						Nenhuma informação pessoal ou conteúdo de e-mail é enviado.
+					</span>
+				</label>
 
 				{#if submitError}
 					<p class="submit-error">
@@ -950,6 +968,30 @@
 	.summary-row em {
 		opacity: 0.6;
 		font-style: normal;
+	}
+
+	/* consentimento de analytics */
+	.consent-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.625rem;
+		padding: 0.875rem 1rem;
+		background: var(--color-surface-2);
+		border-radius: var(--radius-sm);
+		font-size: 0.8125rem;
+		color: var(--color-neutral);
+		line-height: 1.55;
+		cursor: pointer;
+		width: 100%;
+		text-align: left;
+	}
+
+	.consent-row input[type="checkbox"] {
+		margin-top: 0.15rem;
+		flex-shrink: 0;
+		accent-color: var(--color-interactive);
+		width: 1rem;
+		height: 1rem;
 	}
 
 	/* erro de submissão */

@@ -78,8 +78,13 @@ fn create_schema(conn: &Connection) -> Result<(), DbError> {
 
 fn import_ontology_sql(conn: &Connection) -> Result<(), DbError> {
     log_backend("info", "Importing core ontology from SQL");
+    // Foreign keys must be off during bulk import — the ontology SQL does not
+    // guarantee insertion order across tables (e.g. triples reference origin rows
+    // that may not yet exist at insert time).
+    conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
     conn.execute_batch(ONTOLOGY_SQL)
         .map_err(|e| DbError::SchemaError(format!("Ontology import failed: {}", e)))?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     log_backend("info", "Core ontology imported");
     Ok(())
 }
@@ -95,15 +100,23 @@ fn initialize_db_with_progress(
 ) -> Result<Connection, DbError> {
     use tauri::Emitter;
 
-    let needs_initialization = !db_path.exists();
-
     log_backend("info", &format!("Using database: {:?}", db_path));
     let conn = Connection::open(db_path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
     conn.busy_timeout(std::time::Duration::from_secs(DB_BUSY_TIMEOUT_SECS)).map_err(|e| DbError::ConnectionError(e))?;
 
-    if needs_initialization {
-        log_backend("info", "Initializing new database");
+    // Check if the ontology is actually present by looking for a core class.
+    // This is more reliable than checking file existence or a metadata flag,
+    // since the file can be created empty (crash before import) or the flag
+    // may not exist in older databases.
+    let ontology_present = conn.query_row(
+        "SELECT COUNT(*) FROM triples WHERE subject='foundation:Person' AND predicate='rdf:type' AND object='owl:Class' LIMIT 1",
+        [],
+        |row| row.get::<_, i64>(0),
+    ).map(|c| c > 0).unwrap_or(false);
+
+    if !ontology_present {
+        log_backend("info", "Ontology not present — initializing database");
 
         create_schema(&conn)?;
         import_ontology_sql(&conn)?;
@@ -118,7 +131,7 @@ fn initialize_db_with_progress(
 
         log_backend("info", "Database initialization complete");
     } else {
-        log_backend("info", "Database exists, skipping ontology import");
+        log_backend("info", "Ontology already present, skipping import");
     }
 
     let t_startup = std::time::Instant::now();

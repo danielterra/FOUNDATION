@@ -11,7 +11,6 @@ const DEFAULT_IMAP_PORT: u16 = 993;
 const DEFAULT_SYNC_INTERVAL_MINUTES: i64 = 15;
 const MAX_EMAILS_PER_FETCH: usize = 50;
 const MAX_FAILURES_BEFORE_ALERT: usize = 3;
-const SYNC_SLEEP_MILLIS: u64 = 500;
 const TCP_CONNECT_TIMEOUT_SECS: u64 = 20;
 const TCP_SESSION_READ_TIMEOUT_SECS: u64 = 120;
 const IDLE_TCP_READ_TIMEOUT_SECS: u64 = 29 * 60 + 30;
@@ -107,33 +106,18 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
                 let mut stored_count: i64 = 0;
                 for email in emails {
                     let account_iri = account.iri.clone();
-                    let email_from = email.from.clone();
-                    let email_to = email.to.clone();
-                    let email_subject = email.subject.clone();
-                    let email_body = email.body.clone();
                     let subject_log = email.subject.chars().take(40).collect::<String>();
-                    let email_iri = match executor
+                    match executor
                         .write(move |conn| {
                             store_email(conn, &account_iri, &email)
                                 .map(|opt| opt.unwrap_or_default())
                         })
                         .await
                     {
-                        Ok(s) if !s.is_empty() => { stored_count += 1; Some(s) }
-                        Ok(_) => { crate::imap::log_error(&format!("IMAP: duplicate skipped: {}", subject_log)); None }
-                        Err(e) => { crate::imap::log_error(&format!("IMAP store_email error: {} — {}", subject_log, e)); None }
+                        Ok(s) if !s.is_empty() => { stored_count += 1; }
+                        Ok(_) => { crate::imap::log_error(&format!("IMAP: duplicate skipped: {}", subject_log)); }
+                        Err(e) => { crate::imap::log_error(&format!("IMAP store_email error: {} — {}", subject_log, e)); }
                     };
-
-                    if let Some(iri) = email_iri {
-                        let executor_clone = executor.clone();
-                        let app_clone = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            crate::imap::ai_extraction::extract_email_entities(
-                                &app_clone, &executor_clone,
-                                iri, email_subject, email_body, email_from, email_to,
-                            ).await;
-                        });
-                    }
                 }
 
                 let _ = app.emit("imap-sync-finished", serde_json::json!({

@@ -5,17 +5,28 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.17.1] - 2026-04-29
+## [0.17.1] - 2026-05-01
 
 ### Added
 
 - **Pasta de dados configurável**: primeiro acesso exibe wizard para o usuário selecionar a pasta de dados; configuração persistida em `config.json`; comandos Tauri `settings__is_folder_configured`, `settings__get_foundation_dir`, `settings__save_foundation_dir` e `settings__set_foundation_dir`
 - **Servidor MCP dual (HTTP + HTTPS)**: porta 47177 HTTPS com certificado TLS auto-gerado e persistido; porta 47178 HTTP plain para clientes locais como Claude Code; README e docs atualizados com instruções para Claude Desktop Windows/macOS
+- **Wizard de onboarding redesenhado**: fluxo em 4 passos em pt-BR — nome, e-mail IMAP (iCloud, Outlook, Yahoo, custom), escolha de IA (chat interno ou via MCP), confirmação; teste de conexão IMAP inline; `setup__reset` reabre o wizard
+- **Analytics com consentimento do usuário**: integração PostHog com `opt_out_capturing_by_default`; checkbox de consentimento no último passo do wizard; toggle de privacidade nas Configurações; variáveis públicas injetadas via CI
+- **Modal de conexão MCP**: botão "Conectar via MCP" na barra superior; instruções para Claude Desktop com bloco de configuração copiável; paths por OS; hint para configurar API key quando chat está desabilitado
+- **Chat condicional por API key**: botão do chat e overlay só aparecem quando há API key configurada; verificação refeita ao fechar Configurações
 
 ### Fixed
 
 - **Resiliência de execuções de automação**: watchdog periódico (10 min) retoma execuções travadas sem necessidade de restart; `ActiveExecutions` evita recuperação dupla; `resume_workflow_execution` agora emite `automation-execution-finished` para o frontend
 - **WorkflowExecutionWidget**: listeners sempre registrados independente do status inicial; listener `entity-updated` como fallback de reload; crash ao renderizar mensagens corrigido (prop `unit` vs `message`); conversor `messagesToUnits` transforma blocos brutos no formato esperado pelo `ChatMessageBubble` com suporte a markdown
+- **Inicialização do banco por presença de ontologia**: testa existência de `foundation:Person` em vez de existência do arquivo; `PRAGMA foreign_keys = OFF` durante import bulk evita falhas de ordem de inserção; `TAURI_ENV_DEBUG` removido da lista de flags de skip
+- **Build mode**: encerra imediatamente quando Tauri CLI executa o binário para coleta de schemas; fallback para diretório de dados quando `Documents` não existe
+- **CI/CD**: macOS deployment target via `tauri.conf.json` e `GITHUB_ENV`; `permissions: contents: write` para criação de releases; cache npm e `CARGO_INCREMENTAL=0`
+
+### Refactored
+
+- **Sync IMAP**: remoção da extração agentic de entidades por e-mail (`ai_extraction.rs`) — simplifica o worker e elimina dependências de contexto de IA no loop de sincronização
 
 ## [0.17.0] - 2026-04-26
 

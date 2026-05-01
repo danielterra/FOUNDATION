@@ -179,9 +179,12 @@ pub async fn setup__get_current_ai_service(
         };
 
         if let Ok(Some(service_ind)) = Individual::get(conn, &service_iri) {
+            let is_local = !service_ind.properties.iter()
+                .any(|(k, _)| k == "foundation:apiKey");
             Ok(Some(serde_json::json!({
                 "iri": service_iri,
                 "label": service_ind.label,
+                "isLocal": is_local,
             })))
         } else {
             Ok(None)

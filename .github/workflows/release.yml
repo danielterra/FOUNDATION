@@ -63,6 +63,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISPLAY: ${{ matrix.platform == 'ubuntu-22.04' && ':99.0' || '' }}
           CARGO_INCREMENTAL: '0'
+          PUBLIC_POSTHOG_KEY: ${{ vars.PUBLIC_POSTHOG_KEY }}
+          PUBLIC_POSTHOG_HOST: ${{ vars.PUBLIC_POSTHOG_HOST }}
         with:
           tauriScript: npx tauri
           tagName: ${{ github.ref_name }}
