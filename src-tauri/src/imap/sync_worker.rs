@@ -535,29 +535,45 @@ fn collect_attachments_recursive(
 }
 
 fn part_is_attachment(part: &mailparse::ParsedMail) -> bool {
-    match part.headers.get_first_value("Content-Disposition") {
-        Some(disp) => disp.to_lowercase().trim_start().starts_with("attachment"),
-        None => false,
+    // Treat any part with a filename indicator as an attachment, regardless of disposition.
+    // Real-world emails (banks, automated systems) often send attachments with
+    // `Content-Disposition: inline; filename=...` or no Content-Disposition at all,
+    // relying solely on `Content-Type: ...; name=...`.
+    if let Some(disp) = part.headers.get_first_value("Content-Disposition") {
+        let disp_lower = disp.to_lowercase();
+        if disp_lower.trim_start().starts_with("attachment") {
+            return true;
+        }
+        if disp_lower.contains("filename=") {
+            return true;
+        }
     }
+    if let Some(ct) = part.headers.get_first_value("Content-Type") {
+        if ct.to_lowercase().contains("name=") {
+            return true;
+        }
+    }
+    false
 }
 
 fn extract_attachment_filename(part: &mailparse::ParsedMail) -> Option<String> {
-    let disp = part.headers.get_first_value("Content-Disposition")?;
-    let from_disp = disp.split(';')
-        .find(|s| s.trim().to_lowercase().starts_with("filename="))
-        .map(|s| {
-            s.trim()
-                .splitn(2, '=')
-                .nth(1)
-                .unwrap_or("")
-                .trim_matches('"')
-                .trim_matches('\'')
-                .to_string()
-        })
-        .filter(|s| !s.is_empty());
+    if let Some(disp) = part.headers.get_first_value("Content-Disposition") {
+        let from_disp = disp.split(';')
+            .find(|s| s.trim().to_lowercase().starts_with("filename="))
+            .map(|s| {
+                s.trim()
+                    .splitn(2, '=')
+                    .nth(1)
+                    .unwrap_or("")
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string()
+            })
+            .filter(|s| !s.is_empty());
 
-    if from_disp.is_some() {
-        return from_disp;
+        if from_disp.is_some() {
+            return from_disp;
+        }
     }
 
     part.headers.get_first_value("Content-Type")
@@ -682,6 +698,64 @@ RGF0ZSxBbW91bnQKMjAyNi0wNC0wOSwxMDAuMDAK\r\n\
         assert!(
             parsed.attachments.iter().all(|a| a.file_name == "extrato.csv"),
             "inline text/plain part must not be collected as attachment"
+        );
+    }
+
+    // Regression for Bug_1777771421612: emails with multiple attachments using different
+    // Content-Disposition styles (attachment, inline, none) had only the first one captured
+    // because the parser required `Content-Disposition: attachment` strictly.
+    const MULTIPART_MIXED_DISPOSITIONS: &[u8] = b"From: noreply@nubank.com.br\r\n\
+To: bob@example.com\r\n\
+Subject: Extrato da sua conta do Nubank\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n\
+\r\n\
+--BOUND\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Segue extrato em PDF, OFX e CSV.\r\n\
+--BOUND\r\n\
+Content-Type: application/pdf; name=\"extrato.pdf\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+JVBERi0xLjQK\r\n\
+--BOUND\r\n\
+Content-Type: application/x-ofx; name=\"extrato.ofx\"\r\n\
+Content-Disposition: inline; filename=\"extrato.ofx\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+T0ZYSEVBREVSCg==\r\n\
+--BOUND\r\n\
+Content-Type: text/csv; name=\"extrato.csv\"\r\n\
+Content-Disposition: attachment; filename=\"extrato.csv\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+RGF0ZSxBbW91bnQK\r\n\
+--BOUND--\r\n";
+
+    #[test]
+    fn test_parse_raw_email_collects_all_attachments_regardless_of_disposition() {
+        let parsed = parse_raw_email(MULTIPART_MIXED_DISPOSITIONS).expect("parse should succeed");
+        let names: Vec<&str> = parsed.attachments.iter()
+            .map(|a| a.file_name.as_str())
+            .collect();
+
+        assert_eq!(parsed.attachments.len(), 3,
+            "must collect all 3 attachments (got {:?})", names);
+        assert!(names.contains(&"extrato.pdf"),
+            "PDF (no Content-Disposition, only Content-Type name=) must be collected");
+        assert!(names.contains(&"extrato.ofx"),
+            "OFX (Content-Disposition: inline) must be collected");
+        assert!(names.contains(&"extrato.csv"),
+            "CSV (Content-Disposition: attachment) must still be collected");
+    }
+
+    #[test]
+    fn test_parse_raw_email_text_plain_body_not_treated_as_attachment_with_mixed_dispositions() {
+        let parsed = parse_raw_email(MULTIPART_MIXED_DISPOSITIONS).expect("parse should succeed");
+        assert!(
+            parsed.attachments.iter().all(|a| a.mime_type != "text/plain"),
+            "text/plain body part must not be collected as attachment"
         );
     }
 }
