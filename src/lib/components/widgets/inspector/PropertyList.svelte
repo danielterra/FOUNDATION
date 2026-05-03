@@ -79,8 +79,13 @@
 
   const groupedDetails = $derived(
     (properties ?? []).reduce((acc, prop) => {
-      if (!acc[prop.property]) {
-        acc[prop.property] = {
+      // Forward and backlink entries can share the same property IRI but mean different
+      // things (X has Y as previousMonthBudget vs. Y has X as previousMonthBudget).
+      // Backlinks carry groupTotal, forwards do not — split them into separate groups.
+      const isBacklink = prop.groupTotal != null;
+      const key = isBacklink ? `${prop.property}__backlink` : prop.property;
+      if (!acc[key]) {
+        acc[key] = {
           property: prop.property,
           propertyLabel: prop.propertyLabel,
           propertyComment: prop.propertyComment,
@@ -104,8 +109,8 @@
         };
       }
       if (!prop.isEmpty) {
-        acc[prop.property].isEmpty = false;
-        acc[prop.property].values.push({
+        acc[key].isEmpty = false;
+        acc[key].values.push({
           value: prop.value,
           valueLabel: prop.valueLabel,
           valueIcon: prop.valueIcon,
@@ -115,9 +120,9 @@
           formulaError: prop.formulaError ?? null,
           fileInfo: prop.fileInfo ?? null
         });
-        if (prop.groupTotal != null && acc[prop.property].groupTotal == null) {
-          acc[prop.property].groupTotal = prop.groupTotal;
-          acc[prop.property].sourceClassIri = prop.sourceClass ?? null;
+        if (prop.groupTotal != null && acc[key].groupTotal == null) {
+          acc[key].groupTotal = prop.groupTotal;
+          acc[key].sourceClassIri = prop.sourceClass ?? null;
         }
       }
       return acc;
