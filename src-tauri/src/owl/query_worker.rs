@@ -31,15 +31,17 @@ impl QueryWorker {
 }
 
 pub fn register_listener(app: AppHandle) {
-    let app_clone = app.clone();
-    app.listen("entity-updated", move |event| {
-        let Some(entity_iri) = parse_entity_id(event.payload()) else { return };
-        let worker = match app_clone.try_state::<QueryWorker>() {
-            Some(w) => w,
-            None => return,
-        };
-        let _ = worker.sender.try_send(WorkerCommand::Enqueue { entity_iri });
-    });
+    for event_name in ["entity-created", "entity-updated"] {
+        let app_clone = app.clone();
+        app.listen(event_name, move |event| {
+            let Some(entity_iri) = parse_entity_id(event.payload()) else { return };
+            let worker = match app_clone.try_state::<QueryWorker>() {
+                Some(w) => w,
+                None => return,
+            };
+            let _ = worker.sender.try_send(WorkerCommand::Enqueue { entity_iri });
+        });
+    }
 }
 
 fn parse_entity_id(payload: &str) -> Option<String> {
@@ -209,12 +211,19 @@ fn update_query_property_triples(
     property_iri: &str,
     new_results: &[String],
 ) -> Result<bool, crate::owl::OwlError> {
+    // Read current values at MAX(tx) only. Per the immutability model, the latest TX
+    // is the source of truth; reading from triples_current (which only filters by
+    // retracted=0) would return historical values too, causing spurious diffs.
     let current: Vec<String> = {
         let mut stmt = conn.prepare(
-            "SELECT object FROM triples_current \
-             WHERE subject = ? AND predicate = ? AND object IS NOT NULL"
+            "SELECT t.object FROM triples t \
+             WHERE t.subject = ? AND t.predicate = ? \
+               AND t.retracted = 0 AND t.object IS NOT NULL \
+               AND t.tx = (SELECT MAX(tx) FROM triples \
+                           WHERE subject = t.subject AND predicate = t.predicate)"
         ).map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
-        let rows: Vec<String> = stmt.query_map(rusqlite::params![owner_iri, property_iri], |row| row.get::<_, String>(0))
+        let rows: Vec<String> = stmt
+            .query_map(rusqlite::params![owner_iri, property_iri], |row| row.get::<_, String>(0))
             .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?
             .filter_map(|r| r.ok())
             .collect();
@@ -230,17 +239,21 @@ fn update_query_property_triples(
         return Ok(false);
     }
 
-    let old_triples: Vec<Triple> = current.iter()
-        .map(|obj| Triple::new(owner_iri, property_iri, Object::Iri(obj.clone())))
-        .collect();
-    if !old_triples.is_empty() {
-        store::retract_triples(conn, &old_triples, "query_worker")?;
-    }
-
-    let new_triples: Vec<Triple> = new_results.iter()
-        .map(|obj| Triple::new(owner_iri, property_iri, Object::Iri(obj.clone())))
-        .collect();
-    if !new_triples.is_empty() {
+    if new_results.is_empty() {
+        // Clearing the property: retract is the documented "fact no longer true"
+        // operation. Without a non-empty new TX, MAX(tx) would still point to old data.
+        let old_triples: Vec<Triple> = current.iter()
+            .map(|obj| Triple::new(owner_iri, property_iri, Object::Iri(obj.clone())))
+            .collect();
+        if !old_triples.is_empty() {
+            store::retract_triples(conn, &old_triples, "query_worker")?;
+        }
+    } else {
+        // Just assert a new TX with the new values. The latest TX defines the truth —
+        // retracting old values is unnecessary and contradicts the immutability model.
+        let new_triples: Vec<Triple> = new_results.iter()
+            .map(|obj| Triple::new(owner_iri, property_iri, Object::Iri(obj.clone())))
+            .collect();
         store::assert_triples(conn, &new_triples, "query_worker")?;
     }
 

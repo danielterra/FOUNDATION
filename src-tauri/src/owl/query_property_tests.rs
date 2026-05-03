@@ -82,6 +82,8 @@ fn validate_rejects_nonexistent_target_class() {
     let config = QueryConfig {
         target_class: "foundation:NonExistentClass".to_string(),
         filters: vec![],
+        order_by: vec![],
+        limit: None,
     };
     let result = validate_query_config(&conn, &config);
     assert!(result.is_err());
@@ -94,6 +96,8 @@ fn validate_accepts_existing_target_class() {
     let config = QueryConfig {
         target_class: "foundation:Payment".to_string(),
         filters: vec![],
+        order_by: vec![],
+        limit: None,
     };
     let result = validate_query_config(&conn, &config);
     assert!(result.is_ok(), "Should accept existing class: {:?}", result);
@@ -106,6 +110,8 @@ fn evaluate_query_returns_all_when_no_filters() {
     let config = QueryConfig {
         target_class: "foundation:Payment".to_string(),
         filters: vec![],
+        order_by: vec![],
+        limit: None,
     };
     let results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
     assert_eq!(results.len(), 3);
@@ -124,6 +130,8 @@ fn evaluate_query_eq_literal_filter() {
             value_from: None,
             value_to: None,
         }],
+        order_by: vec![],
+        limit: None,
     };
     let results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
     assert_eq!(results.len(), 1);
@@ -143,6 +151,8 @@ fn evaluate_query_gte_filter() {
             value_from: None,
             value_to: None,
         }],
+        order_by: vec![],
+        limit: None,
     };
     let mut results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
     results.sort();
@@ -173,6 +183,8 @@ fn evaluate_query_self_ref_resolves() {
                 value_to: None,
             },
         ],
+        order_by: vec![],
+        limit: None,
     };
     let mut results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
     results.sort();
@@ -194,6 +206,8 @@ fn evaluate_query_missing_self_ref_returns_empty() {
             value_from: None,
             value_to: None,
         }],
+        order_by: vec![],
+        limit: None,
     };
     let results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
     assert!(results.is_empty(), "Missing self ref should return empty set");
@@ -214,6 +228,8 @@ fn evaluate_query_exists_operator() {
             value_from: None,
             value_to: None,
         }],
+        order_by: vec![],
+        limit: None,
     };
     let results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
     assert_eq!(results.len(), 1);
@@ -235,6 +251,8 @@ fn evaluate_query_not_exists_operator() {
             value_from: None,
             value_to: None,
         }],
+        order_by: vec![],
+        limit: None,
     };
     let mut results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
     results.sort();
@@ -256,6 +274,8 @@ fn evaluate_query_between_operator() {
             value_from: Some("2026-01-01".to_string()),
             value_to: Some("2026-01-31".to_string()),
         }],
+        order_by: vec![],
+        limit: None,
     };
     let mut results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
     results.sort();
@@ -277,10 +297,106 @@ fn evaluate_query_numeric_gte_filter() {
             value_from: None,
             value_to: None,
         }],
+        order_by: vec![],
+        limit: None,
     };
     let mut results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
     results.sort();
     assert_eq!(results.len(), 2, "Should return payments with amount >= 100: {:?}", results);
     assert!(results.contains(&"foundation:Payment_1".to_string()));
     assert!(results.contains(&"foundation:Payment_3".to_string()));
+}
+
+#[test]
+fn parse_query_config_includes_order_by_and_limit() {
+    // Regression: orderBy and limit fields were silently dropped because the struct
+    // didn't declare them. Serde ignores unknown fields by default.
+    let json = r#"{
+        "targetClass":"foundation:Payment",
+        "filters":[],
+        "orderBy":[{"propertyIri":"foundation:transactionDate","direction":"desc"}],
+        "limit":1
+    }"#;
+    let config = parse_query_config(json).unwrap();
+    assert_eq!(config.order_by.len(), 1);
+    assert_eq!(config.order_by[0].property_iri, "foundation:transactionDate");
+    assert_eq!(config.order_by[0].direction, "desc");
+    assert_eq!(config.limit, Some(1));
+}
+
+#[test]
+fn evaluate_query_respects_limit() {
+    let mut conn = setup_test_db();
+    setup_payment_schema(&mut conn);
+    let config = QueryConfig {
+        target_class: "foundation:Payment".to_string(),
+        filters: vec![],
+        order_by: vec![],
+        limit: Some(2),
+    };
+    let results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
+    assert_eq!(results.len(), 2, "limit=2 must truncate to 2 results, got {:?}", results);
+}
+
+#[test]
+fn evaluate_query_respects_order_by_desc() {
+    let mut conn = setup_test_db();
+    setup_payment_schema(&mut conn);
+    let config = QueryConfig {
+        target_class: "foundation:Payment".to_string(),
+        filters: vec![],
+        order_by: vec![QueryOrderBy {
+            property_iri: "foundation:transactionDate".to_string(),
+            direction: "desc".to_string(),
+        }],
+        limit: None,
+    };
+    let results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
+    // Payment_3 (Feb 5) > Payment_2 (Jan 20) > Payment_1 (Jan 15)
+    assert_eq!(results, vec![
+        "foundation:Payment_3".to_string(),
+        "foundation:Payment_2".to_string(),
+        "foundation:Payment_1".to_string(),
+    ]);
+}
+
+#[test]
+fn evaluate_query_respects_order_by_asc() {
+    let mut conn = setup_test_db();
+    setup_payment_schema(&mut conn);
+    let config = QueryConfig {
+        target_class: "foundation:Payment".to_string(),
+        filters: vec![],
+        order_by: vec![QueryOrderBy {
+            property_iri: "foundation:transactionDate".to_string(),
+            direction: "asc".to_string(),
+        }],
+        limit: None,
+    };
+    let results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
+    assert_eq!(results, vec![
+        "foundation:Payment_1".to_string(),
+        "foundation:Payment_2".to_string(),
+        "foundation:Payment_3".to_string(),
+    ]);
+}
+
+#[test]
+fn evaluate_query_combines_order_by_and_limit_for_top_n() {
+    // Bug_1777771566070: previousMonthBudget needed orderBy=desc + limit=1 to pick
+    // exactly one preceding budget. Without these, it returned all candidates.
+    let mut conn = setup_test_db();
+    setup_payment_schema(&mut conn);
+    let config = QueryConfig {
+        target_class: "foundation:Payment".to_string(),
+        filters: vec![],
+        order_by: vec![QueryOrderBy {
+            property_iri: "foundation:transactionDate".to_string(),
+            direction: "desc".to_string(),
+        }],
+        limit: Some(1),
+    };
+    let results = evaluate_query(&conn, "foundation:Budget_1", &config).unwrap();
+    assert_eq!(results, vec!["foundation:Payment_3".to_string()],
+        "must return only the most recent payment");
 }

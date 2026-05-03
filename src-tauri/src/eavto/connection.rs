@@ -239,13 +239,14 @@ fn drop_object_datetime_if_exists(conn: &Connection) -> Result<(), DbError> {
         CREATE INDEX IF NOT EXISTS idx_tx ON triples(tx);
 
         CREATE VIEW triples_current AS
-        SELECT DISTINCT
-            subject, predicate, object, object_value, object_datatype, object_language,
-            object_number, object_integer, object_boolean,
-            FIRST_VALUE(tx) OVER (PARTITION BY subject, predicate, origin_id ORDER BY tx DESC) as tx,
-            origin_id, object_type, created_at
-        FROM triples
-        WHERE retracted = 0;
+        SELECT subject, predicate, object, object_value, object_datatype, object_language,
+               object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
+        FROM triples t
+        WHERE t.retracted = 0
+          AND t.tx = (
+              SELECT MAX(tx) FROM triples
+              WHERE subject = t.subject AND predicate = t.predicate
+          );
 
         CREATE VIEW entities AS
         SELECT DISTINCT subject

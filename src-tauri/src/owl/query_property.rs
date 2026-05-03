@@ -6,6 +6,10 @@ use rusqlite::Connection;
 pub struct QueryConfig {
     pub target_class: String,
     pub filters: Vec<QueryFilter>,
+    #[serde(default)]
+    pub order_by: Vec<QueryOrderBy>,
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -16,6 +20,18 @@ pub struct QueryFilter {
     pub value: Option<String>,
     pub value_from: Option<String>,
     pub value_to: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryOrderBy {
+    pub property_iri: String,
+    #[serde(default = "default_order_direction")]
+    pub direction: String,
+}
+
+fn default_order_direction() -> String {
+    "asc".to_string()
 }
 
 pub fn parse_query_config(json: &str) -> Result<QueryConfig, String> {
@@ -39,7 +55,19 @@ pub fn validate_query_config(
         )));
     }
 
+    const VALID_OPERATORS: &[&str] = &[
+        "eq", "neq", "gt", "lt", "gte", "lte", "between", "exists", "not_exists",
+    ];
+
     for filter in &config.filters {
+        if !VALID_OPERATORS.contains(&filter.operator.as_str()) {
+            return Err(crate::owl::OwlError::ValidationError(format!(
+                "Operador de filtro inválido: '{}'. Operadores aceitos: {}",
+                filter.operator,
+                VALID_OPERATORS.join(", ")
+            )));
+        }
+
         if filter.operator == "exists" || filter.operator == "not_exists" {
             continue;
         }
@@ -52,6 +80,25 @@ pub fn validate_query_config(
         if !prop_exists {
             return Err(crate::owl::OwlError::ValidationError(format!(
                 "property_iri '{}' nos filtros não existe no grafo", filter.property_iri
+            )));
+        }
+    }
+
+    for ob in &config.order_by {
+        let dir = ob.direction.to_ascii_lowercase();
+        if dir != "asc" && dir != "desc" {
+            return Err(crate::owl::OwlError::ValidationError(format!(
+                "Direção inválida em orderBy: '{}'. Use 'asc' ou 'desc'", ob.direction
+            )));
+        }
+        let prop_exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM triples_current WHERE subject = ? AND predicate = 'rdf:type'",
+            rusqlite::params![ob.property_iri],
+            |row| row.get(0),
+        ).unwrap_or(false);
+        if !prop_exists {
+            return Err(crate::owl::OwlError::ValidationError(format!(
+                "property_iri '{}' em orderBy não existe no grafo", ob.property_iri
             )));
         }
     }
@@ -184,6 +231,25 @@ pub fn evaluate_query(
                 params.push(resolved);
             }
         }
+    }
+
+    if !config.order_by.is_empty() {
+        sql.push_str(" ORDER BY ");
+        let mut parts: Vec<String> = Vec::with_capacity(config.order_by.len());
+        for ob in &config.order_by {
+            let dir = if ob.direction.eq_ignore_ascii_case("desc") { "DESC" } else { "ASC" };
+            params.push(ob.property_iri.clone());
+            parts.push(format!(
+                "(SELECT COALESCE(f.object, f.object_value) FROM triples_current f \
+                 WHERE f.subject = tc.subject AND f.predicate = ? LIMIT 1) {}",
+                dir
+            ));
+        }
+        sql.push_str(&parts.join(", "));
+    }
+
+    if let Some(limit) = config.limit {
+        sql.push_str(&format!(" LIMIT {}", limit));
     }
 
     let mut stmt = conn.prepare(&sql)
