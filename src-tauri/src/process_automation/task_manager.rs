@@ -20,6 +20,20 @@ const DEFAULT_TIMEOUT_SECS: u64 = 180;
 
 const STATUS_IN_PROGRESS: &str = "foundation:InProgress";
 const STATUS_COMPLETED: &str = "foundation:Completed";
+const STATUS_REJECTED: &str = "foundation:Rejected";
+
+/// Returns true if an execute_task failure is a configuration problem that
+/// won't resolve on retry — API key missing, agent not wired up, model not
+/// configured, etc. The task should be marked Rejected so the recovery loop
+/// stops re-running it on every startup.
+fn is_config_error(err: &str) -> bool {
+    err.contains("API key not configured")
+        || err.contains("API key has no value")
+        || err.contains("has no usesService")
+        || err.contains("has no usesModel")
+        || err.contains("has no modelIdentifier")
+        || err.contains("has no assignee")
+}
 
 pub struct TaskExecutionState {
     running: Mutex<HashSet<String>>,
@@ -85,6 +99,41 @@ fn maybe_execute_task_for_entity(app: AppHandle, entity_id: String) {
                 crate::commands::log_backend("error", &format!(
                     "[task_manager] execute_task failed for {}: {}", task_iri, e
                 ));
+
+                // Permanent config errors (API key missing, agent not wired up)
+                // would be retried forever otherwise: every startup the
+                // task_scheduler resets InProgress→Pending and re-fires the
+                // timer. Mark the task Rejected so the cycle stops; the user
+                // can re-trigger manually after fixing config.
+                if is_config_error(&e) {
+                    if let Some(executor) = app2.try_state::<DbExecutor>() {
+                        let task_for_write = task_iri.clone();
+                        let err_for_write = e.clone();
+                        let result_write = executor.write(move |conn| -> Result<String> {
+                            set_status(conn, &task_for_write, STATUS_REJECTED)?;
+                            Individual::new(&task_for_write)
+                                .add_property(
+                                    conn,
+                                    "foundation:result",
+                                    vec![crate::owl::Object::Literal {
+                                        value: format!("Task automatically rejected (config error): {}", err_for_write),
+                                        datatype: Some("xsd:string".to_string()),
+                                        language: None,
+                                    }],
+                                    "task_manager",
+                                )
+                                .map_err(|e| e.to_string())?;
+                            Ok(String::new())
+                        }).await;
+                        if let Err(set_err) = result_write {
+                            crate::commands::log_backend("error", &format!(
+                                "[task_manager] failed to mark {} as Rejected: {}", task_iri, set_err,
+                            ));
+                        } else {
+                            app2.emit("entity-updated", serde_json::json!({ "entityId": task_iri })).ok();
+                        }
+                    }
+                }
             }
             if let Some(state) = app2.try_state::<TaskExecutionState>() {
                 let mut running = state.running.lock().unwrap_or_else(|e| e.into_inner());

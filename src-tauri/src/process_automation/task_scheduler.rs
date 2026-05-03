@@ -52,12 +52,17 @@ fn collect_scheduled_tasks(conn: &rusqlite::Connection) -> Result<Vec<(String, S
             continue;
         }
 
-        // Skip tasks whose status descends from Completed or InProgress
+        // Skip tasks whose status descends from a terminal-or-active state.
+        // Rejected/Cancelled/Completed are terminal — re-scheduling them would
+        // create a loop with task_manager (which marks failed tasks Rejected;
+        // without this skip, the next reload re-fires the timer, the task
+        // moves to InProgress, fails again, gets re-Rejected, ...).
         let status = get_iri_property(conn, &task_iri, "foundation:hasStatus")
             .map_err(|e| e.to_string())?;
         if let Some(ref s) = status {
             if is_status_descendant_of(conn, s, "foundation:Completed")
-                || is_status_descendant_of(conn, s, "foundation:InProgress") {
+                || is_status_descendant_of(conn, s, "foundation:InProgress")
+                || is_status_descendant_of(conn, s, "foundation:Rejected") {
                 continue;
             }
         }
