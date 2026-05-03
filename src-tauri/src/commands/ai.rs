@@ -75,6 +75,26 @@ pub async fn ai__save_api_key(
 
 #[tauri::command]
 #[allow(non_snake_case)]
+pub async fn ai__delete_api_key(
+    service_iri: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    executor.write(move |conn| {
+        if let Ok(Some(old_key_iri)) = owl::get_iri_property(conn, &service_iri, "foundation:apiKey") {
+            Individual::retract(conn, &old_key_iri, "ai")
+                .map_err(|e| format!("Failed to retract credential: {}", e))?;
+        }
+        Individual::clear_property(conn, &service_iri, "foundation:apiKey", "ai")
+            .map_err(|e| format!("Failed to clear apiKey link: {}", e))?;
+        Ok(String::new())
+    }).await?;
+
+    super::log_backend("info", "API key deleted");
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
 pub async fn ai__get_api_key(
     service_iri: Option<String>,
     executor: State<'_, DbExecutor>,

@@ -166,6 +166,7 @@ pub fn run() {
             commands::clear_logs,
             commands::ai__save_api_key,
             commands::ai__get_api_key,
+            commands::ai__delete_api_key,
             commands::ai__initialize,
             commands::chat__attach_file,
             commands::chat__get_recent_messages,
@@ -217,7 +218,8 @@ pub fn run() {
             commands::settings__is_folder_configured,
             commands::settings__get_foundation_dir,
             commands::settings__save_foundation_dir,
-            commands::settings__set_foundation_dir
+            commands::settings__set_foundation_dir,
+            commands::settings__connect_claude_desktop
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

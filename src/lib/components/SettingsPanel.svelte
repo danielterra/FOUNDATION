@@ -6,25 +6,39 @@
 
 	let { onClose } = $props();
 
-	// --- API Key ---
-	let apiKey = $state('');
-	let apiKeyLoading = $state(false);
-	let apiKeySaving = $state(false);
-	let apiKeyMessage = $state('');
-	let apiKeyError = $state(false);
-
-	// --- Model Selection ---
+	// --- AI Configuration (Provedor + Chave de API + Modelo) ---
 	let services = $state([]);
 	let models = $state([]);
 	let selectedServiceIri = $state('');
 	let selectedModelIri = $state('');
+	let apiKey = $state('');
+	let apiKeyLoading = $state(false);
+	let apiKeyDeleting = $state(false);
+
+	let loadedServiceIri = $state('');
+	let loadedModelIri = $state('');
+	let loadedApiKey = $state('');
+
+	let aiSaving = $state(false);
+	let aiMessage = $state('');
+	let aiError = $state(false);
+
 	let selectedServiceIsLocal = $derived(
 		services.find(s => s.iri === selectedServiceIri)?.isLocal ?? false
 	);
 	let currentModelLabel = $state('');
-	let modelSaving = $state(false);
-	let modelMessage = $state('');
-	let modelError = $state(false);
+
+	let aiDirty = $derived(
+		selectedServiceIri !== loadedServiceIri
+		|| selectedModelIri !== loadedModelIri
+		|| (!selectedServiceIsLocal && apiKey !== loadedApiKey)
+	);
+	let aiCanSave = $derived(
+		!!selectedServiceIri
+		&& !!selectedModelIri
+		&& (selectedServiceIsLocal || apiKey.trim().length > 0)
+		&& aiDirty
+	);
 
 	// --- Local Model ---
 	let localModelExists = $state(false);
@@ -42,6 +56,11 @@
 	let logClearing = $state(false);
 	let logMessage = $state('');
 	let logError = $state(false);
+
+	// --- Claude Desktop ---
+	let claudeConnecting = $state(false);
+	let claudeMessage = $state('');
+	let claudeError = $state(false);
 
 	// --- Analytics ---
 	let analyticsEnabled = $state(false);
@@ -204,15 +223,39 @@
 	}
 
 	async function loadApiKeyForService(serviceIri) {
-		if (!serviceIri) return;
+		if (!serviceIri) {
+			apiKey = '';
+			loadedApiKey = '';
+			return;
+		}
 		apiKeyLoading = true;
 		try {
 			const key = await invoke('ai__get_api_key', { serviceIri });
 			apiKey = key ?? '';
+			loadedApiKey = apiKey;
 		} catch {
-			// leave blank on error
+			apiKey = '';
+			loadedApiKey = '';
 		} finally {
 			apiKeyLoading = false;
+		}
+	}
+
+	async function deleteApiKey() {
+		if (!selectedServiceIri || selectedServiceIsLocal) return;
+		apiKeyDeleting = true;
+		aiMessage = '';
+		aiError = false;
+		try {
+			await invoke('ai__delete_api_key', { serviceIri: selectedServiceIri });
+			apiKey = '';
+			loadedApiKey = '';
+			aiMessage = 'Chave de API removida.';
+		} catch (e) {
+			aiMessage = String(e);
+			aiError = true;
+		} finally {
+			apiKeyDeleting = false;
 		}
 	}
 
@@ -227,11 +270,14 @@
 			if (current) {
 				currentModelLabel = current.label;
 				selectedModelIri = current.iri;
+				loadedModelIri = current.iri;
 			}
 			if (currentSvc) {
 				selectedServiceIri = currentSvc.iri;
+				loadedServiceIri = currentSvc.iri;
 			} else if (services.length > 0) {
 				selectedServiceIri = services[0].iri;
+				loadedServiceIri = '';
 			}
 			if (selectedServiceIri) {
 				await loadModels(selectedServiceIri);
@@ -252,42 +298,37 @@
 	async function onServiceChange(e) {
 		selectedServiceIri = e.target.value;
 		selectedModelIri = '';
+		aiMessage = '';
+		aiError = false;
 		await Promise.all([loadModels(selectedServiceIri), loadApiKeyForService(selectedServiceIri)]);
 	}
 
-	async function saveApiKey() {
-		apiKeySaving = true;
-		apiKeyMessage = '';
-		apiKeyError = false;
+	async function saveAiConfig() {
+		if (!aiCanSave) return;
+		aiSaving = true;
+		aiMessage = '';
+		aiError = false;
 		try {
-			await invoke('ai__save_api_key', { apiKey, serviceIri: selectedServiceIri });
-			apiKeyMessage = 'API key saved.';
-		} catch (e) {
-			apiKeyMessage = String(e);
-			apiKeyError = true;
-		} finally {
-			apiKeySaving = false;
-		}
-	}
-
-	async function saveModel() {
-		if (!selectedModelIri) return;
-		modelSaving = true;
-		modelMessage = '';
-		modelError = false;
-		try {
-			await Promise.all([
-				invoke('setup__save_ai_model', { modelIri: selectedModelIri }),
-				invoke('setup__save_ai_service', { serviceIri: selectedServiceIri }),
-			]);
+			if (!selectedServiceIsLocal && apiKey !== loadedApiKey) {
+				await invoke('ai__save_api_key', { apiKey, serviceIri: selectedServiceIri });
+				loadedApiKey = apiKey;
+			}
+			if (selectedServiceIri !== loadedServiceIri) {
+				await invoke('setup__save_ai_service', { serviceIri: selectedServiceIri });
+				loadedServiceIri = selectedServiceIri;
+			}
+			if (selectedModelIri !== loadedModelIri) {
+				await invoke('setup__save_ai_model', { modelIri: selectedModelIri });
+				loadedModelIri = selectedModelIri;
+			}
 			const selected = models.find(m => m.iri === selectedModelIri);
 			currentModelLabel = selected?.label ?? '';
-			modelMessage = 'Saved.';
+			aiMessage = 'Configuração salva.';
 		} catch (e) {
-			modelMessage = String(e);
-			modelError = true;
+			aiMessage = String(e);
+			aiError = true;
 		} finally {
-			modelSaving = false;
+			aiSaving = false;
 		}
 	}
 
@@ -473,6 +514,23 @@
 		}
 	}
 
+	let claudeFilePath = $state('');
+
+	async function connectClaudeDesktop() {
+		claudeConnecting = true;
+		claudeMessage = '';
+		claudeFilePath = '';
+		claudeError = false;
+		try {
+			claudeFilePath = await invoke('settings__connect_claude_desktop');
+		} catch (e) {
+			claudeMessage = String(e);
+			claudeError = true;
+		} finally {
+			claudeConnecting = false;
+		}
+	}
+
 	function handleBackdropClick(e) {
 		if (e.target === e.currentTarget) onClose?.();
 	}
@@ -506,26 +564,6 @@
 							{/each}
 						</select>
 					</div>
-					{#if models.length > 0}
-						<label class="field-label">Modelo</label>
-						<div class="field-row">
-							<select class="select-input" bind:value={selectedModelIri}>
-								<option value="">Select a model…</option>
-								{#each models as model}
-									<option value={model.iri}>{model.label}</option>
-								{/each}
-							</select>
-							<Button onclick={saveModel} disabled={modelSaving || !selectedModelIri || (!selectedServiceIsLocal && !apiKey.trim())}>
-								{modelSaving ? 'Saving…' : 'Save'}
-							</Button>
-						</div>
-						{#if !selectedServiceIsLocal && !apiKey.trim()}
-							<p class="feedback error">Configure a chave de API abaixo antes de ativar este provedor.</p>
-						{/if}
-					{/if}
-					{#if modelMessage}
-						<p class="feedback" class:error={modelError}>{modelMessage}</p>
-					{/if}
 
 					{#if !selectedServiceIsLocal}
 						<label class="field-label">Chave de API</label>
@@ -539,14 +577,40 @@
 									placeholder="sk-ant-…"
 									bind:value={apiKey}
 								/>
-								<Button onclick={saveApiKey} disabled={apiKeySaving || !apiKey}>
-									{apiKeySaving ? 'Saving…' : 'Save'}
-								</Button>
+								<Button
+									variant="danger"
+									icon="delete"
+									title="Remover chave de API"
+									onclick={deleteApiKey}
+									disabled={apiKeyDeleting || !loadedApiKey}
+								/>
 							</div>
-							{#if apiKeyMessage}
-								<p class="feedback" class:error={apiKeyError}>{apiKeyMessage}</p>
-							{/if}
 						{/if}
+					{/if}
+
+					{#if models.length > 0}
+						<label class="field-label">Modelo padrão</label>
+						<div class="field-row">
+							<select class="select-input" bind:value={selectedModelIri}>
+								<option value="">Selecione um modelo…</option>
+								{#each models as model}
+									<option value={model.iri}>{model.label}</option>
+								{/each}
+							</select>
+						</div>
+						{#if !selectedServiceIsLocal && !apiKey.trim()}
+							<p class="feedback error">Informe a chave de API antes de ativar este provedor.</p>
+						{/if}
+					{/if}
+
+					<div class="field-row">
+						<Button onclick={saveAiConfig} disabled={aiSaving || !aiCanSave}>
+							{aiSaving ? 'Salvando…' : 'Salvar'}
+						</Button>
+					</div>
+
+					{#if aiMessage}
+						<p class="feedback" class:error={aiError}>{aiMessage}</p>
 					{/if}
 				{:else}
 					<p class="hint">No AI services found.</p>
@@ -758,6 +822,35 @@
 
 			<section class="settings-section">
 				<h3 class="section-title">
+					<span class="material-symbols-outlined">extension</span>
+					Claude Desktop
+				</h3>
+				<p class="hint">Instala uma extensão no Claude Desktop que expõe as ferramentas do Foundation. O app Foundation precisa estar aberto para a extensão funcionar.</p>
+				<div class="field-row">
+					<Button icon="download" onclick={connectClaudeDesktop} disabled={claudeConnecting}>
+						{claudeConnecting ? 'Preparando…' : 'Preparar instalador'}
+					</Button>
+				</div>
+				{#if claudeFilePath}
+					<div class="claude-instructions">
+						<p class="hint"><strong>Arquivo pronto em</strong></p>
+						<p class="log-path">{claudeFilePath}</p>
+						<p class="hint" style="margin-top:8px"><strong>Para instalar:</strong></p>
+						<ol class="claude-steps">
+							<li>Abra o Claude Desktop.</li>
+							<li>Vá em <em>Configurações → Extensões</em>.</li>
+							<li>Arraste o arquivo <code>foundation.mcpb</code> da janela do Explorer para dentro da janela de Extensões.</li>
+							<li>Siga as instruções do diálogo de instalação. As ferramentas do Foundation aparecem em seguida.</li>
+						</ol>
+					</div>
+				{/if}
+				{#if claudeMessage}
+					<p class="feedback" class:error={claudeError}>{claudeMessage}</p>
+				{/if}
+			</section>
+
+			<section class="settings-section">
+				<h3 class="section-title">
 					<span class="material-symbols-outlined">shield</span>
 					Privacidade
 				</h3>
@@ -825,9 +918,9 @@
 	.panel {
 		background: var(--color-surface-1);
 		border-radius: var(--radius-lg);
-		width: 420px;
+		width: 920px;
 		max-width: 95vw;
-		max-height: 85vh;
+		max-height: 90vh;
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
@@ -850,9 +943,16 @@
 	.panel-body {
 		overflow-y: auto;
 		padding: 18px;
-		display: flex;
-		flex-direction: column;
-		gap: 24px;
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 24px 28px;
+		align-content: start;
+	}
+
+	@media (max-width: 760px) {
+		.panel-body {
+			grid-template-columns: 1fr;
+		}
 	}
 
 	.settings-section {
@@ -1080,6 +1180,35 @@
 
 	.folder-label {
 		font-size: 12px;
+	}
+
+	.claude-instructions {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 10px 12px;
+		background: var(--color-surface-2);
+		border-radius: var(--radius-sm);
+	}
+
+	.claude-steps {
+		margin: 4px 0 0;
+		padding-left: 20px;
+		font-size: 12px;
+		color: var(--color-neutral, #888);
+		line-height: 1.6;
+	}
+
+	.claude-steps em {
+		font-style: normal;
+		color: var(--color-neutral-active, #e0e0e0);
+	}
+
+	.claude-steps code {
+		font-family: monospace;
+		background: var(--color-surface-3);
+		padding: 0 4px;
+		border-radius: 3px;
 	}
 
 	.analytics-toggle {

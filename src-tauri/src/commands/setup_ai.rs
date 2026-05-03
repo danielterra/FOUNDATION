@@ -23,7 +23,7 @@ pub async fn setup__list_ai_services(
                     .unwrap_or_default();
 
                 let is_local = !service_ind.properties.iter()
-                    .any(|(k, _)| k == "foundation:apiKey");
+                    .any(|(k, _)| k == "foundation:apiBaseUrl");
 
                 result.push(serde_json::json!({
                     "iri": service_iri,
@@ -156,7 +156,7 @@ pub async fn setup__get_active_model_info(
             .unwrap_or_else(|| model_iri.clone());
 
         let is_local = service_ind.map(|i| {
-            !i.properties.iter().any(|(k, _)| k == "foundation:apiKey")
+            !i.properties.iter().any(|(k, _)| k == "foundation:apiBaseUrl")
         }).unwrap_or(false);
 
         Ok(serde_json::json!({
@@ -180,7 +180,7 @@ pub async fn setup__get_current_ai_service(
 
         if let Ok(Some(service_ind)) = Individual::get(conn, &service_iri) {
             let is_local = !service_ind.properties.iter()
-                .any(|(k, _)| k == "foundation:apiKey");
+                .any(|(k, _)| k == "foundation:apiBaseUrl");
             Ok(Some(serde_json::json!({
                 "iri": service_iri,
                 "label": service_ind.label,

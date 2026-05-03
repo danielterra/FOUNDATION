@@ -22,6 +22,9 @@ Cargo.lock
 *.gguf
 src-tauri/resources/models/*.gguf
 
+# Generated MCPB bundle (built by scripts/build-mcpb)
+src-tauri/resources/foundation.mcpb
+
 # Backup files
 *.backup
 
