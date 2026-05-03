@@ -6,7 +6,10 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
-use crate::ai::functions::{ToolCall, ToolResult, execute_tool, get_available_tools};
+use crate::ai::functions::{
+    ToolCall, ToolResult, execute_read_only_tool, execute_tool, get_available_tools,
+    is_read_only_tool,
+};
 use crate::eavto::DbExecutor;
 
 const PORT_HTTPS: u16 = 47177;
@@ -161,14 +164,28 @@ async fn handle_mcp(
             let app = (*state.app).clone();
             let call = ToolCall { name, arguments: req["params"]["arguments"].clone() };
 
-            let result_json = match executor.write(move |conn| -> Result<String, String> {
-                let result = execute_tool(conn, &call, Some(&app), None);
-                serde_json::to_string(&result).map_err(|e| e.to_string())
-            }).await {
-                Ok(json) => json,
-                Err(e) => return Json(
-                    error_response(id, JSONRPC_INTERNAL_ERROR, &e),
-                ).into_response(),
+            // Route read-only tools through the read pool so they don't queue
+            // behind long-running writes. SQLite WAL allows concurrent reads.
+            let result_json = if is_read_only_tool(&call.name) {
+                match executor.read(move |conn| -> Result<String, String> {
+                    let result = execute_read_only_tool(conn, &call);
+                    serde_json::to_string(&result).map_err(|e| e.to_string())
+                }).await {
+                    Ok(json) => json,
+                    Err(e) => return Json(
+                        error_response(id, JSONRPC_INTERNAL_ERROR, &e),
+                    ).into_response(),
+                }
+            } else {
+                match executor.write(move |conn| -> Result<String, String> {
+                    let result = execute_tool(conn, &call, Some(&app), None);
+                    serde_json::to_string(&result).map_err(|e| e.to_string())
+                }).await {
+                    Ok(json) => json,
+                    Err(e) => return Json(
+                        error_response(id, JSONRPC_INTERNAL_ERROR, &e),
+                    ).into_response(),
+                }
             };
 
             let func_result: ToolResult = match serde_json::from_str(&result_json) {

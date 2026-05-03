@@ -139,9 +139,37 @@ fn initialize_db_with_progress(
     run_migrations(&conn)?;
     log_backend("info", &format!("[STARTUP] migrations={}ms", t_startup.elapsed().as_millis()));
 
-    let search_dir = db_path.parent()
-        .map(|p| p.join("search"))
+    // The Tantivy index lives in OS-local app data (never synced to iCloud /
+    // OneDrive / Dropbox). Cloud sync of the index is harmful: it has hundreds
+    // of small files that change on every indexing batch, churning sync events,
+    // and the index is fully regenerable from the SQLite DB. Backup is unwanted
+    // and unnecessary.
+    //
+    // - macOS:   ~/Library/Application Support/org.w3id.foundation/search
+    // - Linux:   ~/.local/share/org.w3id.foundation/search
+    // - Windows: %LOCALAPPDATA%\org.w3id.foundation\search
+    let search_dir = dirs::data_local_dir()
+        .map(|p| p.join("org.w3id.foundation").join("search"))
         .unwrap_or_else(|| std::path::PathBuf::from("search"));
+    if let Err(e) = std::fs::create_dir_all(&search_dir) {
+        log_backend("warn", &format!("[SEARCH] Failed to create app-data search dir {:?}: {}", search_dir, e));
+    }
+
+    // One-time migration: if a stale index exists next to the DB (legacy layout,
+    // typically inside iCloudDrive on Windows), drop it. The new index will be
+    // built from scratch in the local app-data location.
+    if let Some(legacy_dir) = db_path.parent().map(|p| p.join("search")) {
+        if legacy_dir.exists() && legacy_dir != search_dir {
+            log_backend("info", &format!(
+                "[SEARCH] Removing legacy index next to DB: {:?} (will rebuild in app-data)",
+                legacy_dir,
+            ));
+            if let Err(e) = std::fs::remove_dir_all(&legacy_dir) {
+                log_backend("warn", &format!("[SEARCH] Could not remove legacy index: {}", e));
+            }
+        }
+    }
+
     let search_db_path = db_path.to_path_buf();
     std::thread::spawn(move || {
         let t = std::time::Instant::now();

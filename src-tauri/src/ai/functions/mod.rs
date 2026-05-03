@@ -131,6 +131,66 @@ pub fn find_automations_for_types(conn: &Connection, type_iris: &[String]) -> Ve
     results
 }
 
+/// Returns true if the tool name is read-only (no writes, ok to dispatch via the
+/// read pool). MCP and other callers can route these to `executor.read()` so they
+/// don't queue behind long-running writes — SQLite WAL allows concurrent reads.
+pub fn is_read_only_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "search"
+            | "describe_class"
+            | "describe_individual"
+            | "describe_property"
+            | "class_graph"
+            | "read_binary_file"
+            | "head_text_file"
+            | "read_text_lines"
+            | "get_automation"
+    )
+}
+
+/// Execute a read-only tool. Caller must guarantee `call.name` is in the
+/// read-only set (use `is_read_only_tool`). Uses `&Connection` so it can run
+/// on the read pool concurrently with writes.
+///
+/// Note: `describe_individual` may incidentally INSERT into `entity_access_count`
+/// via `track_access`, but that's a benign single-row write that doesn't acquire
+/// long locks under WAL — it's fine to issue from a read-pool connection.
+pub fn execute_read_only_tool(
+    conn: &Connection,
+    call: &ToolCall,
+) -> ToolResult {
+    let is_array_mode = get_available_tools()
+        .iter()
+        .any(|t| t.name == call.name && t.array_mode);
+    let args = if is_array_mode {
+        &call.arguments["operations"]
+    } else {
+        &call.arguments
+    };
+
+    match call.name.as_str() {
+        "search" => individual::search(conn, args),
+        "describe_class" => class::describe_class(conn, args),
+        "describe_individual" => individual::describe_individual(conn, args),
+        "describe_property" => property::describe_property(conn, args),
+        "class_graph" => class_graph::get_class_graph(conn, args),
+        "read_binary_file" => file::read_binary_file(conn, args, None),
+        "head_text_file" => file::head_text_file(conn, args),
+        "read_text_lines" => file::read_text_lines(conn, args),
+        "get_automation" => get_automation_tool(conn, args),
+        _ => ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!(
+                "execute_read_only_tool called with non-read tool: {} (use execute_tool instead)",
+                call.name,
+            )),
+            concept: None,
+        },
+    }
+}
+
 pub fn execute_tool(
     conn: &mut Connection,
     call: &ToolCall,
@@ -405,28 +465,28 @@ fn find_most_recent_conversation_iri(conn: &Connection) -> Option<String> {
     ).ok()
 }
 
-fn resolve_conversation_iri(
-    conn: &Connection,
+fn resolve_blackboard_iri_for_tool(
+    conn: &mut Connection,
     args: &Value,
     conversation_id: Option<&str>,
 ) -> Result<String, String> {
-    if let Some(c) = args["conversation_iri"].as_str().filter(|s| !s.is_empty()) {
-        return Ok(c.to_string());
+    if let Some(b) = args["blackboard_iri"].as_str().filter(|s| !s.is_empty()) {
+        return Ok(b.to_string());
     }
-    if let Some(c) = conversation_id {
-        return Ok(c.to_string());
-    }
-    find_most_recent_conversation_iri(conn)
-        .ok_or_else(|| "No conversations exist; conversation_iri could not be inferred".to_string())
+    let conv = args["conversation_iri"].as_str().filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| conversation_id.map(String::from))
+        .or_else(|| find_most_recent_conversation_iri(conn));
+    crate::commands::widget::resolve_blackboard_iri(conn, conv.as_deref())
 }
 
 fn list_blackboard_widgets_tool(
-    conn: &Connection,
+    conn: &mut Connection,
     args: &Value,
     conversation_id: Option<&str>,
 ) -> ToolResult {
-    let conv_iri = match resolve_conversation_iri(conn, args, conversation_id) {
-        Ok(c) => c,
+    let bb_iri = match resolve_blackboard_iri_for_tool(conn, args, conversation_id) {
+        Ok(b) => b,
         Err(e) => return ToolResult {
             success: false,
             result: None,
@@ -434,9 +494,8 @@ fn list_blackboard_widgets_tool(
             concept: None,
         },
     };
-    let conv_iri = conv_iri.as_str();
 
-    let widgets = match crate::commands::widget::owl_get_widgets_for_conversation(conn, conv_iri) {
+    let widgets = match crate::commands::widget::owl_get_widgets_for_blackboard(conn, &bb_iri) {
         Ok(w) => w,
         Err(e) => return ToolResult {
             success: false,
@@ -468,7 +527,7 @@ fn add_widget_to_blackboard_tool(
     app: Option<&tauri::AppHandle>,
     conversation_id: Option<&str>,
 ) -> ToolResult {
-    use crate::commands::widget::{Widget, Position, WindowState, owl_insert_widget, owl_get_widgets_for_conversation, resolve_widget_type, blackboard__list_widget_types};
+    use crate::commands::widget::{Widget, Position, WindowState, owl_insert_widget, owl_get_widgets_for_blackboard, resolve_widget_type, blackboard__list_widget_types};
     use tauri::Emitter;
 
     let entity_iri = match args["entity_iri"].as_str().filter(|s| !s.is_empty()) {
@@ -481,8 +540,8 @@ fn add_widget_to_blackboard_tool(
         },
     };
 
-    let conv_iri = match resolve_conversation_iri(conn, args, conversation_id) {
-        Ok(c) => c,
+    let bb_iri = match resolve_blackboard_iri_for_tool(conn, args, conversation_id) {
+        Ok(b) => b,
         Err(e) => return ToolResult {
             success: false,
             result: None,
@@ -493,8 +552,8 @@ fn add_widget_to_blackboard_tool(
 
     let requested_type = args["widget_type"].as_str().unwrap_or("").to_string();
 
-    // Check for existing widget for same entity in this conversation
-    match owl_get_widgets_for_conversation(conn, &conv_iri) {
+    // Check for existing widget for same entity on this blackboard
+    match owl_get_widgets_for_blackboard(conn, &bb_iri) {
         Ok(existing) => {
             if let Some(w) = existing.into_iter().find(|w| w.entity_id == entity_iri) {
                 return ToolResult {
@@ -515,7 +574,6 @@ fn add_widget_to_blackboard_tool(
 
     let widget_type = resolve_widget_type(conn, &entity_iri, &requested_type);
 
-    // Validate widget_type against available types
     let valid_types = blackboard__list_widget_types(conn);
     let default_size = match valid_types.into_iter().find(|t| t.id == widget_type) {
         Some(t) => t.default_size,
@@ -528,15 +586,15 @@ fn add_widget_to_blackboard_tool(
     };
 
     let sanitized_entity = entity_iri.replace([':', '/', '#', ' '], "_");
-    let sanitized_conv = conv_iri.replace([':', '/', '#', ' '], "_");
+    let sanitized_bb = bb_iri.replace([':', '/', '#', ' '], "_");
     let widget = Widget {
-        id: format!("foundation:Widget_{widget_type}_{sanitized_entity}_{sanitized_conv}"),
+        id: format!("foundation:Widget_{widget_type}_{sanitized_entity}_{sanitized_bb}"),
         widget_type: widget_type.clone(),
         entity_id: entity_iri.clone(),
         position: Position { x: 100.0, y: 100.0 },
         size: default_size,
         window_state: WindowState::Normal,
-        conversation_iri: Some(conv_iri),
+        blackboard_iri: bb_iri,
     };
 
     if let Err(e) = owl_insert_widget(conn, &widget) {
