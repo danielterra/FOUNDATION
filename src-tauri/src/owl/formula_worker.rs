@@ -473,23 +473,25 @@ pub fn create_reverse_aggregation_recalc_jobs(
     let now = now_millis();
     let mut job_ids = Vec::new();
 
-    let instance_type: Option<String> = conn.query_row(
-        "SELECT object FROM triples \
-         WHERE subject = ? AND predicate = 'rdf:type' AND retracted = 0 \
-         ORDER BY tx DESC LIMIT 1",
-        rusqlite::params![changed_instance_iri],
-        |row| row.get(0),
-    ).ok();
-
     for (agg_prop_iri, source_prop_iri) in agg_props {
-        // Detect direction: if source_prop domain matches the changed instance's type,
-        // the property goes FROM changed_instance TO parent (e.g. Payment.settles → Obligation).
-        // Otherwise it goes FROM parent TO changed_instance (e.g. Project.hasTasks → Task).
+        // Determine traversal direction from the formula's OWNER class, not the changed
+        // instance type. When source_prop has the same class on both sides (e.g.
+        // previousMonthBudget: MonthlyBudget→MonthlyBudget), comparing domain to the
+        // instance type is ambiguous and picks the wrong direction.
+        //
+        // - If the aggregation owner sits at source_prop.domain, the formula walks
+        //   Owner --source_prop--> Target (forward). The changed instance is the Target,
+        //   so we find Owners by reverse lookup (WHERE object = changed_instance).
+        // - Otherwise the formula uses inverse navigation (Target --source_prop--> Owner,
+        //   e.g. Obligation aggregating SOMA({{settles}}.amount) where Payment.settles
+        //   points TO Obligation). The changed instance is the source, so we find Owners
+        //   by forward lookup (WHERE subject = changed_instance).
         let source_domain = fetch_domain(conn, &source_prop_iri);
-        let prop_from_instance = instance_type
-            .as_deref()
-            .map(|t| !source_domain.is_empty() && t == source_domain.as_str())
-            .unwrap_or(false);
+        let agg_owner_class = fetch_domain(conn, &agg_prop_iri);
+        let owner_at_source_domain = !source_domain.is_empty()
+            && !agg_owner_class.is_empty()
+            && agg_owner_class == source_domain;
+        let prop_from_instance = !owner_at_source_domain;
 
         let parent_iris: Vec<String> = if prop_from_instance {
             conn.prepare(

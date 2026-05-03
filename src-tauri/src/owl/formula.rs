@@ -158,7 +158,11 @@ pub fn evaluate_formula_for_instance_raw(
         match resolve_ref_value(conn, instance_iri, ref_iri) {
             Some(v) => {
                 let placeholder = format!("{{{{{}}}}}", ref_iri);
-                expr = expr.replace(&placeholder, &v);
+                // Wrap in parentheses so negative values don't produce invalid infix
+                // unary minus expressions (e.g. `a + -3` — eval_expr explicitly does not
+                // support infix unary minus and would fail).
+                let safe_value = format!("({})", v);
+                expr = expr.replace(&placeholder, &safe_value);
             }
             None => {
                 return Err(format!(
@@ -838,6 +842,23 @@ mod tests {
         insert_formula(&conn, tx, "p:const", "42");
         let result = evaluate_formula_for_instance_raw(&conn, "inst:any", "p:const").unwrap();
         assert_eq!(result, "42");
+    }
+
+    #[test]
+    fn test_evaluate_formula_with_negative_substituted_value() {
+        // Regression: closingBalance = openingBalance + actualMargin
+        // When actualMargin is negative (e.g. -29055.86), substitution produced
+        // "20499.96 + -29055.86" which eval_expr rejects (no infix unary minus).
+        // Substitution must wrap values in parentheses so the resulting expression
+        // is parseable for any sign.
+        let conn = setup_test_db();
+        let tx = insert_tx(&conn);
+        insert_formula(&conn, tx, "p:closing", "{{p:opening}} + {{p:margin}}");
+        insert_value(&conn, tx, "inst:budget", "p:opening", "20499.96");
+        insert_value(&conn, tx, "inst:budget", "p:margin", "-29055.86");
+        let result = evaluate_formula_for_instance_raw(&conn, "inst:budget", "p:closing").unwrap();
+        let parsed: f64 = result.parse().expect("must parse as f64");
+        assert!((parsed - (-8555.90)).abs() < 1e-2, "expected ~-8555.90, got {}", result);
     }
 
     // ── topological_sort_properties ───────────────────────────────────────────
