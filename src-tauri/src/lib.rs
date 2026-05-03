@@ -10,6 +10,7 @@ pub mod search;
 pub mod process_automation;
 pub mod imap;
 pub mod config;
+pub mod paths;
 
 #[derive(serde::Serialize)]
 pub struct TripleData {

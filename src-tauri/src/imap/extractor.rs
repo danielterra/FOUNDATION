@@ -104,10 +104,7 @@ fn persist_attachment(
     att: &ParsedAttachment,
     index: usize,
 ) -> Result<String, String> {
-    let attachments_dir = dirs::document_dir()
-        .ok_or_else(|| "no documents directory".to_string())?
-        .join("Foundation")
-        .join("attachments");
+    let attachments_dir = crate::paths::attachments_dir();
     std::fs::create_dir_all(&attachments_dir)
         .map_err(|e| format!("create dir: {}", e))?;
 
@@ -116,7 +113,9 @@ fn persist_attachment(
     let target_path = attachments_dir.join(format!("{}_{}", ts, safe_name));
     std::fs::write(&target_path, &att.content)
         .map_err(|e| format!("write file: {}", e))?;
-    let target_path_str = target_path.to_string_lossy().into_owned();
+    // Stored as a portable path (e.g. "attachments/123_file.pdf") so the DB
+    // can move between machines without breaking attachment references.
+    let stored_path = crate::paths::to_portable_path(&target_path);
 
     let hash = format!("sha256:{:x}", Sha256::digest(&att.content));
     let size = att.content.len() as i64;
@@ -134,7 +133,7 @@ fn persist_attachment(
     att_ind.add_property(conn, "foundation:fileName", vec![str_lit(&att.file_name)], "imap")
         .map_err(|e| format!("fileName: {}", e))?;
     att_ind.add_property(conn, "foundation:filePath", vec![Object::Literal {
-        value: format!("file://{}", target_path_str),
+        value: stored_path,
         datatype: Some("xsd:anyURI".to_string()),
         language: None,
     }], "imap").map_err(|e| format!("filePath: {}", e))?;

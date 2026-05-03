@@ -141,7 +141,12 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         };
 
         let file_info = if range_class_iri.as_deref() == Some("foundation:File") && !value.is_empty() {
-            let file_path = owl::get_literal_property(conn, &value, "foundation:filePath").ok().flatten();
+            // Resolve portable/legacy storage formats to an absolute path the
+            // frontend can open directly.
+            let file_path = owl::get_literal_property(conn, &value, "foundation:filePath")
+                .ok()
+                .flatten()
+                .map(|stored| crate::paths::resolve_path(&stored).to_string_lossy().into_owned());
             let file_name = owl::get_literal_property(conn, &value, "foundation:fileName").ok().flatten();
             let file_size = owl::get_literal_property(conn, &value, "foundation:fileSize").ok().flatten()
                 .and_then(|s| s.parse::<i64>().ok());

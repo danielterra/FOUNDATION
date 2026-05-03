@@ -34,6 +34,12 @@ pub async fn initialize_app(
             error_msg
         })?;
 
+    // Capture foundation_dir for portable path resolution. Attachment helpers
+    // store paths relative to this directory so the DB roams between machines.
+    if let Some(dir) = db_path.parent() {
+        crate::paths::set_foundation_dir(dir.to_path_buf());
+    }
+
     owl::seed_icon_library(&mut conn);
 
     // Drain the WAL now — only one connection exists so no readers can block this.

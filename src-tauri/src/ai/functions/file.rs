@@ -64,7 +64,7 @@ fn resolve_context_limit(conn: &Connection, conversation_id: Option<&str>) -> Op
 }
 
 fn resolve_file_path(conn: &Connection, file_iri: &str) -> Result<String, ToolResult> {
-    let uri = match crate::owl::get_literal_property(conn, file_iri, "foundation:filePath") {
+    let stored = match crate::owl::get_literal_property(conn, file_iri, "foundation:filePath") {
         Ok(Some(p)) => p,
         Ok(None) => return Err(ToolResult {
             success: false,
@@ -79,7 +79,9 @@ fn resolve_file_path(conn: &Connection, file_iri: &str) -> Result<String, ToolRe
             concept: None,
         }),
     };
-    Ok(uri.strip_prefix("file://").unwrap_or(&uri).to_string())
+    // Accept both portable (relative to foundation_dir), legacy `file://` URIs,
+    // and bare absolute paths. See `paths::resolve_path` for the rules.
+    Ok(crate::paths::resolve_path(&stored).to_string_lossy().into_owned())
 }
 
 fn open_text_file(path: &str) -> Result<std::fs::File, ToolResult> {

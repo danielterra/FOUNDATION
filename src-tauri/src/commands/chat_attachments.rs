@@ -58,10 +58,7 @@ pub async fn chat__attach_file(
     };
 
     let permanent_path = {
-        let attachments_dir = dirs::document_dir()
-            .ok_or("Could not find documents directory")?
-            .join("Foundation")
-            .join("attachments");
+        let attachments_dir = crate::paths::attachments_dir();
         tokio::fs::create_dir_all(&attachments_dir).await
             .map_err(|e| format!("Failed to create attachments directory: {}", e))?;
         let safe_name = file_name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
@@ -69,7 +66,9 @@ pub async fn chat__attach_file(
     };
     tokio::fs::copy(&file_path, &permanent_path).await
         .map_err(|e| format!("Failed to copy file to attachments folder: {}", e))?;
-    let permanent_path_str = permanent_path.to_string_lossy().into_owned();
+    // Portable path (e.g. "attachments/123_file.pdf") instead of the raw absolute
+    // path so the DB can roam between machines.
+    let stored_path = crate::paths::to_portable_path(&permanent_path);
 
     let hash = format!("sha256:{:x}", Sha256::digest(&raw));
     let size = raw.len() as i64;
@@ -103,7 +102,7 @@ pub async fn chat__attach_file(
         }], "chat").map_err(|e| format!("Failed to set fileName: {}", e))?;
 
         ind.add_property(conn, "foundation:filePath", vec![Object::Literal {
-            value: format!("file://{}", permanent_path_str),
+            value: stored_path,
             datatype: Some("xsd:anyURI".to_string()),
             language: None,
         }], "chat").map_err(|e| format!("Failed to set filePath: {}", e))?;
@@ -171,10 +170,7 @@ pub async fn save_camera_frame(base64_data: &str, index: usize) -> Result<String
         .map_err(|e| format!("Failed to decode camera frame: {}", e))?;
 
     let timestamp = chrono::Utc::now().timestamp_millis();
-    let attachments_dir = dirs::document_dir()
-        .ok_or("Could not find documents directory")?
-        .join("Foundation")
-        .join("attachments");
+    let attachments_dir = crate::paths::attachments_dir();
     tokio::fs::create_dir_all(&attachments_dir).await
         .map_err(|e| format!("Failed to create attachments directory: {}", e))?;
 
@@ -182,7 +178,8 @@ pub async fn save_camera_frame(base64_data: &str, index: usize) -> Result<String
     tokio::fs::write(&path, &raw).await
         .map_err(|e| format!("Failed to write camera frame: {}", e))?;
 
-    Ok(path.to_string_lossy().into_owned())
+    // Caller writes this string into foundation:filePath; return portable form.
+    Ok(crate::paths::to_portable_path(&path))
 }
 
 /// Claude scales images to fit within a 1568×1568 bounding box, then divides them

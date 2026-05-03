@@ -217,8 +217,10 @@ pub async fn chat__send_and_reply(
                     language: None,
                 }], "chat").map_err(|e| format!("Failed to set fileName: {}", e))?;
                 if !file_path.is_empty() {
+                    // file_path is already in portable form (relative to foundation_dir
+                    // when possible) — see save_camera_frame() / to_portable_path().
                     ind.add_property(conn, "foundation:filePath", vec![Object::Literal {
-                        value: format!("file://{}", file_path),
+                        value: file_path,
                         datatype: Some("xsd:anyURI".to_string()),
                         language: None,
                     }], "chat").map_err(|e| format!("Failed to set filePath: {}", e))?;
@@ -355,7 +357,9 @@ pub async fn chat__get_recent_messages(
                 let file_path = match file_entity.properties.iter()
                     .find(|(k, _)| k == "foundation:filePath")
                     .and_then(|(_, v)| match v {
-                        Object::Literal { value, .. } => Some(value.trim_start_matches("file://").to_string()),
+                        Object::Literal { value, .. } => Some(
+                            crate::paths::resolve_path(value).to_string_lossy().into_owned(),
+                        ),
                         _ => None,
                     }) {
                     Some(p) => p,
