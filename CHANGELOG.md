@@ -5,6 +5,29 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-05-03
+
+### Added
+
+- **Distribuição via MCPB para Claude Desktop**: foundation.mcpb embarcado como Tauri resource (manifest.json + bridge.js Node que faz ponte stdio→HTTP); script `scripts/build-mcpb` em Rust empacota o bundle e sincroniza versão do manifest com `package.json`; novo botão "Conectar ao Claude Desktop" no SettingsPanel copia o `.mcpb` para Downloads e abre o Explorer (não há deep link nem associação `.mcpb` no SO, principalmente na versão MSIX no Windows)
+- **Comando `ai__delete_api_key`**: retrata a credencial e desfaz o link `apiKey` no service AI
+
+### Fixed
+
+- **Filtros `exists`/`not_exists` e numéricos no MCP `search`**: parser descartava silenciosamente filtros sem campo `value` (caso exists/not_exists) e filtros com `value` JSON Number; agora extrai `operator` antes e converte `Number`/`Bool` via `to_string()`. Comparações `>=`/`<=`/`>`/`<` em `xsd:decimal` usavam comparação lexicográfica de string; agora `build_value_condition_fragment` detecta numéricos via `f64::parse`, usa `CAST(... AS REAL)` em `object_value` e inclui `object_number` e `object_integer` no OR
+- **Importação IMAP captura múltiplos anexos**: `part_is_attachment` exigia estritamente `Content-Disposition: attachment`, ignorando anexos com `inline; filename=...` ou apenas `name=` no Content-Type (caso comum em e-mails de bancos como Nubank); agora detecta por qualquer indicador de filename e `extract_attachment_filename` cai em fallback de Content-Type quando Content-Disposition está ausente
+- **`queryConfig` respeita `orderBy` e `limit`**: campos eram silenciosamente descartados pelo serde (struct `QueryConfig` não os declarava); agora `evaluate_query` gera `ORDER BY (subquery) ASC|DESC` e `LIMIT N`. Resolve o caso `previousMonthBudget` retornar todos os candidatos em vez de só o mais recente
+- **Modelo de imutabilidade no query worker**: `update_query_property_triples` lia `current` da view `triples_current` (que retornava valores históricos) e usava `retract` para "atualizar" valores multi-valorados; agora lê via `WHERE tx = (SELECT MAX(tx) ...)` e apenas insere novo TX (retract permanece só para limpeza). View `triples_current` corrigida para filtrar por MAX(tx) na definição inicial — alinha com a migração que já fazia DROP+recriação
+- **Cascade de fórmulas com domain==range**: `create_reverse_aggregation_recalc_jobs` decidia direção comparando `source_prop.domain` com tipo da instância alterada — para `previousMonthBudget` (domain == range == MonthlyBudget) caía sempre no branch errado e nunca recomputava o `openingBalance` do mês seguinte. Agora usa o domain do dono da fórmula (`agg_owner_class`) para detectar direção
+- **Substituição de valores negativos em fórmulas**: `evaluate_formula_for_instance_raw` produzia expressões como `"a + -3"` que `eval_expr` não aceita (unary minus infixo não suportado); o erro era engolido em `formula_instance_errors` e o triple do resultado nunca era escrito. Agora valores substituídos sempre são envoltos em parênteses
+- **Inspector separa forward de backlink**: `PropertyList` agrupava por IRI da propriedade — forward e backlink (que compartilham o mesmo IRI mas têm semânticas opostas) eram fundidos no mesmo grupo. Agora a chave de agrupamento usa sufixo `__backlink` quando `groupTotal != null`, separando visualmente as duas direções
+
+### Refactored
+
+- **Detecção de "is_local" de AI services**: agora baseada na ausência de `foundation:apiBaseUrl` em vez de `foundation:apiKey` — providers locais podem ter chave (auth em LM Studio remoto), mas providers remotos sempre têm baseUrl
+- **SettingsPanel consolidado**: provider + chave + modelo numa única seção "AI" com dirty/save unificado; remove modal MCP do home (toda configuração migrada para o SettingsPanel)
+- **Scripts de release otimizados (276s → 26s, 10.6× mais rápido)**: `dump-ontology` agora gera multi-row INSERTs (batch de 500) — arquivo SQL caiu de 22MB para 9.5MB e o load do dump ficou ~170× mais rápido (de 257s para 1s); `verify-ontology` paraleliza a comparação de 4627 subjects via Rayon (8 threads), drop+recreate de índices durante bulk load, PRAGMAs de durabilidade desabilitados em DB temporário, fallback para `Property::get` quando subject não é Class/Individual, e `triples_current` em vez de `triples WHERE retracted=0` para alinhamento com o estado atual da ontologia
+
 ## [0.17.1] - 2026-05-01
 
 ### Added

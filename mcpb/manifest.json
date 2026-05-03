@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "foundation",
   "display_name": "Foundation",
-  "version": "0.17.1",
+  "version": "0.18.0",
   "description": "Conecta o Claude Desktop ao Foundation, expondo as ferramentas do app local (consultas à ontologia, automações, blackboard, etc).",
   "long_description": "Esta extensão conecta o Claude Desktop ao servidor MCP embarcado no app Foundation. O app Foundation precisa estar rodando — a extensão atua como ponte entre o stdio do Claude Desktop e o endpoint HTTP local do Foundation (por padrão 127.0.0.1:47178).",
   "author": {

@@ -1,6 +1,6 @@
 [package]
 name = "FOUNDATION"
-version = "0.17.1"
+version = "0.18.0"
 description = "A Tauri App"
 authors = ["daniel_terra@icloud.com"]
 edition = "2021"

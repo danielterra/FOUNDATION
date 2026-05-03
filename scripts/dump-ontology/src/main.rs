@@ -91,18 +91,20 @@ fn bootstrap_registry(conn: &Connection) -> Result<(), rusqlite::Error> {
 }
 
 fn collect_subjects(conn: &Connection) -> Result<Vec<String>, rusqlite::Error> {
+    // Use triples_current (filters by MAX(tx)) so we only dump subjects whose
+    // latest type/registry assertion is still active. Querying raw `triples
+    // WHERE retracted=0` would include stale entries whose newest TX already
+    // retracted them.
     let mut stmt = conn.prepare("
-        SELECT DISTINCT subject FROM triples
-        WHERE retracted = 0
-          AND predicate = 'rdf:type'
+        SELECT DISTINCT subject FROM triples_current
+        WHERE predicate = 'rdf:type'
           AND object IN (
             'owl:Class', 'rdfs:Class', 'owl:ObjectProperty', 'owl:DatatypeProperty',
             'owl:AnnotationProperty', 'rdf:Property'
           )
         UNION
-        SELECT DISTINCT object FROM triples
-        WHERE retracted = 0
-          AND subject = 'foundation:CoreOntologyRegistry'
+        SELECT DISTINCT object FROM triples_current
+        WHERE subject = 'foundation:CoreOntologyRegistry'
           AND predicate = 'foundation:includesIndividual'
         UNION
         SELECT 'foundation:CoreOntologyRegistry'
@@ -200,14 +202,20 @@ fn write_sql(
         SELECT subject, predicate, object, object_value, object_datatype, object_language,
                object_type, object_number, object_integer, object_boolean,
                origin_id
-        FROM triples
-        WHERE retracted = 0
-          AND subject IN (SELECT subject FROM _dump_subjects)
+        FROM triples_current
+        WHERE subject IN (SELECT subject FROM _dump_subjects)
         ORDER BY subject, predicate
     ")?;
 
+    // Emit multi-row VALUES (one INSERT per BATCH rows). SQLite parses each
+    // INSERT statement once and amortizes the parse over many rows, drastically
+    // cutting load time vs one INSERT per row.
+    const BATCH: usize = 500;
+    const INSERT_HEADER: &str = "INSERT OR IGNORE INTO triples (subject, predicate, object, object_value, object_datatype, object_language, object_type, object_number, object_integer, object_boolean, tx, origin_id, retracted, created_at) VALUES";
+
     let mut triple_count = 0u64;
     let mut rows = stmt.query([])?;
+    let mut in_batch = 0usize;
 
     while let Some(row) = rows.next()? {
         let subject: String = row.get(0)?;
@@ -224,9 +232,15 @@ fn write_sql(
 
         let normalized_origin = *origin_map.get(&origin_id).unwrap_or(&origin_id);
 
-        writeln!(
+        if in_batch == 0 {
+            write!(w, "{}\n  ", INSERT_HEADER)?;
+        } else {
+            write!(w, ",\n  ")?;
+        }
+
+        write!(
             w,
-            "INSERT OR IGNORE INTO triples (subject, predicate, object, object_value, object_datatype, object_language, object_type, object_number, object_integer, object_boolean, tx, origin_id, retracted, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 1, {}, 0, 0);",
+            "({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 1, {}, 0, 0)",
             sql_str(&subject),
             sql_str(&predicate),
             sql_opt_str(object.as_deref()),
@@ -240,7 +254,17 @@ fn write_sql(
             normalized_origin,
         )?;
 
+        in_batch += 1;
         triple_count += 1;
+
+        if in_batch >= BATCH {
+            writeln!(w, ";")?;
+            in_batch = 0;
+        }
+    }
+
+    if in_batch > 0 {
+        writeln!(w, ";")?;
     }
 
     writeln!(w)?;
