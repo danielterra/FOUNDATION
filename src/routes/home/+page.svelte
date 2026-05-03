@@ -14,7 +14,24 @@
   let searchComponent = $state();
   let widgetManager = $state();
   let activeConversationIri = $state(null);
+  let activeBlackboardIri = $state(null);
   let showSettings = $state(false);
+
+  async function resolveBlackboard(conversationIri) {
+    try {
+      activeBlackboardIri = await invoke('widget_blackboard__resolve_blackboard', {
+        conversationId: conversationIri ?? null
+      });
+    } catch (e) {
+      console.error('Failed to resolve blackboard:', e);
+      activeBlackboardIri = null;
+    }
+  }
+
+  $effect(() => {
+    const conv = chatEnabled ? activeConversationIri : null;
+    resolveBlackboard(conv);
+  });
 
   onMount(async () => {
     try {
@@ -53,13 +70,14 @@
   $effect(() => { appState.activeConversationIri = activeConversationIri; });
 
   async function handleSearchResult(entityId) {
+    if (!activeBlackboardIri) return;
     try {
       await invoke('widget_blackboard__add_widget', {
         widgetType: 'inspector',
         entityId,
         position: null,
         size: null,
-        conversationId: activeConversationIri
+        blackboardId: activeBlackboardIri
       });
     } catch (e) {
       console.error('Failed to open inspector:', e);
@@ -118,7 +136,7 @@
   </div>
 
   <div class="canvas-area">
-    <WidgetManager bind:this={widgetManager} {activeConversationIri} />
+    <WidgetManager bind:this={widgetManager} {activeBlackboardIri} {activeConversationIri} />
   </div>
 
   {#if chatEnabled}

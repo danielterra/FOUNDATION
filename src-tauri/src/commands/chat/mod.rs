@@ -36,8 +36,12 @@ pub const MAX_OUTPUT_TOKENS: u32 = 64000;
 
 pub async fn build_blackboard_context(executor: &crate::owl::DbExecutor, conversation_id: &str) -> Option<String> {
     let conv_id = conversation_id.to_string();
+    let bb_iri = executor.write(move |conn| {
+        crate::commands::widget::resolve_blackboard_iri(conn, Some(&conv_id))
+    }).await.ok()?;
+
     executor.read(move |conn| {
-        let widgets = crate::commands::widget::owl_get_widgets_for_conversation(conn, &conv_id)
+        let widgets = crate::commands::widget::owl_get_widgets_for_blackboard(conn, &bb_iri)
             .unwrap_or_default();
 
         if widgets.is_empty() {

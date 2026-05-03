@@ -130,10 +130,12 @@ pub fn foundation_architecture_context(conn: &Connection) -> String {
          `foundation:hasStatus = foundation:InProgress`. Sem isso fica pendente.\n\
          \n\
          ## Blackboard\n\
-         O blackboard é o painel visual da conversa ativa. Cada widget renderiza uma entidade \
-         do grafo usando um `foundation:WidgetType`. Você adiciona widgets via \
-         `widget_blackboard__add_widget(widgetType, entityId, conversationId, ...)` — e isso \
-         mostra a entidade para o usuário sem precisar descrevê-la em texto. A lista de widgets \
+         O blackboard é o painel visual de widgets. Existe um blackboard por conversa, e \
+         um blackboard padrão (`foundation:DefaultBlackboard`) usado quando o chat interno \
+         não está ativo. Cada widget renderiza uma entidade do grafo usando um \
+         `foundation:WidgetType`. Você adiciona widgets via \
+         `add_widget_to_blackboard(entity_iri, widget_type, blackboard_iri?)` — `blackboard_iri` \
+         é opcional: se omitido, usa o blackboard da conversa ativa. A lista de widgets \
          disponíveis aparece mais adiante neste prompt na seção \"AI-creatable widgets\".",
         task_list = task_list,
         event_list = event_list,

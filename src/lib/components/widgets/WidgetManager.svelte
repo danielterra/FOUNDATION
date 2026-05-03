@@ -14,7 +14,7 @@
   import GraphWidget from './GraphWidget.svelte';
   import AIConversationWidget from './AIConversationWidget.svelte';
 
-  let { activeConversationIri = null } = $props();
+  let { activeBlackboardIri = null, activeConversationIri = null } = $props();
 
   const BASE_WIDGET_Z_INDEX = 100;
   const WIDGET_FLY_DURATION = 600;
@@ -77,13 +77,13 @@
     });
   }
 
-  async function loadWidgets(conversationIri) {
-    if (!conversationIri) {
+  async function loadWidgets(blackboardIri) {
+    if (!blackboardIri) {
       widgets = [];
       return;
     }
     try {
-      const result = await invoke('widget_blackboard__get_widgets', { conversationId: conversationIri });
+      const result = await invoke('widget_blackboard__get_widgets', { blackboardId: blackboardIri });
       widgets = result.map((w, index) => ({
         ...w,
         zIndex: BASE_WIDGET_Z_INDEX + index
@@ -97,7 +97,7 @@
   }
 
   $effect(() => {
-    loadWidgets(activeConversationIri);
+    loadWidgets(activeBlackboardIri);
   });
 
   function bringToFront(widgetId) {
@@ -255,7 +255,7 @@
 
     const unlistenAdded = await listen('widget-added', (event) => {
       const w = event.payload;
-      if (w.conversation_iri !== activeConversationIri) return;
+      if (w.blackboard_iri !== activeBlackboardIri) return;
 
       // e.g. duplicate entity-created event
       const existingIdx = widgets.findIndex(existing => existing.id === w.id);

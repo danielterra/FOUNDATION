@@ -439,32 +439,6 @@ fn run_automation_tool(conn: &Connection, args: &Value, app: Option<&tauri::AppH
     }
 }
 
-fn find_most_recent_conversation_iri(conn: &Connection) -> Option<String> {
-    conn.query_row(
-        "SELECT c.subject FROM triples c
-         LEFT JOIN (
-             SELECT tp.object AS conv, MAX(ts.object_value) AS last_msg
-             FROM triples tp
-             JOIN triples ts ON ts.subject = tp.subject
-                 AND ts.predicate = 'foundation:sentAt'
-                 AND ts.retracted = 0
-             WHERE tp.predicate = 'foundation:partOfConversation'
-               AND tp.retracted = 0
-             GROUP BY tp.object
-         ) m ON m.conv = c.subject
-         LEFT JOIN triples ca ON ca.subject = c.subject
-             AND ca.predicate = 'foundation:createdAt'
-             AND ca.retracted = 0
-         WHERE c.predicate = 'rdf:type'
-           AND c.object = 'foundation:AIConversation'
-           AND c.retracted = 0
-         ORDER BY COALESCE(m.last_msg, ca.object_value, '') DESC, c.subject DESC
-         LIMIT 1",
-        [],
-        |row| row.get::<_, String>(0),
-    ).ok()
-}
-
 fn resolve_blackboard_iri_for_tool(
     conn: &mut Connection,
     args: &Value,
@@ -475,8 +449,7 @@ fn resolve_blackboard_iri_for_tool(
     }
     let conv = args["conversation_iri"].as_str().filter(|s| !s.is_empty())
         .map(String::from)
-        .or_else(|| conversation_id.map(String::from))
-        .or_else(|| find_most_recent_conversation_iri(conn));
+        .or_else(|| conversation_id.map(String::from));
     crate::commands::widget::resolve_blackboard_iri(conn, conv.as_deref())
 }
 

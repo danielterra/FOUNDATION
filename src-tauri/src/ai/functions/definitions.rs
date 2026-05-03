@@ -767,12 +767,12 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "list_blackboard_widgets".to_string(),
             array_mode: false,
-            description: "List widgets currently open on the conversation blackboard. Returns widget_iri, widget_type, and entity_iri for each open widget. Returns empty list if the blackboard is empty.".to_string(),
+            description: "List widgets currently open on a blackboard. Returns widget_iri, widget_type, and entity_iri for each open widget. Returns empty list if the blackboard is empty.".to_string(),
             parameters: vec![
                 Parameter {
-                    name: "conversation_iri".to_string(),
+                    name: "blackboard_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "IRI of the conversation whose blackboard to inspect. Optional — if omitted, the most recent conversation is used automatically.".to_string(),
+                    description: "IRI of the Blackboard to inspect. Optional — if omitted, the blackboard of the active conversation is used (or the default blackboard when no conversation is active).".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -782,7 +782,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "add_widget_to_blackboard".to_string(),
             array_mode: false,
-            description: "Open a widget on the conversation blackboard to display an entity. If a widget for the same entity already exists in this conversation, returns the existing widget instead of creating a duplicate. widget_type defaults to 'inspector' (universal). Use list_blackboard_widgets first to avoid duplicates.".to_string(),
+            description: "Open a widget on a blackboard to display an entity. If a widget for the same entity already exists on this blackboard, returns the existing widget instead of creating a duplicate. widget_type defaults to 'inspector' (universal). Use list_blackboard_widgets first to avoid duplicates.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "entity_iri".to_string(),
@@ -799,9 +799,9 @@ Example — find all active Tasks whose due date is before this Project's deadli
                     schema: None,
                 },
                 Parameter {
-                    name: "conversation_iri".to_string(),
+                    name: "blackboard_iri".to_string(),
                     param_type: "string".to_string(),
-                    description: "IRI of the conversation whose blackboard to add the widget to. Optional — if omitted, the most recent conversation is used automatically.".to_string(),
+                    description: "IRI of the Blackboard to add the widget to. Optional — if omitted, the blackboard of the active conversation is used (or the default blackboard when no conversation is active).".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -811,7 +811,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "remove_widget_from_blackboard".to_string(),
             array_mode: false,
-            description: "Remove a widget from the conversation blackboard. Only closes the widget — does not modify or delete the entity it displays. Returns an error if the widget IRI does not exist or is already closed.".to_string(),
+            description: "Remove a widget from its blackboard. Only closes the widget — does not modify or delete the entity it displays. Returns an error if the widget IRI does not exist or is already closed.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "widget_iri".to_string(),

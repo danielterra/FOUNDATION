@@ -36,3 +36,5 @@ src-tauri/target/llvm-cov
 src-tauri/target/llvm-cov-target
 src-tauri/target/coverage
 .claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json

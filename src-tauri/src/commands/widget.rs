@@ -5,6 +5,8 @@ use crate::owl::vocabulary::rdf;
 
 const WIDGET_CLASS: &str = "foundation:Widget";
 const WIDGET_ICON: &str = "widgets";
+const BLACKBOARD_CLASS: &str = "foundation:Blackboard";
+const BLACKBOARD_ICON: &str = "dashboard";
 const PRED_WIDGET_TYPE: &str = "foundation:widgetType";
 const PRED_ENTITY_ID: &str = "foundation:widgetEntityId";
 const PRED_POSITION_X: &str = "foundation:widgetPositionX";
@@ -13,7 +15,10 @@ const PRED_SIZE_WIDTH: &str = "foundation:widgetSizeWidth";
 const PRED_SIZE_HEIGHT: &str = "foundation:widgetSizeHeight";
 const WIDGET_ORIGIN: &str = "widget";
 const PRED_WINDOW_STATE: &str = "foundation:widgetWindowState";
-const PRED_CONVERSATION: &str = "foundation:partOfConversation";
+const PRED_BLACKBOARD: &str = "foundation:onBlackboard";
+const PRED_FOR_CONVERSATION: &str = "foundation:forConversation";
+
+pub const DEFAULT_BLACKBOARD_IRI: &str = "foundation:DefaultBlackboard";
 
 const DEFAULT_POS_X: f64 = 100.0;
 const DEFAULT_POS_Y: f64 = 100.0;
@@ -35,7 +40,7 @@ pub struct Widget {
     pub position: Position,
     pub size: Size,
     pub window_state: WindowState,
-    pub conversation_iri: Option<String>,
+    pub blackboard_iri: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,7 +133,7 @@ fn individual_to_widget(ind: Individual) -> Option<Widget> {
     let y = prop_f64(&ind, PRED_POSITION_Y)?;
     let width = prop_f64(&ind, PRED_SIZE_WIDTH)?;
     let height = prop_f64(&ind, PRED_SIZE_HEIGHT)?;
-    let conversation_iri = prop_iri(&ind, PRED_CONVERSATION);
+    let blackboard_iri = prop_iri(&ind, PRED_BLACKBOARD)?;
 
     let window_state = prop_str(&ind, PRED_WINDOW_STATE)
         .and_then(|s| match s.as_str() {
@@ -145,8 +150,46 @@ fn individual_to_widget(ind: Individual) -> Option<Widget> {
         position: Position { x, y },
         size: Size { width, height },
         window_state,
-        conversation_iri,
+        blackboard_iri,
     })
+}
+
+fn sanitize_for_iri(s: &str) -> String {
+    s.replace([':', '/', '#', ' '], "_")
+}
+
+/// Returns the IRI of the Blackboard tied to a conversation (lazy-create).
+/// If `conversation_iri` is None, returns the singleton DefaultBlackboard.
+pub fn resolve_blackboard_iri(
+    conn: &mut Connection,
+    conversation_iri: Option<&str>,
+) -> Result<String, String> {
+    let (bb_iri, label) = match conversation_iri {
+        Some(c) => (
+            format!("foundation:Blackboard_for_{}", sanitize_for_iri(c)),
+            format!("Blackboard for {}", c),
+        ),
+        None => (
+            DEFAULT_BLACKBOARD_IRI.to_string(),
+            "Default Blackboard".to_string(),
+        ),
+    };
+
+    let exists = Individual::get(conn, &bb_iri)
+        .map_err(|e| e.to_string())?
+        .is_some();
+
+    if !exists {
+        let bb = Individual::new(&bb_iri);
+        bb.assert(conn, BLACKBOARD_CLASS, &label, BLACKBOARD_ICON, WIDGET_ORIGIN)
+            .map_err(|e| e.to_string())?;
+        if let Some(c) = conversation_iri {
+            bb.add_property(conn, PRED_FOR_CONVERSATION, vec![Object::Iri(c.to_string())], WIDGET_ORIGIN)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(bb_iri)
 }
 
 pub fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), String> {
@@ -172,10 +215,8 @@ pub fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), S
     };
     ind.add_property(conn, PRED_WINDOW_STATE, vec![str_obj(state_str)], WIDGET_ORIGIN)
         .map_err(|e| e.to_string())?;
-    if let Some(conv_iri) = &widget.conversation_iri {
-        ind.add_property(conn, PRED_CONVERSATION, vec![Object::Iri(conv_iri.clone())], WIDGET_ORIGIN)
-            .map_err(|e| e.to_string())?;
-    }
+    ind.add_property(conn, PRED_BLACKBOARD, vec![Object::Iri(widget.blackboard_iri.clone())], WIDGET_ORIGIN)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -193,9 +234,9 @@ pub fn owl_get_all_widgets(conn: &Connection) -> Result<Vec<Widget>, String> {
     Ok(widgets)
 }
 
-pub fn owl_get_widgets_for_conversation(conn: &Connection, conversation_iri: &str) -> Result<Vec<Widget>, String> {
+pub fn owl_get_widgets_for_blackboard(conn: &Connection, blackboard_iri: &str) -> Result<Vec<Widget>, String> {
     Ok(owl_get_all_widgets(conn)?.into_iter()
-        .filter(|w| w.conversation_iri.as_deref() == Some(conversation_iri))
+        .filter(|w| w.blackboard_iri == blackboard_iri)
         .collect())
 }
 
@@ -421,12 +462,24 @@ pub async fn widget_blackboard__get_graph_data(
 
 #[tauri::command]
 #[allow(non_snake_case)]
+pub async fn widget_blackboard__resolve_blackboard(
+    conversation_id: Option<String>,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor.write(move |conn| {
+        let iri = resolve_blackboard_iri(conn, conversation_id.as_deref())?;
+        Ok(iri)
+    }).await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
 pub async fn widget_blackboard__get_widgets(
-    conversation_id: String,
+    blackboard_id: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<Widget>, String> {
     executor.read(move |conn| {
-        owl_get_widgets_for_conversation(conn, &conversation_id)
+        owl_get_widgets_for_blackboard(conn, &blackboard_id)
     }).await
 }
 
@@ -438,6 +491,7 @@ pub async fn widget_blackboard__add_widget(
     entity_id: String,
     position: Option<Position>,
     size: Option<Size>,
+    blackboard_id: Option<String>,
     conversation_id: Option<String>,
     executor: State<'_, DbExecutor>
 ) -> Result<Widget, String> {
@@ -453,19 +507,27 @@ pub async fn widget_blackboard__add_widget(
         Ok((resolved, size))
     }).await?;
 
-    let sanitized_entity = entity_id.replace([':', '/', '#', ' '], "_");
-    let conv_suffix = conversation_id.as_deref()
-        .map(|c| format!("_{}", c.replace([':', '/', '#', ' '], "_")))
-        .unwrap_or_default();
+    let bb_iri = match blackboard_id {
+        Some(b) => b,
+        None => {
+            let conv = conversation_id.clone();
+            executor.write(move |conn| {
+                resolve_blackboard_iri(conn, conv.as_deref())
+            }).await?
+        }
+    };
+
+    let sanitized_entity = sanitize_for_iri(&entity_id);
+    let sanitized_bb = sanitize_for_iri(&bb_iri);
 
     let widget = Widget {
-        id: format!("foundation:Widget_{resolved_type}_{sanitized_entity}{conv_suffix}"),
+        id: format!("foundation:Widget_{resolved_type}_{sanitized_entity}_{sanitized_bb}"),
         widget_type: resolved_type,
         entity_id,
         position: position.unwrap_or(Position { x: DEFAULT_POS_X, y: DEFAULT_POS_Y }),
         size: size.unwrap_or(default_size),
         window_state: WindowState::Normal,
-        conversation_iri: conversation_id,
+        blackboard_iri: bb_iri,
     };
 
     app.emit("widget-added", widget.clone()).ok();

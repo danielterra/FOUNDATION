@@ -184,6 +184,7 @@ pub fn run() {
             commands::chat::conversation::chat__get_conversation_agent,
             commands::chat::conversation::chat__list_agents,
             commands::chat::conversation::chat__set_conversation_agent,
+            commands::widget_blackboard__resolve_blackboard,
             commands::widget_blackboard__get_widgets,
             commands::widget_blackboard__add_widget,
             commands::widget_blackboard__remove_widget,
