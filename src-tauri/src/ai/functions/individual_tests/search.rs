@@ -623,6 +623,137 @@ fn test_search_things_response_fields_are_correct() {
     assert_eq!(response["total"].as_u64().unwrap(), 2, "total field should be 2");
 }
 
+fn setup_payment_class(conn: &mut Connection) {
+    use crate::owl::{Class, ClassType, Property, PropertyType};
+    Class::new("foundation:Payment")
+        .assert(conn, ClassType::OwlClass, "Payment", ICON_URL, None, "test").unwrap();
+    Property::new("foundation:transactionAmount")
+        .assert(conn, PropertyType::DatatypeProperty, "Amount", None,
+            &["foundation:Payment"], Some("xsd:decimal"), None, "test")
+        .unwrap();
+    Property::new("foundation:transactionDate")
+        .assert(conn, PropertyType::DatatypeProperty, "Date", None,
+            &["foundation:Payment"], Some("xsd:date"), None, "test")
+        .unwrap();
+}
+
+fn create_payment(conn: &mut Connection, iri: &str, amount: f64) {
+    let ind = Individual::new(iri);
+    ind.assert(conn, "foundation:Payment", &format!("Payment {iri}"), ICON_URL, "test").unwrap();
+    ind.add_property(conn, "foundation:transactionAmount",
+        vec![Object::Number(amount)], "test").unwrap();
+}
+
+#[test]
+fn test_filter_exists_without_value_is_not_silently_dropped() {
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+
+    let with_priority = Individual::new("foundation:Task_ex_001");
+    with_priority.assert(&mut conn, "foundation:Task", "With Priority", ICON_URL, "test").unwrap();
+    with_priority.add_property(&mut conn, "foundation:priority", vec![Object::Literal {
+        value: "high".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+    }], "test").unwrap();
+
+    let without_priority = Individual::new("foundation:Task_ex_002");
+    without_priority.assert(&mut conn, "foundation:Task", "Without Priority", ICON_URL, "test").unwrap();
+
+    let args = serde_json::json!({
+        "class_iri": "foundation:Task",
+        "filters": [{"detail": "foundation:priority", "operator": "exists"}]
+    });
+
+    let result = search(&conn, &args);
+    assert!(result.success, "search should succeed: {:?}", result.error);
+    let entities = result.result.unwrap()["entities"].as_array().unwrap().clone();
+    let iris: Vec<&str> = entities.iter().filter_map(|e| e["id"].as_str()).collect();
+
+    assert_eq!(iris.len(), 1, "only the task with priority should match");
+    assert!(iris.contains(&"foundation:Task_ex_001"));
+    assert!(!iris.contains(&"foundation:Task_ex_002"));
+}
+
+#[test]
+fn test_filter_not_exists_without_value_is_not_silently_dropped() {
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+
+    let with_priority = Individual::new("foundation:Task_nex_001");
+    with_priority.assert(&mut conn, "foundation:Task", "With Priority", ICON_URL, "test").unwrap();
+    with_priority.add_property(&mut conn, "foundation:priority", vec![Object::Literal {
+        value: "high".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+    }], "test").unwrap();
+
+    let without_priority = Individual::new("foundation:Task_nex_002");
+    without_priority.assert(&mut conn, "foundation:Task", "Without Priority", ICON_URL, "test").unwrap();
+
+    let args = serde_json::json!({
+        "class_iri": "foundation:Task",
+        "filters": [{"detail": "foundation:priority", "operator": "not_exists"}]
+    });
+
+    let result = search(&conn, &args);
+    assert!(result.success, "search should succeed: {:?}", result.error);
+    let entities = result.result.unwrap()["entities"].as_array().unwrap().clone();
+    let iris: Vec<&str> = entities.iter().filter_map(|e| e["id"].as_str()).collect();
+
+    assert_eq!(iris.len(), 1, "only the task without priority should match");
+    assert!(!iris.contains(&"foundation:Task_nex_001"));
+    assert!(iris.contains(&"foundation:Task_nex_002"));
+}
+
+#[test]
+fn test_filter_numeric_json_number_is_not_silently_dropped() {
+    // Regression: value: 128.7 (JSON number) was silently dropped because
+    // the filter parser called .as_str() which returns None for numbers.
+    let mut conn = setup_test_db();
+    setup_payment_class(&mut conn);
+
+    create_payment(&mut conn, "foundation:Payment_num_001", 128.7);
+    create_payment(&mut conn, "foundation:Payment_num_002", 200.0);
+    create_payment(&mut conn, "foundation:Payment_num_003", 128.7);
+
+    let args = serde_json::json!({
+        "class_iri": "foundation:Payment",
+        "filters": [{"detail": "foundation:transactionAmount", "operator": "=", "value": 128.7}]
+    });
+
+    let result = search(&conn, &args);
+    assert!(result.success, "search should succeed: {:?}", result.error);
+    let entities = result.result.unwrap()["entities"].as_array().unwrap().clone();
+    let iris: Vec<&str> = entities.iter().filter_map(|e| e["id"].as_str()).collect();
+
+    assert_eq!(iris.len(), 2, "exactly 2 payments of 128.7 should match");
+    assert!(iris.contains(&"foundation:Payment_num_001"));
+    assert!(!iris.contains(&"foundation:Payment_num_002"));
+    assert!(iris.contains(&"foundation:Payment_num_003"));
+}
+
+#[test]
+fn test_filter_numeric_gte_uses_numeric_not_lexicographic_comparison() {
+    // Regression: "9" > "128.7" lexicographically, but 9.0 < 128.7 numerically.
+    let mut conn = setup_test_db();
+    setup_payment_class(&mut conn);
+
+    create_payment(&mut conn, "foundation:Payment_gte_001", 9.0);
+    create_payment(&mut conn, "foundation:Payment_gte_002", 100.0);
+    create_payment(&mut conn, "foundation:Payment_gte_003", 200.0);
+
+    let args = serde_json::json!({
+        "class_iri": "foundation:Payment",
+        "filters": [{"detail": "foundation:transactionAmount", "operator": ">=", "value": "100.0"}]
+    });
+
+    let result = search(&conn, &args);
+    assert!(result.success, "search should succeed: {:?}", result.error);
+    let entities = result.result.unwrap()["entities"].as_array().unwrap().clone();
+    let iris: Vec<&str> = entities.iter().filter_map(|e| e["id"].as_str()).collect();
+
+    assert!(!iris.contains(&"foundation:Payment_gte_001"), "9.0 < 100.0 must be excluded");
+    assert!(iris.contains(&"foundation:Payment_gte_002"), "100.0 >= 100.0 must be included");
+    assert!(iris.contains(&"foundation:Payment_gte_003"), "200.0 >= 100.0 must be included");
+}
+
 // Performance tests — run with a copy of the real DB:
 //   sqlite3 ~/Documents/Foundation/FOUNDATION.db "VACUUM INTO '/tmp/foundation_bench.db'"
 //   FOUNDATION_BENCH_DB=/tmp/foundation_bench.db cargo test --lib perf_ -- --ignored --nocapture

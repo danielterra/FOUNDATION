@@ -136,11 +136,20 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
         args.get("filters").and_then(|v| v.as_array()).map(|arr| {
             arr.iter().filter_map(|item| {
                 let detail = item.get("detail").and_then(|v| v.as_str())?.to_string();
-                let value = item.get("value").and_then(|v| v.as_str())?.to_string();
                 let operator = item.get("operator")
                     .and_then(|v| v.as_str())
                     .unwrap_or("=")
                     .to_string();
+                let value = if operator == "exists" || operator == "not_exists" {
+                    String::new()
+                } else {
+                    match item.get("value")? {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::Bool(b) => b.to_string(),
+                        _ => return None,
+                    }
+                };
                 Some((detail, value, operator))
             }).collect()
         });

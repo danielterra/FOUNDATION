@@ -533,6 +533,19 @@ fn build_value_condition_fragment(
                 "(t{n}.object_value = ? OR t{n}.object = ? OR t{n}.object_boolean = ?)"
             ))
         }
+    } else if let Ok(num) = value.parse::<f64>() {
+        // Numeric values are stored in object_number (decimal) or object_integer, with
+        // the text representation in object_value. Use CAST so that comparisons like >=
+        // are numeric rather than lexicographic.
+        let param = SqlValue::Real(num);
+        params.push(param.clone());
+        params.push(param.clone());
+        params.push(param);
+        Ok(format!(
+            "(CAST(t{n}.object_value AS REAL) {sql_op} ? \
+             OR t{n}.object_number {sql_op} ? \
+             OR CAST(t{n}.object_integer AS REAL) {sql_op} ?)"
+        ))
     } else if base_op == "!=" {
         params.push(SqlValue::Text(value.to_string()));
         params.push(SqlValue::Text(value.to_string()));
@@ -740,5 +753,146 @@ mod sort_tests {
         ).unwrap();
 
         assert_eq!(results, vec!["ex:Early", "ex:Late"]);
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+    use crate::eavto::test_helpers::setup_test_db;
+
+    fn ensure_tx(conn: &Connection) -> i64 {
+        if let Ok(id) = conn.query_row(
+            "SELECT id FROM transactions WHERE origin = 'test' LIMIT 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        ) {
+            return id;
+        }
+        conn.execute("INSERT INTO transactions (origin, created_at) VALUES ('test', 0)", []).unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn insert_type(conn: &Connection, subject: &str, class: &str) {
+        let tx = ensure_tx(conn);
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object, object_type, tx, origin_id, retracted, created_at) \
+             VALUES (?1, 'rdf:type', ?2, 'iri', ?3, 1, 0, 0)",
+            rusqlite::params![subject, class, tx],
+        ).unwrap();
+    }
+
+    fn insert_decimal(conn: &Connection, subject: &str, predicate: &str, value: f64) {
+        let tx = ensure_tx(conn);
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object_value, object_datatype, object_number, \
+             object_type, tx, origin_id, retracted, created_at) \
+             VALUES (?1, ?2, ?3, 'xsd:decimal', ?4, 'literal', ?5, 1, 0, 0)",
+            rusqlite::params![subject, predicate, value.to_string(), value, tx],
+        ).unwrap();
+    }
+
+    fn insert_integer(conn: &Connection, subject: &str, predicate: &str, value: i64) {
+        let tx = ensure_tx(conn);
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object_value, object_datatype, object_integer, \
+             object_type, tx, origin_id, retracted, created_at) \
+             VALUES (?1, ?2, ?3, 'xsd:integer', ?4, 'literal', ?5, 1, 0, 0)",
+            rusqlite::params![subject, predicate, value.to_string(), value, tx],
+        ).unwrap();
+    }
+
+    #[test]
+    fn numeric_eq_matches_decimal_stored_in_object_number() {
+        let conn = setup_test_db();
+        insert_type(&conn, "ex:P1", "ex:Payment");
+        insert_decimal(&conn, "ex:P1", "ex:amount", 128.7);
+        insert_type(&conn, "ex:P2", "ex:Payment");
+        insert_decimal(&conn, "ex:P2", "ex:amount", 200.0);
+
+        let (results, total) = find_by_class_iris_and_properties_with_options(
+            &conn, &["ex:Payment"],
+            &[PropertyFilter::Compare("ex:amount", "128.7", "=")],
+            false, 100, 0, None,
+        ).unwrap();
+
+        assert_eq!(total, 1);
+        assert!(results.contains(&"ex:P1".to_string()));
+        assert!(!results.contains(&"ex:P2".to_string()));
+    }
+
+    #[test]
+    fn numeric_gte_uses_numeric_comparison_not_lexicographic() {
+        // Lexicographic: "9" > "128.7" (wrong). Numeric: 9.0 < 128.7 (correct).
+        let conn = setup_test_db();
+        insert_type(&conn, "ex:A", "ex:Thing");
+        insert_decimal(&conn, "ex:A", "ex:val", 9.0);
+        insert_type(&conn, "ex:B", "ex:Thing");
+        insert_decimal(&conn, "ex:B", "ex:val", 100.0);
+        insert_type(&conn, "ex:C", "ex:Thing");
+        insert_decimal(&conn, "ex:C", "ex:val", 200.0);
+
+        let (results, _) = find_by_class_iris_and_properties_with_options(
+            &conn, &["ex:Thing"],
+            &[PropertyFilter::Compare("ex:val", "100.0", ">=")],
+            false, 100, 0, None,
+        ).unwrap();
+
+        assert!(!results.contains(&"ex:A".to_string()), "9 < 100, must be excluded");
+        assert!(results.contains(&"ex:B".to_string()), "100 >= 100, must be included");
+        assert!(results.contains(&"ex:C".to_string()), "200 >= 100, must be included");
+    }
+
+    #[test]
+    fn numeric_eq_matches_integer_stored_in_object_integer() {
+        let conn = setup_test_db();
+        insert_type(&conn, "ex:X", "ex:Thing");
+        insert_integer(&conn, "ex:X", "ex:count", 42);
+        insert_type(&conn, "ex:Y", "ex:Thing");
+        insert_integer(&conn, "ex:Y", "ex:count", 99);
+
+        let (results, total) = find_by_class_iris_and_properties_with_options(
+            &conn, &["ex:Thing"],
+            &[PropertyFilter::Compare("ex:count", "42", "=")],
+            false, 100, 0, None,
+        ).unwrap();
+
+        assert_eq!(total, 1);
+        assert!(results.contains(&"ex:X".to_string()));
+        assert!(!results.contains(&"ex:Y".to_string()));
+    }
+
+    #[test]
+    fn exists_filter_includes_only_entities_with_property() {
+        let conn = setup_test_db();
+        insert_type(&conn, "ex:WithProp", "ex:Thing");
+        insert_decimal(&conn, "ex:WithProp", "ex:amount", 100.0);
+        insert_type(&conn, "ex:NoProp", "ex:Thing");
+
+        let (results, _) = find_by_class_iris_and_properties_with_options(
+            &conn, &["ex:Thing"],
+            &[PropertyFilter::Compare("ex:amount", "", "exists")],
+            false, 100, 0, None,
+        ).unwrap();
+
+        assert!(results.contains(&"ex:WithProp".to_string()));
+        assert!(!results.contains(&"ex:NoProp".to_string()));
+    }
+
+    #[test]
+    fn not_exists_filter_includes_only_entities_without_property() {
+        let conn = setup_test_db();
+        insert_type(&conn, "ex:WithProp", "ex:Thing");
+        insert_decimal(&conn, "ex:WithProp", "ex:amount", 100.0);
+        insert_type(&conn, "ex:NoProp", "ex:Thing");
+
+        let (results, _) = find_by_class_iris_and_properties_with_options(
+            &conn, &["ex:Thing"],
+            &[PropertyFilter::Compare("ex:amount", "", "not_exists")],
+            false, 100, 0, None,
+        ).unwrap();
+
+        assert!(!results.contains(&"ex:WithProp".to_string()));
+        assert!(results.contains(&"ex:NoProp".to_string()));
     }
 }
