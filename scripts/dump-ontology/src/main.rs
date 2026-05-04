@@ -91,21 +91,39 @@ fn bootstrap_registry(conn: &Connection) -> Result<(), rusqlite::Error> {
 }
 
 fn collect_subjects(conn: &Connection) -> Result<Vec<String>, rusqlite::Error> {
-    // Use triples_current (filters by MAX(tx)) so we only dump subjects whose
-    // latest type/registry assertion is still active. Querying raw `triples
-    // WHERE retracted=0` would include stale entries whose newest TX already
-    // retracted them.
+    // We need only entries from the LATEST tx of each (subject, predicate) pair.
+    //
+    // The `triples_current` view does this with a per-row correlated subquery
+    // (`MAX(tx) WHERE subject = t.subject AND predicate = t.predicate`).
+    // SQLite re-evaluates the subquery for *every* candidate row. With ~38k
+    // registry entries, the registry UNION alone re-runs that 38k times even
+    // though all rows share the same (subject, predicate) pair and thus a
+    // single MAX(tx) value. Result: ~9 minutes for what should be ~1 second.
+    //
+    // Avoid the view by computing each MAX(tx) once via an uncorrelated query,
+    // then doing a flat scan against the raw `triples` table.
     let mut stmt = conn.prepare("
-        SELECT DISTINCT subject FROM triples_current
-        WHERE predicate = 'rdf:type'
-          AND object IN (
+        SELECT DISTINCT t.subject FROM triples t
+        WHERE t.retracted = 0
+          AND t.predicate = 'rdf:type'
+          AND t.object IN (
             'owl:Class', 'rdfs:Class', 'owl:ObjectProperty', 'owl:DatatypeProperty',
             'owl:AnnotationProperty', 'rdf:Property'
           )
+          AND t.tx = (
+            SELECT MAX(tx) FROM triples
+            WHERE subject = t.subject AND predicate = 'rdf:type'
+          )
         UNION
-        SELECT DISTINCT object FROM triples_current
-        WHERE subject = 'foundation:CoreOntologyRegistry'
-          AND predicate = 'foundation:includesIndividual'
+        SELECT DISTINCT t.object FROM triples t
+        WHERE t.retracted = 0
+          AND t.subject = 'foundation:CoreOntologyRegistry'
+          AND t.predicate = 'foundation:includesIndividual'
+          AND t.tx = (
+            SELECT MAX(tx) FROM triples
+            WHERE subject = 'foundation:CoreOntologyRegistry'
+              AND predicate = 'foundation:includesIndividual'
+          )
         UNION
         SELECT 'foundation:CoreOntologyRegistry'
         ORDER BY 1
@@ -198,13 +216,27 @@ fn write_sql(
     writeln!(w)?;
 
     writeln!(w, "-- Triples")?;
+    // Avoid `triples_current` view: its per-row correlated MAX(tx) subquery
+    // makes this scan O(N²). We pre-compute the latest tx per (subject, predicate)
+    // in a CTE that runs ONCE, then flat-scan with a join.
     let mut stmt = conn.prepare("
-        SELECT subject, predicate, object, object_value, object_datatype, object_language,
-               object_type, object_number, object_integer, object_boolean,
-               origin_id
-        FROM triples_current
-        WHERE subject IN (SELECT subject FROM _dump_subjects)
-        ORDER BY subject, predicate
+        WITH max_tx AS (
+            SELECT subject, predicate, MAX(tx) AS tx
+            FROM triples
+            WHERE retracted = 0
+              AND subject IN (SELECT subject FROM _dump_subjects)
+            GROUP BY subject, predicate
+        )
+        SELECT t.subject, t.predicate, t.object, t.object_value, t.object_datatype, t.object_language,
+               t.object_type, t.object_number, t.object_integer, t.object_boolean,
+               t.origin_id
+        FROM triples t
+        JOIN max_tx m
+          ON t.subject = m.subject
+         AND t.predicate = m.predicate
+         AND t.tx = m.tx
+        WHERE t.retracted = 0
+        ORDER BY t.subject, t.predicate
     ")?;
 
     // Emit multi-row VALUES (one INSERT per BATCH rows). SQLite parses each
@@ -297,21 +329,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("scripts has no parent");
     let output = project_root.join("core-ontology").join("ontology.sql");
 
+    let t_total = std::time::Instant::now();
     eprintln!("Using database: {}", db_path.display());
     eprintln!("Output: {}", output.display());
 
+    let t = std::time::Instant::now();
     let conn = Connection::open(&db_path)?;
+    eprintln!("[timing] open DB: {:?}", t.elapsed());
 
+    let t = std::time::Instant::now();
     bootstrap_registry(&conn)?;
+    eprintln!("[timing] bootstrap_registry: {:?}", t.elapsed());
 
-    eprintln!("Collecting subjects...");
+    let t = std::time::Instant::now();
     let subjects = collect_subjects(&conn)?;
-    eprintln!("Subjects to dump: {}", subjects.len());
+    eprintln!("[timing] collect_subjects: {:?} ({} subjects)", t.elapsed(), subjects.len());
 
+    let t = std::time::Instant::now();
     conn.execute_batch(
         "CREATE TEMP TABLE IF NOT EXISTS _dump_subjects (subject TEXT PRIMARY KEY);",
     )?;
-
     let tx = conn.unchecked_transaction()?;
     {
         let mut stmt = tx.prepare("INSERT OR IGNORE INTO _dump_subjects VALUES (?1)")?;
@@ -320,15 +357,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     tx.commit()?;
+    eprintln!("[timing] populate _dump_subjects: {:?}", t.elapsed());
 
+    let t = std::time::Instant::now();
     let origins = collect_origins(&conn)?;
+    eprintln!("[timing] collect_origins: {:?} ({} origins)", t.elapsed(), origins.len());
 
-    eprintln!("Generating {}...", output.display());
+    let t = std::time::Instant::now();
     std::fs::create_dir_all(output.parent().unwrap())?;
     let triple_count = write_sql(&conn, &origins, subjects.len(), &output)?;
+    eprintln!("[timing] write_sql: {:?} ({} triples)", t.elapsed(), triple_count);
 
+    let t = std::time::Instant::now();
     conn.execute_batch("DROP TABLE IF EXISTS _dump_subjects;")?;
+    eprintln!("[timing] cleanup: {:?}", t.elapsed());
 
+    eprintln!("[timing] TOTAL: {:?}", t_total.elapsed());
     eprintln!("Done. {} triples written to {}", triple_count, output.display());
 
     Ok(())

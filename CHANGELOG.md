@@ -5,6 +5,19 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.1] - 2026-05-03
+
+### Fixed
+
+- **Paths de attachments agora portáveis**: anexos eram gravados com path absoluto (`file:///Users/daniel/Documents/Foundation/...`), travando o DB à máquina origem. Sincronizar via iCloud para outro computador quebrava todas as referências mesmo que os arquivos físicos roamassem na mesma sub-pasta. Novo módulo `paths.rs` armazena attachments como path relativo a `foundation_dir` (`attachments/foo.pdf`); leitores aceitam tanto o formato novo quanto `file://` legacy e absolutos. Bin one-shot `migrate_file_paths` converte DBs existentes (cross-platform: detecta `/Foundation/attachments/` em paths macOS para extrair a parte relativa)
+- **MCP timeouts mesmo com Foundation idle**: handler de `tools/call` usava `executor.write()` para *todas* as ferramentas — o single write thread sequencial bloqueava reads concorrentes (`describe_individual`, `search`, `class_graph`, etc.) mesmo quando SQLite WAL permitiria. Agora tools read-only são roteadas via `executor.read()` (pool de 6 connections persistentes)
+- **Search index causando churn de iCloud sync no Windows**: índice Tantivy ficava ao lado do DB, dentro da pasta sincronizada — 405 arquivos pequenos modificados a cada indexação geravam dezenas de eventos de sync por minuto. Move para `%LOCALAPPDATA%\org.w3id.foundation\search` (mesma pasta do log); migração one-shot remove o índice legacy do iCloud
+- **Loop infinito em tasks com erro permanente de configuração**: tasks com `API key not configured` ficavam emperradas como `InProgress`, eram resetadas para `Pending` em todo startup, e o ciclo recomeçava. `task_manager` agora detecta erros de config e marca o task como `Rejected` com motivo em `foundation:result`; `task_scheduler::collect_scheduled_tasks` skipa também `Rejected` (antes só `Completed`/`InProgress`)
+
+### Refactored
+
+- **Blackboard como entidade independente**: widgets eram associados à conversa via `foundation:partOfConversation`, exigindo `find_most_recent_conversation_iri()` em vários lugares. Nova classe `foundation:Blackboard` (singleton `DefaultBlackboard` + um por conversa, criado lazy via `resolve_blackboard_iri()`); widgets apontam para `foundation:onBlackboard`. Suporta widgets globais (fora de chat). MCP tools renomeiam `conversation_iri` → `blackboard_iri` (compatível com omissão)
+
 ## [0.18.0] - 2026-05-03
 
 ### Added

@@ -50,6 +50,11 @@ const EXCLUDED_IRIS: &[&str] = &[
     "foundation:Status_1773016842120",
     "foundation:Status_1773183515321",
     "foundation:Status_1776975614793",
+    // Singleton + property added by the Blackboard refactor (v0.18.1).
+    // Created at runtime via lazy code or MCP; origin is 'widget'/'ai' rather
+    // than an ontology TTL. TODO: seed in setup.rs with origin 'setup'.
+    "foundation:DefaultBlackboard",
+    "foundation:forConversation",
 ];
 
 const EXCLUDED_PREFIXES: &[&str] = &[

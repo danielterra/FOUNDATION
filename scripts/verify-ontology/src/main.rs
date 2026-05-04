@@ -106,21 +106,32 @@ fn compare_individual(orig: &Individual, temp: &Individual) -> Vec<String> {
 }
 
 fn collect_core_subjects(conn: &Connection) -> Result<Vec<String>, rusqlite::Error> {
-    // Use triples_current (which filters by MAX(tx)) so we only list subjects
-    // whose latest type/registry assertion is still active. Querying raw
-    // `triples WHERE retracted=0` would include stale subjects whose newest
-    // TX retracts them, producing false-positive "NOT FOUND IN EITHER DB" diffs.
+    // Avoid `triples_current` view: its per-row correlated MAX(tx) subquery
+    // makes the registry UNION re-evaluate MAX(tx) for every one of ~38k rows
+    // even though they all share the same (subject, predicate) pair. Use an
+    // uncorrelated subquery instead — runs once.
     let mut stmt = conn.prepare("
-        SELECT DISTINCT subject FROM triples_current
-        WHERE predicate = 'rdf:type'
-          AND object IN (
+        SELECT DISTINCT t.subject FROM triples t
+        WHERE t.retracted = 0
+          AND t.predicate = 'rdf:type'
+          AND t.object IN (
             'owl:Class', 'rdfs:Class', 'owl:ObjectProperty', 'owl:DatatypeProperty',
             'owl:AnnotationProperty', 'rdf:Property'
           )
+          AND t.tx = (
+            SELECT MAX(tx) FROM triples
+            WHERE subject = t.subject AND predicate = 'rdf:type'
+          )
         UNION
-        SELECT DISTINCT object FROM triples_current
-        WHERE subject = 'foundation:CoreOntologyRegistry'
-          AND predicate = 'foundation:includesIndividual'
+        SELECT DISTINCT t.object FROM triples t
+        WHERE t.retracted = 0
+          AND t.subject = 'foundation:CoreOntologyRegistry'
+          AND t.predicate = 'foundation:includesIndividual'
+          AND t.tx = (
+            SELECT MAX(tx) FROM triples
+            WHERE subject = 'foundation:CoreOntologyRegistry'
+              AND predicate = 'foundation:includesIndividual'
+          )
         UNION
         SELECT 'foundation:CoreOntologyRegistry'
         ORDER BY 1
@@ -412,22 +423,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let orig_conn = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let temp_conn = Connection::open_with_flags(&temp_db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
 
+    // Same anti-pattern fix as collect_core_subjects: avoid `triples_current`'s
+    // correlated MAX(tx) subquery. Pre-compute the latest tx per (subject,
+    // predicate) once via a CTE, then count.
     let orig_triple_count: i64 = orig_conn.query_row(
-        "SELECT COUNT(*) FROM triples_current
-         WHERE subject IN (
-             SELECT DISTINCT subject FROM triples_current
-             WHERE predicate = 'rdf:type'
-               AND object IN (
-                 'owl:Class', 'rdfs:Class', 'owl:ObjectProperty', 'owl:DatatypeProperty',
-                 'owl:AnnotationProperty', 'rdf:Property'
-               )
-             UNION
-             SELECT DISTINCT object FROM triples_current
-             WHERE subject = 'foundation:CoreOntologyRegistry'
-               AND predicate = 'foundation:includesIndividual'
-             UNION
-             SELECT 'foundation:CoreOntologyRegistry'
-         )",
+        "WITH dump_subjects AS (
+            SELECT DISTINCT t.subject FROM triples t
+            WHERE t.retracted = 0
+              AND t.predicate = 'rdf:type'
+              AND t.object IN (
+                'owl:Class', 'rdfs:Class', 'owl:ObjectProperty', 'owl:DatatypeProperty',
+                'owl:AnnotationProperty', 'rdf:Property'
+              )
+              AND t.tx = (
+                SELECT MAX(tx) FROM triples
+                WHERE subject = t.subject AND predicate = 'rdf:type'
+              )
+            UNION
+            SELECT DISTINCT t.object FROM triples t
+            WHERE t.retracted = 0
+              AND t.subject = 'foundation:CoreOntologyRegistry'
+              AND t.predicate = 'foundation:includesIndividual'
+              AND t.tx = (
+                SELECT MAX(tx) FROM triples
+                WHERE subject = 'foundation:CoreOntologyRegistry'
+                  AND predicate = 'foundation:includesIndividual'
+              )
+            UNION
+            SELECT 'foundation:CoreOntologyRegistry'
+         ),
+         max_tx AS (
+             SELECT subject, predicate, MAX(tx) AS tx
+             FROM triples
+             WHERE retracted = 0
+               AND subject IN (SELECT subject FROM dump_subjects)
+             GROUP BY subject, predicate
+         )
+         SELECT COUNT(*)
+         FROM triples t
+         JOIN max_tx m ON t.subject = m.subject AND t.predicate = m.predicate AND t.tx = m.tx
+         WHERE t.retracted = 0",
         [],
         |r| r.get(0),
     )?;
