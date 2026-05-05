@@ -122,22 +122,44 @@ async fn execute_tool(
     };
 
     if tool_result.success {
-        // For read_binary_file, convert image/PDF results to a content-block array so
-        // Claude receives a proper vision/document block instead of raw base64 text.
-        if name == "read_binary_file" {
+        // For read_binary_file / read_pdf_page, convert image/PDF results to a content-block
+        // array so Claude receives a proper vision/document block instead of raw base64 text.
+        // read_binary_file inlines the bytes as `data`; read_pdf_page persists to disk and
+        // returns `page_path` — load lazily from disk so the JSON tool result stays small.
+        if name == "read_binary_file" || name == "read_pdf_page" {
             if let Some(ref result) = tool_result.result {
                 let media_type = result["media_type"].as_str().unwrap_or("");
-                let data = result["data"].as_str().unwrap_or("");
-                if media_type.starts_with("image/") {
-                    let blocks = serde_json::json!([
-                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
-                    ]);
-                    return (serde_json::to_string(&blocks).unwrap_or_default(), false);
-                } else if media_type == "application/pdf" {
-                    let blocks = serde_json::json!([
-                        {"type": "document", "source": {"type": "base64", "media_type": media_type, "data": data}}
-                    ]);
-                    return (serde_json::to_string(&blocks).unwrap_or_default(), false);
+                let inline = result["data"].as_str().unwrap_or("");
+                let from_path = result["page_path"].as_str().unwrap_or("");
+                let data: String = if !inline.is_empty() {
+                    inline.to_string()
+                } else if !from_path.is_empty() {
+                    use base64::Engine;
+                    match std::fs::read(from_path) {
+                        Ok(bytes) => base64::engine::general_purpose::STANDARD.encode(&bytes),
+                        Err(e) => {
+                            crate::commands::log_backend(
+                                "warn",
+                                &format!("{name}: page_path '{from_path}' could not be read ({e}); falling back to raw JSON tool result"),
+                            );
+                            String::new()
+                        }
+                    }
+                } else {
+                    String::new()
+                };
+                if !data.is_empty() {
+                    if media_type.starts_with("image/") {
+                        let blocks = serde_json::json!([
+                            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
+                        ]);
+                        return (serde_json::to_string(&blocks).unwrap_or_default(), false);
+                    } else if media_type == "application/pdf" {
+                        let blocks = serde_json::json!([
+                            {"type": "document", "source": {"type": "base64", "media_type": media_type, "data": data}}
+                        ]);
+                        return (serde_json::to_string(&blocks).unwrap_or_default(), false);
+                    }
                 }
             }
         }

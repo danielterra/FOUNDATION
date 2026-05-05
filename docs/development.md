@@ -56,6 +56,17 @@ npm run tauri          # Compiles Rust on first run (slow), then opens the deskt
 
 The first `npm run tauri` will trigger a full Rust build and may take 5–15 minutes. Subsequent runs are incremental.
 
+## Working in this repo with Claude Code
+
+Repetitive workflows (creating widgets, MCP tools, releases, code review) are encoded as Claude Code skills under [.claude/skills/](../.claude/skills/) — invoked from the chat as `/widget-create`, `/mcp-create`, `/release-create`, etc. Each skill is the source of truth for its workflow, so prefer running the skill over hand-writing the steps. A non-exhaustive index:
+
+| Area | Create | Change | Remove |
+|------|--------|--------|--------|
+| Widgets | [widget-create](../.claude/skills/widget-create/SKILL.md) | [widget-change](../.claude/skills/widget-change/SKILL.md) | [widget-remove](../.claude/skills/widget-remove/SKILL.md) |
+| MCP tools | [mcp-create](../.claude/skills/mcp-create/SKILL.md) | [mcp-change](../.claude/skills/mcp-change/SKILL.md) | [mcp-remove](../.claude/skills/mcp-remove/SKILL.md) |
+| Releases | [release-create](../.claude/skills/release-create/SKILL.md) | — | — |
+| Code review / commit | — | [code-review](../.claude/skills/code-review/SKILL.md), [code-commit](../.claude/skills/code-commit/SKILL.md) | — |
+
 ## Running the Project
 
 ```bash

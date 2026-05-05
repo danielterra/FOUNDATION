@@ -61,8 +61,9 @@
 
 <div class="qc-editor">
   <div class="section">
-    <label class="section-label">Classe alvo</label>
+    <label class="section-label" for="qc-target-class-input">Classe alvo</label>
     <input
+      id="qc-target-class-input"
       class="qc-input"
       type="text"
       bind:value={targetClass}
@@ -72,7 +73,7 @@
 
   <div class="section">
     <div class="section-header">
-      <label class="section-label">Filtros</label>
+      <span class="section-label">Filtros</span>
       <button class="add-btn" onclick={addFilter} type="button">
         <span class="material-symbols-outlined">add</span>
         Adicionar filtro

@@ -6,7 +6,7 @@
   const CURRENCY_CODES = new Set(['BRL', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'ARS', 'CLP', 'MXN', 'PEN', 'COP', 'UYU']);
 
   // Tauri injeta nonce em style-src; precisa repassar ao NumberFlow para o
-  // <style> do Shadow DOM não ser bloqueado pela CSP
+  // elemento style do Shadow DOM não ser bloqueado pela CSP
   const cspNonce = typeof document !== 'undefined'
     ? document.querySelector('style[nonce]')?.nonce
     : undefined;

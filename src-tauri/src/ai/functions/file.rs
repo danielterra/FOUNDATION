@@ -4,64 +4,6 @@ use rusqlite::Connection;
 use super::ToolResult;
 
 const DEFAULT_MAX_LINE_CHARS: usize = 4096;
-// Fallback when no model/agent/global config is available.
-const FALLBACK_MAX_BINARY_BYTES: u64 = 500 * 1024;
-
-/// Maximum bytes allowed for a binary file read, based on 70% of the model's actual
-/// context window (maxInputTokens), NOT the conversation history budget.
-///
-/// `read_binary_file` sends the file content as a base64-encoded JSON string inside a
-/// tool result (plain text — not a native image/document block). The token cost
-/// therefore scales with file size regardless of format:
-///   base64 expands raw bytes by 4/3; base64 chars tokenise at roughly 2 chars/token,
-///   so  raw_bytes → tokens ≈ raw_bytes × (4/3) / 2 = raw_bytes × 2/3
-///   → max_raw_bytes = budget_tokens × 3/2
-///
-/// Context window lookup order (highest priority first):
-///   1. foundation:AIModel.foundation:maxInputTokens via conversation's agent
-///   2. foundation:AIModel.foundation:maxInputTokens via global default model
-///   3. Hardcoded fallback → 500 KB
-fn max_binary_bytes(conn: &Connection, conversation_id: Option<&str>) -> u64 {
-    let max_tokens = resolve_context_limit(conn, conversation_id).unwrap_or(0);
-    if max_tokens == 0 {
-        return FALLBACK_MAX_BINARY_BYTES;
-    }
-    let budget = (max_tokens as u64) * 70 / 100;
-    budget * 3 / 2
-}
-
-fn resolve_context_limit(conn: &Connection, conversation_id: Option<&str>) -> Option<usize> {
-    use crate::owl::{Individual, Object};
-
-    // Use the model's actual context window (maxInputTokens), NOT the conversation history
-    // budget (maxInputTokensPreference). The history budget controls how much prior context
-    // is sent per request (e.g. 30K) and is unrelated to the model's total capacity (e.g.
-    // 200K). Using the budget here would restrict binary reads to tiny sizes like 31 KB.
-
-    // 1. Model's maxInputTokens via the conversation's agent.
-    if let Some(conv_iri) = conversation_id {
-        if let Ok(Some(agent_iri)) = crate::owl::get_iri_property(conn, conv_iri, "foundation:handledBy") {
-            if let Ok(Some(model_iri)) = crate::owl::get_iri_property(conn, &agent_iri, "foundation:usesModel") {
-                if let Ok(Some(model)) = Individual::get(conn, &model_iri) {
-                    if let Some((_, Object::Integer(n))) = model.properties.iter()
-                        .find(|(k, _)| k == "foundation:maxInputTokens") {
-                        return Some(*n as usize);
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Model's maxInputTokens via the global default model.
-    let model_iri = crate::commands::chat::settings::get_ai_model_iri(conn).ok()??;
-    let model = Individual::get(conn, &model_iri).ok()??;
-    if let Some((_, Object::Integer(n))) = model.properties.iter()
-        .find(|(k, _)| k == "foundation:maxInputTokens") {
-        return Some(*n as usize);
-    }
-
-    None
-}
 
 fn resolve_file_path(conn: &Connection, file_iri: &str) -> Result<String, ToolResult> {
     let stored = match crate::owl::get_literal_property(conn, file_iri, "foundation:filePath") {
@@ -123,7 +65,7 @@ fn detect_mime_type(bytes: &[u8]) -> &'static str {
     "application/octet-stream"
 }
 
-pub fn read_binary_file(conn: &Connection, args: &Value, conversation_id: Option<&str>) -> ToolResult {
+pub fn read_binary_file(conn: &Connection, args: &Value) -> ToolResult {
     let file_iri = match args.get("file_iri").and_then(|v| v.as_str()) {
         Some(iri) if !iri.is_empty() => iri,
         _ => return ToolResult {
@@ -138,29 +80,6 @@ pub fn read_binary_file(conn: &Connection, args: &Value, conversation_id: Option
         Ok(p) => p,
         Err(e) => return e,
     };
-
-    let file_size = match std::fs::metadata(&file_path) {
-        Ok(m) => m.len(),
-        Err(e) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(format!("Failed to read file metadata '{}': {}", file_path, e)),
-            concept: None,
-        },
-    };
-
-    let limit = max_binary_bytes(conn, conversation_id);
-    if file_size > limit {
-        return ToolResult {
-            success: false,
-            result: None,
-            error: Some(format!(
-                "File too large to read: {} bytes (limit is {} bytes, 70% of this conversation's context). Use a text tool or pre-process the file first.",
-                file_size, limit
-            )),
-            concept: None,
-        };
-    }
 
     let raw = match std::fs::read(&file_path) {
         Ok(bytes) => bytes,
@@ -180,6 +99,119 @@ pub fn read_binary_file(conn: &Connection, args: &Value, conversation_id: Option
     ToolResult {
         success: true,
         result: Some(serde_json::json!({ "media_type": media_type, "data": data })),
+        error: None,
+        concept: None,
+    }
+}
+
+fn pdf_fingerprint(conn: &Connection, file_iri: &str, file_path: &str) -> String {
+    if let Ok(Some(hash)) = crate::owl::get_literal_property(conn, file_iri, "foundation:fileHash") {
+        let hex = hash.split(':').next_back().unwrap_or(&hash);
+        let trimmed: String = hex.chars().take(16).collect();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+    }
+    // Fallback when foundation:fileHash is missing — mtime in milliseconds is enough
+    // to invalidate a stale cache entry across re-imports.
+    std::fs::metadata(file_path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| format!("m{}", d.as_millis()))
+        .unwrap_or_else(|| "nofp".to_string())
+}
+
+pub fn read_pdf_page(conn: &Connection, args: &Value) -> ToolResult {
+    let file_iri = match args.get("file_iri").and_then(|v| v.as_str()) {
+        Some(iri) if !iri.is_empty() => iri,
+        _ => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing required parameter: file_iri".to_string()),
+            concept: None,
+        },
+    };
+
+    let page = match args.get("page").and_then(|v| v.as_u64()) {
+        Some(p) if p >= 1 => p as u32,
+        _ => return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Missing or invalid required parameter: page (must be a positive integer, 1-based)".to_string()),
+            concept: None,
+        },
+    };
+
+    let file_path = match resolve_file_path(conn, file_iri) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+
+    let mut doc = match lopdf::Document::load(&file_path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!("Failed to load PDF '{}': {}", file_path, e)),
+            concept: None,
+        },
+    };
+
+    let pages = doc.get_pages();
+    let total_pages = pages.len() as u32;
+
+    if page > total_pages {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!("Page {} out of range (PDF has {} pages)", page, total_pages)),
+            concept: None,
+        };
+    }
+
+    let to_delete: Vec<u32> = pages.into_keys().filter(|n| *n != page).collect();
+    doc.delete_pages(&to_delete);
+
+    // Inlining the page bytes (base64) in the JSON tool result balloons context for any
+    // caller that relays it as text — instead, persist to the OS temp dir (cleared by
+    // the OS) and return only the path. Callers that need a content block load lazily.
+    let temp_root = std::env::temp_dir().join("foundation-pdf-pages");
+    if let Err(e) = std::fs::create_dir_all(&temp_root) {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!("Failed to create temp dir '{}': {}", temp_root.display(), e)),
+            concept: None,
+        };
+    }
+
+    // Include a content fingerprint in the filename so distinct IRIs that sanitise to
+    // the same string don't collide, and so a re-imported PDF (same IRI, new bytes)
+    // produces a fresh cache entry instead of serving stale data.
+    let fingerprint = pdf_fingerprint(conn, file_iri, &file_path);
+    let safe_iri: String = file_iri.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let out_path = temp_root.join(format!("{safe_iri}_{fingerprint}_p{page}.pdf"));
+
+    if let Err(e) = doc.save(&out_path) {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!("Failed to write single-page PDF '{}': {}", out_path.display(), e)),
+            concept: None,
+        };
+    }
+
+    ToolResult {
+        success: true,
+        result: Some(serde_json::json!({
+            "media_type": "application/pdf",
+            "page_path": out_path.to_string_lossy(),
+            "page": page,
+            "total_pages": total_pages,
+        })),
         error: None,
         concept: None,
     }
@@ -448,7 +480,7 @@ mod tests {
         tmp.write_all(pdf_bytes).expect("write pdf");
         register_file(&mut conn, "foundation:File_bin_pdf", tmp.path().to_str().unwrap());
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_pdf" }), None);
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_pdf" }));
 
         assert!(result.success, "Expected success but got error: {:?}", result.error);
         let data = result.result.unwrap();
@@ -465,7 +497,7 @@ mod tests {
         tmp.write_all(jpeg).expect("write jpeg");
         register_file(&mut conn, "foundation:File_bin_jpeg", tmp.path().to_str().unwrap());
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_jpeg" }), None);
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_jpeg" }));
 
         assert!(result.success);
         assert_eq!(result.result.unwrap()["media_type"].as_str().unwrap(), "image/jpeg");
@@ -480,7 +512,7 @@ mod tests {
         tmp.write_all(original).expect("write bytes");
         register_file(&mut conn, "foundation:File_bin_rt", tmp.path().to_str().unwrap());
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_rt" }), None);
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_rt" }));
 
         assert!(result.success);
         let encoded = result.result.unwrap()["data"].as_str().unwrap().to_string();
@@ -498,7 +530,7 @@ mod tests {
         tmp.write_all(unknown).expect("write bytes");
         register_file(&mut conn, "foundation:File_bin_unk", tmp.path().to_str().unwrap());
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_unk" }), None);
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_unk" }));
 
         assert!(result.success);
         assert_eq!(result.result.unwrap()["media_type"].as_str().unwrap(), "application/octet-stream");
@@ -511,26 +543,10 @@ mod tests {
         let ind = Individual::new("foundation:File_bin_no_path");
         ind.assert(&mut conn, "foundation:File", "no path", "https://example.com/icon.png", "test").unwrap();
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_no_path" }), None);
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_no_path" }));
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("foundation:filePath"));
-    }
-
-    #[test]
-    fn read_binary_file_returns_error_when_file_exceeds_size_limit() {
-        let mut conn = setup_test_db();
-        setup_file_ontology(&mut conn);
-        // No model config in test DB → falls back to FALLBACK_MAX_BINARY_BYTES (500 KB).
-        let oversized = vec![0u8; (FALLBACK_MAX_BINARY_BYTES + 1) as usize];
-        let mut tmp = NamedTempFile::new().expect("create temp file");
-        tmp.write_all(&oversized).expect("write oversized bytes");
-        register_file(&mut conn, "foundation:File_bin_oversized", tmp.path().to_str().unwrap());
-
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_oversized" }), None);
-
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("too large"));
     }
 
     #[test]
@@ -545,7 +561,7 @@ mod tests {
             language: None,
         }], "test").unwrap();
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_missing" }), None);
+        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_missing" }));
 
         assert!(!result.success);
     }

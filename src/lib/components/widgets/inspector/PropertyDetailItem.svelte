@@ -493,8 +493,9 @@
   {#if editingCardinalityKey === detailGroup.property}
     <div class="cardinality-edit-form">
       <div class="cardinality-edit-row">
-        <label class="cardinality-edit-label">Min</label>
+        <label class="cardinality-edit-label" for="cardinality-min-input">Min</label>
         <input
+          id="cardinality-min-input"
           class="cardinality-input"
           type="number"
           min="0"
@@ -505,8 +506,9 @@
             else if (e.key === 'Enter') saveCardinalityEdit(detailGroup.property);
           }}
         />
-        <label class="cardinality-edit-label">Max</label>
+        <label class="cardinality-edit-label" for="cardinality-max-input">Max</label>
         <input
+          id="cardinality-max-input"
           class="cardinality-input"
           type="number"
           min="0"

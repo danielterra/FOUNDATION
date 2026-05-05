@@ -73,8 +73,8 @@
       }
     }
 
-    // Fix 2: Move SVG <style> to the HTML container.
-    // WebKit does not apply CSS from <style> elements embedded inside SVG when the SVG
+    // Fix 2: Move SVG style element to the HTML container.
+    // WebKit does not apply CSS from style elements embedded inside SVG when the SVG
     // is inserted via innerHTML. SVG elements fall back to default styles (black fill,
     // no stroke) making paths and rects invisible. Moving the style into the HTML scope
     // ensures the selectors are evaluated correctly.

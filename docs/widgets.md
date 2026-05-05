@@ -101,88 +101,17 @@ foundation:Widget_mermaid_MermaidDiagram_InvoiceFlow
     foundation:widgetSizeHeight 500
 ```
 
-## Implementing a New Widget Type
+## Implementing, changing, or removing a widget type
 
-Adding a new widget type requires changes in three places.
+The end-to-end recipes — including handler scaffolding, the `WidgetManager` dispatch wiring, and the ontology call to register a `foundation:WidgetType` — live as Claude Code skills under [.claude/skills/](../.claude/skills/):
 
-### 1. Register the type in the ontology
+- [widget-create](../.claude/skills/widget-create/SKILL.md) — adds a new widget type
+- [widget-change](../.claude/skills/widget-change/SKILL.md) — alters metadata or component logic of an existing widget
+- [widget-remove](../.claude/skills/widget-remove/SKILL.md) — retracts a widget type and cleans up dispatch + component file
 
-Create a `foundation:WidgetType` individual — this is the only registration step needed on the backend.
-
-- `rdfs:label` — display name (e.g. `"My Widget"`)
-- `rdfs:comment` — description shown as a tooltip in the Inspector header
-- icon — Material Symbols name for the Inspector header button
-- `foundation:widgetTypeId` — programmatic ID (e.g. `"my_widget"`)
-- `foundation:widgetSupportedClass` — class IRI this widget targets (`"owl:Thing"` for universal)
-- `foundation:widgetDefaultWidth` / `foundation:widgetDefaultHeight` — default dimensions in pixels
-- `foundation:widgetUsageNote` *(optional)* — if set, the widget appears in the AI system prompt; value is the instruction shown to the AI
-
-### 2. Create the Svelte component
-
-Create `src/lib/components/widgets/MyWidget.svelte`. The component receives two props and must follow the structure below:
-
-```svelte
-<script>
-  import { onMount, onDestroy } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
-
-  let { widgetId, entityId = '' } = $props();
-
-  let label = $state('');
-  let unlistenEntityUpdated = null;
-
-  async function loadData() {
-    if (!entityId) return;
-    const resultStr = await invoke('entity__get', { entityId });
-    const data = JSON.parse(resultStr);
-    label = data?.label ?? entityId;
-  }
-
-  async function closeWidget() {
-    await invoke('widget__remove', { widgetId });
-  }
-
-  onMount(async () => {
-    await loadData();
-    unlistenEntityUpdated = await listen('entity-updated', async (event) => {
-      if (event.payload.entityId === entityId) await loadData();
-    });
-  });
-
-  onDestroy(() => {
-    if (unlistenEntityUpdated) unlistenEntityUpdated();
-  });
-</script>
-
-<div class="my-widget">
-  <!-- The .widget-header class is required — WidgetManager uses it for drag detection -->
-  <div class="widget-header">
-    <span>{label}</span>
-    <button class="close-btn" onclick={closeWidget}>✕</button>
-  </div>
-  <div class="widget-content">
-    <!-- widget body -->
-  </div>
-</div>
-```
-
-Two contracts must be respected:
+The skills are the source of truth for the workflow. The contracts every component must respect are unchanged:
 - The root element must contain a child with class `widget-header` — `WidgetManager` attaches drag listeners to it.
-- Call `invoke('widget__remove', { widgetId })` to let the widget close itself.
-
-### 3. Register the component in WidgetManager
-
-In [src/lib/components/widgets/WidgetManager.svelte](../src/lib/components/widgets/WidgetManager.svelte), add the import and a branch in the `{#each}` block:
-
-```svelte
-<!-- top of <script> -->
-import MyWidget from './MyWidget.svelte';
-
-<!-- inside the {#each widgets} block -->
-{:else if widget.widget_type === 'my_widget'}
-  <MyWidget widgetId={widget.id} entityId={widget.entity_id} />
-```
+- Call `invoke('widget_blackboard__remove_widget', { widgetId })` to let the widget close itself.
 
 ## Frontend Components
 

@@ -168,17 +168,6 @@
     color: var(--color-neutral);
   }
 
-  .file-label {
-    display: none;
-  }
-
-  .file-label {
-    font-family: var(--font-body);
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--color-neutral);
-  }
-
   .file-preview-info {
     display: flex;
     flex-direction: column;

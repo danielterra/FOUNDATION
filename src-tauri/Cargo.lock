@@ -22,6 +22,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "llama-cpp-2",
+ "lopdf 0.34.0",
  "mailparse",
  "native-tls",
  "pdf-extract",
@@ -3152,6 +3153,26 @@ dependencies = [
 
 [[package]]
 name = "lopdf"
+version = "0.34.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5c8ecfc6c72051981c0459f75ccc585e7ff67c70829560cda8e647882a9abff"
+dependencies = [
+ "chrono",
+ "encoding_rs",
+ "flate2",
+ "indexmap 2.14.0",
+ "itoa",
+ "log",
+ "md-5",
+ "nom 7.1.3",
+ "rangemap",
+ "rayon",
+ "time",
+ "weezl",
+]
+
+[[package]]
+name = "lopdf"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c7184fdea2bc3cd272a1acec4030c321a8f9875e877b3f92a53f2f6033fdc289"
@@ -3930,7 +3951,7 @@ dependencies = [
  "encoding_rs",
  "euclid",
  "log",
- "lopdf",
+ "lopdf 0.38.0",
  "postscript",
  "type1-encoding-parser",
  "unicode-normalization",

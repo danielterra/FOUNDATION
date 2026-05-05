@@ -628,6 +628,28 @@ Example — find all active Tasks whose due date is before this Project's deadli
         },
 
         ToolTemplate {
+            name: "read_pdf_page".to_string(),
+            array_mode: false,
+            description: "Read a single page of a PDF foundation:File and persist it as a 1-page PDF in the OS temp dir. Returns page_path (filesystem path), page, total_pages, and media_type=application/pdf — NOT inline base64. The chat layer loads the file lazily and presents Claude a native document content block. Prefer this over read_binary_file for PDFs to avoid loading the whole document at once.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "file_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the foundation:File individual containing a PDF (e.g. 'foundation:File_1234567890')".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "page".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Page number to extract (1-based). Must be between 1 and total_pages.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
             name: "head_text_file".to_string(),
             array_mode: false,
             description: "Return the first N lines of a text-based foundation:File individual. Also returns the total line count so the agent knows the file's full size. Ideal for inspecting CSV headers and structure before choosing a processing strategy.".to_string(),

@@ -1,6 +1,5 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
-	import { onMount } from 'svelte';
 	import posthog from 'posthog-js';
 
 	let { onComplete = () => {} } = $props();
@@ -12,6 +11,10 @@
 
 	// ── step 1: identificação ──────────────────────────────────────────────────
 	let personName = $state('');
+	let nameInputEl = $state(null);
+	$effect(() => {
+		if (step === 1 && nameInputEl) nameInputEl.focus();
+	});
 
 	// ── step 2: e-mail ─────────────────────────────────────────────────────────
 	const PROVIDERS = [
@@ -230,7 +233,7 @@
 					type="text"
 					placeholder="Seu nome"
 					bind:value={personName}
-					autofocus
+					bind:this={nameInputEl}
 					onkeydown={(e) => e.key === 'Enter' && personName.trim() && (step = 2)}
 				/>
 			</div>

@@ -1,8 +1,5 @@
 [build]
 target-dir = "target"
 
-[profile.dev]
-incremental = false
-
-[profile.release]
-incremental = false
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"

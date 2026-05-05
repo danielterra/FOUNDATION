@@ -556,9 +556,9 @@
 					AI Model
 				</h3>
 				{#if services.length > 0}
-					<label class="field-label">Provedor</label>
+					<label class="field-label" for="settings-provider-select">Provedor</label>
 					<div class="field-row">
-						<select class="select-input" value={selectedServiceIri} onchange={onServiceChange}>
+						<select id="settings-provider-select" class="select-input" value={selectedServiceIri} onchange={onServiceChange}>
 							{#each services as svc}
 								<option value={svc.iri}>{svc.label}</option>
 							{/each}
@@ -566,12 +566,13 @@
 					</div>
 
 					{#if !selectedServiceIsLocal}
-						<label class="field-label">Chave de API</label>
+						<label class="field-label" for="settings-api-key-input">Chave de API</label>
 						{#if apiKeyLoading}
 							<p class="hint">Loading…</p>
 						{:else}
 							<div class="field-row">
 								<input
+									id="settings-api-key-input"
 									class="text-input"
 									type="password"
 									placeholder="sk-ant-…"
@@ -589,9 +590,9 @@
 					{/if}
 
 					{#if models.length > 0}
-						<label class="field-label">Modelo padrão</label>
+						<label class="field-label" for="settings-model-select">Modelo padrão</label>
 						<div class="field-row">
-							<select class="select-input" bind:value={selectedModelIri}>
+							<select id="settings-model-select" class="select-input" bind:value={selectedModelIri}>
 								<option value="">Selecione um modelo…</option>
 								{#each models as model}
 									<option value={model.iri}>{model.label}</option>
@@ -762,7 +763,7 @@
 
 				{#if imapAvailableFolders.length > 0}
 					<div class="form-field">
-						<label class="field-label">Pastas monitoradas</label>
+						<span class="field-label">Pastas monitoradas</span>
 						<div class="imap-folders">
 							{#each imapAvailableFolders as folder}
 								<label class="checkbox-label folder-label">
@@ -1056,12 +1057,6 @@
 		font-size: 11px;
 		color: var(--color-neutral, #888);
 		margin: 0;
-	}
-
-	.btn-icon {
-		font-size: 16px;
-		vertical-align: middle;
-		margin-right: 4px;
 	}
 
 	.imap-account-row {

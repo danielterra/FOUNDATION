@@ -1,5 +1,5 @@
 ---
-name: release
+name: release-create
 description: Creates a new FOUNDATION release — bumps version, updates CHANGELOG, SoftwareRelease.ttl, README, commits, tags, and publishes a GitHub release.
 disable-model-invocation: false
 ---

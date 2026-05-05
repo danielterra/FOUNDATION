@@ -171,29 +171,6 @@
     padding: 0px;
   }
 
-  .close-btn {
-    background: none;
-    border: none;
-    padding: 4px;
-    cursor: pointer;
-    color: var(--color-interactive);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: color 0.15s, background 0.15s;
-  }
-
-  .close-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    color: var(--color-neutral-active);
-  }
-
-  .close-btn :global(.material-symbols-outlined) {
-    font-size: 20px;
-  }
-
-  /* headerActions buttons now use <Button>; styles come from that component. */
-
   .header-actions :global(.action-btn--danger) {
     color: var(--color-danger, #ef4444);
   }

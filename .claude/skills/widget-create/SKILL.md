@@ -1,5 +1,5 @@
 ---
-name: create-widget
+name: widget-create
 description: Creates a new Foundation blackboard widget — registers it in the ontology, scaffolds the Svelte component, and wires it into WidgetManager.
 disable-model-invocation: false
 ---

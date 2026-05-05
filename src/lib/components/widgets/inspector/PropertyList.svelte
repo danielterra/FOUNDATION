@@ -86,6 +86,7 @@
       const key = isBacklink ? `${prop.property}__backlink` : prop.property;
       if (!acc[key]) {
         acc[key] = {
+          _groupKey: key,
           property: prop.property,
           propertyLabel: prop.propertyLabel,
           propertyComment: prop.propertyComment,
@@ -187,7 +188,7 @@
     {#if sourceGroup.sourceClassLabel}
       <div class="source-separator" use:sticky={{ top: sepTop }}>{sourceGroup.sourceClassLabel}</div>
     {/if}
-    {#each sourceGroup.items as detailGroup (detailGroup.property)}
+    {#each sourceGroup.items as detailGroup (detailGroup._groupKey)}
       <PropertyDetailItem
         {detailGroup}
         {isClass}
@@ -230,12 +231,12 @@
           <div class="section-body">
             {#if sections.calculatedNumeric.length > 0}
               <div class="big-numbers-grid">
-                {#each sections.calculatedNumeric as detailGroup (detailGroup.property)}
+                {#each sections.calculatedNumeric as detailGroup (detailGroup._groupKey)}
                   <BigNumberCard {detailGroup} />
                 {/each}
               </div>
             {/if}
-            {#each sections.calculatedOther as detailGroup (detailGroup.property)}
+            {#each sections.calculatedOther as detailGroup (detailGroup._groupKey)}
               <PropertyDetailItem
                 {detailGroup}
                 {isClass}
@@ -286,26 +287,6 @@
     margin-bottom: 6px;
     z-index: 2;
     background: var(--color-surface-1);
-  }
-
-  .section-header.collapsible {
-    background: var(--color-surface-1);
-    border: none;
-    cursor: pointer;
-    width: 100%;
-    text-align: left;
-  }
-
-  .chevron {
-    font-size: 16px;
-    color: var(--color-neutral);
-    opacity: 0.6;
-    transition: transform 0.2s;
-    flex-shrink: 0;
-  }
-
-  .chevron.expanded {
-    transform: rotate(90deg);
   }
 
   .section-divider {

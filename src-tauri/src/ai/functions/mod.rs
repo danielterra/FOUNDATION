@@ -143,6 +143,7 @@ pub fn is_read_only_tool(name: &str) -> bool {
             | "describe_property"
             | "class_graph"
             | "read_binary_file"
+            | "read_pdf_page"
             | "head_text_file"
             | "read_text_lines"
             | "get_automation"
@@ -175,7 +176,8 @@ pub fn execute_read_only_tool(
         "describe_individual" => individual::describe_individual(conn, args),
         "describe_property" => property::describe_property(conn, args),
         "class_graph" => class_graph::get_class_graph(conn, args),
-        "read_binary_file" => file::read_binary_file(conn, args, None),
+        "read_binary_file" => file::read_binary_file(conn, args),
+        "read_pdf_page" => file::read_pdf_page(conn, args),
         "head_text_file" => file::head_text_file(conn, args),
         "read_text_lines" => file::read_text_lines(conn, args),
         "get_automation" => get_automation_tool(conn, args),
@@ -225,7 +227,8 @@ pub fn execute_tool(
         "describe_individual" => individual::describe_individual(conn, args),
         "describe_property" => property::describe_property(conn, args),
         "class_graph" => class_graph::get_class_graph(conn, args),
-        "read_binary_file" => file::read_binary_file(conn, args, conversation_id),
+        "read_binary_file" => file::read_binary_file(conn, args),
+        "read_pdf_page" => file::read_pdf_page(conn, args),
         "head_text_file" => file::head_text_file(conn, args),
         "read_text_lines" => file::read_text_lines(conn, args),
         "get_automation" => get_automation_tool(conn, args),

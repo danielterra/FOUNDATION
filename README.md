@@ -164,6 +164,7 @@ Restart the client after editing. FOUNDATION must be running for the tools to be
 | [Widget System](docs/widgets.md) | How the Dynamic Blackboard works, available widget types, and how to implement new ones |
 | [Automation System](docs/automation.md) | BPMN process engine, task types, trigger mechanisms, connectors, and AI agent tasks |
 | [Development Guide](docs/development.md) | Architecture layers, running the project, database structure, and debugging |
+| [Claude Code skills](.claude/skills/) | Prescriptive task recipes for working in this repo via Claude Code — widgets, MCP tools, releases, code review |
 
 ---
 
