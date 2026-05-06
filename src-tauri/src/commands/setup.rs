@@ -38,6 +38,37 @@ pub async fn initialize_app(
     // store paths relative to this directory so the DB roams between machines.
     if let Some(dir) = db_path.parent() {
         crate::paths::set_foundation_dir(dir.to_path_buf());
+
+        // Asset protocol scope (for `convertFileSrc`) and opener scope (for
+        // `openPath`) are declared statically in tauri.conf.json /
+        // capabilities/default.json with the default location, but
+        // foundation_dir is user-configurable (iCloud, OneDrive, custom). Allow
+        // the actual attachments dir at runtime so previews and the "open in
+        // default app" button work from wherever the user picked. Without
+        // this, paths under `iCloudDrive/...` etc. are blocked.
+        let attachments = dir.join("attachments");
+        let attachments_glob = format!("{}/**", attachments.display().to_string().replace('\\', "/"));
+
+        if let Err(e) = app.asset_protocol_scope().allow_directory(&attachments, true) {
+            super::log_backend("warn", &format!(
+                "Failed to allow attachments dir in asset protocol scope ({}): {}",
+                attachments.display(), e
+            ));
+        }
+
+        let cap = tauri::ipc::CapabilityBuilder::new("attachments-dir-runtime")
+            .window("main")
+            .permission_scoped(
+                "opener:allow-open-path",
+                vec![serde_json::json!({ "path": attachments_glob })],
+                Vec::<serde_json::Value>::new(),
+            );
+        if let Err(e) = app.add_capability(cap) {
+            super::log_backend("warn", &format!(
+                "Failed to register runtime opener capability for {}: {}",
+                attachments.display(), e
+            ));
+        }
     }
 
     owl::seed_icon_library(&mut conn);

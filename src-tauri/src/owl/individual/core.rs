@@ -16,7 +16,8 @@ impl Individual {
             .find(|t| t.predicate == "foundation:hasIcon")
             .and_then(|t| match &t.object {
                 Object::Iri(iri) => crate::owl::icon_iri_to_display(conn, iri),
-                Object::Literal { value, .. } => Some(value.clone()),
+                Object::Literal { value, .. } =>
+                    Some(crate::owl::icon_literal_to_display(value)),
                 _ => None,
             });
 
@@ -66,7 +67,8 @@ impl Individual {
             .and_then(|r| r.triples.into_iter().next())
             .and_then(|t| match t.object {
                 Object::Iri(iri) => crate::owl::icon_iri_to_display(conn, &iri),
-                Object::Literal { value, .. } => Some(value),
+                Object::Literal { value, .. } =>
+                    Some(crate::owl::icon_literal_to_display(&value)),
                 _ => None,
             });
 

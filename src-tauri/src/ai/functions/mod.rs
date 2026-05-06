@@ -231,6 +231,7 @@ pub fn execute_tool(
         "read_pdf_page" => file::read_pdf_page(conn, args),
         "head_text_file" => file::head_text_file(conn, args),
         "read_text_lines" => file::read_text_lines(conn, args),
+        "attach_file_to_individual" => file::attach_file_to_individual(conn, args),
         "get_automation" => get_automation_tool(conn, args),
         "run_automation" => run_automation_tool(conn, args, app),
         "list_blackboard_widgets" => list_blackboard_widgets_tool(conn, args, conversation_id),

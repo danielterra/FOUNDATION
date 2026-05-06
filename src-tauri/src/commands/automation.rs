@@ -177,7 +177,8 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                                             .map_err(|e| e.to_string())
                                             .map(|r| r.triples.into_iter().next().and_then(|t| match t.object {
                                                 Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, &icon_iri),
-                                                Object::Literal { value, .. } => Some(value),
+                                                Object::Literal { value, .. } =>
+                                                    Some(crate::owl::icon_literal_to_display(&value)),
                                                 _ => None,
                                             }))?
                                     };
@@ -205,7 +206,8 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                                         .map_err(|e| e.to_string())
                                         .map(|r| r.triples.into_iter().next().and_then(|t| match t.object {
                                             Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, &icon_iri),
-                                            Object::Literal { value, .. } => Some(value),
+                                            Object::Literal { value, .. } =>
+                                                Some(crate::owl::icon_literal_to_display(&value)),
                                             _ => None,
                                         }))?
                                 };

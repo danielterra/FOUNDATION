@@ -110,7 +110,8 @@ impl Class {
         let icon = icon_result.triples.first()
             .and_then(|t| match &t.object {
                 crate::eavto::Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, icon_iri),
-                crate::eavto::Object::Literal { value, .. } => Some(value.clone()),
+                crate::eavto::Object::Literal { value, .. } =>
+                    Some(crate::owl::icon_literal_to_display(value)),
                 _ => None,
             });
 

@@ -159,7 +159,8 @@ pub fn search_individuals(
                         )?;
                         has_icon_result.triples.first().and_then(|t| match &t.object {
                             Object::Iri(iri) => icon_iri_to_display(conn, iri),
-                            Object::Literal { value, .. } => Some(value.clone()),
+                            Object::Literal { value, .. } =>
+                                Some(crate::owl::icon_literal_to_display(value)),
                             _ => None,
                         })
                     };

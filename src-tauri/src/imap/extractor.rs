@@ -80,20 +80,21 @@ pub fn store_email(
     )
     .map_err(|e| format!("account: {}", e))?;
 
+    // Accumulate attachment IRIs and link them in a single add_property call.
+    // assert_triples replaces the full TX set, so calling add_property per
+    // attachment would leave only the last one as the current value.
+    let mut attachment_iris: Vec<Object> = Vec::new();
     for (i, att) in email.attachments.iter().enumerate() {
         match persist_attachment(conn, att, i) {
-            Ok(att_iri) => {
-                ind.add_property(
-                    conn, "foundation:emailHasAttachment",
-                    vec![Object::Iri(att_iri)], "imap",
-                ).map_err(|e| format!("attach link: {}", e))?;
-            }
-            Err(e) => {
-                crate::imap::log_error(&format!(
-                    "IMAP: failed to persist attachment '{}': {}", att.file_name, e,
-                ));
-            }
+            Ok(att_iri) => attachment_iris.push(Object::Iri(att_iri)),
+            Err(e) => crate::imap::log_error(&format!(
+                "IMAP: failed to persist attachment '{}': {}", att.file_name, e,
+            )),
         }
+    }
+    if !attachment_iris.is_empty() {
+        ind.add_property(conn, "foundation:emailHasAttachment", attachment_iris, "imap")
+            .map_err(|e| format!("attach link: {}", e))?;
     }
 
     Ok(Some(email_iri))

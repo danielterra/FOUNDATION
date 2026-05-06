@@ -15,7 +15,7 @@ pub mod query_worker;
 
 pub use graph_config::{load_graph_node_groups, get_graph_node_type_config, GraphNodeTypeConfig};
 
-pub use icons::{validate_icon, icon_name_to_iri, icon_iri_to_display, icon_store_value, seed_icon_library};
+pub use icons::{validate_icon, icon_name_to_iri, icon_iri_to_display, icon_literal_to_display, icon_store_value, seed_icon_library};
 
 pub use class::{Class, ClassType};
 pub use property::{Property, PropertyType, DomainLabel};

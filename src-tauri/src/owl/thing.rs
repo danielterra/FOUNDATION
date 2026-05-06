@@ -35,7 +35,8 @@ impl Thing {
             .and_then(|r| {
                 r.triples.first().and_then(|t| match &t.object {
                     crate::eavto::Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, icon_iri),
-                    crate::eavto::Object::Literal { value, .. } => Some(value.clone()),
+                    crate::eavto::Object::Literal { value, .. } =>
+                        Some(crate::owl::icon_literal_to_display(value)),
                     _ => None,
                 })
             });
@@ -92,7 +93,8 @@ impl Thing {
                 .and_then(|m| m.has_icon.as_ref())
                 .and_then(|obj| match obj {
                     crate::eavto::Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, icon_iri),
-                    crate::eavto::Object::Literal { value, .. } => Some(value.clone()),
+                    crate::eavto::Object::Literal { value, .. } =>
+                        Some(crate::owl::icon_literal_to_display(value)),
                     _ => None,
                 });
             (iri.clone(), Thing { iri: iri.clone(), label, icon })

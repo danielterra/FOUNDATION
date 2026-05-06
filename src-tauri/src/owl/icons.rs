@@ -26,21 +26,46 @@ pub fn icon_iri_to_display(conn: &Connection, iri: &str) -> Option<String> {
     None
 }
 
+/// Resolve an icon literal value to an absolute path/URL the frontend can render.
+/// Portable relative paths (e.g. `attachments/foo.jpg`) are joined onto the
+/// current foundation_dir and returned as `file://...` so callers that strip
+/// the prefix and pass to `convertFileSrc` keep working unchanged.
+pub fn icon_literal_to_display(value: &str) -> String {
+    if value.starts_with("http://")
+        || value.starts_with("https://")
+        || value.starts_with("data:")
+        || value.starts_with("file://")
+    {
+        return value.to_string();
+    }
+    let absolute = crate::paths::resolve_path(value);
+    format!("file://{}", absolute.to_string_lossy())
+}
+
 pub fn icon_store_value(icon: &str) -> (&'static str, crate::eavto::Object) {
     use crate::eavto::Object;
     if icon.starts_with("http://")
         || icon.starts_with("https://")
-        || icon.starts_with("file://")
         || icon.starts_with("data:")
     {
-        ("foundation:hasIcon", Object::Literal {
+        return ("foundation:hasIcon", Object::Literal {
             value: icon.to_string(),
             datatype: Some("xsd:string".to_string()),
             language: None,
-        })
-    } else {
-        ("foundation:hasIcon", Object::Iri(icon_name_to_iri(icon)))
+        });
     }
+    if let Some(path) = icon.strip_prefix("file://") {
+        // Convert paths inside foundation_dir to portable form so the same DB
+        // can roam between machines (matches the foundation:filePath convention).
+        // External `file://` paths are kept absolute.
+        let stored = crate::paths::to_portable_path(std::path::Path::new(path));
+        return ("foundation:hasIcon", Object::Literal {
+            value: stored,
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        });
+    }
+    ("foundation:hasIcon", Object::Iri(icon_name_to_iri(icon)))
 }
 
 /// Validates that `icon` is a recognised icon: a valid Material Symbols IRI, a raw symbol name

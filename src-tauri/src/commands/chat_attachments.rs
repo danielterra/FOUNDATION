@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use base64::Engine;
-use sha2::{Sha256, Digest};
 
 pub struct AttachmentData {
     pub mime_type: String,
@@ -61,7 +60,7 @@ pub async fn chat__attach_file(
         let attachments_dir = crate::paths::attachments_dir();
         tokio::fs::create_dir_all(&attachments_dir).await
             .map_err(|e| format!("Failed to create attachments directory: {}", e))?;
-        let safe_name = file_name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+        let safe_name = crate::files::sanitize_filename(&file_name);
         attachments_dir.join(format!("{}_{}", timestamp, safe_name))
     };
     tokio::fs::copy(&file_path, &permanent_path).await
@@ -70,9 +69,8 @@ pub async fn chat__attach_file(
     // path so the DB can roam between machines.
     let stored_path = crate::paths::to_portable_path(&permanent_path);
 
-    let hash = format!("sha256:{:x}", Sha256::digest(&raw));
+    let hash = crate::files::sha256_hex(&raw);
     let size = raw.len() as i64;
-    let file_type_iri = mime_to_file_type_iri(&mime_type).map(|s| s.to_string());
     let csv_meta = if csv_prefix {
         let text = String::from_utf8_lossy(&raw);
         Some(parse_csv_metadata(&text))
@@ -80,52 +78,32 @@ pub async fn chat__attach_file(
         None
     };
     let file_name_clone = file_name.clone();
-    let hash_clone = hash.clone();
+    let mime_type_clone = mime_type.clone();
     let iri_clone = iri.clone();
 
     executor.write(move |conn| {
-        let ind = Individual::new(&iri_clone);
-
         let (class_iri, icon) = if csv_meta.is_some() {
             ("foundation:CSVFile", "csv")
         } else {
             ("foundation:File", "attach_file")
         };
 
-        ind.assert(conn, class_iri, &file_name_clone, icon, "chat")
-            .map_err(|e| format!("Failed to create File entity: {}", e))?;
-
-        ind.add_property(conn, "foundation:fileName", vec![Object::Literal {
-            value: file_name_clone.clone(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        }], "chat").map_err(|e| format!("Failed to set fileName: {}", e))?;
-
-        ind.add_property(conn, "foundation:filePath", vec![Object::Literal {
-            value: stored_path,
-            datatype: Some("xsd:anyURI".to_string()),
-            language: None,
-        }], "chat").map_err(|e| format!("Failed to set filePath: {}", e))?;
-
-        ind.add_property(conn, "foundation:fileSize", vec![Object::Integer(size)], "chat")
-            .map_err(|e| format!("Failed to set fileSize: {}", e))?;
-
-        ind.add_property(conn, "foundation:fileHash", vec![Object::Literal {
-            value: hash_clone,
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        }], "chat").map_err(|e| format!("Failed to set fileHash: {}", e))?;
-
-        if let Some(ref ft_iri) = file_type_iri {
-            ind.add_property(conn, "foundation:hasFileType",
-                vec![Object::Iri(ft_iri.clone())], "chat")
-                .map_err(|e| format!("Failed to set hasFileType: {}", e))?;
-        }
-
-        ind.add_property(conn, "foundation:uploadDate", vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "chat")
-            .map_err(|e| format!("Failed to set uploadDate: {}", e))?;
+        crate::files::assert_file_individual(conn, &crate::files::FileMetadata {
+            iri: &iri_clone,
+            class_iri,
+            icon,
+            file_name: &file_name_clone,
+            stored_path: &stored_path,
+            size,
+            hash: &hash,
+            mime_type: &mime_type_clone,
+            timestamp_ms: timestamp,
+            origin: "chat",
+        })?;
 
         if let Some(ref csv) = csv_meta {
+            let ind = Individual::new(&iri_clone);
+
             ind.add_property(conn, "foundation:csvDelimiter", vec![Object::Literal {
                 value: csv.delimiter.clone(),
                 datatype: Some("xsd:string".to_string()),
@@ -212,21 +190,6 @@ fn estimate_pdf_tokens(raw: &[u8]) -> usize {
     match pdf_extract::extract_text_from_mem(raw) {
         Ok(text) => super::chat_storage::tokenize_text(&text),
         Err(_) => PDF_FALLBACK_TOKENS,
-    }
-}
-
-fn mime_to_file_type_iri(mime_type: &str) -> Option<&'static str> {
-    match mime_type {
-        "image/jpeg" => Some("foundation:FileType_JPEG"),
-        "image/png"  => Some("foundation:FileType_PNG"),
-        "image/gif"  => Some("foundation:FileType_GIF"),
-        "image/webp" => Some("foundation:FileType_WEBP"),
-        "image/bmp"  => Some("foundation:FileType_BMP"),
-        "image/tiff" => Some("foundation:FileType_TIFF"),
-        "image/svg+xml" => Some("foundation:FileType_SVG"),
-        "application/pdf" => Some("foundation:FileType_PDF"),
-        "text/plain" => Some("foundation:FileType_TXT"),
-        _ => None,
     }
 }
 

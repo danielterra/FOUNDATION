@@ -714,6 +714,63 @@ Example — find all active Tasks whose due date is before this Project's deadli
             ],
         },
 
+        ToolTemplate {
+            name: "attach_file_to_individual".to_string(),
+            array_mode: false,
+            description: format!(
+                "Attach a local file to an existing individual as a foundation:File and link it via a property (default foundation:hasFile). PREFERRED WORKFLOW: drop the file at the absolute path '{inbox}' first (this inbox directory is created on startup; expose it via the Filesystem MCP server or any other tool that can write there), then call this tool with file_path set to '{inbox}/<filename>'. The tool copies the bytes into '{attachments}/' and only deletes the source after the file entity is fully asserted and linked, so a mid-flight failure leaves the original intact. ALTERNATIVE: file_data_base64 + file_name — bytes are decoded server-side, useful when neither side can share a filesystem (slower because of base64 inflation and JSON-RPC overhead). RESULT: a foundation:File is asserted with fileName/filePath/fileSize/fileHash/hasFileType/uploadDate and the triple {{target_iri, link_property, file_iri}} is appended. LINK PROPERTY: defaults to foundation:hasFile — the ontology validates that target_iri's class accepts the property; pick a different link_property if it doesn't (e.g. foundation:hasAttachment, foundation:attachedFile, foundation:hasDocument, foundation:attachments).",
+                inbox = crate::paths::inbox_dir().display(),
+                attachments = crate::paths::attachments_dir().display(),
+            ),
+            parameters: vec![
+                Parameter {
+                    name: "target_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the existing individual that should receive the file (e.g. 'foundation:FinancialObligation_123').".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "file_path".to_string(),
+                    param_type: "string".to_string(),
+                    description: format!(
+                        "Absolute path to the file on the MCP server's filesystem. PREFERRED: place the file at '{inbox}/<filename>' first; the tool copies it into attachments/ and deletes the source after the link succeeds.",
+                        inbox = crate::paths::inbox_dir().display(),
+                    ),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "file_data_base64".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Base64-encoded file bytes. Slower than file_path (base64 inflation + JSON-RPC overhead) — only use when neither side can share a filesystem. No size cap, but prefer file_path via the inbox for any non-trivial file.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "file_name".to_string(),
+                    param_type: "string".to_string(),
+                    description: "File name including extension (e.g. 'darf.pdf'). Required with file_data_base64; optional with file_path (defaults to the basename).".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "link_property".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Object property used to link target_iri → file_iri. Default: 'foundation:hasFile'.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "mime_type".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Override MIME type (e.g. 'application/pdf'). Default: inferred from file_name extension.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
         // ----------------------------------------------------------------
         // GRAPH / PROCESS TOOLS
         // ----------------------------------------------------------------

@@ -108,6 +108,16 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
 
         let value = if is_object_property {
             value_obj.as_iri().unwrap_or("").to_string()
+        } else if property_iri == "foundation:filePath" {
+            // Stored path is portable (relative to foundation_dir). The frontend's
+            // convertFileSrc/openPath need an absolute path to render previews and
+            // open files in the OS default app, so we resolve here.
+            let stored = value_obj.as_literal().unwrap_or_default();
+            if stored.is_empty() {
+                stored
+            } else {
+                crate::paths::resolve_path(&stored).to_string_lossy().into_owned()
+            }
         } else {
             value_obj.as_literal().unwrap_or_default()
         };

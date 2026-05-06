@@ -63,7 +63,8 @@ pub fn resolve_status_appearance(
                     .and_then(|r| {
                         r.triples.first().and_then(|t| match &t.object {
                             Object::Iri(icon_iri) => icon_iri_to_display(conn, icon_iri),
-                            Object::Literal { value, .. } => Some(value.clone()),
+                            Object::Literal { value, .. } =>
+                                Some(crate::owl::icon_literal_to_display(value)),
                             _ => None,
                         })
                     })

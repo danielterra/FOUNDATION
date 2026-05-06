@@ -380,6 +380,159 @@ pub fn read_text_lines(conn: &Connection, args: &Value) -> ToolResult {
     }
 }
 
+fn err(message: String) -> ToolResult {
+    ToolResult { success: false, result: None, error: Some(message), concept: None }
+}
+
+fn target_individual_exists(conn: &Connection, target_iri: &str) -> Result<bool, String> {
+    crate::owl::get_iri_property(conn, target_iri, "rdf:type")
+        .map(|opt| opt.is_some())
+        .map_err(|e| format!("Failed to look up target IRI '{}': {}", target_iri, e))
+}
+
+fn log_step(stage: &str, file_name: &str, detail: &str) {
+    crate::commands::log_backend(
+        "info",
+        &format!("[MCP attach_file] {} | {} | {}", stage, file_name, detail),
+    );
+}
+
+pub fn attach_file_to_individual(conn: &mut Connection, args: &Value) -> ToolResult {
+    let target_iri = match args.get("target_iri").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return err("Missing required parameter: target_iri".to_string()),
+    };
+
+    let link_property = args.get("link_property")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("foundation:hasFile")
+        .to_string();
+
+    let file_path_arg = args.get("file_path").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    let file_data_b64 = args.get("file_data_base64").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    let file_name_arg = args.get("file_name").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    let mime_override = args.get("mime_type").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+
+    let (source_path_opt, raw, file_name) = match (file_path_arg, file_data_b64) {
+        (Some(path), _) => {
+            let src = std::path::PathBuf::from(path);
+            let derived_name = file_name_arg
+                .map(String::from)
+                .or_else(|| src.file_name().and_then(|n| n.to_str()).map(String::from))
+                .unwrap_or_else(|| "unnamed".to_string());
+            log_step("read", &derived_name, &format!("source={}", path));
+            let bytes = match std::fs::read(&src) {
+                Ok(b) => b,
+                Err(e) => return err(format!("Failed to read file '{}': {}", path, e)),
+            };
+            (Some(src), bytes, derived_name)
+        }
+        (None, Some(b64)) => {
+            let name = match file_name_arg {
+                Some(n) => n.to_string(),
+                None => return err("file_name is required when using file_data_base64".to_string()),
+            };
+            log_step("decode", &name, &format!("base64_chars={}", b64.len()));
+            use base64::Engine;
+            let bytes = match base64::engine::general_purpose::STANDARD.decode(b64) {
+                Ok(b) => b,
+                Err(e) => return err(format!("Invalid base64 payload: {}", e)),
+            };
+            (None, bytes, name)
+        }
+        (None, None) => return err(
+            "Either file_path or (file_data_base64 + file_name) is required".to_string()
+        ),
+    };
+
+    match target_individual_exists(conn, &target_iri) {
+        Ok(true) => {}
+        Ok(false) => return err(format!("Target individual '{}' not found", target_iri)),
+        Err(e) => return err(e),
+    }
+
+    let mime_type = mime_override
+        .map(String::from)
+        .unwrap_or_else(|| crate::files::mime_from_extension(&file_name).to_string());
+
+    let attachments_dir = crate::paths::attachments_dir();
+    if let Err(e) = std::fs::create_dir_all(&attachments_dir) {
+        return err(format!("Failed to create attachments directory: {}", e));
+    }
+
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let safe_name = crate::files::sanitize_filename(&file_name);
+    let permanent_path = attachments_dir.join(format!("{}_{}", timestamp, safe_name));
+
+    let hash = crate::files::sha256_hex(&raw);
+    let size = raw.len() as i64;
+    log_step("hash", &file_name, &format!("size={} hash={}", size, hash));
+
+    if let Err(e) = std::fs::write(&permanent_path, &raw) {
+        return err(format!("Failed to write file to attachments dir: {}", e));
+    }
+    log_step("store", &file_name, &format!("dest={}", permanent_path.display()));
+
+    let stored_path = crate::paths::to_portable_path(&permanent_path);
+    let file_iri = format!("foundation:File_{}", timestamp);
+
+    if let Err(e) = crate::files::assert_file_individual(conn, &crate::files::FileMetadata {
+        iri: &file_iri,
+        class_iri: "foundation:File",
+        icon: "attach_file",
+        file_name: &file_name,
+        stored_path: &stored_path,
+        size,
+        hash: &hash,
+        mime_type: &mime_type,
+        timestamp_ms: timestamp,
+        origin: "mcp",
+    }) {
+        let _ = std::fs::remove_file(&permanent_path);
+        return err(e);
+    }
+    log_step("assert", &file_name, &format!("file_iri={}", file_iri));
+
+    let target = crate::owl::Individual::new(&target_iri);
+    if let Err(e) = target.append_property(
+        conn,
+        &link_property,
+        vec![crate::owl::Object::Iri(file_iri.clone())],
+        "mcp",
+    ) {
+        let _ = crate::owl::Individual::retract(conn, &file_iri, "mcp");
+        let _ = std::fs::remove_file(&permanent_path);
+        return err(format!(
+            "Failed to link file via '{}': {}. The file entity and the copy in attachments/ were rolled back; the source file at the original location is untouched. Retry with a different link_property.",
+            link_property, e
+        ));
+    }
+    log_step("link", &file_name, &format!("{} <{}> {}", target_iri, link_property, file_iri));
+
+    if let Some(src) = &source_path_opt {
+        if let Err(e) = std::fs::remove_file(src) {
+            log_step("cleanup", &file_name, &format!("failed to remove source {}: {}", src.display(), e));
+        }
+    }
+
+    ToolResult {
+        success: true,
+        result: Some(serde_json::json!({
+            "file_iri": file_iri,
+            "file_name": file_name,
+            "file_path": stored_path,
+            "file_size": size,
+            "file_hash": hash,
+            "mime_type": mime_type,
+            "linked_to": target_iri,
+            "via_property": link_property,
+        })),
+        error: None,
+        concept: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

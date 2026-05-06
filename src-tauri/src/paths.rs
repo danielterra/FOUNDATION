@@ -23,8 +23,16 @@ use std::sync::OnceLock;
 static FOUNDATION_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Capture the foundation_dir at startup. Idempotent — only the first call wins.
+/// Eagerly creates `attachments/` and `inbox/` so MCP clients (Claude Desktop's
+/// Filesystem feature, custom agents) can drop files there before they exist as
+/// attachments — `attach_file_to_individual` copies them into attachments/ and
+/// deletes the source only after the file entity is asserted and linked.
 pub fn set_foundation_dir(dir: PathBuf) {
-    let _ = FOUNDATION_DIR.set(dir);
+    if FOUNDATION_DIR.set(dir.clone()).is_err() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(dir.join("attachments"));
+    let _ = std::fs::create_dir_all(dir.join("inbox"));
 }
 
 /// Returns the configured foundation_dir, or a sensible fallback when the
@@ -41,6 +49,14 @@ pub fn foundation_dir() -> PathBuf {
 
 pub fn attachments_dir() -> PathBuf {
     foundation_dir().join("attachments")
+}
+
+/// Drop-zone for files about to be attached via `attach_file_to_individual`.
+/// MCP clients (Claude Desktop's Filesystem feature, custom agents) write here;
+/// the MCP tool copies the file into `attachments/` and removes the source
+/// after the file entity is fully asserted and linked.
+pub fn inbox_dir() -> PathBuf {
+    foundation_dir().join("inbox")
 }
 
 /// Convert an absolute path to a portable relative form (e.g.

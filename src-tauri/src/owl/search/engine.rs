@@ -24,7 +24,8 @@ pub(super) fn enrich_from_triples(
         .find(|t| t.predicate == "foundation:hasIcon")
         .and_then(|t| match &t.object {
             Object::Iri(iri) => icon_iri_to_display(conn, iri),
-            Object::Literal { value, .. } => Some(value.clone()),
+            Object::Literal { value, .. } =>
+                Some(crate::owl::icon_literal_to_display(value)),
             _ => None,
         });
 

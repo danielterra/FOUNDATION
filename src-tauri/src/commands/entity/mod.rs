@@ -1273,7 +1273,8 @@ pub fn resolve_iris_batch(conn: &owl::Connection, iris: Vec<String>) -> HashMap<
                     entry.icon = match &object {
                         crate::eavto::Object::Iri(icon_iri) =>
                             crate::owl::icon_iri_to_display(conn, icon_iri),
-                        crate::eavto::Object::Literal { value, .. } => Some(value.clone()),
+                        crate::eavto::Object::Literal { value, .. } =>
+                            Some(crate::owl::icon_literal_to_display(value)),
                         _ => None,
                     };
                 }

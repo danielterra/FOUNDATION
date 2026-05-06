@@ -1,5 +1,9 @@
-// One-shot migration: convert legacy `file://...absolute...` paths in
-// foundation:filePath into portable relative form (e.g. `attachments/foo.pdf`).
+// One-shot migration: convert legacy `file://...absolute...` paths into
+// portable relative form (e.g. `attachments/foo.pdf`).
+//
+// Covers both foundation:filePath (file entities) and foundation:hasIcon
+// (custom file-based icons like a user's profile photo). hasIcon literals
+// that aren't file paths (http://, https://, data:) are left untouched.
 //
 // Safe to re-run: rows already in portable form are skipped. Rows pointing
 // outside foundation_dir are kept as absolute paths (they're external files,
@@ -48,21 +52,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conn = Connection::open(&path)?;
     conn.busy_timeout(std::time::Duration::from_secs(30))?;
 
-    // Collect filePath triples that look like legacy absolute storage.
+    // Collect filePath and hasIcon triples that look like legacy absolute storage.
     let mut stmt = conn.prepare(
-        "SELECT rowid, subject, object_value FROM triples \
-         WHERE predicate = 'foundation:filePath' AND retracted = 0 AND object_value IS NOT NULL",
+        "SELECT rowid, subject, predicate, object_value FROM triples \
+         WHERE predicate IN ('foundation:filePath', 'foundation:hasIcon') \
+         AND retracted = 0 AND object_value IS NOT NULL",
     )?;
-    let rows: Vec<(i64, String, String)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+    let rows: Vec<(i64, String, String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
         .filter_map(|r| r.ok())
         .collect();
 
     let mut converted = 0usize;
     let mut skipped_already = 0usize;
+    let mut skipped_non_file = 0usize;
     let mut skipped_external = 0usize;
 
-    for (rowid, subject, stored) in rows {
+    for (rowid, subject, predicate, stored) in rows {
+        // hasIcon literals can be http(s), data:, or file: URLs — only the file ones
+        // are migration candidates. filePath only ever holds file paths.
+        if stored.starts_with("http://")
+            || stored.starts_with("https://")
+            || stored.starts_with("data:")
+        {
+            skipped_non_file += 1;
+            continue;
+        }
+
         let stripped = stored.strip_prefix("file://").unwrap_or(&stored);
         let p = PathBuf::from(stripped);
 
@@ -116,13 +132,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         converted += 1;
         if converted <= 10 {
-            println!("  {} → {}", subject, portable);
+            println!("  [{}] {} → {}", predicate, subject, portable);
         }
     }
 
     println!();
     println!("Converted:        {}", converted);
     println!("Already portable: {}", skipped_already);
+    println!("Non-file URLs:    {}", skipped_non_file);
     println!("External (kept):  {}", skipped_external);
 
     Ok(())
