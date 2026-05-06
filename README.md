@@ -271,4 +271,6 @@ Every line of code, every bug report, every idea brings us closer to a world whe
 
 *For a future where technology serves humanity, not the other way around*
 
+[Privacy Policy](PRIVACY.md)
+
 </div>
