@@ -10,17 +10,13 @@ pub fn icon_name_to_iri(name: &str) -> String {
     format!("foundation:icon-material-symbols-name-{name}")
 }
 
-/// Resolves an icon IRI to its display value (symbol name or file URL).
-/// For library icons, parses directly from the IRI (no DB query needed).
-/// For file icons, queries foundation:iconKey from the DB.
-pub fn icon_iri_to_display(conn: &Connection, iri: &str) -> Option<String> {
+/// Resolves an icon IRI to its display value (symbol name or URL).
+/// Only Material Symbols IRIs are valid — file icons are always stored as literals.
+pub fn icon_iri_to_display(_conn: &Connection, iri: &str) -> Option<String> {
     if let Some(key) = iri.strip_prefix("foundation:icon-material-symbols-name-") {
         return Some(key.to_string());
     }
-    if iri.starts_with("foundation:icon-file-") {
-        return crate::owl::get_literal_property(conn, iri, "foundation:iconKey").ok().flatten();
-    }
-    if iri.starts_with("file://") || iri.starts_with("https://") || iri.starts_with("http://") || iri.starts_with("data:") {
+    if iri.starts_with("https://") || iri.starts_with("http://") || iri.starts_with("data:") {
         return Some(iri.to_string());
     }
     None

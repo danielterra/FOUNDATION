@@ -39,6 +39,10 @@
   let removeConfirmCount = $state(0);
   let removeConfirmExamples = $state([]);
   let checkingUsage = $state(false);
+  let showAddDisjointForm = $state(false);
+  let savingDisjoint = $state(false);
+  let disjointError = $state(null);
+  let removeDisjointConfirm = $state(null);
 
   async function reloadAutomations() {
     const typeIris = (entityData?.types ?? []).map(t => t.iri).filter(Boolean);
@@ -201,6 +205,52 @@
       console.error('Failed to define class property:', err);
     } finally {
       savingClassProperty = false;
+    }
+  }
+
+  async function addDisjoint(disjointIri) {
+    savingDisjoint = true;
+    disjointError = null;
+    try {
+      await invoke('widget_inspector__add_class_disjoint', {
+        classIri: entityId,
+        disjointIri,
+      });
+      showAddDisjointForm = false;
+    } catch (err) {
+      disjointError = String(err);
+    } finally {
+      savingDisjoint = false;
+    }
+  }
+
+  async function removeDisjointPair(disjointIri) {
+    disjointError = null;
+    try {
+      await invoke('widget_inspector__remove_disjoint_pair', {
+        classIri: entityId,
+        disjointIri,
+      });
+    } catch (err) {
+      disjointError = String(err);
+    }
+  }
+
+  async function retractDisjointSet(groupId) {
+    disjointError = null;
+    try {
+      await invoke('widget_inspector__retract_disjoint_set', { groupId });
+      removeDisjointConfirm = null;
+    } catch (err) {
+      disjointError = String(err);
+    }
+  }
+
+  function requestRemoveDisjoint(group) {
+    if (group.kind === 'all') {
+      removeDisjointConfirm = group;
+    } else {
+      removeDisjointPair(group.members[0].iri);
     }
   }
 
@@ -540,6 +590,15 @@
           onDefineProperty={defineClassProperty}
           onConfirmRemoveProperty={confirmRemoveProperty}
           onCancelRemoveProperty={() => removeConfirmProp = null}
+          bind:showAddDisjointForm
+          {savingDisjoint}
+          {disjointError}
+          {removeDisjointConfirm}
+          onAddDisjoint={addDisjoint}
+          onRequestRemoveDisjoint={requestRemoveDisjoint}
+          onConfirmRemoveDisjoint={() => retractDisjointSet(removeDisjointConfirm?.groupId)}
+          onCancelRemoveDisjoint={() => removeDisjointConfirm = null}
+          onClearDisjointError={() => disjointError = null}
         />
 
         <PropertyList

@@ -649,6 +649,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         types: individual.types.clone(),
         super_classes: vec![],
         sub_classes: vec![],
+        disjoint_groups: vec![],
         instances: vec![],
         properties,
         backlinks,

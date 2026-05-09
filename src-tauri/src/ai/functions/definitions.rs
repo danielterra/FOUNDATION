@@ -67,6 +67,20 @@ pub fn get_available_tools() -> Vec<ToolTemplate> {
                     schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
                 },
                 Parameter {
+                    name: "disjoint_with".to_string(),
+                    param_type: "array".to_string(),
+                    description: "Class IRIs declared pairwise disjoint with this class via owl:disjointWith. REPLACES all pairwise disjointness for this class. The reverse triple is asserted automatically. Provide [] to clear. Used to forbid a class from being combined with another in the same individual or super-class chain.".to_string(),
+                    required: false,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
+                },
+                Parameter {
+                    name: "all_disjoint_classes".to_string(),
+                    param_type: "array".to_string(),
+                    description: "Class IRIs (3+) declared mutually disjoint as a single owl:AllDisjointClasses set. Must include the class being defined. APPENDS a new set on every call (idempotent for the same exact members). For pairs, prefer disjoint_with. To remove an AllDisjointClasses set, retract its blank node directly.".to_string(),
+                    required: false,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" }, "minItems": 3 })),
+                },
+                Parameter {
                     name: "property_restrictions".to_string(),
                     param_type: "array".to_string(),
                     description: "Cardinality constraints. Each: {property_iri, cardinality_min?, cardinality_max?}. REPLACES existing restrictions.".to_string(),

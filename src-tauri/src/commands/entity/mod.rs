@@ -50,6 +50,8 @@ pub struct EntityData {
     pub types: Vec<crate::owl::Thing>,
     pub super_classes: Vec<crate::owl::Thing>,
     pub sub_classes: Vec<crate::owl::Thing>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub disjoint_groups: Vec<DisjointGroup>,
     pub instances: Vec<crate::owl::Thing>,
 
     pub is_class: bool,
@@ -63,6 +65,15 @@ pub struct EntityData {
 
     pub nodes: Vec<GraphNode>,
     pub links: Vec<GraphLink>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisjointGroup {
+    pub kind: String,
+    pub members: Vec<crate::owl::Thing>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1217,6 +1228,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
         })
         .collect();
 
+    let disjoint_groups = build_disjoint_groups(conn, class_id).unwrap_or_default();
+
     Ok(EntityData {
         id: class_id.to_string(),
         label,
@@ -1228,6 +1241,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
         types: class.types.clone(),
         super_classes: class.super_classes.clone(),
         sub_classes: class.sub_classes.clone(),
+        disjoint_groups,
         instances: vec![],
         properties,
         backlinks,
@@ -1236,6 +1250,104 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
         nodes,
         links,
     })
+}
+
+fn build_disjoint_groups(conn: &Connection, class_iri: &str) -> Result<Vec<DisjointGroup>, String> {
+    let mut groups: Vec<DisjointGroup> = Vec::new();
+
+    let pair_iris = Class::get_direct_disjoint_pair_iris(conn, class_iri)
+        .map_err(|e| e.to_string())?;
+    for other in pair_iris {
+        let thing = crate::owl::Thing::get(conn, &other);
+        groups.push(DisjointGroup {
+            kind: "pair".to_string(),
+            members: vec![thing],
+            group_id: None,
+        });
+    }
+
+    let adcs = Class::find_all_disjoint_class_sets(conn, class_iri)
+        .map_err(|e| e.to_string())?;
+    for adc_iri in adcs {
+        let members = Class::get_all_disjoint_classes_members(conn, &adc_iri)
+            .map_err(|e| e.to_string())?;
+        let things: Vec<crate::owl::Thing> = members.iter()
+            .filter(|m| m.as_str() != class_iri)
+            .map(|m| crate::owl::Thing::get(conn, m))
+            .collect();
+        if things.is_empty() {
+            continue;
+        }
+        groups.push(DisjointGroup {
+            kind: "all".to_string(),
+            members: things,
+            group_id: Some(adc_iri),
+        });
+    }
+
+    Ok(groups)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__add_class_disjoint(
+    class_iri: String,
+    disjoint_iri: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let class_iri_clone = class_iri.clone();
+    let disjoint_iri_clone = disjoint_iri.clone();
+    executor.write(move |conn| {
+        Class::add_disjoint_with(conn, &class_iri_clone, &disjoint_iri_clone, "user")
+            .map_err(|e| e.to_string())?;
+        Ok(String::new())
+    }).await?;
+    app.emit("entity-updated", serde_json::json!({ "entityId": class_iri })).ok();
+    app.emit("entity-updated", serde_json::json!({ "entityId": disjoint_iri })).ok();
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__remove_disjoint_pair(
+    class_iri: String,
+    disjoint_iri: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let class_iri_clone = class_iri.clone();
+    let disjoint_iri_clone = disjoint_iri.clone();
+    executor.write(move |conn| {
+        Class::remove_disjoint_with(conn, &class_iri_clone, &disjoint_iri_clone, "user")
+            .map_err(|e| e.to_string())?;
+        Ok(String::new())
+    }).await?;
+    app.emit("entity-updated", serde_json::json!({ "entityId": class_iri })).ok();
+    app.emit("entity-updated", serde_json::json!({ "entityId": disjoint_iri })).ok();
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__retract_disjoint_set(
+    group_id: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let group_id_clone = group_id.clone();
+    let members_json = executor.write(move |conn| {
+        let members = Class::get_all_disjoint_classes_members(conn, &group_id_clone)
+            .map_err(|e| e.to_string())?;
+        Class::retract_all_disjoint_classes(conn, &group_id_clone, "user")
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&members).map_err(|e| e.to_string())
+    }).await?;
+    let members: Vec<String> = serde_json::from_str(&members_json).unwrap_or_default();
+    for iri in members {
+        app.emit("entity-updated", serde_json::json!({ "entityId": iri })).ok();
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]

@@ -182,6 +182,11 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
                 "iri": t.iri,
                 "label": t.label,
             })).collect::<Vec<_>>(),
+            "disjointWith": concept.disjoint_with.iter().map(|t| serde_json::json!({
+                "iri": t.iri,
+                "label": t.label,
+                "icon": t.icon,
+            })).collect::<Vec<_>>(),
             "properties": concept.properties.iter().map(|(prop_iri, source)| {
                 let prop = crate::owl::Property::get(conn, prop_iri).ok().flatten();
                 let label = prop.as_ref().and_then(|p| p.label.clone());
@@ -354,6 +359,7 @@ fn define_class_one(
                         .to_string()
                 ));
             }
+            Class::validate_super_classes_not_disjoint(conn, &iris)?;
             Class::set_super_classes(conn, iri, &iris, "ai")?;
         } else if let Some(val) = super_classes_val {
             let iris: Vec<&str> = val
@@ -365,7 +371,36 @@ fn define_class_one(
                     "super_classes must contain at least one superclass".to_string()
                 ));
             }
+            Class::validate_super_classes_not_disjoint(conn, &iris)?;
             Class::set_super_classes(conn, iri, &iris, "ai")?;
+        }
+
+        if let Some(disjoint_val) = args.get("disjoint_with") {
+            let iris: Vec<&str> = disjoint_val
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            Class::set_disjoint_with(conn, iri, &iris, "ai")?;
+        }
+
+        if let Some(all_disjoint_val) = args.get("all_disjoint_classes") {
+            let members: Vec<&str> = all_disjoint_val
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            if members.len() < 3 {
+                return Err(crate::owl::OwlError::ValidationError(
+                    "all_disjoint_classes requires at least 3 distinct class IRIs \
+                     — for pairs use disjoint_with instead".to_string()
+                ));
+            }
+            if !members.contains(&iri) {
+                return Err(crate::owl::OwlError::ValidationError(format!(
+                    "all_disjoint_classes must include the class being defined ('{}')",
+                    iri,
+                )));
+            }
+            Class::assert_all_disjoint_classes(conn, &members, "ai")?;
         }
 
         if let Some(allowed_statuses) = args.get("allowed_statuses").and_then(|v| v.as_array()) {

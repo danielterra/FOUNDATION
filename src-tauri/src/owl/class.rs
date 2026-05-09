@@ -13,6 +13,7 @@ pub struct Class {
     pub types: Vec<Thing>,
     pub super_classes: Vec<Thing>,
     pub sub_classes: Vec<Thing>,
+    pub disjoint_with: Vec<Thing>,
     pub properties: Vec<(String, String)>,
     pub backlinks: Vec<(String, String, Object)>,
     pub backlink_total: usize,
@@ -31,6 +32,7 @@ impl Class {
             types: Vec::new(),
             super_classes: Vec::new(),
             sub_classes: Vec::new(),
+            disjoint_with: Vec::new(),
             properties: Vec::new(),
             backlinks: Vec::new(),
             backlink_total: 0,
@@ -138,6 +140,11 @@ impl Class {
             .map(|t| Thing::get(conn, &t.subject))
             .collect();
 
+        let disjoint_iris = Self::collect_direct_disjoint_iris(conn, &iri)?;
+        let disjoint_with: Vec<Thing> = disjoint_iris.iter()
+            .map(|d| Thing::get(conn, d))
+            .collect();
+
         let properties = Self::get_properties(conn, &iri)?;
 
         let backlink_total: usize = conn.query_row(
@@ -194,6 +201,7 @@ impl Class {
             types,
             super_classes,
             sub_classes,
+            disjoint_with,
             properties,
             backlinks,
             backlink_total,
@@ -429,6 +437,357 @@ impl Class {
         origin: &str,
     ) -> Result<()> {
         Self::set_super_classes(conn, iri, &[super_class], origin)
+    }
+
+    /// Direct owl:disjointWith targets — pairwise triples plus co-members of every
+    /// owl:AllDisjointClasses set this class participates in.
+    fn collect_direct_disjoint_iris(conn: &Connection, iri: &str) -> Result<Vec<String>> {
+        let mut result = Self::get_direct_disjoint_pair_iris(conn, iri)?;
+        let mut seen: std::collections::HashSet<String> = result.iter().cloned().collect();
+
+        for adc_iri in Self::find_all_disjoint_class_sets(conn, iri)? {
+            let members = Self::get_all_disjoint_classes_members(conn, &adc_iri)?;
+            for m in members {
+                if m != iri && seen.insert(m.clone()) {
+                    result.push(m);
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Class IRIs pairwise disjoint with `iri` via direct owl:disjointWith triples.
+    /// Excludes co-members of owl:AllDisjointClasses sets — those are returned by
+    /// `find_all_disjoint_class_sets` + `get_all_disjoint_classes_members` instead.
+    /// Symmetric: matches both (iri, ⊥, ?) and (?, ⊥, iri) directions.
+    pub fn get_direct_disjoint_pair_iris(conn: &Connection, iri: &str) -> Result<Vec<String>> {
+        let mut result: Vec<String> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        let forward = query::get_by_entity_predicate(conn, iri, owl::DISJOINT_WITH)?;
+        for triple in forward.triples {
+            if let Some(other) = triple.object.as_iri() {
+                if other != iri && seen.insert(other.to_string()) {
+                    result.push(other.to_string());
+                }
+            }
+        }
+        let backward = query::get_by_predicate_object(conn, owl::DISJOINT_WITH, iri)?;
+        for triple in backward.triples {
+            if triple.subject != iri && seen.insert(triple.subject.clone()) {
+                result.push(triple.subject);
+            }
+        }
+        Ok(result)
+    }
+
+    /// All blank-node IRIs of type owl:AllDisjointClasses whose owl:members list
+    /// contains the given class IRI.
+    pub fn find_all_disjoint_class_sets(conn: &Connection, class_iri: &str) -> Result<Vec<String>> {
+        let typed = query::get_by_predicate_object(conn, rdf::TYPE, owl::ALL_DISJOINT_CLASSES)?;
+        let mut hits = Vec::new();
+        for t in typed.triples {
+            let adc_iri = t.subject;
+            let members = Self::get_all_disjoint_classes_members(conn, &adc_iri)?;
+            if members.iter().any(|m| m == class_iri) {
+                hits.push(adc_iri);
+            }
+        }
+        Ok(hits)
+    }
+
+    /// Resolve owl:members of an AllDisjointClasses node to a flat list of class IRIs.
+    pub fn get_all_disjoint_classes_members(conn: &Connection, adc_iri: &str) -> Result<Vec<String>> {
+        let members_triple = query::get_by_entity_predicate(conn, adc_iri, owl::MEMBERS)?;
+        if let Some(triple) = members_triple.triples.first() {
+            if let Some(list_head) = triple.object.as_iri() {
+                return Self::parse_rdf_list(conn, list_head);
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// Replace pairwise owl:disjointWith targets for `iri` with the given list.
+    /// Asserts the symmetric triple (B owl:disjointWith A) so reads from either side agree.
+    /// Does NOT touch owl:AllDisjointClasses sets that include `iri` — passing []
+    /// only clears direct pair triples; the class will still appear disjoint with the
+    /// other ADC members until the ADC is retracted via `retract_all_disjoint_classes`.
+    pub fn set_disjoint_with(
+        conn: &mut Connection,
+        iri: &str,
+        disjoint_with: &[&str],
+        origin: &str,
+    ) -> Result<()> {
+        for d in disjoint_with {
+            if *d == iri {
+                return Err(OwlError::ValidationError(format!(
+                    "Class '{}' cannot be declared disjoint with itself", iri
+                )));
+            }
+            if !Self::exists(conn, d) {
+                return Err(OwlError::ValidationError(format!(
+                    "Class '{}' does not exist — cannot declare disjointness with it", d
+                )));
+            }
+        }
+
+        let forward = query::get_by_entity_predicate(conn, iri, owl::DISJOINT_WITH)?;
+        for triple in forward.triples {
+            store::retract_triples(
+                conn,
+                &[Triple::new(iri, owl::DISJOINT_WITH, triple.object)],
+                origin,
+            )?;
+        }
+        let backward = query::get_by_predicate_object(conn, owl::DISJOINT_WITH, iri)?;
+        for triple in backward.triples {
+            store::retract_triples(
+                conn,
+                &[Triple::new(triple.subject, owl::DISJOINT_WITH, Object::Iri(iri.to_string()))],
+                origin,
+            )?;
+        }
+
+        let mut new_triples = Vec::new();
+        for d in disjoint_with {
+            new_triples.push(Triple::new(iri, owl::DISJOINT_WITH, Object::Iri(d.to_string())));
+            new_triples.push(Triple::new(*d, owl::DISJOINT_WITH, Object::Iri(iri.to_string())));
+        }
+        if !new_triples.is_empty() {
+            store::assert_triples(conn, &new_triples, origin)?;
+        }
+        Ok(())
+    }
+
+    /// Append pairwise owl:disjointWith between `iri` and `disjoint_iri` (idempotent).
+    /// Used by inspector commands that grow the set incrementally.
+    pub fn add_disjoint_with(
+        conn: &mut Connection,
+        iri: &str,
+        disjoint_iri: &str,
+        origin: &str,
+    ) -> Result<()> {
+        if iri == disjoint_iri {
+            return Err(OwlError::ValidationError(format!(
+                "Class '{}' cannot be declared disjoint with itself", iri
+            )));
+        }
+        if !Self::exists(conn, disjoint_iri) {
+            return Err(OwlError::ValidationError(format!(
+                "Class '{}' does not exist — cannot declare disjointness with it", disjoint_iri
+            )));
+        }
+
+        let existing = Self::collect_direct_disjoint_iris(conn, iri)?;
+        if existing.iter().any(|d| d == disjoint_iri) {
+            return Ok(());
+        }
+
+        let triples = vec![
+            Triple::new(iri, owl::DISJOINT_WITH, Object::Iri(disjoint_iri.to_string())),
+            Triple::new(disjoint_iri, owl::DISJOINT_WITH, Object::Iri(iri.to_string())),
+        ];
+        store::assert_triples(conn, &triples, origin)?;
+        Ok(())
+    }
+
+    /// Retract a pairwise owl:disjointWith between `iri` and `disjoint_iri` (both directions).
+    pub fn remove_disjoint_with(
+        conn: &mut Connection,
+        iri: &str,
+        disjoint_iri: &str,
+        origin: &str,
+    ) -> Result<()> {
+        let triples = vec![
+            Triple::new(iri, owl::DISJOINT_WITH, Object::Iri(disjoint_iri.to_string())),
+            Triple::new(disjoint_iri, owl::DISJOINT_WITH, Object::Iri(iri.to_string())),
+        ];
+        store::retract_triples(conn, &triples, origin)?;
+        Ok(())
+    }
+
+    /// Create a new owl:AllDisjointClasses blank node listing the given members.
+    /// Returns the blank node IRI. Identical member sets reuse the same deterministic IRI,
+    /// so calling twice with the same members is idempotent.
+    /// After a retract + re-assert of the same set the original blank IRI is reused;
+    /// the early-return below skips list rebuild only when the previous triples are
+    /// still active (unretracted), so a cycle of retract → assert cleanly recreates the set.
+    pub fn assert_all_disjoint_classes(
+        conn: &mut Connection,
+        members: &[&str],
+        origin: &str,
+    ) -> Result<String> {
+        if members.len() < 2 {
+            return Err(OwlError::ValidationError(
+                "owl:AllDisjointClasses requires at least 2 members".to_string()
+            ));
+        }
+        let mut sorted: Vec<&str> = members.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        if sorted.len() != members.len() {
+            return Err(OwlError::ValidationError(
+                "owl:AllDisjointClasses members must be distinct".to_string()
+            ));
+        }
+        for m in &sorted {
+            if !Self::exists(conn, m) {
+                return Err(OwlError::ValidationError(format!(
+                    "Class '{}' does not exist — cannot include in AllDisjointClasses", m
+                )));
+            }
+        }
+
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        for m in &sorted {
+            hasher.update(m.as_bytes());
+            hasher.update(b":");
+        }
+        let hash = hasher.finalize();
+        let adc_iri = format!(
+            "_:adc_{}",
+            hash[..8].iter().map(|b| format!("{:02x}", b)).collect::<String>()
+        );
+
+        let existing_members = Self::get_all_disjoint_classes_members(conn, &adc_iri)?;
+        if !existing_members.is_empty() {
+            return Ok(adc_iri);
+        }
+
+        let mut list_triples: Vec<Triple> = Vec::new();
+        let mut nodes: Vec<String> = (0..sorted.len())
+            .map(|i| format!("{}_l{}", adc_iri, i))
+            .collect();
+
+        for (i, member) in sorted.iter().enumerate() {
+            let node = &nodes[i];
+            list_triples.push(Triple::new(
+                node, rdf::FIRST, Object::Iri(member.to_string()),
+            ));
+            let rest = if i + 1 == sorted.len() {
+                Object::Iri(rdf::NIL.to_string())
+            } else {
+                Object::Blank(nodes[i + 1].clone())
+            };
+            list_triples.push(Triple::new(node, rdf::REST, rest));
+        }
+        let head = nodes.remove(0);
+
+        list_triples.push(Triple::new(
+            &adc_iri, rdf::TYPE, Object::Iri(owl::ALL_DISJOINT_CLASSES.to_string()),
+        ));
+        list_triples.push(Triple::new(
+            &adc_iri, owl::MEMBERS, Object::Blank(head),
+        ));
+
+        store::assert_triples(conn, &list_triples, origin)?;
+        Ok(adc_iri)
+    }
+
+    /// Retract every triple of an AllDisjointClasses blank node, including its
+    /// owl:members RDF list nodes.
+    pub fn retract_all_disjoint_classes(
+        conn: &mut Connection,
+        adc_iri: &str,
+        origin: &str,
+    ) -> Result<()> {
+        let members_result = query::get_by_entity_predicate(conn, adc_iri, owl::MEMBERS)?;
+        if let Some(members_triple) = members_result.triples.first() {
+            if let Some(list_head) = members_triple.object.as_iri() {
+                let mut current = list_head.to_string();
+                loop {
+                    if current == rdf::NIL {
+                        break;
+                    }
+                    let node_triples = query::get_by_entity(conn, &current)?;
+                    let next = node_triples.triples.iter()
+                        .find(|t| t.predicate == rdf::REST)
+                        .and_then(|t| t.object.as_iri().map(|s| s.to_string()))
+                        .unwrap_or_else(|| rdf::NIL.to_string());
+                    let triples: Vec<Triple> = node_triples.triples.into_iter()
+                        .map(|t| Triple::new(t.subject, t.predicate, t.object))
+                        .collect();
+                    if !triples.is_empty() {
+                        store::retract_triples(conn, &triples, origin)?;
+                    }
+                    current = next;
+                }
+            }
+        }
+
+        let adc_triples = query::get_by_entity(conn, adc_iri)?;
+        let to_retract: Vec<Triple> = adc_triples.triples.into_iter()
+            .map(|t| Triple::new(t.subject, t.predicate, t.object))
+            .collect();
+        if !to_retract.is_empty() {
+            store::retract_triples(conn, &to_retract, origin)?;
+        }
+        Ok(())
+    }
+
+    /// Effective set of class IRIs that conflict with `iri`, expanded over the
+    /// subClassOf hierarchy: a disjointness on an ancestor implies disjointness on
+    /// all descendants.
+    pub fn get_effective_disjoint_iris(
+        conn: &Connection,
+        iri: &str,
+    ) -> Result<std::collections::HashSet<String>> {
+        let mut result = std::collections::HashSet::new();
+        let ancestors = Self::ancestors_inclusive(conn, iri)?;
+        for ancestor in &ancestors {
+            for direct in Self::collect_direct_disjoint_iris(conn, ancestor)? {
+                for descendant in Self::get_descendant_iris(conn, &direct)? {
+                    result.insert(descendant);
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    /// `iri` plus every class reachable by walking rdfs:subClassOf upward.
+    fn ancestors_inclusive(conn: &Connection, iri: &str) -> Result<Vec<String>> {
+        let mut result = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(iri.to_string());
+        while let Some(current) = queue.pop_front() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            result.push(current.clone());
+            let supers = query::get_by_entity_predicate(conn, &current, rdfs::SUB_CLASS_OF)?;
+            for triple in supers.triples {
+                if let Some(parent) = triple.object.as_iri() {
+                    if !visited.contains(parent) {
+                        queue.push_back(parent.to_string());
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    /// Reject super-class lists that mix branches declared disjoint.
+    /// Used by define_class before persisting subClassOf triples.
+    pub fn validate_super_classes_not_disjoint(
+        conn: &Connection,
+        super_classes: &[&str],
+    ) -> Result<()> {
+        for (i, a) in super_classes.iter().enumerate() {
+            let conflicts = Self::get_effective_disjoint_iris(conn, a)?;
+            for b in &super_classes[i + 1..] {
+                if conflicts.contains(*b) {
+                    return Err(OwlError::ValidationError(format!(
+                        "Super-classes '{}' and '{}' are declared disjoint — \
+                         cannot be combined as parents of the same class",
+                        a, b
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Restore a retracted class and all instances that were cascade-deleted with it.

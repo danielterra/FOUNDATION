@@ -7,6 +7,7 @@
   import Search from '$lib/components/graph/Search.svelte';
   import SettingsPanel from '$lib/components/SettingsPanel.svelte';
   import Button from '$lib/components/Button.svelte';
+  import NotificationBell from '$lib/components/NotificationBell.svelte';
   import { appState } from '$lib/appState.svelte';
 
   let isChatOpen = $state(false);
@@ -132,6 +133,7 @@
     {#if chatEnabled}
       <Button icon="forum" title="Conversa (Ctrl+S)" onclick={() => isChatOpen = !isChatOpen} />
     {/if}
+    <NotificationBell />
     <Button icon="settings" title="Configurações" onclick={() => showSettings = true} />
   </div>
 

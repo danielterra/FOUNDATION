@@ -13,6 +13,7 @@
   import WorkflowExecutionWidget from './WorkflowExecutionWidget.svelte';
   import GraphWidget from './GraphWidget.svelte';
   import AIConversationWidget from './AIConversationWidget.svelte';
+  import NotificationCenterWidget from './NotificationCenterWidget.svelte';
 
   let { activeBlackboardIri = null, activeConversationIri = null } = $props();
 
@@ -347,6 +348,8 @@
       <GraphWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {:else if widget.widget_type === 'ai_conversation'}
       <AIConversationWidget widgetId={widget.id} entityId={widget.entity_id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
+    {:else if widget.widget_type === 'notification_center'}
+      <NotificationCenterWidget widgetId={widget.id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {/if}
   </div>
 {/each}

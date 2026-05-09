@@ -1,23 +1,25 @@
 //! Centralized path helpers for the Foundation runtime directory.
 //!
-//! Stores and retrieves paths in a portable, relocatable form so the same DB
-//! can move between machines (iCloud / OneDrive / fresh installs) without
-//! breaking attachment references. The convention:
+//! Stores and retrieves paths in a portable form so the same DB can move
+//! between machines (iCloud / OneDrive / fresh installs) without breaking
+//! attachment references.
 //!
-//! - **At write time** we store relative paths like `attachments/foo.pdf`.
-//! - **At read time** [`resolve_path`] joins them onto the *current*
-//!   foundation_dir. Absolute paths and `file://` URIs are accepted as-is for
-//!   backwards compatibility with DBs created before this change.
+//! Storage convention:
+//!
+//! - **Files in `attachments/`** are stored by **bare filename** only
+//!   (e.g. `123_invoice.pdf`). Every attachment lives directly under
+//!   `attachments/`, so the prefix is implicit.
+//! - **External files** (outside foundation_dir) keep their absolute path.
+//! - **Legacy values** like `attachments/foo.pdf` or `file:///abs/path` are
+//!   still accepted on read so older DBs keep working until migrated.
+//!
+//! At read time, [`resolve_path`] normalizes all of the above into an absolute
+//! native path the OS can open directly.
 //!
 //! The foundation_dir is captured once during DB initialization (see
-//! `commands/setup.rs`) and used across the rest of the app via this module —
-//! avoids re-reading config.json on every attachment lookup.
-//!
-//! There's no automatic in-place migration of existing absolute paths; legacy
-//! values keep working through the lenient [`resolve_path`] semantics. New
-//! attachments are stored relative.
+//! `commands/setup.rs`).
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 
 static FOUNDATION_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -59,32 +61,60 @@ pub fn inbox_dir() -> PathBuf {
     foundation_dir().join("inbox")
 }
 
-/// Convert an absolute path to a portable relative form (e.g.
-/// `attachments/file.pdf`). Returns an absolute path if the input lives
-/// outside foundation_dir — this preserves the URI for genuinely external
-/// files but lets us roam attachments between machines.
+/// Convert an absolute path to its stored form.
 ///
-/// Always uses forward slashes in the relative form so paths written on
-/// Windows are readable on macOS/Linux.
+/// - Files inside `attachments/` collapse to **just their filename**
+///   (`/.../attachments/foo.pdf` → `foo.pdf`).
+/// - Anything else is returned as an absolute path.
 pub fn to_portable_path(absolute: &Path) -> String {
-    match absolute.strip_prefix(foundation_dir()) {
-        Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
-        Err(_) => absolute.to_string_lossy().into_owned(),
+    if let Ok(rel) = absolute.strip_prefix(attachments_dir()) {
+        return rel.to_string_lossy().replace('\\', "/");
     }
+    absolute.to_string_lossy().into_owned()
 }
 
-/// Resolve a stored path string back to an absolute filesystem path.
+/// Resolve a stored path string back to an absolute filesystem path with
+/// native separators.
 ///
 /// Accepts (in priority order):
-/// 1. Relative paths like `attachments/file.pdf` — joined onto foundation_dir.
-/// 2. `file://` URIs — strips the prefix and returns the rest as-is.
-/// 3. Absolute paths — returned as-is.
+/// 1. `file://` URIs — strip the prefix.
+/// 2. Absolute paths — normalize separators and return.
+/// 3. Legacy relative paths with a separator (`attachments/foo.pdf`) — join
+///    onto foundation_dir.
+/// 4. Bare filenames (`foo.pdf`) — join onto attachments_dir (the new storage
+///    form for files written by foundation itself).
 pub fn resolve_path(stored: &str) -> PathBuf {
     let stripped = stored.strip_prefix("file://").unwrap_or(stored);
     let p = PathBuf::from(stripped);
-    if p.is_absolute() {
+
+    let resolved = if p.is_absolute() {
         p
-    } else {
+    } else if stripped.contains('/') || stripped.contains('\\') {
         foundation_dir().join(p)
+    } else {
+        attachments_dir().join(p)
+    };
+
+    normalize_separators(&resolved)
+}
+
+/// Reassemble a path so all separators match the platform's native one.
+/// `PathBuf::join` preserves whatever separators the input fragments had,
+/// which can produce mixed `C:\foo\bar/baz.pdf` on Windows — some shell
+/// surfaces (Explorer's "open file") reject those. Walking the components
+/// and rebuilding gives a clean native path.
+fn normalize_separators(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in p.components() {
+        match component {
+            Component::Normal(seg) => {
+                let s = seg.to_string_lossy();
+                for part in s.split(['/', '\\']).filter(|x| !x.is_empty()) {
+                    out.push(part);
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
     }
+    out
 }

@@ -63,8 +63,9 @@ pub mod owl {
 
     #[allow(dead_code)]
     pub const EQUIVALENT_CLASS: &str = "owl:equivalentClass";
-    #[allow(dead_code)]
     pub const DISJOINT_WITH: &str = "owl:disjointWith";
+    pub const ALL_DISJOINT_CLASSES: &str = "owl:AllDisjointClasses";
+    pub const MEMBERS: &str = "owl:members";
     #[allow(dead_code)]
     pub const EQUIVALENT_PROPERTY: &str = "owl:equivalentProperty";
     pub const INVERSE_OF: &str = "owl:inverseOf";

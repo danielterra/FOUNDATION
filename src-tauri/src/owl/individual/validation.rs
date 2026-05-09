@@ -122,6 +122,36 @@ impl Individual {
         Ok(())
     }
 
+    /// Reject assigning rdf:type `new_class_iri` to an individual that already has
+    /// a type declared disjoint with it (transitively over the subClassOf hierarchy).
+    pub(super) fn validate_disjointness(
+        conn: &Connection,
+        individual_iri: &str,
+        new_class_iri: &str,
+    ) -> Result<()> {
+        let types_result = query::get_by_entity_predicate(conn, individual_iri, rdf::TYPE)?;
+        let existing_types: Vec<String> = types_result.triples.iter()
+            .filter_map(|t| t.object.as_iri())
+            .map(|s| s.to_string())
+            .filter(|t| t != new_class_iri)
+            .collect();
+
+        if existing_types.is_empty() {
+            return Ok(());
+        }
+
+        let new_disjoint = Class::get_effective_disjoint_iris(conn, new_class_iri)?;
+        for existing in &existing_types {
+            if new_disjoint.contains(existing) {
+                return Err(OwlError::ValidationError(format!(
+                    "Cannot assign type '{}' to '{}': it is disjoint with already-assigned type '{}'",
+                    new_class_iri, individual_iri, existing
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Validate that an IRI value exists in the graph before referencing it
     pub(super) fn validate_iri_exists(conn: &Connection, property: &str, value: &Object) -> Result<()> {
         let value_iri = match value.as_iri() {

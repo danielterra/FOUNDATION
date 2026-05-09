@@ -38,6 +38,7 @@ impl Individual {
         crate::owl::check_system_locked(conn, &self.iri, None)?;
         ensure_class_exists(conn, class_iri)?;
         crate::owl::validate_icon(conn, icon)?;
+        Self::validate_disjointness(conn, &self.iri, class_iri)?;
 
         let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(class_iri.to_string()));
         store::assert_triples(conn, &[triple], origin)?;
@@ -70,6 +71,7 @@ impl Individual {
     ) -> Result<()> {
         crate::owl::check_system_locked(conn, &self.iri, None)?;
         ensure_class_exists(conn, class_iri)?;
+        Self::validate_disjointness(conn, &self.iri, class_iri)?;
 
         let triple = Triple::new(&self.iri, rdf::TYPE, Object::Iri(class_iri.to_string()));
         store::assert_triples(conn, &[triple], origin)?;
@@ -162,6 +164,13 @@ impl Individual {
                 Self::validate_range_type(conn, property, value)?;
                 Self::validate_one_of_constraint(conn, property, value)?;
                 Self::validate_literal_datatype(property, value)?;
+            }
+        }
+        if property == rdf::TYPE {
+            for value in &values {
+                if let Some(class_iri) = value.as_iri() {
+                    Self::validate_disjointness(conn, &self.iri, class_iri)?;
+                }
             }
         }
         let t_validate = t0.elapsed().as_millis();
@@ -268,6 +277,13 @@ impl Individual {
                 Self::validate_range_type(conn, property, value)?;
                 Self::validate_one_of_constraint(conn, property, value)?;
                 Self::validate_literal_datatype(property, value)?;
+            }
+        }
+        if property == rdf::TYPE {
+            for value in &values {
+                if let Some(class_iri) = value.as_iri() {
+                    Self::validate_disjointness(conn, &self.iri, class_iri)?;
+                }
             }
         }
 
