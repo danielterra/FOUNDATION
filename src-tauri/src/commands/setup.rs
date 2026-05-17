@@ -71,13 +71,16 @@ pub async fn initialize_app(
         }
     }
 
+    let _ = app.emit("import-progress", serde_json::json!({ "stage": "Carregando biblioteca de ícones" }));
     owl::seed_icon_library(&mut conn);
 
     // Drain the WAL now — only one connection exists so no readers can block this.
     // Pool connections maintain WAL read marks that prevent PASSIVE checkpoints from advancing,
     // causing the WAL to grow unboundedly during normal operation.
+    let _ = app.emit("import-progress", serde_json::json!({ "stage": "Compactando log de transações" }));
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
 
+    let _ = app.emit("import-progress", serde_json::json!({ "stage": "Limpando dados antigos" }));
     purge_old_retractions(&conn);
 
     let t0 = std::time::Instant::now();
@@ -135,6 +138,7 @@ pub async fn initialize_app(
     let worker = FormulaWorker::spawn(app.clone(), executor_for_worker);
     super::log_backend("debug", &format!("[STARTUP] formula_worker={}ms", t0.elapsed().as_millis()));
 
+    let _ = app.emit("import-progress", serde_json::json!({ "stage": "Recuperando processos pendentes" }));
     recover_pending_jobs(&executor_for_recover, &worker).await;
     super::log_backend("debug", &format!("[STARTUP] recover_jobs={}ms", t0.elapsed().as_millis()));
 

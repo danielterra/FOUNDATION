@@ -30,6 +30,21 @@ pub fn store_email(
         return Ok(None);
     }
 
+    // Wrap the whole insert in one TX so a failure mid-way (e.g. an ontology
+    // property mismatch) rolls back all triples — otherwise a partial email
+    // with only emailMessageId set would shadow itself on the next sync via
+    // email_exists() and never be retried.
+    crate::eavto::with_transaction(conn, |conn| {
+        store_email_inner(conn, account_iri, email)
+    })
+    .map(Some)
+}
+
+fn store_email_inner(
+    conn: &mut Connection,
+    account_iri: &str,
+    email: &ParsedEmail,
+) -> Result<String, String> {
     let from_iri = ensure_email_address(conn, &email.from)?;
 
     let to_iris: Vec<Object> = email
@@ -67,8 +82,9 @@ pub fn store_email(
             .map_err(|e| format!("to: {}", e))?;
     }
 
-    if let Some(date) = &email.date {
-        ind.add_property(conn, "foundation:emailDate", vec![datetime_lit(date)], "imap")
+    let normalized_date = email.date.as_deref().and_then(normalize_to_rfc3339);
+    if let Some(date) = &normalized_date {
+        ind.add_property(conn, "foundation:existsFrom", vec![datetime_lit(date)], "imap")
             .map_err(|e| format!("date: {}", e))?;
     }
 
@@ -85,7 +101,7 @@ pub fn store_email(
     // attachment would leave only the last one as the current value.
     let mut attachment_iris: Vec<Object> = Vec::new();
     for (i, att) in email.attachments.iter().enumerate() {
-        match persist_attachment(conn, att, i) {
+        match persist_attachment(conn, att, i, normalized_date.as_deref()) {
             Ok(att_iri) => attachment_iris.push(Object::Iri(att_iri)),
             Err(e) => crate::imap::log_error(&format!(
                 "IMAP: failed to persist attachment '{}': {}", att.file_name, e,
@@ -97,13 +113,14 @@ pub fn store_email(
             .map_err(|e| format!("attach link: {}", e))?;
     }
 
-    Ok(Some(email_iri))
+    Ok(email_iri)
 }
 
 fn persist_attachment(
     conn: &mut Connection,
     att: &ParsedAttachment,
     index: usize,
+    email_date: Option<&str>,
 ) -> Result<String, String> {
     let attachments_dir = crate::paths::attachments_dir();
     std::fs::create_dir_all(&attachments_dir)
@@ -133,15 +150,18 @@ fn persist_attachment(
         .map_err(|e| format!("assert: {}", e))?;
     att_ind.add_property(conn, "foundation:fileName", vec![str_lit(&att.file_name)], "imap")
         .map_err(|e| format!("fileName: {}", e))?;
-    att_ind.add_property(conn, "foundation:filePath", vec![Object::Literal {
-        value: stored_path,
-        datatype: Some("xsd:anyURI".to_string()),
-        language: None,
-    }], "imap").map_err(|e| format!("filePath: {}", e))?;
+    att_ind.add_property(conn, "foundation:filePath", vec![str_lit(&stored_path)], "imap")
+        .map_err(|e| format!("filePath: {}", e))?;
     att_ind.add_property(conn, "foundation:fileSize", vec![Object::Integer(size)], "imap")
         .map_err(|e| format!("fileSize: {}", e))?;
     att_ind.add_property(conn, "foundation:fileHash", vec![str_lit(&hash)], "imap")
         .map_err(|e| format!("fileHash: {}", e))?;
+
+    let upload_date = email_date
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    att_ind.add_property(conn, "foundation:uploadDate", vec![Object::DateTime(upload_date)], "imap")
+        .map_err(|e| format!("uploadDate: {}", e))?;
 
     if let Some(ft_iri) = mime_to_file_type_iri(&att.mime_type) {
         att_ind.add_property(conn, "foundation:hasFileType",
@@ -229,4 +249,17 @@ fn str_lit(v: &str) -> Object {
 
 fn datetime_lit(v: &str) -> Object {
     Object::Literal { value: v.to_string(), datatype: Some("xsd:dateTime".to_string()), language: None }
+}
+
+/// mailparse devolve a string Date: bruta do header (geralmente RFC2822).
+/// Os campos xsd:dateTime do graph esperam RFC3339, então convertemos antes
+/// de gravar — caso contrário queries por data falham silenciosamente.
+fn normalize_to_rfc3339(raw: &str) -> Option<String> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc2822(raw) {
+        return Some(dt.to_rfc3339());
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
+        return Some(dt.to_rfc3339());
+    }
+    None
 }

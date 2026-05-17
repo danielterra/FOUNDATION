@@ -39,17 +39,46 @@ pub fn drain_written_iri_objects() -> Vec<String> {
 }
 
 /// Marks the current thread as being inside a batch transaction.
-/// Returns a guard that clears the flag on drop.
+/// Returns a guard that restores the previous flag on drop, so nested
+/// calls don't prematurely clear the flag for the outer scope.
 pub fn enter_batch_transaction() -> BatchTransactionGuard {
-    IN_BATCH_TX.with(|f| f.set(true));
-    BatchTransactionGuard(())
+    let prev = IN_BATCH_TX.with(|f| f.replace(true));
+    BatchTransactionGuard(prev)
 }
 
-pub struct BatchTransactionGuard(());
+pub struct BatchTransactionGuard(bool);
 
 impl Drop for BatchTransactionGuard {
     fn drop(&mut self) {
-        IN_BATCH_TX.with(|f| f.set(false));
+        let prev = self.0;
+        IN_BATCH_TX.with(|f| f.set(prev));
+    }
+}
+
+/// Runs `f` inside a single SQLite transaction so all writes done via
+/// `assert_triples`/`retract_triples` participate in one atomic commit.
+/// Rolls back on Err. Must NOT be called from within another transaction
+/// (use `enter_batch_transaction` directly if you need nested savepoints).
+pub fn with_transaction<T, F>(
+    conn: &mut Connection,
+    f: F,
+) -> std::result::Result<T, String>
+where
+    F: FnOnce(&mut Connection) -> std::result::Result<T, String>,
+{
+    let _batch = enter_batch_transaction();
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| format!("begin tx: {}", e))?;
+    match f(conn) {
+        Ok(value) => {
+            conn.execute_batch("COMMIT")
+                .map_err(|e| format!("commit tx: {}", e))?;
+            Ok(value)
+        }
+        Err(e) => {
+            conn.execute_batch("ROLLBACK").ok();
+            Err(e)
+        }
     }
 }
 

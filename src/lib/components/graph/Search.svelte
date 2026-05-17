@@ -478,7 +478,7 @@
 	}
 
 	.loading-icon {
-		color: var(--color-interactive);
+		color: var(--color-neutral-active);
 		font-size: 18px;
 		animation: spin 1s linear infinite;
 	}
@@ -530,7 +530,7 @@
 	}
 
 	.result-icon {
-		color: var(--color-interactive);
+		color: var(--color-neutral-active);
 		font-size: 24px;
 		flex-shrink: 0;
 	}
@@ -545,7 +545,7 @@
 	.result-placeholder {
 		width: 24px;
 		height: 24px;
-		background: color-mix(in srgb, var(--color-interactive) 30%, transparent);
+		background: color-mix(in srgb, var(--color-neutral-active) 30%, transparent);
 		flex-shrink: 0;
 	}
 

@@ -1,9 +1,11 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { goto } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import SetupWizard from "$lib/components/SetupWizard.svelte";
   import ImportProgress from "$lib/components/ImportProgress.svelte";
+  import Activity from "$lib/components/Activity.svelte";
 
   // null = verificando, true = configurada, false = precisa configurar
   let folderConfigured = $state(null);
@@ -14,6 +16,37 @@
   let setupComplete = $state(null); // null = verificando, true = done, false = not done
   let importing = $state(null);     // null = verificando, true = importing, false = already imported
 
+  let startupStage = $state('Verificando banco de dados');
+  let startupStartedAt = $state(0);
+  let startupElapsedSec = $state(0);
+  let startupTimer = null;
+  let unlistenStartupProgress = null;
+
+  function formatElapsed(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return m > 0 ? `${m}m ${s.toString().padStart(2, '0')}s` : `${s}s`;
+  }
+
+  async function beginStartupTracking() {
+    startupStartedAt = Date.now();
+    startupElapsedSec = 0;
+    startupTimer = setInterval(() => {
+      startupElapsedSec = Math.floor((Date.now() - startupStartedAt) / 1000);
+    }, 1000);
+    unlistenStartupProgress = await listen('import-progress', (event) => {
+      const payload = event.payload;
+      if (payload && payload.stage) startupStage = payload.stage;
+    });
+  }
+
+  function stopStartupTracking() {
+    if (startupTimer) { clearInterval(startupTimer); startupTimer = null; }
+    if (unlistenStartupProgress) { unlistenStartupProgress(); unlistenStartupProgress = null; }
+  }
+
+  onDestroy(() => { stopStartupTracking(); });
+
   onMount(async () => {
     try {
       const configured = await invoke('settings__is_folder_configured');
@@ -22,10 +55,12 @@
         folderConfigured = false;
       } else {
         folderConfigured = true;
+        await beginStartupTracking();
         await initializeApp();
       }
     } catch {
       folderConfigured = true;
+      await beginStartupTracking();
       await initializeApp();
     }
   });
@@ -65,6 +100,7 @@
   async function checkDatabaseStatus() {
     try {
       const isSetupDone = await invoke('setup__check');
+      stopStartupTracking();
       importing = false;
       if (isSetupDone) {
         setupComplete = true;
@@ -76,13 +112,16 @@
       const errorMsg = String(error);
 
       if (errorMsg.includes('state not managed')) {
-        if (importing === null) importing = true;
-        const { listen } = await import('@tauri-apps/api/event');
+        if (importing === null) {
+          stopStartupTracking();
+          importing = true;
+        }
         const unlisten = await listen('import-complete', async () => {
           unlisten();
           await checkDatabaseStatus();
         });
       } else {
+        stopStartupTracking();
         importing = true;
       }
     }
@@ -153,7 +192,7 @@
     </div>
 
   {:else if importing === null}
-    <p class="redirecting">Verificando banco de dados…</p>
+    <Activity message={`${startupStage} · ${formatElapsed(startupElapsedSec)}`} progress={null} />
 
   {:else if importing === true}
     <ImportProgress onComplete={handleImportComplete} />

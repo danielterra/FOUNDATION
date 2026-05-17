@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
@@ -6,6 +7,12 @@ use mailparse::MailHeaderMap;
 
 use crate::imap::extractor::{ParsedAttachment, ParsedEmail, store_email};
 use crate::owl::{DbExecutor, Individual, Object};
+
+struct FetchedEmail {
+    folder: String,
+    uid: u32,
+    parsed: ParsedEmail,
+}
 
 const DEFAULT_IMAP_PORT: u16 = 993;
 const DEFAULT_SYNC_INTERVAL_MINUTES: i64 = 15;
@@ -104,20 +111,32 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
                 }
 
                 let mut stored_count: i64 = 0;
-                for email in emails {
+                let mut seen_uids: HashMap<String, Vec<u32>> = HashMap::new();
+                for fetched in emails {
                     let account_iri = account.iri.clone();
-                    let subject_log = email.subject.chars().take(40).collect::<String>();
-                    match executor
+                    let subject_log = fetched.parsed.subject.chars().take(40).collect::<String>();
+                    let FetchedEmail { folder, uid, parsed } = fetched;
+                    let persisted = match executor
                         .write(move |conn| {
-                            store_email(conn, &account_iri, &email)
+                            store_email(conn, &account_iri, &parsed)
                                 .map(|opt| opt.unwrap_or_default())
                         })
                         .await
                     {
-                        Ok(s) if !s.is_empty() => { stored_count += 1; }
-                        Ok(_) => { crate::imap::log_error(&format!("IMAP: duplicate skipped: {}", subject_log)); }
-                        Err(e) => { crate::imap::log_error(&format!("IMAP store_email error: {} — {}", subject_log, e)); }
+                        Ok(s) if !s.is_empty() => { stored_count += 1; true }
+                        Ok(_) => { crate::imap::log_error(&format!("IMAP: duplicate skipped: {}", subject_log)); true }
+                        Err(e) => { crate::imap::log_error(&format!("IMAP store_email error: {} — {}", subject_log, e)); false }
                     };
+                    if persisted {
+                        seen_uids.entry(folder).or_default().push(uid);
+                    }
+                }
+
+                if !seen_uids.is_empty() {
+                    let account_for_seen = account.clone();
+                    tokio::task::spawn_blocking(move || mark_seen_blocking(&account_for_seen, seen_uids))
+                        .await
+                        .ok();
                 }
 
                 let _ = app.emit("imap-sync-finished", serde_json::json!({
@@ -260,11 +279,22 @@ fn bool_lit(v: bool) -> Object {
     Object::Literal { value: v.to_string(), datatype: Some("xsd:boolean".to_string()), language: None }
 }
 
-fn sync_account_blocking(account: &AccountConfig) -> Result<Vec<ParsedEmail>, String> {
+fn sync_account_blocking(account: &AccountConfig) -> Result<Vec<FetchedEmail>, String> {
     if account.use_tls {
         fetch_tls(account)
     } else {
         fetch_plain(account)
+    }
+}
+
+fn mark_seen_blocking(account: &AccountConfig, seen_uids: HashMap<String, Vec<u32>>) {
+    let result = if account.use_tls {
+        mark_seen_tls(account, &seen_uids)
+    } else {
+        mark_seen_plain(account, &seen_uids)
+    };
+    if let Err(e) = result {
+        crate::imap::log_error(&format!("IMAP mark \\Seen error for {}: {}", account.iri, e));
     }
 }
 
@@ -288,7 +318,7 @@ fn tcp_connect(host: &str, port: u16) -> Result<TcpStream, String> {
         .map_err(|e| format!("TCP: {}", e))
 }
 
-fn fetch_tls(account: &AccountConfig) -> Result<Vec<ParsedEmail>, String> {
+fn fetch_tls(account: &AccountConfig) -> Result<Vec<FetchedEmail>, String> {
     let tcp = tcp_connect(&account.host, account.port)?;
     tcp.set_read_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
     tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
@@ -302,7 +332,7 @@ fn fetch_tls(account: &AccountConfig) -> Result<Vec<ParsedEmail>, String> {
     Ok(emails)
 }
 
-fn fetch_plain(account: &AccountConfig) -> Result<Vec<ParsedEmail>, String> {
+fn fetch_plain(account: &AccountConfig) -> Result<Vec<FetchedEmail>, String> {
     let tcp = tcp_connect(&account.host, account.port)?;
     tcp.set_read_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
     tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
@@ -312,6 +342,60 @@ fn fetch_plain(account: &AccountConfig) -> Result<Vec<ParsedEmail>, String> {
     let emails = sync_folders(&mut session, &account.monitored_folders)?;
     session.logout().ok();
     Ok(emails)
+}
+
+fn mark_seen_tls(
+    account: &AccountConfig,
+    seen_uids: &HashMap<String, Vec<u32>>,
+) -> Result<(), String> {
+    let tcp = tcp_connect(&account.host, account.port)?;
+    tcp.set_read_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
+    let tls = native_tls::TlsConnector::new().map_err(|e| e.to_string())?;
+    let tls_stream = tls.connect(&account.host, tcp).map_err(|e| format!("TLS: {}", e))?;
+    let mut session = imap::Client::new(tls_stream)
+        .login(&account.username, &account.password)
+        .map_err(|(e, _)| format!("login: {}", e))?;
+    mark_seen_in_session(&mut session, seen_uids)?;
+    session.logout().ok();
+    Ok(())
+}
+
+fn mark_seen_plain(
+    account: &AccountConfig,
+    seen_uids: &HashMap<String, Vec<u32>>,
+) -> Result<(), String> {
+    let tcp = tcp_connect(&account.host, account.port)?;
+    tcp.set_read_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
+    let mut session = imap::Client::new(tcp)
+        .login(&account.username, &account.password)
+        .map_err(|(e, _)| format!("login: {}", e))?;
+    mark_seen_in_session(&mut session, seen_uids)?;
+    session.logout().ok();
+    Ok(())
+}
+
+fn mark_seen_in_session<T: Read + Write>(
+    session: &mut imap::Session<T>,
+    seen_uids: &HashMap<String, Vec<u32>>,
+) -> Result<(), String> {
+    for (folder, uids) in seen_uids {
+        if uids.is_empty() {
+            continue;
+        }
+        if let Err(e) = session.select(folder) {
+            crate::imap::log_error(&format!("IMAP mark \\Seen select '{}' failed: {}", folder, e));
+            continue;
+        }
+        let uid_set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+        if let Err(e) = session.uid_store(&uid_set, "+FLAGS (\\Seen)") {
+            crate::imap::log_error(&format!(
+                "IMAP uid_store +Seen failed for folder '{}' uids={}: {}", folder, uid_set, e,
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn idle_tls(account: &AccountConfig) -> Result<(), String> {
@@ -349,7 +433,7 @@ fn idle_plain(account: &AccountConfig) -> Result<(), String> {
 fn sync_folders<T: Read + Write>(
     session: &mut imap::Session<T>,
     folders: &[String],
-) -> Result<Vec<ParsedEmail>, String> {
+) -> Result<Vec<FetchedEmail>, String> {
     let folders_to_sync: Vec<&str> = if folders.is_empty() {
         vec!["INBOX"]
     } else {
@@ -359,12 +443,15 @@ fn sync_folders<T: Read + Write>(
     let mut all_emails = vec![];
     for folder in folders_to_sync {
         session.select(folder).map_err(|e| e.to_string())?;
-        all_emails.extend(fetch_unseen(session)?);
+        all_emails.extend(fetch_unseen(session, folder)?);
     }
     Ok(all_emails)
 }
 
-fn fetch_unseen<T: Read + Write>(session: &mut imap::Session<T>) -> Result<Vec<ParsedEmail>, String> {
+fn fetch_unseen<T: Read + Write>(
+    session: &mut imap::Session<T>,
+    folder: &str,
+) -> Result<Vec<FetchedEmail>, String> {
     let uids = session.uid_search("UNSEEN").map_err(|e| e.to_string())?;
 
     if uids.is_empty() {
@@ -379,35 +466,44 @@ fn fetch_unseen<T: Read + Write>(session: &mut imap::Session<T>) -> Result<Vec<P
         .collect::<Vec<_>>()
         .join(",");
 
+    // BODY.PEEK[] reads the full message without setting the \Seen flag.
+    // We mark \Seen explicitly only after successful persistence in run_account_loop.
     let messages = session
-        .uid_fetch(&uid_set, "(UID BODY[])")
+        .uid_fetch(&uid_set, "(UID BODY.PEEK[])")
         .map_err(|e| e.to_string())?;
 
     let mut result = vec![];
     for msg in messages.iter() {
+        let uid = match msg.uid {
+            Some(u) => u,
+            None => {
+                crate::imap::log_error("IMAP: fetch response missing UID, skipping");
+                continue;
+            }
+        };
         if let Some(body) = msg.body() {
             match parse_raw_email(body) {
-                Ok(email) => result.push(email),
-                Err(e) => crate::imap::log_error(&format!("IMAP parse error uid={:?}: {}", msg.uid, e)),
+                Ok(parsed) => result.push(FetchedEmail { folder: folder.to_string(), uid, parsed }),
+                Err(e) => crate::imap::log_error(&format!("IMAP parse error uid={}: {}", uid, e)),
             }
             continue;
         }
         // Fallback: combine RFC822 header + text when BODY[] not available
         if let (Some(hdr), Some(txt)) = (msg.header(), msg.text()) {
-            crate::imap::log_error(&format!("IMAP: uid={:?} using header+text fallback", msg.uid));
+            crate::imap::log_error(&format!("IMAP: uid={} using header+text fallback", uid));
             let mut combined = Vec::with_capacity(hdr.len() + 2 + txt.len());
             combined.extend_from_slice(hdr);
             combined.extend_from_slice(b"\r\n");
             combined.extend_from_slice(txt);
             match parse_raw_email(&combined) {
-                Ok(email) => result.push(email),
-                Err(e) => crate::imap::log_error(&format!("IMAP parse error (fallback) uid={:?}: {}", msg.uid, e)),
+                Ok(parsed) => result.push(FetchedEmail { folder: folder.to_string(), uid, parsed }),
+                Err(e) => crate::imap::log_error(&format!("IMAP parse error (fallback) uid={}: {}", uid, e)),
             }
             continue;
         }
         crate::imap::log_error(&format!(
-            "IMAP: uid={:?} no body, header={}, text={}",
-            msg.uid, msg.header().is_some(), msg.text().is_some()
+            "IMAP: uid={} no body, header={}, text={}",
+            uid, msg.header().is_some(), msg.text().is_some()
         ));
     }
 

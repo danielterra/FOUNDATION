@@ -683,7 +683,7 @@
     cursor: pointer;
     font-family: var(--font-body);
     font-size: 11px;
-    color: var(--color-interactive);
+    color: var(--color-neutral-active);
     opacity: 0.7;
   }
 

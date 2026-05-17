@@ -130,7 +130,7 @@
 
   .header-icon {
     font-size: 34px;
-    color: var(--color-interactive);
+    color: var(--color-neutral-active);
   }
 
   .header-icon-img {
@@ -160,6 +160,7 @@
   .header-subtitle {
     display: flex;
     align-items: center;
+    color: var(--color-neutral-active);
   }
 
   .header-actions {
