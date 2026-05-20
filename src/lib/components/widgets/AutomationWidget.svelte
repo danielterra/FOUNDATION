@@ -6,6 +6,7 @@
   import '@xyflow/svelte/dist/style.css'
   import { applyDagreLayout } from './automation/layout.js'
   import WidgetContainer from './WidgetContainer.svelte'
+  import Button from '../Button.svelte'
   import NodeStartEvent        from './automation/NodeStartEvent.svelte'
   import NodeTimerStartEvent   from './automation/NodeTimerStartEvent.svelte'
   import NodeEndEvent     from './automation/NodeEndEvent.svelte'
@@ -43,6 +44,7 @@
   }
 
   let automationLabel = $state('')
+  let isExecutable = $state(false)
   let nodes = $state.raw([])
   let edges = $state.raw([])
   let loading = $state(true)
@@ -88,6 +90,7 @@
       const raw = await invoke('automation__get_graph', { processIri: entityId })
       const data = JSON.parse(raw)
       automationLabel = data.process_label
+      isExecutable = data.is_executable ?? false
 
       const flowNodes = data.nodes.map(n => ({
         id: n.id,
@@ -267,15 +270,12 @@
     {#if activeStepLabel}
       <span class="active-step-label">{activeStepLabel}…</span>
     {/if}
-  {/snippet}
-
-  {#snippet headerActions()}
-    <button class="run-btn" onclick={runAutomation} disabled={running} title="Run automation">
-      <span class="material-symbols-outlined">{running ? 'progress_activity' : 'play_arrow'}</span>
-    </button>
-    <button onclick={openInspector} title="Open inspector">
-      <span class="material-symbols-outlined">info</span>
-    </button>
+    {#if isExecutable}
+      <button class="run-btn" onclick={runAutomation} disabled={running} title="Run automation">
+        <span class="material-symbols-outlined">{running ? 'progress_activity' : 'play_arrow'}</span>
+      </button>
+    {/if}
+    <Button variant="primary" size="sm" icon="info" title="Abrir inspector" onclick={openInspector} />
   {/snippet}
 
   <div class="widget-content">

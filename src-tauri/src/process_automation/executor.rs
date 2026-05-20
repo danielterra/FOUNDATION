@@ -404,10 +404,7 @@ fn create_failure_notification(
     ind.add_property(conn, "foundation:notificationType",
         vec![lit_str("error")], "process_automation")
         .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:notificationTitle",
-        vec![lit_str(&title)], "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:notificationBody",
+    ind.add_property(conn, "rdfs:comment",
         vec![lit_str(error)], "process_automation")
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:notificationSource",

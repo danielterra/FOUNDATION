@@ -65,6 +65,11 @@ pub struct EntityData {
 
     pub nodes: Vec<GraphNode>,
     pub links: Vec<GraphLink>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub related_processes: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub applicable_automations: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -409,6 +414,44 @@ pub async fn widget_inspector__set_references(
         serde_json::to_string(&job_ids).map_err(|e| e.to_string())
     }).await?;
     enqueue_formula_jobs(&app, &job_ids_json);
+    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__add_property_value(
+    entity_id: String,
+    property_iri: String,
+    value_iri: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let entity_id_clone = entity_id.clone();
+    executor.write(move |conn| {
+        Individual::add_iri_value(conn, &entity_id_clone, &property_iri, &value_iri, "user")
+            .map_err(|e| e.to_string())?;
+        Ok("added".to_string())
+    }).await?;
+    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__remove_property_value(
+    entity_id: String,
+    property_iri: String,
+    value_iri: String,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let entity_id_clone = entity_id.clone();
+    executor.write(move |conn| {
+        Individual::remove_iri_value(conn, &entity_id_clone, &property_iri, &value_iri, "user")
+            .map_err(|e| e.to_string())?;
+        Ok("removed".to_string())
+    }).await?;
     app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
     Ok(())
 }
@@ -1229,6 +1272,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
         .collect();
 
     let disjoint_groups = build_disjoint_groups(conn, class_id).unwrap_or_default();
+    let related_processes = crate::ai::functions::find_related_processes_for_class(conn, class_id);
+    let applicable_automations = crate::ai::functions::find_automations_for_types(conn, &[class_id.to_string()]);
 
     Ok(EntityData {
         id: class_id.to_string(),
@@ -1249,6 +1294,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
         required_fields,
         nodes,
         links,
+        related_processes,
+        applicable_automations,
     })
 }
 

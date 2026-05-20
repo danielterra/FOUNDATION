@@ -256,10 +256,7 @@ fn record_connection_error(
         .add_property(conn, "foundation:hasStatus", vec![Object::Iri("foundation:Pending".to_string())], "imap")
         .map_err(|e| e.to_string())?;
     Individual::new(&notif_iri)
-        .add_property(conn, "foundation:notificationTitle", vec![str_lit(title)], "imap")
-        .map_err(|e| e.to_string())?;
-    Individual::new(&notif_iri)
-        .add_property(conn, "foundation:notificationBody", vec![str_lit(error)], "imap")
+        .add_property(conn, "rdfs:comment", vec![str_lit(error)], "imap")
         .map_err(|e| e.to_string())?;
     Individual::new(&notif_iri)
         .add_property(conn, "foundation:notificationType", vec![str_lit("imap_connection_error")], "imap")
@@ -408,7 +405,7 @@ fn idle_tls(account: &AccountConfig) -> Result<(), String> {
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
     session.select("INBOX").map_err(|e| e.to_string())?;
-    let _ = session.idle().wait_while(|_| true);
+    let _ = session.idle().wait_while(imap::extensions::idle::stop_on_any);
     session.logout().ok();
     Ok(())
 }
@@ -421,7 +418,7 @@ fn idle_plain(account: &AccountConfig) -> Result<(), String> {
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
     session.select("INBOX").map_err(|e| e.to_string())?;
-    let _ = session.idle().wait_while(|_| true);
+    let _ = session.idle().wait_while(imap::extensions::idle::stop_on_any);
     session.logout().ok();
     Ok(())
 }

@@ -413,6 +413,51 @@ impl Individual {
         Ok(())
     }
 
+    /// Add a single IRI value to a property without domain validation.
+    /// Use when the caller has already verified semantic correctness and domain
+    /// validation would incorrectly reject a valid subclass relationship.
+    pub fn add_iri_value(
+        conn: &mut Connection,
+        iri: &str,
+        property_iri: &str,
+        value_iri: &str,
+        origin: &str,
+    ) -> Result<()> {
+        crate::owl::check_system_locked(conn, iri, Some(property_iri))?;
+        let existing = query::get_by_entity_predicate(conn, iri, property_iri)?;
+        let already_exists = existing.triples.iter()
+            .any(|t| t.object.as_iri() == Some(value_iri));
+        if already_exists {
+            return Ok(());
+        }
+        let triple = Triple::new(iri, property_iri, Object::Iri(value_iri.to_string()));
+        store::assert_triples(conn, &[triple], origin)?;
+        touch(conn, iri);
+        Ok(())
+    }
+
+    /// Remove a specific IRI value from a property.
+    /// Uses TX-based retraction via store::retract_triples.
+    pub fn remove_iri_value(
+        conn: &mut Connection,
+        iri: &str,
+        property_iri: &str,
+        value_iri: &str,
+        origin: &str,
+    ) -> Result<()> {
+        crate::owl::check_system_locked(conn, iri, Some(property_iri))?;
+        let result = query::get_by_entity_predicate(conn, iri, property_iri)?;
+        let to_retract: Vec<Triple> = result.triples.into_iter()
+            .filter(|t| t.object.as_iri() == Some(value_iri))
+            .map(|t| Triple::new(t.subject.as_str(), t.predicate.as_str(), t.object.clone()))
+            .collect();
+        if !to_retract.is_empty() {
+            store::retract_triples(conn, &to_retract, origin)?;
+            touch(conn, iri);
+        }
+        Ok(())
+    }
+
     pub fn get_retracted_properties(conn: &Connection, iri: &str) -> Result<Vec<Triple>> {
         query::get_retracted_by_entity(conn, iri)
             .map(|r| r.triples.into_iter().filter(|t| {

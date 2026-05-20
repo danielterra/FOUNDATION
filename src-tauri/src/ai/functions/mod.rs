@@ -102,10 +102,9 @@ pub fn find_automations_for_types(conn: &Connection, type_iris: &[String]) -> Ve
     let mut seen = std::collections::HashSet::new();
     for type_iri in type_iris {
         let mut stmt = match conn.prepare(
-            "SELECT DISTINCT t.subject FROM triples t
+            "SELECT DISTINCT t.subject FROM triples_current t
              WHERE t.predicate = 'foundation:inputClass'
-               AND t.object = ?1
-               AND t.retracted = 0"
+               AND t.object = ?1"
         ) {
             Ok(s) => s,
             Err(_) => continue,
@@ -127,6 +126,45 @@ pub fn find_automations_for_types(conn: &Connection, type_iris: &[String]) -> Ve
             seen.insert(iri.clone());
             results.push(serde_json::json!({"iri": iri, "label": label}));
         }
+    }
+    results
+}
+
+pub fn find_related_processes_for_class(conn: &Connection, class_iri: &str) -> Vec<serde_json::Value> {
+    let mut results = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut stmt = match conn.prepare(
+        "SELECT DISTINCT t.subject FROM triples_current t
+         WHERE t.predicate = 'foundation:hasRelatedClass'
+           AND t.object = ?1"
+    ) {
+        Ok(s) => s,
+        Err(_) => return results,
+    };
+    let iris: Vec<String> = stmt
+        .query_map([class_iri], |row| row.get(0))
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
+    for iri in iris {
+        if seen.contains(&iri) { continue; }
+        let rdf_type = crate::owl::get_iri_property(conn, &iri, "rdf:type")
+            .ok()
+            .flatten();
+        let is_process_or_automation = matches!(
+            rdf_type.as_deref(),
+            Some("foundation:Automation") | Some("foundation:Process")
+        );
+        if !is_process_or_automation { continue; }
+        let label = crate::owl::get_literal_property(conn, &iri, "rdfs:label")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| iri.clone());
+        seen.insert(iri.clone());
+        results.push(serde_json::json!({
+            "iri": iri,
+            "label": label,
+            "type": rdf_type,
+        }));
     }
     results
 }
@@ -348,6 +386,44 @@ fn run_automation_tool(conn: &Connection, args: &Value, app: Option<&tauri::AppH
         .map(|s| s.to_string());
 
     let dry_run = args["dry_run"].as_bool().unwrap_or(false);
+
+    match Individual::get(conn, &automation_iri) {
+        Ok(Some(ind)) => {
+            let types: Vec<String> = ind.properties.iter()
+                .filter(|(k, _)| k == "rdf:type")
+                .filter_map(|(_, v)| if let crate::owl::Object::Iri(iri) = v { Some(iri.clone()) } else { None })
+                .collect();
+
+            if !types.iter().any(|t| t == "foundation:Automation") {
+                let type_list = if types.is_empty() {
+                    "none".to_string()
+                } else {
+                    types.join(", ")
+                };
+                return ToolResult {
+                    success: false,
+                    result: None,
+                    error: Some(format!(
+                        "'{}' cannot be executed: it is not an Automation (found types: {}). Only instances of foundation:Automation can be run with this tool.",
+                        automation_iri, type_list
+                    )),
+                    concept: None,
+                };
+            }
+        }
+        Ok(None) => return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!("'{}' not found in the ontology.", automation_iri)),
+            concept: None,
+        },
+        Err(e) => return ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!("Failed to look up '{}': {}", automation_iri, e)),
+            concept: None,
+        },
+    }
 
     let input_class_iri: Option<String> = (|| -> Option<String> {
         let node_iris = find_entities_with_property(conn, "foundation:partOfProcess", &automation_iri)

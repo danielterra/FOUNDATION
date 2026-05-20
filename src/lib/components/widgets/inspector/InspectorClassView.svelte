@@ -2,6 +2,7 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import ClassPropertyForm from './ClassPropertyForm.svelte';
   import DisjointSelect from './DisjointSelect.svelte';
+  import ProcessSelect from './ProcessSelect.svelte';
   import { sticky } from '$lib/utils/actions';
 
   let {
@@ -26,7 +27,14 @@
     onConfirmRemoveDisjoint = null,
     onCancelRemoveDisjoint = null,
     onClearDisjointError = null,
+    onAddRelatedProcess = null,
+    onRemoveRelatedProcess = null,
+    onAddInputAutomation = null,
+    onRemoveInputAutomation = null,
   } = $props();
+
+  let showAddRelatedProcessForm = $state(false);
+  let showAddInputAutomationForm = $state(false);
 
   const disjointGroups = $derived(entityData?.disjointGroups ?? []);
   const disjointExcludeIris = $derived.by(() => {
@@ -100,6 +108,103 @@
             {/if}
           {/if}
           <span class="item-label">{subClass.label}</span>
+        </div>
+      {/each}
+    </div>
+  </div>
+{/if}
+
+{#if entityData.isClass && ((entityData.relatedProcesses?.length ?? 0) > 0 || (!isLocked && onAddRelatedProcess))}
+  <div class="section-group">
+    <div class="section-label section-label-row" use:sticky={{ top: 0 }}>
+      <span>Processos Relacionados</span>
+      {#if !isLocked && onAddRelatedProcess}
+        <button
+          class="add-disjoint-btn"
+          onclick={() => showAddRelatedProcessForm = !showAddRelatedProcessForm}
+          title="Vincular processo ou automação"
+        >
+          <span class="material-symbols-outlined">{showAddRelatedProcessForm ? 'close' : 'add'}</span>
+        </button>
+      {/if}
+    </div>
+
+    {#if showAddRelatedProcessForm}
+      <ProcessSelect
+        excludeIris={(entityData.relatedProcesses ?? []).map(p => p.iri)}
+        onsave={async (iri) => { await onAddRelatedProcess?.(iri); showAddRelatedProcessForm = false; }}
+        oncancel={() => showAddRelatedProcessForm = false}
+      />
+    {/if}
+
+    <div class="item-list">
+      {#each (entityData.relatedProcesses ?? []) as proc (proc.iri)}
+        <div class="item disjoint-item">
+          <div
+            class="item-body clickable"
+            role="button"
+            tabindex="0"
+            onclick={() => openEntityInspector(proc.iri)}
+            onkeydown={(e) => e.key === 'Enter' && openEntityInspector(proc.iri)}
+          >
+            <span class="material-symbols-outlined">
+              {proc.type === 'foundation:Automation' ? 'bolt' : 'schema'}
+            </span>
+            <span class="item-label">{proc.label}</span>
+          </div>
+          {#if !isLocked && onRemoveRelatedProcess}
+            <button class="disjoint-remove" onclick={() => onRemoveRelatedProcess(proc.iri)} title="Desvincular">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  </div>
+{/if}
+
+{#if entityData.isClass && ((entityData.applicableAutomations?.length ?? 0) > 0 || (!isLocked && onAddInputAutomation))}
+  <div class="section-group">
+    <div class="section-label section-label-row" use:sticky={{ top: 0 }}>
+      <span>Automações de Entrada</span>
+      {#if !isLocked && onAddInputAutomation}
+        <button
+          class="add-disjoint-btn"
+          onclick={() => showAddInputAutomationForm = !showAddInputAutomationForm}
+          title="Vincular automação de entrada"
+        >
+          <span class="material-symbols-outlined">{showAddInputAutomationForm ? 'close' : 'add'}</span>
+        </button>
+      {/if}
+    </div>
+
+    {#if showAddInputAutomationForm}
+      <ProcessSelect
+        excludeIris={(entityData.applicableAutomations ?? []).map(a => a.iri)}
+        automationOnly={true}
+        onsave={async (iri) => { await onAddInputAutomation?.(iri); showAddInputAutomationForm = false; }}
+        oncancel={() => showAddInputAutomationForm = false}
+      />
+    {/if}
+
+    <div class="item-list">
+      {#each (entityData.applicableAutomations ?? []) as auto (auto.iri)}
+        <div class="item disjoint-item">
+          <div
+            class="item-body clickable"
+            role="button"
+            tabindex="0"
+            onclick={() => openEntityInspector(auto.iri)}
+            onkeydown={(e) => e.key === 'Enter' && openEntityInspector(auto.iri)}
+          >
+            <span class="material-symbols-outlined">bolt</span>
+            <span class="item-label">{auto.label}</span>
+          </div>
+          {#if !isLocked && onRemoveInputAutomation}
+            <button class="disjoint-remove" onclick={() => onRemoveInputAutomation(auto.iri)} title="Desvincular">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          {/if}
         </div>
       {/each}
     </div>

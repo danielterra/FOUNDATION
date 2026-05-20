@@ -254,6 +254,58 @@
     }
   }
 
+  async function addRelatedProcess(processIri) {
+    try {
+      await invoke('widget_inspector__add_property_value', {
+        entityId: processIri,
+        propertyIri: 'foundation:hasRelatedClass',
+        valueIri: entityId,
+      });
+      scheduleLoad();
+    } catch (err) {
+      console.error('Failed to add related process:', err);
+    }
+  }
+
+  async function removeRelatedProcess(processIri) {
+    try {
+      await invoke('widget_inspector__remove_property_value', {
+        entityId: processIri,
+        propertyIri: 'foundation:hasRelatedClass',
+        valueIri: entityId,
+      });
+      scheduleLoad();
+    } catch (err) {
+      console.error('Failed to remove related process:', err);
+    }
+  }
+
+  async function addInputAutomation(automationIri) {
+    try {
+      await invoke('widget_inspector__add_property_value', {
+        entityId: automationIri,
+        propertyIri: 'foundation:inputClass',
+        valueIri: entityId,
+      });
+      scheduleLoad();
+    } catch (err) {
+      console.error('Failed to add input automation:', err);
+    }
+  }
+
+  async function removeInputAutomation(automationIri) {
+    try {
+      await invoke('widget_inspector__remove_property_value', {
+        entityId: automationIri,
+        propertyIri: 'foundation:inputClass',
+        valueIri: entityId,
+      });
+      scheduleLoad();
+    } catch (err) {
+      console.error('Failed to remove input automation:', err);
+    }
+  }
+
   async function saveCardinality(propertyIri, minCount, maxCount) {
     await invoke('widget_inspector__set_property_cardinality', {
       classId: entityId,
@@ -599,6 +651,10 @@
           onConfirmRemoveDisjoint={() => retractDisjointSet(removeDisjointConfirm?.groupId)}
           onCancelRemoveDisjoint={() => removeDisjointConfirm = null}
           onClearDisjointError={() => disjointError = null}
+          onAddRelatedProcess={isLocked ? null : addRelatedProcess}
+          onRemoveRelatedProcess={isLocked ? null : removeRelatedProcess}
+          onAddInputAutomation={isLocked ? null : addInputAutomation}
+          onRemoveInputAutomation={isLocked ? null : removeInputAutomation}
         />
 
         <PropertyList

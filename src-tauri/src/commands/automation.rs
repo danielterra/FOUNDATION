@@ -71,6 +71,7 @@ pub struct AutomationGraphEdge {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutomationGraph {
     pub process_label: String,
+    pub is_executable: bool,
     pub nodes: Vec<AutomationGraphNode>,
     pub edges: Vec<AutomationGraphEdge>,
     pub sequence_flow_iris: Vec<String>,
@@ -175,6 +176,9 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
 
             let invokes_process = if raw_type == "automation_SubProcess" {
                 get_iri_property(conn, &node_iri, "foundation:calledElement")
+                    .map_err(|e| e.to_string())?
+            } else if raw_type == "process_SubProcess" {
+                get_iri_property(conn, &node_iri, "foundation:invokesProcess")
                     .map_err(|e| e.to_string())?
             } else {
                 None
@@ -446,8 +450,14 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
             }
         }
 
+        let root_type = get_iri_property(conn, automation_iri, rdf::TYPE)
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+        let is_executable = is_subclass_of(conn, &root_type, "foundation:Automation");
+
         Ok(AutomationGraph {
             process_label,
+            is_executable,
             nodes,
             edges,
             sequence_flow_iris,

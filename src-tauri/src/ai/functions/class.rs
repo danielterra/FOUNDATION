@@ -162,6 +162,7 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
             .collect();
 
         let applicable_automations = super::find_automations_for_types(conn, &[iri.to_string()]);
+        let related_processes = super::find_related_processes_for_class(conn, iri);
         let is_locked = crate::owl::is_system_locked(conn, iri);
 
         let mut response = serde_json::json!({
@@ -221,6 +222,9 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
         }
         if !applicable_automations.is_empty() {
             response["applicableAutomations"] = serde_json::json!(applicable_automations);
+        }
+        if !related_processes.is_empty() {
+            response["relatedProcesses"] = serde_json::json!(related_processes);
         }
 
         {

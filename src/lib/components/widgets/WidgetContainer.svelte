@@ -11,6 +11,7 @@
     onClose,
     canExpand = false,
     headerActions,
+    headerExtra,
     headerSubtitle,
     children,
   } = $props();
@@ -50,6 +51,11 @@
           {/if}
         </div>
       </div>
+      {#if headerExtra}
+        <div class="header-extra">
+          {@render headerExtra()}
+        </div>
+      {/if}
       <div class="header-controls">
         {#if canExpand}
           <Button
@@ -112,6 +118,13 @@
     min-width: 0;
     overflow: hidden;
     flex: 1;
+  }
+
+  .header-extra {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
   }
 
   .header-controls {

@@ -53,6 +53,15 @@
     'foundation:derivedFromEmail',
   ];
 
+  function collectSources(props) {
+    const seen = new Set();
+    return SOURCE_PROPERTIES.flatMap(propIri =>
+      findAllProps(props, propIri)
+        .filter(p => p.value && p.value.trim() !== '' && !seen.has(p.value) && seen.add(p.value))
+        .map(p => ({ iri: p.value, label: p.value_label ?? p.value, icon: p.value_icon ?? 'link' }))
+    );
+  }
+
   function findProp(props, iri) {
     if (!Array.isArray(props)) return null;
     return props.find(p => p.property === iri) ?? null;
@@ -113,32 +122,19 @@
       const data = JSON.parse(resultStr);
       const props = data?.properties ?? [];
 
-      const titleProp = findProp(props, 'foundation:notificationTitle');
-      const bodyProp = findProp(props, 'foundation:notificationBody');
       const typeProp = findProp(props, 'foundation:notificationType');
       const createdAtProp = findProp(props, 'foundation:createdAt');
       const lastUpdatedAtProp = findProp(props, 'foundation:lastUpdatedAt');
-
-      const sources = SOURCE_PROPERTIES.flatMap(propIri =>
-        findAllProps(props, propIri)
-          .filter(p => p.value && p.value.trim() !== '')
-          .map(p => ({
-            iri: p.value,
-            label: p.value_label ?? p.value,
-            icon: p.value_icon ?? 'link',
-          }))
-      );
 
       const typeRaw = (typeProp?.value ?? 'info').toLowerCase();
       const normalizedType = TYPE_ICONS[typeRaw] ? typeRaw : 'info';
 
       return {
         iri,
-        label: data?.label ?? iri,
-        title: titleProp?.value ?? data?.label ?? iri,
-        body: bodyProp?.value ?? '',
+        title: data?.label ?? iri,
+        body: data?.comment ?? '',
         type: normalizedType,
-        sources,
+        sources: collectSources(props),
         createdAt: createdAtProp?.value ?? null,
         lastUpdatedAt: lastUpdatedAtProp?.value ?? null,
         status: data?.status ?? null,

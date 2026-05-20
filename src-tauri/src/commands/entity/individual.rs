@@ -657,5 +657,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         required_fields,
         nodes,
         links,
+        related_processes: vec![],
+        applicable_automations: vec![],
     })
 }

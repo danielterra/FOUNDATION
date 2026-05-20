@@ -154,6 +154,8 @@ pub fn run() {
             commands::widget_inspector__clear_property,
             commands::widget_inspector__update_property,
             commands::widget_inspector__set_references,
+            commands::widget_inspector__add_property_value,
+            commands::widget_inspector__remove_property_value,
             commands::widget_inspector__update_status,
             commands::widget_inspector__get_delete_impact,
             commands::widget_inspector__delete_individual,
