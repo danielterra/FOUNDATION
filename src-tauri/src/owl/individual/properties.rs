@@ -96,6 +96,32 @@ pub fn is_instance_of(conn: &Connection, entity: &str, class_iri: &str) -> bool 
     has_property_iri(conn, entity, vocabulary::rdf::TYPE, class_iri)
 }
 
+/// Returns true if `child_iri` is equal to or a (transitive) subclass of `ancestor_iri`,
+/// walking rdfs:subClassOf upward via BFS. Stops at owl:Thing to avoid infinite loops.
+pub fn is_subclass_of(conn: &Connection, child_iri: &str, ancestor_iri: &str) -> bool {
+    if child_iri == ancestor_iri {
+        return true;
+    }
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = vec![child_iri.to_string()];
+    while let Some(current) = queue.pop() {
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+        if let Ok(supers) = get_all_iri_properties(conn, &current, vocabulary::rdfs::SUB_CLASS_OF) {
+            for s in supers {
+                if s == ancestor_iri {
+                    return true;
+                }
+                if s != "owl:Thing" {
+                    queue.push(s);
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Returns the IRIs of all entities that have the given predicate pointing to the given object IRI
 pub fn find_entities_with_property(
     conn: &Connection,

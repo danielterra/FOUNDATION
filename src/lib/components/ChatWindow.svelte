@@ -147,9 +147,7 @@
 			try {
 				await loadActiveModelInfo();
 				console.debug(`[INIT] loadActiveModelInfo=${Math.round(performance.now() - t0)}ms`);
-				const storedKey = await invoke('ai__get_api_key');
-				console.debug(`[INIT] ai__get_api_key=${Math.round(performance.now() - t0)}ms`);
-				await initializeAI(storedKey ?? '');
+				await initializeAI();
 				console.debug(`[INIT] initializeAI=${Math.round(performance.now() - t0)}ms`);
 			} catch (err) {
 				console.error('Failed to initialize AI:', err);
@@ -278,9 +276,9 @@
 		}
 	}
 
-	async function initializeAI(key) {
+	async function initializeAI() {
 		try {
-			await invoke('ai__initialize', { apiKey: key });
+			await invoke('ai__initialize');
 			isInitialized = true;
 		} catch (err) {
 			console.error('Failed to initialize AI:', err);

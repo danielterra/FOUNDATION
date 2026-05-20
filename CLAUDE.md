@@ -57,6 +57,14 @@
 - Use `cargo check` only when user is NOT about to run `tauri dev`.
 - ALWAYS warn user before profile/feature changes — invalidates 100% of the cache (~10–15 min full rebuild on this project).
 
+## Real-time event system
+- `DbExecutor` is initialized with `new_with_notify` (`src-tauri/src/commands/setup.rs:89`).
+- EVERY write through `DbExecutor::write()` — Tauri commands, MCP tools, automation executor, task scheduler — automatically emits `entity-updated` via the notify channel. No manual `app.emit` needed.
+- Flow: write → `store.rs` accumulates subjects in `WRITTEN_SUBJECT_PREDICATES` → after commit, drain → `notify_tx` → receiver emits `entity-updated` to frontend.
+- Frontend widgets subscribe to `entity-updated` (e.g. `AutomationWidget.svelte:208`) and reload when their watched IRIs are affected.
+- NEVER add manual `app.emit("entity-updated", …)` after a `DbExecutor::write()` — it is redundant and causes duplicate events.
+- Batch risk: N separate MCP write calls = N `entity-updated` events. Consider debounce on the frontend consumer if performance is a concern.
+
 ## Releases
 - ALWAYS use `/release-create` skill.
 

@@ -17,7 +17,7 @@ pub use properties::{
     get_all_iri_properties, replace_all_property_iris,
     get_literal_property, get_all_literal_properties, get_iri_property,
     has_property_iri, has_property_literal,
-    is_instance_of, find_entities_with_property, find_entities_with_predicate,
+    is_instance_of, is_subclass_of, find_entities_with_property, find_entities_with_predicate,
 };
 pub use lock::{is_system_locked, set_system_locked, check_system_locked};
 pub use status::{validate_allowed_status, resolve_status_appearance, get_entity_status_info};

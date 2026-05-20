@@ -1,5 +1,6 @@
 <script>
 	import Card from './Card.svelte';
+	import ThinkingDots from './ThinkingDots.svelte';
 
 	let { message = '', progress = null } = $props();
 
@@ -12,10 +13,8 @@
 		<p class="message">{message}</p>
 
 		{#if isIndefinite}
-			<!-- Spinner para progresso indefinido -->
-			<div class="spinner"></div>
+			<ThinkingDots />
 		{:else}
-			<!-- Progress bar para progresso definido -->
 			<div class="progress-container">
 				<div class="progress-bar">
 					<div class="progress-fill" style="width: {percentage}%"></div>
@@ -49,22 +48,6 @@
 		text-overflow: ellipsis;
 	}
 
-	/* Spinner para progresso indefinido */
-	.spinner {
-		width: 32px;
-		height: 32px;
-		border: none;
-		flex-shrink: 0;
-		animation: spin 0.8s linear infinite, glow 2s ease-in-out infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	/* Progress bar para progresso definido */
 	.progress-container {
 		display: flex;
 		flex-direction: row;
@@ -112,27 +95,9 @@
 		min-width: 3ch;
 	}
 
-	/* Animação de shimmer - luz pulsante da esquerda para direita */
 	@keyframes shimmer {
-		0% {
-			left: -100%;
-		}
-		50% {
-			left: 100%;
-		}
-		100% {
-			left: 100%;
-		}
-	}
-
-	/* Animação de glow pulsante para o spinner */
-	@keyframes glow {
-		0%,
-		100% {
-			filter: brightness(1) drop-shadow(0 0 4px var(--color-transition));
-		}
-		50% {
-			filter: brightness(1.4) drop-shadow(0 0 12px var(--color-transition));
-		}
+		0% { left: -100%; }
+		50% { left: 100%; }
+		100% { left: 100%; }
 	}
 </style>

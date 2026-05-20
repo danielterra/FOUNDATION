@@ -105,6 +105,8 @@ pub async fn execute_request_task(
         req = req.body(body_str);
     }
 
+    let start_ms = Utc::now().timestamp_millis();
+
     let response = req
         .send()
         .await
@@ -113,8 +115,8 @@ pub async fn execute_request_task(
     let status_code = response.status().as_u16() as i64;
     let resp_body = response.text().await.unwrap_or_default();
 
-    let timestamp = Utc::now().timestamp_millis();
-    let response_iri = format!("foundation:HTTPResponse_{}", timestamp);
+    let end_ms = Utc::now().timestamp_millis();
+    let response_iri = format!("foundation:HTTPResponse_{}", end_ms);
 
     executor
         .write({
@@ -122,6 +124,15 @@ pub async fn execute_request_task(
             let response_iri = response_iri.clone();
             let resp_body_clone = resp_body.clone();
             move |conn| {
+                let dt = |ms: i64| -> Object {
+                    Object::Literal {
+                        value: chrono::DateTime::from_timestamp_millis(ms)
+                            .unwrap_or_default()
+                            .to_rfc3339(),
+                        datatype: Some("xsd:dateTime".to_string()),
+                        language: None,
+                    }
+                };
                 let ind = Individual::new(&response_iri);
                 ind.assert(conn, "foundation:HTTPResponse", &response_iri, "http", "process_automation")
                     .map_err(|e| e.to_string())?;
@@ -133,6 +144,12 @@ pub async fn execute_request_task(
                     .map_err(|e| e.to_string())?;
                 ind.add_property(conn, "foundation:respondsTo",
                     vec![Object::Iri(request_iri.clone())], "process_automation")
+                    .map_err(|e| e.to_string())?;
+                ind.add_property(conn, "foundation:hasStartTime",
+                    vec![dt(start_ms)], "process_automation")
+                    .map_err(|e| e.to_string())?;
+                ind.add_property(conn, "foundation:hasEndTime",
+                    vec![dt(end_ms)], "process_automation")
                     .map_err(|e| e.to_string())?;
                 Individual::new(&request_iri)
                     .add_property(conn, "foundation:hasResponse",

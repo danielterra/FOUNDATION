@@ -900,9 +900,16 @@ pub async fn log_api_call(
             vec![Object::Integer(cache_read_tokens as i64)], "ai")
             .map_err(|e| format!("Failed to set cacheReadTokens: {}", e))?;
 
+        let called_at_dt = chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339();
         call.add_property(conn, "foundation:calledAt",
-            vec![Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())], "ai")
+            vec![Object::DateTime(called_at_dt.clone())], "ai")
             .map_err(|e| format!("Failed to set calledAt: {}", e))?;
+        call.add_property(conn, "foundation:hasStartTime",
+            vec![Object::DateTime(called_at_dt.clone())], "ai")
+            .map_err(|e| format!("Failed to set hasStartTime: {}", e))?;
+        call.add_property(conn, "foundation:hasEndTime",
+            vec![Object::DateTime(called_at_dt)], "ai")
+            .map_err(|e| format!("Failed to set hasEndTime: {}", e))?;
 
         if let Some(conv_iri) = conversation_iri {
             call.add_property(conn, "foundation:generatedByConversation",

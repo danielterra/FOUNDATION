@@ -164,7 +164,8 @@ fn create_execution_record(
     conn: &mut rusqlite::Connection,
     process_iri: &str,
 ) -> Result<String> {
-    let exec_iri = format!("foundation:WorkflowExecution_{}", Utc::now().timestamp_millis());
+    let now_ms = Utc::now().timestamp_millis();
+    let exec_iri = format!("foundation:WorkflowExecution_{}", now_ms);
     let ind = Individual::new(&exec_iri);
     ind.assert(conn, "foundation:WorkflowExecution", &exec_iri, "play_circle", "process_automation")
         .map_err(|e| e.to_string())?;
@@ -173,6 +174,9 @@ fn create_execution_record(
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:hasStatus",
         vec![Object::Iri(STATUS_IN_PROGRESS.to_string())], "process_automation")
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, "foundation:hasStartTime",
+        vec![lit_datetime(now_ms)], "process_automation")
         .map_err(|e| e.to_string())?;
     Ok(exec_iri)
 }
@@ -197,7 +201,8 @@ fn create_step_record(
     node_iri: &str,
     node_label: &str,
 ) -> Result<String> {
-    let step_iri = format!("foundation:StepExecution_{}", Utc::now().timestamp_millis());
+    let now_ms = Utc::now().timestamp_millis();
+    let step_iri = format!("foundation:StepExecution_{}", now_ms);
     let ind = Individual::new(&step_iri);
     ind.assert(conn, "foundation:StepExecution", node_label, "check_circle", "process_automation")
         .map_err(|e| e.to_string())?;
@@ -211,7 +216,10 @@ fn create_step_record(
         vec![Object::Iri(STATUS_IN_PROGRESS.to_string())], "process_automation")
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:stepStartedAt",
-        vec![lit_datetime(Utc::now().timestamp_millis())], "process_automation")
+        vec![lit_datetime(now_ms)], "process_automation")
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, "foundation:hasStartTime",
+        vec![lit_datetime(now_ms)], "process_automation")
         .map_err(|e| e.to_string())?;
 
     Individual::new(exec_iri)
@@ -229,12 +237,16 @@ fn finish_step_record(
     error: Option<&str>,
 ) -> Result<String> {
     let ind = Individual::new(step_iri);
+    let now_ms = Utc::now().timestamp_millis();
     let status = if error.is_some() { STATUS_FAILED } else { STATUS_COMPLETED };
     ind.add_property(conn, "foundation:hasStatus",
         vec![Object::Iri(status.to_string())], "process_automation")
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:stepFinishedAt",
-        vec![lit_datetime(Utc::now().timestamp_millis())], "process_automation")
+        vec![lit_datetime(now_ms)], "process_automation")
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, "foundation:hasEndTime",
+        vec![lit_datetime(now_ms)], "process_automation")
         .map_err(|e| e.to_string())?;
     if let Some(val) = output.filter(|v| !v.is_empty()) {
         if looks_like_iri(val) {
@@ -264,6 +276,9 @@ fn finish_execution_record(
     let status = if error.is_some() { STATUS_FAILED } else { STATUS_COMPLETED };
     ind.add_property(conn, "foundation:hasStatus",
         vec![Object::Iri(status.to_string())], "process_automation")
+        .map_err(|e| e.to_string())?;
+    ind.add_property(conn, "foundation:hasEndTime",
+        vec![lit_datetime(Utc::now().timestamp_millis())], "process_automation")
         .map_err(|e| e.to_string())?;
     if let Some(msg) = error {
         ind.add_property(conn, "foundation:errorMessage",

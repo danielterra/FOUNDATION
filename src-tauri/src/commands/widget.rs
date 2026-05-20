@@ -635,7 +635,9 @@ pub async fn widget_blackboard__list_widget_definitions(
         let results = all_types.into_iter()
             .filter(|t| {
                 if let Some(ref filter_iri) = class_iri {
-                    t.supported_class == "owl:Thing" || &t.supported_class == filter_iri
+                    t.supported_class == "owl:Thing"
+                        || &t.supported_class == filter_iri
+                        || crate::owl::is_subclass_of(conn, filter_iri, &t.supported_class)
                 } else {
                     true
                 }

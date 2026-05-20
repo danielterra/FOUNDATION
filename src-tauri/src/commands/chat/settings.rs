@@ -22,8 +22,7 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
 
     let service_iri = crate::owl::get_iri_property(conn, &agent_iri, "foundation:usesService")
         .map_err(|e| format!("Failed to get service for agent: {}", e))?
-        .or_else(|| get_ai_service_iri(conn).ok().flatten())
-        .ok_or_else(|| "No AI service configured. Please configure a service in Settings.".to_string())?;
+        .ok_or_else(|| format!("Agent {} has no usesService configured.", agent_iri))?;
 
     let (api_key, is_local) = match crate::owl::get_iri_property(conn, &service_iri, "foundation:apiKey")
         .map_err(|e| format!("Failed to get apiKey from service: {}", e))?
@@ -39,8 +38,7 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
 
     let model_iri = crate::owl::get_iri_property(conn, &agent_iri, "foundation:usesModel")
         .map_err(|e| format!("Failed to get model for agent: {}", e))?
-        .or_else(|| get_ai_model_iri(conn).ok().flatten())
-        .ok_or_else(|| "No AI model configured. Please select a model in Settings.".to_string())?;
+        .ok_or_else(|| format!("Agent {} has no usesModel configured.", agent_iri))?;
 
     let model_identifier = crate::owl::get_literal_property(conn, &model_iri, "foundation:modelIdentifier")
         .map_err(|e| format!("Failed to get modelIdentifier: {}", e))?

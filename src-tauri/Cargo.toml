@@ -59,7 +59,7 @@ tantivy = "0.22"
 encoding_rs = "0.8"
 rhai = { version = "^1", features = ["sync"] }
 async-imap = { version = "0.10", default-features = false, features = ["runtime-tokio"] }
-imap = { version = "2", default-features = false, features = ["tls"] }
+imap = { version = "3.0.0-alpha.15", default-features = false, features = ["native-tls"] }
 native-tls = "0.2"
 mailparse = "0.15"
 

@@ -408,9 +408,7 @@ fn idle_tls(account: &AccountConfig) -> Result<(), String> {
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
     session.select("INBOX").map_err(|e| e.to_string())?;
-    if let Ok(idle) = session.idle() {
-        let _ = idle.wait_keepalive();
-    }
+    let _ = session.idle().wait_while(|_| true);
     session.logout().ok();
     Ok(())
 }
@@ -423,9 +421,7 @@ fn idle_plain(account: &AccountConfig) -> Result<(), String> {
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
     session.select("INBOX").map_err(|e| e.to_string())?;
-    if let Ok(idle) = session.idle() {
-        let _ = idle.wait_keepalive();
-    }
+    let _ = session.idle().wait_while(|_| true);
     session.logout().ok();
     Ok(())
 }

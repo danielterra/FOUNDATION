@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
-use crate::owl::{DbExecutor, get_literal_property, get_all_iri_properties, get_iri_property, find_entities_with_property};
+use crate::owl::{DbExecutor, get_literal_property, get_all_iri_properties, get_iri_property, find_entities_with_property, is_subclass_of};
 use crate::owl::vocabulary::{rdf, rdfs};
 use rusqlite::Connection;
 
@@ -84,6 +84,34 @@ fn extract_local_name(iri: &str) -> &str {
         .unwrap_or(iri)
 }
 
+/// Resolves the canonical bpmn_* render type for a node by walking rdfs:subClassOf
+/// until a class with the "bpmn_" local-name prefix is found.
+fn resolve_bpmn_render_type(conn: &Connection, type_iri: &str) -> String {
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = vec![type_iri.to_string()];
+    while let Some(current) = queue.pop() {
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+        let local = extract_local_name(&current);
+        if local.starts_with("bpmn_") {
+            return local.to_string();
+        }
+        if let Ok(supers) = get_all_iri_properties(conn, &current, "rdfs:subClassOf") {
+            let bpmn_super = supers.iter().find(|s| extract_local_name(s).starts_with("bpmn_"));
+            if let Some(bpmn) = bpmn_super {
+                return extract_local_name(bpmn).to_string();
+            }
+            for s in supers {
+                if s != "owl:Thing" {
+                    queue.push(s);
+                }
+            }
+        }
+    }
+    extract_local_name(type_iri).to_string()
+}
+
 fn get_members_by_part_of_process(
     conn: &Connection,
     process_iri: &str,
@@ -97,7 +125,7 @@ fn get_members_by_part_of_process(
         let type_iri = get_iri_property(conn, &triple.subject, rdf::TYPE)
             .map_err(|e| e.to_string())?
             .unwrap_or_default();
-        let is_sf = type_iri == "foundation:automation_SequenceFlow";
+        let is_sf = is_subclass_of(conn, &type_iri, "foundation:bpmn_SequenceFlow");
         if is_sf == is_sequence_flow {
             iris.push(triple.subject.clone());
         }
@@ -118,7 +146,10 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
             let type_iri = get_iri_property(conn, &node_iri, rdf::TYPE)
                 .map_err(|e| e.to_string())?
                 .unwrap_or_default();
-            let node_type = extract_local_name(&type_iri).to_string();
+            // bpmn_* canonical type sent to the frontend renderer
+            let node_type = resolve_bpmn_render_type(conn, &type_iri);
+            // original local name used for property-specific reads
+            let raw_type = extract_local_name(&type_iri).to_string();
 
             let mut label = get_literal_property(conn, &node_iri, rdfs::LABEL)
                 .map_err(|e| e.to_string())?
@@ -129,7 +160,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                 None => (None, None, None),
             };
 
-            let assigned_agent = if node_type == "automation_AgentTask" {
+            let assigned_agent = if raw_type == "automation_AgentTask" {
                 let agent_iri = get_iri_property(conn, &node_iri, "foundation:assignedAgent")
                     .map_err(|e| e.to_string())?;
                 if let Some(iri) = agent_iri {
@@ -142,7 +173,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                 None
             };
 
-            let invokes_process = if node_type == "automation_SubProcess" {
+            let invokes_process = if raw_type == "automation_SubProcess" {
                 get_iri_property(conn, &node_iri, "foundation:calledElement")
                     .map_err(|e| e.to_string())?
             } else {
@@ -156,7 +187,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
             }
 
             let (input_class_label, input_class_icon, output_class_label, output_class_icon, output_classes) =
-                if node_type == "automation_SubProcess" {
+                if raw_type == "automation_SubProcess" {
                     let (mut in_lbl, mut in_icon, mut out_lbl, mut out_icon) = (None, None, None, None);
                     let mut out_classes: Vec<ClassRef> = Vec::new();
 
@@ -168,7 +199,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                                 .map_err(|e| e.to_string())?
                                 .map(|t| extract_local_name(&t).to_string())
                                 .unwrap_or_default();
-                            if sub_type == "automation_StartEvent" {
+                            if sub_type == "automation_StartEvent" || sub_type == "process_StartEvent" {
                                 if let Ok(Some(c)) = get_iri_property(conn, sub_iri, "foundation:inputClass") {
                                     in_lbl = get_literal_property(conn, &c, rdfs::LABEL).map_err(|e| e.to_string())?;
                                     in_icon = {
@@ -266,14 +297,14 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                     (in_lbl, in_icon, out_lbl, out_icon, vec![])
                 };
 
-            let message_payload = if node_type == "automation_NOVAMessageTask" {
+            let message_payload = if raw_type == "automation_NOVAMessageTask" {
                 get_literal_property(conn, &node_iri, "foundation:messagePayload")
                     .map_err(|e| e.to_string())?
             } else {
                 None
             };
 
-            let timer_cycle = if node_type == "automation_TimerStartEvent" {
+            let timer_cycle = if raw_type == "automation_TimerStartEvent" {
                 let event_def_iri = get_iri_property(conn, &node_iri, "foundation:eventDefinition")
                     .map_err(|e| e.to_string())?;
                 if let Some(def_iri) = event_def_iri {
@@ -286,7 +317,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                 None
             };
 
-            let (uses_tools, assigned_to_roles, assigned_to_users) = if node_type == "automation_UserTask" {
+            let (uses_tools, assigned_to_roles, assigned_to_users) = if raw_type == "automation_UserTask" {
                 let tool_iris = get_all_iri_properties(conn, &node_iri, "foundation:usesTool")
                     .map_err(|e| e.to_string())?;
                 let tools: Vec<String> = tool_iris.iter()
@@ -334,10 +365,14 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
 
         let mut edges: Vec<AutomationGraphEdge> = Vec::new();
         for (i, flow_iri) in sequence_flow_iris.iter().enumerate() {
+            // automation_SequenceFlow uses sourceRef/targetRef;
+            // process_SequenceFlow uses process_sourceRef/process_targetRef
             let source = get_iri_property(conn, flow_iri, "foundation:sourceRef")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| e.to_string())?
+                .or_else(|| get_iri_property(conn, flow_iri, "foundation:process_sourceRef").ok().flatten());
             let target = get_iri_property(conn, flow_iri, "foundation:targetRef")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| e.to_string())?
+                .or_else(|| get_iri_property(conn, flow_iri, "foundation:process_targetRef").ok().flatten());
 
             if let (Some(source), Some(target)) = (source, target) {
                 let label = get_literal_property(conn, flow_iri, rdfs::LABEL)
@@ -358,7 +393,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
 
         // Synthetic edges from SubProcess Segways (replace SequenceFlow-based output routing)
         let subprocess_nodes: Vec<&str> = nodes.iter()
-            .filter(|n| n.node_type == "automation_SubProcess")
+            .filter(|n| n.node_type == "bpmn_SubProcess")
             .map(|n| n.id.as_str())
             .collect();
         let edge_offset = edges.len();
@@ -422,11 +457,11 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn automation__get_graph(
-    automation_iri: String,
+    process_iri: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     executor.read(move |conn| {
-        let graph = build_automation_graph(conn, &automation_iri)?;
+        let graph = build_automation_graph(conn, &process_iri)?;
         serde_json::to_string(&graph).map_err(|e| e.to_string())
     }).await
 }

@@ -24,9 +24,13 @@ pub async fn chat__create_conversation(
         conv.assert(conn, "foundation:AIConversation", &label_clone, "chat", "ai")
             .map_err(|e| format!("Failed to create conversation: {}", e))?;
 
+        let created_at_dt = chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339();
         conv.add_property(conn, "foundation:createdAt", vec![
-            Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339()),
+            Object::DateTime(created_at_dt.clone()),
         ], "ai").map_err(|e| format!("Failed to set createdAt: {}", e))?;
+        conv.add_property(conn, "foundation:hasStartTime", vec![
+            Object::DateTime(created_at_dt),
+        ], "ai").map_err(|e| format!("Failed to set hasStartTime: {}", e))?;
 
         conv.add_property(conn, "foundation:hasStatus", vec![
             Object::Iri("foundation:InProgress".to_string()),

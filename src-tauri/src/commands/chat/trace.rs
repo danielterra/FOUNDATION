@@ -39,6 +39,9 @@ pub async fn save_trace(
         let sent_at = chrono::DateTime::from_timestamp_millis(timestamp)
             .unwrap_or_default()
             .to_rfc3339();
+        let started_at = chrono::DateTime::from_timestamp_millis(timestamp - duration_ms as i64)
+            .unwrap_or_default()
+            .to_rfc3339();
 
         let triples = vec![
             Triple::new(&iri, "rdf:type",
@@ -48,6 +51,10 @@ pub async fn save_trace(
             Triple::new(&iri, "foundation:partOfConversation",
                 Object::Iri(conv_id)),
             Triple::new(&iri, "foundation:sentAt",
+                Object::DateTime(sent_at.clone())),
+            Triple::new(&iri, "foundation:hasStartTime",
+                Object::DateTime(started_at)),
+            Triple::new(&iri, "foundation:hasEndTime",
                 Object::DateTime(sent_at)),
             Triple::new(&iri, "foundation:traceSteps",
                 Object::Literal { value: steps_json, datatype: Some("xsd:string".to_string()), language: None }),

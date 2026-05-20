@@ -17,10 +17,18 @@
   import NodeGateway      from './automation/NodeGateway.svelte'
   import NodeSubProcess        from './automation/NodeSubProcess.svelte'
   import NodeNOVAMessageTask   from './automation/NodeNOVAMessageTask.svelte'
+  import NodeTask              from './automation/NodeTask.svelte'
 
   let { widgetId, entityId, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props()
 
   const nodeTypes = {
+    bpmn_StartEvent:      NodeStartEvent,
+    bpmn_EndEvent:        NodeEndEvent,
+    bpmn_Gateway:         NodeGateway,
+    bpmn_Task:            NodeTask,
+    bpmn_SubProcess:      NodeSubProcess,
+    // automation-specific subtypes resolved via bpmn_* traversal but kept for
+    // backward compat with any cached widget state that still carries the old type
     automation_StartEvent:       NodeStartEvent,
     automation_TimerStartEvent:  NodeTimerStartEvent,
     automation_EndEvent:         NodeEndEvent,
@@ -77,7 +85,7 @@
     execNodeStatus = new Map()
     activeStepLabel = null
     try {
-      const raw = await invoke('automation__get_graph', { automationIri: entityId })
+      const raw = await invoke('automation__get_graph', { processIri: entityId })
       const data = JSON.parse(raw)
       automationLabel = data.process_label
 
@@ -106,7 +114,7 @@
         position: { x: 0, y: 0 },
       }))
 
-      const gatewayIds = new Set(data.nodes.filter(n => n.type === 'automation_Gateway').map(n => n.id))
+      const gatewayIds = new Set(data.nodes.filter(n => n.type === 'bpmn_Gateway' || n.type === 'automation_Gateway').map(n => n.id))
 
       const flowEdges = data.edges.map(e => {
         const isErrorEdge = e.source_handle === 'error'
@@ -132,7 +140,7 @@
       for (const n of data.nodes.filter(n => n.invokes_process)) {
         iris.add(n.invokes_process)
         try {
-          const subRaw = await invoke('automation__get_graph', { automationIri: n.invokes_process })
+          const subRaw = await invoke('automation__get_graph', { processIri: n.invokes_process })
           const subData = JSON.parse(subRaw)
           subData.nodes.forEach(sn => iris.add(sn.id))
         } catch {}
