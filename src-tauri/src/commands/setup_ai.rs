@@ -274,9 +274,18 @@ pub async fn agent__get_ai_config(
 
         let service_label = Individual::get(conn, &service_iri).ok().flatten()
             .and_then(|i| i.label).unwrap_or_else(|| service_iri.clone());
-        let model_label = if model_iri.is_empty() { String::new() } else {
-            Individual::get(conn, &model_iri).ok().flatten()
-                .and_then(|i| i.label).unwrap_or_else(|| model_iri.clone())
+
+        let (model_label, supports_tool_calling) = if model_iri.is_empty() {
+            (String::new(), false)
+        } else {
+            let model_ind = Individual::get(conn, &model_iri).ok().flatten();
+            let label = model_ind.as_ref().and_then(|i| i.label.clone())
+                .unwrap_or_else(|| model_iri.clone());
+            let has_tools = model_ind.map(|i| i.properties.iter().any(|(k, v)| {
+                k == "foundation:modelCapability"
+                    && matches!(v, crate::owl::Object::Literal { value, .. } if value == "tool_calling")
+            })).unwrap_or(false);
+            (label, has_tools)
         };
 
         Ok(serde_json::json!({
@@ -286,6 +295,7 @@ pub async fn agent__get_ai_config(
             "modelIri": model_iri,
             "modelLabel": model_label,
             "modelOverridden": model_overridden,
+            "supportsToolCalling": supports_tool_calling,
         }))
     }).await
 }

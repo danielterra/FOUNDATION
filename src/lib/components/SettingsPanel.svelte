@@ -18,6 +18,13 @@
 	let loadedServiceIri = $state('');
 	let loadedModelIri = $state('');
 	let loadedApiKey = $state('');
+	let baseUrl = $state('');
+	let loadedBaseUrl = $state('');
+	let openRouterModels = $state([]);
+	let selectedOpenRouterModelId = $state('');
+	let loadedOpenRouterModelId = $state('');
+	let fallbackModelIds = $state([]);
+	let loadedFallbackModelIds = $state([]);
 
 	let aiSaving = $state(false);
 	let aiMessage = $state('');
@@ -26,16 +33,22 @@
 	let selectedServiceIsLocal = $derived(
 		services.find(s => s.iri === selectedServiceIri)?.isLocal ?? false
 	);
+	let selectedServiceIsOpenRouter = $derived(
+		baseUrl.includes('openrouter.ai')
+	);
 	let currentModelLabel = $state('');
 
 	let aiDirty = $derived(
 		selectedServiceIri !== loadedServiceIri
 		|| selectedModelIri !== loadedModelIri
 		|| (!selectedServiceIsLocal && apiKey !== loadedApiKey)
+		|| (selectedServiceIsOpenRouter && baseUrl !== loadedBaseUrl)
+		|| (selectedServiceIsOpenRouter && selectedOpenRouterModelId !== loadedOpenRouterModelId)
+		|| (selectedServiceIsOpenRouter && JSON.stringify(fallbackModelIds) !== JSON.stringify(loadedFallbackModelIds))
 	);
 	let aiCanSave = $derived(
 		!!selectedServiceIri
-		&& !!selectedModelIri
+		&& (selectedServiceIsOpenRouter ? !!selectedOpenRouterModelId : !!selectedModelIri)
 		&& (selectedServiceIsLocal || apiKey.trim().length > 0)
 		&& aiDirty
 	);
@@ -116,6 +129,9 @@
 	async function loadAll() {
 		await Promise.all([loadModelData(), loadLogPath(), loadLocalModelStatus(), loadImapAccounts(), loadFoundationDir()]);
 		await loadApiKeyForService(selectedServiceIri);
+		if (selectedServiceIsOpenRouter && apiKey.trim()) {
+			await loadOpenRouterModels();
+		}
 		loadAnalyticsConsent();
 	}
 
@@ -226,16 +242,30 @@
 		if (!serviceIri) {
 			apiKey = '';
 			loadedApiKey = '';
+			baseUrl = '';
+			loadedBaseUrl = '';
 			return;
 		}
 		apiKeyLoading = true;
 		try {
-			const key = await invoke('ai__get_api_key', { serviceIri });
+			const [key, url, fbModels] = await Promise.all([
+				invoke('ai__get_api_key', { serviceIri }),
+				invoke('ai__get_service_base_url', { serviceIri }),
+				invoke('ai__get_fallback_models', { serviceIri }),
+			]);
 			apiKey = key ?? '';
 			loadedApiKey = apiKey;
+			baseUrl = url ?? '';
+			loadedBaseUrl = baseUrl;
+			fallbackModelIds = fbModels ?? [];
+			loadedFallbackModelIds = [...fallbackModelIds];
 		} catch {
 			apiKey = '';
 			loadedApiKey = '';
+			baseUrl = '';
+			loadedBaseUrl = '';
+			fallbackModelIds = [];
+			loadedFallbackModelIds = [];
 		} finally {
 			apiKeyLoading = false;
 		}
@@ -271,6 +301,10 @@
 				currentModelLabel = current.label;
 				selectedModelIri = current.iri;
 				loadedModelIri = current.iri;
+				if (current.modelIdentifier) {
+					selectedOpenRouterModelId = current.modelIdentifier;
+					loadedOpenRouterModelId = current.modelIdentifier;
+				}
 			}
 			if (currentSvc) {
 				selectedServiceIri = currentSvc.iri;
@@ -295,12 +329,29 @@
 		}
 	}
 
+	async function loadOpenRouterModels() {
+		if (!apiKey.trim() || !baseUrl) return;
+		try {
+			openRouterModels = await invoke('ai__list_openrouter_models', { apiKey, baseUrl });
+		} catch {
+			openRouterModels = [];
+		}
+	}
+
 	async function onServiceChange(e) {
 		selectedServiceIri = e.target.value;
 		selectedModelIri = '';
+		selectedOpenRouterModelId = '';
+		loadedOpenRouterModelId = '';
+		openRouterModels = [];
+		fallbackModelIds = [];
+		loadedFallbackModelIds = [];
 		aiMessage = '';
 		aiError = false;
 		await Promise.all([loadModels(selectedServiceIri), loadApiKeyForService(selectedServiceIri)]);
+		if (selectedServiceIsOpenRouter && apiKey.trim()) {
+			await loadOpenRouterModels();
+		}
 	}
 
 	async function saveAiConfig() {
@@ -310,8 +361,34 @@
 		aiError = false;
 		try {
 			if (!selectedServiceIsLocal && apiKey !== loadedApiKey) {
+				if (selectedServiceIsOpenRouter) {
+					await invoke('ai__validate_provider_key', { apiKey, baseUrl });
+				}
 				await invoke('ai__save_api_key', { apiKey, serviceIri: selectedServiceIri });
 				loadedApiKey = apiKey;
+			}
+			if (selectedServiceIsOpenRouter && baseUrl !== loadedBaseUrl) {
+				await invoke('ai__save_service_base_url', { serviceIri: selectedServiceIri, baseUrl });
+				loadedBaseUrl = baseUrl;
+			}
+			if (selectedServiceIsOpenRouter && JSON.stringify(fallbackModelIds) !== JSON.stringify(loadedFallbackModelIds)) {
+				await invoke('ai__save_fallback_models', { serviceIri: selectedServiceIri, modelIds: fallbackModelIds });
+				loadedFallbackModelIds = [...fallbackModelIds];
+			}
+			if (selectedServiceIsOpenRouter && selectedOpenRouterModelId) {
+				const orModel = openRouterModels.find(m => m.id === selectedOpenRouterModelId);
+				if (orModel) {
+					selectedModelIri = await invoke('ai__ensure_openrouter_model', {
+						serviceIri: selectedServiceIri,
+						modelId: orModel.id,
+						modelName: orModel.name,
+						contextLength: orModel.contextLength,
+						inputCostPerToken: orModel.inputCostPerToken,
+						outputCostPerToken: orModel.outputCostPerToken,
+						supportsTools: true,
+					});
+					loadedOpenRouterModelId = selectedOpenRouterModelId;
+				}
 			}
 			if (selectedServiceIri !== loadedServiceIri) {
 				await invoke('setup__save_ai_service', { serviceIri: selectedServiceIri });
@@ -575,7 +652,7 @@
 									id="settings-api-key-input"
 									class="text-input"
 									type="password"
-									placeholder="sk-ant-…"
+									placeholder={selectedServiceIsOpenRouter ? 'sk-or-…' : 'sk-ant-…'}
 									bind:value={apiKey}
 								/>
 								<Button
@@ -589,7 +666,62 @@
 						{/if}
 					{/if}
 
-					{#if models.length > 0}
+					{#if selectedServiceIsOpenRouter}
+						<label class="field-label" for="settings-base-url-input">URL Base</label>
+						<div class="field-row">
+							<input
+								id="settings-base-url-input"
+								class="text-input"
+								type="url"
+								placeholder="https://openrouter.ai/api/v1"
+								bind:value={baseUrl}
+							/>
+						</div>
+					{/if}
+
+					{#if selectedServiceIsOpenRouter && openRouterModels.length > 0}
+						<label class="field-label" for="settings-or-model-select">Modelo (OpenRouter)</label>
+						<div class="field-row">
+							<select id="settings-or-model-select" class="select-input" bind:value={selectedOpenRouterModelId}>
+								<option value="">Selecione um modelo…</option>
+								{#each openRouterModels as m}
+									<option value={m.id}>{m.name} — {(m.contextLength / 1000).toFixed(0)}k ctx · in ${(m.inputCostPerToken * 1_000_000).toFixed(2)} / out ${(m.outputCostPerToken * 1_000_000).toFixed(2)} por 1M</option>
+								{/each}
+							</select>
+						</div>
+					{:else if selectedServiceIsOpenRouter && apiKey.trim() && openRouterModels.length === 0}
+						<div class="field-row">
+							<Button onclick={loadOpenRouterModels}>Carregar modelos</Button>
+						</div>
+					{/if}
+
+					{#if selectedServiceIsOpenRouter && openRouterModels.length > 0}
+						<label class="field-label" for="settings-fallback-add">Modelos de Fallback (em ordem de prioridade)</label>
+						<div class="field-row" style="flex-direction:column;gap:4px;align-items:flex-start;">
+							{#each fallbackModelIds as fbId, i}
+								<div class="field-row" style="width:100%;">
+									<span class="text-input" style="flex:1;padding:4px 8px;font-size:0.85em;">{fbId}</span>
+									<Button icon="remove" title="Remover" onclick={() => { fallbackModelIds = fallbackModelIds.filter((_, idx) => idx !== i); }} />
+								</div>
+							{/each}
+							<div class="field-row" style="width:100%;">
+								<select id="settings-fallback-add" class="select-input" style="flex:1;" onchange={(e) => {
+									const id = e.target.value;
+									if (id && !fallbackModelIds.includes(id)) {
+										fallbackModelIds = [...fallbackModelIds, id];
+									}
+									e.target.value = '';
+								}}>
+									<option value="">Adicionar modelo de fallback…</option>
+									{#each openRouterModels.filter(m => !fallbackModelIds.includes(m.id)) as m}
+										<option value={m.id}>{m.name}</option>
+									{/each}
+								</select>
+							</div>
+						</div>
+					{/if}
+
+					{#if !selectedServiceIsOpenRouter && models.length > 0}
 						<label class="field-label" for="settings-model-select">Modelo padrão</label>
 						<div class="field-row">
 							<select id="settings-model-select" class="select-input" bind:value={selectedModelIri}>
@@ -942,6 +1074,7 @@
 	}
 
 	.panel-body {
+		overflow-x: hidden;
 		overflow-y: auto;
 		padding: 18px;
 		display: grid;
@@ -960,6 +1093,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
+		min-width: 0;
 	}
 
 	/* .section-title and .field-label come from global base.css */
@@ -991,6 +1125,7 @@
 	.text-input,
 	.select-input {
 		flex: 1;
+		min-width: 0;
 		background: var(--color-surface-3);
 		border: none;
 		border-radius: var(--radius-sm);

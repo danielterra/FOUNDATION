@@ -99,6 +99,7 @@
           label: n.label,
           nodeType: n.type,
           assignedAgent: n.assigned_agent ?? null,
+          assignedAgentIri: n.assigned_agent_iri ?? null,
           invokesProcess: n.invokes_process ?? null,
           status: n.status ?? null,
           statusColor: n.status_color ?? null,

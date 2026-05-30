@@ -2,13 +2,11 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::ai::{GenerateRequest, ChatMessage};
-use crate::ai::providers::{MessageContent, ContentBlock};
-use crate::ai::functions::{get_claude_tools, ToolCall as FunctionToolCall, execute_tool as execute_fn};
+use crate::ai::ChatMessage;
+use crate::ai::providers::{ContentBlock, MessageContent};
 use crate::owl::{
     DbExecutor, Individual,
     get_literal_property, get_iri_property,
-    replace_all_property_iris,
 };
 
 type Result<T> = std::result::Result<T, String>;
@@ -16,21 +14,22 @@ type Result<T> = std::result::Result<T, String>;
 const MAX_TOOL_LOOPS: usize = 50;
 const DEFAULT_MAX_TOKENS: u32 = 4096;
 const DEFAULT_TEMPERATURE: f32 = 0.3;
-const DEFAULT_TIMEOUT_SECS: u64 = 180;
 
-const STATUS_IN_PROGRESS: &str = "foundation:InProgress";
-const STATUS_COMPLETED: &str = "foundation:Completed";
-const STATUS_REJECTED: &str = "foundation:Rejected";
+/// Statuses that permanently block execution — do not auto-start even if
+/// description and assignee are present.
+const HALTED_STATUSES: &[&str] = &["foundation:Blocked", "foundation:Rejected"];
 
 /// Returns true if an execute_task failure is a configuration problem that
 /// won't resolve on retry — API key missing, agent not wired up, model not
-/// configured, etc. The task should be marked Rejected so the recovery loop
-/// stops re-running it on every startup.
+/// configured, etc. A result is written so the task won't be retried on
+/// the next startup.
 fn is_config_error(err: &str) -> bool {
     err.contains("API key not configured")
         || err.contains("API key has no value")
         || err.contains("has no usesService")
         || err.contains("has no usesModel")
+        || err.contains("No AI service configured")
+        || err.contains("No AI model configured")
         || err.contains("has no modelIdentifier")
         || err.contains("has no assignee")
 }
@@ -45,38 +44,71 @@ impl TaskExecutionState {
     }
 }
 
-fn maybe_execute_task_for_entity(app: AppHandle, entity_id: String) {
+/// Returns true when a task is ready for automatic execution:
+/// has a non-empty description, is assigned to a SoftwareAgent, has not yet
+/// started (no startedAt), has no result, is not in a halted status, and is
+/// not scheduled for a future time.
+fn is_task_ready(conn: &rusqlite::Connection, entity_id: &str) -> Result<bool> {
+    if !crate::owl::is_instance_of(conn, entity_id, "foundation:Task") {
+        return Ok(false);
+    }
+    let description = get_literal_property(conn, entity_id, "rdfs:comment")
+        .map_err(|e| e.to_string())?;
+    if description.as_deref().unwrap_or("").trim().is_empty() {
+        return Ok(false);
+    }
+    let assignee = get_iri_property(conn, entity_id, "foundation:assignee")
+        .map_err(|e| e.to_string())?;
+    let has_agent = assignee
+        .map(|a| crate::owl::is_instance_of(conn, &a, "foundation:SoftwareAgent"))
+        .unwrap_or(false);
+    if !has_agent {
+        return Ok(false);
+    }
+    if get_literal_property(conn, entity_id, "foundation:startedAt")
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Ok(false);
+    }
+    if get_literal_property(conn, entity_id, "foundation:result")
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Ok(false);
+    }
+    let status = get_iri_property(conn, entity_id, "foundation:hasStatus")
+        .map_err(|e| e.to_string())?;
+    if let Some(ref s) = status {
+        if HALTED_STATUSES.iter().any(|h| s == h) {
+            return Ok(false);
+        }
+    }
+    let scheduled_at = get_literal_property(conn, entity_id, "foundation:scheduledAt")
+        .map_err(|e| e.to_string())?;
+    if let Some(ref dt) = scheduled_at {
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(dt) {
+            if parsed.with_timezone(&chrono::Utc) > chrono::Utc::now() {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
+pub(crate) fn maybe_execute_task_for_entity(app: AppHandle, entity_id: String) {
     tauri::async_runtime::spawn(async move {
         let executor = match app.try_state::<DbExecutor>() {
             Some(e) => e,
             None => return,
         };
         let entity = entity_id.clone();
-        let (is_in_progress, has_agent) = executor
-            .read(move |conn| {
-                if !crate::owl::is_instance_of(conn, &entity, "foundation:Task") {
-                    return Ok((false, false));
-                }
-                let status = get_iri_property(conn, &entity, "foundation:hasStatus")
-                    .map_err(|e| e.to_string())?;
-                let in_progress = status
-                    .as_deref()
-                    .map(|s| super::task_scheduler::is_status_descendant_of(conn, s, STATUS_IN_PROGRESS))
-                    .unwrap_or(false);
-                if !in_progress {
-                    return Ok((false, false));
-                }
-                let assignee = get_iri_property(conn, &entity, "foundation:assignee")
-                    .map_err(|e| e.to_string())?;
-                let has_agent = assignee
-                    .map(|a| crate::owl::is_instance_of(conn, &a, "foundation:SoftwareAgent"))
-                    .unwrap_or(false);
-                Ok((true, has_agent))
-            })
+        let ready = executor
+            .read(move |conn| is_task_ready(conn, &entity))
             .await
-            .unwrap_or((false, false));
+            .unwrap_or(false);
 
-        if !is_in_progress || !has_agent {
+        if !ready {
             return;
         }
 
@@ -100,38 +132,23 @@ fn maybe_execute_task_for_entity(app: AppHandle, entity_id: String) {
                     "[task_manager] execute_task failed for {}: {}", task_iri, e
                 ));
 
-                // Permanent config errors (API key missing, agent not wired up)
-                // would be retried forever otherwise: every startup the
-                // task_scheduler resets InProgress→Pending and re-fires the
-                // timer. Mark the task Rejected so the cycle stops; the user
-                // can re-trigger manually after fixing config.
-                if is_config_error(&e) {
-                    if let Some(executor) = app2.try_state::<DbExecutor>() {
-                        let task_for_write = task_iri.clone();
-                        let err_for_write = e.clone();
-                        let result_write = executor.write(move |conn| -> Result<String> {
-                            set_status(conn, &task_for_write, STATUS_REJECTED)?;
-                            Individual::new(&task_for_write)
-                                .add_property(
-                                    conn,
-                                    "foundation:result",
-                                    vec![crate::owl::Object::Literal {
-                                        value: format!("Task automatically rejected (config error): {}", err_for_write),
-                                        datatype: Some("xsd:string".to_string()),
-                                        language: None,
-                                    }],
-                                    "task_manager",
-                                )
-                                .map_err(|e| e.to_string())?;
-                            Ok(String::new())
-                        }).await;
-                        if let Err(set_err) = result_write {
-                            crate::commands::log_backend("error", &format!(
-                                "[task_manager] failed to mark {} as Rejected: {}", task_iri, set_err,
-                            ));
-                        } else {
-                            app2.emit("entity-updated", serde_json::json!({ "entityId": task_iri })).ok();
-                        }
+                // Any failure leaves startedAt set without a result, which means the
+                // task would be recovered and re-run on every startup. Write result to
+                // prevent re-execution — the user can clear it manually to retry.
+                if let Some(executor) = app2.try_state::<DbExecutor>() {
+                    let task_for_write = task_iri.clone();
+                    let err_for_write = e.clone();
+                    let prefix = if is_config_error(&e) { "Erro de configuração" } else { "Erro de execução" };
+                    let result_write = executor.write(move |conn| -> Result<String> {
+                        set_result(conn, &task_for_write, &format!("{}: {}", prefix, err_for_write))?;
+                        Ok(String::new())
+                    }).await;
+                    if let Err(set_err) = result_write {
+                        crate::commands::log_backend("error", &format!(
+                            "[task_manager] failed to write error result for {}: {}", task_iri, set_err,
+                        ));
+                    } else {
+                        app2.emit("entity-updated", serde_json::json!({ "entityId": task_iri })).ok();
                     }
                 }
             }
@@ -166,10 +183,36 @@ fn parse_entity_id(payload: &str) -> Option<String> {
         .and_then(|v| v["entityId"].as_str().map(|s| s.to_string()))
 }
 
-fn set_status(conn: &mut rusqlite::Connection, task_iri: &str, status_iri: &str) -> Result<()> {
-    replace_all_property_iris(conn, task_iri, "foundation:hasStatus", &[status_iri], "task_manager")
+fn set_started_at(conn: &mut rusqlite::Connection, task_iri: &str) -> Result<()> {
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    Individual::new(task_iri)
+        .add_property(
+            conn,
+            "foundation:startedAt",
+            vec![crate::owl::Object::Literal {
+                value: now,
+                datatype: Some("xsd:dateTime".to_string()),
+                language: None,
+            }],
+            "task_manager",
+        )
         .map_err(|e| e.to_string())?;
-    crate::owl::touch(conn, task_iri);
+    Ok(())
+}
+
+fn set_result(conn: &mut rusqlite::Connection, task_iri: &str, value: &str) -> Result<()> {
+    Individual::new(task_iri)
+        .add_property(
+            conn,
+            "foundation:result",
+            vec![crate::owl::Object::Literal {
+                value: value.to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }],
+            "task_manager",
+        )
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -197,65 +240,13 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
         })
         .await?;
 
-    let (api_key, model_identifier, system_prompt, timeout_secs) = executor
-        .read({
-            let agent_iri = agent_iri.clone();
-            move |conn| {
-                let service_iri = get_iri_property(conn, &agent_iri, "foundation:usesService")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("Agent {} has no usesService", agent_iri))?;
-
-                let api_key_iri = get_iri_property(conn, &service_iri, "foundation:apiKey")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| "API key not configured".to_string())?;
-
-                let api_key = get_literal_property(conn, &api_key_iri, "foundation:credentialValue")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| "API key has no value".to_string())?;
-
-                let model_iri = get_iri_property(conn, &agent_iri, "foundation:usesModel")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("Agent {} has no usesModel", agent_iri))?;
-
-                let model_identifier = get_literal_property(conn, &model_iri, "foundation:modelIdentifier")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("Model {} has no modelIdentifier", model_iri))?;
-
-                let base_prompt = Individual::get(conn, &agent_iri)
-                    .ok()
-                    .flatten()
-                    .and_then(|ind| {
-                        ind.properties.iter()
-                            .find(|(k, _)| k == "foundation:basePrompt")
-                            .and_then(|(_, v)| v.as_literal())
-                    })
-                    .unwrap_or_default();
-
-                let base_system_prompt = crate::commands::chat::settings::load_base_system_prompt(conn);
-                let system_prompt = if base_prompt.is_empty() {
-                    base_system_prompt
-                } else {
-                    format!("{}\n\n{}", base_system_prompt, base_prompt)
-                };
-
-                let timeout_secs = get_literal_property(conn, &agent_iri, "foundation:requestTimeout")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(DEFAULT_TIMEOUT_SECS);
-
-                Ok((api_key, model_identifier, system_prompt, timeout_secs))
-            }
-        })
-        .await?;
+    let agent_config = super::agent_runner::resolve_agent_config(&executor, &agent_iri).await?;
 
     let task_iri_owned = task_iri.to_string();
     executor
-        .write(move |conn| -> Result<String> { set_status(conn, &task_iri_owned, STATUS_IN_PROGRESS)?; Ok(String::new()) })
+        .write(move |conn| -> Result<String> { set_started_at(conn, &task_iri_owned)?; Ok(String::new()) })
         .await?;
     app.emit("entity-updated", serde_json::json!({ "entityId": task_iri })).ok();
-
-    let conv_iri = super::agent_task::create_conversation(&executor, task_iri, &label, Some(&agent_iri)).await;
 
     let current_datetime = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let task_prompt = format!(
@@ -271,114 +262,41 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
         current_datetime, label, description, task_iri
     );
 
-    let mut messages: Vec<ChatMessage> = vec![ChatMessage {
+    let initial_messages = vec![ChatMessage {
         role: "user".to_string(),
         content: MessageContent::ContentBlocks(vec![ContentBlock::Text { text: task_prompt }]),
     }];
 
-    super::agent_task::append_message(&executor, &conv_iri, &messages[0], &model_identifier, 0).await;
+    let loop_config = super::tool_loop::ToolLoopConfig {
+        system: Some(agent_config.system_prompt),
+        tools: crate::ai::functions::get_claude_tools(),
+        max_iterations: MAX_TOOL_LOOPS,
+        max_tokens: DEFAULT_MAX_TOKENS,
+        temperature: DEFAULT_TEMPERATURE,
+        completion_tool: None,
+    };
 
-    let tools = get_claude_tools();
+    let output = super::tool_loop::run_tool_loop(
+        &executor, &agent_config.provider, initial_messages, loop_config,
+    ).await?;
 
-    let provider = crate::ai::providers::ClaudeProvider::with_model(
-        api_key.clone(),
-        model_identifier.clone(),
-        timeout_secs,
-    );
-
-    let mut last_text = String::new();
-
-    for _ in 0..MAX_TOOL_LOOPS {
-        let request = GenerateRequest {
-            messages: messages.clone(),
-            max_tokens: Some(DEFAULT_MAX_TOKENS),
-            temperature: Some(DEFAULT_TEMPERATURE),
-            system: Some(system_prompt.clone()),
-            blackboard_context: None,
-            tools: Some(tools.clone()),
-            supports_web_tools: false,
-            thinking: None,
-            tool_choice: None,
-        };
-
-        let exec_iri = format!("foundation:TaskExecution_{}", task_iri);
-        let response = provider.generate_stream(request, app, &exec_iri).await
-            .map_err(|e| format!("Task execution API error: {}", e))?;
-
-        let stop_reason = response.stop_reason.clone().unwrap_or_else(|| "end_turn".to_string());
-        last_text = response.content.clone();
-
-        let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
-        if !response.content.is_empty() {
-            assistant_blocks.push(ContentBlock::Text { text: response.content.clone() });
-        }
-        for tc in &response.tool_calls {
-            assistant_blocks.push(ContentBlock::ToolUse {
-                id: tc.id.clone(),
-                name: tc.name.clone(),
-                input: tc.input.clone(),
-            });
-        }
-        messages.push(ChatMessage {
-            role: "assistant".to_string(),
-            content: MessageContent::ContentBlocks(assistant_blocks),
-        });
-        super::agent_task::append_message(&executor, &conv_iri, messages.last().unwrap(), &model_identifier, messages.len() - 1).await;
-
-        if stop_reason != "tool_use" {
-            break;
-        }
-
-        let mut result_blocks: Vec<ContentBlock> = Vec::new();
-        for tc in &response.tool_calls {
-            let call = FunctionToolCall {
-                name: tc.name.clone(),
-                arguments: tc.input.clone(),
-            };
-            let tc_id = tc.id.clone();
-            let app_clone = app.clone();
-            let result_json = executor
-                .write(move |conn| {
-                    let r = execute_fn(conn, &call, Some(&app_clone), None);
-                    serde_json::to_string(&r).map_err(|e| e.to_string())
-                })
-                .await
-                .unwrap_or_else(|e| format!("\"{}\"", e));
-
-            let tool_result: crate::ai::functions::ToolResult =
-                serde_json::from_str(&result_json).unwrap_or(crate::ai::functions::ToolResult {
-                    success: false,
-                    result: None,
-                    error: Some(result_json.clone()),
-                    concept: None,
-                });
-
-            let content = if tool_result.success {
-                tool_result.result
-                    .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| v.to_string()))
-                    .unwrap_or_default()
-            } else {
-                tool_result.error.unwrap_or_default()
-            };
-
-            result_blocks.push(ContentBlock::ToolResult {
-                tool_use_id: tc_id,
-                content: serde_json::Value::String(content),
-                is_error: Some(!tool_result.success),
-            });
-        }
-
-        messages.push(ChatMessage {
-            role: "user".to_string(),
-            content: MessageContent::ContentBlocks(result_blocks),
-        });
-        super::agent_task::append_message(&executor, &conv_iri, messages.last().unwrap(), &model_identifier, messages.len() - 1).await;
-    }
+    let conv_iri = super::agent_task::create_conversation(&executor, task_iri, &label, Some(&agent_iri)).await;
+    super::agent_task::persist_messages(&executor, &conv_iri, &output.messages, &agent_config.model_identifier).await;
 
     let task_iri_done = task_iri.to_string();
+    let last_text = output.last_text.clone();
     let delegated_conv_iri = executor
         .write(move |conn| -> Result<String> {
-            set_status(conn, &task_iri_done, STATUS_COMPLETED)?;
+            // Guarantee result is always set so the task is never re-run on the
+            // next startup (the AI should have called replace_property_values, but
+            // if it didn't we write the last message as a fallback).
+            if get_literal_property(conn, &task_iri_done, "foundation:result")
+                .unwrap_or(None)
+                .is_none()
+            {
+                let fallback = if last_text.is_empty() { "Concluído." } else { &last_text };
+                set_result(conn, &task_iri_done, fallback)?;
+            }
             super::task_blocker::check_and_unblock(conn, &task_iri_done);
             let conv = get_iri_property(conn, &task_iri_done, "foundation:delegatedFromConversation")
                 .map_err(|e| e.to_string())?
@@ -391,7 +309,7 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
     app.emit("task-completed", serde_json::json!({
         "task_iri": task_iri,
         "label": label,
-        "result_summary": last_text,
+        "result_summary": output.last_text,
     })).ok();
 
     if !delegated_conv_iri.is_empty() {
@@ -407,11 +325,11 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
             .await
             .unwrap_or_default();
 
-        let result = if result_text.is_empty() { &last_text } else { &result_text };
+        let result = if result_text.is_empty() { &output.last_text } else { &result_text };
         inject_and_trigger_conversation(app, &delegated_conv_iri, task_iri, &label, result).await;
     }
 
-    Ok(last_text)
+    Ok(output.last_text)
 }
 
 fn format_delegation_result(task_iri: &str, label: &str, result: &str) -> String {
@@ -466,12 +384,10 @@ pub fn check_and_recur(conn: &mut rusqlite::Connection, task_iri: &str) {
         return;
     }
 
-    let status = get_iri_property(conn, task_iri, "foundation:hasStatus").unwrap_or(None);
-    let is_completed = status
-        .as_deref()
-        .map(|s| super::task_scheduler::is_status_descendant_of(conn, s, STATUS_COMPLETED))
-        .unwrap_or(false);
-    if !is_completed {
+    let has_result = get_literal_property(conn, task_iri, "foundation:result")
+        .unwrap_or(None)
+        .is_some();
+    if !has_result {
         return;
     }
 
@@ -517,7 +433,6 @@ pub fn check_and_recur(conn: &mut rusqlite::Connection, task_iri: &str) {
             datatype: Some("xsd:string".to_string()),
             language: None,
         }),
-        Triple::new(&new_iri, "foundation:hasStatus", Object::Iri("foundation:Pending".to_string())),
         Triple::new(&new_iri, "foundation:recurrence", Object::Literal {
             value: rrule_str.clone(),
             datatype: Some("xsd:string".to_string()),
@@ -540,6 +455,23 @@ pub fn check_and_recur(conn: &mut rusqlite::Connection, task_iri: &str) {
         triples.push(Triple::new(&new_iri, "foundation:assignee", Object::Iri(a)));
     }
 
+    // Predicates already set above or that must NOT carry over (instance-specific state).
+    const SKIP: &[&str] = &[
+        "rdf:type", "rdfs:label", "rdfs:comment",
+        "foundation:recurrence", "foundation:scheduledAt", "foundation:assignee",
+        "foundation:result", "foundation:nextTask", "foundation:hasStatus",
+        "foundation:lastUpdatedAt",
+    ];
+    // Copy all remaining properties so delegatedFromConversation, aiBehaviorRules,
+    // dueDate, relatedTo, and any future task-level config survive every recurrence cycle.
+    if let Ok(all) = crate::eavto::query::get_by_entity(conn, task_iri) {
+        for t in all.triples {
+            if !SKIP.contains(&t.predicate.as_str()) {
+                triples.push(Triple::new(&new_iri, t.predicate, t.object));
+            }
+        }
+    }
+
     if let Err(e) = store::assert_triples(conn, &triples, "recurrence") {
         crate::commands::log_backend("error", &format!(
             "[recurrence] falha ao criar task: {}", e
@@ -547,7 +479,7 @@ pub fn check_and_recur(conn: &mut rusqlite::Connection, task_iri: &str) {
         return;
     }
 
-    if let Err(e) = replace_all_property_iris(conn, task_iri, "foundation:nextTask", &[&new_iri], "recurrence") {
+    if let Err(e) = crate::owl::replace_all_property_iris(conn, task_iri, "foundation:nextTask", &[&new_iri], "recurrence") {
         crate::commands::log_backend("error", &format!(
             "[recurrence] falha ao setar nextTask: {}", e
         ));
@@ -579,12 +511,9 @@ pub fn listen_for_recurrence(app: AppHandle) {
                     if !crate::owl::is_instance_of(conn, &entity, "foundation:Task") {
                         return Ok(false);
                     }
-                    let status = get_iri_property(conn, &entity, "foundation:hasStatus")
-                        .map_err(|e| e.to_string())?;
-                    Ok(status
-                        .as_deref()
-                        .map(|s| super::task_scheduler::is_status_descendant_of(conn, s, STATUS_COMPLETED))
-                        .unwrap_or(false))
+                    Ok(get_literal_property(conn, &entity, "foundation:result")
+                        .map_err(|e| e.to_string())?
+                        .is_some())
                 })
                 .await
                 .unwrap_or(false);
@@ -629,37 +558,16 @@ mod tests {
     }
 
     #[test]
-    fn test_set_status_updates_and_touches() {
+    fn test_set_started_at_persiste_datetime() {
         let mut conn = setup_test_db();
         insert(&mut conn, &task_triples("foundation:Task_test1", Some("foundation:Agent1")));
 
-        set_status(&mut conn, "foundation:Task_test1", STATUS_IN_PROGRESS)
-            .expect("set_status should succeed");
+        set_started_at(&mut conn, "foundation:Task_test1")
+            .expect("set_started_at should succeed");
 
-        let status = get_iri_property(&conn, "foundation:Task_test1", "foundation:hasStatus")
+        let started = get_literal_property(&conn, "foundation:Task_test1", "foundation:startedAt")
             .unwrap();
-        assert_eq!(status, Some(STATUS_IN_PROGRESS.to_string()));
-    }
-
-    #[test]
-    fn test_set_status_replaces_previous_value() {
-        let mut conn = setup_test_db();
-        insert(&mut conn, &task_triples("foundation:Task_test2", Some("foundation:Agent1")));
-
-        set_status(&mut conn, "foundation:Task_test2", STATUS_IN_PROGRESS).unwrap();
-        set_status(&mut conn, "foundation:Task_test2", STATUS_COMPLETED).unwrap();
-
-        let status = get_iri_property(&conn, "foundation:Task_test2", "foundation:hasStatus")
-            .unwrap();
-        assert_eq!(status, Some(STATUS_COMPLETED.to_string()));
-
-        let result = crate::eavto::query::get_by_entity_predicate(
-            &conn, "foundation:Task_test2", "foundation:hasStatus"
-        ).unwrap();
-        let active: Vec<_> = result.triples.iter()
-            .filter(|t| !t.retracted)
-            .collect();
-        assert_eq!(active.len(), 1, "deve haver exatamente um status ativo");
+        assert!(started.is_some(), "deve ter startedAt após set_started_at");
     }
 
     #[test]
@@ -672,28 +580,22 @@ mod tests {
         assert!(result.is_none(), "task sem assignee deve retornar None");
     }
 
-    fn completed_tree(conn: &mut rusqlite::Connection) {
-        insert(conn, &[Triple::new(
-            "foundation:Completed", "foundation:parentStatus",
-            Object::Iri("foundation:Completed".to_string()),
-        )]);
-        insert(conn, &[Triple::new(
-            "foundation:Pending", "foundation:parentStatus",
-            Object::Iri("foundation:Pending".to_string()),
-        )]);
+    fn task_with_result(task_iri: &str) -> Vec<Triple> {
+        vec![
+            Triple::new(task_iri, "rdf:type", Object::Iri("foundation:Task".to_string())),
+            Triple::new(task_iri, "rdfs:label", Object::Literal {
+                value: task_iri.to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+            Triple::new(task_iri, "foundation:result", Object::Literal {
+                value: "resultado concluído".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+        ]
     }
 
     #[test]
     fn task_sem_recorrencia_nao_cria_nova_task() {
         let mut conn = setup_test_db();
-        completed_tree(&mut conn);
-        insert(&mut conn, &[
-            Triple::new("foundation:Task_norec", "rdf:type", Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:Task_norec", "rdfs:label", Object::Literal {
-                value: "Sem recorrência".to_string(), datatype: Some("xsd:string".to_string()), language: None,
-            }),
-            Triple::new("foundation:Task_norec", "foundation:hasStatus", Object::Iri("foundation:Completed".to_string())),
-        ]);
+        insert(&mut conn, &task_with_result("foundation:Task_norec"));
 
         check_and_recur(&mut conn, "foundation:Task_norec");
 
@@ -704,13 +606,14 @@ mod tests {
     #[test]
     fn task_recorrente_concluida_cria_nova_task_pendente() {
         let mut conn = setup_test_db();
-        completed_tree(&mut conn);
         insert(&mut conn, &[
             Triple::new("foundation:Task_rec1", "rdf:type", Object::Iri("foundation:Task".to_string())),
             Triple::new("foundation:Task_rec1", "rdfs:label", Object::Literal {
                 value: "Reunião semanal".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
-            Triple::new("foundation:Task_rec1", "foundation:hasStatus", Object::Iri("foundation:Completed".to_string())),
+            Triple::new("foundation:Task_rec1", "foundation:result", Object::Literal {
+                value: "concluído".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
             Triple::new("foundation:Task_rec1", "foundation:recurrence", Object::Literal {
                 value: "FREQ=DAILY;INTERVAL=1".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
@@ -721,8 +624,10 @@ mod tests {
         let next_iri = get_iri_property(&conn, "foundation:Task_rec1", "foundation:nextTask").unwrap();
         assert!(next_iri.is_some(), "deve ter criado nextTask");
         let new_task = next_iri.unwrap();
-        let status = get_iri_property(&conn, &new_task, "foundation:hasStatus").unwrap();
-        assert_eq!(status.as_deref(), Some("foundation:Pending"), "nova task deve ser Pendente");
+        let result = get_literal_property(&conn, &new_task, "foundation:result").unwrap();
+        assert!(result.is_none(), "nova task não deve ter resultado ainda");
+        let started = get_literal_property(&conn, &new_task, "foundation:startedAt").unwrap();
+        assert!(started.is_none(), "nova task não deve ter startedAt ainda");
         let label = get_literal_property(&conn, &new_task, "rdfs:label").unwrap();
         assert_eq!(label.as_deref(), Some("Reunião semanal"), "deve preservar o label");
     }
@@ -764,13 +669,14 @@ mod tests {
     #[test]
     fn idempotencia_check_and_recur_duas_vezes() {
         let mut conn = setup_test_db();
-        completed_tree(&mut conn);
         insert(&mut conn, &[
             Triple::new("foundation:Task_rec2", "rdf:type", Object::Iri("foundation:Task".to_string())),
             Triple::new("foundation:Task_rec2", "rdfs:label", Object::Literal {
                 value: "Tarefa recorrente".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
-            Triple::new("foundation:Task_rec2", "foundation:hasStatus", Object::Iri("foundation:Completed".to_string())),
+            Triple::new("foundation:Task_rec2", "foundation:result", Object::Literal {
+                value: "concluído".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
             Triple::new("foundation:Task_rec2", "foundation:recurrence", Object::Literal {
                 value: "FREQ=DAILY;INTERVAL=1".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
@@ -784,5 +690,52 @@ mod tests {
         ).unwrap();
         let active: Vec<_> = result.triples.iter().filter(|t| !t.retracted).collect();
         assert_eq!(active.len(), 1, "deve haver exatamente uma nextTask, não duplicatas");
+    }
+
+    #[test]
+    fn recorrencia_copia_delegated_from_conversation_e_demais_props() {
+        let mut conn = setup_test_db();
+        insert(&mut conn, &[
+            Triple::new("foundation:Task_fullcopy", "rdf:type", Object::Iri("foundation:Task".to_string())),
+            Triple::new("foundation:Task_fullcopy", "rdfs:label", Object::Literal {
+                value: "Triagem de emails".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+            Triple::new("foundation:Task_fullcopy", "foundation:result", Object::Literal {
+                value: "concluído".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+            Triple::new("foundation:Task_fullcopy", "foundation:recurrence", Object::Literal {
+                value: "FREQ=HOURLY;INTERVAL=1".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+            Triple::new("foundation:Task_fullcopy", "foundation:delegatedFromConversation",
+                Object::Iri("foundation:Conv_test".to_string())),
+            Triple::new("foundation:Task_fullcopy", "foundation:aiBehaviorRules", Object::Literal {
+                value: "Processar apenas emails não lidos.".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+            }),
+            Triple::new("foundation:Task_fullcopy", "foundation:dueDate", Object::Literal {
+                value: "2026-12-31T23:59:59Z".to_string(), datatype: Some("xsd:dateTime".to_string()), language: None,
+            }),
+            Triple::new("foundation:Task_fullcopy", "foundation:relatedTo",
+                Object::Iri("foundation:Process_email".to_string())),
+        ]);
+
+        check_and_recur(&mut conn, "foundation:Task_fullcopy");
+
+        let next_iri = get_iri_property(&conn, "foundation:Task_fullcopy", "foundation:nextTask")
+            .unwrap().expect("deve ter criado nextTask");
+
+        let conv = get_iri_property(&conn, &next_iri, "foundation:delegatedFromConversation").unwrap();
+        assert_eq!(conv.as_deref(), Some("foundation:Conv_test"), "delegatedFromConversation deve ser copiado");
+
+        let rules = get_literal_property(&conn, &next_iri, "foundation:aiBehaviorRules").unwrap();
+        assert!(rules.is_some(), "aiBehaviorRules deve ser copiado");
+
+        let due = get_literal_property(&conn, &next_iri, "foundation:dueDate").unwrap();
+        assert!(due.is_some(), "dueDate deve ser copiado");
+
+        let related = get_iri_property(&conn, &next_iri, "foundation:relatedTo").unwrap();
+        assert_eq!(related.as_deref(), Some("foundation:Process_email"), "relatedTo deve ser copiado");
+
+        let result = get_literal_property(&conn, &next_iri, "foundation:result").unwrap();
+        assert!(result.is_none(), "result não deve ser copiado para a nova task");
     }
 }

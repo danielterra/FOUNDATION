@@ -198,26 +198,40 @@
 			});
 			if (version !== loadMessagesVersion) return;
 
-			// Clear streaming and update messages in the same Svelte tick so the
-			// __streaming__ entry is replaced by the real message without a flash.
-			clearStreaming();
+			// Only clear streaming when the incoming result already contains a new
+			// non-empty assistant text — prevents intermediate writes (tool-results,
+			// log_api_call) from wiping streaming text before the real response is saved.
+			// messages is always updated so tool_use results appear immediately.
+			const lastIncoming = result.messages.at(-1);
+			const lastCurrent  = messages.at(-1);
+			const hasNewAssistantText =
+				lastIncoming?.type === 'text' &&
+				!!lastIncoming?.text &&
+				lastIncoming?.iri !== lastCurrent?.iri;
+			// Also clear when a new tool_use round lands — the agent completed a
+			// think+speak+act cycle and the next think phase must start fresh.
+			const hasNewToolUse =
+				lastIncoming?.type === 'tool_use' &&
+				lastIncoming?.iri !== lastCurrent?.iri;
+			if (!streamingSpeak || hasNewAssistantText || hasNewToolUse) {
+				clearStreaming();
+			}
 			hasMoreMessages = result.messages.length === messageLimit;
 			messages = result.messages;
 			scrollToBottom();
 			await loadConversations();
 		});
 
-		const unlistenAIProcessing = await listen('ai-processing-started', (event) => {
-			const iri = event.payload?.conversationId ?? activeConversationIri;
-			startAIStatus('Pensando...', iri);
-		});
-
 		const unlistenAIStatus = await listen('ai-status', (event) => {
 			const iri = event.payload?.conversationId ?? activeConversationIri;
 			if (event.payload?.status) {
-				startAIStatus(event.payload.status, iri);
+				startAIStatus(event.payload.status, iri, event.payload?.phase ?? 'llm');
 			} else {
 				stopAIStatus(iri);
+				// ai-status stop fires from Rust after run_conversation_loop completes —
+				// all streaming chunks are done and the final message is persisted.
+				// Clear any leftover streaming buffer that entity-referenced may have missed.
+				if (iri === activeConversationIri) clearStreaming();
 			}
 		});
 
@@ -238,7 +252,6 @@
 			unlistenImport();
 			unlistenDelta();
 			unlistenMessages();
-			unlistenAIProcessing();
 			unlistenAIStatus();
 			unlistenAIError();
 			document.removeEventListener('chat-inject', handleChatInject);
@@ -407,7 +420,10 @@
 	}
 
 	async function loadMessages() {
-		if (!activeConversationIri) return;
+		if (!activeConversationIri) {
+			isLoadingMessages = false;
+			return;
+		}
 		const version = ++loadMessagesVersion;
 		try {
 			const result = await invoke('chat__get_recent_messages', {
@@ -477,17 +493,17 @@
 		return () => obs.disconnect();
 	});
 
-	function startAIStatus(status, iri = activeConversationIri) {
+	function startAIStatus(status, iri = activeConversationIri, phase = 'llm') {
 		const existing = convLoading[iri];
 		if (existing?.elapsedInterval) clearInterval(existing.elapsedInterval);
-		const startTime = Date.now();
+		const phaseStart = Date.now();
 		const elapsedInterval = setInterval(() => {
 			const s = convLoading[iri];
 			if (s?.aiStatus) {
-				convLoading[iri] = { ...s, elapsedSeconds: Math.floor((Date.now() - s.aiStatus.startTime) / 1000) };
+				convLoading[iri] = { ...s, elapsedSeconds: Math.floor((Date.now() - s.aiStatus.phaseStart) / 1000) };
 			}
 		}, 1000);
-		convLoading[iri] = { isLoading: true, aiStatus: { status, startTime }, elapsedSeconds: 0, elapsedInterval };
+		convLoading[iri] = { isLoading: true, aiStatus: { status, phase, phaseStart }, elapsedSeconds: 0, elapsedInterval };
 	}
 
 	function stopAIStatus(iri = activeConversationIri) {
@@ -501,7 +517,7 @@
 		if (!is_processing) {
 			stopAIStatus(iri);
 		} else if (!convLoading[iri]?.isLoading) {
-			startAIStatus('Pensando...', iri);
+			startAIStatus('Processando...', iri, 'prep');
 		}
 	}
 
@@ -536,8 +552,6 @@
 		if ((convLoading[convIri]?.isLoading ?? false) || !isInitialized) return;
 		if (iri.startsWith('optimistic_')) return;
 
-		startAIStatus('Pensando...', convIri);
-
 		invoke('chat__retry_from_message', { messageIri: iri, conversationId: convIri }).then(() => {
 			stopAIStatus(convIri);
 		}).catch(err => {
@@ -548,7 +562,12 @@
 	}
 
 	async function sendMessage() {
-		const convIri = activeConversationIri;
+		let convIri = activeConversationIri;
+		if (!convIri) {
+			await createConversation();
+			convIri = activeConversationIri;
+			if (!convIri) return;
+		}
 		if ((!inputText.trim() && pendingAttachments.length === 0) || (convLoading[convIri]?.isLoading ?? false) || !isInitialized) return;
 
 		const content = inputText.trim();
@@ -561,8 +580,6 @@
 			if (textareaElement) {
 				textareaElement.style.height = 'auto';
 			}
-
-			startAIStatus('Pensando...', convIri);
 
 			invoke('chat__edit_and_retry', { messageIri: iri, newContent: content, conversationId: convIri }).then(() => {
 				stopAIStatus(convIri);
@@ -604,7 +621,7 @@
 			scrollToBottom();
 		}
 
-		startAIStatus('Pensando...', convIri);
+		startAIStatus('Enviando...', convIri, 'prep');
 
 		invoke('chat__send_and_reply', {
 			content,
@@ -943,11 +960,14 @@
 
 <style>
 	.chat-panel {
-		width: 100%;
+		width: 30%;
+		min-width: 500px;
 		height: 100%;
 		display: flex;
 		flex-direction: column;
+		flex-shrink: 0;
 		background: var(--color-surface-1);
+		border-left: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
 	}
 
 	.chat-content {

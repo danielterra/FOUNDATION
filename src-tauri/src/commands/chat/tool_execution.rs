@@ -1,18 +1,19 @@
-use crate::owl::{Individual, DbExecutor};
+use crate::owl::DbExecutor;
 use crate::ai::functions::ToolCall;
-use crate::commands::chat_storage::{AIConversationMessage, ContentBlock, load_message, create_message};
+use crate::commands::chat_storage::{AIConversationMessage, ContentBlock, create_message};
 use super::super::log_backend;
 use super::trace::{TraceStep, make_step};
 use tauri::Emitter;
 
-/// Returns `(tool_result_msg_iri, steps)`.
-/// `steps` contains one TraceStep per tool executed (excluding ask_question).
+/// Returns `(tool_result_msg_iri, tool_result_msg, steps)`.
+/// `tool_result_msg` is the in-memory message built from tool results — callers can
+/// append it to their history cache without an additional DB read.
 pub async fn execute_tools_from_message(
     executor: &DbExecutor,
     app: &tauri::AppHandle,
     conversation_id: &str,
     assistant_message: &AIConversationMessage,
-) -> Result<(String, Vec<TraceStep>), String> {
+) -> Result<(String, AIConversationMessage, Vec<TraceStep>), String> {
     let has_any_tool_use = assistant_message.content.iter()
         .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
 
@@ -29,50 +30,60 @@ pub async fn execute_tools_from_message(
 
     // Guard against storing duplicate tool_results for the same tool_use_id.
     // This can happen when the recovery path re-executes tools that already ran.
+    // Single JOIN query per tool_use_id avoids loading all conversation messages (N+1).
     let conv_id_check = conversation_id.to_string();
     let ids_to_check = tool_use_ids;
     let existing_iri = executor.read(move |conn| {
-        let message_iris = Individual::find_by_class_and_properties(
-            conn,
-            "foundation:AIConversationMessage",
-            &[("foundation:partOfConversation", &conv_id_check)],
-        ).map_err(|e| format!("Failed to query messages: {}", e))?;
-
-        for iri in message_iris {
-            if let Ok(msg) = load_message(conn, &iri) {
-                let is_duplicate = msg.content.iter().any(|b| {
-                    if let ContentBlock::ToolResult { tool_use_id, .. } = b {
-                        ids_to_check.contains(tool_use_id)
-                    } else {
-                        false
-                    }
-                });
-                if is_duplicate {
-                    return Ok(Some(iri));
-                }
-            }
-        }
-        Ok(None)
+        let found = ids_to_check.iter()
+            .find_map(|id| crate::owl::find_tool_result_message_iri(conn, id, &conv_id_check));
+        Ok(found)
     }).await?;
 
     if let Some(iri) = existing_iri {
         log_backend("warn", &format!(
             "[CHAT] Skipping duplicate tool_result — results already stored in: {}", iri
         ));
-        return Ok((iri, Vec::new()));
+        let empty_msg = AIConversationMessage {
+            iri: iri.clone(),
+            role: "user".to_string(),
+            content: Vec::new(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            token_count: None,
+            model: None,
+            stop_reason: None,
+            input_tokens: None,
+            output_tokens: None,
+        };
+        return Ok((iri, empty_msg, Vec::new()));
     }
 
     let mut tool_results = Vec::new();
     let mut trace_steps = Vec::new();
 
     for block in &assistant_message.content {
-        if let ContentBlock::ToolUse { id, name, input } = block {
+        if let ContentBlock::ToolUse { id, name, input, .. } = block {
             if name == "ask_question" {
                 continue; // answered by user via UI — not executed automatically
             }
+            app.emit("ai-status", serde_json::json!({
+                "status": name,
+                "phase": "tool",
+                "conversationId": conversation_id,
+            })).ok();
             let start = std::time::Instant::now();
+            log_backend("info", &format!("[ENGINE] tool '{}' started (id={})", name, id));
             let (content, is_error) = execute_tool(executor, app, conversation_id, name, input).await;
             let duration_ms = start.elapsed().as_millis() as u64;
+            log_backend(
+                "info",
+                &format!(
+                    "[ENGINE] tool '{}' finished in {}ms (error={}, result_len={})",
+                    name,
+                    duration_ms,
+                    is_error,
+                    content.len()
+                ),
+            );
 
             trace_steps.push(make_step(0, name, input, &content, is_error, duration_ms));
 
@@ -80,18 +91,42 @@ pub async fn execute_tools_from_message(
                 tool_use_id: id.clone(),
                 content,
                 is_error: Some(is_error),
+                duration_ms: Some(duration_ms),
             });
         }
     }
 
     if tool_results.is_empty() {
-        return Ok((assistant_message.iri.clone(), trace_steps));
+        let empty_msg = AIConversationMessage {
+            iri: assistant_message.iri.clone(),
+            role: "user".to_string(),
+            content: Vec::new(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            token_count: None,
+            model: None,
+            stop_reason: None,
+            input_tokens: None,
+            output_tokens: None,
+        };
+        return Ok((assistant_message.iri.clone(), empty_msg, trace_steps));
     }
 
-    let iri = create_message(executor, conversation_id, "user", tool_results, None, None, None).await?;
+    let iri = create_message(executor, conversation_id, "user", tool_results.clone(), None, None, None).await?;
+
+    let tool_result_msg = AIConversationMessage {
+        iri: iri.clone(),
+        role: "user".to_string(),
+        content: tool_results,
+        timestamp: chrono::Utc::now().timestamp_millis(),
+        token_count: None,
+        model: None,
+        stop_reason: None,
+        input_tokens: None,
+        output_tokens: None,
+    };
 
     app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
-    Ok((iri, trace_steps))
+    Ok((iri, tool_result_msg, trace_steps))
 }
 
 async fn execute_tool(

@@ -1,18 +1,49 @@
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::ai::{GenerateRequest, ChatMessage};
+use crate::ai::{ChatMessage};
 use crate::ai::providers::{MessageContent, ContentBlock, ClaudeTool};
-use crate::ai::functions::{get_claude_tools, ToolCall as FunctionToolCall, execute_tool as execute_fn};
+use crate::ai::functions::get_claude_tools;
 use crate::owl::{DbExecutor, get_literal_property, get_iri_property, get_all_iri_properties, Individual, Object};
 
 use super::executor::ExecutionContext;
+use super::tool_loop::{ToolLoopConfig, CompletionToolConfig, run_tool_loop};
+use super::agent_runner::resolve_agent_config;
 
 type Result<T> = std::result::Result<T, String>;
 
-const MAX_TOOL_LOOPS: usize = 50;
 const DEFAULT_MAX_TOKENS: u32 = 4096;
 const DEFAULT_TEMPERATURE: f32 = 0.3;
-const DEFAULT_TIMEOUT_SECS: u64 = 180;
+
+pub(super) fn to_storage_blocks(content: &MessageContent) -> Vec<crate::commands::chat_storage::ContentBlock> {
+    use crate::commands::chat_storage::ContentBlock as S;
+    use ContentBlock as A;
+
+    let blocks = match content {
+        MessageContent::ContentBlocks(b) => b.as_slice(),
+        MessageContent::Text(t) => return vec![S::Text { text: t.clone() }],
+    };
+
+    blocks.iter().filter_map(|b| match b {
+        A::Text { text } => Some(S::Text { text: text.clone() }),
+        A::ToolUse { id, name, input } => Some(S::ToolUse {
+            id: id.clone(), name: name.clone(), input: input.clone(), reason: None,
+        }),
+        A::ToolResult { tool_use_id, content, is_error, .. } => Some(S::ToolResult {
+            tool_use_id: tool_use_id.clone(),
+            content: match content {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            },
+            is_error: *is_error,
+            duration_ms: None,
+        }),
+        A::Thinking { thinking, signature } => Some(S::Thinking {
+            thinking: thinking.clone(), signature: signature.clone(),
+        }),
+        A::RedactedThinking { data } => Some(S::RedactedThinking { data: data.clone() }),
+        A::Image { .. } | A::Document { .. } => None,
+    }).collect()
+}
 
 fn task_complete_tool(output_class: Option<&str>) -> ClaudeTool {
     let (description, output_iri_description) = match output_class {
@@ -31,14 +62,8 @@ fn task_complete_tool(output_class: Option<&str>) -> ClaudeTool {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "output_iri": {
-                    "type": "string",
-                    "description": output_iri_description
-                },
-                "message": {
-                    "type": "string",
-                    "description": "Optional message summarising the outcome."
-                }
+                "output_iri": { "type": "string", "description": output_iri_description },
+                "message": { "type": "string", "description": "Optional message summarising the outcome." }
             },
             "required": []
         }),
@@ -51,18 +76,6 @@ fn interpolate(template: &str, ctx: &ExecutionContext) -> String {
         result = result.replace(&format!("{{{{{}}}}}", key), value);
     }
     result
-}
-
-fn content_to_json(content: &MessageContent) -> String {
-    match content {
-        MessageContent::ContentBlocks(blocks) => {
-            serde_json::to_string(blocks).unwrap_or_default()
-        }
-        MessageContent::Text(text) => {
-            serde_json::to_string(&serde_json::json!([{"type": "text", "text": text}]))
-                .unwrap_or_default()
-        }
-    }
 }
 
 pub async fn create_conversation(
@@ -92,65 +105,22 @@ pub async fn create_conversation(
     }).await.unwrap_or_default()
 }
 
-pub async fn append_message(
+pub async fn persist_messages(
     executor: &DbExecutor,
     conv_iri: &str,
-    msg: &ChatMessage,
-    model: &str,
-    index: usize,
-) {
-    let msg_iri = format!("foundation:AIConversationMessage_{}_{}", chrono::Utc::now().timestamp_millis(), index);
-    let role = msg.role.clone();
-    let content_json = content_to_json(&msg.content);
-    let conv = conv_iri.to_string();
-    let model_str = model.to_string();
-
-    let result = executor.write(move |conn| {
-        let ind = Individual::new(&msg_iri);
-        ind.assert(conn, "foundation:AIConversationMessage", &role, "chat", "process_automation")
-            .map_err(|e| e.to_string())?;
-
-        let mut triples = vec![
-            crate::eavto::Triple::new(
-                &msg_iri, "foundation:role",
-                Object::Literal { value: role.clone(), datatype: Some("xsd:string".to_string()), language: None },
-            ),
-            crate::eavto::Triple::new(
-                &msg_iri, "foundation:content",
-                Object::Literal { value: content_json, datatype: Some("xsd:string".to_string()), language: None },
-            ),
-            crate::eavto::Triple::new(
-                &msg_iri, "foundation:partOfConversation",
-                Object::Iri(conv),
-            ),
-        ];
-        if role == "assistant" && !model_str.is_empty() {
-            triples.push(crate::eavto::Triple::new(
-                &msg_iri, "foundation:model",
-                Object::Literal { value: model_str, datatype: Some("xsd:string".to_string()), language: None },
-            ));
-        }
-
-        crate::eavto::store::assert_triples(conn, &triples, "process_automation")
-            .map_err(|e| e.to_string())?;
-        Ok(msg_iri)
-    }).await;
-    if let Err(e) = &result {
-        crate::commands::log_backend("error", &format!("[agent_task] append_message failed: {}", e));
-    }
-}
-
-pub async fn persist_conversation(
-    executor: &DbExecutor,
-    step_iri: &str,
-    task_label: &str,
-    model: &str,
-    agent_iri: Option<&str>,
     messages: &[ChatMessage],
+    model_identifier: &str,
 ) {
-    let conv_iri = create_conversation(executor, step_iri, task_label, agent_iri).await;
-    for (i, msg) in messages.iter().enumerate() {
-        append_message(executor, &conv_iri, msg, model, i).await;
+    for msg in messages {
+        let role = msg.role.as_str();
+        let model = if role == "assistant" { Some(model_identifier) } else { None };
+        if let Err(e) = crate::commands::chat_storage::create_message(
+            executor, conv_iri, role,
+            to_storage_blocks(&msg.content),
+            model, None, None,
+        ).await {
+            crate::commands::log_backend("error", &format!("[agent_task] persist_messages failed: {}", e));
+        }
     }
 }
 
@@ -193,56 +163,7 @@ pub async fn execute_agent_task(
         })
         .await?;
 
-    let (api_key, model_identifier, system_prompt, timeout_secs) = executor
-        .read({
-            let agent_iri = agent_iri.clone();
-            move |conn| {
-                let service_iri = get_iri_property(conn, &agent_iri, "foundation:usesService")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("Agent {} has no usesService", agent_iri))?;
-
-                let api_key_iri = get_iri_property(conn, &service_iri, "foundation:apiKey")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| "API key not configured".to_string())?;
-
-                let api_key = get_literal_property(conn, &api_key_iri, "foundation:credentialValue")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| "API key has no value".to_string())?;
-
-                let model_iri = get_iri_property(conn, &agent_iri, "foundation:usesModel")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("Agent {} has no usesModel", agent_iri))?;
-
-                let model_identifier = get_literal_property(conn, &model_iri, "foundation:modelIdentifier")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("Model {} has no modelIdentifier", model_iri))?;
-
-                let agent_base_prompt = Individual::get(conn, &agent_iri)
-                    .ok()
-                    .flatten()
-                    .and_then(|ind| {
-                        ind.properties.iter()
-                            .find(|(k, _)| k == "foundation:basePrompt")
-                            .and_then(|(_, v)| v.as_literal())
-                    })
-                    .unwrap_or_default();
-                let base_system_prompt = crate::commands::chat::settings::load_base_system_prompt(conn);
-                let system_prompt = if agent_base_prompt.is_empty() {
-                    base_system_prompt
-                } else {
-                    format!("{}\n\n{}", base_system_prompt, agent_base_prompt)
-                };
-
-                let timeout_secs = get_literal_property(conn, &agent_iri, "foundation:requestTimeout")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(DEFAULT_TIMEOUT_SECS);
-
-                Ok((api_key, model_identifier, system_prompt, timeout_secs))
-            }
-        })
-        .await?;
+    let agent_config = resolve_agent_config(&executor, &agent_iri).await?;
 
     let resolved_description = interpolate(&description, ctx);
 
@@ -309,18 +230,8 @@ pub async fn execute_agent_task(
     let current_datetime = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let task_prompt = format!(
         "currentDateTime: {}\n\nYou are executing the automation task: **{}**{}\n\n## Instructions\n{}\n\nComplete this task and respond with the result.",
-        current_datetime,
-        label,
-        ctx_section,
-        resolved_description
+        current_datetime, label, ctx_section, resolved_description
     );
-
-    let mut messages: Vec<ChatMessage> = vec![ChatMessage {
-        role: "user".to_string(),
-        content: MessageContent::ContentBlocks(vec![
-            ContentBlock::Text { text: task_prompt },
-        ]),
-    }];
 
     let mut tools: Vec<ClaudeTool> = if allowed_tool_names.is_empty() {
         get_claude_tools()
@@ -332,281 +243,39 @@ pub async fn execute_agent_task(
             .collect()
     };
     tools.push(task_complete_tool(output_class.as_deref()));
-    let provider = crate::ai::providers::ClaudeProvider::with_model(
-        api_key.clone(),
-        model_identifier.clone(),
-        timeout_secs,
-    );
 
-    let mut last_text = String::new();
-    let mut task_completion: Option<(String, String)> = None;
+    let initial_messages = vec![ChatMessage {
+        role: "user".to_string(),
+        content: MessageContent::ContentBlocks(vec![
+            ContentBlock::Text { text: task_prompt },
+        ]),
+    }];
 
-    'outer: for _ in 0..MAX_TOOL_LOOPS {
-        let request = GenerateRequest {
-            messages: messages.clone(),
-            max_tokens: Some(DEFAULT_MAX_TOKENS),
-            temperature: Some(DEFAULT_TEMPERATURE),
-            system: Some(system_prompt.clone()),
-            blackboard_context: None,
-            tools: Some(tools.clone()),
-            supports_web_tools: false,
-            thinking: None,
-            tool_choice: None,
-        };
+    let loop_config = ToolLoopConfig {
+        system: Some(agent_config.system_prompt),
+        tools,
+        max_iterations: 50,
+        max_tokens: DEFAULT_MAX_TOKENS,
+        temperature: DEFAULT_TEMPERATURE,
+        completion_tool: Some(CompletionToolConfig {
+            tool_name: "task_complete".to_string(),
+            output_class: output_class.clone(),
+        }),
+    };
 
-        let response = provider.generate_stream(request, app, exec_iri).await
-            .map_err(|e| format!("Agent task API error: {}", e))?;
+    let output = run_tool_loop(&executor, &agent_config.provider, initial_messages, loop_config).await?;
 
-        let stop_reason = response.stop_reason.clone().unwrap_or_else(|| "end_turn".to_string());
-        last_text = response.content.clone();
+    let conv_iri = create_conversation(&executor, step_iri, &label, Some(&agent_iri)).await;
+    persist_messages(&executor, &conv_iri, &output.messages, &agent_config.model_identifier).await;
 
-        let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
-        if !response.content.is_empty() {
-            assistant_blocks.push(ContentBlock::Text { text: response.content.clone() });
-        }
-        for tc in &response.tool_calls {
-            assistant_blocks.push(ContentBlock::ToolUse {
-                id: tc.id.clone(),
-                name: tc.name.clone(),
-                input: tc.input.clone(),
-            });
-        }
-        let assistant_content_json = content_to_json(&MessageContent::ContentBlocks(assistant_blocks.clone()));
-        messages.push(ChatMessage {
-            role: "assistant".to_string(),
-            content: MessageContent::ContentBlocks(assistant_blocks),
-        });
-        app.emit("automation-step-message", serde_json::json!({
-            "executionIri": exec_iri,
-            "stepIri": step_iri,
-            "role": "assistant",
-            "content": assistant_content_json,
-        })).ok();
+    app.emit("automation-step-message", serde_json::json!({
+        "executionIri": exec_iri,
+        "stepIri": step_iri,
+        "lastText": output.last_text,
+    })).ok();
 
-        if stop_reason != "tool_use" {
-            break;
-        }
-
-        let mut result_blocks: Vec<ContentBlock> = Vec::new();
-        for tc in &response.tool_calls {
-            if tc.name == "task_complete" {
-                let output_iri = tc.input.get("output_iri")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_default();
-                let message = tc.input.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string();
-
-                if let Some(ref expected_class) = output_class {
-                    let is_valid_iri_format = !output_iri.is_empty()
-                        && output_iri.contains(':')
-                        && !output_iri.contains(' ');
-
-                    let validation_error: Option<String> = if !is_valid_iri_format {
-                        Some(format!(
-                            "output_iri '{}' is not a valid IRI. You must pass a valid ontology IRI (e.g. 'foundation:Task_1234567890'). Create the {} individual first, then call task_complete with its IRI.",
-                            output_iri, expected_class
-                        ))
-                    } else {
-                        let iri_to_check = output_iri.clone();
-                        let class_to_check = expected_class.clone();
-                        executor.read(move |conn| {
-                            match Individual::get(conn, &iri_to_check) {
-                                Ok(Some(ind)) => {
-                                    if ind.types.iter().any(|t| t.iri == class_to_check) {
-                                        Ok(None)
-                                    } else {
-                                        let actual: Vec<String> = ind.types.iter().map(|t| t.iri.clone()).collect();
-                                        Ok(Some(format!(
-                                            "IRI '{}' is of type {:?}, not {}. Create a {} individual and call task_complete with its IRI.",
-                                            iri_to_check, actual, class_to_check, class_to_check
-                                        )))
-                                    }
-                                }
-                                Ok(None) => Ok(Some(format!(
-                                    "IRI '{}' does not exist in the ontology. Create the {} individual first, then call task_complete with its IRI.",
-                                    iri_to_check, class_to_check
-                                ))),
-                                Err(e) => Ok(Some(format!("Failed to validate IRI '{}': {}", iri_to_check, e))),
-                            }
-                        }).await.unwrap_or_default()
-                    };
-
-                    if let Some(error_msg) = validation_error {
-                        result_blocks.push(ContentBlock::ToolResult {
-                            tool_use_id: tc.id.clone(),
-                            content: serde_json::Value::String(error_msg),
-                            is_error: Some(true),
-                        });
-                        break;
-                    }
-                }
-
-                result_blocks.push(ContentBlock::ToolResult {
-                    tool_use_id: tc.id.clone(),
-                    content: serde_json::Value::String("Task completion acknowledged.".to_string()),
-                    is_error: Some(false),
-                });
-                messages.push(ChatMessage {
-                    role: "user".to_string(),
-                    content: MessageContent::ContentBlocks(result_blocks),
-                });
-
-                task_completion = Some((output_iri, message));
-                break 'outer;
-            }
-
-            let call = FunctionToolCall {
-                name: tc.name.clone(),
-                arguments: tc.input.clone(),
-            };
-            let tc_id = tc.id.clone();
-            let app_clone = app.clone();
-            let result_json = executor
-                .write(move |conn| {
-                    let r = execute_fn(conn, &call, Some(&app_clone), None);
-                    serde_json::to_string(&r).map_err(|e| e.to_string())
-                })
-                .await
-                .unwrap_or_else(|e| format!("\"{}\"", e));
-
-            let tool_result: crate::ai::functions::ToolResult =
-                serde_json::from_str(&result_json).unwrap_or(crate::ai::functions::ToolResult {
-                    success: false,
-                    result: None,
-                    error: Some(result_json.clone()),
-                    concept: None,
-                });
-
-            let content = if tool_result.success {
-                tool_result.result
-                    .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| v.to_string()))
-                    .unwrap_or_default()
-            } else {
-                tool_result.error.unwrap_or_default()
-            };
-
-            result_blocks.push(ContentBlock::ToolResult {
-                tool_use_id: tc_id,
-                content: serde_json::Value::String(content),
-                is_error: Some(!tool_result.success),
-            });
-        }
-
-        if task_completion.is_none() {
-            messages.push(ChatMessage {
-                role: "user".to_string(),
-                content: MessageContent::ContentBlocks(result_blocks),
-            });
-        }
+    match output.completion {
+        Some(c) => Ok(if !c.output_iri.is_empty() { c.output_iri } else { c.message }),
+        None => Ok(output.last_text),
     }
-
-    persist_conversation(&executor, step_iri, &label, &model_identifier, Some(&agent_iri), &messages).await;
-
-    match task_completion {
-        Some((output_iri, message)) => Ok(if !output_iri.is_empty() { output_iri } else { message }),
-        None => Ok(last_text),
-    }
-}
-
-/// Non-streaming tool loop for background tasks.
-/// Runs up to `max_loops` iterations: generate → execute tool calls → loop until end_turn.
-/// Returns the final text response.
-pub async fn run_headless_tool_loop(
-    executor: &DbExecutor,
-    provider: &crate::ai::providers::ClaudeProvider,
-    system_prompt: String,
-    initial_message: String,
-    tools: Vec<ClaudeTool>,
-    max_loops: usize,
-    temperature: f32,
-) -> Result<String> {
-    use crate::ai::{GenerateRequest, ChatMessage};
-
-    let mut messages = vec![ChatMessage::text("user", initial_message)];
-    let mut final_text = String::new();
-
-    for _ in 0..max_loops {
-        let request = GenerateRequest {
-            messages: messages.clone(),
-            max_tokens: Some(DEFAULT_MAX_TOKENS),
-            temperature: Some(temperature),
-            system: Some(system_prompt.clone()),
-            blackboard_context: None,
-            tools: Some(tools.clone()),
-            supports_web_tools: false,
-            thinking: None,
-            tool_choice: None,
-        };
-
-        let response = provider.generate(request).await
-            .map_err(|e| format!("headless tool loop: {}", e))?;
-
-        let stop_reason = response.stop_reason.clone().unwrap_or_default();
-        final_text = response.content.clone();
-
-        let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
-        if !response.content.is_empty() {
-            assistant_blocks.push(ContentBlock::Text { text: response.content.clone() });
-        }
-        for tc in &response.tool_calls {
-            assistant_blocks.push(ContentBlock::ToolUse {
-                id: tc.id.clone(),
-                name: tc.name.clone(),
-                input: tc.input.clone(),
-            });
-        }
-        messages.push(ChatMessage {
-            role: "assistant".to_string(),
-            content: MessageContent::ContentBlocks(assistant_blocks),
-        });
-
-        if stop_reason != "tool_use" {
-            break;
-        }
-
-        let mut result_blocks: Vec<ContentBlock> = Vec::new();
-        for tc in &response.tool_calls {
-            let call = FunctionToolCall {
-                name: tc.name.clone(),
-                arguments: tc.input.clone(),
-            };
-            let tc_id = tc.id.clone();
-            let result_json = executor
-                .write(move |conn| {
-                    let r = execute_fn(conn, &call, None, None);
-                    serde_json::to_string(&r).map_err(|e| e.to_string())
-                })
-                .await
-                .unwrap_or_else(|e| format!("\"{}\"", e));
-
-            let tool_result: crate::ai::functions::ToolResult =
-                serde_json::from_str(&result_json).unwrap_or(crate::ai::functions::ToolResult {
-                    success: false,
-                    result: None,
-                    error: Some(result_json.clone()),
-                    concept: None,
-                });
-
-            let content = if tool_result.success {
-                tool_result.result
-                    .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| v.to_string()))
-                    .unwrap_or_default()
-            } else {
-                tool_result.error.unwrap_or_default()
-            };
-
-            result_blocks.push(ContentBlock::ToolResult {
-                tool_use_id: tc_id,
-                content: serde_json::Value::String(content),
-                is_error: Some(!tool_result.success),
-            });
-        }
-
-        messages.push(ChatMessage {
-            role: "user".to_string(),
-            content: MessageContent::ContentBlocks(result_blocks),
-        });
-    }
-
-    Ok(final_text)
 }

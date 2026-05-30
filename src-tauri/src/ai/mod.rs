@@ -10,6 +10,7 @@ use providers::{MessageContent, ContentBlock};
 pub enum AiProvider {
     Claude(providers::ClaudeProvider),
     Local(local::LocalProvider),
+    OpenRouter(providers::OpenRouterProvider),
 }
 
 impl AiProvider {
@@ -22,6 +23,15 @@ impl AiProvider {
         match self {
             AiProvider::Claude(p) => p.generate_stream(request, app, conversation_id).await,
             AiProvider::Local(p) => p.generate_stream(request, app, conversation_id).await,
+            AiProvider::OpenRouter(p) => p.generate_stream(request, app, conversation_id).await,
+        }
+    }
+
+    pub async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, String> {
+        match self {
+            AiProvider::Claude(p) => p.generate(request).await,
+            AiProvider::Local(_) => Err("Local provider does not support non-streaming generate".to_string()),
+            AiProvider::OpenRouter(p) => p.generate(request).await,
         }
     }
 }
@@ -94,6 +104,8 @@ pub struct GenerateResponse {
     pub thinking_blocks: Vec<ThinkingBlock>,
     pub stop_reason: Option<String>,
     pub usage: Option<providers::UsageInfo>,
+    /// Actual model used (populated by providers that support runtime model selection, e.g. OpenRouter fallback)
+    pub model_used: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

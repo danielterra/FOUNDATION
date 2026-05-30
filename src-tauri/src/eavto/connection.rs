@@ -102,8 +102,25 @@ fn initialize_db_with_progress(
 
     log_backend("info", &format!("Using database: {:?}", db_path));
     let conn = Connection::open(db_path)?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=33554432;")?;
+    // journal_size_limit=32 MB: SQLite resets WAL file size after each successful checkpoint,
+    // capping WAL growth even when TRUNCATE is blocked by a stuck reader.
+    // Without this, WAL grows unboundedly and every new connection must scan gigabytes.
     conn.busy_timeout(std::time::Duration::from_secs(DB_BUSY_TIMEOUT_SECS)).map_err(|e| DbError::ConnectionError(e))?;
+
+    // Truncate any WAL left over from the previous session. The executor
+    // checkpoints every WAL_TRUNCATE_INTERVAL writes during the session, but
+    // if the app exits before reaching that threshold the WAL file keeps
+    // growing across launches. At startup there are no active readers or
+    // writers from the previous session (busy=0), so TRUNCATE always succeeds
+    // and resets the WAL to zero bytes immediately.
+    if let Ok(busy) = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0)) {
+        if busy > 0 {
+            log_backend("warn", &format!("[STARTUP] WAL checkpoint: {} busy readers, WAL not fully truncated", busy));
+        } else {
+            log_backend("info", "[STARTUP] WAL truncated");
+        }
+    }
 
     // Check if the ontology is actually present by looking for a core class.
     // This is more reliable than checking file existence or a metadata flag,
@@ -137,6 +154,7 @@ fn initialize_db_with_progress(
     let t_startup = std::time::Instant::now();
 
     run_migrations(&conn)?;
+    ensure_query_stats(&conn);
     log_backend("info", &format!("[STARTUP] migrations={}ms", t_startup.elapsed().as_millis()));
 
     // The Tantivy index lives in OS-local app data (never synced to iCloud /
@@ -310,6 +328,28 @@ fn drop_object_datetime_if_exists(conn: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
+fn ensure_query_stats(conn: &Connection) {
+    // sqlite_stat1 is absent on first install and on DBs that predate this
+    // change. Without it the query planner falls back to worst-case estimates,
+    // picking idx_subject_retracted over the narrower idx_spo and making
+    // has_prop / property_loop queries 5-6× slower than necessary.
+    let has_stats = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'triples'",
+        [],
+        |row| row.get::<_, i64>(0),
+    ).map(|c| c > 0).unwrap_or(false);
+
+    if !has_stats {
+        let t = std::time::Instant::now();
+        log_backend("info", "[STARTUP] sqlite_stat1 absent — running ANALYZE triples");
+        if let Err(e) = conn.execute_batch("ANALYZE triples;") {
+            log_backend("warn", &format!("[STARTUP] ANALYZE failed: {}", e));
+        } else {
+            log_backend("info", &format!("[STARTUP] ANALYZE complete in {}ms", t.elapsed().as_millis()));
+        }
+    }
+}
+
 fn run_migrations(conn: &Connection) -> Result<(), DbError> {
     drop_object_datetime_if_exists(conn)?;
     conn.execute_batch("
@@ -395,6 +435,14 @@ fn run_migrations(conn: &Connection) -> Result<(), DbError> {
     conn.execute_batch("
         CREATE INDEX IF NOT EXISTS idx_backlinks_active ON triples(object, subject, predicate, tx)
         WHERE retracted = 0 AND object_type = 'iri' AND predicate != 'rdf:type';
+    ")?;
+
+    // Covers (subject, predicate, retracted=0) lookups — the dominant pattern
+    // in has_prop / property_loop queries — without relying on the planner
+    // having seen enough data to prefer idx_spo on its own. The tx column
+    // allows index-only MAX(tx) resolution without a table touch.
+    conn.execute_batch("
+        CREATE INDEX IF NOT EXISTS idx_spr ON triples(subject, predicate, retracted, tx);
     ")?;
 
     crate::search::ensure_access_table(conn).map_err(DbError::ConnectionError)?;

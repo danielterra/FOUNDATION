@@ -89,6 +89,16 @@
     if (searchComponent) searchComponent.open();
   }
 
+  async function openAiCallHistory() {
+    invoke('widget_blackboard__add_widget', {
+      widgetType: 'ai_call_history',
+      entityId: '',
+      position: null,
+      size: null,
+      conversationId: appState.activeConversationIri ?? null,
+    }).catch(e => console.error('Failed to open AI call history:', e));
+  }
+
   function handleKeydown(event) {
     if ((event.metaKey || event.ctrlKey) && event.key === 's') {
       event.preventDefault();
@@ -133,19 +143,20 @@
     {#if chatEnabled}
       <Button icon="forum" title="Conversa (Ctrl+S)" onclick={() => isChatOpen = !isChatOpen} />
     {/if}
+    <Button icon="payments" title="Consumo de IA" onclick={openAiCallHistory} />
     <NotificationBell />
     <Button icon="settings" title="Configurações" onclick={() => showSettings = true} />
   </div>
 
-  <div class="canvas-area">
-    <WidgetManager bind:this={widgetManager} {activeBlackboardIri} {activeConversationIri} />
-  </div>
-
-  {#if chatEnabled}
-    <div class="chat-overlay" class:hidden={!isChatOpen}>
-      <ChatWindow bind:activeConversationIri />
+  <div class="content-area">
+    <div class="canvas-area">
+      <WidgetManager bind:this={widgetManager} {activeBlackboardIri} {activeConversationIri} chatOpen={chatEnabled && isChatOpen} />
     </div>
-  {/if}
+
+    {#if chatEnabled && isChatOpen}
+      <ChatWindow bind:activeConversationIri bind:isOpen={isChatOpen} />
+    {/if}
+  </div>
 
   {#if showSettings}
     <SettingsPanel onClose={closeSettings} />
@@ -157,20 +168,20 @@
     width: 100vw;
     height: 100vh;
     overflow: hidden;
-    position: relative;
+    display: flex;
+    flex-direction: column;
+    --top-bar-height: calc(0.6rem * 2 + 1.5rem);
   }
 
   .top-bar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
     display: flex;
     align-items: center;
     gap: 0.75rem;
     padding: 0.6rem 1.25rem;
     background: var(--color-surface-1);
     z-index: 200;
+    height: var(--top-bar-height);
+    flex-shrink: 0;
   }
 
   .logo {
@@ -184,29 +195,17 @@
     flex: 1;
   }
 
-  .canvas-area {
-    width: 100%;
-    height: 100%;
-    position: relative;
-    z-index: 1;
-  }
-
-  .chat-overlay {
-    position: fixed;
-    top: 0;
-    right: 0;
-    width: 30%;
-    min-width: 500px;
-    height: 100vh;
-    z-index: 250;
+  .content-area {
+    flex: 1;
     display: flex;
-    flex-direction: column;
-    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s;
+    overflow: hidden;
+    min-height: 0;
   }
 
-  .chat-overlay.hidden {
-    transform: translateX(100%);
-    opacity: 0;
-    pointer-events: none;
+  .canvas-area {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    padding: 3px;
   }
 </style>

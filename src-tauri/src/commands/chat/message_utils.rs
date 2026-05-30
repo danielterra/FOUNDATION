@@ -43,14 +43,14 @@ pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
                 }
             ),
             ContentBlock::CameraRef { .. } => None,
-            ContentBlock::ToolUse { id, name, input } => Some(
+            ContentBlock::ToolUse { id, name, input, .. } => Some(
                 ApiContentBlock::ToolUse {
                     id: id.clone(),
                     name: name.clone(),
                     input: input.clone(),
                 }
             ),
-            ContentBlock::ToolResult { tool_use_id, content, is_error } => Some(
+            ContentBlock::ToolResult { tool_use_id, content, is_error, .. } => Some(
                 ApiContentBlock::ToolResult {
                     tool_use_id: tool_use_id.clone(),
                     content: tool_result_content_to_value(content),
@@ -79,6 +79,8 @@ pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
                     }),
                 }
             ),
+            // Compaction summaries are visual-only UI elements — never sent to the model.
+            ContentBlock::CompactionSummary { .. } => None,
         }
     }).collect();
 
@@ -403,11 +405,22 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
             }
         }
     }
+    // Remove last message if it became empty
     if messages.last().map_or(false, |m| {
         matches!(&m.content, MessageContent::ContentBlocks(b) if b.is_empty())
     }) {
+        log_backend("warn", "[CHAT] Removed last message that became empty");
         messages.pop();
     }
+
+    // Remove any empty messages from the entire history (not just last)
+    messages.retain(|m| {
+        let is_empty = matches!(&m.content, MessageContent::ContentBlocks(b) if b.is_empty());
+        if is_empty {
+            log_backend("warn", "[CHAT] Filtered out empty message from history");
+        }
+        !is_empty
+    });
 }
 
 pub fn response_content_to_blocks(
@@ -438,10 +451,15 @@ pub fn response_content_to_blocks(
     }
 
     for tool_call in tool_calls {
+        let mut input = tool_call.input.clone();
+        let reason = input.as_object_mut()
+            .and_then(|obj| obj.remove("_reason"))
+            .and_then(|v| v.as_str().map(|s| s.chars().take(144).collect::<String>()));
         blocks.push(ContentBlock::ToolUse {
             id: tool_call.id.clone(),
             name: tool_call.name.clone(),
-            input: tool_call.input.clone(),
+            input,
+            reason,
         });
     }
 

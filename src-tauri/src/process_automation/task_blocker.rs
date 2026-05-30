@@ -1,14 +1,13 @@
 use tauri::{AppHandle, Manager};
 
 use crate::owl::{
-    DbExecutor, find_entities_with_property, get_iri_property, replace_all_property_iris,
+    DbExecutor, find_entities_with_property, get_iri_property, get_literal_property,
+    replace_all_property_iris,
 };
-use crate::process_automation::task_scheduler::is_status_descendant_of;
 use crate::commands::log_backend;
 
 const STATUS_PENDING: &str = "foundation:Pending";
 const STATUS_BLOCKED: &str = "foundation:Blocked";
-const STATUS_COMPLETED: &str = "foundation:Completed";
 
 /// If `task_iri` has any active blockers that are not Completed, sets its status to Blocked.
 pub fn check_and_block(conn: &mut rusqlite::Connection, task_iri: &str) {
@@ -27,11 +26,9 @@ pub fn check_and_block(conn: &mut rusqlite::Connection, task_iri: &str) {
             Some(s) => s,
             None => return false,
         };
-        let status = get_iri_property(conn, blocker_iri, "foundation:hasStatus").unwrap_or(None);
-        !status
-            .as_deref()
-            .map(|s| is_status_descendant_of(conn, s, STATUS_COMPLETED))
-            .unwrap_or(false)
+        get_literal_property(conn, blocker_iri, "foundation:result")
+            .unwrap_or(None)
+            .is_none()
     });
 
     if has_active_blocker {
@@ -90,12 +87,9 @@ fn are_all_blockers_completed(conn: &rusqlite::Connection, task_iri: &str) -> Re
             Some(s) => s,
             None => continue,
         };
-        let status = get_iri_property(conn, blocker_iri, "foundation:hasStatus")
-            .map_err(|e| e.to_string())?;
-        let is_done = status
-            .as_deref()
-            .map(|s| is_status_descendant_of(conn, s, STATUS_COMPLETED))
-            .unwrap_or(false);
+        let is_done = get_literal_property(conn, blocker_iri, "foundation:result")
+            .map_err(|e| e.to_string())?
+            .is_some();
         if !is_done {
             return Ok(false);
         }
@@ -125,12 +119,9 @@ pub fn listen_for_blocking(app: AppHandle) {
                     if !is_task {
                         return Ok((false, false));
                     }
-                    let status = get_iri_property(conn, &entity, "foundation:hasStatus")
-                        .map_err(|e| e.to_string())?;
-                    let completed = status
-                        .as_deref()
-                        .map(|s| is_status_descendant_of(conn, s, STATUS_COMPLETED))
-                        .unwrap_or(false);
+                    let completed = get_literal_property(conn, &entity, "foundation:result")
+                        .map_err(|e| e.to_string())?
+                        .is_some();
                     Ok((completed, true))
                 })
                 .await
@@ -174,32 +165,34 @@ mod tests {
         store::assert_triples(conn, triples, "test").expect("insert failed");
     }
 
-    fn task(iri: &str, status: &str) -> Vec<Triple> {
+    fn task_blocked(iri: &str) -> Vec<Triple> {
         vec![
             Triple::new(iri, "rdf:type", Object::Iri("foundation:Task".to_string())),
-            Triple::new(iri, "foundation:hasStatus", Object::Iri(status.to_string())),
+            Triple::new(iri, "foundation:hasStatus", Object::Iri("foundation:Blocked".to_string())),
         ]
     }
 
-    fn blocker_tree(conn: &mut rusqlite::Connection) {
-        // foundation:Completed is its own parent (root)
-        insert(conn, &[Triple::new(
-            "foundation:Completed", "foundation:parentStatus",
-            Object::Iri("foundation:Completed".to_string()),
-        )]);
-        insert(conn, &[Triple::new(
-            "foundation:Pending", "foundation:parentStatus",
-            Object::Iri("foundation:Pending".to_string()),
-        )]);
+    fn task_pending(iri: &str) -> Vec<Triple> {
+        vec![Triple::new(iri, "rdf:type", Object::Iri("foundation:Task".to_string()))]
+    }
+
+    fn task_done(iri: &str) -> Vec<Triple> {
+        vec![
+            Triple::new(iri, "rdf:type", Object::Iri("foundation:Task".to_string())),
+            Triple::new(iri, "foundation:result", Object::Literal {
+                value: "concluído".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+        ]
     }
 
     #[test]
-    fn tarefa_e_desbloqueada_quando_bloqueadora_e_concluida() {
+    fn tarefa_e_desbloqueada_quando_bloqueadora_tem_resultado() {
         let mut conn = setup_test_db();
-        blocker_tree(&mut conn);
 
-        insert(&mut conn, &task("foundation:TaskA", "foundation:Completed"));
-        insert(&mut conn, &task("foundation:TaskB", "foundation:Blocked"));
+        insert(&mut conn, &task_done("foundation:TaskA"));
+        insert(&mut conn, &task_blocked("foundation:TaskB"));
         insert(&mut conn, &[Triple::new(
             "foundation:TaskB", "foundation:blockedBy",
             Object::Iri("foundation:TaskA".to_string()),
@@ -212,27 +205,26 @@ mod tests {
     }
 
     #[test]
-    fn tarefa_com_multiplos_bloqueadores_so_e_desbloqueada_quando_todos_concluidos() {
+    fn tarefa_com_multiplos_bloqueadores_so_e_desbloqueada_quando_todos_tem_resultado() {
         let mut conn = setup_test_db();
-        blocker_tree(&mut conn);
 
-        insert(&mut conn, &task("foundation:TaskA", "foundation:Completed"));
-        insert(&mut conn, &task("foundation:TaskB", "foundation:Pending"));
-        insert(&mut conn, &task("foundation:TaskC", "foundation:Blocked"));
+        insert(&mut conn, &task_done("foundation:TaskA"));
+        insert(&mut conn, &task_pending("foundation:TaskB"));
+        insert(&mut conn, &task_blocked("foundation:TaskC"));
         insert(&mut conn, &[
             Triple::new("foundation:TaskC", "foundation:blockedBy", Object::Iri("foundation:TaskA".to_string())),
             Triple::new("foundation:TaskC", "foundation:blockedBy", Object::Iri("foundation:TaskB".to_string())),
         ]);
 
-        // Conclui A — C não deve ser desbloqueada pois B ainda está Pending
+        // A tem resultado — C não deve ser desbloqueada pois B ainda não tem
         check_and_unblock(&mut conn, "foundation:TaskA");
         let status = get_iri_property(&conn, "foundation:TaskC", "foundation:hasStatus").unwrap();
         assert_eq!(status, Some("foundation:Blocked".to_string()), "C deve permanecer Bloqueada");
 
-        // Conclui B — agora todos os blockers estão Concluídos
+        // B recebe resultado — agora todos os blockers estão concluídos
         insert(&mut conn, &[Triple::new(
-            "foundation:TaskB", "foundation:hasStatus",
-            Object::Iri("foundation:Completed".to_string()),
+            "foundation:TaskB", "foundation:result",
+            Object::Literal { value: "feito".to_string(), datatype: Some("xsd:string".to_string()), language: None },
         )]);
         check_and_unblock(&mut conn, "foundation:TaskB");
         let status = get_iri_property(&conn, "foundation:TaskC", "foundation:hasStatus").unwrap();
@@ -242,26 +234,22 @@ mod tests {
     #[test]
     fn tarefa_sem_bloqueadores_nao_e_afetada_por_check_and_unblock() {
         let mut conn = setup_test_db();
-        blocker_tree(&mut conn);
 
-        insert(&mut conn, &task("foundation:TaskA", "foundation:Completed"));
-        insert(&mut conn, &task("foundation:TaskB", "foundation:Pending"));
-        // TaskB não tem blockedBy
+        insert(&mut conn, &task_done("foundation:TaskA"));
+        insert(&mut conn, &task_pending("foundation:TaskB"));
 
         check_and_unblock(&mut conn, "foundation:TaskA");
 
         let status = get_iri_property(&conn, "foundation:TaskB", "foundation:hasStatus").unwrap();
-        assert_eq!(status, Some("foundation:Pending".to_string()), "B não deve ser alterada");
+        assert!(status.is_none(), "B não deve ser alterada pois não tem blockedBy");
     }
 
     #[test]
     fn tarefa_e_bloqueada_automaticamente_ao_receber_blocked_by() {
         let mut conn = setup_test_db();
-        blocker_tree(&mut conn);
 
-        insert(&mut conn, &task("foundation:TaskA", "foundation:Pending"));
-        insert(&mut conn, &task("foundation:TaskB", "foundation:Pending"));
-        // TaskB recebe blockedBy apontando para TaskA (que não está Concluída)
+        insert(&mut conn, &task_pending("foundation:TaskA"));
+        insert(&mut conn, &task_pending("foundation:TaskB"));
         insert(&mut conn, &[Triple::new(
             "foundation:TaskB", "foundation:blockedBy",
             Object::Iri("foundation:TaskA".to_string()),
@@ -274,12 +262,11 @@ mod tests {
     }
 
     #[test]
-    fn tarefa_nao_e_bloqueada_se_blocker_ja_esta_concluido() {
+    fn tarefa_nao_e_bloqueada_se_blocker_ja_tem_resultado() {
         let mut conn = setup_test_db();
-        blocker_tree(&mut conn);
 
-        insert(&mut conn, &task("foundation:TaskA", "foundation:Completed"));
-        insert(&mut conn, &task("foundation:TaskB", "foundation:Pending"));
+        insert(&mut conn, &task_done("foundation:TaskA"));
+        insert(&mut conn, &task_pending("foundation:TaskB"));
         insert(&mut conn, &[Triple::new(
             "foundation:TaskB", "foundation:blockedBy",
             Object::Iri("foundation:TaskA".to_string()),
@@ -288,6 +275,6 @@ mod tests {
         check_and_block(&mut conn, "foundation:TaskB");
 
         let status = get_iri_property(&conn, "foundation:TaskB", "foundation:hasStatus").unwrap();
-        assert_eq!(status, Some("foundation:Pending".to_string()), "B não deve ser bloqueada pois A já está Concluída");
+        assert!(status.is_none(), "B não deve ser bloqueada pois A já tem resultado");
     }
 }

@@ -174,6 +174,14 @@ pub fn run() {
             commands::ai__save_api_key,
             commands::ai__get_api_key,
             commands::ai__delete_api_key,
+            commands::ai__list_api_calls,
+            commands::ai__list_openrouter_models,
+            commands::ai__ensure_openrouter_model,
+            commands::ai__get_fallback_models,
+            commands::ai__save_fallback_models,
+            commands::ai__validate_provider_key,
+            commands::ai__get_service_base_url,
+            commands::ai__save_service_base_url,
             commands::ai__initialize,
             commands::chat__attach_file,
             commands::chat__get_recent_messages,
@@ -227,7 +235,8 @@ pub fn run() {
             commands::settings__get_foundation_dir,
             commands::settings__save_foundation_dir,
             commands::settings__set_foundation_dir,
-            commands::settings__connect_claude_desktop
+            commands::settings__connect_claude_desktop,
+            commands::recover_database
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

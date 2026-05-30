@@ -37,7 +37,13 @@
 {#if aiStatus}
 	<div class="ai-status-indicator">
 		<div class="ai-status-content">
-			<ThinkingDots />
+			{#if aiStatus.phase === 'tool'}
+				<span class="material-symbols-outlined phase-icon">build</span>
+			{:else if aiStatus.phase === 'prep'}
+				<span class="material-symbols-outlined phase-icon">schedule</span>
+			{:else}
+				<ThinkingDots />
+			{/if}
 			<span class="ai-status-text">{aiStatus.status} ({elapsedSeconds}s)</span>
 		</div>
 		{#if onCancelAI}
@@ -120,6 +126,17 @@
 
 	.cancel-ai-btn .material-symbols-outlined {
 		font-size: 20px;
+	}
+
+	.phase-icon {
+		font-size: 18px;
+		color: var(--color-transition);
+		animation: thinking-pulse 1.5s ease-in-out infinite;
+	}
+
+	@keyframes thinking-pulse {
+		0%, 100% { opacity: 0.7; }
+		50% { opacity: 1; }
 	}
 
 	.ai-status-text {

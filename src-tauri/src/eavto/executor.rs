@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 
-const READ_POOL_SIZE: usize = 6;
+const READ_POOL_SIZE: usize = 20;
 const WAL_TRUNCATE_INTERVAL: u32 = 200;
 const WAL_PASSIVE_INTERVAL: u32 = 50;
 
@@ -102,12 +102,114 @@ impl DbExecutor {
                         std::mem::take(&mut *guard)
                     };
                     drop(old_conns);
-                    let _ = write_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+                    // Retry up to 3× with a brief pause to let in-progress readers finish.
+                    let mut truncated = false;
+                    for attempt in 0..3u8 {
+                        if attempt > 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(20));
+                        }
+                        let ckpt = write_conn.query_row(
+                            "PRAGMA wal_checkpoint(TRUNCATE)",
+                            [],
+                            |row| Ok((row.get::<_, i32>(0)?, row.get::<_, i32>(1)?, row.get::<_, i32>(2)?)),
+                        );
+                        match ckpt {
+                            Ok((0, log, done)) => {
+                                crate::commands::log_backend("debug", &format!(
+                                    "[WAL] TRUNCATE ok (attempt={} log={} done={})", attempt + 1, log, done
+                                ));
+                                truncated = true;
+                                break;
+                            }
+                            Ok((busy, log, done)) => {
+                                crate::commands::log_backend("warn", &format!(
+                                    "[WAL] TRUNCATE busy (attempt={} busy={} log={} done={})", attempt + 1, busy, log, done
+                                ));
+                            }
+                            Err(e) => {
+                                crate::commands::log_backend("warn", &format!(
+                                    "[WAL] TRUNCATE error (attempt={}): {}", attempt + 1, e
+                                ));
+                            }
+                        }
+                    }
+                    if !truncated {
+                        // Fall back to RESTART: resets write position so WAL space is reused
+                        // even if it can't be physically truncated right now.
+                        let _ = write_conn.execute_batch("PRAGMA wal_checkpoint(RESTART);");
+                        crate::commands::log_backend("warn", "[WAL] fell back to RESTART checkpoint");
+                    }
                 } else if write_count % WAL_PASSIVE_INTERVAL == 0 {
-                    let _ = write_conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+                    let ckpt = write_conn.query_row(
+                        "PRAGMA wal_checkpoint(PASSIVE)",
+                        [],
+                        |row| Ok((row.get::<_, i32>(1)?, row.get::<_, i32>(2)?)),
+                    );
+                    if let Ok((log, done)) = ckpt {
+                        crate::commands::log_backend("debug", &format!(
+                            "[WAL] PASSIVE checkpoint log={} done={}", log, done
+                        ));
+                    }
                 }
             }
+            // Runs once as the app exits: asks SQLite to update sqlite_stat1 only
+            // for tables/indexes that accumulated enough new data to be worth it.
+            // Cheap (sub-millisecond when nothing changed significantly) and keeps
+            // query-planner estimates fresh across sessions without a full ANALYZE.
+            let _ = write_conn.execute_batch("PRAGMA optimize;");
         });
+
+        // Idle WAL checkpoint: every 30 s, drain the pool and attempt TRUNCATE even
+        // when no writes are happening. Without this, a large WAL from a busy session
+        // never drains during idle periods, causing slow read-connection startup.
+        {
+            let pool_for_idle = read_pool.clone();
+            let write_tx_idle = write_tx.clone();
+            std::thread::Builder::new()
+                .name("wal-idle-checkpoint".into())
+                .spawn(move || {
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(30));
+                        let pool = pool_for_idle.clone();
+                        let (result_tx, _) = oneshot::channel::<Result<String, String>>();
+                        let sent = write_tx_idle.send(WriteTask {
+                            operation: Box::new(move |conn| {
+                                let old = {
+                                    let mut g = pool.lock().unwrap_or_else(|e| e.into_inner());
+                                    std::mem::take(&mut *g)
+                                };
+                                drop(old);
+                                // Brief pause so in-progress reads can release their WAL marks.
+                                std::thread::sleep(std::time::Duration::from_millis(20));
+                                let r = conn.query_row(
+                                    "PRAGMA wal_checkpoint(TRUNCATE)", [],
+                                    |row| Ok((row.get::<_, i32>(0)?, row.get::<_, i32>(1)?, row.get::<_, i32>(2)?)),
+                                );
+                                match r {
+                                    Ok((0, log, done)) => crate::commands::log_backend("info", &format!(
+                                        "[WAL] Idle TRUNCATE ok (log={} done={})", log, done
+                                    )),
+                                    Ok((_, log, done)) => {
+                                        crate::commands::log_backend("warn", &format!(
+                                            "[WAL] Idle TRUNCATE busy → RESTART (log={} done={})", log, done
+                                        ));
+                                        let _ = conn.execute_batch("PRAGMA wal_checkpoint(RESTART);");
+                                    }
+                                    Err(e) => crate::commands::log_backend("warn", &format!(
+                                        "[WAL] Idle checkpoint error: {}", e
+                                    )),
+                                }
+                                Ok(String::new())
+                            }),
+                            result_tx,
+                        });
+                        if sent.is_err() {
+                            break; // write channel closed — app is shutting down
+                        }
+                    }
+                })
+                .ok();
+        }
 
         Self { write_tx, db_path, notify_tx, read_pool }
     }
@@ -135,6 +237,9 @@ impl DbExecutor {
             let (conn, from_pool) = match conn_opt {
                 Some(c) => (c, true),
                 None => {
+                    // Pool exhausted — open a temporary connection. This requires a WAL scan
+                    // which is expensive when the WAL is large, so pool exhaustion is bad.
+                    crate::commands::log_backend("warn", "[DB] Read pool exhausted — opening temporary connection");
                     let c = Connection::open(&path).map_err(|e| e.to_string())?;
                     c.busy_timeout(std::time::Duration::from_secs(30)).map_err(|e| e.to_string())?;
                     (c, false)
@@ -146,6 +251,10 @@ impl DbExecutor {
             if from_pool {
                 if let Ok(mut guard) = pool.lock() {
                     if guard.len() < READ_POOL_SIZE {
+                        // Release WAL read mark before returning to pool.
+                        // Without this the connection holds its snapshot indefinitely while
+                        // idle, blocking TRUNCATE checkpoints and growing the WAL.
+                        let _ = conn.execute_batch("BEGIN DEFERRED; COMMIT;");
                         guard.push(conn);
                     }
                 }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use crate::owl::{self, Class, Individual, Property, Connection};
 use super::{EntityData, PropertyValue, GraphNode, GraphLink, StatusInfo, FileInfo,
-            resolve_unit_label, resolve_entity_status, resolve_status_for_entity};
+            resolve_unit_label, resolve_entity_status};
 
 pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, u8), individual: Individual) -> Result<EntityData, String> {
     let t0 = std::time::Instant::now();
@@ -77,8 +77,53 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             }
         }
     }
+    // Also include IRI-valued property objects so the property loop can resolve
+    // labels/icons from the cache instead of making one Thing::get call per value.
+    for (_, value_obj) in &individual.properties {
+        if let Some(iri) = value_obj.as_iri() {
+            thing_iris.insert(iri.to_string());
+        }
+    }
     let thing_iris_vec: Vec<String> = thing_iris.into_iter().collect();
     let thing_cache = crate::owl::Thing::get_batch(conn, &thing_iris_vec);
+
+    // Pre-fetch hasStatus for all forward IRI-valued properties in one batch,
+    // replacing per-property resolve_status_for_entity calls that each load the
+    // entire target entity just to find one IRI value.
+    let object_value_iris: Vec<String> = individual.properties.iter()
+        .filter_map(|(_, v)| v.as_iri())
+        .map(|s| s.to_string())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let fwd_status_iris = crate::eavto::query::get_first_iri_property_batch(
+        conn, &object_value_iris, "foundation:hasStatus",
+    ).unwrap_or_default();
+    let unique_fwd_status: Vec<String> = fwd_status_iris.values()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut fwd_status_info: HashMap<String, StatusInfo> = HashMap::new();
+    for status_iri in unique_fwd_status {
+        if crate::owl::is_instance_of(conn, &status_iri, "foundation:Status") {
+            let status_thing = thing_cache.get(&status_iri)
+                .cloned()
+                .unwrap_or_else(|| crate::owl::Thing::get(conn, &status_iri));
+            let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri);
+            fwd_status_info.insert(status_iri.clone(), StatusInfo {
+                iri: status_iri,
+                label: status_thing.label,
+                icon,
+                color,
+            });
+        }
+    }
+    let fwd_value_to_status: HashMap<String, StatusInfo> = fwd_status_iris.into_iter()
+        .filter_map(|(entity_iri, status_iri)| {
+            fwd_status_info.get(&status_iri).cloned().map(|info| (entity_iri, info))
+        })
+        .collect();
 
     let mut properties = Vec::new();
     for (property_iri, value_obj) in &individual.properties {
@@ -123,8 +168,10 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         };
 
         let (value_label, value_icon, datatype, value_status) = if is_object_property {
-            let target_thing = crate::owl::Thing::get(conn, &value);
-            let status = resolve_status_for_entity(conn, &value);
+            let target_thing = thing_cache.get(&value)
+                .cloned()
+                .unwrap_or_else(|| crate::owl::Thing::get(conn, &value));
+            let status = fwd_value_to_status.get(&value).cloned();
             (Some(target_thing.label), target_thing.icon, None, status)
         } else {
             let stored_dt = value_obj.datatype().map(|s| s.to_string());

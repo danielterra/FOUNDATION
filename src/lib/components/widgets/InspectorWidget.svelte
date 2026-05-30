@@ -60,7 +60,7 @@
     loadDebounceTimer = setTimeout(() => {
       loadDebounceTimer = null;
       loadEntity();
-    }, 20);
+    }, 300);
   }
 
   async function loadEntity() {
@@ -94,7 +94,7 @@
       console.debug(`[INSPECTOR] ${entityId} defs+automations=${Math.round(t3 - t2)}ms total=${Math.round(t3 - t0)}ms`);
 
       widgetDefinitions = defsResult.status === 'fulfilled'
-        ? defsResult.value.filter(d => d.widget_type !== 'inspector')
+        ? defsResult.value.filter(d => !['inspector', 'notification_center', 'ai_call_history'].includes(d.widget_type))
         : [];
 
       applicableAutomations = automationsResult.status === 'fulfilled'

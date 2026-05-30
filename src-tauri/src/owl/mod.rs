@@ -22,10 +22,32 @@ pub use property::{Property, PropertyType, DomainLabel};
 pub use individual::Individual;
 pub use thing::Thing;
 pub use crate::eavto::Object;
+pub use crate::eavto::Triple;
 pub use crate::eavto::Connection;
 pub use crate::eavto::DbExecutor;
 pub use crate::eavto::initialize_with_progress;
 pub use crate::eavto::get_stats;
+
+/// Append triples without retracting existing (subject, predicate) pairs.
+/// Wraps `eavto::store::append_triples` so that `commands/` does not import `eavto/` directly.
+pub fn batch_insert_triples(conn: &mut Connection, triples: &[Triple], origin: &str) -> std::result::Result<(), String> {
+    crate::eavto::store::append_triples(conn, triples, origin)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Assert triples (retracts existing same-predicate values first).
+/// Wraps `eavto::store::assert_triples` so that `commands/` does not import `eavto/` directly.
+pub fn assert_raw_triples(conn: &mut Connection, triples: &[Triple], origin: &str) -> std::result::Result<i64, String> {
+    crate::eavto::store::assert_triples(conn, triples, origin)
+        .map_err(|e| e.to_string())
+}
+
+/// Check whether any tool_result for the given tool_use_id already exists in the conversation.
+/// Returns the message IRI of the first matching result, or None.
+pub fn find_tool_result_message_iri(conn: &Connection, tool_use_id: &str, conversation_iri: &str) -> Option<String> {
+    crate::eavto::query::find_tool_result_message_iri(conn, tool_use_id, conversation_iri)
+}
 
 pub use individual::{
     is_system_locked, set_system_locked, check_system_locked,

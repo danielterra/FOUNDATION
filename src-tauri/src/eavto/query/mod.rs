@@ -9,6 +9,39 @@ use super::query_result_type::QueryResult;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// Returns the IRI of the first AIConversationMessage in `conversation_iri` that
+/// contains a ToolResultBlock whose `anthropic:resultOf` points to the ToolUseBlock
+/// identified by `tool_use_id`. Used to detect duplicate tool_result storage on recovery.
+pub fn find_tool_result_message_iri(
+    conn: &Connection,
+    tool_use_id: &str,
+    conversation_iri: &str,
+) -> Option<String> {
+    conn.query_row(
+        "SELECT t_msg.subject
+         FROM triples t_use_id
+         JOIN triples t_result_of
+           ON t_result_of.predicate = 'anthropic:resultOf'
+          AND t_result_of.object = t_use_id.subject
+          AND t_result_of.retracted = 0
+         JOIN triples t_has_block
+           ON t_has_block.predicate = 'foundation:hasContentBlock'
+          AND t_has_block.object = t_result_of.subject
+          AND t_has_block.retracted = 0
+         JOIN triples t_msg
+           ON t_msg.subject = t_has_block.subject
+          AND t_msg.predicate = 'foundation:partOfConversation'
+          AND t_msg.object = ?2
+          AND t_msg.retracted = 0
+         WHERE t_use_id.predicate = 'anthropic:toolUseId'
+           AND t_use_id.object_value = ?1
+           AND t_use_id.retracted = 0
+         LIMIT 1",
+        rusqlite::params![tool_use_id, conversation_iri],
+        |row| row.get(0),
+    ).ok()
+}
+
 /// SQL fragment that ensures the row is the latest assertion for its
 /// (subject, predicate) group — i.e., no newer tx exists for the same group.
 const AND_IS_CURRENT: &str =
@@ -558,15 +591,23 @@ pub fn batch_load_triples_for_subjects(
         return Ok(std::collections::HashMap::new());
     }
     let placeholders = subjects.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    // Window function (single pass over the filtered rows) instead of a correlated subquery
+    // per row — avoids N re-executions of the inner MAX query when batching many subjects.
     let sql = format!(
         "SELECT subject, predicate, object, object_value, object_datatype, object_language,
                 object_type, object_number, object_integer, object_boolean,
                 tx, origin_id, retracted, created_at
-         FROM triples t
-         WHERE t.subject IN ({}) AND t.retracted = 0
-         {}
-         ORDER BY t.subject, t.predicate, t.tx DESC",
-        placeholders, AND_IS_CURRENT
+         FROM (
+             SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                    object_type, object_number, object_integer, object_boolean,
+                    tx, origin_id, retracted, created_at,
+                    MAX(tx) OVER (PARTITION BY subject, predicate) AS max_tx
+             FROM triples
+             WHERE subject IN ({}) AND retracted = 0
+         )
+         WHERE tx = max_tx
+         ORDER BY subject, predicate, tx DESC",
+        placeholders
     );
     let params: Vec<SqlValue> = subjects.iter().map(|s| SqlValue::Text(s.clone())).collect();
     let mut stmt = conn.prepare(&sql)?;

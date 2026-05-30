@@ -182,6 +182,7 @@ impl LocalProvider {
             thinking_blocks: vec![],
             stop_reason: Some("tool_use".to_string()),
             usage,
+            model_used: None,
         })
     }
 }

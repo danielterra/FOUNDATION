@@ -26,6 +26,8 @@ pub struct AutomationGraphNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assigned_agent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_agent_iri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub invokes_process: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
@@ -161,17 +163,18 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                 None => (None, None, None),
             };
 
-            let assigned_agent = if raw_type == "automation_AgentTask" {
+            let (assigned_agent, assigned_agent_iri) = if raw_type == "automation_AgentTask" {
                 let agent_iri = get_iri_property(conn, &node_iri, "foundation:assignedAgent")
                     .map_err(|e| e.to_string())?;
                 if let Some(iri) = agent_iri {
-                    get_literal_property(conn, &iri, rdfs::LABEL)
-                        .map_err(|e| e.to_string())?
+                    let label = get_literal_property(conn, &iri, rdfs::LABEL)
+                        .map_err(|e| e.to_string())?;
+                    (label, Some(iri))
                 } else {
-                    None
+                    (None, None)
                 }
             } else {
-                None
+                (None, None)
             };
 
             let invokes_process = if raw_type == "automation_SubProcess" {
@@ -350,6 +353,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                 node_type,
                 label,
                 assigned_agent,
+                assigned_agent_iri,
                 invokes_process,
                 status,
                 status_color,

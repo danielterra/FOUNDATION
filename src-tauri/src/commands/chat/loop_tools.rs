@@ -50,13 +50,21 @@ pub fn build_system_prompt(
         conversation_id
     );
 
+    let tool_reason_instruction = "## Tool calls\n\
+        Every tool call MUST include a `_reason` field in its input JSON — a brief description \
+        (max 144 characters) of what you are doing and why. Examples: \
+        'Buscando feature por label...', 'Criando nova User Story...', \
+        'Verificando cardinality constraints...'. This field is stripped before execution \
+        and shown to the user as context.";
+
     let base = format!(
-        "{}\n\n{}\n\n{}\n\n{}\n\n{}",
+        "{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
         foundation_context,
         agent_config.base_system_prompt,
         widget_context,
         agent_config.system_prompt,
         delegation_section,
+        tool_reason_instruction,
     );
     match camera_count {
         Some(n) => format!(

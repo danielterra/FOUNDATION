@@ -11,6 +11,7 @@ mod loop_tools;
 mod engine;
 mod trace;
 mod foundation_context;
+pub mod compaction;
 
 pub use tool_execution::execute_tools_from_message;
 pub use cancellation::{AiCancellationState, ConversationProcessingState};
@@ -145,10 +146,17 @@ pub async fn chat__send_and_reply(
     // IRIs of existing File entities to link via hasAttachment (regular attachments)
     let mut existing_file_iris: Vec<String> = Vec::new();
 
+    app.emit("ai-status", serde_json::json!({
+        "status": "Salvando mensagem...", "phase": "prep", "conversationId": conversation_id
+    })).ok();
+
     let user_msg_iri = if attachment_iris.is_some() || camera_images.is_some() {
         let mut blocks: Vec<ContentBlock> = Vec::new();
 
         if let Some(ref frames) = camera_images {
+            app.emit("ai-status", serde_json::json!({
+                "status": "Processando imagens...", "phase": "prep", "conversationId": conversation_id
+            })).ok();
             let capture_ts = chrono::Utc::now().timestamp_millis();
             for (i, frame_data) in frames.iter().enumerate() {
                 let raw = base64::engine::general_purpose::STANDARD.decode(frame_data).unwrap_or_default();
@@ -164,6 +172,9 @@ pub async fn chat__send_and_reply(
         }
 
         if let Some(ref iris) = attachment_iris {
+            app.emit("ai-status", serde_json::json!({
+                "status": "Processando anexos...", "phase": "prep", "conversationId": conversation_id
+            })).ok();
             let mut store = PENDING_ATTACHMENTS.lock().await;
             for iri in iris {
                 if let Some(att) = store.remove(iri) {
@@ -237,6 +248,10 @@ pub async fn chat__send_and_reply(
     }
 
     app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
+
+    app.emit("ai-status", serde_json::json!({
+        "status": "Consultando subconsciente...", "phase": "prep", "conversationId": conversation_id
+    })).ok();
 
     let content_for_subconscious = content.clone();
     let exclude_iri = user_msg_iri.clone();
@@ -405,12 +420,12 @@ pub async fn chat__get_recent_messages(
 
         // --- walk messages and assemble display units ---
 
-        // Pre-build map: tool_use_id → (content, is_error)
-        let mut all_tool_results: std::collections::HashMap<String, (String, bool)> = std::collections::HashMap::new();
+        // Pre-build map: tool_use_id → (content, is_error, duration_ms)
+        let mut all_tool_results: std::collections::HashMap<String, (String, bool, Option<u64>)> = std::collections::HashMap::new();
         for iri in &message_iris {
             for block in get_content_blocks(conn, iri) {
-                if let ContentBlock::ToolResult { tool_use_id, content, is_error } = block {
-                    all_tool_results.insert(tool_use_id, (content, is_error.unwrap_or(false)));
+                if let ContentBlock::ToolResult { tool_use_id, content, is_error, duration_ms } = block {
+                    all_tool_results.insert(tool_use_id, (content, is_error.unwrap_or(false), duration_ms));
                 }
             }
         }
@@ -497,7 +512,7 @@ pub async fn chat__get_recent_messages(
                         });
 
                         if let Some((q_id, question, question_type, options)) = question_block {
-                            let answer: Option<String> = all_tool_results.get(&q_id).map(|(content, _)| content.clone());
+                            let answer: Option<String> = all_tool_results.get(&q_id).map(|(content, _, _)| content.clone());
                             units.push(serde_json::json!({
                                 "type": "question",
                                 "iri": iri,
@@ -512,16 +527,18 @@ pub async fn chat__get_recent_messages(
 
                     } else if has_tool_use {
                         let tool_calls: Vec<serde_json::Value> = blocks.iter().filter_map(|b| {
-                            let ContentBlock::ToolUse { id, name, input } = b else { return None; };
+                            let ContentBlock::ToolUse { id, name, input, reason } = b else { return None; };
                             if name == "ask_question" { return None; }
-                            let (result, is_error) = all_tool_results.get(id)
-                                .map(|(c, e)| (Some(c.clone()), *e))
-                                .unwrap_or((None, false));
+                            let (result, is_error, duration_ms) = all_tool_results.get(id)
+                                .map(|(c, e, d)| (Some(c.clone()), *e, *d))
+                                .unwrap_or((None, false, None));
                             Some(serde_json::json!({
                                 "name": name,
                                 "input": input,
                                 "result": result,
                                 "is_error": is_error,
+                                "reason": reason,
+                                "duration_ms": duration_ms,
                             }))
                         }).collect();
 
@@ -579,6 +596,20 @@ pub async fn chat__get_recent_messages(
                             "input_tokens": input_tokens,
                             "output_tokens": output_tokens,
                             "estimated_cost": estimated_cost,
+                        }));
+                    }
+                }
+
+                "compaction" => {
+                    let text = blocks.iter().find_map(|b| {
+                        if let ContentBlock::CompactionSummary { text } = b { Some(text.clone()) } else { None }
+                    }).unwrap_or_default();
+                    if !text.is_empty() {
+                        units.push(serde_json::json!({
+                            "type": "compaction",
+                            "iri": iri,
+                            "text": text,
+                            "timestamp": timestamp,
                         }));
                     }
                 }
@@ -665,6 +696,10 @@ pub async fn chat__edit_and_retry(
 ) -> Result<Vec<serde_json::Value>, String> {
     let _cancel_rx = cancellation.begin(&conversation_id);
 
+    app.emit("ai-status", serde_json::json!({
+        "status": "Editando mensagem...", "phase": "prep", "conversationId": conversation_id
+    })).ok();
+
     let msg_timestamp = executor.read(move |conn| {
         let ind = Individual::get(conn, &message_iri)
             .map_err(|e| format!("Failed to load message: {}", e))?
@@ -727,7 +762,7 @@ pub async fn chat__edit_and_retry(
     run_conversation_from_current_state(app_clone, executor_clone, conversation_id.clone(), &cancellation, false).await?;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
-    let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
+    let (history, _) = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
     for msg in history.iter().rev() {
         if msg.role == "assistant" && msg.timestamp > timestamp {
             response_messages.push(serde_json::json!({
@@ -752,6 +787,10 @@ pub async fn chat__retry_from_message(
     cancellation: State<'_, CancellationState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let _cancel_rx = cancellation.begin(&conversation_id);
+
+    app.emit("ai-status", serde_json::json!({
+        "status": "Preparando retry...", "phase": "prep", "conversationId": conversation_id
+    })).ok();
 
     let message_iri_for_sc = message_iri.clone();
     let (msg_timestamp, is_user_message) = executor.read(move |conn| {
@@ -804,7 +843,7 @@ pub async fn chat__retry_from_message(
     run_conversation_from_current_state(app_clone, executor_clone, conversation_id.clone(), &cancellation, false).await?;
 
     let max_tokens = get_max_input_tokens(&executor).await?;
-    let history = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
+    let (history, _) = load_conversation_history(&executor, &conversation_id, max_tokens).await?;
     let mut response_messages = Vec::new();
     for msg in history.iter().rev() {
         if msg.role == "assistant" && msg.timestamp > msg_timestamp {
@@ -861,7 +900,7 @@ pub async fn chat__recover_pending_tools(
 
     super::log_backend("info", &format!("[RECOVERY] Most recent conversation: {}", conv_id));
 
-    let history = load_conversation_history(&executor, &conv_id, max_tokens).await?;
+    let (history, _) = load_conversation_history(&executor, &conv_id, max_tokens).await?;
 
     super::log_backend("info", &format!(
         "[RECOVERY] Loaded {} messages from history", history.len()
@@ -930,7 +969,7 @@ pub async fn chat__recover_pending_tools(
             }).await?;
             app.emit("chat-message-added", serde_json::json!({"conversationId": conv_id})).ok();
         } else {
-            let (tool_result_msg_iri, _) = execute_tools_from_message(
+            let (tool_result_msg_iri, _, _) = execute_tools_from_message(
                 &executor,
                 &app,
                 &conv_id,
@@ -969,6 +1008,7 @@ pub async fn chat__dismiss_question(
         tool_use_id: tool_use_id.clone(),
         content: "[Question dismissed by user]".to_string(),
         is_error: None,
+        duration_ms: None,
     }];
     let result_json = serde_json::to_string(&result_blocks)
         .map_err(|e| format!("Failed to serialize dismiss result: {}", e))?;
@@ -997,6 +1037,7 @@ pub async fn chat__answer_question(
         tool_use_id: tool_use_id.clone(),
         content: answer_str,
         is_error: None,
+        duration_ms: None,
     }];
     let result_json = serde_json::to_string(&result_blocks)
         .map_err(|e| format!("Failed to serialize answer: {}", e))?;

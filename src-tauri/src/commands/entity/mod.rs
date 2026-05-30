@@ -853,11 +853,6 @@ pub(super) fn resolve_entity_status(conn: &Connection, properties: &[PropertyVal
     None
 }
 
-pub(super) fn resolve_status_for_entity(conn: &Connection, entity_iri: &str) -> Option<StatusInfo> {
-    owl::get_entity_status_info(conn, entity_iri)
-        .map(|(iri, label, color, icon)| StatusInfo { iri, label, icon, color })
-}
-
 fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class: Class) -> Result<EntityData, String> {
     let (group_class, _group_individual, group_literal) = groups;
 

@@ -6,6 +6,8 @@ const DEFAULT_TIMEOUT_SECS: u64 = 900;
 pub struct AgentConfig {
     pub api_key: String,
     pub is_local: bool,
+    pub base_url: String,
+    pub fallback_models: Vec<String>,
     pub model_identifier: String,
     pub base_system_prompt: String,
     pub system_prompt: String,
@@ -22,7 +24,8 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
 
     let service_iri = crate::owl::get_iri_property(conn, &agent_iri, "foundation:usesService")
         .map_err(|e| format!("Failed to get service for agent: {}", e))?
-        .ok_or_else(|| format!("Agent {} has no usesService configured.", agent_iri))?;
+        .or_else(|| get_ai_service_iri(conn).ok().flatten())
+        .ok_or_else(|| format!("Agent {} has no usesService and no default service configured.", agent_iri))?;
 
     let (api_key, is_local) = match crate::owl::get_iri_property(conn, &service_iri, "foundation:apiKey")
         .map_err(|e| format!("Failed to get apiKey from service: {}", e))?
@@ -36,9 +39,19 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
         None => (String::new(), true),
     };
 
+    let base_url = crate::owl::get_literal_property(conn, &service_iri, "foundation:apiBaseUrl")
+        .unwrap_or_default()
+        .unwrap_or_default();
+
+    let fallback_models: Vec<String> = crate::owl::get_literal_property(conn, &service_iri, "foundation:fallbackModelIdentifiers")
+        .unwrap_or_default()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+
     let model_iri = crate::owl::get_iri_property(conn, &agent_iri, "foundation:usesModel")
         .map_err(|e| format!("Failed to get model for agent: {}", e))?
-        .ok_or_else(|| format!("Agent {} has no usesModel configured.", agent_iri))?;
+        .or_else(|| get_ai_model_iri(conn).ok().flatten())
+        .ok_or_else(|| format!("Agent {} has no usesModel and no default model configured.", agent_iri))?;
 
     let model_identifier = crate::owl::get_literal_property(conn, &model_iri, "foundation:modelIdentifier")
         .map_err(|e| format!("Failed to get modelIdentifier: {}", e))?
@@ -92,6 +105,8 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
     Ok(AgentConfig {
         api_key,
         is_local,
+        base_url,
+        fallback_models,
         model_identifier,
         base_system_prompt,
         system_prompt,

@@ -35,9 +35,10 @@ function readLastLines(filePath, n) {
   return allLines.slice(-n - 1).join('\n');
 }
 
-const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const now = new Date().toLocaleString('sv-SE', { timeZone: tz }).replace(',', '').trim();
 console.log('=== FOUNDATION Application Logs ===');
-console.log(`Current date/time: ${now}`);
+console.log(`Current date/time: ${now} (${tz})`);
 console.log(watch ? `Showing last ${lines} lines (watching for changes...)` : `Showing last ${lines} lines`);
 console.log('===================================\n');
 

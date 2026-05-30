@@ -28,7 +28,7 @@
   function openTaskInspector(taskIri: string) {
     invoke('widget_blackboard__add_widget', {
       widgetType: 'inspector', entityId: taskIri,
-      position: null, size: null, conversationId: null
+      position: null, size: null, conversationId: appState.activeConversationIri ?? null
     }).catch(e => console.error('[toast] Failed to open inspector:', e));
   }
 

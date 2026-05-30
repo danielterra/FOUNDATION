@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { fly } from 'svelte/transition';
@@ -14,8 +14,9 @@
   import GraphWidget from './GraphWidget.svelte';
   import AIConversationWidget from './AIConversationWidget.svelte';
   import NotificationCenterWidget from './NotificationCenterWidget.svelte';
+  import AICallHistoryWidget from './AICallHistoryWidget.svelte';
 
-  let { activeBlackboardIri = null, activeConversationIri = null } = $props();
+  let { activeBlackboardIri = null, activeConversationIri = null, chatOpen = false } = $props();
 
   const BASE_WIDGET_Z_INDEX = 100;
   const WIDGET_FLY_DURATION = 600;
@@ -23,6 +24,7 @@
   const MIN_WIDGET_WIDTH = 200;
   const MIN_WIDGET_HEIGHT = 100;
   const TOP_BAR_HEIGHT = 44;
+  const CANVAS_PADDING = 3;
 
   let widgets = $state([]);
   let unlisteners = [];
@@ -43,10 +45,10 @@
   }
 
   function constrainToBounds(position, size, displayHeight) {
-    const minX = 0;
-    const minY = TOP_BAR_HEIGHT;
-    const maxX = viewportWidth - size.width;
-    const maxY = viewportHeight - (displayHeight ?? size.height);
+    const minX = CANVAS_PADDING;
+    const minY = CANVAS_PADDING;
+    const maxX = viewportWidth - size.width - CANVAS_PADDING;
+    const maxY = viewportHeight - (displayHeight ?? size.height) - CANVAS_PADDING;
 
     return {
       x: Math.max(minX, Math.min(maxX, position.x)),
@@ -59,8 +61,9 @@
   }
 
   function updateViewportSize() {
-    viewportWidth = window.innerWidth;
-    viewportHeight = window.innerHeight;
+    const chatWidth = chatOpen ? Math.max(window.innerWidth * 0.3, 500) : 0;
+    viewportWidth = window.innerWidth - chatWidth - (CANVAS_PADDING * 2);
+    viewportHeight = window.innerHeight - TOP_BAR_HEIGHT - (CANVAS_PADDING * 2);
 
     widgets = widgets.map(w => {
       const constrainedSize = constrainSize(w.size);
@@ -99,6 +102,13 @@
 
   $effect(() => {
     loadWidgets(activeBlackboardIri);
+  });
+
+  // Use untrack to prevent infinite loop - we only want to react to chatOpen changes,
+  // not to the widgets array mutations caused by updateViewportSize
+  $effect(() => {
+    chatOpen;
+    untrack(() => updateViewportSize());
   });
 
   function bringToFront(widgetId) {
@@ -350,6 +360,8 @@
       <AIConversationWidget widgetId={widget.id} entityId={widget.entity_id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {:else if widget.widget_type === 'notification_center'}
       <NotificationCenterWidget widgetId={widget.id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
+    {:else if widget.widget_type === 'ai_call_history'}
+      <AICallHistoryWidget widgetId={widget.id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {/if}
   </div>
 {/each}

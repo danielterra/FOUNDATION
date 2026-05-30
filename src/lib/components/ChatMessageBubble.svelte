@@ -277,6 +277,12 @@
 									{hasResult ? (tc.is_error ? 'error' : 'check_circle') : 'pending'}
 								</span>
 								<span class="tool-chip-name">{tc.name}</span>
+								{#if tc.reason}
+									<span class="tool-chip-reason">{tc.reason}</span>
+								{/if}
+								{#if tc.duration_ms != null}
+									<span class="tool-chip-duration">{(tc.duration_ms / 1000).toFixed(1)}s</span>
+								{/if}
 							</button>
 						{/each}
 					</div>
@@ -288,6 +294,14 @@
 					{isLast}
 					{conversationId}
 				/>
+			{:else if unit.type === 'compaction'}
+				<div class="compaction-bubble">
+					<span class="material-symbols-outlined compaction-icon">compress</span>
+					<div class="compaction-content">
+						<span class="compaction-label">Histórico compactado</span>
+						<div class="compaction-text">{unit.text}</div>
+					</div>
+				</div>
 			{/if}
 
 			<div class="message-bubble-footer">
@@ -603,6 +617,25 @@
 	.tool-chip-summary.success .tool-chip-icon { color: var(--color-success); opacity: 1; }
 	.tool-chip-summary.error .tool-chip-icon { color: var(--color-error); opacity: 1; }
 	.tool-chip-summary.pending .tool-chip-icon { color: var(--color-transition); opacity: 1; animation: thinking-pulse 1.5s infinite ease-in-out; }
+
+	.tool-chip-reason {
+		font-size: 11px;
+		opacity: 0.6;
+		margin-left: 2px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 200px;
+	}
+
+	.tool-chip-duration {
+		font-size: 10px;
+		opacity: 0.5;
+		margin-left: 4px;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+
 	.tool-chip-summary.pending .tool-chip-name { color: var(--color-transition); animation: thinking-pulse 1.5s infinite ease-in-out; }
 
 	.tool-chip-name {
@@ -642,5 +675,48 @@
 
 	.subconscious-summary-text {
 		font-weight: 500;
+	}
+
+	.compaction-bubble {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 10px 14px;
+		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+		border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
+		border-radius: 10px;
+		width: 100%;
+	}
+
+	.compaction-icon {
+		font-size: 18px;
+		color: var(--color-accent);
+		flex-shrink: 0;
+		margin-top: 1px;
+		font-variation-settings: 'FILL' 1;
+	}
+
+	.compaction-content {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 0;
+	}
+
+	.compaction-label {
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--color-accent);
+		opacity: 0.8;
+	}
+
+	.compaction-text {
+		font-size: 13px;
+		color: var(--color-text-secondary);
+		line-height: 1.5;
+		white-space: pre-wrap;
+		word-break: break-word;
 	}
 </style>
