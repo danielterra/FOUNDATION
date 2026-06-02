@@ -16,6 +16,7 @@ use rusqlite::Connection;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{mpsc, oneshot};
 
 const READ_POOL_SIZE: usize = 100;
@@ -31,6 +32,8 @@ pub struct DbExecutor {
     /// Sends (subject_predicates, iri_objects) written by each transaction so callers can emit events.
     notify_tx: Option<mpsc::UnboundedSender<(HashMap<String, Vec<String>>, Vec<String>)>>,
     read_pool: Arc<Mutex<Vec<Connection>>>,
+    /// Cumulative count of temporary connections opened due to pool exhaustion.
+    temp_conn_count: Arc<AtomicUsize>,
 }
 
 /// A write task to be executed sequentially
@@ -211,7 +214,7 @@ impl DbExecutor {
                 .ok();
         }
 
-        Self { write_tx, db_path, notify_tx, read_pool }
+        Self { write_tx, db_path, notify_tx, read_pool, temp_conn_count: Arc::new(AtomicUsize::new(0)) }
     }
 
     /// Create an executor backed by an in-memory database (for CI/test use only).
@@ -230,21 +233,27 @@ impl DbExecutor {
     {
         let path = self.db_path.clone();
         let pool = self.read_pool.clone();
+        let temp_counter = self.temp_conn_count.clone();
 
         tokio::task::spawn_blocking(move || {
-            let conn_opt = pool.lock().ok().and_then(|mut g| g.pop());
+            let (conn_opt, pool_size) = pool.lock()
+                .map(|mut g| { let c = g.pop(); let sz = g.len(); (c, sz) })
+                .unwrap_or((None, 0));
 
             let (conn, from_pool) = match conn_opt {
                 Some(c) => (c, true),
                 None => {
-                    // Pool exhausted â€” open a temporary connection. This requires a WAL scan
-                    // which is expensive when the WAL is large, so pool exhaustion is bad.
-                    crate::diagnostics::log_backend("warn", "[DB] Read pool exhausted â€” opening temporary connection");
+                    let temp_total = temp_counter.fetch_add(1, Ordering::Relaxed) + 1;
+                    crate::diagnostics::log_backend(
+                        “warn”,
+                        &format!(“[DB] Read pool exhausted (pool=0/{READ_POOL_SIZE}, temp_total={temp_total}) -- opening temporary connection”),
+                    );
                     let c = Connection::open(&path).map_err(|e| e.to_string())?;
                     c.busy_timeout(std::time::Duration::from_secs(30)).map_err(|e| e.to_string())?;
                     (c, false)
                 }
             };
+            let _ = pool_size;
 
             let result = operation(&conn);
 
@@ -291,6 +300,7 @@ impl Clone for DbExecutor {
             db_path: self.db_path.clone(),
             notify_tx: self.notify_tx.clone(),
             read_pool: self.read_pool.clone(),
+            temp_conn_count: self.temp_conn_count.clone(),
         }
     }
 }
