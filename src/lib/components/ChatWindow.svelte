@@ -1,6 +1,7 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
 	import { onMount, tick } from 'svelte';
+	import { createEntitySubscription } from '$lib/realtime/subscriptions';
 	import { marked } from 'marked';
 	import Card from './Card.svelte';
 	import ChatAttachmentPreview from './ChatAttachmentPreview.svelte';
@@ -133,6 +134,50 @@
 		}
 	});
 
+	// Parity with widgets: the chat subscribes to its active conversation IRI through the
+	// pub/sub bus. Each new AIConversationMessage writes foundation:partOfConversation
+	// pointing at the conversation, surfacing as an entity-referenced event for that IRI.
+	const conversationSub = createEntitySubscription(async (event) => {
+		if (event.type !== 'referenced') return;
+		if (!activeConversationIri) return;
+		if (event.entityId !== activeConversationIri) return;
+
+		console.debug(`[CHAT] entity-referenced(${activeConversationIri}) → reload messages`);
+		const version = ++loadMessagesVersion;
+		const result = await invoke('chat__get_recent_messages', {
+			limit: messageLimit,
+			conversationId: activeConversationIri
+		});
+		if (version !== loadMessagesVersion) return;
+
+		// Only clear streaming when the incoming result already contains a new
+		// non-empty assistant text — prevents intermediate writes (tool-results,
+		// log_api_call) from wiping streaming text before the real response is saved.
+		// messages is always updated so tool_use results appear immediately.
+		const lastIncoming = result.messages.at(-1);
+		const lastCurrent  = messages.at(-1);
+		const hasNewAssistantText =
+			lastIncoming?.type === 'text' &&
+			!!lastIncoming?.text &&
+			lastIncoming?.iri !== lastCurrent?.iri;
+		// Also clear when a new tool_use round lands — the agent completed a
+		// think+speak+act cycle and the next think phase must start fresh.
+		const hasNewToolUse =
+			lastIncoming?.type === 'tool_use' &&
+			lastIncoming?.iri !== lastCurrent?.iri;
+		if (!streamingSpeak || hasNewAssistantText || hasNewToolUse) {
+			clearStreaming();
+		}
+		hasMoreMessages = result.messages.length === messageLimit;
+		messages = result.messages;
+		scrollToBottom();
+		await loadConversations();
+	});
+
+	$effect(() => {
+		conversationSub.setIris(activeConversationIri ? [activeConversationIri] : []);
+	});
+
 	onMount(async () => {
 		requestLocation();
 
@@ -181,48 +226,6 @@
 			}
 		});
 
-		// entity-referenced fires (via the ontology notification pipeline) every time a new
-		// AIConversationMessage is created — because each message writes a
-		// foundation:partOfConversation triple that points to the conversation IRI, which
-		// lands in WRITTEN_IRI_OBJECTS and is emitted as entity-referenced.
-		// This means the chat stays in sync with the ontology regardless of which view the
-		// user is looking at when the engine runs.
-		const unlistenMessages = await listen('entity-referenced', async (event) => {
-			if (!activeConversationIri) return;
-			if (event.payload?.entityId !== activeConversationIri) return;
-
-			console.debug(`[CHAT] entity-referenced(${activeConversationIri}) → reload messages`);
-			const version = ++loadMessagesVersion;
-			const result = await invoke('chat__get_recent_messages', {
-				limit: messageLimit,
-				conversationId: activeConversationIri
-			});
-			if (version !== loadMessagesVersion) return;
-
-			// Only clear streaming when the incoming result already contains a new
-			// non-empty assistant text — prevents intermediate writes (tool-results,
-			// log_api_call) from wiping streaming text before the real response is saved.
-			// messages is always updated so tool_use results appear immediately.
-			const lastIncoming = result.messages.at(-1);
-			const lastCurrent  = messages.at(-1);
-			const hasNewAssistantText =
-				lastIncoming?.type === 'text' &&
-				!!lastIncoming?.text &&
-				lastIncoming?.iri !== lastCurrent?.iri;
-			// Also clear when a new tool_use round lands — the agent completed a
-			// think+speak+act cycle and the next think phase must start fresh.
-			const hasNewToolUse =
-				lastIncoming?.type === 'tool_use' &&
-				lastIncoming?.iri !== lastCurrent?.iri;
-			if (!streamingSpeak || hasNewAssistantText || hasNewToolUse) {
-				clearStreaming();
-			}
-			hasMoreMessages = result.messages.length === messageLimit;
-			messages = result.messages;
-			scrollToBottom();
-			await loadConversations();
-		});
-
 		const unlistenAIStatus = await listen('ai-status', (event) => {
 			const iri = event.payload?.conversationId ?? activeConversationIri;
 			if (event.payload?.status) {
@@ -252,7 +255,6 @@
 		return () => {
 			unlistenImport();
 			unlistenDelta();
-			unlistenMessages();
 			unlistenAIStatus();
 			unlistenAIError();
 			document.removeEventListener('chat-inject', handleChatInject);

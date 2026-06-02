@@ -5,7 +5,7 @@
 //
 // Architecture:
 // - Single writer thread with sequential queue for writes
-// - Read pool of N persistent connections â€” avoids the WAL scan overhead on
+// - Read pool of N persistent connections â€" avoids the WAL scan overhead on
 //   every call (SQLite must scan the entire WAL to build a read snapshot when
 //   opening a new connection; with a large WAL this dominates read latency)
 // - WAL mode allows concurrent reads and writes at the SQLite file level
@@ -34,6 +34,9 @@ pub struct DbExecutor {
     read_pool: Arc<Mutex<Vec<Connection>>>,
     /// Cumulative count of temporary connections opened due to pool exhaustion.
     temp_conn_count: Arc<AtomicUsize>,
+    /// Connections currently checked out (in a spawn_blocking closure, not yet returned).
+    /// Must be 0 when the app is idle — any non-zero value indicates a leak.
+    in_flight: Arc<AtomicUsize>,
 }
 
 /// A write task to be executed sequentially
@@ -59,7 +62,7 @@ impl DbExecutor {
         let (write_tx, mut write_rx) = mpsc::unbounded_channel::<WriteTask>();
         let notify_tx_thread = notify_tx.clone();
 
-        // Pool starts empty â€” connections are added lazily as reads complete.
+        // Pool starts empty â€" connections are added lazily as reads complete.
         // Every 200 writes the pool is drained and a TRUNCATE checkpoint runs so the
         // WAL does not grow unboundedly (pool read-marks would otherwise block PASSIVE
         // checkpoints indefinitely).
@@ -96,7 +99,7 @@ impl DbExecutor {
 
                 write_count += 1;
                 if write_count % WAL_TRUNCATE_INTERVAL == 0 {
-                    // Pool read-marks block TRUNCATE checkpoints indefinitely â€” drain the
+                    // Pool read-marks block TRUNCATE checkpoints indefinitely â€" drain the
                     // pool first so the WAL can be zeroed and does not grow unboundedly.
                     let old_conns = {
                         let mut guard = pool_for_checkpoint
@@ -177,11 +180,32 @@ impl DbExecutor {
                         let (result_tx, _) = oneshot::channel::<Result<String, String>>();
                         let sent = write_tx_idle.send(WriteTask {
                             operation: Box::new(move |conn| {
+                                // Check WAL page count before draining the pool.
+                                // Draining is only needed to release read marks so TRUNCATE can
+                                // zero the WAL file. If the WAL is already empty there is nothing
+                                // to do — skip drain + TRUNCATE to keep pool connections alive.
+                                let wal_log_pages = conn.query_row(
+                                    "PRAGMA wal_checkpoint(PASSIVE)", [],
+                                    |row| row.get::<_, i32>(1), // column 1 = wal_frames written
+                                ).unwrap_or(1);
+
+                                if wal_log_pages == 0 {
+                                    crate::diagnostics::log_backend("debug",
+                                        "[WAL] Idle checkpoint skipped: WAL already empty, pool untouched");
+                                    return Ok(String::new());
+                                }
+
+                                let pool_size_before = pool.lock()
+                                    .map(|g| g.len()).unwrap_or(0);
                                 let old = {
                                     let mut g = pool.lock().unwrap_or_else(|e| e.into_inner());
                                     std::mem::take(&mut *g)
                                 };
                                 drop(old);
+                                crate::diagnostics::log_backend("debug", &format!(
+                                    "[WAL] Idle checkpoint: drained {} pool conns (wal_pages={})",
+                                    pool_size_before, wal_log_pages
+                                ));
                                 // Brief pause so in-progress reads can release their WAL marks.
                                 std::thread::sleep(std::time::Duration::from_millis(20));
                                 let r = conn.query_row(
@@ -194,7 +218,7 @@ impl DbExecutor {
                                     )),
                                     Ok((_, log, done)) => {
                                         crate::diagnostics::log_backend("warn", &format!(
-                                            "[WAL] Idle TRUNCATE busy â†’ RESTART (log={} done={})", log, done
+                                            "[WAL] Idle TRUNCATE busy -- RESTART (log={} done={})", log, done
                                         ));
                                         let _ = conn.execute_batch("PRAGMA wal_checkpoint(RESTART);");
                                     }
@@ -207,19 +231,26 @@ impl DbExecutor {
                             result_tx,
                         });
                         if sent.is_err() {
-                            break; // write channel closed â€” app is shutting down
+                            break; // write channel closed â€" app is shutting down
                         }
                     }
                 })
                 .ok();
         }
 
-        Self { write_tx, db_path, notify_tx, read_pool, temp_conn_count: Arc::new(AtomicUsize::new(0)) }
+        Self {
+            write_tx,
+            db_path,
+            notify_tx,
+            read_pool,
+            temp_conn_count: Arc::new(AtomicUsize::new(0)),
+            in_flight: Arc::new(AtomicUsize::new(0)),
+        }
     }
 
     /// Create an executor backed by an in-memory database (for CI/test use only).
     /// Reads always open a fresh empty in-memory DB, so only the write connection
-    /// holds state â€” reads will return empty results.
+    /// holds state â€" reads will return empty results.
     pub fn new_in_memory(conn: Connection) -> Self {
         Self::new(conn, PathBuf::from(":memory:"))
     }
@@ -234,37 +265,68 @@ impl DbExecutor {
         let path = self.db_path.clone();
         let pool = self.read_pool.clone();
         let temp_counter = self.temp_conn_count.clone();
+        let in_flight = self.in_flight.clone();
 
         tokio::task::spawn_blocking(move || {
-            let (conn_opt, pool_size) = pool.lock()
-                .map(|mut g| { let c = g.pop(); let sz = g.len(); (c, sz) })
+            let (conn_opt, pool_before) = pool.lock()
+                .map(|mut g| { let before = g.len(); let c = g.pop(); (c, before) })
                 .unwrap_or((None, 0));
 
             let (conn, from_pool) = match conn_opt {
-                Some(c) => (c, true),
+                Some(c) => {
+                    let flight = in_flight.fetch_add(1, Ordering::Relaxed) + 1;
+                    crate::diagnostics::log_backend("debug", &format!(
+                        "[DB] Pool hit: conn taken (pool {}->{} cap={} in_flight={})",
+                        pool_before, pool_before - 1, READ_POOL_SIZE, flight
+                    ));
+                    (c, true)
+                }
                 None => {
                     let temp_total = temp_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                    crate::diagnostics::log_backend(
-                        “warn”,
-                        &format!(“[DB] Read pool exhausted (pool=0/{READ_POOL_SIZE}, temp_total={temp_total}) -- opening temporary connection”),
-                    );
+                    let flight = in_flight.fetch_add(1, Ordering::Relaxed) + 1;
+                    crate::diagnostics::log_backend("warn", &format!(
+                        "[DB] Pool exhausted: opening temp conn (avail=0 cap={READ_POOL_SIZE} temp_total={temp_total} in_flight={flight})"
+                    ));
                     let c = Connection::open(&path).map_err(|e| e.to_string())?;
                     c.busy_timeout(std::time::Duration::from_secs(30)).map_err(|e| e.to_string())?;
                     (c, false)
                 }
             };
-            let _ = pool_size;
 
             let result = operation(&conn);
 
-            if from_pool {
-                if let Ok(mut guard) = pool.lock() {
-                    if guard.len() < READ_POOL_SIZE {
-                        // Release WAL read mark before returning to pool.
-                        // Without this the connection holds its snapshot indefinitely while
-                        // idle, blocking TRUNCATE checkpoints and growing the WAL.
-                        let _ = conn.execute_batch("BEGIN DEFERRED; COMMIT;");
-                        guard.push(conn);
+            // Return to pool regardless of origin so the pool grows organically from
+            // its initial empty state. Without this, from_pool is always false (pool
+            // starts empty), connections are never returned, and every read opens a
+            // fresh temporary connection indefinitely.
+            if let Ok(mut guard) = pool.lock() {
+                if guard.len() < READ_POOL_SIZE {
+                    // Release WAL read mark before returning to pool.
+                    // Without this the connection holds its snapshot indefinitely while
+                    // idle, blocking TRUNCATE checkpoints and growing the WAL.
+                    let _ = conn.execute_batch("BEGIN DEFERRED; COMMIT;");
+                    let pool_after = guard.len() + 1;
+                    guard.push(conn);
+                    let flight = in_flight.fetch_sub(1, Ordering::Relaxed) - 1;
+                    crate::diagnostics::log_backend("debug", &format!(
+                        "[DB] Pool {}: conn returned (pool {}->{} cap={} in_flight={})",
+                        if from_pool { "return" } else { "grow" },
+                        pool_after - 1, pool_after, READ_POOL_SIZE, flight
+                    ));
+                    if flight == 0 {
+                        crate::diagnostics::log_backend("debug",
+                            "[DB] All connections returned to pool (in_flight=0)");
+                    }
+                } else {
+                    let flight = in_flight.fetch_sub(1, Ordering::Relaxed) - 1;
+                    crate::diagnostics::log_backend("debug", &format!(
+                        "[DB] Pool full: {} conn dropped (pool={} cap={} in_flight={})",
+                        if from_pool { "pool" } else { "temp" },
+                        guard.len(), READ_POOL_SIZE, flight
+                    ));
+                    if flight == 0 {
+                        crate::diagnostics::log_backend("debug",
+                            "[DB] All connections returned to pool (in_flight=0)");
                     }
                 }
             }
@@ -301,6 +363,7 @@ impl Clone for DbExecutor {
             notify_tx: self.notify_tx.clone(),
             read_pool: self.read_pool.clone(),
             temp_conn_count: self.temp_conn_count.clone(),
+            in_flight: self.in_flight.clone(),
         }
     }
 }

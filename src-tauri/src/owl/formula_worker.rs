@@ -155,7 +155,7 @@ async fn process_job(app: &tauri::AppHandle, executor: &crate::owl::DbExecutor, 
                     let _ = sender.try_send(WorkerCommand::Enqueue { job_id: jid.to_string() });
                 }
                 if job.instance_iri.is_some() {
-                    app.emit("entity-updated", serde_json::json!({"entityId": instance_iri})).ok();
+                    crate::realtime::emit_entity_updated(&app, &instance_iri);
                 }
             }
             Err(msg) => {

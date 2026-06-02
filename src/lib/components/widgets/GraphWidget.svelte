@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
+  import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import GraphVisualization from '../graph/GraphVisualization.svelte';
   import WidgetContainer from './WidgetContainer.svelte';
 
@@ -10,7 +10,9 @@
   let label = $state('');
   let graphData = $state(null);
   let graphComponent = $state();
-  let unlistenEntityUpdated = null;
+  const entitySub = createEntitySubscription((event) => {
+    if (event.type === 'updated') loadGraph();
+  });
 
   async function closeWidget() {
     try {
@@ -79,13 +81,14 @@
 
   onMount(async () => {
     await loadGraph();
-    unlistenEntityUpdated = await listen('entity-updated', async (event) => {
-      if (event.payload.entityId === entityId) await loadGraph();
-    });
   });
 
   onDestroy(() => {
-    if (unlistenEntityUpdated) unlistenEntityUpdated();
+    entitySub.destroy();
+  });
+
+  $effect(() => {
+    entitySub.setIris(entityId ? [entityId] : []);
   });
 </script>
 

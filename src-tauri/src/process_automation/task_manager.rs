@@ -149,7 +149,7 @@ pub(crate) fn maybe_execute_task_for_entity(app: AppHandle, entity_id: String) {
                             "[task_manager] failed to write error result for {}: {}", task_iri, set_err,
                         ));
                     } else {
-                        app2.emit("entity-updated", serde_json::json!({ "entityId": task_iri })).ok();
+                        crate::realtime::emit_entity_updated(&app2, &task_iri);
                     }
                 }
             }
@@ -329,7 +329,7 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
         })
         .await?;
 
-    app.emit("entity-updated", serde_json::json!({ "entityId": task_iri })).ok();
+    crate::realtime::emit_entity_updated(&app, &task_iri);
     app.emit("task-completed", serde_json::json!({
         "task_iri": task_iri,
         "label": label,

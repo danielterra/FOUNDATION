@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
+  import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import WidgetContainer from './WidgetContainer.svelte';
 
   let { widgetId, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props();
@@ -14,7 +14,16 @@
   let filterType = $state('all');
   let filterStatus = $state('pending');
   let selectedIris = $state({});
-  let unlistenEntityUpdated = null;
+  const entitySub = createEntitySubscription((event) => {
+    if (event.type !== 'updated') return;
+    pendingUpserts.add(event.entityId);
+    clearTimeout(upsertTimer);
+    upsertTimer = setTimeout(() => {
+      const batch = [...pendingUpserts];
+      pendingUpserts.clear();
+      for (const iri of batch) upsertNotification(iri);
+    }, 250);
+  });
   let upsertTimer = null;
   let pendingUpserts = new Set();
 
@@ -305,22 +314,11 @@
 
   onMount(async () => {
     await loadNotifications();
-
-    unlistenEntityUpdated = await listen('entity-updated', (event) => {
-      const updatedIri = event.payload?.entityId;
-      if (!updatedIri || !updatedIri.includes('AINotification')) return;
-      pendingUpserts.add(updatedIri);
-      clearTimeout(upsertTimer);
-      upsertTimer = setTimeout(() => {
-        const batch = [...pendingUpserts];
-        pendingUpserts.clear();
-        for (const iri of batch) upsertNotification(iri);
-      }, 250);
-    });
+    entitySub.setPatterns(['AINotification']);
   });
 
   onDestroy(() => {
-    unlistenEntityUpdated?.();
+    entitySub.destroy();
     clearTimeout(upsertTimer);
   });
 </script>

@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
+  import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import WidgetContainer from './WidgetContainer.svelte';
 
   let { widgetId, windowState = 'normal', onWindowStateChange } = $props();
@@ -10,7 +10,9 @@
   let loading = $state(false);
   let fromDate = $state('');
   let toDate = $state('');
-  let unlistenEntityUpdated = null;
+  const entitySub = createEntitySubscription((event) => {
+    if (event.type === 'updated') load();
+  });
 
   // Group calls by model for summary view
   let summary = $derived(() => {
@@ -61,15 +63,10 @@
 
   onMount(async () => {
     await load();
-    unlistenEntityUpdated = await listen('entity-updated', async (event) => {
-      // Reload when a new AIAPICall is written
-      if (String(event.payload?.entityId ?? '').includes('AIAPICall')) {
-        await load();
-      }
-    });
+    entitySub.setPatterns(['AIAPICall']);
   });
 
-  onDestroy(() => { if (unlistenEntityUpdated) unlistenEntityUpdated(); });
+  onDestroy(() => { entitySub.destroy(); });
 </script>
 
 <WidgetContainer

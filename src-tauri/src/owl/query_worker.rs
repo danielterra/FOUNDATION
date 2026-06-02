@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Listener, Manager, Emitter};
+use tauri::{AppHandle, Listener, Manager};
 use tokio::sync::mpsc;
 use crate::owl::{DbExecutor, query_property};
 use crate::eavto::{store, Triple, Object};
@@ -103,7 +103,7 @@ async fn process_entity_update(app: &AppHandle, executor: &DbExecutor, entity_ir
                 }
             }
 
-            app.emit("entity-updated", serde_json::json!({ "entityId": owner_iri })).ok();
+            crate::realtime::emit_entity_updated(&app, &owner_iri);
         }
     }
 }

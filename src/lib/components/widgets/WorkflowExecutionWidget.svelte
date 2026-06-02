@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
+  import { createEntitySubscription } from '$lib/realtime/subscriptions'
   import ChatMessageBubble from '../ChatMessageBubble.svelte'
   import WidgetContainer from './WidgetContainer.svelte'
 
@@ -14,6 +15,9 @@
   let errorDismissed = $state(null)
 
   let unlisteners = []
+  const entitySub = createEntitySubscription((event) => {
+    if (event.type === 'updated') loadDetail()
+  })
 
   const NODE_TYPE_ICONS = {
     automation_AgentTask:       'assignment_ind',
@@ -142,16 +146,16 @@
       detail = detail
       expandedStep = stepIri
     })
-    const unlistenEntityUpdated = await listen('entity-updated', async (event) => {
-      if (event.payload.entityId === entityId) {
-        await loadDetail()
-      }
-    })
-    unlisteners.push(unlistenProgress, unlistenFinished, unlistenMessage, unlistenEntityUpdated)
+    unlisteners.push(unlistenProgress, unlistenFinished, unlistenMessage)
   })
 
   onDestroy(() => {
     unlisteners.forEach(fn => fn())
+    entitySub.destroy()
+  })
+
+  $effect(() => {
+    entitySub.setIris(entityId ? [entityId] : [])
   })
 </script>
 

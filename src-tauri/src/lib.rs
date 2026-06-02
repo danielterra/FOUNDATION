@@ -14,6 +14,7 @@ pub mod imap;
 pub mod config;
 pub mod paths;
 pub mod files;
+pub mod realtime;
 
 #[derive(serde::Serialize)]
 pub struct TripleData {
@@ -123,6 +124,7 @@ pub fn run() {
         .manage(commands::AiCancellationState::new())
         .manage(commands::ConversationProcessingState::new())
         .manage(commands::LocalModelDownloadState::default())
+        .manage(realtime::SubscriptionRegistry::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(mcp::serve(app_handle.clone()));
@@ -238,7 +240,8 @@ pub fn run() {
             commands::settings__save_foundation_dir,
             commands::settings__set_foundation_dir,
             commands::settings__connect_claude_desktop,
-            commands::recover_database
+            commands::recover_database,
+            realtime::events__set_subscriptions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

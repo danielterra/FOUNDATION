@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
+  import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import WidgetContainer from './WidgetContainer.svelte';
 
   let { widgetId, entityId = '', windowState = 'normal', onWindowStateChange } = $props();
@@ -10,7 +10,9 @@
   let running = $state(false);
   let steps = $state([]);
   let error = $state(null);
-  let unlistenEntityUpdated = null;
+  const entitySub = createEntitySubscription((event) => {
+    if (event.type === 'updated') loadProcess();
+  });
 
   async function loadProcess() {
     if (!entityId) return;
@@ -57,18 +59,14 @@
 
   onMount(async () => {
     await loadProcess();
-
-    if (entityId) {
-      unlistenEntityUpdated = await listen('entity-updated', async (event) => {
-        if (event.payload.entityId === entityId) {
-          await loadProcess();
-        }
-      });
-    }
   });
 
   onDestroy(() => {
-    if (unlistenEntityUpdated) unlistenEntityUpdated();
+    entitySub.destroy();
+  });
+
+  $effect(() => {
+    entitySub.setIris(entityId ? [entityId] : []);
   });
 </script>
 

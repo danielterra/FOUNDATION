@@ -1,9 +1,9 @@
 <script>
-  import { onMount, onDestroy, untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
 
   import { invoke } from '@tauri-apps/api/core';
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
+  import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import { deleteConfirm } from '$lib/stores/deleteConfirm';
   import FilePreview from './inspector/FilePreview.svelte';
   import MetaFields from './inspector/MetaFields.svelte';
@@ -24,9 +24,23 @@
   let reloadWhenDone = false;
   let loadDebounceTimer = null;
   let widgetDefinitions = $state([]);
-  let unlistenEntityUpdated = $state(null);
-  let unlistenEntityReferenced = $state(null);
-  let unlistenEntityDeleted = $state(null);
+  const entitySub = createEntitySubscription((event) => {
+    const { type, entityId: updatedId } = event;
+    if (type === 'updated') {
+      if (updatedId === entityId) { scheduleLoad(); return; }
+      if (entityData?.properties?.some(p => p.value === updatedId)) scheduleLoad();
+      return;
+    }
+    if (type === 'referenced') {
+      if (updatedId === entityId) { scheduleLoad(); return; }
+      if (entityData?.types?.some(t => t.iri === updatedId)) reloadAutomations();
+      return;
+    }
+    if (type === 'deleted') {
+      if (updatedId === entityId) { closeWidget(); return; }
+      if (entityData?.properties?.some(p => p.value === updatedId)) scheduleLoad();
+    }
+  });
   let applicableAutomations = $state([]);
   let runningAutomationIri = $state(null);
   let togglingLock = $state(false);
@@ -480,50 +494,22 @@
     return () => document.removeEventListener('click', handleDocClick, true);
   });
 
-  onMount(async () => {
-    unlistenEntityUpdated = await listen('entity-updated', (event) => {
-      const updatedId = event.payload.entityId;
-      if (updatedId === entityId) {
-        console.debug(`[INSPECTOR] ${entityId} entity-updated(self) → scheduleLoad`);
-        scheduleLoad();
-        return;
-      }
-      if (entityData?.properties?.some(p => p.value === updatedId)) {
-        console.debug(`[INSPECTOR] ${entityId} entity-updated(prop=${updatedId}) → scheduleLoad`);
-        scheduleLoad();
-      }
-    });
-
-    // entity-referenced fires when a write creates a link TO an entity (new backlink).
-    // Reload if this is the inspected entity, or if a class type of this entity was referenced
-    // (e.g. a new Automation linked to this entity's class via foundation:inputClass).
-    unlistenEntityReferenced = await listen('entity-referenced', (event) => {
-      if (event.payload.entityId === entityId) {
-        console.debug(`[INSPECTOR] ${entityId} entity-referenced → scheduleLoad`);
-        scheduleLoad();
-        return;
-      }
-      if (entityData?.types?.some(t => t.iri === event.payload.entityId)) {
-        reloadAutomations();
-      }
-    });
-
-    unlistenEntityDeleted = await listen('entity-deleted', (event) => {
-      if (event.payload.entityId === entityId) {
-        closeWidget();
-        return;
-      }
-      if (entityData?.properties?.some(p => p.value === event.payload.entityId)) {
-        scheduleLoad();
-      }
-    });
-
+  // The inspected entity plus every IRI it renders (property values, types) — reloading
+  // when any of them changes mirrors the previous self + property-value + type watches.
+  $effect(() => {
+    const iris = new Set();
+    if (entityId) iris.add(entityId);
+    for (const p of entityData?.properties ?? []) {
+      if (p.value) iris.add(p.value);
+    }
+    for (const t of entityData?.types ?? []) {
+      if (t.iri) iris.add(t.iri);
+    }
+    entitySub.setIris(iris);
   });
 
   onDestroy(() => {
-    if (unlistenEntityUpdated) unlistenEntityUpdated();
-    if (unlistenEntityReferenced) unlistenEntityReferenced();
-    if (unlistenEntityDeleted) unlistenEntityDeleted();
+    entitySub.destroy();
   });
 </script>
 

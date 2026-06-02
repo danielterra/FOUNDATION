@@ -65,13 +65,14 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - Use `cargo check` only when user is NOT about to run `tauri dev`.
 - ALWAYS warn user before profile/feature changes — invalidates 100% of the cache (~10–15 min full rebuild on this project).
 
-## Real-time event system
-- `DbExecutor` is initialized with `new_with_notify` (`src-tauri/src/commands/setup.rs:89`).
-- EVERY write through `DbExecutor::write()` — Tauri commands, MCP tools, automation executor, task scheduler — automatically emits `entity-updated` via the notify channel. No manual `app.emit` needed.
-- Flow: write → `store.rs` accumulates subjects in `WRITTEN_SUBJECT_PREDICATES` → after commit, drain → `notify_tx` → receiver emits `entity-updated` to frontend.
-- Frontend widgets subscribe to `entity-updated` (e.g. `AutomationWidget.svelte:208`) and reload when their watched IRIs are affected.
-- NEVER add manual `app.emit("entity-updated", …)` after a `DbExecutor::write()` — it is redundant and causes duplicate events.
-- Batch risk: N separate MCP write calls = N `entity-updated` events. Consider debounce on the frontend consumer if performance is a concern.
+## Real-time event system (pub/sub)
+- Model: the frontend declares which entity IRIs it shows; the backend emits `entity-updated`/`entity-referenced`/`entity-deleted` ONLY for subscribed entities. Closing a widget drops its IRIs and stops its events.
+- Registry: `crate::realtime::SubscriptionRegistry` (managed state). Frontend pushes the full displayed set via the `events__set_subscriptions` command — wholesale replace, so a webview reload self-heals.
+- Backend: ALWAYS emit entity events via `crate::realtime::emit_entity_updated` / `emit_entity_updated_with` / `emit_entity_referenced` / `emit_entity_deleted` (batch path: `emit_queued`). They consult the registry. NEVER call `app.emit("entity-updated"/"entity-referenced"/"entity-deleted", …)` directly — it bypasses the subscription filter.
+- DbExecutor write path: EVERY `DbExecutor::write()` still accumulates `WRITTEN_SUBJECT_PREDICATES`/`WRITTEN_IRI_OBJECTS` → `notify_tx` → receiver (`setup.rs`) emits via the helpers above. No manual emit after a write.
+- ALWAYS keep the search reindex in the notify receiver UNCONDITIONAL — never gate it on subscriptions.
+- Frontend: ALWAYS consume entity events via `createEntitySubscription` (`$lib/realtime/subscriptions`); call `setIris` (exact IRIs) or `setPatterns` (collection views, IRI substring) — typically from a `$effect` — and `destroy()` in `onDestroy`. NEVER attach a raw `listen('entity-updated'/…)` in a component.
+- Streaming/execution events (`chat-ai-delta`, `ai-status`, `ai-error`, `automation-execution-*`) are NOT entity events — they stay direct emits/listens, scoped by payload (`conversationId`/`executionIri`).
 
 ## Releases
 - ALWAYS use `/release-create` skill.

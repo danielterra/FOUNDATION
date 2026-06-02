@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
+  import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import WidgetContainer from './WidgetContainer.svelte';
   import ChatMessageBubble from '../ChatMessageBubble.svelte';
 
@@ -59,19 +59,20 @@
     await invoke('widget_blackboard__remove_widget', { widgetId });
   }
 
-  let unlistenRef;
+  const entitySub = createEntitySubscription((event) => {
+    if (event.type === 'referenced') loadMessages();
+  });
 
   onMount(async () => {
     await loadMessages();
-    unlistenRef = await listen('entity-referenced', async (event) => {
-      if (event.payload?.entityId !== entityId) return;
-      console.debug(`[CONV_WIDGET] ${entityId} entity-referenced → loadMessages`);
-      await loadMessages();
-    });
   });
 
   onDestroy(() => {
-    unlistenRef?.();
+    entitySub.destroy();
+  });
+
+  $effect(() => {
+    entitySub.setIris(entityId ? [entityId] : []);
   });
 </script>
 

@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import mermaid from 'mermaid';
   import WidgetContainer from './WidgetContainer.svelte';
 
@@ -27,7 +28,21 @@
   let dragStart = { x: 0, y: 0 };
   let dragMoved = false;
   let unlistenContentUpdated = null;
-  let unlistenEntityUpdated = null;
+  const entitySub = createEntitySubscription(async (event) => {
+    if (event.type !== 'updated') return;
+    try {
+      const resultStr = await invoke('inspector__get_entity', { entityId });
+      const data = JSON.parse(resultStr);
+      const source = data?.properties?.find(p => p.property === 'foundation:diagramSource')?.value;
+      if (source && source !== content) {
+        content = source;
+        draftContent = source;
+        await renderDiagram();
+      }
+    } catch {
+      // ignore
+    }
+  });
   let renderCount = 0;
 
   mermaid.initialize({
@@ -228,28 +243,15 @@
       if (event.payload === widgetId) renderDiagram();
     });
 
-    if (entityId) {
-      unlistenEntityUpdated = await listen('entity-updated', async (event) => {
-        if (event.payload.entityId !== entityId) return;
-        try {
-          const resultStr = await invoke('inspector__get_entity', { entityId });
-          const data = JSON.parse(resultStr);
-          const source = data?.properties?.find(p => p.property === 'foundation:diagramSource')?.value;
-          if (source && source !== content) {
-            content = source;
-            draftContent = source;
-            await renderDiagram();
-          }
-        } catch {
-          // ignore
-        }
-      });
-    }
   });
 
   onDestroy(() => {
     if (unlistenContentUpdated) unlistenContentUpdated();
-    if (unlistenEntityUpdated) unlistenEntityUpdated();
+    entitySub.destroy();
+  });
+
+  $effect(() => {
+    entitySub.setIris(entityId ? [entityId] : []);
   });
 </script>
 

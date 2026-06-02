@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use serde_json::Value;
 use rusqlite::Connection;
-use tauri::Emitter;
 use crate::eavto::enter_batch_transaction;
 use super::ToolResult;
 
@@ -151,7 +150,7 @@ pub(super) fn run_atomic(
 
     if let Some(app_handle) = app {
         for (name, payload) in take_events() {
-            app_handle.emit(&name, payload).ok();
+            crate::realtime::emit_queued(app_handle, &name, payload);
         }
 
         dispatch_formula_recalcs(conn, app_handle);

@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::{State, Emitter, Manager};
+use tauri::{State, Manager};
 use std::collections::HashMap;
 use crate::owl::{self, Class, Individual, Property, Connection, DbExecutor, Object};
 
@@ -339,7 +339,7 @@ pub async fn widget_inspector__clear_property(
         serde_json::to_string(&job_ids).map_err(|e| e.to_string())
     }).await?;
     enqueue_formula_jobs(&app, &job_ids_json);
-    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
 
@@ -385,7 +385,7 @@ pub async fn widget_inspector__update_property(
         serde_json::to_string(&job_ids).map_err(|e| e.to_string())
     }).await?;
     enqueue_formula_jobs(&app, &job_ids_json);
-    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
 
@@ -415,7 +415,7 @@ pub async fn widget_inspector__set_references(
         serde_json::to_string(&job_ids).map_err(|e| e.to_string())
     }).await?;
     enqueue_formula_jobs(&app, &job_ids_json);
-    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
 
@@ -434,7 +434,7 @@ pub async fn widget_inspector__add_property_value(
             .map_err(|e| e.to_string())?;
         Ok("added".to_string())
     }).await?;
-    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
 
@@ -453,7 +453,7 @@ pub async fn widget_inspector__remove_property_value(
             .map_err(|e| e.to_string())?;
         Ok("removed".to_string())
     }).await?;
-    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
 
@@ -472,7 +472,7 @@ pub async fn widget_inspector__update_status(
             .map_err(|e| e.to_string())?;
         Ok("updated".to_string())
     }).await?;
-    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
 
@@ -516,9 +516,9 @@ pub async fn widget_inspector__delete_individual(
     let all_retracted: Vec<String> = serde_json::from_str(&retracted_json).unwrap_or_default();
     crate::search::remove_from_index(&all_retracted);
     for iri in &all_retracted {
-        app.emit("entity-deleted", serde_json::json!({ "entityId": iri })).ok();
+        crate::realtime::emit_entity_deleted(&app, iri);
     }
-    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
 
@@ -579,8 +579,8 @@ pub async fn widget_inspector__define_class_property(
         Ok(final_iri_clone.clone())
     }).await?;
 
-    app.emit("entity-updated", serde_json::json!({ "entityId": final_iri })).ok();
-    app.emit("entity-updated", serde_json::json!({ "entityId": class_iri })).ok();
+    crate::realtime::emit_entity_updated(&app, &final_iri);
+    crate::realtime::emit_entity_updated(&app, &class_iri);
     Ok(final_iri)
 }
 
@@ -682,7 +682,7 @@ pub async fn widget_inspector__remove_class_property(
         Ok("removed".to_string())
     }).await?;
 
-    app.emit("entity-updated", serde_json::json!({ "entityId": class_iri })).ok();
+    crate::realtime::emit_entity_updated(&app, &class_iri);
     Ok(())
 }
 
@@ -700,7 +700,7 @@ pub async fn widget_inspector__set_system_locked(
             .map_err(|e| e.to_string())?;
         Ok(String::new())
     }).await?;
-    app.emit("entity-updated", serde_json::json!({ "entityId": entity_id })).ok();
+    crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
 
@@ -744,7 +744,7 @@ pub async fn widget_inspector__set_property_cardinality(
 
         Ok(String::new())
     }).await?;
-    app.emit("entity-updated", serde_json::json!({ "entityId": class_id })).ok();
+    crate::realtime::emit_entity_updated(&app, &class_id);
     Ok(())
 }
 
@@ -801,11 +801,11 @@ pub async fn widget_inspector__set_property_query_config(
         }).await.map(|s| s.split(',').filter(|s| !s.is_empty()).map(String::from).collect())?;
 
         for iri in instances {
-            app.emit("entity-updated", serde_json::json!({ "entityId": iri })).ok();
+            crate::realtime::emit_entity_updated(&app, &iri);
         }
     }
 
-    app.emit("entity-updated", serde_json::json!({ "entityId": class_id })).ok();
+    crate::realtime::emit_entity_updated(&app, &class_id);
     Ok(())
 }
 
@@ -1346,8 +1346,8 @@ pub async fn widget_inspector__add_class_disjoint(
             .map_err(|e| e.to_string())?;
         Ok(String::new())
     }).await?;
-    app.emit("entity-updated", serde_json::json!({ "entityId": class_iri })).ok();
-    app.emit("entity-updated", serde_json::json!({ "entityId": disjoint_iri })).ok();
+    crate::realtime::emit_entity_updated(&app, &class_iri);
+    crate::realtime::emit_entity_updated(&app, &disjoint_iri);
     Ok(())
 }
 
@@ -1366,8 +1366,8 @@ pub async fn widget_inspector__remove_disjoint_pair(
             .map_err(|e| e.to_string())?;
         Ok(String::new())
     }).await?;
-    app.emit("entity-updated", serde_json::json!({ "entityId": class_iri })).ok();
-    app.emit("entity-updated", serde_json::json!({ "entityId": disjoint_iri })).ok();
+    crate::realtime::emit_entity_updated(&app, &class_iri);
+    crate::realtime::emit_entity_updated(&app, &disjoint_iri);
     Ok(())
 }
 
@@ -1388,7 +1388,7 @@ pub async fn widget_inspector__retract_disjoint_set(
     }).await?;
     let members: Vec<String> = serde_json::from_str(&members_json).unwrap_or_default();
     for iri in members {
-        app.emit("entity-updated", serde_json::json!({ "entityId": iri })).ok();
+        crate::realtime::emit_entity_updated(&app, &iri);
     }
     Ok(())
 }

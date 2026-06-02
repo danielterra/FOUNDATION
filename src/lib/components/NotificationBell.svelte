@@ -1,12 +1,16 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
+  import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import Button from './Button.svelte';
   import { appState } from '$lib/appState.svelte';
 
   let pendingCount = $state(0);
-  let unlistenEntityUpdated: (() => void) | undefined;
+  const entitySub = createEntitySubscription((event) => {
+    if (event.type !== 'updated') return;
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refreshCount, 300);
+  });
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   type SearchEntity = { id: string; status?: { iri?: string } | null };
@@ -37,16 +41,11 @@
 
   onMount(async () => {
     await refreshCount();
-    unlistenEntityUpdated = await listen<{ entityId?: string }>('entity-updated', (event) => {
-      const id = event.payload?.entityId ?? '';
-      if (!id.includes('AINotification')) return;
-      clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(refreshCount, 300);
-    });
+    entitySub.setPatterns(['AINotification']);
   });
 
   onDestroy(() => {
-    unlistenEntityUpdated?.();
+    entitySub.destroy();
     clearTimeout(refreshTimer);
   });
 </script>

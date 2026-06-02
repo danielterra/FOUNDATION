@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
+  import { createEntitySubscription } from '$lib/realtime/subscriptions'
   import { SvelteFlow, Controls, Background, BackgroundVariant } from '@xyflow/svelte'
   import '@xyflow/svelte/dist/style.css'
   import { applyDagreLayout } from './automation/layout.js'
@@ -76,7 +77,9 @@
   )
 
   let watchedIris = new Set()
-  let unlisten = null
+  const entitySub = createEntitySubscription((event) => {
+    if (event.type === 'updated') loadGraph()
+  })
   let unlistenExecStarted = null
   let unlistenStepProgress = null
   let unlistenExecFinished = null
@@ -150,6 +153,7 @@
         } catch {}
       }
       watchedIris = iris
+      entitySub.setIris(iris)
     } catch (e) {
       error = String(e)
     } finally {
@@ -217,9 +221,6 @@
 
   onMount(async () => {
     await loadGraph()
-    unlisten = await listen('entity-updated', async (event) => {
-      if (watchedIris.has(event.payload.entityId)) await loadGraph()
-    })
     unlistenExecStarted = await listen('automation-execution-started', (event) => {
       if (event.payload.processIri === entityId) {
         activeExecutionIri = event.payload.executionIri
@@ -252,7 +253,7 @@
   })
 
   onDestroy(() => {
-    if (unlisten) unlisten()
+    entitySub.destroy()
     if (unlistenExecStarted) unlistenExecStarted()
     if (unlistenStepProgress) unlistenStepProgress()
     if (unlistenExecFinished) unlistenExecFinished()

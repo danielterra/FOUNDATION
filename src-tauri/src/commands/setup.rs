@@ -110,17 +110,14 @@ pub async fn initialize_app(
             let mut seen_subjects: Vec<String> = Vec::new();
             {
                 for (iri, predicates) in subject_predicates {
-                    app_for_notify.emit("entity-updated", serde_json::json!({
-                        "entityId": iri,
-                        "changedPredicates": predicates
-                    })).ok();
+                    crate::realtime::emit_entity_updated_with(&app_for_notify, &iri, &predicates);
                     seen_subjects.push(iri);
                 }
             }
             let mut seen_objects = std::collections::HashSet::new();
             for iri in iri_objects {
                 if seen_objects.insert(iri.clone()) {
-                    app_for_notify.emit("entity-referenced", serde_json::json!({ "entityId": iri })).ok();
+                    crate::realtime::emit_entity_referenced(&app_for_notify, &iri);
                 }
             }
             if !seen_subjects.is_empty() {
