@@ -83,7 +83,7 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
             status_iris.iter()
                 .map(|status_iri| {
                     let thing = crate::owl::Thing::get(conn, status_iri);
-                    let (icon, color) = crate::owl::resolve_status_appearance(conn, status_iri);
+                    let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, status_iri);
                     serde_json::json!({
                         "iri": status_iri,
                         "label": thing.label,
@@ -422,7 +422,7 @@ fn define_class_one(
                         status_iri
                     )));
                 }
-                let (icon, _) = crate::owl::resolve_status_appearance(conn, status_iri);
+                let (icon, _) = crate::core_ontology::status::resolve_status_appearance(conn, status_iri);
                 if icon.is_none() {
                     return Err(crate::owl::OwlError::ValidationError(format!(
                         "Status '{}' exists but has no icon. All statuses must have a valid icon.",

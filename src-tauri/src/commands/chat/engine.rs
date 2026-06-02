@@ -73,6 +73,7 @@ pub async fn run_conversation_loop(
     let mut strip_thinking = false;
     let mut is_first_iteration = true;
     let mut none_stop_retries = 0usize;
+    let mut empty_end_nudged = false;
     let mut tool_fingerprints: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     let loop_start = std::time::Instant::now();
@@ -239,6 +240,16 @@ pub async fn run_conversation_loop(
         sanitize_tool_pairs(&mut api_messages);
         inject_datetime_context(&mut api_messages);
 
+        if empty_end_nudged {
+            api_messages.push(crate::ai::ChatMessage {
+                role: "user".to_string(),
+                content: crate::ai::providers::MessageContent::Text(
+                    "[System] You returned an empty response. You MUST reply to the user with text now — \
+                     summarize what was done, report the result, or explain what happened.".to_string()
+                ),
+            });
+        }
+
         if strip_thinking {
             log_backend("warn", "[ENGINE] Stripping thinking blocks from history (previous 400 thinking-block error)");
             for msg in api_messages.iter_mut() {
@@ -380,8 +391,18 @@ pub async fn run_conversation_loop(
         )?;
         let content_blocks = extract_and_save_file_summaries(content_blocks, executor).await;
 
-        if content_blocks.is_empty() && stop_reason == "end_turn" {
-            log_backend("info", "[ENGINE] Empty end_turn — conversation complete, not saving");
+        if content_blocks.is_empty() && stop_reason != "tool_use" && stop_reason != "tool_calls" {
+            if !empty_end_nudged {
+                log_backend("warn", "[ENGINE] Empty end turn — nudging model to respond");
+                empty_end_nudged = true;
+                continue;
+            }
+            log_backend("info", "[ENGINE] Empty end turn after nudge — conversation complete, not saving");
+            if !silent {
+                app.emit("ai-status", serde_json::json!({
+                    "status": null, "conversationId": conversation_id
+                })).ok();
+            }
             break 'main;
         }
 

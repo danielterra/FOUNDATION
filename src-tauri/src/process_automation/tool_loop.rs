@@ -17,6 +17,19 @@ pub struct ToolLoopConfig {
     pub temperature: f32,
     /// If set, the loop watches for this tool name and exits early when called.
     pub completion_tool: Option<CompletionToolConfig>,
+    /// Compact the in-memory message history when input_tokens / context_window exceeds this ratio.
+    /// Set to 0.0 to disable. Defaults to 0.80.
+    pub compaction_threshold: f32,
+    /// Model context window size in tokens. Used to determine when compaction is needed.
+    /// Defaults to 180_000 (conservative for Claude models).
+    pub context_window: u32,
+    /// If set, each new message is persisted to this conversation as it is generated.
+    pub persist_to: Option<PersistConfig>,
+}
+
+pub struct PersistConfig {
+    pub conv_iri: String,
+    pub model_identifier: String,
 }
 
 impl Default for ToolLoopConfig {
@@ -28,6 +41,9 @@ impl Default for ToolLoopConfig {
             max_tokens: DEFAULT_MAX_TOKENS,
             temperature: DEFAULT_TEMPERATURE,
             completion_tool: None,
+            compaction_threshold: 0.80,
+            context_window: 180_000,
+            persist_to: None,
         }
     }
 }
@@ -65,7 +81,12 @@ pub async fn run_tool_loop(
     let mut last_text = String::new();
     let mut completion: Option<CompletionResult> = None;
 
-    'outer: for _ in 0..config.max_iterations {
+    let conv_label = config.persist_to.as_ref().map(|p| p.conv_iri.as_str()).unwrap_or("-");
+    crate::commands::log_backend("info", &format!(
+        "[tool_loop] start conv={} max_iter={}", conv_label, config.max_iterations
+    ));
+
+    'outer: for iteration in 0..config.max_iterations {
         let request = GenerateRequest {
             messages: messages.clone(),
             max_tokens: Some(config.max_tokens),
@@ -78,8 +99,42 @@ pub async fn run_tool_loop(
             tool_choice: None,
         };
 
+        crate::commands::log_backend("debug", &format!(
+            "[tool_loop] iter={} calling provider (msgs={})", iteration, messages.len()
+        ));
         let response = provider.generate(request).await
-            .map_err(|e| format!("tool loop: {}", e))?;
+            .map_err(|e| {
+                crate::commands::log_backend("error", &format!(
+                    "[tool_loop] iter={} provider error: {}", iteration, e
+                ));
+                format!("tool loop: {}", e)
+            })?;
+        crate::commands::log_backend("debug", &format!(
+            "[tool_loop] iter={} provider responded stop_reason={} input_tokens={}",
+            iteration,
+            response.stop_reason.as_deref().unwrap_or("none"),
+            response.usage.as_ref().map(|u| u.input_tokens).unwrap_or(0)
+        ));
+
+        if config.compaction_threshold > 0.0 {
+            let input_tokens = response.usage.as_ref().map(|u| u.input_tokens).unwrap_or(0);
+            // Compare against the model context window, not max_tokens (output limit).
+            // max_tokens controls output size; context window is how much input the model accepts.
+            let ratio = input_tokens as f32 / config.context_window as f32;
+            if ratio >= config.compaction_threshold && messages.len() > 2 {
+                crate::commands::log_backend("info", &format!(
+                    "[TASK COMPACTION] input_tokens={} ratio={:.2} — compacting {} messages",
+                    input_tokens, ratio, messages.len()
+                ));
+                if let Some(compacted) = compact_messages(provider, &messages, config.system.as_deref(), config.max_tokens).await {
+                    crate::commands::log_backend("info", &format!(
+                        "[TASK COMPACTION] input_tokens={} -> compacted to 1 summary message",
+                        input_tokens
+                    ));
+                    messages = compacted;
+                }
+            }
+        }
 
         let stop_reason = response.stop_reason.clone().unwrap_or_default();
         last_text = response.content.clone();
@@ -95,12 +150,20 @@ pub async fn run_tool_loop(
                 input: tc.input.clone(),
             });
         }
-        messages.push(ChatMessage {
+        let assistant_msg = ChatMessage {
             role: "assistant".to_string(),
             content: MessageContent::ContentBlocks(assistant_blocks),
-        });
+        };
+        if let Some(ref p) = config.persist_to {
+            persist_message(executor, &p.conv_iri, &assistant_msg, Some(&p.model_identifier)).await;
+        }
+        messages.push(assistant_msg);
 
         if stop_reason != "tool_use" && stop_reason != "tool_calls" {
+            crate::commands::log_backend("info", &format!(
+                "[tool_loop] iter={} stop_reason={} — loop ended",
+                iteration, stop_reason
+            ));
             break;
         }
 
@@ -143,6 +206,9 @@ pub async fn run_tool_loop(
                 }
             }
 
+            crate::commands::log_backend("debug", &format!(
+                "[tool_loop] iter={} tool={}", iteration, tc.name
+            ));
             let call = FunctionToolCall {
                 name: tc.name.clone(),
                 arguments: tc.input.clone(),
@@ -180,14 +246,82 @@ pub async fn run_tool_loop(
         }
 
         if completion.is_none() {
-            messages.push(ChatMessage {
+            let tool_result_msg = ChatMessage {
                 role: "user".to_string(),
                 content: MessageContent::ContentBlocks(result_blocks),
-            });
+            };
+            if let Some(ref p) = config.persist_to {
+                persist_message(executor, &p.conv_iri, &tool_result_msg, None).await;
+            }
+            messages.push(tool_result_msg);
         }
     }
 
     Ok(ToolLoopOutput { messages, last_text, completion })
+}
+
+async fn persist_message(executor: &DbExecutor, conv_iri: &str, msg: &ChatMessage, model: Option<&str>) {
+    let blocks = super::agent_task::to_storage_blocks(&msg.content);
+    if let Err(e) = crate::commands::chat_storage::create_message(
+        executor, conv_iri, &msg.role, blocks, model, None, None,
+    ).await {
+        crate::commands::log_backend("warn", &format!(
+            "[tool_loop] persist_message failed for {}: {}", conv_iri, e
+        ));
+    }
+}
+
+/// Summarise the message history into a single user message so the loop can continue
+/// without hitting the context limit. Returns None if the compaction call itself fails,
+/// leaving the original messages intact so the loop can still attempt one more iteration.
+async fn compact_messages(
+    provider: &AiProvider,
+    messages: &[ChatMessage],
+    system: Option<&str>,
+    max_tokens: u32,
+) -> Option<Vec<ChatMessage>> {
+    let history: String = messages.iter().map(|m| {
+        let role = &m.role;
+        let text = match &m.content {
+            MessageContent::Text(t) => t.clone(),
+            MessageContent::ContentBlocks(blocks) => blocks.iter().filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                ContentBlock::ToolResult { content, .. } => content.as_str(),
+                _ => None,
+            }).collect::<Vec<_>>().join(" "),
+        };
+        format!("[{}]: {}", role, &text[..text.len().min(500)])
+    }).collect::<Vec<_>>().join("\n");
+
+    let compaction_prompt = format!(
+        "Summarise the following task execution history. Preserve: the original task objective, \
+         items already processed, items still pending, and key decisions made. \
+         Discard intermediate tool call details that are no longer needed.\n\n{}",
+        history
+    );
+
+    let req = GenerateRequest {
+        messages: vec![ChatMessage {
+            role: "user".to_string(),
+            content: MessageContent::Text(compaction_prompt),
+        }],
+        max_tokens: Some((max_tokens / 4).max(512)),
+        temperature: Some(0.1),
+        system: system.map(str::to_string),
+        blackboard_context: None,
+        tools: None,
+        supports_web_tools: false,
+        thinking: None,
+        tool_choice: None,
+    };
+
+    let summary = provider.generate(req).await.ok()?.content;
+    if summary.is_empty() { return None; }
+
+    Some(vec![ChatMessage {
+        role: "user".to_string(),
+        content: MessageContent::Text(format!("[Resumo do progresso anterior]\n{}", summary)),
+    }])
 }
 
 async fn validate_output_iri(executor: &DbExecutor, iri: &str, expected_class: &str) -> Option<String> {

@@ -4,7 +4,7 @@
   import { listen } from '@tauri-apps/api/event';
   import WidgetContainer from './WidgetContainer.svelte';
 
-  let { widgetId, windowState = 'normal', onWindowStateChange } = $props();
+  let { widgetId, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props();
 
   let notifications = $state([]);
   let loading = $state(true);
@@ -15,6 +15,8 @@
   let filterStatus = $state('pending');
   let selectedIris = $state({});
   let unlistenEntityUpdated = null;
+  let upsertTimer = null;
+  let pendingUpserts = new Set();
 
   const STATUS_PENDING = 'foundation:Pending';
   const STATUS_COMPLETED = 'foundation:Completed';
@@ -145,6 +147,25 @@
     }
   }
 
+  function updateLocalStatus(iri, statusIri) {
+    const idx = notifications.findIndex(n => n.iri === iri);
+    if (idx >= 0) {
+      const next = notifications.slice();
+      next[idx] = { ...next[idx], status: { iri: statusIri } };
+      notifications = next;
+    }
+  }
+
+  async function fetchBatched(iris, batchSize = 10) {
+    const results = [];
+    for (let i = 0; i < iris.length; i += batchSize) {
+      const batch = iris.slice(i, i + batchSize);
+      const batchResults = await Promise.all(batch.map(fetchNotificationDetails));
+      results.push(...batchResults);
+    }
+    return results;
+  }
+
   async function loadNotifications() {
     loading = true;
     error = null;
@@ -156,7 +177,7 @@
       });
       const list = JSON.parse(resultStr);
       const iris = list.map(item => item.id);
-      const details = await Promise.all(iris.map(fetchNotificationDetails));
+      const details = await fetchBatched(iris);
       notifications = details
         .filter(n => n !== null)
         .map(n => ({ ...n, _ts: resolveTimestamp(n) }))
@@ -190,12 +211,14 @@
 
   async function resolveNotification(iri, event) {
     event.stopPropagation();
-    await setNotificationStatus(iri, STATUS_COMPLETED);
+    updateLocalStatus(iri, STATUS_COMPLETED);
+    setNotificationStatus(iri, STATUS_COMPLETED).catch(() => updateLocalStatus(iri, STATUS_PENDING));
   }
 
   async function reopenNotification(iri, event) {
     event.stopPropagation();
-    await setNotificationStatus(iri, STATUS_PENDING);
+    updateLocalStatus(iri, STATUS_PENDING);
+    setNotificationStatus(iri, STATUS_PENDING).catch(() => updateLocalStatus(iri, STATUS_COMPLETED));
   }
 
   function isSelected(iri) {
@@ -229,12 +252,13 @@
       const targetIris = filteredNotifications
         .filter(n => isSelected(n.iri) && isPending(n))
         .map(n => n.iri);
-      for (const iri of targetIris) {
-        await setNotificationStatus(iri, STATUS_COMPLETED);
-      }
+      for (const iri of targetIris) updateLocalStatus(iri, STATUS_COMPLETED);
       const next = { ...selectedIris };
       for (const iri of targetIris) delete next[iri];
       selectedIris = next;
+      await Promise.all(targetIris.map(iri =>
+        setNotificationStatus(iri, STATUS_COMPLETED).catch(() => updateLocalStatus(iri, STATUS_PENDING))
+      ));
     } finally {
       resolving = false;
     }
@@ -249,7 +273,7 @@
         entityId: source.iri,
         position: null,
         size: null,
-        conversationId: null,
+        conversationId: conversationIri,
       });
     } catch (err) {
       console.error('[NotificationCenter] Failed to open source', err);
@@ -285,12 +309,19 @@
     unlistenEntityUpdated = await listen('entity-updated', (event) => {
       const updatedIri = event.payload?.entityId;
       if (!updatedIri || !updatedIri.includes('AINotification')) return;
-      upsertNotification(updatedIri);
+      pendingUpserts.add(updatedIri);
+      clearTimeout(upsertTimer);
+      upsertTimer = setTimeout(() => {
+        const batch = [...pendingUpserts];
+        pendingUpserts.clear();
+        for (const iri of batch) upsertNotification(iri);
+      }, 250);
     });
   });
 
   onDestroy(() => {
     unlistenEntityUpdated?.();
+    clearTimeout(upsertTimer);
   });
 </script>
 

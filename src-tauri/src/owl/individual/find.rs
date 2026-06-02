@@ -67,24 +67,86 @@ impl Individual {
         ).map_err(|e| OwlError::DatabaseError(e.to_string()))
     }
 
-    /// Returns the IRI of the conversation with the most recent user message.
-    /// Only considers conversations that have a `foundation:handledBy` triple.
-    pub fn find_conversation_by_last_user_message(conn: &Connection) -> Result<Option<String>> {
-        query::find_conversation_by_last_user_message(conn)
-            .map_err(|e| OwlError::DatabaseError(e.to_string()))
-    }
-
-    /// Returns IRIs of messages in `conversation_iri` ordered by sentAt descending (newest first).
-    /// Pass `limit = usize::MAX` for no limit.
-    pub fn find_messages_by_conversation(
+    /// Generic: find subjects linked to `parent_iri` via `link_predicate`,
+    /// ordered newest-first by `order_predicate`. Domain predicates supplied by caller.
+    pub fn find_subjects_linked_to_ordered_by(
         conn: &Connection,
-        conversation_iri: &str,
+        parent_iri: &str,
+        link_predicate: &str,
+        order_predicate: &str,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<String>> {
-        query::find_message_iris_by_conversation(conn, conversation_iri, limit, offset)
+        query::find_subjects_linked_to_ordered_by(conn, parent_iri, link_predicate, order_predicate, limit, offset)
             .map_err(|e| OwlError::DatabaseError(e.to_string()))
     }
+
+    /// Generic: find the most recent instance of `class_iri` that has `guard_predicate` set,
+    /// ordered by the latest `child_ts_predicate` of children filtered by `child_filter_predicate` = `child_filter_value`.
+    /// Domain predicates and values supplied by caller (Core-Ontology layer).
+    pub fn find_class_instance_ordered_by_child_timestamp(
+        conn: &Connection,
+        class_iri: &str,
+        guard_predicate: &str,
+        child_link_predicate: &str,
+        child_ts_predicate: &str,
+        child_filter_predicate: &str,
+        child_filter_value: &str,
+    ) -> Result<Option<String>> {
+        query::find_class_instance_ordered_by_child_timestamp(
+            conn, class_iri, guard_predicate,
+            child_link_predicate, child_ts_predicate,
+            child_filter_predicate, child_filter_value,
+        ).map_err(|e| OwlError::DatabaseError(e.to_string()))
+    }
+
+    /// Generic: given a literal `needle` stored under `id_predicate` on a source node,
+    /// traverse the hop chain via_predicate → block_predicate, then filter by scope_predicate = scope_iri.
+    /// Returns the IRI of the parent node. Domain predicates supplied by caller.
+    pub fn find_parent_by_linked_id_and_scope(
+        conn: &Connection,
+        needle: &str,
+        id_predicate: &str,
+        via_predicate: &str,
+        block_predicate: &str,
+        scope_predicate: &str,
+        scope_iri: &str,
+    ) -> Option<String> {
+        crate::eavto::query::find_parent_by_linked_id_and_scope(
+            conn, needle, id_predicate, via_predicate, block_predicate, scope_predicate, scope_iri,
+        )
+    }
+
+    /// Generic: returns true if `subject_iri` has a linked object (via `link_predicate`)
+    /// whose `rdf:type` is NOT `excluded_type`. Domain predicates supplied by caller.
+    pub fn has_linked_object_without_type(
+        conn: &Connection,
+        subject_iri: &str,
+        link_predicate: &str,
+        excluded_type: &str,
+    ) -> bool {
+        let block_iris: Vec<String> = match query::get_by_entity_predicate(conn, subject_iri, link_predicate) {
+            Ok(r) => r.triples.into_iter()
+                .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+                .collect(),
+            Err(_) => return false,
+        };
+        if block_iris.is_empty() {
+            return false;
+        }
+        let block_triples = match query::batch_load_triples_for_subjects(conn, &block_iris) {
+            Ok(m) => m,
+            Err(_) => return false,
+        };
+        block_iris.iter().any(|iri| {
+            block_triples.get(iri).map_or(false, |triples| {
+                !triples.iter().any(|t| {
+                    t.predicate == "rdf:type" && t.object.as_iri() == Some(excluded_type)
+                })
+            })
+        })
+    }
+
 }
 
 #[cfg(test)]
@@ -280,103 +342,6 @@ mod tests {
         assert_eq!(total, 1);
         assert!(results.contains(&"foundation:HolidayVacation".to_string()));
         assert!(!results.contains(&"foundation:BirthdayParty".to_string()));
-    }
-
-    fn insert_message(conn: &mut Connection, iri: &str, conversation_iri: &str, sent_at_ms: i64) {
-        let rfc3339 = chrono::DateTime::from_timestamp_millis(sent_at_ms)
-            .unwrap_or_default()
-            .to_rfc3339();
-        store::assert_triples(conn, &[
-            Triple::new(iri, rdf::TYPE, Object::Iri("foundation:AIConversationMessage".to_string())),
-            Triple::new(iri, "foundation:partOfConversation", Object::Iri(conversation_iri.to_string())),
-            Triple::new(iri, "foundation:sentAt", Object::DateTime(rfc3339)),
-        ], "test").unwrap();
-    }
-
-    #[test]
-    fn test_find_messages_by_conversation_empty_db() {
-        let conn = setup_test_db();
-        let result = Individual::find_messages_by_conversation(
-            &conn,
-            "foundation:ConvA",
-            usize::MAX,
-            0,
-        ).unwrap();
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_find_messages_by_conversation_returns_messages_ordered_newest_first() {
-        let mut conn = setup_test_db();
-        insert_message(&mut conn, "foundation:Msg1", "foundation:ConvA", 1_000);
-        insert_message(&mut conn, "foundation:Msg2", "foundation:ConvA", 3_000);
-        insert_message(&mut conn, "foundation:Msg3", "foundation:ConvA", 2_000);
-
-        let result = Individual::find_messages_by_conversation(
-            &conn,
-            "foundation:ConvA",
-            usize::MAX,
-            0,
-        ).unwrap();
-
-        assert_eq!(result.len(), 3);
-        assert_eq!(result[0], "foundation:Msg2");
-        assert_eq!(result[1], "foundation:Msg3");
-        assert_eq!(result[2], "foundation:Msg1");
-    }
-
-    #[test]
-    fn test_find_messages_by_conversation_respects_limit() {
-        let mut conn = setup_test_db();
-        insert_message(&mut conn, "foundation:Msg1", "foundation:ConvA", 1_000);
-        insert_message(&mut conn, "foundation:Msg2", "foundation:ConvA", 3_000);
-        insert_message(&mut conn, "foundation:Msg3", "foundation:ConvA", 2_000);
-
-        let result = Individual::find_messages_by_conversation(
-            &conn,
-            "foundation:ConvA",
-            2,
-            0,
-        ).unwrap();
-
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], "foundation:Msg2");
-        assert_eq!(result[1], "foundation:Msg3");
-    }
-
-    #[test]
-    fn test_find_messages_by_conversation_respects_offset() {
-        let mut conn = setup_test_db();
-        insert_message(&mut conn, "foundation:Msg1", "foundation:ConvA", 1_000);
-        insert_message(&mut conn, "foundation:Msg2", "foundation:ConvA", 3_000);
-        insert_message(&mut conn, "foundation:Msg3", "foundation:ConvA", 2_000);
-
-        let result = Individual::find_messages_by_conversation(
-            &conn,
-            "foundation:ConvA",
-            usize::MAX,
-            1,
-        ).unwrap();
-
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], "foundation:Msg3");
-        assert_eq!(result[1], "foundation:Msg1");
-    }
-
-    #[test]
-    fn test_find_messages_by_conversation_excludes_other_conversations() {
-        let mut conn = setup_test_db();
-        insert_message(&mut conn, "foundation:Msg1", "foundation:ConvA", 1_000);
-        insert_message(&mut conn, "foundation:Msg2", "foundation:ConvB", 3_000);
-
-        let result = Individual::find_messages_by_conversation(
-            &conn,
-            "foundation:ConvA",
-            usize::MAX,
-            0,
-        ).unwrap();
-
-        assert_eq!(result, vec!["foundation:Msg1".to_string()]);
     }
 
     #[test]

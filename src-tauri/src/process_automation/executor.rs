@@ -166,8 +166,13 @@ fn create_execution_record(
 ) -> Result<String> {
     let now_ms = Utc::now().timestamp_millis();
     let exec_iri = format!("foundation:WorkflowExecution_{}", now_ms);
+    let process_label = crate::owl::get_literal_property(conn, process_iri, "rdfs:label")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| process_iri.to_string());
+    let exec_label = format!("Execução: {}", process_label);
     let ind = Individual::new(&exec_iri);
-    ind.assert(conn, "foundation:WorkflowExecution", &exec_iri, "play_circle", "process_automation")
+    ind.assert(conn, "foundation:WorkflowExecution", &exec_label, "play_circle", "process_automation")
         .map_err(|e| e.to_string())?;
     ind.add_property(conn, "foundation:executesProcess",
         vec![Object::Iri(process_iri.to_string())], "process_automation")

@@ -64,7 +64,11 @@
   }
 
   async function loadEntity() {
-    if (loadPending) { reloadWhenDone = true; return; }
+    if (loadPending) {
+      reloadWhenDone = true;
+      console.debug(`[INSPECTOR] ${entityId} queued (loadPending=true)`);
+      return;
+    }
     loadPending = true;
     loading = true;
     error = null;
@@ -79,6 +83,14 @@
       const typeIris = (entityData?.types ?? []).map(t => t.iri).filter(Boolean);
 
       console.debug(`[INSPECTOR] ${entityId} get_entity=${Math.round(t1 - t0)}ms`);
+      {
+        const watchProps = ['foundation:result', 'foundation:startedAt'];
+        for (const iri of watchProps) {
+          const p = (entityData?.properties ?? []).find(p => p.property === iri);
+          if (p) console.debug(`[INSPECTOR] ${entityId} prop ${iri}: value="${p.value?.slice(0,60)}" is_empty=${p.is_empty}`);
+          else console.debug(`[INSPECTOR] ${entityId} prop ${iri}: NOT IN properties array`);
+        }
+      }
 
       const t2 = performance.now();
       const [defsResult, automationsResult] = await Promise.allSettled([
@@ -108,6 +120,7 @@
       loading = false;
       if (reloadWhenDone) {
         reloadWhenDone = false;
+        console.debug(`[INSPECTOR] ${entityId} reloadWhenDone → scheduling next`);
         scheduleLoad();
       }
     }
@@ -471,10 +484,12 @@
     unlistenEntityUpdated = await listen('entity-updated', (event) => {
       const updatedId = event.payload.entityId;
       if (updatedId === entityId) {
+        console.debug(`[INSPECTOR] ${entityId} entity-updated(self) → scheduleLoad`);
         scheduleLoad();
         return;
       }
       if (entityData?.properties?.some(p => p.value === updatedId)) {
+        console.debug(`[INSPECTOR] ${entityId} entity-updated(prop=${updatedId}) → scheduleLoad`);
         scheduleLoad();
       }
     });
@@ -484,6 +499,7 @@
     // (e.g. a new Automation linked to this entity's class via foundation:inputClass).
     unlistenEntityReferenced = await listen('entity-referenced', (event) => {
       if (event.payload.entityId === entityId) {
+        console.debug(`[INSPECTOR] ${entityId} entity-referenced → scheduleLoad`);
         scheduleLoad();
         return;
       }

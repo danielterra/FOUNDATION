@@ -137,6 +137,22 @@ pub async fn chat__send_and_reply(
         super::log_backend("info", &format!("[CHAT] Attachments: {:?}", attachments));
     }
 
+    // Compact before persisting the user message so the context sent to the API is always
+    // [summary] + [tail] + [user_message] — the user's last message is never swallowed by
+    // compaction and the resulting history is deterministic.
+    {
+        let (_, current_tokens) = load_conversation_history(executor.inner(), &conversation_id, agent_config.max_tokens)
+            .await
+            .unwrap_or_default();
+        compaction::run_compaction_if_needed(
+            executor.inner().clone(),
+            app.clone(),
+            conversation_id.clone(),
+            compaction::CompactionConfig::from_agent_config(&agent_config),
+            current_tokens,
+        ).await;
+    }
+
     // (mime_type, base64_data) — injected into API for current turn only, never stored in DB
     let mut attachment_binaries: Vec<(String, String)> = Vec::new();
     // (file_iri, file_name) — files without a foundation:aiSummary, AI is asked to save one
@@ -314,101 +330,122 @@ pub async fn chat__get_recent_messages(
         // Over-fetch raw messages to account for intermediate tool_result / tool_use messages
         // that will be folded into display units and not counted toward `limit`.
         let fetch_count = limit * 5 + 10;
-        let message_iris = Individual::find_messages_by_conversation(conn, &conv_id, fetch_count, 0)
+        let message_iris = crate::core_ontology::chat::find_messages_by_conversation(conn, &conv_id, fetch_count, 0)
             .map_err(|e| format!("Failed to query messages: {}", e))?;
 
         // `find_messages_by_conversation` returns newest-first; reverse to chronological order.
         let message_iris: Vec<String> = message_iris.into_iter().rev().collect();
 
-        // --- helpers ---
+        // --- batch load all data (4 queries instead of O(messages × blocks × 10)) ---
+        let t_batch_start = std::time::Instant::now();
 
-        fn load_props(conn: &crate::owl::Connection, iri: &str) -> Option<Individual> {
-            Individual::get(conn, iri).ok().flatten()
-        }
+        // Batch 1: all message-level triples
+        let t1 = std::time::Instant::now();
+        let msg_triples_map = Individual::batch_load_triples(conn, &message_iris)
+            .map_err(|e| format!("Failed to batch-load message triples: {}", e))?;
+        let ms1 = t1.elapsed().as_millis();
 
-        fn get_role(props: &Individual) -> String {
-            props.properties.iter()
-                .find(|(k, _)| k == "foundation:role")
-                .and_then(|(_, v)| v.as_literal())
-                .unwrap_or_default()
-        }
+        // Batch 2: all content block triples
+        let all_block_iris: Vec<String> = message_iris.iter()
+            .filter_map(|iri| msg_triples_map.get(iri))
+            .flat_map(|triples| super::chat_storage::triple_iris(triples, "foundation:hasContentBlock"))
+            .collect();
 
-        fn get_content_blocks(conn: &crate::owl::Connection, iri: &str) -> Vec<ContentBlock> {
-            super::chat_storage::load_content_blocks(conn, iri).unwrap_or_default()
-        }
+        let t2 = std::time::Instant::now();
+        let block_triples_map = Individual::batch_load_triples(conn, &all_block_iris)
+            .map_err(|e| format!("Failed to batch-load block triples: {}", e))?;
+        let ms2 = t2.elapsed().as_millis();
 
-        fn get_timestamp(props: &Individual) -> i64 {
-            props.properties.iter()
-                .find(|(k, _)| k == "foundation:sentAt")
-                .and_then(|(_, v)| parse_timestamp(v))
-                .unwrap_or(0)
-        }
+        // Batch 3: ToolUseBlocks referenced by ToolResultBlocks (for tool_use_id resolution)
+        let tool_use_iris: Vec<String> = block_triples_map.values()
+            .flat_map(|triples| {
+                triples.iter()
+                    .filter(|t| t.predicate == "anthropic:resultOf")
+                    .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
 
-        fn resolve_attachments(
-            conn: &crate::owl::Connection,
-            msg_iri: &str,
-            blocks: &[ContentBlock],
-        ) -> Vec<serde_json::Value> {
-            let file_ref_count = blocks.iter().filter(|b| matches!(b, ContentBlock::FileRef { .. })).count();
-            if file_ref_count > 0 {
-                super::log_backend("debug", &format!("[CHAT] Message {} has {} FileRef block(s)", msg_iri, file_ref_count));
-            }
+        let t3 = std::time::Instant::now();
+        let tool_use_triples_map = Individual::batch_load_triples(conn, &tool_use_iris)
+            .map_err(|e| format!("Failed to batch-load tool-use block triples: {}", e))?;
+        let ms3 = t3.elapsed().as_millis();
 
+        // Batch 4: file entity triples for FileRef attachment resolution
+        let file_iris: Vec<String> = block_triples_map.values()
+            .flat_map(|triples| {
+                triples.iter()
+                    .filter(|t| t.predicate == "rdf:type" && t.object.as_iri() == Some("foundation:FileRefBlock"))
+                    .flat_map(|_| triples.iter()
+                        .filter(|t| t.predicate == "foundation:fileRef")
+                        .filter_map(|t| t.object.as_iri().map(|s| s.to_string())))
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let t4 = std::time::Instant::now();
+        let file_triples_map = Individual::batch_load_triples(conn, &file_iris)
+            .map_err(|e| format!("Failed to batch-load file triples: {}", e))?;
+
+        // Collect all file type IRIs for mime-type resolution
+        let file_type_iris: Vec<String> = file_triples_map.values()
+            .flat_map(|triples| {
+                triples.iter()
+                    .filter(|t| t.predicate == "foundation:hasFileType")
+                    .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let file_type_triples_map = Individual::batch_load_triples(conn, &file_type_iris)
+            .map_err(|e| format!("Failed to batch-load file type triples: {}", e))?;
+        let ms4 = t4.elapsed().as_millis();
+
+        let total_batch_ms = t_batch_start.elapsed().as_millis();
+        super::log_backend("debug", &format!(
+            "[CMD] chat_messages({}msgs {}blocks {}tool_uses) batch1={}ms batch2={}ms batch3={}ms batch4={}ms total={}ms",
+            message_iris.len(), all_block_iris.len(), tool_use_iris.len(),
+            ms1, ms2, ms3, ms4, total_batch_ms
+        ));
+
+        // --- helpers (all work from in-memory maps, zero additional DB queries) ---
+
+        let get_blocks_for = |iri: &str| -> Vec<ContentBlock> {
+            let block_iris = msg_triples_map.get(iri)
+                .map(|t| super::chat_storage::triple_iris(t, "foundation:hasContentBlock"))
+                .unwrap_or_default();
+            let mut indexed: Vec<(i64, ContentBlock)> = block_iris.iter()
+                .filter_map(|block_iri| {
+                    block_triples_map.get(block_iri)
+                        .and_then(|bt| super::chat_storage::parse_content_block_from_batch(bt, &tool_use_triples_map))
+                })
+                .collect();
+            indexed.sort_by_key(|(idx, _)| *idx);
+            indexed.into_iter().map(|(_, b)| b).collect()
+        };
+
+        let resolve_attachments = |msg_iri: &str, blocks: &[ContentBlock]| -> Vec<serde_json::Value> {
             blocks.iter().filter_map(|block| {
                 let ContentBlock::FileRef { file_iri, file_name, .. } = block else { return None; };
+                let file_triples = file_triples_map.get(file_iri.as_str())?;
 
-                let file_entity = match Individual::get(conn, file_iri) {
-                    Ok(Some(e)) => e,
-                    Ok(None) => {
-                        super::log_backend("warn", &format!("[CHAT] FileRef {} — entity not found", file_iri));
-                        return None;
-                    }
-                    Err(e) => {
-                        super::log_backend("warn", &format!("[CHAT] FileRef {} — lookup error: {}", file_iri, e));
-                        return None;
-                    }
-                };
+                let file_path = super::chat_storage::triple_str(file_triples, "foundation:filePath")
+                    .map(|p| crate::paths::resolve_path(&p).to_string_lossy().into_owned())?;
 
-                let file_path = match file_entity.properties.iter()
-                    .find(|(k, _)| k == "foundation:filePath")
-                    .and_then(|(_, v)| match v {
-                        Object::Literal { value, .. } => Some(
-                            crate::paths::resolve_path(value).to_string_lossy().into_owned(),
-                        ),
-                        _ => None,
-                    }) {
-                    Some(p) => p,
-                    None => {
-                        super::log_backend("warn", &format!(
-                            "[CHAT] FileRef {} — no filePath property (props: {:?})",
-                            file_iri,
-                            file_entity.properties.iter().map(|(k, _)| k).collect::<Vec<_>>()
-                        ));
-                        return None;
-                    }
-                };
-
-                let file_size = file_entity.properties.iter()
-                    .find(|(k, _)| k == "foundation:fileSize")
-                    .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None })
+                let file_size = super::chat_storage::triple_int(file_triples, "foundation:fileSize")
                     .unwrap_or(0);
 
-                let mime_type = file_entity.properties.iter()
-                    .find(|(k, _)| k == "foundation:hasFileType")
-                    .and_then(|(_, v)| match v {
-                        Object::Iri(ft_iri) => Individual::get(conn, ft_iri.as_str()).ok()
-                            .flatten()
-                            .and_then(|ft| ft.properties.into_iter()
-                                .find(|(k, _)| k == "foundation:mimeType")
-                                .and_then(|(_, v)| match v {
-                                    Object::Literal { value, .. } => Some(value),
-                                    _ => None,
-                                })
-                            ),
-                        _ => None,
-                    })
+                let mime_type = file_triples.iter()
+                    .find(|t| t.predicate == "foundation:hasFileType")
+                    .and_then(|t| t.object.as_iri())
+                    .and_then(|ft_iri| file_type_triples_map.get(ft_iri))
+                    .and_then(|ft_triples| super::chat_storage::triple_str(ft_triples, "foundation:mimeType"))
                     .unwrap_or_else(|| "application/octet-stream".to_string());
 
+                super::log_backend("debug", &format!("[CHAT] Message {} FileRef resolved", msg_iri));
                 Some(serde_json::json!({
                     "fileName": file_name,
                     "filePath": file_path,
@@ -416,14 +453,14 @@ pub async fn chat__get_recent_messages(
                     "mimeType": mime_type,
                 }))
             }).collect()
-        }
+        };
 
         // --- walk messages and assemble display units ---
 
         // Pre-build map: tool_use_id → (content, is_error, duration_ms)
         let mut all_tool_results: std::collections::HashMap<String, (String, bool, Option<u64>)> = std::collections::HashMap::new();
         for iri in &message_iris {
-            for block in get_content_blocks(conn, iri) {
+            for block in get_blocks_for(iri) {
                 if let ContentBlock::ToolResult { tool_use_id, content, is_error, duration_ms } = block {
                     all_tool_results.insert(tool_use_id, (content, is_error.unwrap_or(false), duration_ms));
                 }
@@ -433,14 +470,19 @@ pub async fn chat__get_recent_messages(
         let mut units: Vec<serde_json::Value> = Vec::new();
 
         for iri in &message_iris {
-            let props = match load_props(conn, iri) {
-                Some(p) => p,
+            let msg_triples = match msg_triples_map.get(iri) {
+                Some(t) => t,
                 None => continue,
             };
 
-            let role = get_role(&props);
-            let blocks = get_content_blocks(conn, iri);
-            let timestamp = get_timestamp(&props);
+            let role = super::chat_storage::triple_str(msg_triples, "foundation:role").unwrap_or_default();
+            let blocks = get_blocks_for(iri);
+            let timestamp = msg_triples.iter()
+                .find(|t| t.predicate == "foundation:sentAt")
+                .and_then(|t| if let Object::DateTime(rfc) = &t.object {
+                    chrono::DateTime::parse_from_rfc3339(rfc).ok().map(|dt| dt.timestamp_millis())
+                } else { None })
+                .unwrap_or(0);
 
             if blocks.is_empty() {
                 continue;
@@ -470,18 +512,15 @@ pub async fn chat__get_recent_messages(
                         if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
                     }).collect::<Vec<_>>().join(" ");
 
-                    let attachments = resolve_attachments(conn, iri, &blocks);
+                    let attachments = resolve_attachments(iri, &blocks);
                     if !attachments.is_empty() {
                         super::log_backend("debug", &format!("[CHAT] Message {} has {} attachment(s)", iri, attachments.len()));
                     }
 
-                    let subconscious_entities: Vec<subconscious::SubconsciousEntity> = props.properties.iter()
-                        .find(|(k, _)| k == "foundation:subconsciousContext")
-                        .and_then(|(_, v)| match v {
-                            Object::Literal { value, .. } => serde_json::from_str(value).ok(),
-                            _ => None,
-                        })
-                        .unwrap_or_default();
+                    let subconscious_entities: Vec<subconscious::SubconsciousEntity> =
+                        super::chat_storage::triple_str(msg_triples, "foundation:subconsciousContext")
+                            .and_then(|v| serde_json::from_str(&v).ok())
+                            .unwrap_or_default();
 
                     units.push(serde_json::json!({
                         "type": "user",
@@ -545,8 +584,14 @@ pub async fn chat__get_recent_messages(
                         let reasoning: Option<String> = {
                             let parts: Vec<String> = blocks.iter().filter_map(|b| match b {
                                 ContentBlock::Thinking { thinking, .. } => Some(thinking.clone()),
-                                ContentBlock::Text { text } if !text.is_empty() => Some(text.clone()),
                                 _ => None,
+                            }).collect();
+                            if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
+                        };
+
+                        let text: Option<String> = {
+                            let parts: Vec<&str> = blocks.iter().filter_map(|b| {
+                                if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
                             }).collect();
                             if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
                         };
@@ -556,6 +601,7 @@ pub async fn chat__get_recent_messages(
                                 "type": "tool_use",
                                 "iri": iri,
                                 "tool_calls": tool_calls,
+                                "text": text,
                                 "reasoning": reasoning,
                                 "timestamp": timestamp,
                             }));
@@ -573,30 +619,28 @@ pub async fn chat__get_recent_messages(
                             if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
                         };
 
-                        let input_tokens = props.properties.iter()
-                            .find(|(k, _)| k == "foundation:inputTokens")
-                            .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
-                        let output_tokens = props.properties.iter()
-                            .find(|(k, _)| k == "foundation:outputTokens")
-                            .and_then(|(_, v)| match v { Object::Integer(n) => Some(*n), _ => None });
-                        let estimated_cost = props.properties.iter()
-                            .find(|(k, _)| k == "foundation:estimatedCost")
-                            .and_then(|(_, v)| match v {
+                        let input_tokens = super::chat_storage::triple_int(msg_triples, "foundation:inputTokens");
+                        let output_tokens = super::chat_storage::triple_int(msg_triples, "foundation:outputTokens");
+                        let estimated_cost = msg_triples.iter()
+                            .find(|t| t.predicate == "foundation:estimatedCost")
+                            .and_then(|t| match &t.object {
                                 Object::Number(n) => Some(*n),
                                 Object::Literal { value, .. } => value.parse::<f64>().ok(),
                                 _ => None,
                             });
 
-                        units.push(serde_json::json!({
-                            "type": "text",
-                            "iri": iri,
-                            "text": text,
-                            "reasoning": reasoning,
-                            "timestamp": timestamp,
-                            "input_tokens": input_tokens,
-                            "output_tokens": output_tokens,
-                            "estimated_cost": estimated_cost,
-                        }));
+                        if !text.is_empty() || reasoning.is_some() {
+                            units.push(serde_json::json!({
+                                "type": "text",
+                                "iri": iri,
+                                "text": text,
+                                "reasoning": reasoning,
+                                "timestamp": timestamp,
+                                "input_tokens": input_tokens,
+                                "output_tokens": output_tokens,
+                                "estimated_cost": estimated_cost,
+                            }));
+                        }
                     }
                 }
 
@@ -983,7 +1027,13 @@ pub async fn chat__recover_pending_tools(
         }
     }
 
-    run_conversation_from_current_state(app.clone(), executor.inner().clone(), conv_id, &cancellation, true).await?;
+    run_conversation_from_current_state(app.clone(), executor.inner().clone(), conv_id.clone(), &cancellation, true).await?;
+
+    // Always clear the ai-status chip after recovery regardless of silent mode — the chip
+    // may be stuck showing a stale status from the previous interrupted run.
+    use tauri::Emitter;
+    app.emit("ai-status", serde_json::json!({ "status": null, "conversationId": conv_id })).ok();
+
     Ok(1)
 }
 

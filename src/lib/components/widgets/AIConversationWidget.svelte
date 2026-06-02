@@ -13,8 +13,18 @@
   let error = $state(null);
   let messagesEl = $state(null);
 
+  let loadPending = false;
+  let reloadWhenDone = false;
+
   async function loadMessages() {
     if (!entityId) return;
+    if (loadPending) {
+      reloadWhenDone = true;
+      console.debug(`[CONV_WIDGET] ${entityId} queued (loadPending=true, label=${!!label})`);
+      return;
+    }
+    loadPending = true;
+    console.debug(`[CONV_WIDGET] ${entityId} loadMessages start (label=${!!label})`);
     try {
       const result = await invoke('chat__get_recent_messages', {
         limit: 200,
@@ -22,6 +32,7 @@
       });
       messages = result.messages ?? [];
       if (!label) {
+        console.debug(`[CONV_WIDGET] ${entityId} fetching label via inspector__get_entity`);
         const conv = await invoke('inspector__get_entity', { entityId });
         label = JSON.parse(conv)?.label ?? '';
       }
@@ -29,6 +40,12 @@
       error = err?.toString() ?? 'Falha ao carregar mensagens';
     } finally {
       loading = false;
+      loadPending = false;
+      if (reloadWhenDone) {
+        reloadWhenDone = false;
+        console.debug(`[CONV_WIDGET] ${entityId} reloadWhenDone → scheduling next`);
+        loadMessages();
+      }
     }
     await tick();
     scrollToBottom();
@@ -48,6 +65,7 @@
     await loadMessages();
     unlistenRef = await listen('entity-referenced', async (event) => {
       if (event.payload?.entityId !== entityId) return;
+      console.debug(`[CONV_WIDGET] ${entityId} entity-referenced → loadMessages`);
       await loadMessages();
     });
   });

@@ -164,6 +164,12 @@ pub async fn start(app: AppHandle) {
                     log_backend("error", &format!(
                         "[task_scheduler] Failed to clear startedAt for {}: {}", task_iri, e
                     ));
+                    continue;
+                }
+                if let Err(e) = crate::owl::replace_all_property_iris(conn, task_iri, "foundation:hasStatus", &["foundation:Pending"], "task_scheduler") {
+                    log_backend("error", &format!(
+                        "[task_scheduler] Failed to reset status for {}: {}", task_iri, e
+                    ));
                 } else {
                     log_backend("warn", &format!(
                         "[task_scheduler] Recovered interrupted task: {}", task_iri

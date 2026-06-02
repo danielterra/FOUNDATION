@@ -424,64 +424,95 @@ pub fn find_by_properties_with_options(
     Ok((entities, total))
 }
 
-/// Only considers conversations that have a `foundation:handledBy` triple.
-pub fn find_conversation_by_last_user_message(conn: &Connection) -> Result<Option<String>> {
+/// Generic: find the most recent instance of `class_iri` that has `guard_predicate` set,
+/// ordered by the latest `child_ts_predicate` among its children linked via
+/// `child_link_predicate` whose `child_filter_predicate` equals `child_filter_value`.
+///
+/// Domain-specific predicate names and values are supplied by the caller (OWL layer),
+/// keeping this function free of Foundation-specific IRIs.
+pub fn find_class_instance_ordered_by_child_timestamp(
+    conn: &Connection,
+    class_iri: &str,
+    guard_predicate: &str,
+    child_link_predicate: &str,
+    child_ts_predicate: &str,
+    child_filter_predicate: &str,
+    child_filter_value: &str,
+) -> Result<Option<String>> {
     let sql = "
         SELECT conv.subject
         FROM triples_current conv
         WHERE conv.predicate = 'rdf:type'
-          AND conv.object = 'foundation:AIConversation'
+          AND conv.object = ?1
           AND EXISTS (
               SELECT 1 FROM triples_current h
               WHERE h.subject = conv.subject
-                AND h.predicate = 'foundation:handledBy'
+                AND h.predicate = ?2
           )
         ORDER BY (
             SELECT MAX(t_sent.object_value)
             FROM triples_current t_conv
             JOIN triples_current t_sent ON t_sent.subject = t_conv.subject
-              AND t_sent.predicate = 'foundation:sentAt'
+              AND t_sent.predicate = ?4
             JOIN triples_current t_role ON t_role.subject = t_conv.subject
-              AND t_role.predicate = 'foundation:role'
-              AND t_role.object_value = 'user'
-            WHERE t_conv.predicate = 'foundation:partOfConversation'
+              AND t_role.predicate = ?5
+              AND t_role.object_value = ?6
+            WHERE t_conv.predicate = ?3
               AND t_conv.object = conv.subject
         ) DESC NULLS LAST
         LIMIT 1
     ";
     let mut stmt = conn.prepare(sql)?;
-    let mut rows = stmt.query([])?;
+    let mut rows = stmt.query(rusqlite::params![
+        class_iri, guard_predicate, child_link_predicate,
+        child_ts_predicate, child_filter_predicate, child_filter_value,
+    ])?;
     Ok(rows.next()?.map(|row| row.get::<_, String>(0)).transpose()?)
 }
 
-pub fn find_message_iris_by_conversation(
+/// Generic: find subjects that are linked to `parent_iri` via `link_predicate`,
+/// ordered newest-first by `order_predicate` on those subjects.
+///
+/// Domain-specific predicate names are supplied by the caller (OWL layer),
+/// keeping this function free of Foundation-specific IRIs.
+pub fn find_subjects_linked_to_ordered_by(
     conn: &Connection,
-    conversation_iri: &str,
+    parent_iri: &str,
+    link_predicate: &str,
+    order_predicate: &str,
     limit: usize,
     offset: usize,
 ) -> Result<Vec<String>> {
+    // Window function over all link_predicate rows (including historical) so we
+    // honour the immutability rule: the row with MAX(tx) for each (subject, predicate)
+    // is truth, regardless of the retracted flag on older rows.
     let sql = "
         SELECT subject FROM (
-            SELECT t_type.subject, MAX(t_sent.object_value) AS ts
-            FROM triples_current t_type
-            INNER JOIN triples_current t_conv
-                ON t_type.subject = t_conv.subject
-                AND t_conv.predicate = 'foundation:partOfConversation'
-                AND (t_conv.object = ?1 OR t_conv.object_value = ?1)
-            LEFT JOIN triples_current t_sent
-                ON t_type.subject = t_sent.subject
-                AND t_sent.predicate = 'foundation:sentAt'
-            WHERE t_type.predicate = 'rdf:type'
-              AND t_type.object = 'foundation:AIConversationMessage'
-            GROUP BY t_type.subject
+            SELECT t_conv.subject, MAX(t_sent.object_value) AS ts
+            FROM (
+                SELECT subject, retracted,
+                       MAX(tx) OVER (PARTITION BY subject, predicate) AS max_tx, tx
+                FROM triples
+                WHERE predicate = ?1
+                  AND (object = ?2 OR object_value = ?2)
+            ) t_conv
+            INNER JOIN triples t_sent
+                ON t_conv.subject = t_sent.subject
+               AND t_sent.predicate = ?3
+               AND t_sent.retracted = 0
+            WHERE t_conv.tx = t_conv.max_tx AND t_conv.retracted = 0
+            GROUP BY t_conv.subject
         )
         ORDER BY ts DESC
-        LIMIT ?2 OFFSET ?3
+        LIMIT ?4 OFFSET ?5
     ";
     let limit_i64: i64 = limit.try_into().unwrap_or(-1);
     let mut stmt = conn.prepare(sql)?;
     let iris = stmt
-        .query_map(rusqlite::params![conversation_iri, limit_i64, offset as i64], |row| row.get(0))?
+        .query_map(
+            rusqlite::params![link_predicate, parent_iri, order_predicate, limit_i64, offset as i64],
+            |row| row.get(0),
+        )?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(iris)
 }

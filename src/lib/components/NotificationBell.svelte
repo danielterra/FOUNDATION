@@ -7,6 +7,7 @@
 
   let pendingCount = $state(0);
   let unlistenEntityUpdated: (() => void) | undefined;
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   type SearchEntity = { id: string; status?: { iri?: string } | null };
 
@@ -38,12 +39,15 @@
     await refreshCount();
     unlistenEntityUpdated = await listen<{ entityId?: string }>('entity-updated', (event) => {
       const id = event.payload?.entityId ?? '';
-      if (id.includes('AINotification')) refreshCount();
+      if (!id.includes('AINotification')) return;
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(refreshCount, 300);
     });
   });
 
   onDestroy(() => {
     unlistenEntityUpdated?.();
+    clearTimeout(refreshTimer);
   });
 </script>
 

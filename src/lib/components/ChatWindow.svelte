@@ -1,6 +1,6 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { marked } from 'marked';
 	import Card from './Card.svelte';
 	import ChatAttachmentPreview from './ChatAttachmentPreview.svelte';
@@ -191,6 +191,7 @@
 			if (!activeConversationIri) return;
 			if (event.payload?.entityId !== activeConversationIri) return;
 
+			console.debug(`[CHAT] entity-referenced(${activeConversationIri}) → reload messages`);
 			const version = ++loadMessagesVersion;
 			const result = await invoke('chat__get_recent_messages', {
 				limit: messageLimit,
@@ -433,8 +434,11 @@
 			if (version !== loadMessagesVersion) return;
 			hasMoreMessages = result.messages.length === messageLimit;
 			messages = result.messages;
+			isLoadingMessages = false;
 			syncLoadingFromDb(result.is_processing, activeConversationIri);
-			scrollToBottom();
+			await tick();
+			autoScroll = true;
+			if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
 		} catch (err) {
 			if (version !== loadMessagesVersion) return;
 			console.error('Failed to load messages:', err);
@@ -490,6 +494,7 @@
 			}
 		});
 		obs.observe(contentEl);
+		obs.observe(chatContainer);
 		return () => obs.disconnect();
 	});
 

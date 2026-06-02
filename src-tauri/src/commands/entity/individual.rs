@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use crate::owl::{self, Class, Individual, Property, Connection};
 use super::{EntityData, PropertyValue, GraphNode, GraphLink, StatusInfo, FileInfo,
             resolve_unit_label, resolve_entity_status};
@@ -9,7 +9,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     let n_props = individual.properties.len();
     let n_backlinks = individual.backlinks.len();
     let n_types = individual.types.len();
-    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: Individual (props={n_props} backlinks={n_backlinks} types={n_types})"));
+    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: Individual (props={n_props} backlinks={n_backlinks} types={n_types})"));
 
     let label = individual.label.unwrap_or_else(|| individual_id.to_string());
     let icon = individual.icon;
@@ -30,12 +30,15 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         .collect();
 
     // Pre-fetch all class objects to avoid redundant Class::get calls.
+    let t_a = std::time::Instant::now();
     let mut class_cache: HashMap<String, Class> = HashMap::new();
     for type_thing in &individual.types {
         if let Ok(Some(class)) = Class::get(conn, &type_thing.iri) {
             class_cache.insert(type_thing.iri.clone(), class);
         }
     }
+    let t_b = std::time::Instant::now();
+    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: class_cache {}ms", t_b.duration_since(t_a).as_millis()));
 
     // Collect all property IRIs needed (filled + class-defined empty) for a single batch fetch.
     let filled_iris_set: std::collections::HashSet<&str> = individual.properties.iter()
@@ -60,6 +63,8 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     }
     let all_prop_iris_refs: Vec<&str> = all_prop_iris.iter().map(|s| s.as_str()).collect();
     let prop_cache = Property::get_batch(conn, &all_prop_iris_refs).unwrap_or_default();
+    let t_c = std::time::Instant::now();
+    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: prop_cache ({} props) {}ms", all_prop_iris_refs.len(), t_c.duration_since(t_b).as_millis()));
 
     // Pre-fetch Thing metadata for all range/source class IRIs in one batch.
     let mut thing_iris: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -99,6 +104,9 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     let fwd_status_iris = crate::eavto::query::get_first_iri_property_batch(
         conn, &object_value_iris, "foundation:hasStatus",
     ).unwrap_or_default();
+    let t_d = std::time::Instant::now();
+    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: thing_cache+fwd_status_batch {}ms", t_d.duration_since(t_c).as_millis()));
+
     let unique_fwd_status: Vec<String> = fwd_status_iris.values()
         .cloned()
         .collect::<std::collections::HashSet<_>>()
@@ -110,7 +118,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             let status_thing = thing_cache.get(&status_iri)
                 .cloned()
                 .unwrap_or_else(|| crate::owl::Thing::get(conn, &status_iri));
-            let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri);
+            let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
             fwd_status_info.insert(status_iri.clone(), StatusInfo {
                 iri: status_iri,
                 label: status_thing.label,
@@ -124,6 +132,8 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             fwd_status_info.get(&status_iri).cloned().map(|info| (entity_iri, info))
         })
         .collect();
+    let t_e = std::time::Instant::now();
+    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: fwd_status_info {}ms", t_e.duration_since(t_d).as_millis()));
 
     let mut properties = Vec::new();
     for (property_iri, value_obj) in &individual.properties {
@@ -267,7 +277,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     }
 
     let t_props = std::time::Instant::now();
-    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: property loop {}ms", t_props.duration_since(t0).as_millis()));
+    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: property loop {}ms", t_props.duration_since(t0).as_millis()));
 
     properties.sort_by(|a, b| {
         let tx_a = max_tx_per_predicate.get(&a.property).copied().unwrap_or(0);
@@ -362,7 +372,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     }
 
     let t_empty_props = std::time::Instant::now();
-    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: empty-props loop {}ms", t_empty_props.duration_since(t_props).as_millis()));
+    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: empty-props loop {}ms", t_empty_props.duration_since(t_props).as_millis()));
 
     {
         let mut card_map: HashMap<String, (Option<u32>, Option<u32>)> = HashMap::new();
@@ -392,7 +402,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     }
 
     let t_cardinality = std::time::Instant::now();
-    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: cardinality {}ms", t_cardinality.duration_since(t_empty_props).as_millis()));
+    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: cardinality {}ms", t_cardinality.duration_since(t_empty_props).as_millis()));
 
     let mut nodes = Vec::new();
     let mut links = Vec::new();
@@ -488,7 +498,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     }
 
     let t_graph_nodes = std::time::Instant::now();
-    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: graph nodes {}ms", t_graph_nodes.duration_since(t_cardinality).as_millis()));
+    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: graph nodes {}ms", t_graph_nodes.duration_since(t_cardinality).as_millis()));
 
     let backlink_source_iris: Vec<String> = {
         let mut seen = std::collections::HashSet::new();
@@ -540,7 +550,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     for status_iri in unique_status_iris {
         if owl::is_instance_of(conn, &status_iri, "foundation:Status") {
             let status_thing = crate::owl::Thing::get(conn, &status_iri);
-            let (icon, color) = owl::resolve_status_appearance(conn, &status_iri);
+            let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
             status_cache.insert(status_iri.clone(), StatusInfo {
                 iri: status_iri,
                 label: status_thing.label,
@@ -648,7 +658,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     }
 
     let t_backlinks = std::time::Instant::now();
-    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] {individual_id}: backlinks section {}ms", t_backlinks.duration_since(t_graph_nodes).as_millis()));
+    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: backlinks section {}ms", t_backlinks.duration_since(t_graph_nodes).as_millis()));
 
     let status = resolve_entity_status(conn, &properties);
 
@@ -672,14 +682,14 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         for status_iri in status_iris {
             if seen_status_iris.insert(status_iri.clone()) {
                 let thing = crate::owl::Thing::get(conn, &status_iri);
-                let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri);
+                let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
                 allowed_statuses.push(StatusInfo { iri: status_iri, label: thing.label, icon, color });
             }
         }
     }
 
     let t_tail = std::time::Instant::now();
-    crate::commands::logging::log_backend("DEBUG", &format!(
+    crate::commands::logging::log_backend("debug", &format!(
         "[INSPECTOR] {individual_id}: tail (status+required+allowed) {}ms | TOTAL {}ms",
         t_tail.duration_since(t_backlinks).as_millis(),
         t_tail.duration_since(t0).as_millis(),
@@ -708,3 +718,4 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         applicable_automations: vec![],
     })
 }
+

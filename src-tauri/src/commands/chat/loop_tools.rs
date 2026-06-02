@@ -57,14 +57,21 @@ pub fn build_system_prompt(
         'Verificando cardinality constraints...'. This field is stripped before execution \
         and shown to the user as context.";
 
+    let response_rule = "## Response rule\n\
+        You MUST always end your turn with a text message to the user. \
+        Never finish silently after tool calls — always confirm what was done, \
+        summarize the result, or ask the next question. \
+        An empty final turn is a failure.";
+
     let base = format!(
-        "{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+        "{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
         foundation_context,
         agent_config.base_system_prompt,
         widget_context,
         agent_config.system_prompt,
         delegation_section,
         tool_reason_instruction,
+        response_rule,
     );
     match camera_count {
         Some(n) => format!(

@@ -9,35 +9,42 @@ use super::query_result_type::QueryResult;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-/// Returns the IRI of the first AIConversationMessage in `conversation_iri` that
-/// contains a ToolResultBlock whose `anthropic:resultOf` points to the ToolUseBlock
-/// identified by `tool_use_id`. Used to detect duplicate tool_result storage on recovery.
-pub fn find_tool_result_message_iri(
+/// Generic: given a literal `needle` stored under `id_predicate` on a source node S,
+/// traverse three hops: S →[via_predicate]→ M →[block_predicate]→ P, where P also
+/// has `scope_predicate` pointing to `scope_iri`. Returns the IRI of P.
+///
+/// Domain-specific predicate names are supplied by the caller (OWL layer),
+/// keeping this function free of Foundation-specific IRIs.
+pub fn find_parent_by_linked_id_and_scope(
     conn: &Connection,
-    tool_use_id: &str,
-    conversation_iri: &str,
+    needle: &str,
+    id_predicate: &str,
+    via_predicate: &str,
+    block_predicate: &str,
+    scope_predicate: &str,
+    scope_iri: &str,
 ) -> Option<String> {
     conn.query_row(
         "SELECT t_msg.subject
          FROM triples t_use_id
          JOIN triples t_result_of
-           ON t_result_of.predicate = 'anthropic:resultOf'
+           ON t_result_of.predicate = ?3
           AND t_result_of.object = t_use_id.subject
           AND t_result_of.retracted = 0
          JOIN triples t_has_block
-           ON t_has_block.predicate = 'foundation:hasContentBlock'
+           ON t_has_block.predicate = ?4
           AND t_has_block.object = t_result_of.subject
           AND t_has_block.retracted = 0
          JOIN triples t_msg
            ON t_msg.subject = t_has_block.subject
-          AND t_msg.predicate = 'foundation:partOfConversation'
-          AND t_msg.object = ?2
+          AND t_msg.predicate = ?5
+          AND t_msg.object = ?6
           AND t_msg.retracted = 0
-         WHERE t_use_id.predicate = 'anthropic:toolUseId'
+         WHERE t_use_id.predicate = ?2
            AND t_use_id.object_value = ?1
            AND t_use_id.retracted = 0
          LIMIT 1",
-        rusqlite::params![tool_use_id, conversation_iri],
+        rusqlite::params![needle, id_predicate, via_predicate, block_predicate, scope_predicate, scope_iri],
         |row| row.get(0),
     ).ok()
 }
@@ -610,6 +617,7 @@ pub fn batch_load_triples_for_subjects(
         placeholders
     );
     let params: Vec<SqlValue> = subjects.iter().map(|s| SqlValue::Text(s.clone())).collect();
+    let t0 = std::time::Instant::now();
     let mut stmt = conn.prepare(&sql)?;
     let triples = stmt
         .query_map(rusqlite::params_from_iter(params.iter()), row_to_triple)?
@@ -617,6 +625,13 @@ pub fn batch_load_triples_for_subjects(
     let mut map: std::collections::HashMap<String, Vec<Triple>> = std::collections::HashMap::new();
     for triple in triples {
         map.entry(triple.subject.clone()).or_default().push(triple);
+    }
+    let elapsed = t0.elapsed().as_millis();
+    if elapsed > 10 || subjects.len() > 50 {
+        crate::diagnostics::log_backend("debug", &format!(
+            "[EAVTO] batch_load({} subjects) → {} triples {}ms",
+            subjects.len(), map.len(), elapsed
+        ));
     }
     Ok(map)
 }

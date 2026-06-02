@@ -35,7 +35,7 @@ pub async fn execute_tools_from_message(
     let ids_to_check = tool_use_ids;
     let existing_iri = executor.read(move |conn| {
         let found = ids_to_check.iter()
-            .find_map(|id| crate::owl::find_tool_result_message_iri(conn, id, &conv_id_check));
+            .find_map(|id| crate::core_ontology::chat::find_tool_result_message_iri(conn, id, &conv_id_check));
         Ok(found)
     }).await?;
 

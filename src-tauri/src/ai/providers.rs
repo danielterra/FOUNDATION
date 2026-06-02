@@ -934,12 +934,27 @@ impl OpenRouterProvider {
                         let delta = &choice["delta"];
                         if let Some(chunk_text) = delta["content"].as_str() {
                             if !chunk_text.is_empty() {
-                                text_content.push_str(chunk_text);
-                                app.emit("chat-ai-delta", serde_json::json!({
-                                    "conversationId": conv_id,
-                                    "type": "text",
-                                    "text": chunk_text,
-                                })).ok();
+                                // DeepSeek leaks internal DSML markers into text content.
+                                // Truncate at the first marker — everything after it is model-internal.
+                                let clean = if let Some(pos) = chunk_text.find("<｜DSML｜") {
+                                    &chunk_text[..pos]
+                                } else {
+                                    chunk_text
+                                };
+                                // Also truncate anything already accumulated in text_content.
+                                if clean.len() < chunk_text.len() {
+                                    if let Some(pos) = text_content.find("<｜DSML｜") {
+                                        text_content.truncate(pos);
+                                    }
+                                }
+                                if !clean.is_empty() {
+                                    text_content.push_str(clean);
+                                    app.emit("chat-ai-delta", serde_json::json!({
+                                        "conversationId": conv_id,
+                                        "type": "text",
+                                        "text": clean,
+                                    })).ok();
+                                }
                             }
                         }
 

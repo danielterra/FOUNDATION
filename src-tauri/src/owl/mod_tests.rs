@@ -1,6 +1,8 @@
 use super::*;
 use crate::eavto::test_helpers::setup_test_db;
 use crate::eavto::{store, Triple, Object};
+use crate::core_ontology::search::{search_classes, search_individuals, search_instances, search};
+use crate::core_ontology::status::{validate_allowed_status, resolve_status_appearance, get_entity_status_info};
 
 #[test]
 fn test_replace_all_property_iris_saves_all_values() {

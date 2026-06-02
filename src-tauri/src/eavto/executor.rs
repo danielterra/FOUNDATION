@@ -1,11 +1,11 @@
-// ============================================================================
+﻿// ============================================================================
 // EAVTO Executor Module
 // ============================================================================
 // Provides async execution for database operations to avoid blocking the UI
 //
 // Architecture:
 // - Single writer thread with sequential queue for writes
-// - Read pool of N persistent connections — avoids the WAL scan overhead on
+// - Read pool of N persistent connections â€” avoids the WAL scan overhead on
 //   every call (SQLite must scan the entire WAL to build a read snapshot when
 //   opening a new connection; with a large WAL this dominates read latency)
 // - WAL mode allows concurrent reads and writes at the SQLite file level
@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 
-const READ_POOL_SIZE: usize = 20;
+const READ_POOL_SIZE: usize = 100;
 const WAL_TRUNCATE_INTERVAL: u32 = 200;
 const WAL_PASSIVE_INTERVAL: u32 = 50;
 
@@ -56,7 +56,7 @@ impl DbExecutor {
         let (write_tx, mut write_rx) = mpsc::unbounded_channel::<WriteTask>();
         let notify_tx_thread = notify_tx.clone();
 
-        // Pool starts empty — connections are added lazily as reads complete.
+        // Pool starts empty â€” connections are added lazily as reads complete.
         // Every 200 writes the pool is drained and a TRUNCATE checkpoint runs so the
         // WAL does not grow unboundedly (pool read-marks would otherwise block PASSIVE
         // checkpoints indefinitely).
@@ -93,7 +93,7 @@ impl DbExecutor {
 
                 write_count += 1;
                 if write_count % WAL_TRUNCATE_INTERVAL == 0 {
-                    // Pool read-marks block TRUNCATE checkpoints indefinitely — drain the
+                    // Pool read-marks block TRUNCATE checkpoints indefinitely â€” drain the
                     // pool first so the WAL can be zeroed and does not grow unboundedly.
                     let old_conns = {
                         let mut guard = pool_for_checkpoint
@@ -102,7 +102,7 @@ impl DbExecutor {
                         std::mem::take(&mut *guard)
                     };
                     drop(old_conns);
-                    // Retry up to 3× with a brief pause to let in-progress readers finish.
+                    // Retry up to 3Ã— with a brief pause to let in-progress readers finish.
                     let mut truncated = false;
                     for attempt in 0..3u8 {
                         if attempt > 0 {
@@ -115,19 +115,19 @@ impl DbExecutor {
                         );
                         match ckpt {
                             Ok((0, log, done)) => {
-                                crate::commands::log_backend("debug", &format!(
+                                crate::diagnostics::log_backend("debug", &format!(
                                     "[WAL] TRUNCATE ok (attempt={} log={} done={})", attempt + 1, log, done
                                 ));
                                 truncated = true;
                                 break;
                             }
                             Ok((busy, log, done)) => {
-                                crate::commands::log_backend("warn", &format!(
+                                crate::diagnostics::log_backend("warn", &format!(
                                     "[WAL] TRUNCATE busy (attempt={} busy={} log={} done={})", attempt + 1, busy, log, done
                                 ));
                             }
                             Err(e) => {
-                                crate::commands::log_backend("warn", &format!(
+                                crate::diagnostics::log_backend("warn", &format!(
                                     "[WAL] TRUNCATE error (attempt={}): {}", attempt + 1, e
                                 ));
                             }
@@ -137,7 +137,7 @@ impl DbExecutor {
                         // Fall back to RESTART: resets write position so WAL space is reused
                         // even if it can't be physically truncated right now.
                         let _ = write_conn.execute_batch("PRAGMA wal_checkpoint(RESTART);");
-                        crate::commands::log_backend("warn", "[WAL] fell back to RESTART checkpoint");
+                        crate::diagnostics::log_backend("warn", "[WAL] fell back to RESTART checkpoint");
                     }
                 } else if write_count % WAL_PASSIVE_INTERVAL == 0 {
                     let ckpt = write_conn.query_row(
@@ -146,7 +146,7 @@ impl DbExecutor {
                         |row| Ok((row.get::<_, i32>(1)?, row.get::<_, i32>(2)?)),
                     );
                     if let Ok((log, done)) = ckpt {
-                        crate::commands::log_backend("debug", &format!(
+                        crate::diagnostics::log_backend("debug", &format!(
                             "[WAL] PASSIVE checkpoint log={} done={}", log, done
                         ));
                     }
@@ -186,16 +186,16 @@ impl DbExecutor {
                                     |row| Ok((row.get::<_, i32>(0)?, row.get::<_, i32>(1)?, row.get::<_, i32>(2)?)),
                                 );
                                 match r {
-                                    Ok((0, log, done)) => crate::commands::log_backend("info", &format!(
+                                    Ok((0, log, done)) => crate::diagnostics::log_backend("info", &format!(
                                         "[WAL] Idle TRUNCATE ok (log={} done={})", log, done
                                     )),
                                     Ok((_, log, done)) => {
-                                        crate::commands::log_backend("warn", &format!(
-                                            "[WAL] Idle TRUNCATE busy → RESTART (log={} done={})", log, done
+                                        crate::diagnostics::log_backend("warn", &format!(
+                                            "[WAL] Idle TRUNCATE busy â†’ RESTART (log={} done={})", log, done
                                         ));
                                         let _ = conn.execute_batch("PRAGMA wal_checkpoint(RESTART);");
                                     }
-                                    Err(e) => crate::commands::log_backend("warn", &format!(
+                                    Err(e) => crate::diagnostics::log_backend("warn", &format!(
                                         "[WAL] Idle checkpoint error: {}", e
                                     )),
                                 }
@@ -204,7 +204,7 @@ impl DbExecutor {
                             result_tx,
                         });
                         if sent.is_err() {
-                            break; // write channel closed — app is shutting down
+                            break; // write channel closed â€” app is shutting down
                         }
                     }
                 })
@@ -216,7 +216,7 @@ impl DbExecutor {
 
     /// Create an executor backed by an in-memory database (for CI/test use only).
     /// Reads always open a fresh empty in-memory DB, so only the write connection
-    /// holds state — reads will return empty results.
+    /// holds state â€” reads will return empty results.
     pub fn new_in_memory(conn: Connection) -> Self {
         Self::new(conn, PathBuf::from(":memory:"))
     }
@@ -237,9 +237,9 @@ impl DbExecutor {
             let (conn, from_pool) = match conn_opt {
                 Some(c) => (c, true),
                 None => {
-                    // Pool exhausted — open a temporary connection. This requires a WAL scan
+                    // Pool exhausted â€” open a temporary connection. This requires a WAL scan
                     // which is expensive when the WAL is large, so pool exhaustion is bad.
-                    crate::commands::log_backend("warn", "[DB] Read pool exhausted — opening temporary connection");
+                    crate::diagnostics::log_backend("warn", "[DB] Read pool exhausted â€” opening temporary connection");
                     let c = Connection::open(&path).map_err(|e| e.to_string())?;
                     c.busy_timeout(std::time::Duration::from_secs(30)).map_err(|e| e.to_string())?;
                     (c, false)
@@ -294,3 +294,4 @@ impl Clone for DbExecutor {
         }
     }
 }
+

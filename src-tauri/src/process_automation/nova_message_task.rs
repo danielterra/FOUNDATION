@@ -70,7 +70,7 @@ pub async fn execute_nova_message_task(
 
     let conv_id = executor
         .read(|conn| {
-            Individual::find_conversation_by_last_user_message(conn)
+            crate::core_ontology::conversation::find_conversation_by_last_user_message(conn)
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| "No active conversation found".to_string())
         })

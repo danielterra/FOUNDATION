@@ -237,27 +237,29 @@ async fn is_timer_event_definition(app: &AppHandle, entity_id: &str, include_ret
     let entity_id = entity_id.to_string();
     executor
         .read(move |conn| {
-            let has_timer_type = |ind: &Individual| {
-                ind.properties.iter().any(|(p, v)| {
-                    p == "rdf:type"
-                        && v.as_iri()
-                            .map(|iri| {
-                                iri == "foundation:automation_TimerEventDefinition"
-                                    || iri == "foundation:automation_TimerStartEvent"
-                            })
-                            .unwrap_or(false)
-                })
+            let is_timer_iri = |iri: &str| {
+                iri == "foundation:automation_TimerEventDefinition"
+                    || iri == "foundation:automation_TimerStartEvent"
             };
 
+            // Fast type check before loading the full individual with backlinks —
+            // entity-updated fires for every write so we must not pay Individual::get
+            // (which loads backlinks) for unrelated high-cardinality entities.
+            let is_candidate = crate::owl::is_instance_of(conn, &entity_id, "foundation:automation_TimerEventDefinition")
+                || crate::owl::is_instance_of(conn, &entity_id, "foundation:automation_TimerStartEvent");
+            if !is_candidate {
+                return Ok(false);
+            }
+
             if let Ok(Some(ind)) = Individual::get(conn, &entity_id) {
-                if has_timer_type(&ind) {
+                if ind.properties.iter().any(|(p, v)| p == "rdf:type" && v.as_iri().map(is_timer_iri).unwrap_or(false)) {
                     return Ok(true);
                 }
             }
 
             if include_retracted {
                 if let Ok(Some(ind)) = Individual::get_from_retracted(conn, &entity_id) {
-                    return Ok(has_timer_type(&ind));
+                    return Ok(ind.properties.iter().any(|(p, v)| p == "rdf:type" && v.as_iri().map(is_timer_iri).unwrap_or(false)));
                 }
             }
 

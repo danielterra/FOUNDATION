@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use std::collections::HashMap;
 use super::triple_type::Triple;
 use super::object_type::Object;
-use crate::commands::log_backend;
+use crate::diagnostics::log_backend;
 use chrono;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;

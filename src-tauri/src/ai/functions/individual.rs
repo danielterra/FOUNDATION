@@ -155,7 +155,7 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
         });
 
     let iri_hit = if !query_str.is_empty() && filters_owned.is_none() {
-        crate::owl::try_iri_direct_lookup(conn, query_str)
+        crate::core_ontology::search::try_iri_direct_lookup(conn, query_str)
     } else {
         None
     };
@@ -168,7 +168,7 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
 
     let filters_ref: Option<&[(String, String, String)]> = filters_owned.as_deref();
 
-    match crate::owl::search(
+    match crate::core_ontology::search::search(
         conn,
         &tokens,
         entity_type_filter,
@@ -218,6 +218,79 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
             error: Some(e.to_string()),
             concept: class_iri.and_then(|iri| load_class_context(conn,iri)),
         },
+    }
+}
+
+pub fn read_property_page(conn: &Connection, args: &Value) -> ToolResult {
+    let individual_iri = match args.get("individual_iri").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return ToolResult { success: false, result: None, error: Some("Missing required parameter: individual_iri".to_string()), concept: None },
+    };
+    let property_iri = match args.get("property_iri").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return ToolResult { success: false, result: None, error: Some("Missing required parameter: property_iri".to_string()), concept: None },
+    };
+    let page = args.get("page").and_then(|v| v.as_u64()).unwrap_or(1).max(1) as usize;
+    let page_size = args.get("page_size").and_then(|v| v.as_u64()).unwrap_or(2000).max(1) as usize;
+    let value_index = args.get("value_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+
+    let individual = match Individual::get(conn, individual_iri) {
+        Ok(Some(ind)) => ind,
+        Ok(None) => return ToolResult { success: false, result: None, error: Some(format!("Individual '{}' not found.", individual_iri)), concept: None },
+        Err(e) => return ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
+    };
+
+    let values: Vec<String> = individual.properties.iter()
+        .filter(|(pred, _)| pred == property_iri)
+        .enumerate()
+        .filter(|(i, _)| *i == value_index)
+        .map(|(_, (_, obj))| match obj {
+            Object::Literal { value, .. } => value.clone(),
+            Object::Iri(s) | Object::Blank(s) => s.clone(),
+            Object::Integer(n) => n.to_string(),
+            Object::Number(n) => n.to_string(),
+            Object::Boolean(b) => b.to_string(),
+            Object::DateTime(s) => s.clone(),
+        })
+        .collect();
+
+    let text = match values.into_iter().next() {
+        Some(v) => v,
+        None => return ToolResult {
+            success: false, result: None,
+            error: Some(format!("Property '{}' not found on '{}' at value_index {}.", property_iri, individual_iri, value_index)),
+            concept: None,
+        },
+    };
+
+    let chars: Vec<char> = text.chars().collect();
+    let total_chars = chars.len();
+    let total_pages = (total_chars + page_size - 1) / page_size;
+    let total_pages = total_pages.max(1);
+
+    if page > total_pages {
+        return ToolResult {
+            success: false, result: None,
+            error: Some(format!("Page {} out of range — total_pages is {}.", page, total_pages)),
+            concept: None,
+        };
+    }
+
+    let start = (page - 1) * page_size;
+    let end = (start + page_size).min(total_chars);
+    let page_text: String = chars[start..end].iter().collect();
+
+    ToolResult {
+        success: true,
+        result: Some(serde_json::json!({
+            "value": page_text,
+            "page": page,
+            "total_chars": total_chars,
+            "total_pages": total_pages,
+            "has_next_page": page < total_pages,
+        })),
+        error: None,
+        concept: None,
     }
 }
 
@@ -273,7 +346,10 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
 
     match (|| {
         let individual = Individual::get(conn, iri)?
-            .ok_or_else(|| crate::owl::OwlError::NotFound(iri.to_string()))?;
+            .ok_or_else(|| crate::owl::OwlError::NotFound(format!(
+                "'{}' not found. Do NOT retry this IRI — use the `search` tool to find the correct IRI first.",
+                iri
+            )))?;
 
         let mut seen_groups = std::collections::HashSet::new();
         let mut backlinks: Vec<serde_json::Value> = Vec::new();
@@ -340,18 +416,14 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
             }
         }
 
-        const CONTENT_MAX: usize = 500;
+        const LITERAL_MAX: usize = 2000;
         for prop in &mut properties {
-            if prop.get("property").and_then(|p| p.as_str()) == Some("foundation:content") {
-                if let Some(value) = prop.get("value").and_then(|v| v.as_str()) {
-                    if value.len() > CONTENT_MAX {
-                        let truncated = format!(
-                            "{}…[{} chars total]",
-                            &value[..CONTENT_MAX],
-                            value.len(),
-                        );
-                        prop["value"] = serde_json::json!(truncated);
-                    }
+            if let Some(value) = prop.get("value").and_then(|v| v.as_str()) {
+                let char_count = value.chars().count();
+                if char_count > LITERAL_MAX {
+                    let cut = value.char_indices().nth(LITERAL_MAX).map(|(i, _)| i).unwrap_or(value.len());
+                    let truncated = format!("{}…[truncated: {} chars total]", &value[..cut], char_count);
+                    prop["value"] = serde_json::json!(truncated);
                 }
             }
         }
@@ -527,7 +599,7 @@ pub(crate) fn assert_individual_one(conn: &mut Connection, args: &Value) -> Tool
 
                 if property_iri == "foundation:hasStatus" {
                     if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
-                        crate::owl::validate_allowed_status(conn, class_iri, status_iri)?;
+                        crate::core_ontology::status::validate_allowed_status(conn, class_iri, status_iri)?;
                     }
                 }
 
@@ -652,7 +724,7 @@ fn add_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult {
                         let msg = format!("Individual '{}' has no rdf:type", iri);
                         crate::owl::OwlError::NotFound(msg)
                     })?;
-                crate::owl::validate_allowed_status(conn, &class_iri, status_iri)?;
+                crate::core_ontology::status::validate_allowed_status(conn, &class_iri, status_iri)?;
             }
         }
 
@@ -735,7 +807,7 @@ fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResul
                         let msg = format!("Individual '{}' has no rdf:type", iri);
                         crate::owl::OwlError::NotFound(msg)
                     })?;
-                crate::owl::validate_allowed_status(conn, &class_iri, status_iri)?;
+                crate::core_ontology::status::validate_allowed_status(conn, &class_iri, status_iri)?;
             }
         }
 

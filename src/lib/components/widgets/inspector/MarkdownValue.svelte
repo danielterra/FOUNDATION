@@ -10,15 +10,10 @@
       worker = new MarkdownWorker();
       worker.onmessage = ({ data: { id, html } }) => {
         const cb = callbacks.get(id);
-        if (cb) {
-          cb(html);
-          callbacks.delete(id);
-        }
+        if (cb) { cb(html); callbacks.delete(id); }
       };
       worker.onerror = () => {
-        for (const [id, cb] of callbacks) {
-          cb('');
-        }
+        for (const [id, cb] of callbacks) cb('');
         callbacks.clear();
         worker = null;
       };
@@ -41,17 +36,12 @@
 
   let { value, openEntityInspector = null } = $props();
 
-  // Below this threshold, parse synchronously — it's fast enough
   const SYNC_THRESHOLD = 1000;
-  // Above this threshold, skip markdown entirely (catastrophic backtracking risk)
   const PRE_THRESHOLD = 50_000;
 
   const IRI_REGEX = /\b[a-zA-Z][a-zA-Z0-9_]*:(?!\/\/)([a-zA-Z][a-zA-Z0-9_.-]*)\b/g;
 
   let _asyncHtml = $state('');
-  // For short texts (≤ SYNC_THRESHOLD), parse synchronously via $derived so the
-  // initial render already has content — avoids the one-frame empty-bubble flash
-  // that $effect would cause (effects run after paint in Svelte 5).
   let html = $derived.by(() => {
     const text = value ?? '';
     if (text.length > PRE_THRESHOLD) return '';
@@ -63,23 +53,13 @@
 
   $effect(() => {
     const text = value ?? '';
-
-    if (text.length > PRE_THRESHOLD || text.length <= SYNC_THRESHOLD) {
-      loading = false;
-      return;
-    }
-
+    if (text.length > PRE_THRESHOLD || text.length <= SYNC_THRESHOLD) { loading = false; return; }
     loading = true;
     _asyncHtml = '';
     let cancelled = false;
-
     parseAsync(text).then(result => {
-      if (!cancelled) {
-        _asyncHtml = result;
-        loading = false;
-      }
+      if (!cancelled) { _asyncHtml = result; loading = false; }
     });
-
     return () => { cancelled = true; };
   });
 
@@ -88,7 +68,6 @@
     const text = value ?? '';
     const matches = [...new Set([...text.matchAll(IRI_REGEX)].map(m => m[0]))];
     if (matches.length === 0) return;
-
     invoke('entity__resolve_iris', { iris: matches })
       .then(json => { iriResolutions = JSON.parse(json); })
       .catch(() => {});
@@ -120,13 +99,49 @@
     );
   }
 
-  function handleClick(e) {
-    if (!openEntityInspector) return;
-    const pill = e.target.closest('[data-iri]');
-    if (pill) {
-      e.stopPropagation();
-      openEntityInspector(pill.dataset.iri);
+  // Shadow DOM action — isolates injected CSS from email style tags
+  // so the app styles do not leak into rendered email content.
+  function shadowContent(node, params) {
+    const shadow = node.attachShadow({ mode: 'open' });
+
+    const styleEl = document.createElement('style');
+    styleEl.textContent = `
+      :host { display: block; }
+      * { box-sizing: border-box; }
+      div, p, span, li, td, th { font-size: 14px; color: var(--color-neutral-active); line-height: 1.5; word-wrap: break-word; }
+      a { color: var(--color-interactive); }
+      code, pre { font-family: var(--font-mono, monospace); font-size: 13px; }
+      pre { background: color-mix(in srgb, var(--color-white) 5%, transparent); padding: 10px 14px; overflow: auto; }
+      blockquote { border-left: 3px solid var(--color-interactive); margin: 0; padding-left: 12px; opacity: 0.8; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent); padding: 6px 10px; }
+      .iri-pill { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 4px; background: color-mix(in srgb, var(--color-interactive) 12%, transparent); color: var(--color-interactive); font-size: 13px; line-height: 1.4; cursor: pointer; vertical-align: middle; }
+      .iri-pill-icon { font-family: 'Material Symbols Outlined'; font-size: 14px; line-height: 1; }
+      .iri-pill-icon-img { width: 14px; height: 14px; object-fit: contain; vertical-align: middle; }
+      .iri-pill-label { font-size: 13px; }
+    `;
+
+    const container = document.createElement('div');
+    shadow.appendChild(styleEl);
+    shadow.appendChild(container);
+
+    let current = params;
+
+    function handleClick(e) {
+      if (!current.onIriClick) return;
+      const pill = e.target.closest('[data-iri]');
+      if (pill) { e.stopPropagation(); current.onIriClick(pill.dataset.iri); }
     }
+    shadow.addEventListener('click', handleClick);
+    container.innerHTML = params.html ?? '';
+
+    return {
+      update(newParams) {
+        current = newParams;
+        container.innerHTML = newParams.html ?? '';
+      },
+      destroy() { shadow.removeEventListener('click', handleClick); }
+    };
   }
 </script>
 
@@ -135,9 +150,10 @@
     <span class="material-symbols-outlined spinning">progress_activity</span>
   </div>
 {:else}
-  <div class="value-markdown markdown-content" onclick={handleClick} role="presentation">
-    {@html injectIriPills(html, iriResolutions)}
-  </div>
+  <div
+    use:shadowContent={{ html: injectIriPills(html, iriResolutions), onIriClick: openEntityInspector }}
+    class="value-markdown"
+  ></div>
 {/if}
 
 <style>
@@ -165,37 +181,5 @@
     line-height: 1.5;
     word-wrap: break-word;
     min-width: 0;
-  }
-
-  :global(.iri-pill) {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 1px 6px;
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
-    color: var(--color-interactive);
-    font-size: 13px;
-    line-height: 1.4;
-    cursor: pointer;
-    vertical-align: middle;
-  }
-
-  :global(.iri-pill-icon) {
-    font-size: 14px;
-    line-height: 1;
-  }
-
-  :global(.iri-pill-label) {
-    font-size: 13px;
-  }
-
-  :global(.iri-pill-icon-img) {
-    width: 14px;
-    height: 14px;
-    object-fit: cover;
-    border-radius: 2px;
-    flex-shrink: 0;
-    vertical-align: middle;
   }
 </style>

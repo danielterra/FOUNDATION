@@ -44,10 +44,16 @@ pub fn delete_messages_from_timestamp(
     Ok(())
 }
 
-/// Returns true if the newest message in the conversation has role "user",
-/// meaning there is a pending user message the engine has not yet responded to.
+/// Returns true if the newest message in the conversation is a real user-typed message
+/// that the engine has not yet responded to.
+///
+/// Tool result messages also carry role="user" in the protocol, but they consist
+/// exclusively of ToolResultBlock content. Those must NOT be treated as pending user
+/// messages — doing so causes an infinite re-run loop when the model returns an empty
+/// stop after executing tools (engine terminates → last message is tool result →
+/// has_pending_user_message=true → engine starts again → repeat forever).
 pub fn has_pending_user_message(conn: &Connection, conversation_iri: &str) -> bool {
-    let iris = match Individual::find_messages_by_conversation(conn, conversation_iri, 1, 0) {
+    let iris = match crate::core_ontology::chat::find_messages_by_conversation(conn, conversation_iri, 1, 0) {
         Ok(v) => v,
         Err(_) => return false,
     };
@@ -55,10 +61,18 @@ pub fn has_pending_user_message(conn: &Connection, conversation_iri: &str) -> bo
         Some(iri) => iri,
         None => return false,
     };
-    matches!(
+
+    let role_ok = matches!(
         get_literal_property(conn, newest_iri, "foundation:role"),
         Ok(Some(role)) if role == "user"
-    )
+    );
+    if !role_ok {
+        return false;
+    }
+
+    // Exclude pure tool-result messages: they have only ToolResultBlock content blocks.
+    // A real user message has at least one non-ToolResult block (Text, Image, Document, etc.).
+    crate::core_ontology::chat::message_has_non_tool_result_block(conn, newest_iri.as_str())
 }
 
 fn build_recovery_first_turn_ctx(
@@ -205,18 +219,44 @@ mod tests {
         ], "test").unwrap();
     }
 
+    fn attach_text_block(conn: &mut rusqlite::Connection, msg_iri: &str, block_iri: &str) {
+        store::assert_triples(conn, &[
+            Triple::new(block_iri, "rdf:type", Object::Iri("anthropic:TextBlock".to_string())),
+            Triple::new(msg_iri, "foundation:hasContentBlock", Object::Iri(block_iri.to_string())),
+        ], "test").unwrap();
+    }
+
+    fn attach_tool_result_block(conn: &mut rusqlite::Connection, msg_iri: &str, block_iri: &str) {
+        store::assert_triples(conn, &[
+            Triple::new(block_iri, "rdf:type", Object::Iri("anthropic:ToolResultBlock".to_string())),
+            Triple::new(msg_iri, "foundation:hasContentBlock", Object::Iri(block_iri.to_string())),
+        ], "test").unwrap();
+    }
+
     #[test]
-    fn has_pending_user_message_retorna_true_quando_ultimo_e_user() {
+    fn has_pending_user_message_retorna_true_quando_ultimo_e_user_com_texto() {
         let mut conn = setup_test_db();
         insert_msg(&mut conn, "foundation:Msg1", "foundation:ConvA", "assistant", 1_000);
         insert_msg(&mut conn, "foundation:Msg2", "foundation:ConvA", "user", 2_000);
+        attach_text_block(&mut conn, "foundation:Msg2", "anthropic:Block1");
         assert!(has_pending_user_message(&conn, "foundation:ConvA"));
+    }
+
+    #[test]
+    fn has_pending_user_message_retorna_false_quando_ultimo_e_tool_result() {
+        let mut conn = setup_test_db();
+        insert_msg(&mut conn, "foundation:Msg1", "foundation:ConvA", "assistant", 1_000);
+        insert_msg(&mut conn, "foundation:Msg2", "foundation:ConvA", "user", 2_000);
+        attach_tool_result_block(&mut conn, "foundation:Msg2", "anthropic:Block1");
+        assert!(!has_pending_user_message(&conn, "foundation:ConvA"),
+            "mensagem de tool result não deve ser tratada como mensagem pendente do usuário");
     }
 
     #[test]
     fn has_pending_user_message_retorna_false_quando_ultimo_e_assistant() {
         let mut conn = setup_test_db();
         insert_msg(&mut conn, "foundation:Msg1", "foundation:ConvA", "user", 1_000);
+        attach_text_block(&mut conn, "foundation:Msg1", "anthropic:Block1");
         insert_msg(&mut conn, "foundation:Msg2", "foundation:ConvA", "assistant", 2_000);
         assert!(!has_pending_user_message(&conn, "foundation:ConvA"));
     }

@@ -80,13 +80,15 @@ fn interpolate(template: &str, ctx: &ExecutionContext) -> String {
 
 pub async fn create_conversation(
     executor: &DbExecutor,
-    step_iri: &str,
+    origin_iri: &str,
+    origin_property: &str,
     task_label: &str,
     agent_iri: Option<&str>,
 ) -> String {
     let conv_iri = format!("foundation:AIConversation_{}", chrono::Utc::now().timestamp_millis());
     let conv_label = format!("{} — Execution", task_label);
-    let step = step_iri.to_string();
+    let origin = origin_iri.to_string();
+    let prop = origin_property.to_string();
     let conv = conv_iri.clone();
     let agent = agent_iri.map(|s| s.to_string());
     executor.write(move |conn| {
@@ -94,7 +96,7 @@ pub async fn create_conversation(
         ind.assert(conn, "foundation:AIConversation", &conv_label, "smart_toy", "process_automation")
             .map_err(|e| e.to_string())?;
         let mut triples = vec![
-            crate::eavto::Triple::new(&conv, "foundation:generatedByStep", Object::Iri(step)),
+            crate::eavto::Triple::new(&conv, &prop, Object::Iri(origin)),
         ];
         if let Some(a) = agent {
             triples.push(crate::eavto::Triple::new(&conv, "foundation:handledBy", Object::Iri(a)));
@@ -261,11 +263,14 @@ pub async fn execute_agent_task(
             tool_name: "task_complete".to_string(),
             output_class: output_class.clone(),
         }),
+        compaction_threshold: 0.80,
+        context_window: 180_000,
+        persist_to: None,
     };
 
     let output = run_tool_loop(&executor, &agent_config.provider, initial_messages, loop_config).await?;
 
-    let conv_iri = create_conversation(&executor, step_iri, &label, Some(&agent_iri)).await;
+    let conv_iri = create_conversation(&executor, step_iri, "foundation:generatedByStep", &label, Some(&agent_iri)).await;
     persist_messages(&executor, &conv_iri, &output.messages, &agent_config.model_identifier).await;
 
     app.emit("automation-step-message", serde_json::json!({

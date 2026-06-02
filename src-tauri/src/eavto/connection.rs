@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use std::fmt;
 use std::error::Error;
-use crate::commands::log_backend;
+use crate::diagnostics::log_backend;
 
 const DB_BUSY_TIMEOUT_SECS: u64 = 30;
 

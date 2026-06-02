@@ -1,13 +1,10 @@
 use super::*;
 use super::timestamps::touch;
 
-pub(super) fn is_formula_property(conn: &Connection, property_iri: &str) -> Result<bool> {
-    let result = query::get_by_entity_predicate(conn, property_iri, "foundation:formula")?;
-    Ok(!result.triples.is_empty())
-}
-
-pub(super) fn is_query_property(conn: &Connection, property_iri: &str) -> Result<bool> {
-    let result = query::get_by_entity_predicate(conn, property_iri, "foundation:queryConfig")?;
+/// Generic: returns true if `property_iri` has a triple with `metadata_predicate`.
+/// Used by write hooks to decide whether to trigger recalculation.
+pub(super) fn property_has_metadata(conn: &Connection, property_iri: &str, metadata_predicate: &str) -> Result<bool> {
+    let result = query::get_by_entity_predicate(conn, property_iri, metadata_predicate)?;
     Ok(!result.triples.is_empty())
 }
 
@@ -110,7 +107,7 @@ impl Individual {
             || property == "foundation:hasIcon";
 
         if !is_meta_property {
-            if let Ok(true) = is_formula_property(conn, property) {
+            if let Ok(true) = property_has_metadata(conn, property, "foundation:formula") {
                 return Err(OwlError::ValidationError(format!(
                     "Property '{}' is calculated via a formula and cannot be set directly",
                     property
@@ -195,7 +192,7 @@ impl Individual {
         let t_touch = t0.elapsed().as_millis();
 
         if t_touch > 20 {
-            crate::commands::log_backend("debug", &format!(
+            crate::diagnostics::log_backend("debug", &format!(
                 "[OWL] add_property({}) total={}ms [lock={}ms formula={}ms types={}ms has_prop={}ms validate={}ms cardinality={}ms assert={}ms touch={}ms]",
                 property, t_touch, t_lock, t_formula - t_lock, t_types - t_formula,
                 t_has_prop - t_types, t_validate - t_has_prop,
@@ -224,13 +221,13 @@ impl Individual {
             || property == "foundation:hasIcon";
 
         if !is_meta_property {
-            if let Ok(true) = is_formula_property(conn, property) {
+            if let Ok(true) = property_has_metadata(conn, property, "foundation:formula") {
                 return Err(OwlError::ValidationError(format!(
                     "Property '{}' is calculated via a formula and cannot be set directly",
                     property
                 )));
             }
-            if let Ok(true) = is_query_property(conn, property) {
+            if let Ok(true) = property_has_metadata(conn, property, "foundation:queryConfig") {
                 return Err(OwlError::ValidationError(format!(
                     "Property '{}' is a query property and cannot be set directly",
                     property

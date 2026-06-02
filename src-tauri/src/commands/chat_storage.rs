@@ -714,13 +714,13 @@ pub fn load_content_blocks(
     Ok(indexed_blocks.into_iter().map(|(_, b)| b).collect())
 }
 
-fn triple_str(triples: &[Triple], predicate: &str) -> Option<String> {
+pub fn triple_str(triples: &[Triple], predicate: &str) -> Option<String> {
     triples.iter()
         .find(|t| t.predicate == predicate)
         .and_then(|t| t.object.as_literal())
 }
 
-fn triple_int(triples: &[Triple], predicate: &str) -> Option<i64> {
+pub fn triple_int(triples: &[Triple], predicate: &str) -> Option<i64> {
     triples.iter()
         .find(|t| t.predicate == predicate)
         .and_then(|t| if let Object::Integer(n) = &t.object { Some(*n) } else { None })
@@ -732,14 +732,14 @@ fn triple_iri<'a>(triples: &'a [Triple], predicate: &str) -> Option<&'a str> {
         .and_then(|t| t.object.as_iri())
 }
 
-fn triple_iris(triples: &[Triple], predicate: &str) -> Vec<String> {
+pub fn triple_iris(triples: &[Triple], predicate: &str) -> Vec<String> {
     triples.iter()
         .filter(|t| t.predicate == predicate)
         .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
         .collect()
 }
 
-fn parse_content_block_from_batch(
+pub fn parse_content_block_from_batch(
     block_triples: &[Triple],
     tool_use_triples_map: &std::collections::HashMap<String, Vec<Triple>>,
 ) -> Option<(i64, ContentBlock)> {
@@ -874,7 +874,7 @@ pub async fn load_conversation_history(
     let selected = executor.read(move |conn| {
         let t0 = std::time::Instant::now();
 
-        let iris_desc = Individual::find_messages_by_conversation(conn, &conversation_id, usize::MAX, 0)
+        let iris_desc = crate::core_ontology::chat::find_messages_by_conversation(conn, &conversation_id, usize::MAX, 0)
             .map_err(|e| format!("Failed to query messages: {}", e))?;
         let t1 = std::time::Instant::now();
 
@@ -939,6 +939,23 @@ pub async fn load_conversation_history(
                     } else { None }))
                 .unwrap_or(0);
 
+            // The compaction message is saved after the user's last message, so filtering by
+            // compaction_ts would exclude that message. Use summaryUpToMessage's sentAt instead —
+            // everything after the last summarized message is "recent".
+            let summary_up_to_iri: Option<String> = crate::owl::get_iri_property(conn, &conversation_id, "foundation:summaryUpToMessage")
+                .ok()
+                .flatten();
+
+            let cutoff_ts = summary_up_to_iri
+                .as_deref()
+                .and_then(|iri| msg_triples_map.get(iri))
+                .and_then(|t| t.iter()
+                    .find(|tr| tr.predicate == "foundation:sentAt")
+                    .and_then(|tr| if let Object::DateTime(rfc) = &tr.object {
+                        chrono::DateTime::parse_from_rfc3339(rfc).ok().map(|dt| dt.timestamp_millis())
+                    } else { None }))
+                .unwrap_or(compaction_ts);
+
             let summary_text = triple_iris(
                 msg_triples_map.get(compaction_iri.as_str()).map(|v| v.as_slice()).unwrap_or_default(),
                 "foundation:hasContentBlock",
@@ -976,7 +993,7 @@ pub async fn load_conversation_history(
                                 chrono::DateTime::parse_from_rfc3339(rfc).ok().map(|dt| dt.timestamp_millis())
                             } else { None }))
                         .unwrap_or(0);
-                    ts > compaction_ts
+                    ts > cutoff_ts
                 })
                 .collect();
 
@@ -1231,63 +1248,46 @@ pub async fn log_api_call(
     let message_iri_opt = message_iri.map(|s| s.to_string());
 
     executor.write(move |conn| {
-        let call = Individual::new(&iri);
-
-        call.assert(conn, "foundation:AIAPICall", "AI API Call", "api", "ai")
-            .map_err(|e| format!("Failed to create AIAPICall: {}", e))?;
-
-        call.add_property(conn, "foundation:model", vec![Object::Literal {
-            value: model.clone(),
-            datatype: Some("xsd:string".to_string()),
+        // Build all triples in memory and insert in one bulk call — bypasses OWL
+        // validation (add_property runs has_prop + cardinality + domain/range checks
+        // per property; for a brand-new IRI every check is pure overhead, and
+        // generatedByConversation validation alone cost ~250ms, causing read-pool
+        // exhaustion under concurrent load).
+        let lit = |value: String, datatype: &str| Object::Literal {
+            value,
+            datatype: Some(datatype.to_string()),
             language: None,
-        }], "ai").map_err(|e| format!("Failed to set model: {}", e))?;
-
-        call.add_property(conn, "foundation:inputTokens",
-            vec![Object::Integer(input_tokens as i64)], "ai")
-            .map_err(|e| format!("Failed to set inputTokens: {}", e))?;
-
-        call.add_property(conn, "foundation:outputTokens",
-            vec![Object::Integer(output_tokens as i64)], "ai")
-            .map_err(|e| format!("Failed to set outputTokens: {}", e))?;
-
-        call.add_property(conn, "foundation:cacheCreationTokens",
-            vec![Object::Integer(cache_creation_tokens as i64)], "ai")
-            .map_err(|e| format!("Failed to set cacheCreationTokens: {}", e))?;
-
-        call.add_property(conn, "foundation:cacheReadTokens",
-            vec![Object::Integer(cache_read_tokens as i64)], "ai")
-            .map_err(|e| format!("Failed to set cacheReadTokens: {}", e))?;
-
-        let called_at_dt = chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339();
-        call.add_property(conn, "foundation:calledAt",
-            vec![Object::DateTime(called_at_dt.clone())], "ai")
-            .map_err(|e| format!("Failed to set calledAt: {}", e))?;
-        call.add_property(conn, "foundation:hasStartTime",
-            vec![Object::DateTime(called_at_dt.clone())], "ai")
-            .map_err(|e| format!("Failed to set hasStartTime: {}", e))?;
-        call.add_property(conn, "foundation:hasEndTime",
-            vec![Object::DateTime(called_at_dt)], "ai")
-            .map_err(|e| format!("Failed to set hasEndTime: {}", e))?;
-
-        if let Some(conv_iri) = conversation_iri {
-            call.add_property(conn, "foundation:generatedByConversation",
-                vec![Object::Iri(conv_iri)], "ai")
-                .map_err(|e| format!("Failed to set generatedByConversation: {}", e))?;
-        }
-
-        if let Some(msg_iri) = message_iri_opt {
-            call.add_property(conn, "foundation:generatedMessage",
-                vec![Object::Iri(msg_iri)], "ai")
-                .map_err(|e| format!("Failed to set generatedMessage: {}", e))?;
-        }
-
-        if let Some(cost) = estimate_call_cost(
+        };
+        let called_at_dt = chrono::DateTime::from_timestamp_millis(timestamp)
+            .unwrap_or_default()
+            .to_rfc3339();
+        let cost = estimate_call_cost(
             conn, &model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-        ) {
-            call.add_property(conn, "foundation:estimatedCost",
-                vec![Object::Number(cost)], "ai")
-                .map_err(|e| format!("Failed to set estimatedCost: {}", e))?;
+        );
+
+        let mut triples: Vec<Triple> = Vec::with_capacity(16);
+        triples.push(Triple::new(&iri, "rdf:type", Object::Iri("foundation:AIAPICall".to_string())));
+        triples.push(Triple::new(&iri, "rdfs:label", lit("AI API Call".to_string(), "xsd:string")));
+        triples.push(Triple::new(&iri, "foundation:model", lit(model.clone(), "xsd:string")));
+        triples.push(Triple::new(&iri, "foundation:inputTokens", Object::Integer(input_tokens as i64)));
+        triples.push(Triple::new(&iri, "foundation:outputTokens", Object::Integer(output_tokens as i64)));
+        triples.push(Triple::new(&iri, "foundation:cacheCreationTokens", Object::Integer(cache_creation_tokens as i64)));
+        triples.push(Triple::new(&iri, "foundation:cacheReadTokens", Object::Integer(cache_read_tokens as i64)));
+        triples.push(Triple::new(&iri, "foundation:calledAt", Object::DateTime(called_at_dt.clone())));
+        triples.push(Triple::new(&iri, "foundation:hasStartTime", Object::DateTime(called_at_dt.clone())));
+        triples.push(Triple::new(&iri, "foundation:hasEndTime", Object::DateTime(called_at_dt)));
+        if let Some(conv_iri) = conversation_iri {
+            triples.push(Triple::new(&iri, "foundation:generatedByConversation", Object::Iri(conv_iri)));
         }
+        if let Some(msg_iri) = message_iri_opt {
+            triples.push(Triple::new(&iri, "foundation:generatedMessage", Object::Iri(msg_iri)));
+        }
+        if let Some(c) = cost {
+            triples.push(Triple::new(&iri, "foundation:estimatedCost", Object::Number(c)));
+        }
+
+        crate::owl::assert_raw_triples(conn, &triples, "ai")
+            .map_err(|e| format!("Failed to save AIAPICall: {}", e))?;
 
         Ok(iri)
     }).await

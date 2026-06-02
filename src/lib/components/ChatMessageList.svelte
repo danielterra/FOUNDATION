@@ -54,7 +54,7 @@
 
 <style>
 	@keyframes message-enter {
-		from { opacity: 0; transform: translateY(24px); }
+		from { opacity: 0; transform: translateY(-8px); }
 		to   { opacity: 1; transform: translateY(0); }
 	}
 

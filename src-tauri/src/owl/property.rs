@@ -93,9 +93,16 @@ impl Property {
             return Ok(std::collections::HashMap::new());
         }
         let placeholders = property_iris.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        // DomainLabel.onProperty is written once at creation and never updated.
+        // Querying triples_current triggered the correlated MAX(tx) subquery for each of the
+        // ~60 matching rows, causing ~100ms overhead per Property::get_batch call.
+        // Using the raw triples table with retracted=0 is safe for this immutable relationship.
         let sql = format!(
-            "SELECT subject, object FROM triples_current \
-             WHERE predicate = 'foundation:onProperty' AND object IN ({})",
+            "SELECT subject, object FROM (
+                SELECT subject, object, MAX(tx) OVER (PARTITION BY subject) AS max_tx, tx
+                FROM triples
+                WHERE predicate = 'foundation:onProperty' AND object IN ({}) AND retracted = 0
+             ) WHERE tx = max_tx",
             placeholders
         );
         let params: Vec<SqlValue> = property_iris.iter()

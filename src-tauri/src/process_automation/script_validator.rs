@@ -42,6 +42,12 @@ async fn validate_code_task(app: &AppHandle, entity_id: &str) {
     let entity_id = entity_id.to_string();
     let result = executor
         .read(move |conn| {
+            // Fast type check before loading the full individual — entity-updated fires
+            // for every write and Individual::get is expensive for high-cardinality entities.
+            if !crate::owl::is_instance_of(conn, &entity_id, "foundation:automation_CodeTask") {
+                return Ok(None);
+            }
+
             let is_code_task = Individual::get(conn, &entity_id)
                 .ok()
                 .flatten()

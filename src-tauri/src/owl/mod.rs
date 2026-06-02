@@ -4,7 +4,6 @@ mod individual;
 mod thing;
 mod icons;
 mod graph_config;
-mod search;
 pub mod vocabulary;
 pub mod cardinality;
 pub mod aggregation;
@@ -43,26 +42,13 @@ pub fn assert_raw_triples(conn: &mut Connection, triples: &[Triple], origin: &st
         .map_err(|e| e.to_string())
 }
 
-/// Check whether any tool_result for the given tool_use_id already exists in the conversation.
-/// Returns the message IRI of the first matching result, or None.
-pub fn find_tool_result_message_iri(conn: &Connection, tool_use_id: &str, conversation_iri: &str) -> Option<String> {
-    crate::eavto::query::find_tool_result_message_iri(conn, tool_use_id, conversation_iri)
-}
-
 pub use individual::{
     is_system_locked, set_system_locked, check_system_locked,
     get_all_iri_properties, replace_all_property_iris,
     get_literal_property, get_all_literal_properties, get_iri_property,
     has_property_iri, has_property_literal,
     is_instance_of, is_subclass_of, find_entities_with_property, find_entities_with_predicate,
-    validate_allowed_status, resolve_status_appearance, get_entity_status_info,
     touch, LAST_UPDATED_AT,
-};
-
-pub use search::{
-    SearchResult, ClassSearchResult,
-    search, search_instances, search_classes, search_individuals,
-    try_iri_direct_lookup,
 };
 
 #[derive(Debug)]
@@ -100,7 +86,7 @@ impl From<Box<dyn std::error::Error>> for OwlError {
     }
 }
 
-type Result<T> = std::result::Result<T, OwlError>;
+pub type Result<T> = std::result::Result<T, OwlError>;
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]

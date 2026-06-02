@@ -158,7 +158,7 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                 .map_err(|e| e.to_string())?
                 .unwrap_or_else(|| node_iri.clone());
 
-            let (status, status_color, status_icon) = match crate::owl::get_entity_status_info(conn, &node_iri) {
+            let (status, status_color, status_icon) = match crate::core_ontology::status::get_entity_status_info(conn, &node_iri) {
                 Some((_, label, color, icon)) => (Some(label), color, icon),
                 None => (None, None, None),
             };
@@ -620,7 +620,7 @@ pub async fn automation__get_execution(
             .unwrap_or_else(|| process_iri.clone());
 
         let (exec_status_label, exec_status_color, exec_status_icon) =
-            match crate::owl::get_entity_status_info(conn, &execution_iri) {
+            match crate::core_ontology::status::get_entity_status_info(conn, &execution_iri) {
                 Some((_, label, color, icon)) => (label, color, icon),
                 None => ("Unknown".to_string(), None, None),
             };
@@ -647,7 +647,7 @@ pub async fn automation__get_execution(
                 .unwrap_or_default();
 
             let (step_status_label, step_status_color, step_status_icon) =
-                match crate::owl::get_entity_status_info(conn, &step_iri) {
+                match crate::core_ontology::status::get_entity_status_info(conn, &step_iri) {
                     Some((_, label, color, icon)) => (label, color, icon),
                     None => ("Unknown".to_string(), None, None),
                 };

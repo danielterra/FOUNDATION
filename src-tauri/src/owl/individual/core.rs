@@ -52,6 +52,7 @@ impl Individual {
 
     pub fn get(conn: &Connection, iri: impl Into<String>) -> Result<Option<Self>> {
         let iri = iri.into();
+        let t0 = std::time::Instant::now();
 
         let all_triples = query::get_by_entity(conn, &iri)?;
         if all_triples.triples.is_empty() {
@@ -97,6 +98,14 @@ impl Individual {
 
         const BACKLINK_LIMIT_PER_GROUP: usize = 15;
         let backlinks = query::get_backlinks_grouped_limited(conn, &iri, BACKLINK_LIMIT_PER_GROUP)?;
+
+        let elapsed = t0.elapsed().as_millis();
+        if elapsed > 30 {
+            crate::diagnostics::log_backend("debug", &format!(
+                "[OWL] Individual::get({}) props={} backlinks={} {}ms",
+                iri, properties.len(), backlinks.len(), elapsed
+            ));
+        }
 
         Ok(Some(Self {
             iri: iri.clone(),

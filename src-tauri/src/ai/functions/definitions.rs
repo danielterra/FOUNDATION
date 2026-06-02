@@ -729,6 +729,49 @@ Example — find all active Tasks whose due date is before this Project's deadli
         },
 
         ToolTemplate {
+            name: "read_property_page".to_string(),
+            array_mode: false,
+            description: "Read a paginated slice of a large literal property value from an individual. Returns the requested page of text, total character count, total pages, and whether more pages follow. Use this after describe_individual shows a truncated value (marked with '…[truncated: N chars total]') to read the full content in 2 000-character chunks.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "individual_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the individual whose property you want to read (e.g. 'foundation:UserStory_123').".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "property_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the literal property to paginate (e.g. 'foundation:implementationPlan').".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "page".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "1-based page number to retrieve. Defaults to 1.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "page_size".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Characters per page. Defaults to 2000.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "value_index".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "0-based index into multi-valued properties. Defaults to 0.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
             name: "attach_file_to_individual".to_string(),
             array_mode: false,
             description: format!(

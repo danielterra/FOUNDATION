@@ -1,11 +1,9 @@
-use crate::owl::DbExecutor;
+use crate::owl::{DbExecutor, Individual, Object};
 use crate::commands::chat_storage::{ContentBlock, create_message, load_conversation_history};
 use crate::commands::chat::settings::AgentConfig;
 use crate::ai::{AiProvider, ChatMessage, GenerateRequest};
 use crate::ai::providers::{ClaudeProvider, OpenRouterProvider};
 use crate::ai::local::LocalProvider;
-use crate::eavto::store::append_triples;
-use crate::eavto::{Triple, Object};
 use super::super::log_backend;
 use tauri::Emitter;
 
@@ -73,9 +71,10 @@ async fn run_compaction(
     // Load full history (no token budget — we want everything)
     let (history, _) = load_conversation_history(&executor, &conversation_id, usize::MAX).await?;
 
-    // Only compact normal messages (not previous compaction messages)
+    // Only compact real persisted messages — exclude compaction summaries and synthetic
+    // messages that load_conversation_history may inject on the compacted path.
     let normal_msgs: Vec<_> = history.iter()
-        .filter(|m| m.role != "compaction")
+        .filter(|m| m.role != "compaction" && !m.iri.starts_with("synthetic:"))
         .collect();
 
     // Keep the most recent 10 messages intact so they remain as "live" context
@@ -150,17 +149,15 @@ async fn run_compaction(
         compaction_iri, summary_up_to_iri
     ));
 
-    // Update foundation:summaryUpToMessage on the conversation
+    // Replace (not append) summaryUpToMessage so exactly one value exists at all times.
     let conv_id_for_write = conversation_id.clone();
     let summary_up_to = summary_up_to_iri.clone();
     executor.write(move |conn| {
-        let triple = Triple::new(
-            &conv_id_for_write,
-            "foundation:summaryUpToMessage",
-            Object::Iri(summary_up_to),
-        );
-        append_triples(conn, &[triple], "ai")
-            .map_err(|e| format!("Failed to update summaryUpToMessage: {}", e))?;
+        Individual::clear_property(conn, &conv_id_for_write, "foundation:summaryUpToMessage", "ai")
+            .map_err(|e| format!("Failed to clear summaryUpToMessage: {}", e))?;
+        Individual::new(&conv_id_for_write)
+            .add_property(conn, "foundation:summaryUpToMessage", vec![Object::Iri(summary_up_to)], "ai")
+            .map_err(|e| format!("Failed to set summaryUpToMessage: {}", e))?;
         Ok(String::new())
     }).await?;
 

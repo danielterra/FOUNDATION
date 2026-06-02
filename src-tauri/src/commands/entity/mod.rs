@@ -154,10 +154,10 @@ pub async fn graph__search_entities(
     executor.read(move |conn| {
         let limit = limit.unwrap_or(100);
         let results = if type_iri.as_deref() == Some("owl:Class") {
-            crate::owl::search_classes(conn, &query, limit)
+            crate::core_ontology::search::search_classes(conn, &query, limit)
                 .map_err(|e| e.to_string())?
                 .into_iter()
-                .map(|r| crate::owl::SearchResult {
+                .map(|r| crate::core_ontology::search::SearchResult {
                     id: r.id,
                     label: r.label,
                     icon: r.icon,
@@ -172,12 +172,12 @@ pub async fn graph__search_entities(
                 .split_whitespace()
                 .map(|s| s.to_lowercase())
                 .collect();
-            let (results, _) = crate::owl::search(
+            let (results, _) = crate::core_ontology::search::search(
                 conn, &tokens, None, Some(class_iri.as_str()), None, false, limit, 0,
             ).map_err(|e| e.to_string())?;
             results
         } else {
-            crate::owl::search_instances(conn, &query, limit)
+            crate::core_ontology::search::search_instances(conn, &query, limit)
                 .map_err(|e| e.to_string())?
         };
         serde_json::to_string(&results).map_err(|e| e.to_string())
@@ -227,7 +227,7 @@ pub async fn inspector__get_backlink_page(
         for status_iri in unique_status_iris {
             if crate::owl::is_instance_of(conn, &status_iri, "foundation:Status") {
                 let thing = crate::owl::Thing::get(conn, &status_iri);
-                let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri);
+                let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
                 status_cache.insert(status_iri.clone(), StatusInfo {
                     iri: status_iri,
                     label: thing.label,
@@ -262,6 +262,7 @@ pub async fn inspector__get_entity(
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     let t0 = std::time::Instant::now();
+    crate::commands::logging::log_backend("debug", &format!("[CMD] inspector__get_entity({entity_id})"));
     let entity_id_log = entity_id.clone();
     let track_id = entity_id.clone();
     let executor_clone = executor.inner().clone();
@@ -841,7 +842,7 @@ pub(super) fn resolve_entity_status(conn: &Connection, properties: &[PropertyVal
             continue;
         }
         if owl::is_instance_of(conn, &prop.value, "foundation:Status") {
-            let (icon, color) = owl::resolve_status_appearance(conn, &prop.value);
+            let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &prop.value);
             return Some(StatusInfo {
                 iri: prop.value.clone(),
                 label: prop.value_label.clone().unwrap_or_else(|| prop.value.clone()),
@@ -1190,7 +1191,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
     for status_iri in unique_status_iris {
         if owl::is_instance_of(conn, &status_iri, "foundation:Status") {
             let status_thing = crate::owl::Thing::get(conn, &status_iri);
-            let (icon, color) = owl::resolve_status_appearance(conn, &status_iri);
+            let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
             status_cache.insert(status_iri.clone(), StatusInfo {
                 iri: status_iri,
                 label: status_thing.label,
@@ -1261,7 +1262,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
         .into_iter()
         .map(|status_iri| {
             let thing = crate::owl::Thing::get(conn, &status_iri);
-            let (icon, color) = crate::owl::resolve_status_appearance(conn, &status_iri);
+            let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
             StatusInfo { iri: status_iri, label: thing.label, icon, color }
         })
         .collect();

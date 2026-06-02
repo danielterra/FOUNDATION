@@ -265,6 +265,9 @@
 						<span class="tool-chip-name">Pensamentos</span>
 					</button>
 				{/if}
+				{#if unit.text}
+					<div class="message-text"><MarkdownValue value={unit.text} openEntityInspector={onEntityClick} /></div>
+				{/if}
 				{#if unit.tool_calls?.length > 0}
 					<div class="tool-chips">
 						{#each unit.tool_calls as tc}

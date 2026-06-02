@@ -359,7 +359,7 @@
     {:else if widget.widget_type === 'ai_conversation'}
       <AIConversationWidget widgetId={widget.id} entityId={widget.entity_id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {:else if widget.widget_type === 'notification_center'}
-      <NotificationCenterWidget widgetId={widget.id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
+      <NotificationCenterWidget widgetId={widget.id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} conversationIri={activeConversationIri} />
     {:else if widget.widget_type === 'ai_call_history'}
       <AICallHistoryWidget widgetId={widget.id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {/if}

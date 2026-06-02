@@ -1,9 +1,11 @@
 #![allow(non_snake_case)]
 
 mod namespaces;
+pub mod diagnostics;
 mod commands;
 mod eavto;
 pub mod owl;
+pub mod core_ontology;
 pub mod ai;
 mod mcp;
 pub mod search;

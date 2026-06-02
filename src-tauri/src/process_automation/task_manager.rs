@@ -141,6 +141,7 @@ pub(crate) fn maybe_execute_task_for_entity(app: AppHandle, entity_id: String) {
                     let prefix = if is_config_error(&e) { "Erro de configuração" } else { "Erro de execução" };
                     let result_write = executor.write(move |conn| -> Result<String> {
                         set_result(conn, &task_for_write, &format!("{}: {}", prefix, err_for_write))?;
+                        set_status(conn, &task_for_write, "foundation:Rejected")?;
                         Ok(String::new())
                     }).await;
                     if let Err(set_err) = result_write {
@@ -200,6 +201,11 @@ fn set_started_at(conn: &mut rusqlite::Connection, task_iri: &str) -> Result<()>
     Ok(())
 }
 
+fn set_status(conn: &mut rusqlite::Connection, task_iri: &str, status_iri: &str) -> Result<()> {
+    crate::owl::replace_all_property_iris(conn, task_iri, "foundation:hasStatus", &[status_iri], "task_manager")
+        .map_err(|e| e.to_string())
+}
+
 fn set_result(conn: &mut rusqlite::Connection, task_iri: &str, value: &str) -> Result<()> {
     Individual::new(task_iri)
         .add_property(
@@ -219,7 +225,7 @@ fn set_result(conn: &mut rusqlite::Connection, task_iri: &str, value: &str) -> R
 pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
     let executor = app.state::<DbExecutor>();
 
-    let (label, description, agent_iri) = executor
+    let (label, description, agent_iri, ai_behavior_rules) = executor
         .read({
             let task_iri = task_iri.to_string();
             move |conn| {
@@ -235,31 +241,45 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("Task {} has no assignee", task_iri))?;
 
-                Ok((label, description, agent_iri))
+                let ai_behavior_rules = get_literal_property(conn, &task_iri, "foundation:aiBehaviorRules")
+                    .map_err(|e| e.to_string())?
+                    .unwrap_or_default();
+
+                Ok((label, description, agent_iri, ai_behavior_rules))
             }
         })
         .await?;
 
     let agent_config = super::agent_runner::resolve_agent_config(&executor, &agent_iri).await?;
 
+    let conv_iri = super::agent_task::create_conversation(&executor, task_iri, "foundation:generatedByTask", &label, Some(&agent_iri)).await;
+
     let task_iri_owned = task_iri.to_string();
     executor
-        .write(move |conn| -> Result<String> { set_started_at(conn, &task_iri_owned)?; Ok(String::new()) })
+        .write(move |conn| -> Result<String> {
+            set_started_at(conn, &task_iri_owned)?;
+            set_status(conn, &task_iri_owned, "foundation:InProgress")?;
+            Ok(String::new())
+        })
         .await?;
-    app.emit("entity-updated", serde_json::json!({ "entityId": task_iri })).ok();
 
     let current_datetime = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let behavior_section = if ai_behavior_rules.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\n\n## Behavior Rules\n{}", ai_behavior_rules)
+    };
     let task_prompt = format!(
         "currentDateTime: {}\n\n\
          You are executing the task: **{}**\n\n\
-         ## Task Description\n{}\n\n\
+         ## Task Description\n{}{}\n\n\
          ## Required Final Step\n\
          After completing the task, you MUST call `replace_property_values` with:\n\
          - iri: `{}`\n\
          - property_iri: `foundation:result`\n\
          - values: [your detailed result]\n\n\
          Do NOT modify `rdfs:comment` — that field contains the original instructions.",
-        current_datetime, label, description, task_iri
+        current_datetime, label, description, behavior_section, task_iri
     );
 
     let initial_messages = vec![ChatMessage {
@@ -274,14 +294,17 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
         max_tokens: DEFAULT_MAX_TOKENS,
         temperature: DEFAULT_TEMPERATURE,
         completion_tool: None,
+        compaction_threshold: 0.80,
+        context_window: 180_000,
+        persist_to: Some(super::tool_loop::PersistConfig {
+            conv_iri: conv_iri.clone(),
+            model_identifier: agent_config.model_identifier.clone(),
+        }),
     };
 
     let output = super::tool_loop::run_tool_loop(
         &executor, &agent_config.provider, initial_messages, loop_config,
     ).await?;
-
-    let conv_iri = super::agent_task::create_conversation(&executor, task_iri, &label, Some(&agent_iri)).await;
-    super::agent_task::persist_messages(&executor, &conv_iri, &output.messages, &agent_config.model_identifier).await;
 
     let task_iri_done = task_iri.to_string();
     let last_text = output.last_text.clone();
@@ -297,6 +320,7 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
                 let fallback = if last_text.is_empty() { "Concluído." } else { &last_text };
                 set_result(conn, &task_iri_done, fallback)?;
             }
+            set_status(conn, &task_iri_done, "foundation:Completed")?;
             super::task_blocker::check_and_unblock(conn, &task_iri_done);
             let conv = get_iri_property(conn, &task_iri_done, "foundation:delegatedFromConversation")
                 .map_err(|e| e.to_string())?
@@ -460,7 +484,7 @@ pub fn check_and_recur(conn: &mut rusqlite::Connection, task_iri: &str) {
         "rdf:type", "rdfs:label", "rdfs:comment",
         "foundation:recurrence", "foundation:scheduledAt", "foundation:assignee",
         "foundation:result", "foundation:nextTask", "foundation:hasStatus",
-        "foundation:lastUpdatedAt",
+        "foundation:lastUpdatedAt", "foundation:startedAt",
     ];
     // Copy all remaining properties so delegatedFromConversation, aiBehaviorRules,
     // dueDate, relatedTo, and any future task-level config survive every recurrence cycle.
