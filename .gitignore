@@ -38,3 +38,7 @@ src-tauri/target/coverage
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
+.claude/skills/foundation-review/
+.claude/skills/foundation-review-workspace/
+tmp/
+C：*
