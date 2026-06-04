@@ -24,6 +24,9 @@
   let reloadWhenDone = false;
   let loadDebounceTimer = null;
   let widgetDefinitions = $state([]);
+  // Snapshot tx cursor: max(tx) at the last successful loadEntity call.
+  let snapshotTx = 0;
+
   const entitySub = createEntitySubscription((event) => {
     const { type, entityId: updatedId } = event;
     if (type === 'updated') {
@@ -89,9 +92,25 @@
 
     try {
       const t0 = performance.now();
-      const resultStr = await invoke('inspector__get_entity', { entityId });
+      // Fetch entity data and snapshot tx in parallel.
+      const [resultStr, snapTx] = await Promise.all([
+        invoke('inspector__get_entity', { entityId }),
+        invoke('chat__get_conversation_snapshot_tx', { conversationId: entityId }).catch(() => 0),
+      ]);
       const t1 = performance.now();
       entityData = JSON.parse(resultStr);
+
+      // Declare the flat set: anchor + IRI-valued properties + backlink sources.
+      const objectIris = (entityData?.properties ?? [])
+        .filter(p => p.value && p.value.startsWith('foundation:') || (p.value ?? '').includes(':'))
+        .map(p => p.value)
+        .filter(Boolean);
+      const backlinkIris = (entityData?.backlinks ?? []).flatMap(b => b.values?.map(v => v.value) ?? []);
+      const flatSet = [entityId, ...objectIris, ...backlinkIris].filter(Boolean);
+      snapshotTx = /** @type {number} */ (snapTx);
+      entitySub.setIris(flatSet);
+      entitySub.setSinceTx(snapshotTx);
+      entitySub.replayMissed();
 
       const classIri = entityData?.types?.[0]?.iri ?? null;
       const typeIris = (entityData?.types ?? []).map(t => t.iri).filter(Boolean);
@@ -494,18 +513,11 @@
     return () => document.removeEventListener('click', handleDocClick, true);
   });
 
-  // The inspected entity plus every IRI it renders (property values, types) — reloading
-  // when any of them changes mirrors the previous self + property-value + type watches.
+  // When entityId changes (widget navigates to another entity), reset the subscription.
+  // loadEntity() declares the full flat set; this effect only seeds the anchor before
+  // the first load so updates that arrive during the load aren't dropped.
   $effect(() => {
-    const iris = new Set();
-    if (entityId) iris.add(entityId);
-    for (const p of entityData?.properties ?? []) {
-      if (p.value) iris.add(p.value);
-    }
-    for (const t of entityData?.types ?? []) {
-      if (t.iri) iris.add(t.iri);
-    }
-    entitySub.setIris(iris);
+    if (entityId) entitySub.setIris([entityId]);
   });
 
   onDestroy(() => {

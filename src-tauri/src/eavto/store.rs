@@ -11,6 +11,23 @@ use chrono;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// A single written triple carried in the notify payload, enabling creation-query
+/// matching and per-entity reactive updates in the receiver.
+///
+/// `subject_type` is left empty by the store (no DB access on the write thread);
+/// the notify receiver resolves it from the triple store when matching creation-queries.
+#[derive(Debug, Clone)]
+pub struct WrittenTriple {
+    pub subject: String,
+    pub predicate: String,
+    /// IRI object (when the triple points to another entity).
+    pub object_iri: Option<String>,
+    /// Literal value (when the triple carries a data value).
+    pub object_value: Option<String>,
+    /// The tx of the transaction that wrote this triple.
+    pub tx: i64,
+}
+
 std::thread_local! {
     /// Set to true while batch_operations holds an outer transaction open.
     /// When true, assert_triples/retract_triples use SAVEPOINTs instead of BEGIN
@@ -24,6 +41,11 @@ std::thread_local! {
     /// Accumulates IRI objects written during assert_triples on the write thread.
     /// Drained by DbExecutor after each write to emit entity-referenced notifications.
     static WRITTEN_IRI_OBJECTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+
+    /// Accumulates the full triple details written during this write batch.
+    /// Carries (predicate, object_iri, object_value, tx) per subject for creation-query
+    /// matching and cursor-based replay in the notify receiver.
+    static WRITTEN_TRIPLES: std::cell::RefCell<Vec<WrittenTriple>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Returns all subject→predicates accumulated since the last drain, removing them from the buffer.
@@ -36,6 +58,12 @@ pub fn drain_written_subject_predicates() -> HashMap<String, Vec<String>> {
 /// Only meaningful when called from the write thread.
 pub fn drain_written_iri_objects() -> Vec<String> {
     WRITTEN_IRI_OBJECTS.with(|v| std::mem::take(&mut *v.borrow_mut()))
+}
+
+/// Returns all written triples accumulated since the last drain, removing them from the buffer.
+/// Only meaningful when called from the write thread.
+pub fn drain_written_triples() -> Vec<WrittenTriple> {
+    WRITTEN_TRIPLES.with(|v| std::mem::take(&mut *v.borrow_mut()))
 }
 
 /// Marks the current thread as being inside a batch transaction.
@@ -116,6 +144,21 @@ pub fn assert_triples(
                         buf.push(iri.clone());
                     }
                 }
+            }
+        });
+        WRITTEN_TRIPLES.with(|v| {
+            let mut buf = v.borrow_mut();
+            for triple in triples {
+                if is_vocabulary_iri(&triple.subject) {
+                    continue;
+                }
+                buf.push(WrittenTriple {
+                    subject: triple.subject.clone(),
+                    predicate: triple.predicate.clone(),
+                    object_iri: triple.object.as_iri().map(str::to_owned),
+                    object_value: triple.object.as_literal(),
+                    tx: tx_id,
+                });
             }
         });
     }
@@ -291,6 +334,21 @@ pub fn append_triples(
                 }
             }
         });
+        WRITTEN_TRIPLES.with(|v| {
+            let mut buf = v.borrow_mut();
+            for triple in triples {
+                if is_vocabulary_iri(&triple.subject) {
+                    continue;
+                }
+                buf.push(WrittenTriple {
+                    subject: triple.subject.clone(),
+                    predicate: triple.predicate.clone(),
+                    object_iri: triple.object.as_iri().map(str::to_owned),
+                    object_value: triple.object.as_literal(),
+                    tx: tx_id,
+                });
+            }
+        });
     }
     Ok(tx_id)
 }
@@ -400,6 +458,21 @@ pub fn retract_triples(
                         buf.push(iri.clone());
                     }
                 }
+            }
+        });
+        WRITTEN_TRIPLES.with(|v| {
+            let mut buf = v.borrow_mut();
+            for triple in triples {
+                if is_vocabulary_iri(&triple.subject) {
+                    continue;
+                }
+                buf.push(WrittenTriple {
+                    subject: triple.subject.clone(),
+                    predicate: triple.predicate.clone(),
+                    object_iri: triple.object.as_iri().map(str::to_owned),
+                    object_value: triple.object.as_literal(),
+                    tx: tx_id,
+                });
             }
         });
     }

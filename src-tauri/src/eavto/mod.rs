@@ -27,3 +27,4 @@ pub use executor::DbExecutor;
 pub use rusqlite::Connection;
 pub use store::enter_batch_transaction;
 pub use store::with_transaction;
+pub use store::WrittenTriple;

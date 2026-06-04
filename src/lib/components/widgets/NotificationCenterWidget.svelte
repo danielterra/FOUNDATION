@@ -14,7 +14,23 @@
   let filterType = $state('all');
   let filterStatus = $state('pending');
   let selectedIris = $state({});
-  const entitySub = createEntitySubscription((event) => {
+  // Snapshot tx cursor: max(tx) at the time of the last loadNotifications call.
+  let snapshotTx = 0;
+
+  const entitySub = createEntitySubscription(async (event) => {
+    if (event.type === 'joined-set') {
+      // A new AINotification entered the set — add it to the top and subscribe to updates.
+      const iri = event.entityId;
+      // Idempotency: skip if already in the list.
+      if (notifications.some(n => n.iri === iri)) return;
+      // Idempotency by tx cursor.
+      if (event.tx != null && event.tx <= snapshotTx) return;
+      await upsertNotification(iri);
+      // Add the new IRI to the watched set so updates to it are received.
+      const currentIris = notifications.map(n => n.iri);
+      entitySub.setIris(currentIris);
+      return;
+    }
     if (event.type !== 'updated') return;
     pendingUpserts.add(event.entityId);
     clearTimeout(upsertTimer);
@@ -179,11 +195,14 @@
     loading = true;
     error = null;
     try {
-      const resultStr = await invoke('graph__search_entities', {
-        query: '',
-        typeIri: 'foundation:AINotification',
-        limit: 100,
-      });
+      const [resultStr, snapTx] = await Promise.all([
+        invoke('graph__search_entities', {
+          query: '',
+          typeIri: 'foundation:AINotification',
+          limit: 100,
+        }),
+        invoke('chat__get_conversation_snapshot_tx', { conversationId: 'foundation:AINotification' }).catch(() => 0),
+      ]);
       const list = JSON.parse(resultStr);
       const iris = list.map(item => item.id);
       const details = await fetchBatched(iris);
@@ -191,6 +210,11 @@
         .filter(n => n !== null)
         .map(n => ({ ...n, _ts: resolveTimestamp(n) }))
         .sort((a, b) => b._ts - a._ts);
+      // Declare the flat set of notification IRIs for atomic updates.
+      entitySub.setIris(notifications.map(n => n.iri));
+      snapshotTx = /** @type {number} */ (snapTx);
+      entitySub.setSinceTx(snapshotTx);
+      entitySub.replayMissed();
     } catch (err) {
       error = String(err);
     } finally {
@@ -313,8 +337,14 @@
   }
 
   onMount(async () => {
+    // Register creation-query BEFORE loading so no new notification is missed
+    // during the load (stable subscription, no birth-race).
+    entitySub.setCreationQueries([{
+      classIri: 'foundation:AINotification',
+      predicate: 'rdf:type',
+      objectValue: 'foundation:AINotification',
+    }]);
     await loadNotifications();
-    entitySub.setPatterns(['AINotification']);
   });
 
   onDestroy(() => {

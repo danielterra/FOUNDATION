@@ -76,9 +76,33 @@
         })
   )
 
+  // Snapshot tx cursor: max(tx) at the last loadGraph call.
+  let snapshotTx = 0
+  // IRI set for the flat subscription: automation + nodes + sequence flows.
   let watchedIris = new Set()
-  const entitySub = createEntitySubscription((event) => {
-    if (event.type === 'updated') loadGraph()
+  // Execution-scoped subscription for StepExecution entities.
+  let execSub = null
+
+  const entitySub = createEntitySubscription(async (event) => {
+    if (event.type === 'joined-set') {
+      if (event.classIri === 'foundation:automation_FlowNode' ||
+          // cover all FlowNode subtypes by checking the predicate
+          event.predicate === 'foundation:partOfProcess') {
+        // A new node was added to this automation — reload the diagram to pick it up.
+        // Layout needs recalculation anyway so a full graph reload is appropriate here.
+        if (event.tx != null && event.tx <= snapshotTx) return
+        await loadGraph()
+      }
+      return
+    }
+    if (event.type === 'updated') {
+      // A node or sequence flow in the flat set changed — only reload the graph
+      // if the changed entity is part of the current diagram (avoid false reloads
+      // when a node of another automation is in the watched set by coincidence).
+      if (watchedIris.has(event.entityId)) {
+        await loadGraph()
+      }
+    }
   })
   let unlistenExecStarted = null
   let unlistenStepProgress = null
@@ -87,10 +111,11 @@
   async function loadGraph() {
     loading = true
     error = null
-    execNodeStatus = new Map()
-    activeStepLabel = null
     try {
-      const raw = await invoke('automation__get_graph', { processIri: entityId })
+      const [raw, snapTx] = await Promise.all([
+        invoke('automation__get_graph', { processIri: entityId }),
+        invoke('chat__get_conversation_snapshot_tx', { conversationId: entityId }).catch(() => 0),
+      ])
       const data = JSON.parse(raw)
       automationLabel = data.process_label
       isExecutable = data.is_executable ?? false
@@ -154,6 +179,15 @@
       }
       watchedIris = iris
       entitySub.setIris(iris)
+      // Register creation-query for new nodes added to this automation (US6).
+      entitySub.setCreationQueries([{
+        classIri: 'foundation:automation_FlowNode',
+        predicate: 'foundation:partOfProcess',
+        objectValue: entityId,
+      }])
+      snapshotTx = /** @type {number} */ (snapTx)
+      entitySub.setSinceTx(snapshotTx)
+      entitySub.replayMissed()
     } catch (e) {
       error = String(e)
     } finally {
@@ -222,12 +256,58 @@
   onMount(async () => {
     await loadGraph()
     unlistenExecStarted = await listen('automation-execution-started', (event) => {
-      if (event.payload.processIri === entityId) {
-        activeExecutionIri = event.payload.executionIri
-        execNodeStatus = new Map()
-        activeStepLabel = null
-        running = true
-      }
+      if (event.payload.processIri !== entityId) return
+      const execIri = event.payload.executionIri
+      activeExecutionIri = execIri
+      execNodeStatus = new Map()
+      activeStepLabel = null
+      running = true
+      // Register creation-query for new StepExecution entities belonging to this execution (US5).
+      // The stream remains the source of truth for the toast (ephemeral progress).
+      // The entity subscription is the source of truth for the persistent status (inspector).
+      if (execSub) execSub.destroy()
+      const execStepIris = new Set()
+      execSub = createEntitySubscription((event) => {
+        if (event.type === 'joined-set' && event.predicate === 'foundation:belongsToExecution') {
+          // A new step entered this execution — subscribe to its updates.
+          const stepIri = event.entityId
+          if (execStepIris.has(stepIri)) return
+          execStepIris.add(stepIri)
+          execSub.setIris([...execStepIris])
+          return
+        }
+        if (event.type === 'updated') {
+          // A StepExecution was updated — reflect its persisted status in the node overlay.
+          // The stream already showed ephemeral progress; this ensures the final state is durable.
+          const stepIri = event.entityId
+          invoke('inspector__get_entity', { entityId: stepIri }).then((resultStr) => {
+            const data = JSON.parse(resultStr)
+            const props = data?.properties ?? []
+            const statusProp = props.find(p => p.property === 'foundation:hasStatus')
+            const execStepProp = props.find(p => p.property === 'foundation:executesStep')
+            const nodeIri = execStepProp?.value ?? null
+            if (!nodeIri) return
+            const statusIri = statusProp?.value ?? ''
+            // Map ontology status to display values.
+            let statusLabel, statusColor, statusIcon
+            if (statusIri.includes('Falhou') || statusIri.includes('1772993026091')) {
+              statusLabel = 'Failed'; statusColor = '#EF4444'; statusIcon = 'error'
+            } else if (statusIri === 'foundation:Completed' || statusIri.includes('Concluído')) {
+              statusLabel = 'Done'; statusColor = '#22C55E'; statusIcon = 'check_circle'
+            } else {
+              statusLabel = 'Running'; statusColor = '#F59E0B'; statusIcon = 'progress_activity'
+            }
+            const map = new Map(execNodeStatus)
+            map.set(nodeIri, { statusLabel, statusColor, statusIcon })
+            execNodeStatus = map
+          }).catch(() => {})
+        }
+      })
+      execSub.setCreationQueries([{
+        classIri: 'foundation:StepExecution',
+        predicate: 'foundation:belongsToExecution',
+        objectValue: execIri,
+      }])
     })
     unlistenStepProgress = await listen('automation-step-progress', (event) => {
       if (event.payload.executionIri !== activeExecutionIri) return
@@ -254,6 +334,7 @@
 
   onDestroy(() => {
     entitySub.destroy()
+    if (execSub) execSub.destroy()
     if (unlistenExecStarted) unlistenExecStarted()
     if (unlistenStepProgress) unlistenStepProgress()
     if (unlistenExecFinished) unlistenExecFinished()

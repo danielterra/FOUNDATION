@@ -3,6 +3,7 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import NumberFlow from '@number-flow/svelte';
   import MarkdownValue from './MarkdownValue.svelte';
+  import HtmlValue from './HtmlValue.svelte';
   import PropertyEditForm from './PropertyEditForm.svelte';
   import RecurrenceEditor from './RecurrenceEditor.svelte';
   import { focus } from '$lib/utils/actions';
@@ -336,7 +337,19 @@
             <span class="value-text">{val.valueLabel || val.value}</span>
             <span class="material-symbols-outlined url-open-icon">open_in_new</span>
           </button>
-        {:else if isStringType(val.datatype)}
+        {:else if val.datatype === 'rdf:HTML'}
+          {#if editingKey === editKey(detailGroup.property, idx)}
+            <PropertyEditForm
+              propertyIri={detailGroup.property}
+              bind:draftValue
+              {saving}
+              onsave={onSaveEdit}
+              oncancel={onCancelEdit}
+            />
+          {:else}
+            <HtmlValue value={val.value} />
+          {/if}
+        {:else if val.datatype === 'foundation:markdown'}
           {#if editingKey === editKey(detailGroup.property, idx)}
             <PropertyEditForm
               propertyIri={detailGroup.property}
@@ -354,6 +367,25 @@
             </div>
           {:else}
             <MarkdownValue value={val.value} {openEntityInspector} />
+          {/if}
+        {:else if isStringType(val.datatype)}
+          {#if editingKey === editKey(detailGroup.property, idx)}
+            <PropertyEditForm
+              propertyIri={detailGroup.property}
+              bind:draftValue
+              {saving}
+              onsave={onSaveEdit}
+              oncancel={onCancelEdit}
+            />
+          {:else if (val.value ?? '').length > 50_000}
+            <div class="value-large">
+              <pre class="value-pre">{val.value}</pre>
+              <button class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
+                <span class="material-symbols-outlined">content_copy</span>
+              </button>
+            </div>
+          {:else}
+            <div class="value-plain">{val.value}</div>
           {/if}
         {:else if isNumericType(val.datatype)}
           {#if editingKey === editKey(detailGroup.property, idx)}
@@ -506,6 +538,17 @@
     font-size: 14px;
     color: var(--color-neutral-active);
     flex: 1;
+  }
+
+  .value-plain {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-body);
+    font-size: 14px;
+    color: var(--color-neutral-active);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 
   .unit {

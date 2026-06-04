@@ -212,6 +212,12 @@
     return !datatype || datatype === 'xsd:string' || datatype === 'rdf:langString';
   }
 
+  // Datatypes edited through the same plain-textarea form (markdown/html are just
+  // text under the hood — only their rendering differs).
+  function isTextEditable(datatype) {
+    return isStringType(datatype) || datatype === 'foundation:markdown' || datatype === 'rdf:HTML';
+  }
+
   function isDateType(datatype) {
     return datatype === 'xsd:date' || datatype === 'xsd:dateTime';
   }
@@ -254,6 +260,8 @@
   function formatDatatype(datatype) {
     if (!datatype || datatype === 'xsd:string' || datatype === 'rdf:langString') return 'String';
     if (datatype === 'foundation:rrule') return 'Recorrência';
+    if (datatype === 'rdf:HTML') return 'HTML';
+    if (datatype === 'foundation:markdown') return 'Markdown';
     const parts = datatype.split(':');
     const typeName = parts.length > 1 ? parts[1] : datatype;
     return typeName.charAt(0).toUpperCase() + typeName.slice(1);
@@ -460,7 +468,7 @@
       </div>
     {:else}
       <div class="prop-actions">
-        {#if onSave && !detailGroup.isObjectProperty && !detailGroup.isCalculated && (isStringType(detailGroup.datatype) || isDateType(detailGroup.datatype) || isNumericType(detailGroup.datatype) || isRruleType(detailGroup.datatype) || isQueryConfigProperty(detailGroup.property)) && (detailGroup.isEmpty || detailGroup.values.length <= 1)}
+        {#if onSave && !detailGroup.isObjectProperty && !detailGroup.isCalculated && (isTextEditable(detailGroup.datatype) || isDateType(detailGroup.datatype) || isNumericType(detailGroup.datatype) || isRruleType(detailGroup.datatype) || isQueryConfigProperty(detailGroup.property)) && (detailGroup.isEmpty || detailGroup.values.length <= 1)}
           <button
             class="edit-btn"
             title="Edit"

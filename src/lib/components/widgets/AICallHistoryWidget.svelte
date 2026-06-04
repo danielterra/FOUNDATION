@@ -10,8 +10,38 @@
   let loading = $state(false);
   let fromDate = $state('');
   let toDate = $state('');
+  // Snapshot tx cursor: max(tx) at the last load. Used for lossless replay.
+  let snapshotTx = 0;
+  // Set of call IRIs already seen — prevents double-counting on replay.
+  let seenCallIris = new Set();
+
   const entitySub = createEntitySubscription((event) => {
-    if (event.type === 'updated') load();
+    if (event.type === 'joined-set') {
+      // A new AIAPICall entered the set — add it to the history and update the summary.
+      const iri = event.entityId;
+      // Idempotency: skip if already known.
+      if (seenCallIris.has(iri)) return;
+      if (event.tx != null && event.tx <= snapshotTx) return;
+      // Fetch the individual call via the entity inspector to build the call record.
+      invoke('inspector__get_entity', { entityId: iri }).then((resultStr) => {
+        if (seenCallIris.has(iri)) return;
+        const data = JSON.parse(resultStr);
+        const props = data?.properties ?? [];
+        const getProp = (key) => props.find(p => p.property === key)?.value ?? null;
+        const call = {
+          iri,
+          model: getProp('foundation:model') ?? '',
+          calledAt: getProp('foundation:calledAt') ?? '',
+          inputTokens: parseInt(getProp('foundation:inputTokens') ?? '0', 10) || 0,
+          outputTokens: parseInt(getProp('foundation:outputTokens') ?? '0', 10) || 0,
+          estimatedCost: parseFloat(getProp('foundation:estimatedCost') ?? '0') || 0,
+          conversationIri: getProp('foundation:generatedByConversation') ?? null,
+        };
+        seenCallIris.add(iri);
+        calls = [call, ...calls];
+        entitySub.setIris([...seenCallIris]);
+      }).catch(() => {});
+    }
   });
 
   // Group calls by model for summary view
@@ -49,9 +79,19 @@
     try {
       const fromMs = fromDate ? new Date(fromDate).getTime() : null;
       const toMs = toDate ? new Date(toDate + 'T23:59:59').getTime() : null;
-      calls = await invoke('ai__list_api_calls', { fromMs, toMs, limit: 200 });
+      const [fetched, snapTx] = await Promise.all([
+        invoke('ai__list_api_calls', { fromMs, toMs, limit: 200 }),
+        invoke('chat__get_conversation_snapshot_tx', { conversationId: 'foundation:AIAPICall' }).catch(() => 0),
+      ]);
+      calls = fetched;
+      seenCallIris = new Set(calls.map(c => c.iri).filter(Boolean));
+      snapshotTx = /** @type {number} */ (snapTx);
+      entitySub.setIris([...seenCallIris]);
+      entitySub.setSinceTx(snapshotTx);
+      entitySub.replayMissed();
     } catch (e) {
       calls = [];
+      seenCallIris = new Set();
     } finally {
       loading = false;
     }
@@ -62,8 +102,13 @@
   }
 
   onMount(async () => {
+    // Register creation-query before loading to avoid birth-race.
+    entitySub.setCreationQueries([{
+      classIri: 'foundation:AIAPICall',
+      predicate: 'rdf:type',
+      objectValue: 'foundation:AIAPICall',
+    }]);
     await load();
-    entitySub.setPatterns(['AIAPICall']);
   });
 
   onDestroy(() => { entitySub.destroy(); });

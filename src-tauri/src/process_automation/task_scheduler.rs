@@ -230,22 +230,11 @@ async fn schedule(app: AppHandle) {
 pub fn listen_for_scheduled_tasks(app: AppHandle) {
     use tauri::Listener;
 
-    let app_for_created = app.clone();
-    app.listen("entity-created", move |event| {
+    // React to the non-gated internal signal so scheduling reloads happen for every task
+    // write, not only when the frontend is displaying the task.
+    app.clone().listen("entity-changed-internal", move |event| {
         if let Some(entity_id) = parse_entity_id(event.payload()) {
-            let app2 = app_for_created.clone();
-            tauri::async_runtime::spawn(async move {
-                if is_task_entity(&app2, &entity_id).await {
-                    reload(app2).await;
-                }
-            });
-        }
-    });
-
-    let app_for_updated = app.clone();
-    app.listen("entity-updated", move |event| {
-        if let Some(entity_id) = parse_entity_id(event.payload()) {
-            let app2 = app_for_updated.clone();
+            let app2 = app.clone();
             tauri::async_runtime::spawn(async move {
                 if is_task_entity(&app2, &entity_id).await {
                     reload(app2).await;

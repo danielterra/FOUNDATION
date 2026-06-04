@@ -12,6 +12,7 @@ pub struct ParsedEmail {
     pub subject: String,
     pub date: Option<String>,
     pub body: String,
+    pub body_html: Option<String>,
     pub attachments: Vec<ParsedAttachment>,
 }
 
@@ -74,6 +75,14 @@ fn store_email_inner(
         .map_err(|e| format!("subject: {}", e))?;
     ind.add_property(conn, "foundation:emailBody", vec![str_lit(&email.body)], "imap")
         .map_err(|e| format!("body: {}", e))?;
+
+    // Preserve the original text/html part as rdf:HTML so the inspector can render
+    // the email as designed; emailBody (text/plain) stays as the lossless fallback.
+    if let Some(html) = email.body_html.as_deref().filter(|h| !h.is_empty()) {
+        ind.add_property(conn, "foundation:emailBodyHtml", vec![html_lit(html)], "imap")
+            .map_err(|e| format!("body_html: {}", e))?;
+    }
+
     ind.add_property(conn, "foundation:emailFrom", vec![Object::Iri(from_iri)], "imap")
         .map_err(|e| format!("from: {}", e))?;
 
@@ -249,6 +258,10 @@ fn str_lit(v: &str) -> Object {
 
 fn datetime_lit(v: &str) -> Object {
     Object::Literal { value: v.to_string(), datatype: Some("xsd:dateTime".to_string()), language: None }
+}
+
+fn html_lit(v: &str) -> Object {
+    Object::Literal { value: v.to_string(), datatype: Some("rdf:HTML".to_string()), language: None }
 }
 
 /// mailparse devolve a string Date: bruta do header (geralmente RFC2822).

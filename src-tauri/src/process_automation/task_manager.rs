@@ -36,11 +36,18 @@ fn is_config_error(err: &str) -> bool {
 
 pub struct TaskExecutionState {
     running: Mutex<HashSet<String>>,
+    /// In-flight check_and_recur per task IRI. Prevents duplicate next tasks when
+    /// two `entity-changed-internal` signals arrive back-to-back before the first
+    /// recurrence transaction commits the `nextTask` pointer.
+    recurring: Mutex<HashSet<String>>,
 }
 
 impl TaskExecutionState {
     pub fn new() -> Self {
-        Self { running: Mutex::new(HashSet::new()) }
+        Self {
+            running: Mutex::new(HashSet::new()),
+            recurring: Mutex::new(HashSet::new()),
+        }
     }
 }
 
@@ -164,14 +171,9 @@ pub(crate) fn maybe_execute_task_for_entity(app: AppHandle, entity_id: String) {
 pub fn listen_for_in_progress(app: AppHandle) {
     use tauri::Listener;
 
-    let app2 = app.clone();
-    app.clone().listen("entity-updated", move |event| {
-        if let Some(entity_id) = parse_entity_id(event.payload()) {
-            maybe_execute_task_for_entity(app2.clone(), entity_id);
-        }
-    });
-
-    app.clone().listen("entity-created", move |event| {
+    // React to the non-gated internal signal so a task executes as soon as it is ready,
+    // regardless of whether the frontend is currently displaying it.
+    app.clone().listen("entity-changed-internal", move |event| {
         if let Some(entity_id) = parse_entity_id(event.payload()) {
             maybe_execute_task_for_entity(app.clone(), entity_id);
         }
@@ -518,38 +520,50 @@ pub fn check_and_recur(conn: &mut rusqlite::Connection, task_iri: &str) {
 pub fn listen_for_recurrence(app: AppHandle) {
     use tauri::Listener;
 
-    app.clone().listen("entity-updated", move |event| {
+    app.clone().listen("entity-changed-internal", move |event| {
         let entity_id = match parse_entity_id(event.payload()) {
             Some(id) => id,
             None => return,
         };
+        // Per-task lock: at most one in-flight recurrence check per IRI. Without this,
+        // back-to-back internal signals can race past the nextTask guard before the
+        // first recurrence transaction commits, producing duplicate next tasks.
+        if let Some(state) = app.try_state::<TaskExecutionState>() {
+            let mut recurring = state.recurring.lock().unwrap_or_else(|e| e.into_inner());
+            if !recurring.insert(entity_id.clone()) {
+                return;
+            }
+        }
         let app2 = app.clone();
+        let entity_for_cleanup = entity_id.clone();
         tauri::async_runtime::spawn(async move {
-            let executor = match app2.try_state::<DbExecutor>() {
-                Some(e) => e,
-                None => return,
-            };
-            let entity = entity_id.clone();
-            let should_recur = executor
-                .read(move |conn| {
-                    if !crate::owl::is_instance_of(conn, &entity, "foundation:Task") {
-                        return Ok(false);
-                    }
-                    Ok(get_literal_property(conn, &entity, "foundation:result")
-                        .map_err(|e| e.to_string())?
-                        .is_some())
-                })
-                .await
-                .unwrap_or(false);
-
-            if should_recur {
-                let entity2 = entity_id.clone();
-                let _ = executor
-                    .write(move |conn| {
-                        check_and_recur(conn, &entity2);
-                        Ok(String::new())
+            if let Some(executor) = app2.try_state::<DbExecutor>() {
+                let entity = entity_id.clone();
+                let should_recur = executor
+                    .read(move |conn| {
+                        if !crate::owl::is_instance_of(conn, &entity, "foundation:Task") {
+                            return Ok(false);
+                        }
+                        Ok(get_literal_property(conn, &entity, "foundation:result")
+                            .map_err(|e| e.to_string())?
+                            .is_some())
                     })
-                    .await;
+                    .await
+                    .unwrap_or(false);
+
+                if should_recur {
+                    let entity2 = entity_id.clone();
+                    let _ = executor
+                        .write(move |conn| {
+                            check_and_recur(conn, &entity2);
+                            Ok(String::new())
+                        })
+                        .await;
+                }
+            }
+            if let Some(state) = app2.try_state::<TaskExecutionState>() {
+                let mut r = state.recurring.lock().unwrap_or_else(|e| e.into_inner());
+                r.remove(&entity_for_cleanup);
             }
         });
     });

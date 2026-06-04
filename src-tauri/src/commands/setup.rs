@@ -85,7 +85,7 @@ pub async fn initialize_app(
 
     let t0 = std::time::Instant::now();
 
-    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel::<(std::collections::HashMap<String, Vec<String>>, Vec<String>)>();
+    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel::<(std::collections::HashMap<String, Vec<String>>, Vec<String>, Vec<crate::eavto::WrittenTriple>)>();
     let executor = DbExecutor::new_with_notify(conn, db_path.clone(), Some(notify_tx));
     let executor_for_worker = executor.clone();
     let executor_for_recover = executor.clone();
@@ -105,21 +105,93 @@ pub async fn initialize_app(
 
     let app_for_notify = app.clone();
     let executor_for_reindex = app.state::<DbExecutor>().inner().clone();
+    let executor_for_type_resolve = app.state::<DbExecutor>().inner().clone();
     tauri::async_runtime::spawn(async move {
-        while let Some((subject_predicates, iri_objects)) = notify_rx.recv().await {
+        while let Some((subject_predicates, iri_objects, written_triples)) = notify_rx.recv().await {
+            // Derive the max tx from this batch for the ring and event payloads.
+            let batch_tx = written_triples.iter().map(|t| t.tx).max().unwrap_or(0);
+
             let mut seen_subjects: Vec<String> = Vec::new();
-            {
-                for (iri, predicates) in subject_predicates {
-                    crate::realtime::emit_entity_updated_with(&app_for_notify, &iri, &predicates);
-                    seen_subjects.push(iri);
-                }
+            for (iri, predicates) in &subject_predicates {
+                crate::realtime::emit_entity_updated_with_tx(&app_for_notify, iri, predicates, batch_tx);
+                // Non-gated backend signal: task execution / recurrence / scheduler must react
+                // to every write, independent of whether the frontend is displaying the entity.
+                crate::realtime::emit_entity_changed_internal(&app_for_notify, iri);
+                seen_subjects.push(iri.clone());
             }
+
             let mut seen_objects = std::collections::HashSet::new();
-            for iri in iri_objects {
+            for iri in &iri_objects {
                 if seen_objects.insert(iri.clone()) {
-                    crate::realtime::emit_entity_referenced(&app_for_notify, &iri);
+                    crate::realtime::emit_entity_referenced_with_tx(&app_for_notify, iri, batch_tx);
                 }
             }
+
+            // Match creation-queries against the written triples in memory.
+            // For each written triple that matches (predicate, object_value), check whether
+            // the subject has the required rdf:type. The type check goes to the DB only when
+            // there is at least one creation-query registered — avoiding unnecessary reads.
+            if let Some(registry) = app_for_notify.try_state::<crate::realtime::SubscriptionRegistry>() {
+                let queries = registry.creation_queries();
+                if !queries.is_empty() {
+                    // Collect candidate (subject, predicate, object_value, tx) tuples whose
+                    // predicate+object matches at least one creation-query.
+                    let candidates: Vec<(String, String, String, i64)> = written_triples.iter()
+                        .filter_map(|t| {
+                            let obj = t.object_iri.as_deref().or(t.object_value.as_deref())?;
+                            if queries.iter().any(|q| q.predicate == t.predicate && q.object_value == obj) {
+                                Some((t.subject.clone(), t.predicate.clone(), obj.to_owned(), t.tx))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    if !candidates.is_empty() {
+                        // Resolve rdf:type for candidate subjects via a single read.
+                        let app_for_join = app_for_notify.clone();
+                        let executor_for_join = executor_for_type_resolve.clone();
+                        let queries_for_join = queries.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let _ = executor_for_join.read(move |conn| {
+                                for (subject, predicate, object_value, tx) in &candidates {
+                                    // Resolve the current rdf:type of the subject.
+                                    let subject_type: Option<String> = conn.query_row(
+                                        "SELECT object FROM triples
+                                         WHERE subject = ?1 AND predicate = 'rdf:type'
+                                           AND retracted = 0
+                                           AND tx = (SELECT MAX(tx) FROM triples
+                                                      WHERE subject = ?1 AND predicate = 'rdf:type')",
+                                        rusqlite::params![subject],
+                                        |row| row.get(0),
+                                    ).ok();
+
+                                    if let Some(ref stype) = subject_type {
+                                        for query in &queries_for_join {
+                                            if query.class_iri == *stype
+                                                && query.predicate == *predicate
+                                                && query.object_value == *object_value
+                                            {
+                                                crate::realtime::emit_entity_joined_set(
+                                                    &app_for_join,
+                                                    subject,
+                                                    &query.class_iri,
+                                                    predicate,
+                                                    object_value,
+                                                    *tx,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(String::new())
+                            }).await;
+                        });
+                    }
+                }
+            }
+
+            // Search reindex is unconditional — always runs regardless of subscriptions.
             if !seen_subjects.is_empty() {
                 let executor = executor_for_reindex.clone();
                 tauri::async_runtime::spawn(async move {

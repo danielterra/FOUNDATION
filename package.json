@@ -41,6 +41,7 @@
     "cronstrue": "^3.14.0",
     "d3": "^7.9.0",
     "dagre": "^0.8.5",
+    "dompurify": "^3.4.7",
     "marked": "^17.0.3",
     "material-symbols": "^0.40.1",
     "mermaid": "^11.12.3",

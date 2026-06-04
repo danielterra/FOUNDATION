@@ -134,48 +134,126 @@
 		}
 	});
 
-	// Parity with widgets: the chat subscribes to its active conversation IRI through the
-	// pub/sub bus. Each new AIConversationMessage writes foundation:partOfConversation
-	// pointing at the conversation, surfacing as an entity-referenced event for that IRI.
-	const conversationSub = createEntitySubscription(async (event) => {
-		if (event.type !== 'referenced') return;
-		if (!activeConversationIri) return;
-		if (event.entityId !== activeConversationIri) return;
+	// Per-conversation snapshot tx — the max(tx) at the time of the last full load.
+	// Used as the cursor for lossless replay when the creation-query fires after a gap.
+	let snapshotTx = $state(0);
 
-		console.debug(`[CHAT] entity-referenced(${activeConversationIri}) → reload messages`);
-		const version = ++loadMessagesVersion;
-		const result = await invoke('chat__get_recent_messages', {
-			limit: messageLimit,
-			conversationId: activeConversationIri
-		});
-		if (version !== loadMessagesVersion) return;
+	// tx cursor for the conversation list — max(tx) at the time of the last loadConversations.
+	let listSnapshotTx = $state(0);
 
-		// Only clear streaming when the incoming result already contains a new
-		// non-empty assistant text — prevents intermediate writes (tool-results,
-		// log_api_call) from wiping streaming text before the real response is saved.
-		// messages is always updated so tool_use results appear immediately.
-		const lastIncoming = result.messages.at(-1);
-		const lastCurrent  = messages.at(-1);
-		const hasNewAssistantText =
-			lastIncoming?.type === 'text' &&
-			!!lastIncoming?.text &&
-			lastIncoming?.iri !== lastCurrent?.iri;
-		// Also clear when a new tool_use round lands — the agent completed a
-		// think+speak+act cycle and the next think phase must start fresh.
-		const hasNewToolUse =
-			lastIncoming?.type === 'tool_use' &&
-			lastIncoming?.iri !== lastCurrent?.iri;
-		if (!streamingSpeak || hasNewAssistantText || hasNewToolUse) {
-			clearStreaming();
-		}
-		hasMoreMessages = result.messages.length === messageLimit;
-		messages = result.messages;
-		scrollToBottom();
+	// Watches ALL conversations for new messages so the list stays ordered by last-message
+	// timestamp without depending on the active-conversation subscription.
+	// One creation-query per convIri is registered; joined-set fires for any conversation.
+	const listSub = createEntitySubscription(async (event) => {
+		if (event.type !== 'joined-set') return;
+		if (event.classIri !== 'foundation:AIConversationMessage') return;
+		// Promote the conversation that received a new message to the top.
+		const convIri = event.objectValue;
+		if (!convIri) return;
+		// Idempotency: if tx ≤ cursor the event was already accounted for at snapshot time.
+		if (event.tx != null && event.tx <= listSnapshotTx) return;
 		await loadConversations();
 	});
 
+	// Reactive subscription: watches the active conversation for new messages (via creation-query)
+	// and for updates to messages already in the displayed set (via exact IRI subscription).
+	// Falls back to full reload only for question-type messages that need the full tool_results map.
+	const conversationSub = createEntitySubscription(async (event) => {
+		if (!activeConversationIri) return;
+
+		if (event.type === 'joined-set') {
+			// A new message arrived for the active conversation.
+			if (
+				event.classIri !== 'foundation:AIConversationMessage' ||
+				event.objectValue !== activeConversationIri
+			) return;
+
+			const newIri = event.entityId;
+			// Skip if we already have it (idempotent).
+			if (messages.some(m => m.iri === newIri)) return;
+
+			const unit = await invoke('chat__get_message_by_iri', { messageIri: newIri }).catch(() => null);
+			if (!unit) {
+				// question or pure tool_result — reload the full set once to resolve the answer.
+				const version = ++loadMessagesVersion;
+				const result = await invoke('chat__get_recent_messages', {
+					limit: messageLimit,
+					conversationId: activeConversationIri
+				}).catch(() => null);
+				if (!result || version !== loadMessagesVersion) return;
+				clearStreaming();
+				hasMoreMessages = result.messages.length === messageLimit;
+				messages = result.messages;
+			} else {
+				// The persisted user message replaces the optimistic placeholder added on
+				// send: the placeholder carries no real IRI, so the join-set idempotency
+				// check above cannot dedupe it — drop it before appending the real unit.
+				let base = messages;
+				if (unit.type === 'user') {
+					const optIdx = base.findIndex(m => m.iri?.startsWith('optimistic_') && m.text === unit.text);
+					if (optIdx !== -1) base = [...base.slice(0, optIdx), ...base.slice(optIdx + 1)];
+				}
+				const lastCurrent = base.at(-1);
+				const hasNewAssistantText = unit.type === 'text' && !!unit.text && unit.iri !== lastCurrent?.iri;
+				const hasNewToolUse = unit.type === 'tool_use' && unit.iri !== lastCurrent?.iri;
+				if (!streamingSpeak || hasNewAssistantText || hasNewToolUse) {
+					clearStreaming();
+				}
+				messages = [...base, unit];
+				// Add new message IRI to subscription so future updates to it are received.
+				conversationSub.setIris([
+					activeConversationIri,
+					...messages.map(m => m.iri).filter(Boolean)
+				]);
+			}
+			scrollToBottom();
+			await loadConversations();
+			return;
+		}
+
+		if (event.type === 'updated') {
+			// A message already in the displayed set was mutated — refetch only that unit.
+			const msgIndex = messages.findIndex(m => m.iri === event.entityId);
+			if (msgIndex === -1) return;
+
+			const unit = await invoke('chat__get_message_by_iri', { messageIri: event.entityId }).catch(() => null);
+			if (!unit) return;
+
+			const updated = [...messages];
+			updated[msgIndex] = unit;
+			messages = updated;
+			return;
+		}
+	});
+
 	$effect(() => {
-		conversationSub.setIris(activeConversationIri ? [activeConversationIri] : []);
+		if (!activeConversationIri) {
+			conversationSub.setIris([]);
+			conversationSub.setCreationQueries([]);
+			return;
+		}
+		// Declare the exact set of IRIs displayed plus a creation-query for new messages.
+		conversationSub.setIris([
+			activeConversationIri,
+			...messages.map(m => m.iri).filter(Boolean)
+		]);
+		conversationSub.setCreationQueries([{
+			classIri: 'foundation:AIConversationMessage',
+			predicate: 'foundation:partOfConversation',
+			objectValue: activeConversationIri,
+		}]);
+		conversationSub.setSinceTx(snapshotTx);
+	});
+
+	// Keep listSub watching all conversations for new messages so the list stays sorted.
+	$effect(() => {
+		const queries = conversations.map(c => ({
+			classIri: 'foundation:AIConversationMessage',
+			predicate: 'foundation:partOfConversation',
+			objectValue: c.iri,
+		}));
+		listSub.setCreationQueries(queries);
+		listSub.setSinceTx(listSnapshotTx);
 	});
 
 	onMount(async () => {
@@ -258,6 +336,8 @@
 			unlistenAIStatus();
 			unlistenAIError();
 			document.removeEventListener('chat-inject', handleChatInject);
+			listSub.destroy();
+			conversationSub.destroy();
 			for (const state of Object.values(convLoading)) {
 				if (state.elapsedInterval) clearInterval(state.elapsedInterval);
 			}
@@ -381,6 +461,14 @@
 	async function loadConversations() {
 		try {
 			conversations = await invoke('chat__list_conversations');
+			// Use the active conversation's snapshot tx as the list cursor — it is the
+			// most recent max(tx) we have and conservatively covers any new message
+			// written after this load in any conversation.
+			if (snapshotTx > listSnapshotTx) {
+				listSnapshotTx = snapshotTx;
+				listSub.setSinceTx(listSnapshotTx);
+				listSub.replayMissed();
+			}
 		} catch (err) {
 			console.error('Failed to load conversations:', err);
 		}
@@ -428,14 +516,25 @@
 			return;
 		}
 		const version = ++loadMessagesVersion;
+		const convIri = activeConversationIri;
 		try {
-			const result = await invoke('chat__get_recent_messages', {
-				limit: messageLimit,
-				conversationId: activeConversationIri
-			});
+			// Fetch messages and the max(tx) of this snapshot in parallel.
+			const [result, snapTx] = await Promise.all([
+				invoke('chat__get_recent_messages', {
+					limit: messageLimit,
+					conversationId: convIri,
+				}),
+				invoke('chat__get_conversation_snapshot_tx', {
+					conversationId: convIri,
+				}).catch(() => 0),
+			]);
 			if (version !== loadMessagesVersion) return;
 			hasMoreMessages = result.messages.length === messageLimit;
 			messages = result.messages;
+			snapshotTx = /** @type {number} */ (snapTx);
+			// Update sinceTx so the subscription replays any events missed during load.
+			conversationSub.setSinceTx(snapshotTx);
+			conversationSub.replayMissed();
 			isLoadingMessages = false;
 			syncLoadingFromDb(result.is_processing, activeConversationIri);
 			await tick();

@@ -564,28 +564,50 @@ fn parse_raw_email(raw: &[u8]) -> Result<ParsedEmail, String> {
                 .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
         });
 
-    let body = extract_body_text(&parsed);
+    let (body, body_html) = extract_bodies(&parsed);
     let attachments = collect_attachments(&parsed);
 
-    Ok(ParsedEmail { message_id, from, to, subject, date, body, attachments })
+    Ok(ParsedEmail { message_id, from, to, subject, date, body, body_html, attachments })
 }
 
-fn extract_body_text(mail: &mailparse::ParsedMail) -> String {
+/// Walks the full MIME tree and returns the first text/plain and text/html body
+/// parts found, ignoring attachment parts. Real-world emails nest these inside
+/// multipart/alternative (often wrapped again in multipart/mixed), so a flat scan
+/// of the top-level subparts misses the html alternative — hence the recursion.
+fn extract_bodies(mail: &mailparse::ParsedMail) -> (String, Option<String>) {
+    let mut plain: Option<String> = None;
+    let mut html: Option<String> = None;
+    collect_bodies(mail, &mut plain, &mut html);
+    (plain.unwrap_or_default(), html)
+}
+
+fn collect_bodies(
+    mail: &mailparse::ParsedMail,
+    plain: &mut Option<String>,
+    html: &mut Option<String>,
+) {
     if mail.subparts.is_empty() {
-        if mail.ctype.mimetype.starts_with("text/") {
-            return mail.get_body().unwrap_or_default();
+        if part_is_attachment(mail) {
+            return;
         }
-        return String::new();
+        let mime = mail.ctype.mimetype.as_str();
+        if mime == "text/plain" {
+            if plain.is_none() {
+                *plain = mail.get_body().ok();
+            }
+        } else if mime == "text/html" {
+            if html.is_none() {
+                *html = mail.get_body().ok();
+            }
+        } else if mime.starts_with("text/") && plain.is_none() {
+            // Fallback for single-part text emails with an uncommon subtype.
+            *plain = mail.get_body().ok();
+        }
+        return;
     }
     for part in &mail.subparts {
-        if part.ctype.mimetype == "text/plain" {
-            return part.get_body().unwrap_or_default();
-        }
+        collect_bodies(part, plain, html);
     }
-    mail.subparts
-        .first()
-        .and_then(|p| p.get_body().ok())
-        .unwrap_or_default()
 }
 
 fn collect_attachments(mail: &mailparse::ParsedMail) -> Vec<ParsedAttachment> {
@@ -846,5 +868,53 @@ RGF0ZSxBbW91bnQK\r\n\
             parsed.attachments.iter().all(|a| a.mime_type != "text/plain"),
             "text/plain body part must not be collected as attachment"
         );
+    }
+
+    #[test]
+    fn test_parse_raw_email_plain_only_has_no_html_body() {
+        let parsed = parse_raw_email(MULTIPART_WITH_CSV).expect("parse should succeed");
+        assert!(parsed.body.contains("Segue o extrato"), "plain body must be extracted");
+        assert!(parsed.body_html.is_none(), "no text/html part means body_html must stay None");
+    }
+
+    // multipart/mixed wrapping a multipart/alternative (plain+html) plus an attachment.
+    // The html alternative is nested two levels deep — the old flat scan of top-level
+    // subparts missed it, which is why extract_bodies recurses.
+    const NESTED_ALTERNATIVE_WITH_ATTACHMENT: &[u8] = b"From: news@example.com\r\n\
+To: bob@example.com\r\n\
+Subject: Newsletter\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"MIX\"\r\n\
+\r\n\
+--MIX\r\n\
+Content-Type: multipart/alternative; boundary=\"ALT\"\r\n\
+\r\n\
+--ALT\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Visite [ https://example.com ]\r\n\
+--ALT\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<html><body><a href=\"https://example.com\">Visite</a></body></html>\r\n\
+--ALT--\r\n\
+--MIX\r\n\
+Content-Type: application/pdf; name=\"doc.pdf\"\r\n\
+Content-Disposition: attachment; filename=\"doc.pdf\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+JVBERi0xLjQK\r\n\
+--MIX--\r\n";
+
+    #[test]
+    fn test_parse_raw_email_extracts_html_from_nested_alternative() {
+        let parsed = parse_raw_email(NESTED_ALTERNATIVE_WITH_ATTACHMENT).expect("parse should succeed");
+        assert!(parsed.body.contains("Visite"),
+            "plain body must be extracted from nested alternative; got: {:?}", parsed.body);
+        let html = parsed.body_html.expect("html body must be extracted from nested alternative");
+        assert!(html.contains("<a href=\"https://example.com\">"),
+            "body_html must be the text/html part; got: {}", html);
+        assert_eq!(parsed.attachments.len(), 1, "the pdf attachment must still be collected");
+        assert_eq!(parsed.attachments[0].file_name, "doc.pdf");
     }
 }

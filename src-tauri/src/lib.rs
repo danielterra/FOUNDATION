@@ -189,6 +189,8 @@ pub fn run() {
             commands::ai__initialize,
             commands::chat__attach_file,
             commands::chat__get_recent_messages,
+            commands::chat__get_message_by_iri,
+            commands::chat__get_conversation_snapshot_tx,
             commands::chat__send_and_reply,
             commands::chat__cancel,
             commands::chat__edit_and_retry,
@@ -241,7 +243,9 @@ pub fn run() {
             commands::settings__set_foundation_dir,
             commands::settings__connect_claude_desktop,
             commands::recover_database,
-            realtime::events__set_subscriptions
+            realtime::events__set_subscriptions,
+            realtime::events__set_subscriptions_v2,
+            realtime::events__replay_since
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

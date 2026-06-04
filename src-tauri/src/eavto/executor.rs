@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{mpsc, oneshot};
+use crate::eavto::store::WrittenTriple;
 
 const READ_POOL_SIZE: usize = 100;
 const WAL_TRUNCATE_INTERVAL: u32 = 200;
@@ -29,8 +30,8 @@ const WAL_PASSIVE_INTERVAL: u32 = 50;
 pub struct DbExecutor {
     write_tx: mpsc::UnboundedSender<WriteTask>,
     db_path: PathBuf,
-    /// Sends (subject_predicates, iri_objects) written by each transaction so callers can emit events.
-    notify_tx: Option<mpsc::UnboundedSender<(HashMap<String, Vec<String>>, Vec<String>)>>,
+    /// Sends (subject_predicates, iri_objects, written_triples) written by each transaction so callers can emit events.
+    notify_tx: Option<mpsc::UnboundedSender<(HashMap<String, Vec<String>>, Vec<String>, Vec<WrittenTriple>)>>,
     read_pool: Arc<Mutex<Vec<Connection>>>,
     /// Cumulative count of temporary connections opened due to pool exhaustion.
     temp_conn_count: Arc<AtomicUsize>,
@@ -52,12 +53,13 @@ impl DbExecutor {
         Self::new_with_notify(conn, db_path, None)
     }
 
-    /// Like `new`, but also sends (subject_predicates, iri_objects) to `notify_tx` after each write.
-    /// The receiver emits `entity-updated` for subjects and `entity-referenced` for iri_objects.
+    /// Like `new`, but also sends (subject_predicates, iri_objects, written_triples) to `notify_tx` after each write.
+    /// The receiver emits `entity-updated` for subjects, `entity-referenced` for iri_objects, and
+    /// matches creation-queries using written_triples.
     pub fn new_with_notify(
         conn: Connection,
         db_path: PathBuf,
-        notify_tx: Option<mpsc::UnboundedSender<(HashMap<String, Vec<String>>, Vec<String>)>>,
+        notify_tx: Option<mpsc::UnboundedSender<(HashMap<String, Vec<String>>, Vec<String>, Vec<WrittenTriple>)>>,
     ) -> Self {
         let (write_tx, mut write_rx) = mpsc::unbounded_channel::<WriteTask>();
         let notify_tx_thread = notify_tx.clone();
@@ -91,8 +93,9 @@ impl DbExecutor {
                 if let Some(ref tx) = notify_tx_thread {
                     let subject_predicates = crate::eavto::store::drain_written_subject_predicates();
                     let iri_objects = crate::eavto::store::drain_written_iri_objects();
-                    if !subject_predicates.is_empty() || !iri_objects.is_empty() {
-                        let _ = tx.send((subject_predicates, iri_objects));
+                    let written_triples = crate::eavto::store::drain_written_triples();
+                    if !subject_predicates.is_empty() || !iri_objects.is_empty() || !written_triples.is_empty() {
+                        let _ = tx.send((subject_predicates, iri_objects, written_triples));
                     }
                 }
                 let _ = task.result_tx.send(result);

@@ -10,8 +10,22 @@
   let label = $state('');
   let graphData = $state(null);
   let graphComponent = $state();
+  // Snapshot tx cursor: max(tx) at the last loadGraph call.
+  let snapshotTx = 0;
+  // Flat set of entity IRIs currently in the graph.
+  let graphIris = new Set();
+
   const entitySub = createEntitySubscription((event) => {
-    if (event.type === 'updated') loadGraph();
+    if (event.type === 'joined-set') {
+      // A new entity joined the graph via a relation — reload to pick it up.
+      if (event.tx != null && event.tx <= snapshotTx) return;
+      loadGraph();
+      return;
+    }
+    if (event.type === 'updated' && graphIris.has(event.entityId)) {
+      // An entity in the graph was updated — reload to reflect the change.
+      loadGraph();
+    }
   });
 
   async function closeWidget() {
@@ -55,10 +69,20 @@
     const { iris, entityLabel } = await resolveIris();
     if (iris.length === 0) return;
     try {
-      const json = await invoke('widget_blackboard__get_graph_data', { entityIris: iris });
+      const [json, snapTx] = await Promise.all([
+        invoke('widget_blackboard__get_graph_data', { entityIris: iris }),
+        invoke('chat__get_conversation_snapshot_tx', { conversationId: iris[0] ?? entityId }).catch(() => 0),
+      ]);
       const data = JSON.parse(json);
       label = entityLabel || (iris.length === 1 ? (data.nodes.find(n => n.id === iris[0])?.label ?? iris[0]) : `${iris.length} entities`);
       graphData = { nodes: data.nodes, links: data.links };
+      // Declare the flat set of entity IRIs for atomic updates.
+      const nodeIris = (data.nodes ?? []).map(n => n.id).filter(Boolean);
+      graphIris = new Set([entityId, ...iris, ...nodeIris]);
+      entitySub.setIris([...graphIris]);
+      snapshotTx = /** @type {number} */ (snapTx);
+      entitySub.setSinceTx(snapshotTx);
+      entitySub.replayMissed();
     } catch (err) {
       console.error('Failed to load graph data:', err);
     }
@@ -87,8 +111,9 @@
     entitySub.destroy();
   });
 
+  // Seed the anchor IRI before the first load so events during initialization aren't dropped.
   $effect(() => {
-    entitySub.setIris(entityId ? [entityId] : []);
+    if (entityId) entitySub.setIris([entityId]);
   });
 </script>
 

@@ -67,15 +67,25 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 
 ## Real-time event system (pub/sub)
 - Model: the frontend declares which entity IRIs it shows; the backend emits `entity-updated`/`entity-referenced`/`entity-deleted` ONLY for subscribed entities. Closing a widget drops its IRIs and stops its events.
-- Registry: `crate::realtime::SubscriptionRegistry` (managed state). Frontend pushes the full displayed set via the `events__set_subscriptions` command — wholesale replace, so a webview reload self-heals.
-- Backend: ALWAYS emit entity events via `crate::realtime::emit_entity_updated` / `emit_entity_updated_with` / `emit_entity_referenced` / `emit_entity_deleted` (batch path: `emit_queued`). They consult the registry. NEVER call `app.emit("entity-updated"/"entity-referenced"/"entity-deleted", …)` directly — it bypasses the subscription filter.
-- DbExecutor write path: EVERY `DbExecutor::write()` still accumulates `WRITTEN_SUBJECT_PREDICATES`/`WRITTEN_IRI_OBJECTS` → `notify_tx` → receiver (`setup.rs`) emits via the helpers above. No manual emit after a write.
+- Registry: `crate::realtime::SubscriptionRegistry` (managed state). Frontend pushes the full displayed set via `events__set_subscriptions` (IRIs+patterns) or `events__set_subscriptions_v2` (IRIs+patterns+creation_queries) — wholesale replace, so a webview reload self-heals.
+- Creation-queries: the frontend registers `(classIri, predicate, objectValue)` tuples via `events__set_subscriptions_v2`. The backend matches new triples against registered queries IN MEMORY (no DB query per emit) and emits `entity-joined-set` with the new entityId, classIri, predicate, objectValue and tx. IRIs of domain classes come from the frontend; the realtime layer stays generic.
+- Cursor / replay: `entity-updated`/`entity-referenced`/`entity-joined-set` events carry a `tx` field. At snapshot time, the frontend calls `chat__get_conversation_snapshot_tx` (or equivalent) to get max(tx)=T, sets `setSinceTx(T)` on the subscription handle, and calls `replayMissed()` after the subscription is active — invoking `events__replay_since` to recover events in the assinar-depois-do-evento window. Ring in memory (1024 entries); falls back to triples table for older cursors.
+- Backend: ALWAYS emit entity events via `crate::realtime::emit_entity_updated_with_tx` / `emit_entity_updated_with` / `emit_entity_referenced_with_tx` / `emit_entity_deleted` (batch path: `emit_queued`). They consult the registry. NEVER call `app.emit("entity-updated"/"entity-referenced"/"entity-deleted", …)` directly — it bypasses the subscription filter.
+- DbExecutor write path: EVERY `DbExecutor::write()` accumulates `WRITTEN_SUBJECT_PREDICATES`/`WRITTEN_IRI_OBJECTS`/`WRITTEN_TRIPLES` (type `WrittenTriple`) → `notify_tx` → receiver (`setup.rs`) emits via the helpers above and matches creation-queries. No manual emit after a write.
 - ALWAYS keep the search reindex in the notify receiver UNCONDITIONAL — never gate it on subscriptions.
-- Frontend: ALWAYS consume entity events via `createEntitySubscription` (`$lib/realtime/subscriptions`); call `setIris` (exact IRIs) or `setPatterns` (collection views, IRI substring) — typically from a `$effect` — and `destroy()` in `onDestroy`. NEVER attach a raw `listen('entity-updated'/…)` in a component.
+- Backend reactors (task execution/recurrence/scheduler) MUST listen to `entity-changed-internal` — a NON-gated signal the notify receiver emits via `crate::realtime::emit_entity_changed_internal` for EVERY written subject — NOT `entity-updated`/`entity-created` (subscription-gated, would skip entities the UI is not showing). The frontend NEVER listens to `entity-changed-internal`. Server-side automation runs regardless of what the UI displays.
+- Frontend: ALWAYS consume entity events via `createEntitySubscription` (`$lib/realtime/subscriptions`); call `setIris` (exact IRIs), `setPatterns` (collection views), `setCreationQueries` and `setSinceTx`/`replayMissed` — typically from a `$effect` — and `destroy()` in `onDestroy`. NEVER attach a raw `listen('entity-updated'/…)` in a component.
 - Streaming/execution events (`chat-ai-delta`, `ai-status`, `ai-error`, `automation-execution-*`) are NOT entity events — they stay direct emits/listens, scoped by payload (`conversationId`/`executionIri`).
 
 ## Releases
 - ALWAYS use `/release-create` skill.
+
+## Blackboard / Lousa
+- `add_widget_to_blackboard` takes `blackboard_iri` (a `foundation:Blackboard`), NOT a conversation IRI. Omit → DefaultBlackboard.
+- ALWAYS resolve conversation → board: a conversation's board IRI is `foundation:Blackboard_for_<conversationIri with ':' → '_'>` (e.g. `foundation:Blackboard_for_foundation_Conversation_<id>`).
+- ALWAYS show user-facing widgets on the ACTIVE conversation's board, never DefaultBlackboard — EXCEPT when chat is off (no active conversation), then omit → DefaultBlackboard (app setting).
+- MAIN conversation = `foundation:Conversation_1779893196496`; board = `foundation:Blackboard_for_foundation_Conversation_1779893196496`.
+- `InProgress` status does NOT uniquely mark the active conversation (many conversations share it).
 
 ## TODO doc filenames
 - Format: `YYYYMMDD-HHMMSS-description.md` (e.g. `20260228-192519-layer-violations-fix.md`).

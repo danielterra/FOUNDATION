@@ -1,6 +1,7 @@
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Weekday};
 
 pub enum Freq {
+    Minutely,
     Hourly,
     Daily,
     Weekly,
@@ -32,6 +33,7 @@ pub fn parse_rrule(s: &str) -> Option<Rrule> {
         match key {
             "FREQ" => {
                 freq = Some(match val {
+                    "MINUTELY" => Freq::Minutely,
                     "HOURLY" => Freq::Hourly,
                     "DAILY" => Freq::Daily,
                     "WEEKLY" => Freq::Weekly,
@@ -53,6 +55,7 @@ pub fn parse_rrule(s: &str) -> Option<Rrule> {
 
 pub fn next_occurrence(rrule: &Rrule, from: NaiveDateTime) -> Option<NaiveDateTime> {
     match rrule.freq {
+        Freq::Minutely => Some(from + Duration::minutes(rrule.interval as i64)),
         Freq::Hourly => Some(from + Duration::hours(rrule.interval as i64)),
         Freq::Daily => Some(from + Duration::days(rrule.interval as i64)),
         Freq::Weekly => Some(next_weekly(rrule, from)),
@@ -269,6 +272,14 @@ mod tests {
         let rrule = parse_rrule("FREQ=YEARLY;INTERVAL=1;BYMONTH=4;BYMONTHDAY=13").unwrap();
         let next = next_occurrence(&rrule, dt(2026, 4, 13)).unwrap();
         assert_eq!(next.date(), NaiveDate::from_ymd_opt(2027, 4, 13).unwrap());
+    }
+
+    #[test]
+    fn proxima_ocorrencia_minuto() {
+        let rrule = parse_rrule("FREQ=MINUTELY;INTERVAL=15").unwrap();
+        let from = dt(2026, 4, 20);
+        let next = next_occurrence(&rrule, from).unwrap();
+        assert_eq!(next, from + Duration::minutes(15));
     }
 
     #[test]

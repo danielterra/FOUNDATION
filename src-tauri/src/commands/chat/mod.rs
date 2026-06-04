@@ -1109,3 +1109,269 @@ pub async fn chat__answer_question(
 
     Ok(())
 }
+
+/// Fetch the display-unit for a single message by IRI for targeted reactive updates.
+/// Returns null when the message no longer has displayable content (e.g. pure tool_result).
+#[tauri::command]
+pub async fn chat__get_message_by_iri(
+    message_iri: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<Option<serde_json::Value>, String> {
+    executor.read(move |conn| {
+        let message_iris = vec![message_iri.clone()];
+
+        let msg_triples_map = Individual::batch_load_triples(conn, &message_iris)
+            .map_err(|e| format!("Failed to batch-load message triples: {}", e))?;
+
+        let msg_triples = match msg_triples_map.get(&message_iri) {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+
+        let all_block_iris: Vec<String> =
+            super::chat_storage::triple_iris(msg_triples, "foundation:hasContentBlock");
+
+        let block_triples_map = Individual::batch_load_triples(conn, &all_block_iris)
+            .map_err(|e| format!("Failed to batch-load block triples: {}", e))?;
+
+        let tool_use_iris: Vec<String> = block_triples_map.values()
+            .flat_map(|triples| {
+                triples.iter()
+                    .filter(|t| t.predicate == "anthropic:resultOf")
+                    .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let tool_use_triples_map = Individual::batch_load_triples(conn, &tool_use_iris)
+            .map_err(|e| format!("Failed to batch-load tool-use block triples: {}", e))?;
+
+        let file_iris: Vec<String> = block_triples_map.values()
+            .flat_map(|triples| {
+                triples.iter()
+                    .filter(|t| t.predicate == "rdf:type" && t.object.as_iri() == Some("foundation:FileRefBlock"))
+                    .flat_map(|_| triples.iter()
+                        .filter(|t| t.predicate == "foundation:fileRef")
+                        .filter_map(|t| t.object.as_iri().map(|s| s.to_string())))
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let file_triples_map = Individual::batch_load_triples(conn, &file_iris)
+            .map_err(|e| format!("Failed to batch-load file triples: {}", e))?;
+
+        let file_type_iris: Vec<String> = file_triples_map.values()
+            .flat_map(|triples| {
+                triples.iter()
+                    .filter(|t| t.predicate == "foundation:hasFileType")
+                    .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let file_type_triples_map = Individual::batch_load_triples(conn, &file_type_iris)
+            .map_err(|e| format!("Failed to batch-load file type triples: {}", e))?;
+
+        let block_iris_ordered = super::chat_storage::triple_iris(msg_triples, "foundation:hasContentBlock");
+        let mut indexed_blocks: Vec<(i64, ContentBlock)> = block_iris_ordered.iter()
+            .filter_map(|block_iri| {
+                block_triples_map.get(block_iri)
+                    .and_then(|bt| super::chat_storage::parse_content_block_from_batch(bt, &tool_use_triples_map))
+            })
+            .collect();
+        indexed_blocks.sort_by_key(|(idx, _)| *idx);
+        let blocks: Vec<ContentBlock> = indexed_blocks.into_iter().map(|(_, b)| b).collect();
+
+        if blocks.is_empty() {
+            return Ok(None);
+        }
+
+        let role = super::chat_storage::triple_str(msg_triples, "foundation:role").unwrap_or_default();
+
+        let timestamp = msg_triples.iter()
+            .find(|t| t.predicate == "foundation:sentAt")
+            .and_then(|t| if let Object::DateTime(rfc) = &t.object {
+                chrono::DateTime::parse_from_rfc3339(rfc).ok().map(|dt| dt.timestamp_millis())
+            } else { None })
+            .unwrap_or(0);
+
+        let resolve_attachments = |blocks: &[ContentBlock]| -> Vec<serde_json::Value> {
+            blocks.iter().filter_map(|block| {
+                let ContentBlock::FileRef { file_iri, file_name, .. } = block else { return None; };
+                let file_triples = file_triples_map.get(file_iri.as_str())?;
+                let file_path = super::chat_storage::triple_str(file_triples, "foundation:filePath")
+                    .map(|p| crate::paths::resolve_path(&p).to_string_lossy().into_owned())?;
+                let file_size = super::chat_storage::triple_int(file_triples, "foundation:fileSize").unwrap_or(0);
+                let mime_type = file_triples.iter()
+                    .find(|t| t.predicate == "foundation:hasFileType")
+                    .and_then(|t| t.object.as_iri())
+                    .and_then(|ft_iri| file_type_triples_map.get(ft_iri))
+                    .and_then(|ft_triples| super::chat_storage::triple_str(ft_triples, "foundation:mimeType"))
+                    .unwrap_or_else(|| "application/octet-stream".to_string());
+                Some(serde_json::json!({
+                    "fileName": file_name,
+                    "filePath": file_path,
+                    "fileSize": file_size,
+                    "mimeType": mime_type,
+                }))
+            }).collect()
+        };
+
+        let unit = match role.as_str() {
+            "user" => {
+                let only_tool_results = blocks.iter().all(|b| matches!(b, ContentBlock::ToolResult { .. }));
+                if only_tool_results { return Ok(None); }
+                let has_text = blocks.iter().any(|b| matches!(b, ContentBlock::Text { .. }));
+                if !has_text { return Ok(None); }
+                let text = blocks.iter().filter_map(|b| {
+                    if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
+                }).collect::<Vec<_>>().join(" ");
+                let attachments = resolve_attachments(&blocks);
+                let subconscious_entities: Vec<subconscious::SubconsciousEntity> =
+                    super::chat_storage::triple_str(msg_triples, "foundation:subconsciousContext")
+                        .and_then(|v| serde_json::from_str(&v).ok())
+                        .unwrap_or_default();
+                Some(serde_json::json!({
+                    "type": "user",
+                    "iri": message_iri,
+                    "text": text,
+                    "attachments": attachments,
+                    "timestamp": timestamp,
+                    "subconscious_entities": subconscious_entities,
+                }))
+            }
+            "assistant" => {
+                let has_question = blocks.iter().any(|b| match b {
+                    ContentBlock::QuestionOutput { .. } => true,
+                    ContentBlock::ToolUse { name, .. } => name == "ask_question",
+                    _ => false,
+                });
+                let has_tool_use = blocks.iter().any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name != "ask_question"));
+                let has_text = blocks.iter().any(|b| matches!(b, ContentBlock::Text { .. }));
+                let has_thinking = blocks.iter().any(|b| matches!(b, ContentBlock::Thinking { .. }));
+
+                if has_question {
+                    None // question blocks need full context for answer resolution
+                } else if has_tool_use {
+                    let tool_calls: Vec<serde_json::Value> = blocks.iter().filter_map(|b| {
+                        let ContentBlock::ToolUse { id: _, name, input, reason } = b else { return None; };
+                        if name == "ask_question" { return None; }
+                        // Without the full tool_results map we cannot resolve results here;
+                        // the frontend will reload the full set when a question is involved.
+                        Some(serde_json::json!({
+                            "name": name,
+                            "input": input,
+                            "result": serde_json::Value::Null,
+                            "is_error": false,
+                            "reason": reason,
+                            "duration_ms": serde_json::Value::Null,
+                        }))
+                    }).collect();
+                    let reasoning = {
+                        let parts: Vec<String> = blocks.iter().filter_map(|b| {
+                            if let ContentBlock::Thinking { thinking, .. } = b { Some(thinking.clone()) } else { None }
+                        }).collect();
+                        if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
+                    };
+                    let text = {
+                        let parts: Vec<&str> = blocks.iter().filter_map(|b| {
+                            if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
+                        }).collect();
+                        if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
+                    };
+                    if tool_calls.is_empty() { None } else {
+                        Some(serde_json::json!({
+                            "type": "tool_use",
+                            "iri": message_iri,
+                            "tool_calls": tool_calls,
+                            "text": text,
+                            "reasoning": reasoning,
+                            "timestamp": timestamp,
+                        }))
+                    }
+                } else if has_text || has_thinking {
+                    let text = blocks.iter().filter_map(|b| {
+                        if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
+                    }).collect::<Vec<_>>().join("\n\n");
+                    let reasoning = {
+                        let parts: Vec<String> = blocks.iter().filter_map(|b| {
+                            if let ContentBlock::Thinking { thinking, .. } = b { Some(thinking.clone()) } else { None }
+                        }).collect();
+                        if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
+                    };
+                    let input_tokens = super::chat_storage::triple_int(msg_triples, "foundation:inputTokens");
+                    let output_tokens = super::chat_storage::triple_int(msg_triples, "foundation:outputTokens");
+                    let estimated_cost = msg_triples.iter()
+                        .find(|t| t.predicate == "foundation:estimatedCost")
+                        .and_then(|t| match &t.object {
+                            Object::Number(n) => Some(*n),
+                            Object::Literal { value, .. } => value.parse::<f64>().ok(),
+                            _ => None,
+                        });
+                    if !text.is_empty() || reasoning.is_some() {
+                        Some(serde_json::json!({
+                            "type": "text",
+                            "iri": message_iri,
+                            "text": text,
+                            "reasoning": reasoning,
+                            "timestamp": timestamp,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "estimated_cost": estimated_cost,
+                        }))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            "compaction" => {
+                let text = blocks.iter().find_map(|b| {
+                    if let ContentBlock::CompactionSummary { text } = b { Some(text.clone()) } else { None }
+                }).unwrap_or_default();
+                if text.is_empty() { None } else {
+                    Some(serde_json::json!({
+                        "type": "compaction",
+                        "iri": message_iri,
+                        "text": text,
+                        "timestamp": timestamp,
+                    }))
+                }
+            }
+            _ => None,
+        };
+
+        Ok(unit)
+    }).await
+}
+
+/// Returns the max(tx) across all triples for a given conversation's messages,
+/// giving the frontend a cursor for lossless replay on subscription.
+#[tauri::command]
+pub async fn chat__get_conversation_snapshot_tx(
+    conversation_id: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<i64, String> {
+    executor.read(move |conn| {
+        let tx: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(t.tx), 0)
+             FROM triples t
+             WHERE t.subject IN (
+                 SELECT subject FROM triples
+                 WHERE predicate = 'foundation:partOfConversation'
+                   AND object = ?1
+                   AND retracted = 0
+                   AND tx = (SELECT MAX(tx) FROM triples t2
+                              WHERE t2.subject = triples.subject
+                                AND t2.predicate = triples.predicate)
+             )",
+            rusqlite::params![conversation_id],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        Ok(tx)
+    }).await
+}
