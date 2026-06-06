@@ -260,7 +260,7 @@
   .freq-select, .ordinal-select {
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius);
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 13px;
@@ -319,7 +319,7 @@
 
   .day-btn {
     padding: 4px 2px;
-    border-radius: 4px;
+    border-radius: var(--radius);
     border: none;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     color: var(--color-neutral);
@@ -342,7 +342,7 @@
 
   .month-btn {
     padding: 6px 4px;
-    border-radius: 6px;
+    border-radius: var(--radius);
     border: none;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     color: var(--color-neutral);
@@ -381,7 +381,7 @@
 
   .btn-cancel {
     padding: 7px 16px;
-    border-radius: 7px;
+    border-radius: var(--radius);
     border: none;
     background: transparent;
     color: var(--color-neutral);
@@ -392,7 +392,7 @@
 
   .btn-ok {
     padding: 7px 20px;
-    border-radius: 7px;
+    border-radius: var(--radius);
     border: none;
     background: var(--color-interactive);
     color: var(--color-neutral-active);

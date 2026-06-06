@@ -10,7 +10,7 @@ mod file;
 mod property;
 pub(crate) mod individual;
 
-pub use definitions::{get_available_tools, get_claude_tools};
+pub use definitions::{get_available_tools, get_tool_definitions};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolTemplate {
@@ -32,7 +32,7 @@ pub struct Parameter {
 }
 
 impl ToolTemplate {
-    pub fn to_claude_tool(&self) -> crate::ai::providers::ClaudeTool {
+    pub fn to_tool_definition(&self) -> crate::ai::providers::ToolDefinition {
         let mut properties = serde_json::Map::new();
         let mut required = Vec::new();
 
@@ -73,7 +73,7 @@ impl ToolTemplate {
             item_schema
         };
 
-        crate::ai::providers::ClaudeTool {
+        crate::ai::providers::ToolDefinition {
             name: self.name.clone(),
             description: self.description.clone(),
             input_schema,

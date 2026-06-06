@@ -82,7 +82,6 @@
   {windowState}
   {onWindowStateChange}
   onClose={closeWidget}
-  canExpand={true}
 >
   <div class="messages-scroll" bind:this={messagesEl}>
     {#if loading}

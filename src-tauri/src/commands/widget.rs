@@ -74,6 +74,7 @@ pub struct WidgetDefinitionInfo {
     pub widget_type: String,
     pub description: String,
     pub icon: String,
+    pub default_size: Size,
 }
 
 fn str_obj(value: impl Into<String>) -> Object {
@@ -646,6 +647,7 @@ pub async fn widget_blackboard__list_widget_definitions(
                 widget_type: t.id,
                 description: t.description,
                 icon: t.icon,
+                default_size: t.default_size,
             })
             .collect();
 

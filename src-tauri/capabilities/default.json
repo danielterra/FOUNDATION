@@ -5,6 +5,13 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:default",
+    "core:window:allow-set-decorations",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-is-maximized",
     "opener:default",
     "opener:allow-reveal-item-in-dir",
     {

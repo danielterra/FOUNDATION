@@ -73,7 +73,7 @@ pub struct GenerateRequest {
     pub temperature: Option<f32>,
     pub system: Option<String>,
     pub blackboard_context: Option<String>,
-    pub tools: Option<Vec<providers::ClaudeTool>>,
+    pub tools: Option<Vec<providers::ToolDefinition>>,
     pub supports_web_tools: bool,
     pub thinking: Option<ThinkingConfig>,
     pub tool_choice: Option<serde_json::Value>,

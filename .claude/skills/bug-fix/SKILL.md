@@ -1,121 +1,140 @@
 ---
 name: bug-fix
-description: Use when the user asks to fix a Foundation bug by IRI — e.g. "fix bug foundation:Bug_123", "corrija o bug foundation:Bug_456", "resolva o bug <IRI>". Fetches the bug from the ontology, investigates the root cause following CLAUDE.md debugging order (logs → messages → DB → code), applies the fix, validates the build, and closes the bug with a cause analysis. Always invoke this skill when the user mentions a bug IRI.
+description: Use when the user (PO) asks to fix a Foundation bug by IRI — e.g. "fix bug foundation:Bug_123", "corrija o bug foundation:Bug_456", "resolva o bug <IRI>". Orchestrates the bug pipeline: `support` (investigation & technical dossier) → `architect` Modo Triagem **Briefing** (decide BE/FE/both and produce per-dev briefings) → dispatch `developer-backend` / `developer-frontend` with the briefings → `architect` Modo Triagem **Costura** (validate builds, consolidate `## Como testar`, move to Em Validação (QA)) → `qa` (validation gate before Concluído). Sub-agents cannot call other sub-agents in Claude — this skill (which runs in the main loop) IS the orchestrator. The PO never invokes devs directly; the bug is NEVER closed without QA validation. Always invoke this skill when the user mentions a bug IRI.
 ---
 
 # Bug Fix
 
-Skill que investiga e corrige um `foundation:Bug`, seguindo a ordem de depuração do CLAUDE.md e fechando o registro com a análise da causa raiz.
+Skill que conduz um `foundation:Bug` por todo o pipeline do FOUNDATION, dentro do ciclo:
+
+```
+Pendente → [Support] Pronto para Dev → [Architect Triagem Brief] Em Progresso → [Devs] → [Architect Costura] Em Validação (QA) → [QA] Concluído
+                                                                                                                                                (↘ Mudança Pendente)
+```
+
+O PO nunca fala com dev direto; o bug **nunca** é fechado sem passar pelo `qa`.
+
+> **Por que a skill orquestra todos os passos:** o harness do Claude não permite que um sub-agente invoque outro sub-agente. O `architect` (e qualquer outro agente) é sub-agente. As skills, ao contrário, rodam no main loop e PODEM disparar sub-agentes. Por isso o Modo Triagem do `architect` foi dividido em **Briefing** (devolve prompts) e **Costura** (recebe retornos) — esta skill faz a ponte entre os dois e dispara os devs.
 
 ---
 
 ## Pré-requisitos
 
-A skill recebe a IRI do bug como argumento (ex. `foundation:Bug_1780369248862`).  
-Se o usuário não informar, peça antes de prosseguir.
+A skill recebe a IRI do bug como argumento (ex. `foundation:Bug_1780369248862`). Se o usuário não informar, peça antes de prosseguir.
 
 ---
 
-## Instruções
+## Como executar
 
-### Passo 1 — Carregar o bug
+Esta skill é o orquestrador completo do pipeline de bug. O PO não investiga, não distribui, não corrige, não fecha — só aciona.
 
-`describe_individual([<BugIRI>])` e leia:
+### Passo 1 — `support` produz o dossiê técnico
 
-- `rdfs:label` — título do bug
-- `foundation:bugDescription` — descrição detalhada
-- `foundation:expectedBehavior` — comportamento esperado
-- `foundation:stepsToReproduce` — passos para reproduzir
-- `foundation:causeAnalysis` — análise já existente (pode estar vazia)
-- `foundation:relatedTo` — entidades relacionadas (tasks, outros bugs, processos)
-
-Mantenha essas informações na memória de trabalho — elas guiam toda a investigação.
-
-### Passo 2 — Investigar a causa raiz
-
-Siga a **ordem de depuração do CLAUDE.md**: logs → histórico de mensagens → DB → código.
-
-**Logs**  
-```
-npm run logs 20
-```
-Procure erros ou warnings relacionados às entidades/predicados mencionados no bug.
-
-**Histórico de mensagens** (se o bug envolve AI / conversas)  
-Consulte a classe `foundation:AIConversationMessage` se relevante. Campos: `foundation:role`, `foundation:content` em `object_value`; `foundation:sentAt` em `object_datetime`.
-
-**DB** (se necessário)  
-Use apenas `SELECT` — nunca escreva SQL de mutação diretamente. Verifique a tabela `triples` filtrando pelas IRIs das entidades em `foundation:relatedTo`. Lembre-se das regras de imutabilidade do CLAUDE.md: filtre pelo maior `tx` para obter o estado atual.
-
-**Código**  
-Localize os arquivos relevantes com Grep/Glob. Leia e entenda o fluxo completo antes de alterar qualquer coisa. Preste atenção na arquitetura em camadas (`EAVTO → OWL → Core-Ontology → Commands`) — a causa raiz geralmente é uma propriedade que nunca é lida, um desvio de camada, ou um fallback que esconde o erro real.
-
-### Passo 3 — Confirmar a hipótese antes de editar
-
-Antes de tocar no código, formule a causa raiz em uma frase objetiva. Se a hipótese não for óbvia, anuncie-a ao usuário e aguarde confirmação.
-
-### Passo 4 — Aplicar a correção
-
-Edite apenas o necessário para corrigir o bug. Respeite o CLAUDE.md:
-
-- Comentários só de WHY — nunca WHAT.
-- Sem TODO/FIXME.
-- Sem suprimir warnings ou erros.
-- Scripts em Rust (nunca Node, Python ou shell).
-- Não adicione tratamento de erro, fallbacks ou validações para cenários que não podem ocorrer.
-
-Se a correção tocar em camadas proibidas (ex. EAVTO referenciando IRIs de domínio), ajuste para respeitar a arquitetura antes de prosseguir.
-
-### Passo 5 — Validar build
-
-Conforme CLAUDE.md:
-
-- Se tocou em `Cargo.toml`, features ou dependências → `cargo build --manifest-path src-tauri/Cargo.toml` (avise o usuário antes se invalida 100% do cache).
-- Caso contrário → `cargo check --manifest-path src-tauri/Cargo.toml`.
-- Se tocou em `src/` (Svelte/TS) → sinalize ao usuário para validar no `tauri dev`.
-
-Se a validação falhar, corrija e revalide. Não encerre a skill com erros pendentes.
-
-### Passo 6 — Fechar o bug
-
-Use **uma única chamada** `replace_property_values` com duas operações:
+Invoque o agente `support` via `Agent` (subagent_type: `support`) com prompt auto-contido:
 
 ```
-replace_property_values(operations: [
-  {
-    iri: "<BugIRI>",
-    property_iri: "foundation:causeAnalysis",
-    values: ["<causa raiz confirmada>\n\nCorreção aplicada: <descrição objetiva da mudança — arquivo:linha, o que foi adicionado/removido e por quê>. Build validado com cargo check."]
-  },
-  {
-    iri: "<BugIRI>",
-    property_iri: "foundation:hasStatus",
-    values: ["foundation:Completed"]
-  }
-])
+Bug: <IRI>
+
+Tarefa: investigue conforme o protocolo do agente Support — reproduza o sintoma (ou descreva como reproduzir), siga a ordem CLAUDE.md (logs → mensagens → DB → código), formule causa provável, mapeie camadas afetadas e arquivos suspeitos (path:linha), persista o dossiê no Bug e mova para `foundation:Status_1773079329634` (Pronto para Desenvolvimento).
+
+Não corrija código. Não invoque outros agentes. Reporte de volta a esta skill o dossiê + indicação do próximo passo.
 ```
 
-`foundation:Completed` é o status de **Concluído** — use sempre este IRI exato.
+Se o `support` parar (app não rodando, IRI inválido, bug sem evidência coletável), reporte ao usuário e aguarde.
 
-### Passo 7 — Reportar
+### Passo 2 — `architect` em Modo 3a (Triagem — Briefing)
 
-Em até 8 linhas:
+Quando o `support` retorna com o bug em **Pronto para Dev** e dossiê preenchido, invoque o agente `architect` via `Agent` (subagent_type: `architect`):
 
-- IRI e label do bug.
-- Causa raiz em uma frase.
-- Arquivos modificados com `path:linha`.
-- Status atualizado para Concluído.
+```
+Modo: Triagem de Bug — 3a Briefing
+
+Bug: <IRI>
+
+Tarefa: executar o Modo 3a (Briefing) do Modo Triagem conforme a sua persona:
+- Ler o dossiê do `support` (causeAnalysis + stepsToReproduce + expectedBehavior + camadas afetadas).
+- Decidir a fatia (developer-backend / developer-frontend / ambos).
+- Mover o bug para `foundation:InProgress` via `replace_property_values`.
+- Produzir um briefing PRONTO PARA EU DISPARAR a cada dev envolvido.
+
+NÃO invoque os devs — eu (esta skill) faço isso. Devolva os briefings; eu disparo e reinvoco você em Modo 3b com os retornos.
+
+Se o dossiê estiver incompleto, NÃO investigue — reporte para eu acionar o `support` de novo.
+
+Reporte de volta a esta skill conforme o "Relatório final — Modo 3a" da sua definição.
+```
+
+Se o `architect` reportar que o dossiê está incompleto, retorne ao Passo 1.
+
+### Passo 3 — Disparar os devs com os briefings
+
+O `architect` devolve os briefings + a fatia (BE / FE / ambos). Aplique:
+
+- **Apenas BE** → invoque `developer-backend` com o briefing.
+- **Apenas FE** → invoque `developer-frontend` com o briefing.
+- **Ambos** → invoque `developer-backend` e `developer-frontend` no MESMO bloco de tool calls (paralelo), cada um com o seu briefing.
+
+Cada dev retorna o pacote no formato da sua persona (resumo do fix, arquivos `path:linha`, build verde, seção `## Como testar` da fatia).
+
+**Build vermelho persistente após uma rodada de correção** → leve ao Passo 4 com flag de blocker para o architect decidir (em geral retraindo para Mudança Pendente).
+
+### Passo 4 — `architect` em Modo 3b (Triagem — Costura)
+
+Reinvoque o agente `architect` via `Agent` (subagent_type: `architect`) com os retornos dos devs:
+
+```
+Modo: Triagem de Bug — 3b Costura
+
+Bug: <IRI>
+
+Retornos dos devs (consolidados, no formato exato em que cada um devolveu):
+
+### <Backend e/ou Frontend — conforme aplicável>
+<colar os retornos completos>
+
+Tarefa: executar o Modo 3b (Costura) conforme a sua persona:
+- Validar que os builds estão verdes (vermelho de qualquer lado é blocker — me reporte).
+- Concatenar `## Como testar` produzido pelo(s) dev(s) num único bloco anexado ao Bug (em `foundation:causeAnalysis` ou propriedade dedicada se existir).
+- `add_property_values` em `foundation:changelog`: `<YYYY-MM-DD do contexto> — fix entregue. <BE/FE/ambos>: <arquivos>. Encaminhado ao QA.`
+- `replace_property_values` em `foundation:hasStatus` ← `foundation:Status_1772600993751` (Em Validação (QA)).
+
+Reporte de volta a esta skill conforme o "Relatório final — Modo 3b" da sua definição.
+```
+
+### Passo 5 — `qa` valida e fecha (ou abre regressão)
+
+Quando o `architect` retorna com o bug em **Em Validação (QA)**, invoque o agente `qa` via `Agent` (subagent_type: `qa`):
+
+```
+Tarefa: valide o Bug <IRI> conforme o protocolo de validação de Bug do QA — rode a suíte (cargo test + npm run check), reproduza os stepsToReproduce e confirme que o sintoma não acontece mais e que o comportamento bate com `expectedBehavior`. Analise logs durante a reprodução.
+
+Decisão:
+- ✅ Sintoma não reproduz + comportamento esperado + suíte verde → fechar o bug em `foundation:Completed` com veredito QA em `causeAnalysis`.
+- ❌ Ainda reproduz ou regressão nova → registrar Bug novo (regressão / fix incompleto) e devolver o original para `foundation:Status_1773581282341` (Mudança Pendente).
+- ⚠️ Manual → manter Em Validação (QA) e pedir confirmação do usuário.
+
+Se o bug estava ligado a uma US (`bugOfUserStory`), sinalize se a US precisa voltar para Em Validação também.
+
+Não invoque outros agentes. Reporte de volta a esta skill o veredito.
+```
+
+### Passo 6 — Reportar ao usuário
+
+Repasse o veredito do QA ao usuário com convite explícito ao próximo passo:
+- Veredito ✅ → bug fechado, nada a fazer.
+- Veredito ❌ → bug novo registrado; rode `/bug-fix <IRI do novo bug>` para reabrir o ciclo.
+- Veredito ⚠️ → guia de teste manual; aguardar confirmação do usuário antes de fechar.
 
 ---
 
 ## Regras
 
-- **ALWAYS** siga a ordem de depuração: logs → mensagens → DB → código. Não pule direto para o código.
-- **ALWAYS** formule a causa raiz antes de editar qualquer arquivo.
-- **ALWAYS** valide com `cargo check` / `cargo build` antes de fechar o bug.
-- **ALWAYS** feche o bug com `foundation:causeAnalysis` + `foundation:hasStatus = foundation:Completed` na mesma chamada.
-- **NEVER** use SQL de mutação (INSERT/UPDATE/DELETE) — apenas SELECT, ou MCP tools para writes.
-- **NEVER** altere `rdfs:comment` das entidades relacionadas — é o campo de descrição original.
-- **NEVER** rode `npm run tauri dev` / `npm run build` (CLAUDE.md).
-- **NEVER** suprima warnings ou erros para "passar" a build.
+- **NEVER** invoque o `architect` na esperança de que ele dispare os devs — o `architect` é sub-agente e NÃO pode invocar outros sub-agentes. Quem dispara é esta skill.
+- **NEVER** invoque `developer-backend`, `developer-frontend` ou `support` fora da ordem prescrita — `support` antes, `architect` (Briefing) depois, devs, `architect` (Costura), `qa` por último.
+- **NEVER** feche o bug aqui — Concluído é responsabilidade exclusiva do `qa` após validação.
+- **NEVER** pule o `support` mesmo que o bug pareça "óbvio" — o dossiê é o input do Arquiteto, não uma formalidade.
+- **NEVER** pule o `qa` mesmo que o fix pareça trivial — todo bug (e toda US) passa pelo QA antes de fechar.
+- **ALWAYS** passe a IRI do bug exatamente como o usuário forneceu.
+- **ALWAYS** passe ao Modo 3b os retornos dos devs **na íntegra** — o architect precisa do material bruto para validar builds e consolidar o `## Como testar`.
+- **ALWAYS** lembre-se: agentes (sub-agentes) **NÃO podem invocar outros sub-agentes**. Quem orquestra é esta skill, no main loop.
 - **ALWAYS** responda ao usuário em português (CLAUDE.md).

@@ -13,7 +13,7 @@
 <style>
 	.card {
 		background: var(--color-surface-1);
-		border-radius: var(--radius-md);
+		border-radius: var(--radius);
 		padding: 1rem;
 	}
 </style>

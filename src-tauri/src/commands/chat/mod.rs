@@ -7,7 +7,7 @@ mod stopwords;
 mod subconscious;
 pub mod retention;
 pub mod conversation;
-mod loop_tools;
+pub(crate) mod loop_tools;
 mod engine;
 mod trace;
 mod foundation_context;

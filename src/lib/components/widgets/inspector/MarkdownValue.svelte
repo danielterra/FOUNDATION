@@ -115,7 +115,7 @@
       blockquote { border-left: 3px solid var(--color-interactive); margin: 0; padding-left: 12px; opacity: 0.8; }
       table { border-collapse: collapse; width: 100%; }
       th, td { border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent); padding: 6px 10px; }
-      .iri-pill { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 4px; background: color-mix(in srgb, var(--color-interactive) 12%, transparent); color: var(--color-interactive); font-size: 13px; line-height: 1.4; cursor: pointer; vertical-align: middle; }
+      .iri-pill { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: var(--radius); background: color-mix(in srgb, var(--color-interactive) 12%, transparent); color: var(--color-interactive); font-size: 13px; line-height: 1.4; cursor: pointer; vertical-align: middle; }
       .iri-pill-icon { font-family: 'Material Symbols Outlined'; font-size: 14px; line-height: 1; }
       .iri-pill-icon-img { width: 14px; height: 14px; object-fit: contain; vertical-align: middle; }
       .iri-pill-label { font-size: 13px; }

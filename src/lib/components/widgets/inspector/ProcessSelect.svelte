@@ -21,12 +21,12 @@
     searching = true;
     try {
       const searches = [
-        invoke('graph__search_entities', { query: q, limit: 10, typeIri: 'foundation:Automation' })
+        invoke('owl__search_entities', { query: q, limit: 10, typeIri: 'foundation:Automation' })
           .then(r => JSON.parse(r)).catch(() => []),
       ];
       if (!automationOnly) {
         searches.push(
-          invoke('graph__search_entities', { query: q, limit: 10, typeIri: 'foundation:Process' })
+          invoke('owl__search_entities', { query: q, limit: 10, typeIri: 'foundation:Process' })
             .then(r => JSON.parse(r)).catch(() => [])
         );
       }

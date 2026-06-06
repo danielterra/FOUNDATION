@@ -60,14 +60,14 @@
   ];
 
   const filteredNotifications = $derived(
-    notifications.filter(n => {
-      const typeOk = filterType === 'all' || n.type === filterType;
-      const statusOk = filterStatus === 'all'
-        || (filterStatus === 'pending' && isPending(n))
-        || (filterStatus === 'resolved' && isResolved(n));
-      return typeOk && statusOk;
-    })
+    notifications.filter(n => filterType === 'all' || n.type === filterType)
   );
+
+  function statusIriForFilter(filter) {
+    if (filter === 'pending') return STATUS_PENDING;
+    if (filter === 'resolved') return STATUS_COMPLETED;
+    return null;
+  }
 
   const TYPE_ICONS = {
     error: 'error',
@@ -195,16 +195,10 @@
     loading = true;
     error = null;
     try {
-      const [resultStr, snapTx] = await Promise.all([
-        invoke('graph__search_entities', {
-          query: '',
-          typeIri: 'foundation:AINotification',
-          limit: 100,
-        }),
+      const [iris, snapTx] = await Promise.all([
+        invoke('notification__list_iris', { statusIri: statusIriForFilter(filterStatus) }),
         invoke('chat__get_conversation_snapshot_tx', { conversationId: 'foundation:AINotification' }).catch(() => 0),
       ]);
-      const list = JSON.parse(resultStr);
-      const iris = list.map(item => item.id);
       const details = await fetchBatched(iris);
       notifications = details
         .filter(n => n !== null)
@@ -345,6 +339,14 @@
       objectValue: 'foundation:AINotification',
     }]);
     await loadNotifications();
+  });
+
+  let lastFilterStatus = filterStatus;
+  $effect(() => {
+    if (filterStatus !== lastFilterStatus) {
+      lastFilterStatus = filterStatus;
+      loadNotifications();
+    }
   });
 
   onDestroy(() => {

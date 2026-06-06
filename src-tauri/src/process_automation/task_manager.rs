@@ -23,6 +23,23 @@ const HALTED_STATUSES: &[&str] = &["foundation:Blocked", "foundation:Rejected"];
 /// won't resolve on retry — API key missing, agent not wired up, model not
 /// configured, etc. A result is written so the task won't be retried on
 /// the next startup.
+/// The instruction string the agent receives. Prefers `rdfs:comment` (rich
+/// description) and falls back to `rdfs:label` so tasks that arrive with only
+/// a title (e.g. derived from email subjects) still execute instead of being
+/// silently skipped by `is_task_ready`.
+fn task_instruction(conn: &rusqlite::Connection, entity_id: &str) -> Result<String> {
+    let comment = get_literal_property(conn, entity_id, "rdfs:comment")
+        .map_err(|e| e.to_string())?;
+    if let Some(c) = comment {
+        if !c.trim().is_empty() {
+            return Ok(c);
+        }
+    }
+    let label = get_literal_property(conn, entity_id, "rdfs:label")
+        .map_err(|e| e.to_string())?;
+    Ok(label.unwrap_or_default())
+}
+
 fn is_config_error(err: &str) -> bool {
     err.contains("API key not configured")
         || err.contains("API key has no value")
@@ -52,16 +69,16 @@ impl TaskExecutionState {
 }
 
 /// Returns true when a task is ready for automatic execution:
-/// has a non-empty description, is assigned to a SoftwareAgent, has not yet
-/// started (no startedAt), has no result, is not in a halted status, and is
-/// not scheduled for a future time.
+/// has a non-empty instruction (rdfs:comment OR rdfs:label as fallback),
+/// is assigned to a SoftwareAgent, has not yet started (no startedAt),
+/// has no result, is not in a halted status, and is not scheduled for
+/// a future time.
 fn is_task_ready(conn: &rusqlite::Connection, entity_id: &str) -> Result<bool> {
     if !crate::owl::is_instance_of(conn, entity_id, "foundation:Task") {
         return Ok(false);
     }
-    let description = get_literal_property(conn, entity_id, "rdfs:comment")
-        .map_err(|e| e.to_string())?;
-    if description.as_deref().unwrap_or("").trim().is_empty() {
+    let instruction = task_instruction(conn, entity_id).map_err(|e| e.to_string())?;
+    if instruction.trim().is_empty() {
         return Ok(false);
     }
     let assignee = get_iri_property(conn, entity_id, "foundation:assignee")
@@ -235,9 +252,7 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
                     .map_err(|e| e.to_string())?
                     .unwrap_or_else(|| task_iri.clone());
 
-                let description = get_literal_property(conn, &task_iri, "rdfs:comment")
-                    .map_err(|e| e.to_string())?
-                    .unwrap_or_default();
+                let description = task_instruction(conn, &task_iri)?;
 
                 let agent_iri = get_iri_property(conn, &task_iri, "foundation:assignee")
                     .map_err(|e| e.to_string())?
@@ -289,9 +304,14 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
         content: MessageContent::ContentBlocks(vec![ContentBlock::Text { text: task_prompt }]),
     }];
 
+    let mut task_mgr_tools = crate::ai::functions::get_tool_definitions();
+    for tool in task_mgr_tools.iter_mut() {
+        crate::commands::chat::loop_tools::inject_reason_into_schema(&mut tool.input_schema);
+    }
+
     let loop_config = super::tool_loop::ToolLoopConfig {
         system: Some(agent_config.system_prompt),
-        tools: crate::ai::functions::get_claude_tools(),
+        tools: task_mgr_tools,
         max_iterations: MAX_TOOL_LOOPS,
         max_tokens: DEFAULT_MAX_TOKENS,
         temperature: DEFAULT_TEMPERATURE,

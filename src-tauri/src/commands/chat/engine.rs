@@ -389,6 +389,7 @@ pub async fn run_conversation_loop(
             &api_response.tool_calls,
             &api_response.thinking_blocks,
         )?;
+
         let content_blocks = extract_and_save_file_summaries(content_blocks, executor).await;
 
         if content_blocks.is_empty() && stop_reason != "tool_use" && stop_reason != "tool_calls" {

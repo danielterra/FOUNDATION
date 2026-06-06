@@ -12,7 +12,9 @@
   import { deleteConfirm } from '$lib/stores/deleteConfirm';
   import GlobalModal from '$lib/components/GlobalModal.svelte';
   import ThinkingDots from '$lib/components/ThinkingDots.svelte';
+  import AppHeader from '$lib/components/AppHeader.svelte';
   import { appState } from '$lib/appState.svelte';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
 
   type TaskCompletedEvent = {
     task_iri: string;
@@ -132,6 +134,12 @@
   onMount(async () => {
     initializeLogging();
     document.addEventListener('click', handleLinkClick, true);
+
+    try {
+      await getCurrentWindow().setDecorations(false);
+    } catch (e) {
+      console.error('[layout] setDecorations failed:', e);
+    }
 
     unlistenRetentionStarted = await listen('retention-started', () => {
       retentionRunning = true;
@@ -272,7 +280,12 @@
   });
 </script>
 
-{@render children()}
+<div class="app-shell">
+  <AppHeader />
+  <main class="app-main">
+    {@render children()}
+  </main>
+</div>
 
 {#if $deleteConfirm}
   {@const dialog = $deleteConfirm}
@@ -438,6 +451,23 @@
     background: var(--color-surface-0);
   }
 
+  .app-shell {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .app-main {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 5px;
+  }
+
   .global-overlay {
     position: fixed;
     inset: 0;
@@ -456,7 +486,7 @@
     gap: 12px;
     padding: 28px 24px;
     background: var(--color-surface-3);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     max-width: 340px;
     width: 90vw;
     text-align: center;
@@ -591,7 +621,7 @@
 
   .automation-toast {
     background: var(--color-surface-2);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius);
     color: var(--color-neutral);
     padding: 10px 14px;
     display: flex;
@@ -687,7 +717,7 @@
 
   .system-toast {
     background: var(--color-surface-2);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius);
     color: var(--color-neutral);
     padding: 8px 14px;
     display: flex;

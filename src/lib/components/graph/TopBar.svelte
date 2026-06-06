@@ -9,7 +9,6 @@
 	<div class="left-controls">
 		<Card>
 			<header class="floating-header">
-				<h1>FOUNDATION</h1>
 				<span class="screen-indicator">{screenName}</span>
 				<button class="search-trigger" onclick={onOpenSearch} aria-label="Search (/)">
 					<span class="material-symbols-outlined">search</span>
@@ -47,18 +46,9 @@
 		gap: 0.75rem;
 	}
 
-	.floating-header h1 {
-		margin: 0;
-		font-size: 1.25rem;
-		font-weight: 500;
-		color: var(--color-neutral-active);
-		letter-spacing: 0.03rem;
-	}
-
 	.screen-indicator {
 		font-size: 0.875rem;
 		color: var(--color-neutral);
-		padding-left: 0.75rem;
 	}
 
 	.search-trigger {

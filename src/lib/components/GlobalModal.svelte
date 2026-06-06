@@ -79,7 +79,7 @@
     position: relative;
     z-index: 1;
     background: var(--color-surface-3);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     width: min(640px, 90vw);
     max-height: 80vh;
     display: flex;

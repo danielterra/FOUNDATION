@@ -547,7 +547,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 100vh;
+    height: 100%;
     background: var(--color-black);
   }
 
@@ -580,7 +580,7 @@
     align-items: center;
     gap: 1.25rem;
     background: var(--color-surface-1);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     padding: 2.5rem 2rem;
     width: 480px;
     max-width: 95vw;
@@ -621,7 +621,7 @@
     border: none;
     padding: 0.625rem 0.875rem;
     font-size: 0.875rem;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     min-width: 0;
   }
 
@@ -635,7 +635,7 @@
     color: var(--color-neutral);
     border: none;
     padding: 0.625rem 0.75rem;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -702,7 +702,7 @@
     align-items: stretch;
     gap: 1rem;
     background: var(--color-surface-1);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     padding: 2rem;
     width: 600px;
     max-width: 95vw;
@@ -737,7 +737,7 @@
     padding: 0.75rem 1rem;
     margin: 0;
     line-height: 1.5;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     display: flex;
     align-items: flex-start;
     gap: 0.5rem;
@@ -755,7 +755,7 @@
     gap: 0.5rem 1rem;
     background: var(--color-surface-2);
     padding: 0.875rem 1rem;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     font-size: 0.8125rem;
   }
 
@@ -794,7 +794,7 @@
     border: none;
     padding: 0.75rem 1rem;
     font-size: 0.875rem;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     cursor: pointer;
     transition: background 0.15s;
   }
@@ -842,7 +842,7 @@
   .error-hint code {
     background: var(--color-surface-2);
     padding: 0.125rem 0.375rem;
-    border-radius: 3px;
+    border-radius: var(--radius);
     font-family: var(--font-mono, monospace);
     font-size: 0.8125rem;
   }
@@ -862,7 +862,7 @@
 
   .recovery-modal {
     background: var(--color-surface-1);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     padding: 2.5rem 2rem;
     width: 520px;
     max-width: 95vw;
@@ -926,7 +926,7 @@
     color: var(--color-danger);
     background: color-mix(in srgb, var(--color-danger) 10%, transparent);
     padding: 0.75rem 1rem;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     margin: 0;
     max-width: 100%;
     word-break: break-word;
@@ -1040,7 +1040,7 @@
     width: 100%;
     height: 8px;
     background: var(--color-surface-2);
-    border-radius: 4px;
+    border-radius: var(--radius);
     overflow: hidden;
     margin-top: 0.25rem;
   }

@@ -31,7 +31,7 @@ struct ClaudeRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ClaudeTool {
+pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
@@ -756,15 +756,29 @@ fn build_openai_messages(
     result
 }
 
-fn build_openai_tools(tools: &[ClaudeTool]) -> Vec<serde_json::Value> {
+fn build_openai_tools(tools: &[ToolDefinition]) -> Vec<serde_json::Value> {
     tools.iter().map(|t| serde_json::json!({
         "type": "function",
         "function": {
             "name": t.name,
             "description": t.description,
-            "parameters": t.input_schema
+            "parameters": t.input_schema,
+            "strict": true
         }
     })).collect()
+}
+
+// OpenRouter server tools (web_search/web_fetch) são executadas pelo próprio OpenRouter
+// server-side e funcionam com qualquer modelo (doc oficial). Override total quando
+// provider é OpenRouter — independente de capability do modelo.
+fn inject_openrouter_web_tools(body: &mut serde_json::Value, base_url: &str) {
+    if !base_url.contains("openrouter.ai") {
+        return;
+    }
+    if let Some(arr) = body.get_mut("tools").and_then(|v| v.as_array_mut()) {
+        arr.push(serde_json::json!({"type": "openrouter:web_search"}));
+        arr.push(serde_json::json!({"type": "openrouter:web_fetch"}));
+    }
 }
 
 impl OpenRouterProvider {
@@ -816,9 +830,13 @@ impl OpenRouterProvider {
             body["tools"] = serde_json::json!(build_openai_tools(tool_list));
             body["tool_choice"] = tool_choice.unwrap_or(serde_json::json!("auto"));
         }
+        inject_openrouter_web_tools(&mut body, &self.base_url);
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         crate::commands::log_backend("info", "[OPENROUTER API] Sending streaming request...");
+        crate::commands::log_backend("debug", &format!(
+            "[OPENROUTER API] Request body (streaming): {}", body
+        ));
 
         let http_response = self.client
             .post(&url)
@@ -834,6 +852,9 @@ impl OpenRouterProvider {
         let status = http_response.status();
         if !status.is_success() {
             let error_body = http_response.text().await.unwrap_or_default();
+            crate::commands::log_backend("error", &format!(
+                "[OPENROUTER API] HTTP {} (streaming) — raw body: {}", status, error_body
+            ));
 
             // Parse OpenRouter error for better user messages
             let friendly_error = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&error_body) {
@@ -1024,7 +1045,7 @@ impl OpenRouterProvider {
         });
 
         if !self.fallback_models.is_empty() {
-            let mut all_models = vec![model];
+            let mut all_models = vec![model.clone()];
             all_models.extend(self.fallback_models.clone());
             body["models"] = serde_json::json!(all_models);
         } else {
@@ -1039,8 +1060,13 @@ impl OpenRouterProvider {
             body["tools"] = serde_json::json!(build_openai_tools(tool_list));
             body["tool_choice"] = tool_choice.unwrap_or(serde_json::json!("auto"));
         }
+        inject_openrouter_web_tools(&mut body, &self.base_url);
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        crate::commands::log_backend("info", &format!("[OPENROUTER API] Sending request... model={}", model));
+        crate::commands::log_backend("debug", &format!(
+            "[OPENROUTER API] Request body (non-stream): {}", body
+        ));
 
         let http_response = self.client
             .post(&url)
@@ -1056,6 +1082,9 @@ impl OpenRouterProvider {
         let status = http_response.status();
         if !status.is_success() {
             let error_body = http_response.text().await.unwrap_or_default();
+            crate::commands::log_backend("error", &format!(
+                "[OPENROUTER API] HTTP {} (non-stream) — raw body: {}", status, error_body
+            ));
 
             // Parse OpenRouter error for better user messages
             let friendly_error = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&error_body) {

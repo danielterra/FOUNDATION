@@ -61,9 +61,21 @@ pub async fn execute_tools_from_message(
     let mut trace_steps = Vec::new();
 
     for block in &assistant_message.content {
-        if let ContentBlock::ToolUse { id, name, input, .. } = block {
+        if let ContentBlock::ToolUse { id, name, input, reason } = block {
             if name == "ask_question" {
                 continue; // answered by user via UI — not executed automatically
+            }
+            if reason.is_none() {
+                let err_msg = "Missing required 'reason' field. Every tool call MUST include a 'reason' field with a ≤6 word PT-BR description of your intent. Retry the same tool call but include the 'reason' field this time.";
+                log_backend("warn", &format!("[ENGINE] tool '{}' rejected: missing 'reason' (id={})", name, id));
+                trace_steps.push(make_step(0, name, input, err_msg, true, 0));
+                tool_results.push(ContentBlock::ToolResult {
+                    tool_use_id: id.clone(),
+                    content: err_msg.to_string(),
+                    is_error: Some(true),
+                    duration_ms: Some(0),
+                });
+                continue;
             }
             app.emit("ai-status", serde_json::json!({
                 "status": name,

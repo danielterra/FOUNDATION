@@ -69,7 +69,7 @@
     }
     classSearching = true;
     try {
-      const raw = await invoke('graph__search_entities', { query: q, limit: 15, typeIri: 'owl:Class' });
+      const raw = await invoke('owl__search_entities', { query: q, limit: 15, typeIri: 'owl:Class' });
       classResults = JSON.parse(raw);
       showClassDropdown = classResults.length > 0;
     } catch {

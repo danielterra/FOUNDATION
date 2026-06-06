@@ -13,17 +13,9 @@
   });
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
-  type SearchEntity = { id: string; status?: { iri?: string } | null };
-
   async function refreshCount() {
     try {
-      const resultStr = await invoke<string>('graph__search_entities', {
-        query: '',
-        typeIri: 'foundation:AINotification',
-        limit: 500,
-      });
-      const list: SearchEntity[] = JSON.parse(resultStr);
-      pendingCount = list.filter(n => n.status?.iri === 'foundation:Pending').length;
+      pendingCount = await invoke<number>('notification__count_pending');
     } catch (err) {
       console.error('[NotificationBell] Failed to refresh count:', err);
     }
@@ -74,7 +66,7 @@
     min-width: 16px;
     height: 16px;
     padding: 0 4px;
-    border-radius: 8px;
+    border-radius: var(--radius);
     background: var(--color-danger, #ef4444);
     color: white;
     font-size: 9px;

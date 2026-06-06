@@ -58,7 +58,7 @@
 
 	.modal-panel {
 		background: var(--color-surface-2);
-		border-radius: var(--radius-lg);
+		border-radius: var(--radius);
 		display: flex;
 		flex-direction: column;
 		max-height: 85vh;

@@ -250,7 +250,17 @@ export function createEntitySubscription(handler: EntityHandler): EntitySubscrip
     setCreationQueries(queries: CreationQuerySpec[]) {
       if (queriesEqual(sub.creationQueries, queries)) return;
       sub.creationQueries = queries;
-      scheduleSync();
+      // Creation-queries define the entry window for brand-new entities.
+      // Any delay between registering the query here and pushing it to the
+      // backend is exactly the race window where a freshly-created entity
+      // escapes the backend match — no entity-joined-set is emitted, the ring
+      // never sees the event, and replay does not reconstruct it (fallback only
+      // covers entity-updated). Cancel any pending debounce so that setIris/
+      // setPatterns changes coalesce into this immediate sync; the lastSentKey
+      // gate in syncNow() prevents a redundant push if nothing actually changed.
+      clearTimeout(syncTimer);
+      syncTimer = undefined;
+      syncNow();
     },
     setSinceTx(tx: number) {
       sub.sinceTx = tx;

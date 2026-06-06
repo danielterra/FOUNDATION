@@ -123,7 +123,6 @@
   {windowState}
   {onWindowStateChange}
   onClose={closeWidget}
-  canExpand={true}
 >
   {#snippet headerActions()}
     <button class="action-btn" onclick={openInspector} title="Open inspector">

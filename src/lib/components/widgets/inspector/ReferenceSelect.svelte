@@ -45,7 +45,7 @@
     }
     searching = true
     try {
-      const raw = await invoke('graph__search_entities', {
+      const raw = await invoke('owl__search_entities', {
         query: q,
         limit: 20,
         typeIri: rangeClassIri ?? null,

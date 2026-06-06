@@ -1,8 +1,8 @@
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::ai::{ChatMessage};
-use crate::ai::providers::{MessageContent, ContentBlock, ClaudeTool};
-use crate::ai::functions::get_claude_tools;
+use crate::ai::providers::{MessageContent, ContentBlock, ToolDefinition};
+use crate::ai::functions::get_tool_definitions;
 use crate::owl::{DbExecutor, get_literal_property, get_iri_property, get_all_iri_properties, Individual, Object};
 
 use super::executor::ExecutionContext;
@@ -45,7 +45,7 @@ pub(super) fn to_storage_blocks(content: &MessageContent) -> Vec<crate::commands
     }).collect()
 }
 
-fn task_complete_tool(output_class: Option<&str>) -> ClaudeTool {
+fn task_complete_tool(output_class: Option<&str>) -> ToolDefinition {
     let (description, output_iri_description) = match output_class {
         Some(class) => (
             format!("Signal explicit completion of this AgentTask. You MUST pass the IRI of a {} individual in output_iri — the executor forwards it to the next step as its input.", class),
@@ -56,7 +56,7 @@ fn task_complete_tool(output_class: Option<&str>) -> ClaudeTool {
             "The single IRI produced by this task, forwarded as input to the next step.".to_string(),
         ),
     };
-    ClaudeTool {
+    ToolDefinition {
         name: "task_complete".to_string(),
         description,
         input_schema: serde_json::json!({
@@ -235,16 +235,19 @@ pub async fn execute_agent_task(
         current_datetime, label, ctx_section, resolved_description
     );
 
-    let mut tools: Vec<ClaudeTool> = if allowed_tool_names.is_empty() {
-        get_claude_tools()
+    let mut tools: Vec<ToolDefinition> = if allowed_tool_names.is_empty() {
+        get_tool_definitions()
     } else {
         crate::ai::functions::get_available_tools()
             .into_iter()
             .filter(|t| allowed_tool_names.contains(&t.name))
-            .map(|t| t.to_claude_tool())
+            .map(|t| t.to_tool_definition())
             .collect()
     };
     tools.push(task_complete_tool(output_class.as_deref()));
+    for tool in tools.iter_mut() {
+        crate::commands::chat::loop_tools::inject_reason_into_schema(&mut tool.input_schema);
+    }
 
     let initial_messages = vec![ChatMessage {
         role: "user".to_string(),

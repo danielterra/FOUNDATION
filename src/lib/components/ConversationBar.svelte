@@ -231,6 +231,7 @@
 		z-index: 100;
 		background: color-mix(in srgb, var(--color-white) 6%, var(--color-black));
 		box-shadow: 0 8px 24px color-mix(in srgb, var(--color-black) 60%, transparent);
+		border-radius: var(--radius);
 		display: flex;
 		flex-direction: column;
 		max-height: 320px;
@@ -351,6 +352,7 @@
 		height: 22px;
 		background: transparent;
 		border: none;
+		border-radius: var(--radius);
 		color: var(--color-neutral-disabled);
 		cursor: pointer;
 		display: flex;

@@ -9,7 +9,7 @@
     windowState = 'normal',
     onWindowStateChange,
     onClose,
-    canExpand = false,
+    canExpand = true,
     headerActions,
     headerExtra,
     headerSubtitle,
@@ -57,18 +57,18 @@
         </div>
       {/if}
       <div class="header-controls">
+        <Button
+          icon={windowState === 'minimized' ? 'filter_none' : 'horizontal_rule'}
+          title={windowState === 'minimized' ? 'Restore' : 'Minimize'}
+          onclick={toggleMinimize}
+        />
         {#if canExpand}
           <Button
-            icon={windowState === 'maximized' ? 'close_fullscreen' : 'open_in_full'}
-            title={windowState === 'maximized' ? 'Restore' : 'Expand'}
+            icon={windowState === 'maximized' ? 'filter_none' : 'check_box_outline_blank'}
+            title={windowState === 'maximized' ? 'Restore' : 'Maximize'}
             onclick={toggleExpanded}
           />
         {/if}
-        <Button
-          icon={windowState === 'minimized' ? 'expand_more' : 'expand_less'}
-          title={windowState === 'minimized' ? 'Expand' : 'Minimize'}
-          onclick={toggleMinimize}
-        />
         <Button icon="close" title="Close" onclick={onClose} />
       </div>
     </div>
@@ -92,7 +92,7 @@
     display: flex;
     flex-direction: column;
     background: var(--color-surface-1);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius);
     overflow: hidden;
     box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
   }

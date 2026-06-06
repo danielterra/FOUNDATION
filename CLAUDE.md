@@ -6,6 +6,50 @@
 - ALWAYS keep this file in en-US, terse, bullet-only with ALWAYS/NEVER prefixes, H1/H2 headers only, zero prose or boilerplate.
 - ALWAYS name skills as `entity-action` (e.g. `ontology-create`, `ontology-change`, `widget-remove`, `release-create`). NEVER use other naming patterns.
 
+## Foundation principles — non-negotiable
+- **OWNERSHIP** — local-first; data lives on the user's machine; no Big Tech servers; AGPL-3.0 prevents closed cloud forks. ALWAYS reject designs that require a centralized backend, hosted SaaS dependency or telemetry/exfiltration.
+- **ONTOLOGY-FIRST** — model via classes/properties/individuals in the live DB (via MCP), never via ad-hoc tables. ALWAYS use `foundation:*`/`anthropic:*` vocabulary; NEVER hardcode IRIs that didn't come from `search`/`describe_*`.
+- **IMMUTABLE STORE** — Datomic-style append-only triples with monotonic `tx`. ALWAYS update by writing a new triple with higher tx; NEVER `UPDATE` rows; `retracted=1` only to permanently delete a fact.
+- **AUTOMATION-REACTIVE** — data acts on itself: writes notify, readevopsrs run, widgets refresh. ALWAYS route entity writes through the notify→emit path so readevopsrs and UI converge automatically; NEVER bypass with direct `app.emit` or out-of-band SQL.
+- ALWAYS evaluate every design/code decision against these four pillars. A change that violates one is a blocker.
+
+## Foundation vocabulary — domain entities
+- `foundation:Project` / `foundation:SoftwareFeature` / `foundation:UserStory` / `foundation:ArchitectureDecisionRecord` (ADR) — work planning.
+- `foundation:SoftwareAgent` — product-side agent personas only: NOVA (`foundation:LocalAIAssistant`), Automator, etc. **Dev-process personas (architect, support, ux, developer-backend, developer-frontend, qa, devops) live in [.claude/agents/](.claude/agents/) — NEVER in the ontology**. Process roles are tooling, not product.
+- `foundation:Persona` — end-user personas (audience of the product): João (non-tech, `_1772476248172`), Daniel (power user, `_1773783644387`), AI Agent (`_1773180459062`).
+- `foundation:MCPTool` — MCP tool registered on the agent surface; `foundation:functionName` MUST match the Rust `ToolTemplate.name` exactly or AgentTask silently drops the tool.
+- `foundation:WidgetType` — blackboard widget definition with `widgetTypeId`, `widgetSupportedClass`, `widgetDefaultWidth/Height`, `widgetUsageNote` (WHY+HOW; presence marks AI-creatable).
+- `foundation:Blackboard` / `foundation:Conversation` / `foundation:AIConversationMessage` / `foundation:AINotification` — chat & lousa surface.
+- `foundation:Automation` (BPMN 2.0) / `foundation:WorkflowExecution` / `foundation:StepExecution` / `foundation:Task` — automation engine.
+- `foundation:Bug` / `foundation:TestCase` — quality.
+- ALWAYS naming: SoftwareFeature label ≤ 3 words, noun-based. UserStory label uses "Como [persona] quero [capability] para [benefit]".
+- ALWAYS set `foundation:hasStatus` on every individual at creation time — even drafts. NEVER assert without status.
+
+## Status IRIs — canonical (use IRI, NEVER label)
+- `foundation:Pending` — Pendente.
+- `foundation:Status_1772596341042` — Planejado.
+- `foundation:Status_1773079329634` — Pronto para Desenvolvimento.
+- `foundation:InProgress` — Em Progresso.
+- `foundation:Status_1772600993751` — Em Validação (QA) / Testando.
+- `foundation:Completed` — Concluído.
+- `foundation:Status_1773581282341` — Mudança Pendente.
+- `foundation:Blocked` — Bloqueado.
+- `foundation:Rejected` — Rejeitado.
+- `foundation:Status_1772570972069` — Cancelado.
+
+## Development process — PO → Architect → specialists
+- Roles: **PO** (Claude principal / user) → **architect** (single coordination point) → **ux** + **developer-backend** + **developer-frontend** → **qa** → **devops**. **Bug flow** adds **support** before `architect`: Bug → **support** (technical dossier) → **architect** (Modo Triagem) → dev → **qa** → Concluído.
+- ALWAYS route every planning / implementation / bug request through `architect`. NEVER let the PO invoke `developer-backend`, `developer-frontend`, `ux` or `support` directly **for a fix**.
+- `architect` has three modes: **Planejamento** (designs architecture, writes `foundation:implementationPlan`, moves US to Planejado), **Execução** (delegates the plan's "Fatia de execução" to specialists in parallel, costura builds + `## Como testar` + changelog, moves US to Em Validação (QA)), and **Triagem de Bug** (reads `support` dossier, picks the dev, delegates, costura, moves Bug to Em Validação (QA)).
+- `architect` NEVER writes code, NEVER investigates bugs (that's `support`), NEVER closes items. Specialists never move status or persist plan/dossier — `architect` costura everything.
+- `support` is the bug entry point. Investigates (logs → messages → DB → code), produces dossier in `foundation:Bug`, moves to Pronto para Dev. NEVER edits code, NEVER picks the dev, NEVER closes the bug.
+- `ux` is invoked by `architect` ONLY in Planejamento — by heuristic (US touches `src/**` or mentions interface/widget/screen/form). It writes the `## UX/UI` section of the plan (including a "Validação pelo usuário" checklist that the QA merges into `## Como testar`). `ux` does NOT enter Execução — there is no way for it to see the rendered screen; visual validation happens in QA with the human user. `ux` NEVER edits code.
+- `developer-backend` owns `src-tauri/**` (Rust/Tauri, MCP, ontology mutations via MCP). NEVER touches `src/**`.
+- `developer-frontend` owns `src/**` (Svelte 5, TS, widgets, realtime subscriptions). NEVER touches `src-tauri/**`.
+- **`qa` is the SINGLE gate before Concluído — for User Stories AND Bugs.** NEVER move a US or Bug from Em Progresso / Em Validação (QA) directly to Concluído without `qa` validation. `qa` enters when `architect` finishes Execução / Triagem; `devops` enters after for code review / security / release. NEITHER edits feature code.
+- Skills `/userstory-plan`, `/userstory-implement`, `/bug-fix` are thin proxies: they invoke `architect` (and `support` for bugs). NEVER duplicate the protocol inside the skills.
+- Skills `/feature-plan` and `/feature-implement` orchestrate per-US via the userstory skills, so they inherit the hierarchy automatically.
+
 ## Debugging order
 - ALWAYS investigate in this order: logs → message history → DB → code.
 - Logs: `npm run logs [N]` or `~/Library/Application Support/org.w3id.foundation/application.log`.
@@ -73,7 +117,7 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - Backend: ALWAYS emit entity events via `crate::realtime::emit_entity_updated_with_tx` / `emit_entity_updated_with` / `emit_entity_referenced_with_tx` / `emit_entity_deleted` (batch path: `emit_queued`). They consult the registry. NEVER call `app.emit("entity-updated"/"entity-referenced"/"entity-deleted", …)` directly — it bypasses the subscription filter.
 - DbExecutor write path: EVERY `DbExecutor::write()` accumulates `WRITTEN_SUBJECT_PREDICATES`/`WRITTEN_IRI_OBJECTS`/`WRITTEN_TRIPLES` (type `WrittenTriple`) → `notify_tx` → receiver (`setup.rs`) emits via the helpers above and matches creation-queries. No manual emit after a write.
 - ALWAYS keep the search reindex in the notify receiver UNCONDITIONAL — never gate it on subscriptions.
-- Backend reactors (task execution/recurrence/scheduler) MUST listen to `entity-changed-internal` — a NON-gated signal the notify receiver emits via `crate::realtime::emit_entity_changed_internal` for EVERY written subject — NOT `entity-updated`/`entity-created` (subscription-gated, would skip entities the UI is not showing). The frontend NEVER listens to `entity-changed-internal`. Server-side automation runs regardless of what the UI displays.
+- Backend readevopsrs (task execution/recurrence/scheduler) MUST listen to `entity-changed-internal` — a NON-gated signal the notify receiver emits via `crate::realtime::emit_entity_changed_internal` for EVERY written subject — NOT `entity-updated`/`entity-created` (subscription-gated, would skip entities the UI is not showing). The frontend NEVER listens to `entity-changed-internal`. Server-side automation runs regardless of what the UI displays.
 - Frontend: ALWAYS consume entity events via `createEntitySubscription` (`$lib/realtime/subscriptions`); call `setIris` (exact IRIs), `setPatterns` (collection views), `setCreationQueries` and `setSinceTx`/`replayMissed` — typically from a `$effect` — and `destroy()` in `onDestroy`. NEVER attach a raw `listen('entity-updated'/…)` in a component.
 - Streaming/execution events (`chat-ai-delta`, `ai-status`, `ai-error`, `automation-execution-*`) are NOT entity events — they stay direct emits/listens, scoped by payload (`conversationId`/`executionIri`).
 

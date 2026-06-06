@@ -15,15 +15,14 @@
   import AIConversationWidget from './AIConversationWidget.svelte';
   import NotificationCenterWidget from './NotificationCenterWidget.svelte';
   import AICallHistoryWidget from './AICallHistoryWidget.svelte';
+  import WidgetSidebar from './WidgetSidebar.svelte';
 
-  let { activeBlackboardIri = null, activeConversationIri = null, chatOpen = false } = $props();
+  let { activeBlackboardIri = null, activeConversationIri = null } = $props();
 
   const BASE_WIDGET_Z_INDEX = 100;
   const WIDGET_FLY_DURATION = 600;
-  const MINIMIZED_HEIGHT = 80;
   const MIN_WIDGET_WIDTH = 200;
   const MIN_WIDGET_HEIGHT = 100;
-  const TOP_BAR_HEIGHT = 44;
   const CANVAS_PADDING = 3;
 
   let widgets = $state([]);
@@ -35,12 +34,54 @@
   let topZIndex = $state(BASE_WIDGET_Z_INDEX);
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
-  const premaximizeState = new Map();
+  const premaximizePosition = new Map();
+  const preminimizeState = new Map();
+  const widgetDefaultSize = new Map();
+
+  const widgetTypeInfo = new Map();
+
+  let entityResolutionByIri = $state(new Map());
+
+  const sidebarEntries = $derived(
+    [...widgets]
+      .sort((a, b) => b.zIndex - a.zIndex)
+      .map((w, i) => {
+        const entity = w.entity_id ? entityResolutionByIri.get(w.entity_id) : undefined;
+        const typeFallback = widgetTypeInfo.get(w.widget_type);
+        return {
+          id: w.id,
+          icon: entity?.icon || typeFallback?.icon || 'widgets',
+          title: entity?.label || typeFallback?.description || w.widget_type,
+          isFocused: i === 0 && w.window_state !== 'minimized',
+          isMinimized: w.window_state === 'minimized'
+        };
+      })
+  );
+
+  const hasOpenWidgets = $derived(widgets.some(w => w.window_state !== 'minimized'));
+  const hasMinimizedWidgets = $derived(widgets.some(w => w.window_state === 'minimized'));
+
+  $effect(() => {
+    const entityIds = [...new Set(widgets.map(w => w.entity_id).filter(Boolean))];
+    if (entityIds.length === 0) return;
+    invoke('entity__resolve_iris', { iris: entityIds })
+      .then(json => {
+        const parsed = JSON.parse(json);
+        const next = new Map();
+        for (const [iri, val] of Object.entries(parsed)) {
+          next.set(iri, val);
+        }
+        entityResolutionByIri = next;
+      })
+      .catch(() => {});
+  });
 
   function constrainSize(size) {
+    const maxW = Math.max(MIN_WIDGET_WIDTH, viewportWidth);
+    const maxH = Math.max(MIN_WIDGET_HEIGHT, viewportHeight);
     return {
-      width: Math.min(size.width, Math.max(MIN_WIDGET_WIDTH, viewportWidth)),
-      height: Math.min(size.height, Math.max(MIN_WIDGET_HEIGHT, viewportHeight))
+      width: Math.min(Math.max(size.width, MIN_WIDGET_WIDTH), maxW),
+      height: Math.min(Math.max(size.height, MIN_WIDGET_HEIGHT), maxH)
     };
   }
 
@@ -56,15 +97,8 @@
     };
   }
 
-  function displayHeight(widget) {
-    return widget.window_state === 'minimized' ? MINIMIZED_HEIGHT : widget.size.height;
-  }
-
   function updateViewportSize() {
-    const chatWidth = chatOpen ? Math.max(window.innerWidth * 0.3, 500) : 0;
-    viewportWidth = window.innerWidth - chatWidth - (CANVAS_PADDING * 2);
-    viewportHeight = window.innerHeight - TOP_BAR_HEIGHT - (CANVAS_PADDING * 2);
-
+    if (viewportWidth === 0 || viewportHeight === 0) return;
     widgets = widgets.map(w => {
       const constrainedSize = constrainSize(w.size);
       if (constrainedSize.width !== w.size.width || constrainedSize.height !== w.size.height) {
@@ -76,7 +110,7 @@
       return {
         ...w,
         size: constrainedSize,
-        position: constrainToBounds(w.position, constrainedSize, displayHeight(w))
+        position: constrainToBounds(w.position, constrainedSize, constrainedSize.height)
       };
     });
   }
@@ -104,10 +138,9 @@
     loadWidgets(activeBlackboardIri);
   });
 
-  // Use untrack to prevent infinite loop - we only want to react to chatOpen changes,
-  // not to the widgets array mutations caused by updateViewportSize
   $effect(() => {
-    chatOpen;
+    viewportWidth;
+    viewportHeight;
     untrack(() => updateViewportSize());
   });
 
@@ -172,7 +205,7 @@
 
     widgets = widgets.map(w =>
       w.id === draggedWidget.id
-        ? { ...w, position: constrainToBounds({ x: newX, y: newY }, w.size, displayHeight(w)) }
+        ? { ...w, position: constrainToBounds({ x: newX, y: newY }, w.size, w.size.height) }
         : w
     );
   }
@@ -235,19 +268,24 @@
     const prevState = widget?.window_state;
 
     if (windowState === 'maximized' && widget) {
-      premaximizeState.set(widgetId, {
-        size: { ...widget.size },
-        position: { ...widget.position }
-      });
-      resizeWidget(widgetId, viewportWidth, viewportHeight - TOP_BAR_HEIGHT);
-      moveWidget(widgetId, { x: 0, y: TOP_BAR_HEIGHT });
-    } else if (windowState === 'normal' && prevState === 'maximized') {
-      const saved = premaximizeState.get(widgetId);
-      if (saved) {
-        resizeWidget(widgetId, saved.size.width, saved.size.height);
-        moveWidget(widgetId, saved.position);
-        premaximizeState.delete(widgetId);
+      premaximizePosition.set(widgetId, { ...widget.position });
+      resizeWidget(widgetId, viewportWidth, viewportHeight);
+      moveWidget(widgetId, { x: 0, y: 0 });
+    } else if (windowState === 'minimized' && widget) {
+      preminimizeState.set(widgetId, { position: { ...widget.position }, size: { ...widget.size } });
+    } else if (windowState === 'normal' && prevState === 'maximized' && widget) {
+      const defaultSize = widgetDefaultSize.get(widget.widget_type);
+      const savedPos = premaximizePosition.get(widgetId);
+      if (defaultSize) {
+        resizeWidget(widgetId, defaultSize.width, defaultSize.height);
       }
+      if (savedPos) {
+        moveWidget(widgetId, savedPos);
+        premaximizePosition.delete(widgetId);
+      }
+    } else if (windowState === 'normal' && prevState === 'minimized' && widget) {
+      restoreFromMinimized(widgetId);
+      return;
     }
 
     widgets = widgets.map(w =>
@@ -261,8 +299,54 @@
     });
   }
 
+  function restoreFromMinimized(widgetId) {
+    const widget = widgets.find(w => w.id === widgetId);
+    if (!widget) return;
+
+    const saved = preminimizeState.get(widgetId);
+    if (saved) {
+      resizeWidget(widgetId, saved.size.width, saved.size.height);
+      moveWidget(widgetId, saved.position);
+      preminimizeState.delete(widgetId);
+    } else {
+      const defaultSize = widgetDefaultSize.get(widget.widget_type);
+      if (defaultSize) resizeWidget(widgetId, defaultSize.width, defaultSize.height);
+    }
+
+    widgets = widgets.map(w =>
+      w.id === widgetId ? { ...w, window_state: 'normal' } : w
+    );
+    invoke('widget_blackboard__update_widget_window_state', {
+      widgetId,
+      windowState: 'normal'
+    }).catch(error => {
+      console.error('Failed to update widget window state:', error);
+    });
+    bringToFront(widgetId);
+  }
+
+  function onSidebarSelect(widgetId) {
+    const widget = widgets.find(w => w.id === widgetId);
+    if (!widget) return;
+    if (widget.window_state === 'minimized') {
+      restoreFromMinimized(widgetId);
+    } else {
+      bringToFront(widgetId);
+    }
+  }
+
   onMount(async () => {
     updateViewportSize();
+
+    try {
+      const defs = await invoke('widget_blackboard__list_widget_definitions', { classIri: null });
+      defs.forEach(d => {
+        widgetDefaultSize.set(d.widget_type, d.default_size);
+        widgetTypeInfo.set(d.widget_type, { description: d.description, icon: d.icon });
+      });
+    } catch (e) {
+      console.error('Failed to load widget definitions:', e);
+    }
 
     const unlistenAdded = await listen('widget-added', (event) => {
       const w = event.payload;
@@ -281,7 +365,7 @@
       topZIndex++;
       const newWidget = { ...w, zIndex: topZIndex };
 
-      newWidget.position = constrainToBounds(newWidget.position, newWidget.size, displayHeight(newWidget));
+      newWidget.position = constrainToBounds(newWidget.position, newWidget.size, newWidget.size.height);
       widgets = [...widgets, newWidget];
     });
 
@@ -297,22 +381,28 @@
 
     document.addEventListener('mousemove', onDrag);
     document.addEventListener('mouseup', stopDrag);
-
-    window.addEventListener('resize', updateViewportSize);
   });
 
   onDestroy(() => {
     unlisteners.forEach(unlisten => unlisten());
     document.removeEventListener('mousemove', onDrag);
     document.removeEventListener('mouseup', stopDrag);
-    window.removeEventListener('resize', updateViewportSize);
   });
 </script>
 
-<svelte:window />
-
-
-{#each widgets as widget (widget.id)}
+<div class="widget-manager-layout">
+  {#if widgets.length > 0}
+    <WidgetSidebar
+      entries={sidebarEntries}
+      onSelect={onSidebarSelect}
+      onMinimizeAll={minimizeAll}
+      onRestoreAll={expandAll}
+      {hasOpenWidgets}
+      {hasMinimizedWidgets}
+    />
+  {/if}
+  <div class="widget-canvas" bind:clientWidth={viewportWidth} bind:clientHeight={viewportHeight}>
+{#each widgets.filter(w => w.window_state !== 'minimized') as widget (widget.id)}
   <div
     class="widget-container"
     class:dragging={draggedWidget?.id === widget.id}
@@ -320,7 +410,7 @@
     style:left="{widget.position.x}px"
     style:top="{widget.position.y}px"
     style:width="{widget.size.width}px"
-    style:height="{widget.window_state === 'minimized' ? MINIMIZED_HEIGHT : widget.size.height}px"
+    style:height="{widget.size.height}px"
     style:z-index={widget.zIndex}
     onmousedown={(e) => startDrag(e, widget)}
     onclick={() => bringToFront(widget.id)}
@@ -331,15 +421,13 @@
     in:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicOut }}
     out:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicIn }}
   >
-    {#if widget.window_state !== 'minimized'}
-      <div
-        class="resize-handle"
-        role="button"
-        tabindex="0"
-        onmousedown={(e) => startResize(e, widget)}
-        onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && startResize(e, widget)}
-      ></div>
-    {/if}
+    <div
+      class="resize-handle"
+      role="button"
+      tabindex="0"
+      onmousedown={(e) => startResize(e, widget)}
+      onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && startResize(e, widget)}
+    ></div>
     {#if widget.widget_type === 'inspector'}
       <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} conversationIri={activeConversationIri} />
     {:else if widget.widget_type === 'mermaid'}
@@ -365,8 +453,26 @@
     {/if}
   </div>
 {/each}
+  </div>
+</div>
 
 <style>
+  .widget-manager-layout {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    gap: 5px;
+  }
+
+  .widget-canvas {
+    position: relative;
+    flex: 1;
+    height: 100%;
+    min-width: 0;
+  }
+
   .widget-container {
     position: absolute;
     transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s;

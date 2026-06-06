@@ -1050,7 +1050,7 @@
 
 	.panel {
 		background: var(--color-surface-1);
-		border-radius: var(--radius-lg);
+		border-radius: var(--radius);
 		width: 920px;
 		max-width: 95vw;
 		max-height: 90vh;
@@ -1128,7 +1128,7 @@
 		min-width: 0;
 		background: var(--color-surface-3);
 		border: none;
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius);
 		color: var(--color-neutral-active, #e0e0e0);
 		font-family: var(--font-body);
 		font-size: 14px;
@@ -1200,7 +1200,7 @@
 		gap: 8px;
 		padding: 8px 12px;
 		background: var(--color-surface-2);
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius);
 		margin-bottom: 6px;
 	}
 
@@ -1318,7 +1318,7 @@
 		gap: 4px;
 		padding: 10px 12px;
 		background: var(--color-surface-2);
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius);
 	}
 
 	.claude-steps {
@@ -1338,7 +1338,7 @@
 		font-family: monospace;
 		background: var(--color-surface-3);
 		padding: 0 4px;
-		border-radius: 3px;
+		border-radius: var(--radius);
 	}
 
 	.analytics-toggle {
@@ -1347,7 +1347,7 @@
 		gap: 10px;
 		padding: 10px 12px;
 		background: var(--color-surface-2);
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius);
 		cursor: pointer;
 	}
 

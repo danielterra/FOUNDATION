@@ -49,6 +49,9 @@
 
 	function openToolModal(tc) {
 		const sections = [];
+		if (tc.reason) {
+			sections.push({ label: 'Razão', content: tc.reason });
+		}
 		if (tc.input) {
 			sections.push({ label: 'Request', content: JSON.stringify(tc.input, null, 2) });
 		}
@@ -279,10 +282,7 @@
 								<span class="material-symbols-outlined tool-chip-icon">
 									{hasResult ? (tc.is_error ? 'error' : 'check_circle') : 'pending'}
 								</span>
-								<span class="tool-chip-name">{tc.name}</span>
-								{#if tc.reason}
-									<span class="tool-chip-reason">{tc.reason}</span>
-								{/if}
+								<span class="tool-chip-name">{tc.reason ?? tc.name}</span>
 								{#if tc.duration_ms != null}
 									<span class="tool-chip-duration">{(tc.duration_ms / 1000).toFixed(1)}s</span>
 								{/if}
@@ -371,7 +371,7 @@
 		transition: opacity 0.15s;
 		z-index: 1;
 		background: var(--color-surface-2);
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius);
 		padding: 2px;
 	}
 
@@ -414,6 +414,7 @@
 		gap: 8px;
 		min-width: 0;
 		padding: 8px 12px;
+		border-radius: var(--radius);
 	}
 
 	.message.user .message-bubble {
@@ -456,12 +457,14 @@
 		flex-direction: column;
 		gap: 6px;
 		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+		border-radius: var(--radius);
 		padding: 8px;
 		cursor: pointer;
 		transition: all 0.2s;
 		min-width: 150px;
 		max-width: 200px;
 		text-align: left;
+		overflow: hidden;
 	}
 
 	.attachment-thumbnail:active {
@@ -473,6 +476,7 @@
 		height: 120px;
 		object-fit: cover;
 		background: color-mix(in srgb, var(--color-black) 5%, transparent);
+		border-radius: var(--radius);
 	}
 
 	.pdf-preview,
@@ -483,6 +487,7 @@
 		justify-content: center;
 		height: 120px;
 		background: color-mix(in srgb, var(--color-white) 5%, transparent);
+		border-radius: var(--radius);
 	}
 
 	.pdf-preview iframe {
@@ -547,6 +552,7 @@
 		font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
 		color: #989898;
 		background: color-mix(in srgb, var(--color-white) 6%, transparent);
+		border-radius: var(--radius);
 		padding: 1px 6px;
 		line-height: 1.6;
 		opacity: 0.7;
@@ -621,16 +627,6 @@
 	.tool-chip-summary.error .tool-chip-icon { color: var(--color-error); opacity: 1; }
 	.tool-chip-summary.pending .tool-chip-icon { color: var(--color-transition); opacity: 1; animation: thinking-pulse 1.5s infinite ease-in-out; }
 
-	.tool-chip-reason {
-		font-size: 11px;
-		opacity: 0.6;
-		margin-left: 2px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		max-width: 200px;
-	}
-
 	.tool-chip-duration {
 		font-size: 10px;
 		opacity: 0.5;
@@ -656,6 +652,7 @@
 		padding: 2px 8px 2px 5px;
 		background: color-mix(in srgb, var(--color-interactive) 8%, transparent);
 		color: color-mix(in srgb, var(--color-interactive) 85%, var(--color-neutral-disabled));
+		border-radius: var(--radius);
 		cursor: pointer;
 		font-size: 10px;
 		line-height: 1.4;
@@ -687,7 +684,7 @@
 		padding: 10px 14px;
 		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
 		border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
-		border-radius: 10px;
+		border-radius: var(--radius);
 		width: 100%;
 	}
 

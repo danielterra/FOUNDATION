@@ -8,12 +8,14 @@
   import SettingsPanel from '$lib/components/SettingsPanel.svelte';
   import Button from '$lib/components/Button.svelte';
   import NotificationBell from '$lib/components/NotificationBell.svelte';
+  import HeaderActions from '$lib/components/HeaderActions.svelte';
   import { appState } from '$lib/appState.svelte';
+  import { fly } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
 
   let isChatOpen = $state(false);
   let chatEnabled = $state(false);
   let searchComponent = $state();
-  let widgetManager = $state();
   let activeConversationIri = $state(null);
   let activeBlackboardIri = $state(null);
   let showSettings = $state(false);
@@ -131,30 +133,29 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
+<HeaderActions>
+  <Button icon="search" title="Buscar (/)" onclick={openSearch} />
+  <span class="header-spacer"></span>
+  {#if chatEnabled}
+    <Button icon="forum" title="Conversa (Ctrl+S)" onclick={() => isChatOpen = !isChatOpen} />
+  {/if}
+  <Button icon="payments" title="Consumo de IA" onclick={openAiCallHistory} />
+  <NotificationBell />
+  <Button icon="settings" title="Configurações" onclick={() => showSettings = true} />
+</HeaderActions>
+
 <div class="main-layout">
   <Search bind:this={searchComponent} onSelectResult={handleSearchResult} />
 
-  <div class="top-bar">
-    <span class="logo">FOUNDATION</span>
-    <Button icon="search" title="Buscar (/)" onclick={openSearch} />
-    <Button icon="collapse_all" title="Minimizar todos os widgets" onclick={() => widgetManager?.minimizeAll()} />
-    <Button icon="expand_all" title="Expandir todos os widgets" onclick={() => widgetManager?.expandAll()} />
-    <span class="top-bar-spacer"></span>
-    {#if chatEnabled}
-      <Button icon="forum" title="Conversa (Ctrl+S)" onclick={() => isChatOpen = !isChatOpen} />
-    {/if}
-    <Button icon="payments" title="Consumo de IA" onclick={openAiCallHistory} />
-    <NotificationBell />
-    <Button icon="settings" title="Configurações" onclick={() => showSettings = true} />
-  </div>
-
   <div class="content-area">
     <div class="canvas-area">
-      <WidgetManager bind:this={widgetManager} {activeBlackboardIri} {activeConversationIri} chatOpen={chatEnabled && isChatOpen} />
+      <WidgetManager {activeBlackboardIri} {activeConversationIri} />
     </div>
 
     {#if chatEnabled && isChatOpen}
-      <ChatWindow bind:activeConversationIri bind:isOpen={isChatOpen} />
+      <div class="chat-slot" transition:fly={{ x: 500, duration: 250, easing: cubicOut }}>
+        <ChatWindow bind:activeConversationIri bind:isOpen={isChatOpen} />
+      </div>
     {/if}
   </div>
 
@@ -165,33 +166,14 @@
 
 <style>
   .main-layout {
-    width: 100vw;
-    height: 100vh;
+    flex: 1;
+    min-height: 0;
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    --top-bar-height: calc(0.6rem * 2 + 1.5rem);
   }
 
-  .top-bar {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.6rem 1.25rem;
-    background: var(--color-surface-1);
-    z-index: 200;
-    height: var(--top-bar-height);
-    flex-shrink: 0;
-  }
-
-  .logo {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--color-neutral-active);
-    letter-spacing: 0.08em;
-  }
-
-  .top-bar-spacer {
+  .header-spacer {
     flex: 1;
   }
 
@@ -200,12 +182,20 @@
     display: flex;
     overflow: hidden;
     min-height: 0;
+    gap: 5px;
   }
 
   .canvas-area {
     flex: 1;
     position: relative;
     overflow: hidden;
-    padding: 3px;
+  }
+
+  .chat-slot {
+    width: 30%;
+    min-width: 500px;
+    height: 100%;
+    flex-shrink: 0;
+    display: flex;
   }
 </style>

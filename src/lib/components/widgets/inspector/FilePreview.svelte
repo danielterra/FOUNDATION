@@ -124,7 +124,7 @@
     align-items: flex-start;
     gap: 10px;
     background: var(--color-surface-2);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     padding: 8px 10px;
     text-align: left;
   }
@@ -134,7 +134,7 @@
     height: 48px;
     overflow: hidden;
     background: var(--color-surface-3);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     flex-shrink: 0;
   }
 
@@ -152,7 +152,7 @@
     width: 48px;
     height: 48px;
     background: var(--color-surface-3);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     flex-shrink: 0;
   }
 

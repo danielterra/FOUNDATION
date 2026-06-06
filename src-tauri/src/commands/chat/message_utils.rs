@@ -43,13 +43,25 @@ pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
                 }
             ),
             ContentBlock::CameraRef { .. } => None,
-            ContentBlock::ToolUse { id, name, input, .. } => Some(
-                ApiContentBlock::ToolUse {
+            ContentBlock::ToolUse { id, name, input, reason } => {
+                // Re-inject the `reason` field into `input` when sending history back
+                // to the model. The backend strips `reason` from `input` before
+                // executing the tool (it's display-only). But if we omit it here,
+                // the model sees its own past tool calls without `reason` and
+                // learns by imitation that `reason` is optional — even though the
+                // schema marks it required. This is the model's strongest cue.
+                let mut api_input = input.clone();
+                if let Some(r) = reason {
+                    if let Some(obj) = api_input.as_object_mut() {
+                        obj.insert("reason".to_string(), serde_json::Value::String(r.clone()));
+                    }
+                }
+                Some(ApiContentBlock::ToolUse {
                     id: id.clone(),
                     name: name.clone(),
-                    input: input.clone(),
-                }
-            ),
+                    input: api_input,
+                })
+            },
             ContentBlock::ToolResult { tool_use_id, content, is_error, .. } => Some(
                 ApiContentBlock::ToolResult {
                     tool_use_id: tool_use_id.clone(),
@@ -423,6 +435,21 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
     });
 }
 
+/// Returns the first `max_words` whitespace-separated words from `s`.
+/// Punctuation attached to a word is preserved. Strings with ≤ max_words words
+/// are returned unchanged. Leading/trailing whitespace is stripped.
+fn truncate_to_words(s: &str, max_words: usize) -> String {
+    s.split_whitespace()
+        .take(max_words)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Converts raw API response data into the internal `ContentBlock` list.
+///
+/// Strips `reason` from each tool call's input (it is display-only and must not
+/// reach the actual tool handler), truncates it to 6 words, and stores it in the
+/// `reason` field of the resulting `ToolUse` block.
 pub fn response_content_to_blocks(
     content: &str,
     tool_calls: &[crate::ai::ToolCall],
@@ -452,9 +479,10 @@ pub fn response_content_to_blocks(
 
     for tool_call in tool_calls {
         let mut input = tool_call.input.clone();
-        let reason = input.as_object_mut()
-            .and_then(|obj| obj.remove("_reason"))
-            .and_then(|v| v.as_str().map(|s| s.chars().take(144).collect::<String>()));
+        let raw = input.as_object_mut()
+            .and_then(|obj| obj.remove("reason"))
+            .and_then(|v| v.as_str().map(|s| s.to_string()));
+        let reason = raw.map(|s| truncate_to_words(&s, 6)).filter(|s| !s.is_empty());
         blocks.push(ContentBlock::ToolUse {
             id: tool_call.id.clone(),
             name: tool_call.name.clone(),

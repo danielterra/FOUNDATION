@@ -247,8 +247,8 @@
 
 <style>
 	#canvas-page {
-		width: 100vw;
-		height: 100vh;
+		width: 100%;
+		height: 100%;
 		position: relative;
 		overflow: hidden;
 	}
@@ -257,7 +257,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		height: 100vh;
+		height: 100%;
 		color: var(--color-neutral);
 		font-size: 18px;
 	}
@@ -302,7 +302,7 @@
 		align-items: center;
 		gap: 8px;
 		background: var(--color-surface-2);
-		border-radius: var(--radius-md);
+		border-radius: var(--radius);
 		padding: 6px 12px;
 	}
 
@@ -344,7 +344,7 @@
 		align-items: center;
 		gap: 6px;
 		background: var(--color-surface-2);
-		border-radius: var(--radius-md);
+		border-radius: var(--radius);
 		color: var(--color-neutral);
 		font-size: 14px;
 		font-weight: 600;

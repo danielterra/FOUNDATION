@@ -127,6 +127,7 @@
 		height: 36px;
 		background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
 		border: none;
+		border-radius: var(--radius);
 		color: var(--color-interactive);
 		cursor: pointer;
 		display: flex;

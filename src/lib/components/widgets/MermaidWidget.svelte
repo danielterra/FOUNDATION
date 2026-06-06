@@ -282,7 +282,6 @@
   {windowState}
   {onWindowStateChange}
   onClose={closeWidget}
-  canExpand={true}
   overrideActions={editMode ? editActions : undefined}
   headerActions={editMode ? undefined : normalActions}
 >

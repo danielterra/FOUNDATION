@@ -347,7 +347,6 @@
   {windowState}
   {onWindowStateChange}
   onClose={closeWidget}
-  canExpand={true}
 >
   {#snippet headerExtra()}
     {#if activeStepLabel}

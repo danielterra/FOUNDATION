@@ -96,9 +96,10 @@
 	--color-surface-4: color-mix(in srgb, var(--color-white) 20%, var(--color-black));    /* Itens dentro de elevações: linhas de lista no modal, inputs */
 
 	/* ========================================
-	 * RADIUS - Raios de borda padronizados
+	 * RADIUS - Raio de borda padrão único
+	 * Toda a aplicação usa var(--radius) por padrão.
+	 * Ajuste apenas este valor para mudar o arredondamento de toda a app.
+	 * Exceções intencionais: 50% (círculos perfeitos) e 999px (pills totais).
 	 * ======================================== */
-	--radius-sm: 6px;
-	--radius-md: 10px;
-	--radius-lg: 16px;
+	--radius: 10px;
 }

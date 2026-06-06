@@ -200,6 +200,22 @@ fn looks_like_iri(s: &str) -> bool {
     s.contains(':') && !s.contains(' ')
 }
 
+fn split_iri_lines(s: &str) -> Option<Vec<String>> {
+    let lines: Vec<String> = s
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    if lines.iter().all(|l| looks_like_iri(l)) {
+        Some(lines)
+    } else {
+        None
+    }
+}
+
 fn create_step_record(
     conn: &mut rusqlite::Connection,
     exec_iri: &str,
@@ -254,14 +270,23 @@ fn finish_step_record(
         vec![lit_datetime(now_ms)], "process_automation")
         .map_err(|e| e.to_string())?;
     if let Some(val) = output.filter(|v| !v.is_empty()) {
-        if looks_like_iri(val) {
-            ind.add_property(conn, "foundation:outputValue",
-                vec![Object::Iri(val.to_string())], "process_automation")
-                .map_err(|e| e.to_string())?;
-        } else {
-            ind.add_property(conn, "foundation:stepOutput",
-                vec![lit_str(val)], "process_automation")
-                .map_err(|e| e.to_string())?;
+        match split_iri_lines(val) {
+            Some(iris) if iris.len() == 1 => {
+                ind.add_property(conn, "foundation:outputValue",
+                    vec![Object::Iri(iris.into_iter().next().unwrap())], "process_automation")
+                    .map_err(|e| e.to_string())?;
+            }
+            Some(iris) => {
+                let json = serde_json::to_string(&iris).map_err(|e| e.to_string())?;
+                ind.add_property(conn, "foundation:outputIRIs",
+                    vec![lit_str(&json)], "process_automation")
+                    .map_err(|e| e.to_string())?;
+            }
+            None => {
+                ind.add_property(conn, "foundation:stepOutput",
+                    vec![lit_str(val)], "process_automation")
+                    .map_err(|e| e.to_string())?;
+            }
         }
     }
     if let Some(msg) = error {

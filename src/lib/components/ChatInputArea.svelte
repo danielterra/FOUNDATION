@@ -103,6 +103,7 @@
 		padding: 12px 16px;
 		margin-bottom: 12px;
 		background: color-mix(in srgb, var(--color-transition) 10%, transparent);
+		border-radius: var(--radius);
 		animation: fadeIn 0.3s;
 	}
 
@@ -168,6 +169,7 @@
 		padding: 8px 12px;
 		margin-bottom: 8px;
 		background: color-mix(in srgb, var(--color-interactive) 10%, transparent);
+		border-radius: var(--radius);
 		font-size: 14px;
 		color: var(--color-interactive);
 		animation: fadeIn 0.2s;
@@ -212,6 +214,7 @@
 		height: 40px;
 		background: transparent;
 		border: none;
+		border-radius: var(--radius);
 		color: var(--color-neutral);
 		cursor: pointer;
 		display: flex;
@@ -232,6 +235,7 @@
 	.chat-input textarea {
 		flex: 1;
 		border: none;
+		border-radius: var(--radius);
 		padding: 10px 16px;
 		font-family: inherit;
 		font-size: 14px;
@@ -265,6 +269,7 @@
 		background: var(--color-interactive);
 		color: var(--color-neutral-on-interactive);
 		border: none;
+		border-radius: var(--radius);
 		cursor: pointer;
 		display: flex;
 		align-items: center;

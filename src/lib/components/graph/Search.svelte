@@ -46,7 +46,7 @@
 
 	async function fetchClasses(query) {
 		try {
-			const json = await invoke('graph__search_entities', {
+			const json = await invoke('owl__search_entities', {
 				query: query.trim(),
 				limit: 50,
 				typeIri: 'owl:Class'
@@ -78,7 +78,7 @@
 			if (activeClassFilter) {
 				args.typeIri = activeClassFilter.iri;
 			}
-			const resultsJson = await invoke('graph__search_entities', args);
+			const resultsJson = await invoke('owl__search_entities', args);
 			const results = JSON.parse(resultsJson);
 			searchResults = results;
 			showResults = results.length > 0;

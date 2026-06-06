@@ -6,8 +6,8 @@ const MODEL_E4B: &str = concat!(
     "/resources/models/gemma-4-E4B-it-Q4_K_M.gguf"
 );
 
-fn speak_tool() -> ClaudeTool {
-    ClaudeTool {
+fn speak_tool() -> ToolDefinition {
+    ToolDefinition {
         name: "speak".to_string(),
         description: "Responde ao usuário com texto".to_string(),
         input_schema: serde_json::json!({
@@ -18,8 +18,8 @@ fn speak_tool() -> ClaudeTool {
     }
 }
 
-fn describe_tool() -> ClaudeTool {
-    ClaudeTool {
+fn describe_tool() -> ToolDefinition {
+    ToolDefinition {
         name: "describe_individual".to_string(),
         description: "Fetch full details of an entity by IRI".to_string(),
         input_schema: serde_json::json!({
@@ -30,8 +30,8 @@ fn describe_tool() -> ClaudeTool {
     }
 }
 
-fn search_tool() -> ClaudeTool {
-    ClaudeTool {
+fn search_tool() -> ToolDefinition {
+    ToolDefinition {
         name: "search".to_string(),
         description: "Search for entities by label or type".to_string(),
         input_schema: serde_json::json!({
@@ -47,7 +47,7 @@ fn search_tool() -> ClaudeTool {
 
 fn build_turns(
     system: &str,
-    tools: &[ClaudeTool],
+    tools: &[ToolDefinition],
     turns: Vec<(&str, MessageContent)>,
 ) -> Vec<(String, String)> {
     let mut messages: Vec<(String, String)> = vec![
@@ -457,7 +457,7 @@ fn format_tools_contem_nome_e_formato() {
 fn format_tools_multiplas_ferramentas() {
     let tools = vec![
         speak_tool(),
-        ClaudeTool {
+        ToolDefinition {
             name: "search".to_string(),
             description: "Busca no grafo".to_string(),
             input_schema: serde_json::json!({

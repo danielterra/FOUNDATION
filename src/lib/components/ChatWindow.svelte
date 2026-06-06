@@ -60,6 +60,9 @@
 	let streamingReasoning = $state('');
 	let streamingSpeak = $state('');
 	let activeModelInfo = $state(null);
+	// Mutable ref kept in sync with the prop so streaming listener closures
+	// (registered once in onMount) always read the current conversation IRI.
+	let activeConvIriRef = $state(activeConversationIri);
 
 	let streamingMessage = $derived.by(() => {
 		if (!streamingReasoning && !streamingSpeak) return null;
@@ -125,6 +128,10 @@
 	function toggleThinking() {
 		thinkingEnabled = !thinkingEnabled;
 	}
+
+	$effect(() => {
+		activeConvIriRef = activeConversationIri;
+	});
 
 	$effect(() => {
 		if (activeConversationIri) {
@@ -296,7 +303,7 @@
 
 		const unlistenDelta = await listen('chat-ai-delta', (event) => {
 			const { conversationId, type, text } = event.payload;
-			if (conversationId !== activeConversationIri) return;
+			if (conversationId !== activeConvIriRef) return;
 			if (type === 'thinking') {
 				onStreamChunk('thinking', text);
 			} else if (type === 'speak' || type === 'text') {
@@ -305,7 +312,7 @@
 		});
 
 		const unlistenAIStatus = await listen('ai-status', (event) => {
-			const iri = event.payload?.conversationId ?? activeConversationIri;
+			const iri = event.payload?.conversationId ?? activeConvIriRef;
 			if (event.payload?.status) {
 				startAIStatus(event.payload.status, iri, event.payload?.phase ?? 'llm');
 			} else {
@@ -313,12 +320,12 @@
 				// ai-status stop fires from Rust after run_conversation_loop completes —
 				// all streaming chunks are done and the final message is persisted.
 				// Clear any leftover streaming buffer that entity-referenced may have missed.
-				if (iri === activeConversationIri) clearStreaming();
+				if (iri === activeConvIriRef) clearStreaming();
 			}
 		});
 
 		const unlistenAIError = await listen('ai-error', (event) => {
-			stopAIStatus(activeConversationIri);
+			stopAIStatus(activeConvIriRef);
 			if (event.payload?.message) {
 				showError(event.payload.message);
 			}
@@ -1066,14 +1073,13 @@
 
 <style>
 	.chat-panel {
-		width: 30%;
-		min-width: 500px;
+		width: 100%;
 		height: 100%;
 		display: flex;
 		flex-direction: column;
-		flex-shrink: 0;
-		background: var(--color-surface-1);
-		border-left: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+		background: color-mix(in srgb, var(--color-white) 7%, var(--color-black));
+		border-radius: var(--radius);
+		overflow: hidden;
 	}
 
 	.chat-content {

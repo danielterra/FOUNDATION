@@ -12,7 +12,7 @@ use llama_cpp_2::model::{AddBos, LlamaModel, LlamaChatMessage};
 use llama_cpp_2::sampling::LlamaSampler;
 
 use crate::ai::{GenerateRequest, GenerateResponse, ToolCall};
-use crate::ai::providers::{MessageContent, ClaudeTool, UsageInfo};
+use crate::ai::providers::{MessageContent, ToolDefinition, UsageInfo};
 
 // LlamaContext wraps a raw C pointer that is safe to send across threads
 // (llama.cpp uses no thread-local state; access is serialised by the Mutex below).
@@ -379,7 +379,7 @@ struct InferenceStats {
 ///
 /// Gemma 4 was trained with native <tool_call> token support. The examples below match
 /// the format used during training so the model recognises them reliably.
-fn format_tools_for_prompt(tools: &[ClaudeTool]) -> String {
+fn format_tools_for_prompt(tools: &[ToolDefinition]) -> String {
     if tools.is_empty() {
         return String::new();
     }
@@ -414,7 +414,7 @@ fn format_tools_for_prompt(tools: &[ClaudeTool]) -> String {
     out
 }
 
-fn compact_tool_signature(tool: &ClaudeTool) -> String {
+fn compact_tool_signature(tool: &ToolDefinition) -> String {
     let params = schema_params_signature(&tool.input_schema);
     let desc = tool.description.trim();
     let desc = if desc.len() > TOOL_DESC_MAX_LEN { &desc[..TOOL_DESC_MAX_LEN] } else { desc };

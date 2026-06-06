@@ -41,7 +41,7 @@
 		white-space: nowrap;
 		flex-shrink: 0;
 		border: none;
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius);
 	}
 
 	.btn:disabled {
@@ -70,6 +70,14 @@
 	.btn-danger {
 		background: color-mix(in srgb, var(--color-danger) 15%, transparent);
 		color: var(--color-danger);
+	}
+
+	.btn-icon-only {
+		background: none;
+	}
+
+	.btn-icon-only:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--color-white) 8%, transparent);
 	}
 
 	.btn-icon {

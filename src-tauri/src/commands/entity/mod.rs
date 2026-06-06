@@ -145,7 +145,7 @@ pub struct FileInfo {
 /// Search for instances by label and property values
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn graph__search_entities(
+pub async fn owl__search_entities(
     query: String,
     limit: Option<usize>,
     type_iri: Option<String>,

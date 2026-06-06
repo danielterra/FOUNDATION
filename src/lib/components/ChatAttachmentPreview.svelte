@@ -39,6 +39,7 @@
 		margin-bottom: 12px;
 		padding: 12px;
 		background: color-mix(in srgb, var(--color-white) 5%, transparent);
+		border-radius: var(--radius);
 	}
 
 	.attachment-item {
@@ -47,6 +48,7 @@
 		gap: 8px;
 		padding: 8px;
 		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+		border-radius: var(--radius);
 		font-size: 14px;
 	}
 
@@ -73,6 +75,7 @@
 		height: 24px;
 		background: transparent;
 		border: none;
+		border-radius: var(--radius);
 		color: var(--color-neutral);
 		cursor: pointer;
 		display: flex;

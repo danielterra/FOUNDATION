@@ -1,5 +1,5 @@
 use crate::ai::{AiProvider, GenerateRequest, ChatMessage};
-use crate::ai::providers::{MessageContent, ContentBlock, ClaudeTool};
+use crate::ai::providers::{MessageContent, ContentBlock, ToolDefinition};
 use crate::ai::functions::{ToolCall as FunctionToolCall, execute_tool as execute_fn};
 use crate::owl::DbExecutor;
 
@@ -11,7 +11,7 @@ const DEFAULT_MAX_ITERATIONS: usize = 50;
 
 pub struct ToolLoopConfig {
     pub system: Option<String>,
-    pub tools: Vec<ClaudeTool>,
+    pub tools: Vec<ToolDefinition>,
     pub max_iterations: usize,
     pub max_tokens: u32,
     pub temperature: f32,

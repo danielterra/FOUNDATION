@@ -16,6 +16,7 @@ pub mod local_model;
 pub mod imap;
 mod settings;
 mod recovery;
+mod notification;
 
 pub use setup::*;
 pub use setup_ai::*;
@@ -32,3 +33,4 @@ pub use task::*;
 pub use local_model::LocalModelDownloadState;
 pub use settings::*;
 pub use recovery::*;
+pub use notification::*;

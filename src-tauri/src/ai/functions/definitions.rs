@@ -1,9 +1,9 @@
 use super::{ToolTemplate, Parameter};
 
-pub fn get_claude_tools() -> Vec<crate::ai::providers::ClaudeTool> {
+pub fn get_tool_definitions() -> Vec<crate::ai::providers::ToolDefinition> {
     get_available_tools()
         .into_iter()
-        .map(|f| f.to_claude_tool())
+        .map(|f| f.to_tool_definition())
         .collect()
 }
 
