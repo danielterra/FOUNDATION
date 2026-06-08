@@ -479,7 +479,7 @@
   .widget-container {
     position: absolute;
     transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s;
-    box-shadow: 0px 0px 10px #000;
+    box-shadow: 0px 0px 10px var(--background);
   }
 
   .widget-container.dragging,

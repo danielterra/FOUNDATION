@@ -6,7 +6,7 @@
   import SafeHtmlFrame from './SafeHtmlFrame.svelte';
   import PropertyEditForm from './PropertyEditForm.svelte';
   import RecurrenceEditor from './RecurrenceEditor.svelte';
-  import { focus } from '$lib/utils/actions';
+  import { Input } from '$lib/components/ui/input';
 
   let {
     detailGroup,
@@ -21,6 +21,16 @@
     onCancelEdit,
     openEntityInspector,
   } = $props();
+
+  let dateInputRef = $state(null);
+  let numericInputRef = $state(null);
+
+  $effect(() => {
+    if (dateInputRef) dateInputRef.focus();
+  });
+  $effect(() => {
+    if (numericInputRef) numericInputRef.focus();
+  });
 
   function editKey(propertyIri, valueIdx) {
     return `${propertyIri}::${valueIdx}`;
@@ -166,16 +176,16 @@
 
 {#snippet numericEditor(propertyIri, step)}
   <div class="date-edit-container">
-    <input
+    <Input
       class="date-input"
       type="number"
       {step}
       bind:value={draftValue}
+      bind:ref={numericInputRef}
       onkeydown={(e) => {
         if (e.key === 'Escape') onCancelEdit();
         else if (e.key === 'Enter') onSaveEdit(propertyIri);
       }}
-      use:focus
     />
     <div class="edit-actions">
       <button
@@ -207,15 +217,15 @@
   <div class="date-edit-container">
     {#if inputType === 'datetime-local'}
       <div class="datetime-pair">
-        <input
+        <Input
           class="date-input"
           type="date"
           value={datePart(draftValue)}
+          bind:ref={dateInputRef}
           oninput={(e) => draftValue = combineDatetime(e.currentTarget.value, timePart(draftValue))}
           onchange={(e) => draftValue = combineDatetime(e.currentTarget.value, timePart(draftValue))}
-          use:focus
         />
-        <input
+        <Input
           class="date-input"
           type="time"
           value={timePart(draftValue)}
@@ -228,17 +238,17 @@
         />
       </div>
     {:else}
-      <input
+      <Input
         class="date-input"
         type="date"
         value={draftValue}
+        bind:ref={dateInputRef}
         oninput={(e) => draftValue = e.currentTarget.value}
         onchange={(e) => draftValue = e.currentTarget.value}
         onkeydown={(e) => {
           if (e.key === 'Escape') onCancelEdit();
           else if (e.key === 'Enter') onSaveEdit(propertyIri);
         }}
-        use:focus
       />
     {/if}
     <div class="edit-actions">
@@ -669,7 +679,7 @@
     gap: 6px;
   }
 
-  .datetime-pair .date-input {
+  .datetime-pair :global([data-slot="input"].date-input) {
     flex: 1;
     min-width: 0;
   }
@@ -682,7 +692,7 @@
     min-width: 0;
   }
 
-  .date-input {
+  :global([data-slot="input"].date-input) {
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: none;
     color: var(--color-neutral-active);
@@ -690,6 +700,8 @@
     font-size: 14px;
     padding: 6px 8px;
     outline: none;
+    box-shadow: none;
+    height: auto;
     color-scheme: dark;
   }
 

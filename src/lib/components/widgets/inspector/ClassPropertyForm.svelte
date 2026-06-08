@@ -1,6 +1,8 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
-  import { focus } from '$lib/utils/actions';
+  import { Input } from '$lib/components/ui/input';
+  import { Textarea } from '$lib/components/ui/textarea';
+  import * as Select from '$lib/components/ui/select';
 
   let {
     mode = 'add',
@@ -37,6 +39,11 @@
   );
 
   let debounceTimer = null;
+  let labelInputRef = $state(null);
+
+  $effect(() => {
+    if (mode === 'add' && labelInputRef) labelInputRef.focus();
+  });
 
   $effect(() => {
     if (propertyType === 'datatype') {
@@ -115,14 +122,14 @@
 <div class="cpf-form">
   <div class="cpf-row">
     <label class="cpf-label" for="cpf-label-input">Label</label>
-    <input
+    <Input
+      bind:ref={labelInputRef}
       id="cpf-label-input"
       class="cpf-input"
       type="text"
       placeholder="Property name"
       bind:value={label}
       onkeydown={(e) => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') oncancel(); }}
-      use:focus={mode === 'add'}
     />
   </div>
 
@@ -153,11 +160,20 @@
   <div class="cpf-row">
     <span class="cpf-label">Range</span>
     {#if propertyType === 'datatype'}
-      <select class="cpf-select" bind:value={range}>
-        {#each XSD_TYPES as xsd}
-          <option value={xsd.value}>{xsd.label}</option>
-        {/each}
-      </select>
+      <Select.Root
+        type="single"
+        value={range}
+        onValueChange={(v) => { if (v) range = v; }}
+      >
+        <Select.Trigger class="cpf-select-trigger">
+          <Select.Value placeholder="Selecionar tipo" />
+        </Select.Trigger>
+        <Select.Content>
+          {#each XSD_TYPES as xsd}
+            <Select.Item value={xsd.value}>{xsd.label}</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
     {:else}
       <div class="cpf-class-picker">
         {#if selectedClassName}
@@ -170,7 +186,7 @@
           </div>
         {:else}
           <div class="cpf-class-search-wrap">
-            <input
+            <Input
               class="cpf-input"
               type="text"
               placeholder="Search for a class…"
@@ -202,7 +218,7 @@
   {#if needsUnit}
     <div class="cpf-row">
       <label class="cpf-label" for="cpf-unit-input">Unit</label>
-      <input
+      <Input
         id="cpf-unit-input"
         class="cpf-input"
         type="text"
@@ -214,13 +230,13 @@
 
   <div class="cpf-row">
     <label class="cpf-label" for="cpf-comment-input">Comment</label>
-    <textarea
+    <Textarea
       id="cpf-comment-input"
       class="cpf-textarea"
       placeholder="Optional description"
       bind:value={comment}
-      rows="2"
-    ></textarea>
+      rows={2}
+    />
   </div>
 
   <div class="cpf-actions">
@@ -265,7 +281,8 @@
     padding-top: 6px;
   }
 
-  .cpf-input {
+  :global([data-slot="input"].cpf-input),
+  :global([data-slot="textarea"].cpf-textarea) {
     flex: 1;
     min-width: 0;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
@@ -274,31 +291,27 @@
     font-family: var(--font-body);
     font-size: 14px;
     padding: 5px 8px;
-    outline: none;
+    height: auto;
+    border-radius: 0;
+    box-shadow: none;
+    min-height: unset;
   }
 
-  .cpf-textarea {
-    flex: 1;
-    min-width: 0;
-    background: color-mix(in srgb, var(--color-black) 50%, transparent);
-    border: none;
-    color: var(--color-neutral-active);
-    font-family: var(--font-body);
-    font-size: 14px;
-    padding: 5px 8px;
-    outline: none;
+  :global([data-slot="textarea"].cpf-textarea) {
     resize: vertical;
   }
 
-  .cpf-select {
+  :global(.cpf-select-trigger) {
     flex: 1;
+    min-width: 0;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: none;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 14px;
     padding: 5px 8px;
-    outline: none;
+    height: auto;
+    border-radius: 0;
     cursor: pointer;
   }
 
@@ -348,7 +361,7 @@
     align-items: center;
   }
 
-  .cpf-class-search-wrap .cpf-input {
+  :global(.cpf-class-search-wrap [data-slot="input"].cpf-input) {
     width: 100%;
   }
 

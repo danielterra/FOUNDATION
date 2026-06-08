@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Button } from '$lib/components/ui/button';
+
   interface SidebarEntry {
     id: string;
     icon: string;
@@ -28,26 +30,22 @@
   <div class="sidebar-header">
     <span class="sidebar-header-label">Widgets</span>
     <div class="sidebar-header-actions">
-      <button
-        type="button"
-        class="header-action-btn"
+      <Button
+        variant="ghost"
+        size="icon-sm"
         disabled={!hasOpenWidgets}
         onclick={() => onMinimizeAll?.()}
         title="Minimizar todos os widgets"
         aria-label="Minimizar todos os widgets"
-      >
-        <span class="material-symbols-outlined">vertical_align_bottom</span>
-      </button>
-      <button
-        type="button"
-        class="header-action-btn"
+      ><span class="material-symbols-outlined">vertical_align_bottom</span></Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
         disabled={!hasMinimizedWidgets}
         onclick={() => onRestoreAll?.()}
         title="Restaurar todos os widgets"
         aria-label="Restaurar todos os widgets"
-      >
-        <span class="material-symbols-outlined">vertical_align_top</span>
-      </button>
+      ><span class="material-symbols-outlined">vertical_align_top</span></Button>
     </div>
   </div>
   <div class="sidebar-list">
@@ -74,7 +72,7 @@
   .widget-sidebar {
     display: flex;
     flex-direction: column;
-    background: color-mix(in srgb, var(--color-white) 7%, var(--color-black));
+    background: var(--card);
     border-radius: var(--radius);
     overflow: hidden;
     flex-shrink: 0;
@@ -87,7 +85,7 @@
     justify-content: space-between;
     gap: 6px;
     padding: 4px 6px 4px 10px;
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
@@ -95,7 +93,7 @@
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.04em;
-    color: color-mix(in srgb, var(--color-white) 65%, transparent);
+    color: var(--muted-foreground);
     text-transform: uppercase;
   }
 
@@ -103,36 +101,6 @@
     display: flex;
     align-items: center;
     gap: 2px;
-  }
-
-  .header-action-btn {
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius);
-    color: color-mix(in srgb, var(--color-white) 70%, transparent);
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s, opacity 0.15s;
-    padding: 0;
-  }
-
-  .header-action-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-white) 10%, transparent);
-    color: var(--color-white);
-  }
-
-  .header-action-btn:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-  }
-
-  .header-action-btn .material-symbols-outlined {
-    font-size: 18px;
-    line-height: 1;
   }
 
   .sidebar-list {
@@ -155,7 +123,7 @@
     border: none;
     border-radius: var(--radius);
     background: transparent;
-    color: color-mix(in srgb, var(--color-white) 55%, transparent);
+    color: var(--muted-foreground);
     cursor: pointer;
     min-width: 0;
     width: 100%;
@@ -164,17 +132,17 @@
   }
 
   .sidebar-entry:hover {
-    background: color-mix(in srgb, var(--color-white) 8%, transparent);
-    color: var(--color-white);
+    background: var(--accent);
+    color: var(--accent-foreground);
   }
 
   .sidebar-entry.is-focused {
-    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
-    color: var(--color-interactive);
+    background: color-mix(in srgb, var(--primary) 20%, transparent);
+    color: var(--primary);
   }
 
   .sidebar-entry.is-focused:hover {
-    background: color-mix(in srgb, var(--color-interactive) 30%, transparent);
+    background: color-mix(in srgb, var(--primary) 30%, transparent);
   }
 
   .sidebar-entry.is-minimized {

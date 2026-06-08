@@ -1,6 +1,6 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
-  import { focus } from '$lib/utils/actions';
+  import { Input } from '$lib/components/ui/input';
 
   let {
     excludeIris = [],
@@ -14,6 +14,11 @@
   let searching = $state(false);
   let showDropdown = $state(false);
   let debounceTimer = null;
+  let searchInputRef = $state(null);
+
+  $effect(() => {
+    if (searchInputRef) searchInputRef.focus();
+  });
 
   async function search(q) {
     if (!q.trim()) {
@@ -52,9 +57,9 @@
 
 <div class="disjoint-select">
   <div class="search-row">
-    <input
+    <Input
+      bind:ref={searchInputRef}
       type="text"
-      use:focus
       class="search-input"
       placeholder="Buscar classe..."
       value={query}
@@ -97,7 +102,7 @@
     gap: 4px;
   }
 
-  .search-input {
+  :global([data-slot="input"].search-input) {
     flex: 1;
     padding: 6px 10px;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
@@ -105,11 +110,13 @@
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 13px;
+    height: auto;
+    border-radius: 0;
   }
 
-  .search-input:focus {
-    outline: none;
+  :global([data-slot="input"].search-input:focus-visible) {
     border-color: var(--color-interactive);
+    box-shadow: none;
   }
 
   .cancel-btn {

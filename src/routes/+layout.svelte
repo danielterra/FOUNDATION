@@ -1,7 +1,8 @@
 <script lang="ts">
+  import '../app.css';
+  import '$lib/colors.css';
   import '$lib/base.css';
   import '$lib/fonts.css';
-  import '$lib/colors.css';
   import '$lib/markdown.css';
   import { initializeLogging } from '$lib/logging.js';
   import { onMount, onDestroy } from 'svelte';
@@ -10,6 +11,8 @@
   import { listen } from '@tauri-apps/api/event';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { deleteConfirm } from '$lib/stores/deleteConfirm';
+  import * as Dialog from '$lib/components/ui/dialog';
+  import { Button } from '$lib/components/ui/button';
   import GlobalModal from '$lib/components/GlobalModal.svelte';
   import ThinkingDots from '$lib/components/ThinkingDots.svelte';
   import AppHeader from '$lib/components/AppHeader.svelte';
@@ -285,44 +288,48 @@
   </main>
 </div>
 
-{#if $deleteConfirm}
-  {@const dialog = $deleteConfirm}
-  {@const hasCascade = dialog.cascade_items.length > 0}
-  {@const hasImpact = hasCascade || dialog.backlink_count > 0}
-  <div class="global-overlay" role="dialog" aria-modal="true">
-    <div class="global-dialog">
-      <span class="material-symbols-outlined dialog-icon">delete_forever</span>
-      <p class="dialog-title">Excluir "{dialog.entityLabel}"?</p>
-      {#if hasImpact}
-        <div class="dialog-impact">
-          {#if hasCascade}
-            <p class="impact-heading">Também será excluído:</p>
-            <ul class="impact-list">
-              {#each dialog.cascade_items as item}
-                <li>
-                  <span class="impact-item-label">{item.label}</span>
-                  {#if item.type_label}<span class="impact-item-type">{item.type_label}</span>{/if}
-                </li>
-              {/each}
-            </ul>
-          {/if}
-          {#if dialog.backlink_count > 0}
-            <p class="backlink-note">
-              {dialog.backlink_count} {dialog.backlink_count === 1 ? 'referência' : 'referências'} a esta entidade {dialog.backlink_count === 1 ? 'será removida' : 'serão removidas'} de outras entidades (que não serão excluídas).
-            </p>
-          {/if}
-          <p class="impact-warning">Esta ação não pode ser desfeita pela interface.</p>
-        </div>
-      {:else}
-        <p class="dialog-warning">Esta ação não pode ser desfeita pela interface.</p>
-      {/if}
-      <div class="dialog-actions">
-        <button class="dialog-cancel-btn" onclick={dialog.onCancel}>Cancelar</button>
-        <button class="dialog-confirm-btn" onclick={dialog.onConfirm}>Excluir</button>
+<Dialog.Root open={$deleteConfirm !== null} onOpenChange={(o) => { if (!o) $deleteConfirm?.onCancel(); }}>
+  <Dialog.Content class="delete-confirm-content sm:max-w-[380px]" showCloseButton={false}>
+    {#if $deleteConfirm}
+      {@const dialog = $deleteConfirm}
+      {@const hasCascade = dialog.cascade_items.length > 0}
+      {@const hasImpact = hasCascade || dialog.backlink_count > 0}
+      <Dialog.Header class="items-center text-center gap-3">
+        <span class="material-symbols-outlined delete-dialog-icon">delete_forever</span>
+        <Dialog.Title class="delete-dialog-title">Excluir "{dialog.entityLabel}"?</Dialog.Title>
+      </Dialog.Header>
+      <div class="delete-dialog-body">
+        {#if hasImpact}
+          <div class="dialog-impact">
+            {#if hasCascade}
+              <p class="impact-heading">Também será excluído:</p>
+              <ul class="impact-list">
+                {#each dialog.cascade_items as item}
+                  <li>
+                    <span class="impact-item-label">{item.label}</span>
+                    {#if item.type_label}<span class="impact-item-type">{item.type_label}</span>{/if}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+            {#if dialog.backlink_count > 0}
+              <p class="backlink-note">
+                {dialog.backlink_count} {dialog.backlink_count === 1 ? 'referência' : 'referências'} a esta entidade {dialog.backlink_count === 1 ? 'será removida' : 'serão removidas'} de outras entidades (que não serão excluídas).
+              </p>
+            {/if}
+            <p class="impact-warning">Esta ação não pode ser desfeita pela interface.</p>
+          </div>
+        {:else}
+          <p class="dialog-warning">Esta ação não pode ser desfeita pela interface.</p>
+        {/if}
       </div>
-    </div>
-  </div>
-{/if}
+      <Dialog.Footer class="sm:justify-center gap-2">
+        <Button variant="outline" onclick={dialog.onCancel}>Cancelar</Button>
+        <Button variant="destructive" onclick={dialog.onConfirm}>Excluir</Button>
+      </Dialog.Footer>
+    {/if}
+  </Dialog.Content>
+</Dialog.Root>
 
 <GlobalModal />
 
@@ -466,47 +473,25 @@
     padding: 5px;
   }
 
-  .global-overlay {
-    position: fixed;
-    inset: 0;
-    background: color-mix(in srgb, var(--color-black) 70%, transparent);
-    backdrop-filter: blur(6px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 99999;
-  }
-
-  .global-dialog {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    padding: 28px 24px;
-    background: var(--color-surface-3);
-    border-radius: var(--radius);
-    max-width: 340px;
-    width: 90vw;
+  :global(.delete-confirm-content) {
     text-align: center;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
   }
 
-  .dialog-icon {
+  .delete-dialog-icon {
     font-size: 36px;
-    color: #ef4444;
+    color: var(--color-danger);
   }
 
-  .dialog-title {
-    font-family: var(--font-body);
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--color-neutral-active);
-    margin: 0;
+  :global(.delete-dialog-title) {
+    font-size: 14px !important;
     word-break: break-word;
   }
 
+  .delete-dialog-body {
+    padding: 0 4px;
+  }
+
   .dialog-warning {
-    font-family: var(--font-body);
     font-size: 12px;
     color: var(--color-neutral);
     margin: 0;
@@ -515,16 +500,16 @@
 
   .dialog-impact {
     width: 100%;
-    background: color-mix(in srgb, #ef4444 8%, transparent);
+    background: color-mix(in srgb, var(--color-danger) 8%, transparent);
     padding: 10px 14px;
+    border-radius: var(--radius);
     text-align: left;
   }
 
   .impact-heading {
-    font-family: var(--font-body);
     font-size: 11px;
     font-weight: 700;
-    color: color-mix(in srgb, #ef4444 80%, white);
+    color: color-mix(in srgb, var(--color-danger) 80%, white);
     margin: 0 0 6px 0;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -539,7 +524,6 @@
   }
 
   .impact-list li {
-    font-family: var(--font-body);
     font-size: 12px;
     color: var(--color-neutral-active);
     line-height: 1.4;
@@ -560,7 +544,6 @@
   }
 
   .backlink-note {
-    font-family: var(--font-body);
     font-size: 11px;
     color: var(--color-neutral);
     margin: 0 0 6px 0;
@@ -569,42 +552,10 @@
   }
 
   .impact-warning {
-    font-family: var(--font-body);
     font-size: 11px;
     color: var(--color-neutral);
     margin: 0;
     opacity: 0.7;
-  }
-
-  .dialog-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 4px;
-  }
-
-  .dialog-cancel-btn {
-    padding: 7px 18px;
-    background: color-mix(in srgb, var(--color-white) 8%, transparent);
-    color: var(--color-neutral-active);
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .dialog-confirm-btn {
-    padding: 7px 18px;
-    background: color-mix(in srgb, #ef4444 20%, transparent);
-    color: #ef4444;
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .dialog-confirm-btn:active {
-    background: color-mix(in srgb, #ef4444 35%, transparent);
-    color: var(--color-neutral-active);
   }
 
   .toast-stack {

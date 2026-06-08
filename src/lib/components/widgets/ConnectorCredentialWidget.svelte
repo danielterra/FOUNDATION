@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import WidgetContainer from './WidgetContainer.svelte';
+  import { Button } from '$lib/components/ui/button';
 
   let { widgetId, entityId = '', windowState = 'normal', onWindowStateChange } = $props();
 
@@ -163,9 +164,7 @@
         <span class="material-symbols-outlined">check_circle</span>
       </span>
     {/if}
-    <button class="action-btn" onclick={openInspector} title="Open inspector">
-      <span class="material-symbols-outlined">info</span>
-    </button>
+    <Button variant="ghost" size="icon" onclick={openInspector} title="Open inspector"><span class="material-symbols-outlined">info</span></Button>
   {/snippet}
 
   <div class="widget-content">
@@ -246,17 +245,17 @@
             disabled={saving}
             autocomplete="new-password"
           />
-          <button
-            class="secret-toggle"
+          <Button
+            variant="ghost"
+            size="icon"
             type="button"
             onclick={() => oauth2ShowSecret = !oauth2ShowSecret}
             aria-label={oauth2ShowSecret ? 'Ocultar client secret' : 'Mostrar client secret'}
-            tabindex="0"
           >
             <span class="material-symbols-outlined">
               {oauth2ShowSecret ? 'visibility_off' : 'visibility'}
             </span>
-          </button>
+          </Button>
         </div>
       </div>
       <div class="field-group">
@@ -278,15 +277,17 @@
               {#each oauth2ScopeList() as scope (scope)}
                 <span class="scope-chip">
                   <span class="scope-chip-label">{scope}</span>
-                  <button
-                    class="scope-chip-remove"
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     type="button"
+                    class="scope-chip-remove"
                     onclick={() => removeScope(scope)}
                     aria-label="Remover scope {scope}"
                     disabled={saving}
                   >
                     <span class="material-symbols-outlined">close</span>
-                  </button>
+                  </Button>
                 </span>
               {/each}
             </div>
@@ -303,15 +304,17 @@
                 if (e.key === 'Enter') { e.preventDefault(); addScope(); }
               }}
             />
-            <button
-              class="scope-add-btn"
+            <Button
+              variant="ghost"
+              size="icon"
               type="button"
+              class="scope-add-btn"
               onclick={addScope}
               disabled={saving || !oauth2ScopeInput.trim()}
               aria-label="Adicionar scope"
             >
               <span class="material-symbols-outlined">add</span>
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -332,22 +335,22 @@
     {/if}
 
     <div class="action-row">
-      <button class="btn btn-primary" onclick={saveCredential} disabled={saving}>
+      <Button variant="default" onclick={saveCredential} disabled={saving}>
         {#if saving}
           <span class="material-symbols-outlined spinning">progress_activity</span>
         {:else}
           <span class="material-symbols-outlined">save</span>
         {/if}
         Save
-      </button>
-      <button class="btn btn-secondary" onclick={testAuth} disabled={testing || !isConfigured}>
+      </Button>
+      <Button variant="secondary" onclick={testAuth} disabled={testing || !isConfigured}>
         {#if testing}
           <span class="material-symbols-outlined spinning">progress_activity</span>
         {:else}
           <span class="material-symbols-outlined">wifi_tethering</span>
         {/if}
         Test
-      </button>
+      </Button>
     </div>
   </div>
 </WidgetContainer>
@@ -355,7 +358,7 @@
 <style>
   .configured-badge .material-symbols-outlined {
     font-size: 18px;
-    color: var(--color-success, #22c55e);
+    color: var(--color-success);
   }
 
   .widget-content {
@@ -392,7 +395,7 @@
   }
 
   .field-select option {
-    background: #1e293b;
+    background: var(--color-surface-3);
     color: var(--color-neutral-active);
   }
 
@@ -406,18 +409,18 @@
   }
 
   .status-error {
-    background: color-mix(in srgb, var(--color-error, #ef4444) 10%, transparent);
-    color: var(--color-error, #ef4444);
+    background: color-mix(in srgb, var(--color-error) 10%, transparent);
+    color: var(--color-error);
   }
 
   .status-result.ok {
-    background: color-mix(in srgb, var(--color-success, #22c55e) 10%, transparent);
-    color: var(--color-success, #22c55e);
+    background: color-mix(in srgb, var(--color-success) 10%, transparent);
+    color: var(--color-success);
   }
 
   .status-result.fail {
-    background: color-mix(in srgb, var(--color-error, #ef4444) 10%, transparent);
-    color: var(--color-error, #ef4444);
+    background: color-mix(in srgb, var(--color-error) 10%, transparent);
+    color: var(--color-error);
   }
 
   .status-error .material-symbols-outlined,
@@ -432,45 +435,6 @@
     gap: 8px;
     margin-top: auto;
     padding-top: 4px;
-  }
-
-  .btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 16px;
-    border: none;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn .material-symbols-outlined {
-    font-size: 16px;
-  }
-
-  .btn-primary {
-    background: var(--color-interactive);
-    color: white;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    filter: brightness(1.1);
-  }
-
-  .btn-secondary {
-    background: color-mix(in srgb, var(--color-white) 10%, transparent);
-    color: var(--color-neutral-active);
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-white) 15%, transparent);
   }
 
   .spinning {
@@ -493,25 +457,20 @@
     min-width: 0;
   }
 
-  .secret-toggle {
-    background: color-mix(in srgb, var(--color-white) 8%, transparent);
-    border: none;
-    padding: 8px 10px;
-    cursor: pointer;
+  .secret-row :global([data-slot="button"]) {
     color: var(--color-neutral);
-    display: flex;
-    align-items: center;
     flex-shrink: 0;
-    transition: color 0.15s, background 0.15s;
+    background: color-mix(in srgb, var(--color-white) 8%, transparent);
+    border-radius: 0;
   }
 
-  .secret-toggle:hover {
+  .secret-row :global([data-slot="button"]:hover) {
     color: var(--color-neutral-active);
     background: color-mix(in srgb, var(--color-white) 14%, transparent);
   }
 
-  .secret-toggle .material-symbols-outlined {
-    font-size: 18px;
+  .secret-row :global([data-slot="button"] .material-symbols-outlined) {
+    font-size: 18px !important;
   }
 
   .scopes-field {
@@ -540,29 +499,21 @@
     font-weight: 600;
   }
 
-  .scope-chip-remove {
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    color: var(--color-interactive);
-    display: flex;
-    align-items: center;
+  :global(.scope-chip-remove) {
+    color: var(--color-interactive) !important;
     opacity: 0.7;
-    transition: opacity 0.15s;
+    padding: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: 0 !important;
   }
 
-  .scope-chip-remove:hover {
-    opacity: 1;
+  :global(.scope-chip-remove:hover) {
+    opacity: 1 !important;
   }
 
-  .scope-chip-remove:disabled {
-    cursor: not-allowed;
-    opacity: 0.3;
-  }
-
-  .scope-chip-remove .material-symbols-outlined {
-    font-size: 14px;
+  :global(.scope-chip-remove .material-symbols-outlined) {
+    font-size: 14px !important;
   }
 
   .scope-add-row {
@@ -576,28 +527,18 @@
     min-width: 0;
   }
 
-  .scope-add-btn {
-    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
-    border: none;
-    padding: 8px 10px;
-    cursor: pointer;
-    color: var(--color-interactive);
-    display: flex;
-    align-items: center;
+  :global(.scope-add-btn) {
+    color: var(--color-interactive) !important;
+    background: color-mix(in srgb, var(--color-interactive) 20%, transparent) !important;
+    border-radius: 0 !important;
     flex-shrink: 0;
-    transition: background 0.15s;
   }
 
-  .scope-add-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-interactive) 35%, transparent);
+  :global(.scope-add-btn:hover:not(:disabled)) {
+    background: color-mix(in srgb, var(--color-interactive) 35%, transparent) !important;
   }
 
-  .scope-add-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .scope-add-btn .material-symbols-outlined {
-    font-size: 18px;
+  :global(.scope-add-btn .material-symbols-outlined) {
+    font-size: 18px !important;
   }
 </style>

@@ -1,9 +1,12 @@
-button {
-  border: none;
-}
-
-body {
-  background-color: #1a1a1a;
+/*
+ * Resets de elemento em foundation-reset: menor prioridade que
+ * @layer utilities do Tailwind. Garante que utilities como `border`
+ * e `px-4` nos componentes shadcn não sejam anuladas por `button { border: none }`.
+ */
+@layer foundation-reset {
+  button {
+    border: none;
+  }
 }
 
 /* ============================================================================

@@ -3,7 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import WidgetContainer from './WidgetContainer.svelte';
-  import Button from '../Button.svelte';
+  import { Button } from '$lib/components/ui/button';
   import SafeHtmlFrame from './inspector/SafeHtmlFrame.svelte';
 
   let {
@@ -121,7 +121,7 @@
     onClose={closeWidget}
   >
     {#snippet headerActions()}
-      <Button icon="open_in_new" title="Abrir no Inspector" onclick={openInspector} />
+      <Button variant="ghost" size="icon" title="Abrir no Inspector" onclick={openInspector}><span class="material-symbols-outlined">open_in_new</span></Button>
     {/snippet}
     {#snippet children()}
       <div class="email-body">

@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { createEntitySubscription } from '$lib/realtime/subscriptions';
-  import Button from './Button.svelte';
+  import { Button } from '$lib/components/ui/button';
   import { appState } from '$lib/appState.svelte';
 
   let pendingCount = $state(0);
@@ -43,11 +43,10 @@
 </script>
 
 <div class="bell-wrapper">
-  <Button
-    icon="notifications"
+  <Button variant="ghost" size="icon"
     title={pendingCount > 0 ? `${pendingCount} notificação(ões) pendente(s)` : 'Histórico de notificações'}
     onclick={openNotificationCenter}
-  />
+  ><span class="material-symbols-outlined">notifications</span></Button>
   {#if pendingCount > 0}
     <span class="bell-badge">{pendingCount > 99 ? '99+' : pendingCount}</span>
   {/if}

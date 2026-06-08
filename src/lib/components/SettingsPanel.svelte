@@ -1,7 +1,8 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
-	import Button from './Button.svelte';
-	import Modal from './Modal.svelte';
+	import { Button } from '$lib/components/ui/button';
+	import * as Dialog from '$lib/components/ui/dialog';
+	import { Input } from '$lib/components/ui/input';
 	import posthog from 'posthog-js';
 
 	let { onClose } = $props();
@@ -623,7 +624,7 @@
 	<div class="panel" role="dialog" aria-modal="true" aria-label="Settings">
 		<div class="panel-header">
 			<span class="panel-title">Settings</span>
-			<Button icon="close" title="Close" onclick={onClose} />
+			<Button variant="ghost" size="icon" title="Close" onclick={onClose}><span class="material-symbols-outlined">close</span></Button>
 		</div>
 
 		<div class="panel-body">
@@ -648,20 +649,17 @@
 							<p class="hint">Loading…</p>
 						{:else}
 							<div class="field-row">
-								<input
+								<Input
 									id="settings-api-key-input"
-									class="text-input"
 									type="password"
 									placeholder={selectedServiceIsOpenRouter ? 'sk-or-…' : 'sk-ant-…'}
 									bind:value={apiKey}
 								/>
-								<Button
-									variant="danger"
-									icon="delete"
+								<Button variant="destructive" size="icon"
 									title="Remover chave de API"
 									onclick={deleteApiKey}
 									disabled={apiKeyDeleting || !loadedApiKey}
-								/>
+								><span class="material-symbols-outlined">delete</span></Button>
 							</div>
 						{/if}
 					{/if}
@@ -669,9 +667,8 @@
 					{#if selectedServiceIsOpenRouter}
 						<label class="field-label" for="settings-base-url-input">URL Base</label>
 						<div class="field-row">
-							<input
+							<Input
 								id="settings-base-url-input"
-								class="text-input"
 								type="url"
 								placeholder="https://openrouter.ai/api/v1"
 								bind:value={baseUrl}
@@ -691,7 +688,7 @@
 						</div>
 					{:else if selectedServiceIsOpenRouter && apiKey.trim() && openRouterModels.length === 0}
 						<div class="field-row">
-							<Button onclick={loadOpenRouterModels}>Carregar modelos</Button>
+							<Button variant="default" onclick={loadOpenRouterModels}>Carregar modelos</Button>
 						</div>
 					{/if}
 
@@ -701,7 +698,7 @@
 							{#each fallbackModelIds as fbId, i}
 								<div class="field-row" style="width:100%;">
 									<span class="text-input" style="flex:1;padding:4px 8px;font-size:0.85em;">{fbId}</span>
-									<Button icon="remove" title="Remover" onclick={() => { fallbackModelIds = fallbackModelIds.filter((_, idx) => idx !== i); }} />
+									<Button variant="ghost" size="icon" title="Remover" onclick={() => { fallbackModelIds = fallbackModelIds.filter((_, idx) => idx !== i); }}><span class="material-symbols-outlined">remove</span></Button>
 								</div>
 							{/each}
 							<div class="field-row" style="width:100%;">
@@ -737,7 +734,7 @@
 					{/if}
 
 					<div class="field-row">
-						<Button onclick={saveAiConfig} disabled={aiSaving || !aiCanSave}>
+						<Button variant="default" onclick={saveAiConfig} disabled={aiSaving || !aiCanSave}>
 							{aiSaving ? 'Salvando…' : 'Salvar'}
 						</Button>
 					</div>
@@ -768,12 +765,12 @@
 					</div>
 					<p class="progress-detail">{formatBytes(localModelDownloadedBytes)} / {formatBytes(localModelTotalBytes)}</p>
 					<div class="field-row">
-						<Button variant="danger" onclick={cancelModelDownload}>Cancelar</Button>
+						<Button variant="destructive" onclick={cancelModelDownload}>Cancelar</Button>
 					</div>
 				{:else}
 					<p class="hint">Modelo não instalado · {localModelSizeHuman}</p>
 					<div class="field-row">
-						<Button icon="download" onclick={startModelDownload}>Baixar modelo</Button>
+						<Button variant="default" onclick={startModelDownload}><span class="material-symbols-outlined">download</span>Baixar modelo</Button>
 					</div>
 				{/if}
 				{#if localModelMessage}
@@ -797,9 +794,9 @@
 							<span class="imap-account-label">{account.label}</span>
 							<span class="imap-account-host">{account.username}@{account.host}</span>
 						</div>
-						<Button size="sm" icon="history" title="Histórico de sincronização" onclick={() => toggleImapHistory(account.iri)} />
-						<Button size="sm" icon="edit" title="Editar" onclick={() => startEditImapAccount(account)} />
-						<Button size="sm" variant="danger" icon="delete" title="Remover" disabled={imapDeleting} onclick={() => deleteImapAccount(account.iri)} />
+						<Button variant="ghost" size="icon-sm" title="Histórico de sincronização" onclick={() => toggleImapHistory(account.iri)}><span class="material-symbols-outlined">history</span></Button>
+						<Button variant="ghost" size="icon-sm" title="Editar" onclick={() => startEditImapAccount(account)}><span class="material-symbols-outlined">edit</span></Button>
+						<Button variant="destructive" size="icon-sm" title="Remover" disabled={imapDeleting} onclick={() => deleteImapAccount(account.iri)}><span class="material-symbols-outlined">delete</span></Button>
 					</div>
 					{#if imapHistoryAccountIri === account.iri}
 						<div class="sync-history">
@@ -834,95 +831,99 @@
 				{/if}
 
 				<div class="field-row">
-					<Button icon="add" onclick={startAddImapAccount}>Adicionar conta</Button>
+					<Button variant="default" onclick={startAddImapAccount}><span class="material-symbols-outlined">add</span>Adicionar conta</Button>
 				</div>
 			</section>
 
-			<Modal
-				open={imapEditing !== null}
-				title={imapEditing === 'new' ? 'Nova conta de email' : 'Editar conta de email'}
-				icon="mail"
-				size="md"
-				onClose={cancelImapEdit}
-			>
-				<div class="form-field">
-					<label class="field-label" for="imap-label">Rótulo</label>
-					<input id="imap-label" class="text-input" type="text" placeholder="Gmail Pessoal" bind:value={imapForm.label} />
-				</div>
+			<Dialog.Root open={imapEditing !== null} onOpenChange={(o) => { if (!o) cancelImapEdit(); }}>
+				<Dialog.Content class="sm:max-w-[480px]">
+					<Dialog.Header>
+						<Dialog.Title>
+							<span class="material-symbols-outlined" style="vertical-align: middle; font-size: 18px; margin-right: 6px;">mail</span>
+							{imapEditing === 'new' ? 'Nova conta de email' : 'Editar conta de email'}
+						</Dialog.Title>
+					</Dialog.Header>
 
-				<div class="form-grid">
-					<div class="form-field" style="flex:3; min-width:0">
-						<label class="field-label" for="imap-host">Servidor IMAP</label>
-						<input id="imap-host" class="text-input" type="text" placeholder="imap.gmail.com" bind:value={imapForm.host} />
-					</div>
-					<div class="form-field" style="flex:1; min-width:80px">
-						<label class="field-label" for="imap-port">Porta</label>
-						<input id="imap-port" class="text-input" type="number" placeholder="993" bind:value={imapForm.port} min="1" max="65535" />
-					</div>
-				</div>
-
-				<div class="form-field">
-					<label class="field-label" for="imap-username">Usuário</label>
-					<input id="imap-username" class="text-input" type="text" placeholder="seu@email.com" bind:value={imapForm.username} autocomplete="off" />
-				</div>
-
-				<div class="form-field">
-					<label class="field-label" for="imap-password">Senha</label>
-					<input
-						id="imap-password"
-						class="text-input"
-						type="password"
-						placeholder={imapHasExistingPassword ? '••••••••' : 'Senha de aplicativo'}
-						bind:value={imapForm.password}
-						autocomplete="new-password"
-					/>
-					{#if imapHasExistingPassword}
-						<p class="hint">Deixe em branco para manter a senha salva.</p>
-					{/if}
-				</div>
-
-				<div class="field-row imap-options-row">
-					<label class="checkbox-label">
-						<input type="checkbox" bind:checked={imapForm.use_tls} />
-						Usar TLS
-					</label>
-					<label class="checkbox-label" style="margin-left:auto">
-						Sincronizar a cada
-						<input class="text-input interval-input" type="number" bind:value={imapForm.sync_interval_minutes} min="1" max="1440" />
-						min
-					</label>
-				</div>
-
-				{#if imapAvailableFolders.length > 0}
-					<div class="form-field">
-						<span class="field-label">Pastas monitoradas</span>
-						<div class="imap-folders">
-							{#each imapAvailableFolders as folder}
-								<label class="checkbox-label folder-label">
-									<input type="checkbox" checked={imapSelectedFolders.includes(folder)} onchange={() => toggleImapFolder(folder)} />
-									{folder}
-								</label>
-							{/each}
+					<div class="imap-form-body">
+						<div class="form-field">
+							<label class="field-label" for="imap-label">Rótulo</label>
+							<Input id="imap-label" type="text" placeholder="Gmail Pessoal" bind:value={imapForm.label} />
 						</div>
+
+						<div class="form-grid">
+							<div class="form-field" style="flex:3; min-width:0">
+								<label class="field-label" for="imap-host">Servidor IMAP</label>
+								<Input id="imap-host" type="text" placeholder="imap.gmail.com" bind:value={imapForm.host} />
+							</div>
+							<div class="form-field" style="flex:1; min-width:80px">
+								<label class="field-label" for="imap-port">Porta</label>
+								<Input id="imap-port" type="number" placeholder="993" bind:value={imapForm.port} min="1" max="65535" />
+							</div>
+						</div>
+
+						<div class="form-field">
+							<label class="field-label" for="imap-username">Usuário</label>
+							<Input id="imap-username" type="text" placeholder="seu@email.com" bind:value={imapForm.username} autocomplete="off" />
+						</div>
+
+						<div class="form-field">
+							<label class="field-label" for="imap-password">Senha</label>
+							<Input
+								id="imap-password"
+								type="password"
+								placeholder={imapHasExistingPassword ? '••••••••' : 'Senha de aplicativo'}
+								bind:value={imapForm.password}
+								autocomplete="new-password"
+							/>
+							{#if imapHasExistingPassword}
+								<p class="hint">Deixe em branco para manter a senha salva.</p>
+							{/if}
+						</div>
+
+						<div class="field-row imap-options-row">
+							<label class="checkbox-label">
+								<input type="checkbox" bind:checked={imapForm.use_tls} />
+								Usar TLS
+							</label>
+							<label class="checkbox-label" style="margin-left:auto">
+								Sincronizar a cada
+								<Input class="interval-input" type="number" bind:value={imapForm.sync_interval_minutes} min="1" max="1440" />
+								min
+							</label>
+						</div>
+
+						{#if imapAvailableFolders.length > 0}
+							<div class="form-field">
+								<span class="field-label">Pastas monitoradas</span>
+								<div class="imap-folders">
+									{#each imapAvailableFolders as folder}
+										<label class="checkbox-label folder-label">
+											<input type="checkbox" checked={imapSelectedFolders.includes(folder)} onchange={() => toggleImapFolder(folder)} />
+											{folder}
+										</label>
+									{/each}
+								</div>
+							</div>
+						{:else if imapLoadingFolders}
+							<p class="hint">Carregando pastas…</p>
+						{/if}
+
+						{#if imapMessage}
+							<p class="feedback" class:error={imapError}>{imapMessage}</p>
+						{/if}
 					</div>
-				{:else if imapLoadingFolders}
-					<p class="hint">Carregando pastas…</p>
-				{/if}
 
-				{#if imapMessage}
-					<p class="feedback" class:error={imapError}>{imapMessage}</p>
-				{/if}
-
-				{#snippet footer()}
-					<Button onclick={cancelImapEdit}>Cancelar</Button>
-					<Button onclick={testImapConnection} disabled={imapTesting || !imapForm.host || !imapForm.username || !imapForm.password}>
-						{imapTesting ? 'Testando…' : 'Testar conexão'}
-					</Button>
-					<Button onclick={saveImapAccount} disabled={imapSaving || !imapForm.label || !imapForm.host || !imapForm.username || (!imapHasExistingPassword && !imapForm.password)}>
-						{imapSaving ? 'Salvando…' : 'Salvar'}
-					</Button>
-				{/snippet}
-			</Modal>
+					<Dialog.Footer>
+						<Button variant="ghost" onclick={cancelImapEdit}>Cancelar</Button>
+						<Button variant="default" onclick={testImapConnection} disabled={imapTesting || !imapForm.host || !imapForm.username || !imapForm.password}>
+							{imapTesting ? 'Testando…' : 'Testar conexão'}
+						</Button>
+						<Button variant="default" onclick={saveImapAccount} disabled={imapSaving || !imapForm.label || !imapForm.host || !imapForm.username || (!imapHasExistingPassword && !imapForm.password)}>
+							{imapSaving ? 'Salvando…' : 'Salvar'}
+						</Button>
+					</Dialog.Footer>
+				</Dialog.Content>
+			</Dialog.Root>
 
 			<section class="settings-section">
 				<h3 class="section-title">
@@ -931,22 +932,18 @@
 				</h3>
 				<p class="hint">Pasta onde o banco de dados do Foundation é armazenado. O app será reiniciado ao salvar.</p>
 				<div class="field-row">
-					<input
-						class="text-input"
+					<Input
 						type="text"
 						placeholder="/caminho/para/pasta"
 						bind:value={foundationDir}
 					/>
-					<Button icon="folder_open" title="Selecionar pasta" onclick={browseFoundationDir} />
+					<Button variant="ghost" size="icon" title="Selecionar pasta" onclick={browseFoundationDir}><span class="material-symbols-outlined">folder_open</span></Button>
 				</div>
 				<div class="field-row">
-					<Button
-						icon="restart_alt"
+					<Button variant="default"
 						onclick={saveFoundationDir}
 						disabled={foundationDirSaving || !foundationDir.trim()}
-					>
-						{foundationDirSaving ? 'Salvando…' : 'Salvar e reiniciar'}
-					</Button>
+					><span class="material-symbols-outlined">restart_alt</span>{foundationDirSaving ? 'Salvando…' : 'Salvar e reiniciar'}</Button>
 				</div>
 				{#if foundationDirMessage}
 					<p class="feedback" class:error={foundationDirError}>{foundationDirMessage}</p>
@@ -960,9 +957,7 @@
 				</h3>
 				<p class="hint">Instala uma extensão no Claude Desktop que expõe as ferramentas do Foundation. O app Foundation precisa estar aberto para a extensão funcionar.</p>
 				<div class="field-row">
-					<Button icon="download" onclick={connectClaudeDesktop} disabled={claudeConnecting}>
-						{claudeConnecting ? 'Preparando…' : 'Preparar instalador'}
-					</Button>
+					<Button variant="default" onclick={connectClaudeDesktop} disabled={claudeConnecting}><span class="material-symbols-outlined">download</span>{claudeConnecting ? 'Preparando…' : 'Preparar instalador'}</Button>
 				</div>
 				{#if claudeFilePath}
 					<div class="claude-instructions">
@@ -1007,12 +1002,9 @@
 				</h3>
 				<p class="hint">Ferramentas para teste e depuração.</p>
 				<div class="field-row">
-					<Button
-						icon="refresh"
+					<Button variant="default"
 						onclick={async () => { await invoke('setup__reset'); }}
-					>
-						Refazer setup inicial
-					</Button>
+					><span class="material-symbols-outlined">refresh</span>Refazer setup inicial</Button>
 				</div>
 			</section>
 
@@ -1025,7 +1017,7 @@
 					<p class="log-path">{logPath}</p>
 				{/if}
 				<div class="field-row">
-					<Button variant="danger" onclick={clearLogs} disabled={logClearing}>
+					<Button variant="destructive" onclick={clearLogs} disabled={logClearing}>
 						{logClearing ? 'Clearing…' : 'Clear logs'}
 					</Button>
 				</div>
@@ -1292,11 +1284,12 @@
 		cursor: pointer;
 	}
 
-	.interval-input {
+	:global([data-slot="input"].interval-input) {
 		flex: none;
 		width: 52px;
 		display: inline-block;
 		padding: 4px 6px;
+		height: auto;
 	}
 
 	.imap-folders {
@@ -1375,5 +1368,13 @@
 		font-size: 12px;
 		color: var(--color-neutral);
 		line-height: 1.5;
+	}
+
+	.imap-form-body {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		overflow-y: auto;
+		max-height: 60vh;
 	}
 </style>

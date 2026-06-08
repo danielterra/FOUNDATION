@@ -1,5 +1,7 @@
 <script>
   import MarkdownValue from './MarkdownValue.svelte';
+  import { Input } from '$lib/components/ui/input';
+  import { Textarea } from '$lib/components/ui/textarea';
 
   let { label, comment, onSave, openEntityInspector = null } = $props();
 
@@ -34,6 +36,7 @@
   }
 
   let commentTextareaEl = $state(null);
+  let labelInputEl = $state(null);
 
   $effect(() => {
     if (!commentTextareaEl) return;
@@ -42,23 +45,28 @@
     commentTextareaEl.style.height = Math.min(commentTextareaEl.scrollHeight, 400) + 'px';
   });
 
-  function focusOnMount(node) {
-    node.focus();
-    if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') {
-      const len = node.value.length;
-      node.setSelectionRange(len, len);
+  $effect(() => {
+    if (editingMeta === 'label' && labelInputEl) {
+      labelInputEl.focus();
+      const len = labelInputEl.value.length;
+      labelInputEl.setSelectionRange(len, len);
     }
-  }
+    if (editingMeta === 'comment' && commentTextareaEl) {
+      commentTextareaEl.focus();
+      const len = commentTextareaEl.value.length;
+      commentTextareaEl.setSelectionRange(len, len);
+    }
+  });
 </script>
 
 <div class="meta-field-row" class:editing={editingMeta === 'label'}>
   {#if editingMeta === 'label'}
-    <input
+    <Input
       class="meta-edit-input"
       bind:value={metaDraft}
+      bind:ref={labelInputEl}
       onkeydown={onKeydown}
       onblur={saveMetaEdit}
-      use:focusOnMount
     />
   {:else if onSave}
     <div
@@ -75,14 +83,13 @@
 
 <div class="meta-field-row" class:editing={editingMeta === 'comment'}>
   {#if editingMeta === 'comment'}
-    <textarea
+    <Textarea
       class="meta-edit-textarea"
       bind:value={metaDraft}
-      bind:this={commentTextareaEl}
+      bind:ref={commentTextareaEl}
       onkeydown={onKeydown}
       onblur={saveMetaEdit}
-      use:focusOnMount
-    ></textarea>
+    />
   {:else if onSave}
     <div
       class="description editable"
@@ -132,26 +139,23 @@
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
   }
 
-  .meta-edit-input {
+  :global([data-slot="input"].meta-edit-input) {
     width: 100%;
-    box-sizing: border-box;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     border: none;
-    padding: 6px 10px;
     font-family: var(--font-title);
     font-size: 16px;
     font-weight: 700;
     color: var(--color-neutral-active);
     outline: none;
+    box-shadow: none;
   }
 
-  .meta-edit-textarea {
+  :global([data-slot="textarea"].meta-edit-textarea) {
     width: 100%;
     min-height: 36px;
-    box-sizing: border-box;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     border: none;
-    padding: 8px 10px;
     font-family: inherit;
     font-size: 14px;
     color: var(--color-neutral-active);
@@ -159,6 +163,8 @@
     resize: none;
     overflow-y: auto;
     outline: none;
+    box-shadow: none;
+    field-sizing: fixed;
   }
 
   .description {

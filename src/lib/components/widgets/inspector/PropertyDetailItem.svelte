@@ -9,7 +9,7 @@
   import PropertySelect from './PropertySelect.svelte';
   import RecurrenceEditor from './RecurrenceEditor.svelte';
   import QueryConfigEditor from './QueryConfigEditor.svelte';
-  import { focus } from '$lib/utils/actions';
+  import { Input } from '$lib/components/ui/input';
 
   let {
     detailGroup,
@@ -70,6 +70,17 @@
 
   let editingQueryConfigKey = $state(null);
   let savingQueryConfig = $state(false);
+
+  let dateInputRef = $state(null);
+  let numericInputRef = $state(null);
+  let cardinalityMinRef = $state(null);
+
+  $effect(() => {
+    if (dateInputRef) dateInputRef.focus();
+  });
+  $effect(() => {
+    if (numericInputRef) numericInputRef.focus();
+  });
 
   async function saveQueryConfigEdit(propertyIri, json) {
     if (!onSaveQueryConfig || savingQueryConfig) return;
@@ -295,15 +306,15 @@
   <div class="date-edit-container">
     {#if inputType === 'datetime-local'}
       <div class="datetime-pair">
-        <input
+        <Input
           class="date-input"
           type="date"
           value={datePart(draftValue)}
+          bind:ref={dateInputRef}
           oninput={(e) => draftValue = combineDatetime(e.currentTarget.value, timePart(draftValue))}
           onchange={(e) => draftValue = combineDatetime(e.currentTarget.value, timePart(draftValue))}
-          use:focus
         />
-        <input
+        <Input
           class="date-input"
           type="time"
           value={timePart(draftValue)}
@@ -316,17 +327,17 @@
         />
       </div>
     {:else}
-      <input
+      <Input
         class="date-input"
         type="date"
         value={draftValue}
+        bind:ref={dateInputRef}
         oninput={(e) => draftValue = e.currentTarget.value}
         onchange={(e) => draftValue = e.currentTarget.value}
         onkeydown={(e) => {
           if (e.key === 'Escape') cancelEdit();
           else if (e.key === 'Enter') saveEdit(propertyIri);
         }}
-        use:focus
       />
     {/if}
     <div class="edit-actions">
@@ -357,16 +368,16 @@
 
 {#snippet numericEditor(propertyIri)}
   <div class="date-edit-container">
-    <input
+    <Input
       class="date-input"
       type="number"
       step={numericStep(editingDatatype)}
       bind:value={draftValue}
+      bind:ref={numericInputRef}
       onkeydown={(e) => {
         if (e.key === 'Escape') cancelEdit();
         else if (e.key === 'Enter') saveEdit(propertyIri);
       }}
-      use:focus
     />
     <div class="edit-actions">
       <button
@@ -526,20 +537,21 @@
     <div class="cardinality-edit-form">
       <div class="cardinality-edit-row">
         <label class="cardinality-edit-label" for="cardinality-min-input">Min</label>
-        <input
+        <Input
           id="cardinality-min-input"
           class="cardinality-input"
           type="number"
           min="0"
           bind:value={cardinalityDraftMin}
           placeholder="0"
+          bind:ref={cardinalityMinRef}
           onkeydown={(e) => {
             if (e.key === 'Escape') cancelCardinalityEdit();
             else if (e.key === 'Enter') saveCardinalityEdit(detailGroup.property);
           }}
         />
         <label class="cardinality-edit-label" for="cardinality-max-input">Max</label>
-        <input
+        <Input
           id="cardinality-max-input"
           class="cardinality-input"
           type="number"
@@ -837,19 +849,21 @@
     min-width: 26px;
   }
 
-  .cardinality-input {
+  :global([data-slot="input"].cardinality-input) {
     width: 70px;
+    height: auto;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     border: none;
     padding: 4px 8px;
     font-size: 14px;
     color: var(--color-neutral-active);
     outline: none;
+    box-shadow: none;
     text-align: center;
   }
 
-  .cardinality-input::-webkit-inner-spin-button,
-  .cardinality-input::-webkit-outer-spin-button {
+  :global([data-slot="input"].cardinality-input::-webkit-inner-spin-button),
+  :global([data-slot="input"].cardinality-input::-webkit-outer-spin-button) {
     opacity: 0.4;
   }
 
@@ -988,7 +1002,7 @@
     gap: 6px;
   }
 
-  .datetime-pair .date-input {
+  .datetime-pair :global([data-slot="input"].date-input) {
     flex: 1;
     min-width: 0;
   }
@@ -1001,7 +1015,7 @@
     min-width: 0;
   }
 
-  .date-input {
+  :global([data-slot="input"].date-input) {
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: none;
     color: var(--color-neutral-active);
@@ -1009,6 +1023,8 @@
     font-size: 14px;
     padding: 6px 8px;
     outline: none;
+    box-shadow: none;
+    height: auto;
     color-scheme: dark;
   }
 

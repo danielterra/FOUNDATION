@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
-	import Card from '$lib/components/Card.svelte';
+	import { Card } from '$lib/components/ui/card';
 	import PropertyRow from '$lib/components/graph/PropertyRow.svelte';
 	import PropertyGroup from '$lib/components/graph/PropertyGroup.svelte';
 
@@ -151,9 +151,8 @@
 	class:fixed={isFixed}
 >
 	{#if !isFixed}
-		<Card>
-			{#snippet children()}
-				<div class="panel-wrapper" class:folded={isFolded}>
+		<Card class="p-0 gap-0">
+			<div class="panel-wrapper" class:folded={isFolded}>
 				<div class="panel-header panel-drag-handle">
 				<div class="panel-header-drag panel-drag-handle">
 					<span class="drag-handle">⋮⋮</span>
@@ -218,7 +217,6 @@
 			</div>
 			{/if}
 		</div>
-		{/snippet}
 	</Card>
 	{:else}
 		<div class="fixed-panel-wrapper">

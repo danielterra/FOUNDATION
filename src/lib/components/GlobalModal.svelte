@@ -1,10 +1,10 @@
 <script lang="ts">
   import { modal } from '$lib/stores/modal';
+  import * as Dialog from '$lib/components/ui/dialog';
 
   function close() {
     modal.set(null);
   }
-
 
   function highlightJson(json: string): string {
     return json
@@ -24,19 +24,13 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && $modal) close(); }} />
-
-{#if $modal}
-  {@const m = $modal}
-  <div class="modal-overlay">
-    <button class="modal-backdrop" onclick={close} aria-label="Fechar modal"></button>
-    <div class="modal-panel" role="dialog" tabindex="-1">
-      <div class="modal-header">
-        <span class="modal-title">{m.title}</span>
-        <button class="modal-close" onclick={close}>
-          <span class="material-symbols-outlined">close</span>
-        </button>
-      </div>
+<Dialog.Root open={$modal !== null} onOpenChange={(o) => { if (!o) close(); }}>
+  <Dialog.Content class="global-modal-content sm:max-w-[640px] max-h-[80vh] flex flex-col">
+    {#if $modal}
+      {@const m = $modal}
+      <Dialog.Header>
+        <Dialog.Title><span class="modal-title">{m.title}</span></Dialog.Title>
+      </Dialog.Header>
       <div class="modal-body">
         {#if m.html}
           <div class="modal-markdown markdown-content">{@html m.html}</div>
@@ -52,47 +46,13 @@
           </div>
         {/if}
       </div>
-    </div>
-  </div>
-{/if}
+    {/if}
+  </Dialog.Content>
+</Dialog.Root>
 
 <style>
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 99998;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .modal-backdrop {
-    position: absolute;
-    inset: 0;
-    background: color-mix(in srgb, var(--color-black) 60%, transparent);
-    backdrop-filter: blur(4px);
-    border: none;
-    cursor: pointer;
-  }
-
-  .modal-panel {
-    position: relative;
-    z-index: 1;
-    background: var(--color-surface-3);
-    border-radius: var(--radius);
-    width: min(640px, 90vw);
-    max-height: 80vh;
-    display: flex;
-    flex-direction: column;
-    outline: none;
-  }
-
-  .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    flex-shrink: 0;
+  :global(.global-modal-content) {
+    overflow: hidden;
   }
 
   .modal-title {
@@ -102,24 +62,13 @@
     font-weight: 600;
   }
 
-  .modal-close {
-    background: none;
-    border: none;
-    color: var(--color-neutral-disabled);
-    cursor: pointer;
-    padding: 0;
-    display: flex;
-    align-items: center;
-  }
-
-  .modal-close .material-symbols-outlined {
-    font-size: 18px;
-  }
-
   .modal-body {
     overflow-y: auto;
-    padding: 14px;
+    padding: 14px 0 0;
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
   .modal-markdown {
@@ -167,7 +116,6 @@
     color: var(--color-neutral);
     line-height: 1.5;
   }
-
 
   .modal-section-json :global(.json-key)     { color: #9cdcfe; }
   .modal-section-json :global(.json-string)  { color: #ce9178; }

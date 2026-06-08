@@ -44,19 +44,19 @@
     align-items: stretch;
     width: 220px;
     cursor: pointer;
-    background: #130820;
-    color: #FFB74D;
+    background: var(--automation-node-nova-bg);
+    color: var(--automation-node-nova-text);
     overflow: hidden;
   }
   .side-tab {
     width: 28px;
     flex-shrink: 0;
-    background: #FF6F00;
+    background: var(--automation-node-nova-tab);
     display: flex;
     align-items: center;
     justify-content: center;
   }
-  .icon { font-size: 16px; color: #130820; font-variation-settings: 'FILL' 1; }
+  .icon { font-size: 16px; color: var(--automation-node-nova-bg); font-variation-settings: 'FILL' 1; }
   .content { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 8px 10px; min-width: 0; flex: 1; }
   .label { font-size: 12px; font-weight: 500; line-height: 1.3; }
   .sub { font-size: 9px; font-family: var(--font-body); opacity: 0.7; }

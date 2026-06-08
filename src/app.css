@@ -1,0 +1,199 @@
+/*
+ * FOUNDATION — Tailwind v4 base + shadcn-svelte token bridge
+ *
+ * Importa o engine de utilitários do Tailwind e declara as CSS vars
+ * que o shadcn-svelte espera, mapeadas para as vars semânticas em
+ * src/lib/colors.css (fonte de verdade de cor).
+ *
+ * Dark-only: o app não tem tema claro. O bloco .dark abaixo é estático
+ * e fixado na raiz em app.html via class="dark". color-scheme: dark
+ * garante que os controles do UA (scrollbar, inputs nativos) também
+ * entrem no modo escuro.
+ *
+ * Ordem das @layer (prioridade crescente — última declarada vence):
+ *   foundation-reset → theme → base → components → utilities
+ *
+ * Os resets globais de fonts.css e base.css ficam em foundation-reset,
+ * garantindo que as utilities Tailwind (em @layer utilities) sempre
+ * vençam seletores de elemento como `button` ou `*`.
+ */
+
+@layer foundation-reset, theme, base, components, utilities;
+
+@import "tailwindcss";
+
+/*
+ * Mapeamento de tokens shadcn → vars semânticas FOUNDATION.
+ * Definidos no escopo .dark (estático na raiz) para que as
+ * utilidades Tailwind dark:* e os componentes shadcn funcionem
+ * sem depender de media query prefers-color-scheme.
+ *
+ * colors.css precisa já ter sido carregado antes deste arquivo
+ * para que as vars --color-* estejam disponíveis.
+ */
+/*
+ * Paleta de identidade categórica BPMN — tokens por tipo de nó.
+ *
+ * Cada tipo de nó de automação tem uma cor de identidade visual distinta
+ * (não um papel semântico — não colapse tipos distintos num mesmo token).
+ * Trio por tipo: bg (fundo escuro do nó), tab (cor viva da aba lateral),
+ * text (cor do texto/ícone principal dentro do nó).
+ *
+ * Nós com papel semântico claro (eventos de início/fim) reutilizam
+ * --color-success / --color-danger da paleta semântica.
+ * O token --color-warning já cobre o aviso de tool calling do AgentTask.
+ *
+ * Dark-only: estas variáveis não têm bloco light — o app é dark-only.
+ */
+:root {
+  /* task — slate/cinza */
+  --automation-node-task-bg:   #1a1f2e;
+  --automation-node-task-tab:  #475569;
+  --automation-node-task-text: #e2e8f0;
+  --automation-node-task-icon: #f1f5f9;
+
+  /* agent — roxo profundo */
+  --automation-node-agent-bg:   #1e0d36;
+  --automation-node-agent-tab:  #8E24AA;
+  --automation-node-agent-text: #ce93d8;
+
+  /* code — azul */
+  --automation-node-code-bg:   #0d2744;
+  --automation-node-code-tab:  #1E88E5;
+  --automation-node-code-text: #90caf9;
+
+  /* script — teal */
+  --automation-node-script-bg:   #00211e;
+  --automation-node-script-tab:  #00897B;
+  --automation-node-script-text: #80cbc4;
+
+  /* request — laranja queimado */
+  --automation-node-request-bg:   #2d1600;
+  --automation-node-request-tab:  #FB8C00;
+  --automation-node-request-text: #ffcc80;
+
+  /* user — amarelo */
+  --automation-node-user-bg:   #201500;
+  --automation-node-user-tab:  #FDD835;
+  --automation-node-user-text: #fff59d;
+  --automation-node-user-meta: #a18a3a;
+
+  /* nova — âmbar */
+  --automation-node-nova-bg:   #130820;
+  --automation-node-nova-tab:  #FF6F00;
+  --automation-node-nova-text: #FFB74D;
+
+  /* gateway — violeta */
+  --automation-node-gateway-bg:   #1a0a2e;
+  --automation-node-gateway-tab:  #7B1FA2;
+  --automation-node-gateway-text: #ce93d8;
+
+  /* subprocess — ciano */
+  --automation-node-subprocess-bg:   #002030;
+  --automation-node-subprocess-tab:  #00ACC1;
+  --automation-node-subprocess-text: #80deea;
+
+  /* start-event / timer-start — derivados de --color-success (verde semântico) */
+  --automation-node-start-bg:   color-mix(in srgb, var(--color-success-base) 18%, black);
+  --automation-node-start-tab:  var(--color-success-base);
+  --automation-node-start-text: color-mix(in srgb, var(--color-success-base) 65%, white);
+
+  /* end-event — derivado de --color-danger (vermelho semântico) */
+  --automation-node-end-bg:   color-mix(in srgb, var(--color-danger-base) 18%, black);
+  --automation-node-end-tab:  var(--color-danger-base);
+  --automation-node-end-text: color-mix(in srgb, var(--color-danger-base) 65%, white);
+
+  /* io-label — etiqueta flutuante de handle de entrada/saída */
+  --automation-io-label-bg:   color-mix(in srgb, #64B5F6 18%, black);
+  --automation-io-label-text: #90CAF9;
+}
+
+@layer base {
+  /*
+   * Canonical shadcn-svelte base: pintar bordas com o token --border.
+   * No Tailwind v4 a utility `border` seta apenas border-width; sem esta
+   * regra a cor cai em currentColor (texto = branco no dark) → borda branca.
+   */
+  *, ::after, ::before, ::backdrop, ::file-selector-button {
+    border-color: var(--border);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+  }
+
+  .dark {
+    /* Superfícies — hierarquia de elevação crescente */
+    --background: var(--color-surface-0);   /* fundo da app: preto puro */
+    --card: var(--color-surface-1);         /* painéis / widgets */
+    --popover: var(--color-surface-3);      /* dropdowns / tooltips elevados */
+    --muted: var(--color-surface-2);        /* áreas silenciadas / separadores */
+    --accent: var(--color-surface-4);       /* hover de item em lista elevada */
+
+    /* Texto */
+    --foreground: var(--color-neutral);             /* texto principal */
+    --card-foreground: var(--color-neutral);
+    --popover-foreground: var(--color-neutral);
+    --muted-foreground: var(--color-neutral-disabled);
+    --accent-foreground: var(--color-neutral-active);
+
+    /* Interação — laranja semântico */
+    --primary: var(--color-interactive);
+    --primary-foreground: var(--color-neutral-on-interactive);
+
+    /* Secundário — muted como base neutra secundária */
+    --secondary: var(--color-surface-2);
+    --secondary-foreground: var(--color-neutral);
+
+    /* Perigo / destrutivo */
+    --destructive: var(--color-danger);
+    --destructive-foreground: var(--color-neutral-active);
+
+    /* Borda e input */
+    --border: var(--color-surface-3);
+    --input: var(--color-surface-2);
+
+    /* Foco-visível unificado */
+    --ring: var(--color-interactive);
+
+    /* Raio — reutiliza o --radius existente */
+    --radius: 10px;
+  }
+
+  /*
+   * color-scheme: dark garante que controles nativos do UA
+   * (scrollbars, date pickers, etc.) também entrem no modo escuro.
+   */
+  html.dark {
+    color-scheme: dark;
+  }
+}
+
+@theme {
+  /*
+   * Expõe os tokens shadcn como variáveis CSS para o Tailwind v4.
+   * As utilidades bg-background, text-foreground, border-border, etc.
+   * são geradas automaticamente a partir destes tokens.
+   */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-DEFAULT: var(--radius);
+}

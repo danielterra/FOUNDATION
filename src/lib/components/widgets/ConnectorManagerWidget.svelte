@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import WidgetContainer from './WidgetContainer.svelte';
+  import { Button } from '$lib/components/ui/button';
 
   let { widgetId, entityId = '', conversationIri = null, windowState = 'normal', onWindowStateChange } = $props();
 
@@ -109,31 +110,31 @@
 
     {#if !importMode}
       <div class="action-grid">
-        <button class="action-card" onclick={exportPackage} disabled={exporting}>
+        <Button variant="ghost" class="action-card" onclick={exportPackage} disabled={exporting}>
           <span class="material-symbols-outlined action-icon">upload</span>
           <span class="action-label">{exporting ? 'Exporting…' : 'Export Package'}</span>
           <span class="action-desc">Share connector as JSON</span>
-        </button>
-        <button class="action-card" onclick={() => { importMode = true; exportJson = null; message = null; }}>
+        </Button>
+        <Button variant="ghost" class="action-card" onclick={() => { importMode = true; exportJson = null; message = null; }}>
           <span class="material-symbols-outlined action-icon">download</span>
           <span class="action-label">Import Package</span>
           <span class="action-desc">Install connector from JSON</span>
-        </button>
-        <button class="action-card" onclick={openCredentials}>
+        </Button>
+        <Button variant="ghost" class="action-card" onclick={openCredentials}>
           <span class="material-symbols-outlined action-icon">vpn_key</span>
           <span class="action-label">Credentials</span>
           <span class="action-desc">Configure authentication</span>
-        </button>
+        </Button>
       </div>
 
       {#if exportJson}
         <div class="export-section">
           <div class="export-header">
             <span class="export-title">Package JSON</span>
-            <button class="copy-btn" onclick={copyJson}>
+            <Button variant="ghost" size="sm" class="copy-btn" onclick={copyJson}>
               <span class="material-symbols-outlined">content_copy</span>
               Copy
-            </button>
+            </Button>
           </div>
           <pre class="json-preview">{exportJson}</pre>
         </div>
@@ -149,17 +150,17 @@
           spellcheck="false"
         ></textarea>
         <div class="import-actions">
-          <button class="btn btn-primary" onclick={importPackage} disabled={importing || !importText.trim()}>
+          <Button variant="default" onclick={importPackage} disabled={importing || !importText.trim()}>
             {#if importing}
               <span class="material-symbols-outlined spinning">progress_activity</span>
             {:else}
               <span class="material-symbols-outlined">download</span>
             {/if}
             Import
-          </button>
-          <button class="btn btn-secondary" onclick={() => { importMode = false; message = null; }}>
+          </Button>
+          <Button variant="secondary" onclick={() => { importMode = false; message = null; }}>
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     {/if}
@@ -185,13 +186,13 @@
   }
 
   .status-msg.ok {
-    background: color-mix(in srgb, var(--color-success, #22c55e) 10%, transparent);
-    color: var(--color-success, #22c55e);
+    background: color-mix(in srgb, var(--color-success) 10%, transparent);
+    color: var(--color-success);
   }
 
   .status-msg.fail {
-    background: color-mix(in srgb, var(--color-error, #ef4444) 10%, transparent);
-    color: var(--color-error, #ef4444);
+    background: color-mix(in srgb, var(--color-error) 10%, transparent);
+    color: var(--color-error);
   }
 
   .status-msg .material-symbols-outlined {
@@ -206,25 +207,15 @@
     gap: 8px;
   }
 
-  .action-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    padding: 14px 8px;
-    background: color-mix(in srgb, var(--color-white) 6%, transparent);
-    cursor: pointer;
-    transition: background 0.2s;
+  :global(.action-card) {
+    flex-direction: column !important;
+    align-items: center !important;
+    height: auto !important;
+    gap: 6px !important;
+    padding: 14px 8px !important;
+    background: color-mix(in srgb, var(--color-white) 6%, transparent) !important;
     text-align: center;
-  }
-
-  .action-card:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
-  }
-
-  .action-card:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+    white-space: normal !important;
   }
 
   .action-icon {
@@ -263,25 +254,13 @@
     letter-spacing: 0.04em;
   }
 
-  .copy-btn {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    background: none;
-    border: none;
-    padding: 4px 8px;
-    font-size: 11px;
-    color: var(--color-interactive);
-    cursor: pointer;
-    transition: background 0.2s;
+  :global(.copy-btn) {
+    color: var(--color-interactive) !important;
+    font-size: 11px !important;
   }
 
-  .copy-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 10%, transparent);
-  }
-
-  .copy-btn .material-symbols-outlined {
-    font-size: 14px;
+  :global(.copy-btn .material-symbols-outlined) {
+    font-size: 14px !important;
   }
 
   .json-preview {
@@ -327,45 +306,6 @@
   .import-actions {
     display: flex;
     gap: 8px;
-  }
-
-  .btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 16px;
-    border: none;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn .material-symbols-outlined {
-    font-size: 16px;
-  }
-
-  .btn-primary {
-    background: var(--color-interactive);
-    color: white;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    filter: brightness(1.1);
-  }
-
-  .btn-secondary {
-    background: color-mix(in srgb, var(--color-white) 10%, transparent);
-    color: var(--color-neutral-active);
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-white) 15%, transparent);
   }
 
   .spinning {

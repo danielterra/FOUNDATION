@@ -1,5 +1,5 @@
 <script>
-	import Card from './Card.svelte';
+	import { Card } from '$lib/components/ui/card';
 	import ThinkingDots from './ThinkingDots.svelte';
 
 	let { message = '', progress = null } = $props();
@@ -8,7 +8,7 @@
 	let percentage = $derived(progress !== null ? Math.round(progress) : 0);
 </script>
 
-<Card>
+<Card class="p-4">
 	<div class="activity">
 		<p class="message">{message}</p>
 

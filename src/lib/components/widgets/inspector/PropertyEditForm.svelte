@@ -1,5 +1,6 @@
 <script>
-  import { focus } from '$lib/utils/actions';
+  import { Textarea } from '$lib/components/ui/textarea';
+  import { cn } from '$lib/utils';
   let { propertyIri, draftValue = $bindable(), saving, mono = false, onsave, oncancel } = $props();
 
   let textareaEl = $state(null);
@@ -10,21 +11,23 @@
     textareaEl.style.height = 'auto';
     textareaEl.style.height = Math.min(textareaEl.scrollHeight, 400) + 'px';
   });
+
+  $effect(() => {
+    if (textareaEl) textareaEl.focus();
+  });
 </script>
 
 <div class="edit-container">
-  <textarea
-    class="edit-textarea"
-    class:mono
+  <Textarea
+    class={cn('edit-textarea', mono && 'mono')}
     bind:value={draftValue}
-    bind:this={textareaEl}
+    bind:ref={textareaEl}
     onblur={() => onsave(propertyIri)}
     onkeydown={(e) => {
       if (e.key === 'Escape') oncancel();
       else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) onsave(propertyIri);
     }}
-    use:focus
-  ></textarea>
+  />
   <div class="edit-actions">
     <button
       class="edit-save-btn"
@@ -59,7 +62,7 @@
     min-width: 0;
   }
 
-  .edit-textarea {
+  :global([data-slot="textarea"].edit-textarea) {
     width: 100%;
     min-height: 36px;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
@@ -72,10 +75,12 @@
     resize: none;
     box-sizing: border-box;
     outline: none;
+    box-shadow: none;
     overflow-y: auto;
+    field-sizing: fixed;
   }
 
-  .edit-textarea.mono {
+  :global([data-slot="textarea"].edit-textarea.mono) {
     font-family: var(--font-mono, monospace);
     font-size: 13px;
   }

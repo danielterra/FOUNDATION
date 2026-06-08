@@ -1,13 +1,13 @@
 <script>
-	import Card from '$lib/components/Card.svelte';
-	import IconButton from '$lib/components/IconButton.svelte';
+	import { Card } from '$lib/components/ui/card';
+	import { Button } from '$lib/components/ui/button';
 
 	let { onRecenter, onOpenSearch, screenName = 'Ontology Graph' } = $props();
 </script>
 
 <div class="floating-top-bar">
 	<div class="left-controls">
-		<Card>
+		<Card class="py-2 px-3 gap-0">
 			<header class="floating-header">
 				<span class="screen-indicator">{screenName}</span>
 				<button class="search-trigger" onclick={onOpenSearch} aria-label="Search (/)">
@@ -16,7 +16,7 @@
 			</header>
 		</Card>
 
-		<IconButton icon="center_focus_strong" hint="Recenter graph (⌘0)" onclick={onRecenter} />
+		<Button variant="ghost" size="icon" title="Recenter graph (⌘0)" onclick={onRecenter}><span class="material-symbols-outlined">center_focus_strong</span></Button>
 	</div>
 </div>
 

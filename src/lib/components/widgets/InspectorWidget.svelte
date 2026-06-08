@@ -11,7 +11,7 @@
   import PropertyList from './inspector/PropertyList.svelte';
   import InspectorClassView from './inspector/InspectorClassView.svelte';
   import WidgetContainer from './WidgetContainer.svelte';
-  import Button from '../Button.svelte';
+  import { Button } from '$lib/components/ui/button';
 
   let {
     entityId, widgetId, refreshKey = 0, windowState = 'normal',
@@ -538,29 +538,25 @@
 
     {#snippet headerActions()}
       {#each widgetDefinitions as def}
-        <Button
-          icon={def.icon || 'open_in_new'}
+        <Button variant="ghost" size="icon"
           title={def.description}
           onclick={() => openWidgetForEntity(def.widget_type)}
-        />
+        ><span class="material-symbols-outlined">{def.icon || 'open_in_new'}</span></Button>
       {/each}
       {#if entityData}
-        <Button
-          icon={isLocked ? 'lock' : 'lock_open'}
+        <Button variant="ghost" size="icon"
           title={isLocked ? 'Unlock entity' : 'Lock entity'}
           disabled={togglingLock}
           onclick={toggleSystemLock}
-        />
+        ><span class="material-symbols-outlined">{isLocked ? 'lock' : 'lock_open'}</span></Button>
       {/if}
       {#if entityData && !entityData.isClass && !isLocked}
-        <Button
-          variant="danger"
-          icon="delete_forever"
+        <Button variant="destructive" size="icon"
           title="Delete"
           onclick={initiateDelete}
-        />
+        ><span class="material-symbols-outlined">delete_forever</span></Button>
       {/if}
-      <Button icon="content_copy" title="Copy IRI" onclick={copyEntityIri} />
+      <Button variant="ghost" size="icon" title="Copy IRI" onclick={copyEntityIri}><span class="material-symbols-outlined">content_copy</span></Button>
       {#if entityData?.status || (entityData?.allowedStatuses?.length > 0 && !entityData?.isClass && !isLocked)}
         <div class="status-badge-wrapper" bind:this={statusBadgeWrapperEl}>
           <button
@@ -797,13 +793,13 @@
     top: calc(100% + 4px);
     right: 0;
     z-index: 1000;
-    background: color-mix(in srgb, var(--color-black) 90%, transparent);
+    background: var(--color-surface-3);
     padding: 4px;
     display: flex;
     flex-direction: column;
     gap: 2px;
     min-width: 160px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 6px 20px color-mix(in srgb, var(--color-black) 50%, transparent);
   }
 
   .status-picker-item {
@@ -834,12 +830,12 @@
     gap: 10px;
     padding: 10px 12px;
     margin-bottom: 14px;
-    background: color-mix(in srgb, var(--color-warning, #f59e0b) 10%, transparent);
+    background: color-mix(in srgb, var(--color-warning) 10%, transparent);
   }
 
   .locked-banner-icon {
     font-size: 18px;
-    color: var(--color-warning, #f59e0b);
+    color: var(--color-warning);
     flex-shrink: 0;
     padding-top: 1px;
   }
@@ -854,7 +850,7 @@
     font-family: var(--font-body);
     font-size: 12px;
     font-weight: 700;
-    color: var(--color-warning, #f59e0b);
+    color: var(--color-warning);
   }
 
   .locked-banner-desc {
@@ -940,11 +936,11 @@
     align-items: center;
     gap: 6px;
     padding: 8px 14px;
-    background: color-mix(in srgb, #22c55e 20%, var(--color-black));
+    background: color-mix(in srgb, var(--color-success) 20%, var(--color-black));
     font-family: var(--font-body);
     font-size: 12px;
     font-weight: 600;
-    color: #22c55e;
+    color: var(--color-success);
     white-space: nowrap;
     z-index: 101;
     pointer-events: none;

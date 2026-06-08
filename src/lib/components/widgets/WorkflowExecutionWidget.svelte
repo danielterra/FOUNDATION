@@ -6,6 +6,7 @@
   import ChatMessageBubble from '../ChatMessageBubble.svelte'
   import MarkdownValue from './inspector/MarkdownValue.svelte'
   import WidgetContainer from './WidgetContainer.svelte'
+  import { Button } from '$lib/components/ui/button'
 
   let { widgetId, entityId, conversationIri = null, windowState = 'normal', onWindowStateChange } = $props()
 
@@ -206,9 +207,7 @@
         <span class="status-label">{detail.status_label}</span>
       </span>
     {/if}
-    <button class="action-btn" aria-label="Abrir inspetor da execução" onclick={openInspector} title="Open inspector">
-      <span class="material-symbols-outlined">info</span>
-    </button>
+    <Button variant="ghost" size="icon" aria-label="Abrir inspetor da execução" onclick={openInspector} title="Open inspector"><span class="material-symbols-outlined">info</span></Button>
   {/snippet}
 
   <div class="body">
@@ -226,9 +225,7 @@
         <div class="execution-error">
           <span class="material-symbols-outlined">error</span>
           <span class="error-message-text">{detail.error_message}</span>
-          <button class="error-dismiss" aria-label="Dispensar erro" onclick={() => errorDismissed = detail.error_message} title="Dismiss">
-            <span class="material-symbols-outlined">close</span>
-          </button>
+          <Button variant="ghost" size="icon" class="error-dismiss-btn" aria-label="Dispensar erro" onclick={() => errorDismissed = detail.error_message} title="Dismiss"><span class="material-symbols-outlined">close</span></Button>
         </div>
       {/if}
 
@@ -313,14 +310,10 @@
 
   {#if detail?.control_instance_iri}
     <div class="widget-footer">
-      <button
-        class="footer-btn"
-        aria-label="Abrir inspetor da instância de controle"
-        onclick={openControlInstanceInspector}
-      >
+      <Button variant="ghost" class="footer-btn" aria-label="Abrir inspetor da instância de controle" onclick={openControlInstanceInspector}>
         <span class="material-symbols-outlined">open_in_new</span>
         Abrir instância de controle
-      </button>
+      </Button>
     </div>
   {/if}
 </WidgetContainer>
@@ -396,26 +389,18 @@
     flex: 1;
   }
 
-  .error-dismiss {
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    color: var(--color-danger-hover);
+  :global(.error-dismiss-btn) {
+    color: var(--color-danger-hover) !important;
     opacity: 0.6;
-    display: flex;
-    align-items: center;
     flex-shrink: 0;
-    transition: opacity 0.15s;
   }
 
-  .error-dismiss:hover {
+  :global(.error-dismiss-btn:hover) {
     opacity: 1;
   }
 
-  .error-dismiss .material-symbols-outlined {
-    font-size: 14px;
-    margin-top: 0;
+  :global(.error-dismiss-btn .material-symbols-outlined) {
+    font-size: 14px !important;
   }
 
   .steps {
@@ -559,34 +544,18 @@
     background: color-mix(in srgb, var(--color-interactive) 8%, transparent);
   }
 
-  .footer-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+  :global(.widget-footer .footer-btn) {
     width: 100%;
-    padding: 8px 12px;
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-interactive);
-    font-family: var(--font-body);
+    justify-content: flex-start;
+    color: var(--color-interactive) !important;
     font-size: 12px;
     font-weight: 600;
-    text-align: left;
-    transition: background 0.15s;
+    padding: 8px 12px;
+    height: auto;
   }
 
-  .footer-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-  }
-
-  .footer-btn:active {
-    background: color-mix(in srgb, var(--color-interactive) 22%, transparent);
-  }
-
-  .footer-btn .material-symbols-outlined {
-    font-size: 16px;
-    flex-shrink: 0;
+  :global(.widget-footer .footer-btn .material-symbols-outlined) {
+    font-size: 16px !important;
   }
 
   @keyframes spin {

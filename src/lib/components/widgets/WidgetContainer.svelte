@@ -1,6 +1,6 @@
 <script>
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import Button from '../Button.svelte';
+  import { Button } from '$lib/components/ui/button';
 
   let {
     icon = 'widgets',
@@ -57,19 +57,17 @@
         </div>
       {/if}
       <div class="header-controls">
-        <Button
-          icon={windowState === 'minimized' ? 'filter_none' : 'horizontal_rule'}
+        <Button variant="ghost" size="icon"
           title={windowState === 'minimized' ? 'Restore' : 'Minimize'}
           onclick={toggleMinimize}
-        />
+        ><span class="material-symbols-outlined">{windowState === 'minimized' ? 'filter_none' : 'horizontal_rule'}</span></Button>
         {#if canExpand}
-          <Button
-            icon={windowState === 'maximized' ? 'filter_none' : 'check_box_outline_blank'}
+          <Button variant="ghost" size="icon"
             title={windowState === 'maximized' ? 'Restore' : 'Maximize'}
             onclick={toggleExpanded}
-          />
+          ><span class="material-symbols-outlined">{windowState === 'maximized' ? 'filter_none' : 'check_box_outline_blank'}</span></Button>
         {/if}
-        <Button icon="close" title="Close" onclick={onClose} />
+        <Button variant="ghost" size="icon" title="Close" onclick={onClose}><span class="material-symbols-outlined">close</span></Button>
       </div>
     </div>
     {#if headerActions}
@@ -177,7 +175,7 @@
   }
 
   .header-actions {
-    background-color: rgba(255, 140, 66, 0.09);
+    background-color: color-mix(in srgb, var(--primary) 9%, transparent);
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -186,12 +184,12 @@
   }
 
   .header-actions :global(.action-btn--danger) {
-    color: var(--color-danger, #ef4444);
+    color: var(--destructive);
   }
 
   .header-actions :global(.action-btn--danger:hover) {
-    background: color-mix(in srgb, var(--color-danger, #ef4444) 15%, transparent);
-    color: var(--color-danger, #ef4444);
+    background: color-mix(in srgb, var(--destructive) 15%, transparent);
+    color: var(--destructive);
   }
 
   .content-wrapper {

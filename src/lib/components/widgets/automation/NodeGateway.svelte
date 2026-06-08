@@ -33,19 +33,19 @@
     align-items: stretch;
     width: 220px;
     cursor: pointer;
-    background: #1a0a2e;
-    color: #ce93d8;
+    background: var(--automation-node-gateway-bg);
+    color: var(--automation-node-gateway-text);
     overflow: hidden;
   }
   .side-tab {
     width: 28px;
     flex-shrink: 0;
-    background: #7B1FA2;
+    background: var(--automation-node-gateway-tab);
     display: flex;
     align-items: center;
     justify-content: center;
   }
-  .icon { font-size: 16px; color: #1a0a2e; font-variation-settings: 'FILL' 1; }
+  .icon { font-size: 16px; color: var(--automation-node-gateway-bg); font-variation-settings: 'FILL' 1; }
   .content { display: flex; flex-direction: column; justify-content: center; padding: 8px 10px; min-width: 0; flex: 1; }
   .label { font-size: 12px; font-weight: 500; line-height: 1.3; }
 </style>

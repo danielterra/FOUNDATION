@@ -1,4 +1,7 @@
 <script>
+  import { Input } from '$lib/components/ui/input';
+  import * as Select from '$lib/components/ui/select';
+
   let { value = '', onconfirm, oncancel } = $props();
 
   function parseConfig(json) {
@@ -62,7 +65,7 @@
 <div class="qc-editor">
   <div class="section">
     <label class="section-label" for="qc-target-class-input">Classe alvo</label>
-    <input
+    <Input
       id="qc-target-class-input"
       class="qc-input"
       type="text"
@@ -86,33 +89,42 @@
       <div class="filters-list">
         {#each filters as filter, i}
           <div class="filter-row">
-            <input
+            <Input
               class="qc-input prop-input"
               type="text"
               bind:value={filter.propertyIri}
               placeholder="foundation:propriedade"
             />
-            <select class="qc-select" bind:value={filter.operator}>
-              {#each OPERATORS as op}
-                <option value={op.value}>{op.label}</option>
-              {/each}
-            </select>
+            <Select.Root
+              type="single"
+              value={filter.operator}
+              onValueChange={(v) => { if (v) filter.operator = v; }}
+            >
+              <Select.Trigger class="qc-select-trigger">
+                <Select.Value />
+              </Select.Trigger>
+              <Select.Content>
+                {#each OPERATORS as op}
+                  <Select.Item value={op.value}>{op.label}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
             {#if isBetween(filter.operator)}
-              <input
+              <Input
                 class="qc-input val-input"
                 type="text"
                 bind:value={filter.valueFrom}
                 placeholder="de"
               />
               <span class="between-sep">e</span>
-              <input
+              <Input
                 class="qc-input val-input"
                 type="text"
                 bind:value={filter.valueTo}
                 placeholder="até"
               />
             {:else if !isUnary(filter.operator)}
-              <input
+              <Input
                 class="qc-input val-input"
                 type="text"
                 bind:value={filter.value}
@@ -165,24 +177,26 @@
     color: var(--color-neutral);
   }
 
-  .qc-input {
+  :global([data-slot="input"].qc-input) {
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: none;
     color: var(--color-neutral-active);
     font-family: var(--font-mono, monospace);
     font-size: 12px;
     padding: 5px 8px;
-    outline: none;
+    height: auto;
+    border-radius: 0;
+    box-shadow: none;
     min-width: 0;
   }
 
-  .qc-input::placeholder {
+  :global([data-slot="input"].qc-input::placeholder) {
     color: var(--color-neutral);
     opacity: 0.4;
     font-family: var(--font-body);
   }
 
-  .qc-select {
+  :global(.qc-select-trigger) {
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
     border: none;
     color: var(--color-neutral-active);
@@ -191,6 +205,9 @@
     padding: 5px 6px;
     cursor: pointer;
     flex-shrink: 0;
+    height: auto;
+    border-radius: 0;
+    min-width: 120px;
   }
 
   .filters-list {
@@ -205,11 +222,11 @@
     gap: 4px;
   }
 
-  .prop-input {
+  :global([data-slot="input"].prop-input) {
     flex: 2;
   }
 
-  .val-input {
+  :global([data-slot="input"].val-input) {
     flex: 1;
   }
 

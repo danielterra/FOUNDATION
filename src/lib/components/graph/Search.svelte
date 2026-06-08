@@ -4,7 +4,7 @@
 	import { cubicOut } from 'svelte/easing';
 	import { invoke } from '@tauri-apps/api/core';
 	import { convertFileSrc } from '@tauri-apps/api/core';
-	import Card from '$lib/components/Card.svelte';
+	import { Card } from '$lib/components/ui/card';
 
 	let { onSelectResult } = $props();
 
@@ -284,7 +284,7 @@
 {#if isOpen}
 	<div class="search-overlay" role="presentation" transition:fade={{ duration: 200 }}>
 		<div class="search-container" transition:fly={{ y: -16, duration: 220, easing: cubicOut }}>
-			<Card>
+			<Card class="p-3 gap-0">
 				<div class="search-input-wrapper">
 					<span class="material-symbols-outlined search-icon">search</span>
 					{#if activeClassFilter}
@@ -320,7 +320,7 @@
 
 			{#if showClassAutocomplete && classResults.length > 0}
 				<div class="search-results">
-					<Card>
+					<Card class="p-0 gap-0">
 						<div class="results-list">
 							{#each classResults as cls, index}
 								<button
@@ -352,7 +352,7 @@
 
 			{#if showResults && searchResults.length > 0}
 				<div class="search-results">
-					<Card>
+					<Card class="p-0 gap-0">
 						<div class="results-list">
 							{#each searchResults as result, index}
 								<button

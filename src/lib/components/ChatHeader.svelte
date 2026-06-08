@@ -1,6 +1,6 @@
 <script>
 	import AgentPicker from './AgentPicker.svelte';
-	import Button from './Button.svelte';
+	import { Button } from '$lib/components/ui/button';
 	import { convertFileSrc } from '@tauri-apps/api/core';
 
 	let {
@@ -75,24 +75,22 @@
 	<div class="chat-header-right">
 		{#if onToggleCamera}
 			<span class:toggle-off={!cameraEnabled}>
-				<Button
-					icon={cameraEnabled ? 'videocam' : 'videocam_off'}
+				<Button variant="ghost" size="icon"
 					title={cameraEnabled ? 'Camera vision on' : 'Camera vision off'}
 					onclick={onToggleCamera}
-				/>
+				><span class="material-symbols-outlined">{cameraEnabled ? 'videocam' : 'videocam_off'}</span></Button>
 			</span>
 		{/if}
 		{#if onToggleThinking}
 			<span class:toggle-off={!thinkingEnabled}>
-				<Button
-					icon={thinkingEnabled ? 'psychology' : 'psychology_alt'}
+				<Button variant="ghost" size="icon"
 					title={thinkingEnabled ? 'Extended thinking on' : 'Extended thinking off'}
 					onclick={onToggleThinking}
-				/>
+				><span class="material-symbols-outlined">{thinkingEnabled ? 'psychology' : 'psychology_alt'}</span></Button>
 			</span>
 		{/if}
-		<Button icon="add" title="New conversation" onclick={onNewConversation} />
-		<Button icon="download" title="Download chat" onclick={onDownloadChat} />
+		<Button variant="ghost" size="icon" title="New conversation" onclick={onNewConversation}><span class="material-symbols-outlined">add</span></Button>
+		<Button variant="ghost" size="icon" title="Download chat" onclick={onDownloadChat}><span class="material-symbols-outlined">download</span></Button>
 	</div>
 </div>
 

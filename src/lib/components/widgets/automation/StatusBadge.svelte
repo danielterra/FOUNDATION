@@ -1,12 +1,12 @@
 <script>
   let { status, statusColor, statusIcon } = $props()
 
-  const color = $derived(statusColor ?? '#9e9e9e')
+  const color = $derived(statusColor ?? 'var(--muted-foreground)')
   const icon  = $derived(statusIcon  ?? 'radio_button_unchecked')
 </script>
 
 {#if status}
-  <div class="status-badge" style="background:{color}22;color:{color}">
+  <div class="status-badge" style="background:color-mix(in srgb, {color} 13%, transparent);color:{color}">
     <span class="material-symbols-outlined icon">{icon}</span>
     <span class="label">{status}</span>
   </div>

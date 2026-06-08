@@ -61,22 +61,22 @@
     align-items: stretch;
     width: 220px;
     cursor: pointer;
-    background: #1e0d36;
-    color: #ce93d8;
+    background: var(--automation-node-agent-bg);
+    color: var(--automation-node-agent-text);
     overflow: hidden;
   }
   .side-tab {
     width: 28px;
     flex-shrink: 0;
-    background: #8E24AA;
+    background: var(--automation-node-agent-tab);
     display: flex;
     align-items: center;
     justify-content: center;
   }
-  .icon { font-size: 16px; color: #1e0d36; font-variation-settings: 'FILL' 1; }
+  .icon { font-size: 16px; color: var(--automation-node-agent-bg); font-variation-settings: 'FILL' 1; }
   .content { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 8px 10px; min-width: 0; flex: 1; }
   .label { font-size: 12px; font-weight: 500; line-height: 1.3; }
   .sub { font-size: 9px; font-family: var(--font-body); opacity: 0.7; }
   .model-info { font-size: 8px; opacity: 0.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tool-warn { font-size: 9px; color: #ffb74d; font-weight: 600; }
+  .tool-warn { font-size: 9px; color: var(--color-warning); font-weight: 600; }
 </style>

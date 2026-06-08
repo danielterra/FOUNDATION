@@ -6,7 +6,7 @@
   import WidgetManager from '$lib/components/widgets/WidgetManager.svelte';
   import Search from '$lib/components/graph/Search.svelte';
   import SettingsPanel from '$lib/components/SettingsPanel.svelte';
-  import Button from '$lib/components/Button.svelte';
+  import { Button } from '$lib/components/ui/button';
   import NotificationBell from '$lib/components/NotificationBell.svelte';
   import HeaderActions from '$lib/components/HeaderActions.svelte';
   import { appState } from '$lib/appState.svelte';
@@ -129,14 +129,14 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <HeaderActions>
-  <Button icon="search" title="Buscar (/)" onclick={openSearch} />
+  <Button variant="ghost" size="icon" title="Buscar (/)" onclick={openSearch}><span class="material-symbols-outlined">search</span></Button>
   <span class="header-spacer"></span>
   {#if chatEnabled}
-    <Button icon="forum" title="Conversa (Ctrl+S)" onclick={() => isChatOpen = !isChatOpen} />
+    <Button variant="ghost" size="icon" title="Conversa (Ctrl+S)" onclick={() => isChatOpen = !isChatOpen}><span class="material-symbols-outlined">forum</span></Button>
   {/if}
-  <Button icon="payments" title="Consumo de IA" onclick={openAiCallHistory} />
+  <Button variant="ghost" size="icon" title="Consumo de IA" onclick={openAiCallHistory}><span class="material-symbols-outlined">payments</span></Button>
   <NotificationBell />
-  <Button icon="settings" title="Configurações" onclick={() => showSettings = true} />
+  <Button variant="ghost" size="icon" title="Configurações" onclick={() => showSettings = true}><span class="material-symbols-outlined">settings</span></Button>
 </HeaderActions>
 
 <div class="main-layout">

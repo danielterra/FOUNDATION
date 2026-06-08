@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import WidgetContainer from './WidgetContainer.svelte';
+  import { Button } from '$lib/components/ui/button';
 
   let { widgetId, entityId = '', windowState = 'normal', onWindowStateChange } = $props();
 
@@ -78,17 +79,10 @@
   onClose={closeWidget}
 >
   {#snippet headerActions()}
-    <button
-      class="action-btn run-btn"
-      onclick={executeProcess}
-      disabled={running}
-      title="Run process"
-    >
+    <Button variant="ghost" size="icon" class="run-btn-process" onclick={executeProcess} disabled={running} title="Run process">
       <span class="material-symbols-outlined">{running ? 'progress_activity' : 'play_arrow'}</span>
-    </button>
-    <button class="action-btn" onclick={openInspector} title="Open inspector">
-      <span class="material-symbols-outlined">info</span>
-    </button>
+    </Button>
+    <Button variant="ghost" size="icon" onclick={openInspector} title="Open inspector"><span class="material-symbols-outlined">info</span></Button>
   {/snippet}
 
   <div class="widget-content">
@@ -128,22 +122,17 @@
 </WidgetContainer>
 
 <style>
-  .run-btn {
-    color: #43A047;
+  :global(.run-btn-process) {
+    color: var(--color-success) !important;
   }
 
-  .run-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, #43A047 15%, transparent);
-    color: #66BB6A;
+  :global(.run-btn-process:hover:not(:disabled)) {
+    background: color-mix(in srgb, var(--color-success) 15%, transparent) !important;
+    color: var(--color-success-hover, var(--color-success)) !important;
   }
 
-  .run-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .run-btn .material-symbols-outlined {
-    font-size: 20px;
+  :global(.run-btn-process .material-symbols-outlined) {
+    font-size: 20px !important;
   }
 
   .widget-content {
@@ -167,7 +156,7 @@
   }
 
   .status-error {
-    color: var(--color-error, #ef4444);
+    color: var(--color-error);
   }
 
   .status-error .material-symbols-outlined,
@@ -205,11 +194,11 @@
   }
 
   .step-item.step-ok {
-    border-left: 2px solid var(--color-success, #22c55e);
+    border-left: 2px solid var(--color-success);
   }
 
   .step-item.step-err {
-    border-left: 2px solid var(--color-error, #ef4444);
+    border-left: 2px solid var(--color-error);
   }
 
   .step-icon {
@@ -219,11 +208,11 @@
   }
 
   .step-ok .step-icon {
-    color: var(--color-success, #22c55e);
+    color: var(--color-success);
   }
 
   .step-err .step-icon {
-    color: var(--color-error, #ef4444);
+    color: var(--color-error);
   }
 
   .step-body {

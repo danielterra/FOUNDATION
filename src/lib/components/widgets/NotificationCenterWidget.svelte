@@ -1,9 +1,10 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import { openEntity } from '$lib/blackboard';
   import WidgetContainer from './WidgetContainer.svelte';
+  import { Button } from '$lib/components/ui/button';
 
   let { widgetId, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props();
 
@@ -326,22 +327,19 @@
   }
 
   onMount(async () => {
-    // Register creation-query BEFORE loading so no new notification is missed
-    // during the load (stable subscription, no birth-race).
     entitySub.setCreationQueries([{
       classIri: 'foundation:AINotification',
       predicate: 'rdf:type',
       objectValue: 'foundation:AINotification',
     }]);
     await loadNotifications();
+    mounted = true;
   });
 
-  let lastFilterStatus = filterStatus;
+  let mounted = $state(false);
   $effect(() => {
-    if (filterStatus !== lastFilterStatus) {
-      lastFilterStatus = filterStatus;
-      loadNotifications();
-    }
+    filterStatus;
+    if (untrack(() => mounted)) loadNotifications();
   });
 
   onDestroy(() => {
@@ -369,8 +367,9 @@
     {@const filteredIris = filteredNotifications.map(n => n.iri)}
     {@const allFilteredSelected = filteredIris.length > 0 && filteredIris.every(iri => selectedIris[iri])}
     {@const selectedPendingCount = filteredNotifications.filter(n => isSelected(n.iri) && isPending(n)).length}
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="sm"
       class="header-action-btn"
       onclick={toggleSelectAllFiltered}
       disabled={filteredIris.length === 0}
@@ -380,10 +379,11 @@
         {allFilteredSelected ? 'check_box' : 'check_box_outline_blank'}
       </span>
       <span>{allFilteredSelected ? 'Desmarcar todas' : 'Selecionar todas'}</span>
-    </button>
+    </Button>
     {#if selectedPendingCount > 0}
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
         class="header-action-btn"
         onclick={resolveSelected}
         disabled={resolving}
@@ -393,7 +393,7 @@
           {resolving ? 'progress_activity' : 'done_all'}
         </span>
         <span>Resolver selecionadas ({selectedPendingCount})</span>
-      </button>
+      </Button>
     {/if}
   {/snippet}
 
@@ -457,40 +457,44 @@
                 onclick={() => toggleExpand(notif.iri)}
                 aria-expanded={expanded}
               >
-              <span class="material-symbols-outlined type-icon type-icon-{notif.type}">
-                {resolved ? 'check_circle' : TYPE_ICONS[notif.type]}
-              </span>
-              <div class="notif-body">
-                <span class="notif-title">{notif.title}</span>
-              </div>
-              {#if notif._ts}
-                <span class="meta-time" title={formatAbsoluteDate(notif.createdAt ?? notif.lastUpdatedAt)}>
-                  {formatRelativeDate(notif._ts)}
+                <span class="material-symbols-outlined type-icon type-icon-{notif.type}">
+                  {resolved ? 'check_circle' : TYPE_ICONS[notif.type]}
                 </span>
-              {/if}
+                <div class="notif-body">
+                  <span class="notif-title">{notif.title}</span>
+                </div>
+                {#if notif._ts}
+                  <span class="meta-time" title={formatAbsoluteDate(notif.createdAt ?? notif.lastUpdatedAt)}>
+                    {formatRelativeDate(notif._ts)}
+                  </span>
+                {/if}
+                <span class="material-symbols-outlined chevron">
+                  {expanded ? 'expand_less' : 'expand_more'}
+                </span>
+              </button>
               {#if pending}
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="icon"
                   class="row-action resolve"
                   onclick={(e) => resolveNotification(notif.iri, e)}
                   title="Marcar como resolvida"
+                  aria-label="Marcar como resolvida"
                 >
                   <span class="material-symbols-outlined">check</span>
-                </button>
+                </Button>
               {:else if resolved}
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="icon"
                   class="row-action reopen"
                   onclick={(e) => reopenNotification(notif.iri, e)}
                   title="Reabrir notificação"
+                  aria-label="Reabrir notificação"
                 >
                   <span class="material-symbols-outlined">undo</span>
-                </button>
+                </Button>
               {/if}
-              <span class="material-symbols-outlined chevron">
-                {expanded ? 'expand_less' : 'expand_more'}
-              </span>
-            </button>
             </div>
             {#if expanded}
               <div class="notif-detail">
@@ -501,15 +505,16 @@
                   <div class="source-list">
                     <span class="source-list-label">Fonte:</span>
                     {#each notif.sources as source}
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         class="source-chip"
                         onclick={(e) => openSource(source, e)}
                         title="Abrir {source.label}"
                       >
                         <span class="material-symbols-outlined source-icon">{source.icon}</span>
                         <span class="source-label">{source.label}</span>
-                      </button>
+                      </Button>
                     {/each}
                   </div>
                 {/if}
@@ -536,7 +541,7 @@
     align-items: center;
     gap: 8px;
     padding: 8px 14px;
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 6%, transparent);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
@@ -544,23 +549,24 @@
     flex: 1;
     min-width: 0;
     padding: 4px 8px;
-    background: color-mix(in srgb, var(--color-white) 6%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-white) 8%, transparent);
-    color: var(--color-neutral-active);
+    background: var(--muted);
+    border: 1px solid var(--border);
+    color: var(--foreground);
     font-family: var(--font-body);
     font-size: 12px;
     cursor: pointer;
     appearance: auto;
+    border-radius: var(--radius);
   }
 
   .filter-select:focus {
-    outline: 1px solid var(--color-interactive);
+    outline: 1px solid var(--ring);
     outline-offset: -1px;
   }
 
   .header-counter {
     font-size: 11px;
-    color: var(--color-neutral);
+    color: var(--muted-foreground);
     opacity: 0.85;
   }
 
@@ -576,11 +582,11 @@
     gap: 8px;
     padding: 24px 16px;
     font-size: 12px;
-    color: var(--color-neutral);
+    color: var(--muted-foreground);
     justify-content: center;
   }
 
-  .state-msg.fail { color: var(--color-danger); }
+  .state-msg.fail { color: var(--destructive); }
   .state-msg.empty { opacity: 0.7; }
 
   .state-msg .material-symbols-outlined {
@@ -598,7 +604,7 @@
   }
 
   .notification-item {
-    border-bottom: 1px solid color-mix(in srgb, var(--color-white) 5%, transparent);
+    border-bottom: 1px solid var(--border);
   }
 
   .notification-item.resolved {
@@ -606,17 +612,17 @@
   }
 
   .notification-item.resolved .type-icon {
-    color: var(--color-success, #22c55e);
+    color: var(--color-success);
   }
 
   .notification-item.selected {
-    background: color-mix(in srgb, var(--color-transition) 10%, transparent);
+    background: color-mix(in srgb, var(--primary) 10%, transparent);
   }
 
   .notif-header-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 4px;
     padding-left: 14px;
   }
 
@@ -625,7 +631,7 @@
     width: 14px;
     height: 14px;
     cursor: pointer;
-    accent-color: var(--color-interactive);
+    accent-color: var(--primary);
     margin: 0;
   }
 
@@ -635,16 +641,16 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 14px 10px 0;
+    padding: 10px 4px 10px 0;
     background: none;
     border: none;
     text-align: left;
     cursor: pointer;
-    color: var(--color-neutral-active);
+    color: var(--foreground);
   }
 
   .notification-row:hover {
-    background: color-mix(in srgb, var(--color-white) 6%, transparent);
+    background: var(--accent);
   }
 
   .type-icon {
@@ -652,9 +658,9 @@
     flex-shrink: 0;
   }
 
-  .type-icon-error { color: var(--color-danger, #ef4444); }
-  .type-icon-warning { color: #f59e0b; }
-  .type-icon-info { color: var(--color-neutral); }
+  .type-icon-error { color: var(--destructive); }
+  .type-icon-warning { color: var(--color-warning); }
+  .type-icon-info { color: var(--muted-foreground); }
 
   .notif-body {
     flex: 1;
@@ -666,7 +672,7 @@
   .notif-title {
     font-size: 12px;
     font-weight: 600;
-    color: var(--color-neutral-active);
+    color: var(--foreground);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -674,7 +680,7 @@
 
   .meta-time {
     font-size: 11px;
-    color: var(--color-neutral);
+    color: var(--muted-foreground);
     opacity: 0.85;
     white-space: nowrap;
     flex-shrink: 0;
@@ -683,68 +689,35 @@
 
   .chevron {
     font-size: 18px;
-    color: var(--color-interactive);
+    color: var(--primary);
     flex-shrink: 0;
   }
 
-  .row-action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: none;
-    border: none;
-    padding: 4px;
-    cursor: pointer;
-    color: var(--color-interactive);
+  :global(.row-action) {
     flex-shrink: 0;
+    color: var(--primary) !important;
   }
 
-  .row-action:hover {
-    background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
+  :global(.row-action.reopen) {
+    color: var(--muted-foreground) !important;
   }
 
-  .row-action.reopen {
-    color: var(--color-neutral);
-  }
-
-  .row-action.reopen:hover {
-    background: color-mix(in srgb, var(--color-white) 10%, transparent);
-    color: var(--color-neutral-active);
-  }
-
-  .row-action .material-symbols-outlined {
+  :global(.row-action .material-symbols-outlined) {
     font-size: 16px;
   }
 
-  .header-action-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-interactive);
-    font-size: 11px;
-    font-weight: 600;
+  :global(.header-action-btn) {
+    color: var(--primary) !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
   }
 
-  .header-action-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
-  }
-
-  .header-action-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-    color: var(--color-neutral);
-  }
-
-  .header-action-btn .material-symbols-outlined {
+  :global(.header-action-btn .material-symbols-outlined) {
     font-size: 16px;
   }
 
-  .header-action-btn :global(.spinning),
-  .header-action-btn .material-symbols-outlined.spinning {
+  :global(.header-action-btn .spinning),
+  :global(.header-action-btn .material-symbols-outlined.spinning) {
     animation: spin 1s linear infinite;
   }
 
@@ -759,7 +732,7 @@
     margin: 0;
     font-size: 12px;
     line-height: 1.5;
-    color: var(--color-neutral);
+    color: var(--muted-foreground);
     white-space: pre-wrap;
     word-break: break-word;
   }
@@ -770,7 +743,7 @@
     flex-wrap: wrap;
     gap: 6px;
     font-size: 11px;
-    color: var(--color-neutral);
+    color: var(--muted-foreground);
   }
 
   .source-list-label {
@@ -780,20 +753,11 @@
     opacity: 0.7;
   }
 
-  .source-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    background: color-mix(in srgb, var(--color-white) 6%, transparent);
-    border: none;
-    padding: 3px 8px;
-    cursor: pointer;
-    color: var(--color-interactive);
-    font-size: 11px;
-  }
-
-  .source-chip:hover {
-    background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
+  :global(.source-chip) {
+    color: var(--primary) !important;
+    font-size: 11px !important;
+    padding: 2px 8px !important;
+    height: auto !important;
   }
 
   .source-icon {

@@ -19,29 +19,35 @@
   font-display: swap;
 }
 
-/* Apply fonts globally */
-:root {
-  --font-title: 'PoppinsSemiBold', sans-serif;
-  --font-body: 'Poppins', sans-serif;
-  --font-code: 'Monaspace Krypton', 'SF Mono', 'Monaco', 'Courier New', monospace;
-}
+/*
+ * Resets e estilos globais em foundation-reset: menor prioridade
+ * que @layer utilities do Tailwind. Garante que utilities como
+ * px-4, py-2, h-9 vençam o reset `* { padding: 0 }`.
+ */
+@layer foundation-reset {
+  :root {
+    --font-title: 'PoppinsSemiBold', sans-serif;
+    --font-body: 'Poppins', sans-serif;
+    --font-code: 'Monaspace Krypton', 'SF Mono', 'Monaco', 'Courier New', monospace;
+  }
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
 
-body {
-  font-family: var(--font-body);
-  font-weight: 400;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  color: var(--color-neutral);
-}
+  body {
+    font-family: var(--font-body);
+    font-weight: 400;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    color: var(--color-neutral);
+  }
 
-h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-title);
-  font-weight: 600;
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-title);
+    font-weight: 600;
+  }
 }

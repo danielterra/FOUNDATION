@@ -1,7 +1,9 @@
 <script>
   import { invoke } from '@tauri-apps/api/core'
   import { convertFileSrc } from '@tauri-apps/api/core'
-  import { focus } from '$lib/utils/actions'
+  import { Input } from '$lib/components/ui/input'
+
+  let searchInputRef = $state(null)
 
   let {
     propertyIri,
@@ -23,6 +25,10 @@
   let debounceTimer = null
 
   const maxReached = $derived(maxCount != null && selected.length >= maxCount)
+
+  $effect(() => {
+    if (selected.length === 0 && searchInputRef) searchInputRef.focus()
+  })
 
   function isIconUrl(icon) {
     if (!icon) return false
@@ -118,7 +124,8 @@
 
   {#if !maxReached}
     <div class="search-row">
-      <input
+      <Input
+        bind:ref={searchInputRef}
         class="search-input"
         type="text"
         placeholder="Search {rangeClassLabel ?? 'entity'}…"
@@ -126,7 +133,6 @@
         oninput={onInput}
         onfocus={() => { if (results.length > 0) showDropdown = true }}
         onblur={() => setTimeout(() => { showDropdown = false }, 150)}
-        use:focus={selected.length === 0}
       />
       {#if searching}
         <span class="material-symbols-outlined search-spin">progress_activity</span>
@@ -254,7 +260,7 @@
     align-items: center;
   }
 
-  .search-input {
+  :global([data-slot="input"].search-input) {
     flex: 1;
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: none;
@@ -262,7 +268,9 @@
     font-family: var(--font-body);
     font-size: 14px;
     padding: 6px 8px;
-    outline: none;
+    height: auto;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .search-spin {

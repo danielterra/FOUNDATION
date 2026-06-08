@@ -4,6 +4,7 @@
   import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import GraphVisualization from '../graph/GraphVisualization.svelte';
   import WidgetContainer from './WidgetContainer.svelte';
+  import { Button } from '$lib/components/ui/button';
 
   let { widgetId, entityId = '', conversationIri = null, windowState = 'normal', onWindowStateChange } = $props();
 
@@ -125,9 +126,7 @@
   onClose={closeWidget}
 >
   {#snippet headerActions()}
-    <button class="action-btn" onclick={openInspector} title="Open inspector">
-      <span class="material-symbols-outlined">info</span>
-    </button>
+    <Button variant="ghost" size="icon" onclick={openInspector} title="Open inspector"><span class="material-symbols-outlined">info</span></Button>
   {/snippet}
 
   <div class="widget-content">

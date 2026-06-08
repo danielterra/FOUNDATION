@@ -8,7 +8,7 @@
   import '@xyflow/svelte/dist/style.css'
   import { applyDagreLayout } from './automation/layout.js'
   import WidgetContainer from './WidgetContainer.svelte'
-  import Button from '../Button.svelte'
+  import { Button } from '$lib/components/ui/button'
   import NodeStartEvent        from './automation/NodeStartEvent.svelte'
   import NodeTimerStartEvent   from './automation/NodeTimerStartEvent.svelte'
   import NodeEndEvent     from './automation/NodeEndEvent.svelte'
@@ -159,11 +159,11 @@
           type: 'default',
           animated: !isErrorEdge,
           sourceHandle: isErrorEdge ? undefined : (e.source_handle ?? undefined),
-          style: isErrorEdge ? 'stroke:#ef4444;stroke-dasharray:5,4;stroke-width:1.5px;' : undefined,
+          style: isErrorEdge ? 'stroke:var(--color-danger);stroke-dasharray:5,4;stroke-width:1.5px;' : undefined,
           label: isErrorEdge ? (e.label ?? 'on error') : (conditionLabel ?? undefined),
           labelStyle: isErrorEdge
-            ? 'background:#450a0a;color:#fca5a5;padding:2px 7px;border:1px solid #ef4444;font-size:11px;font-weight:500;'
-            : conditionLabel ? 'background:#1e293b;color:#f1f5f9;padding:2px 7px;border:1px solid #475569;font-size:11px;font-weight:500;' : undefined,
+            ? 'background:var(--color-surface-2);color:var(--color-danger-hover);padding:2px 7px;border:1px solid var(--color-danger);font-size:11px;font-weight:500;'
+            : conditionLabel ? 'background:var(--color-surface-2);color:var(--color-neutral-active);padding:2px 7px;border:1px solid var(--color-surface-3);font-size:11px;font-weight:500;' : undefined,
         }
       })
 
@@ -285,11 +285,11 @@
             // Map ontology status to display values.
             let statusLabel, statusColor, statusIcon
             if (statusIri.includes('Falhou') || statusIri.includes('1772993026091')) {
-              statusLabel = 'Failed'; statusColor = '#EF4444'; statusIcon = 'error'
+              statusLabel = 'Failed'; statusColor = 'var(--color-danger)'; statusIcon = 'error'
             } else if (statusIri === 'foundation:Completed' || statusIri.includes('Concluído')) {
-              statusLabel = 'Done'; statusColor = '#22C55E'; statusIcon = 'check_circle'
+              statusLabel = 'Done'; statusColor = 'var(--color-success)'; statusIcon = 'check_circle'
             } else {
-              statusLabel = 'Running'; statusColor = '#F59E0B'; statusIcon = 'progress_activity'
+              statusLabel = 'Running'; statusColor = 'var(--color-warning)'; statusIcon = 'progress_activity'
             }
             const map = new Map(execNodeStatus)
             map.set(nodeIri, { statusLabel, statusColor, statusIcon })
@@ -308,13 +308,13 @@
       const { nodeIri, nodeLabel, status } = event.payload
       const map = new Map(execNodeStatus)
       if (status === 'started') {
-        map.set(nodeIri, { statusLabel: 'Running', statusColor: '#F59E0B', statusIcon: 'progress_activity' })
+        map.set(nodeIri, { statusLabel: 'Running', statusColor: 'var(--color-warning)', statusIcon: 'progress_activity' })
         activeStepLabel = nodeLabel
       } else if (status === 'completed') {
-        map.set(nodeIri, { statusLabel: 'Done', statusColor: '#22C55E', statusIcon: 'check_circle' })
+        map.set(nodeIri, { statusLabel: 'Done', statusColor: 'var(--color-success)', statusIcon: 'check_circle' })
         activeStepLabel = null
       } else if (status === 'failed') {
-        map.set(nodeIri, { statusLabel: 'Failed', statusColor: '#EF4444', statusIcon: 'error' })
+        map.set(nodeIri, { statusLabel: 'Failed', statusColor: 'var(--color-danger)', statusIcon: 'error' })
         activeStepLabel = null
       }
       execNodeStatus = map
@@ -347,11 +347,11 @@
       <span class="active-step-label">{activeStepLabel}…</span>
     {/if}
     {#if isExecutable}
-      <button class="run-btn" onclick={runAutomation} disabled={running} title="Run automation">
+      <Button variant="ghost" size="icon-sm" class="run-btn-automation" onclick={runAutomation} disabled={running} title="Run automation">
         <span class="material-symbols-outlined">{running ? 'progress_activity' : 'play_arrow'}</span>
-      </button>
+      </Button>
     {/if}
-    <Button variant="primary" size="sm" icon="info" title="Abrir inspector" onclick={openInspector} />
+    <Button variant="ghost" size="icon-sm" title="Abrir inspector" onclick={openInspector}><span class="material-symbols-outlined">info</span></Button>
   {/snippet}
 
   <div class="widget-content">
@@ -387,7 +387,7 @@
 <style>
   .active-step-label {
     font-size: 10px;
-    color: #F59E0B;
+    color: var(--color-warning);
     font-style: italic;
     max-width: 140px;
     white-space: nowrap;
@@ -395,30 +395,21 @@
     text-overflow: ellipsis;
   }
 
-  .run-btn {
-    background: none;
-    border: none;
-    padding: 4px;
-    cursor: pointer;
-    color: #43A047;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
+  :global(.run-btn-automation) {
+    color: var(--color-success) !important;
   }
-  .run-btn:hover {
-    background: color-mix(in srgb, #43A047 15%, transparent);
-    color: #66BB6A;
+
+  :global(.run-btn-automation:hover:not(:disabled)) {
+    background: color-mix(in srgb, var(--color-success) 15%, transparent) !important;
+    color: var(--color-success) !important;
   }
-  .run-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-  .run-btn:disabled .material-symbols-outlined {
+
+  :global(.run-btn-automation:disabled .material-symbols-outlined) {
     animation: spin 1s linear infinite;
   }
-  .run-btn .material-symbols-outlined {
-    font-size: 18px;
+
+  :global(.run-btn-automation .material-symbols-outlined) {
+    font-size: 18px !important;
   }
 
   .widget-content {
@@ -456,7 +447,7 @@
     justify-content: center;
     height: 100%;
     gap: 8px;
-    color: var(--color-error, #ef4444);
+    color: var(--color-error);
     font-size: 14px;
     padding: 24px;
     text-align: center;

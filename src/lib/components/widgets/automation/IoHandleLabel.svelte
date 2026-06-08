@@ -19,8 +19,8 @@
     font-size: 9px;
     font-weight: 700;
     padding: 2px 6px;
-    background: color-mix(in srgb, #64B5F6 18%, #000);
-    color: #90CAF9;
+    background: var(--automation-io-label-bg);
+    color: var(--automation-io-label-text);
     white-space: nowrap;
     pointer-events: none;
     z-index: 10;

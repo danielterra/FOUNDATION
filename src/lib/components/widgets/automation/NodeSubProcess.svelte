@@ -50,19 +50,19 @@
     align-items: stretch;
     width: 220px;
     cursor: pointer;
-    background: #002030;
-    color: #80deea;
+    background: var(--automation-node-subprocess-bg);
+    color: var(--automation-node-subprocess-text);
     overflow: hidden;
   }
   .side-tab {
     width: 28px;
     flex-shrink: 0;
-    background: #00ACC1;
+    background: var(--automation-node-subprocess-tab);
     display: flex;
     align-items: center;
     justify-content: center;
   }
-  .icon { font-size: 16px; color: #002030; font-variation-settings: 'FILL' 1; }
+  .icon { font-size: 16px; color: var(--automation-node-subprocess-bg); font-variation-settings: 'FILL' 1; }
   .content { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 8px 10px; min-width: 0; flex: 1; }
   .label { font-size: 12px; font-weight: 500; line-height: 1.3; }
   .sub { font-size: 9px; font-family: var(--font-body); opacity: 0.65; }

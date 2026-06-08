@@ -58,21 +58,21 @@
     align-items: stretch;
     width: 220px;
     cursor: pointer;
-    background: #201500;
-    color: #fff59d;
+    background: var(--automation-node-user-bg);
+    color: var(--automation-node-user-text);
     overflow: hidden;
   }
   .side-tab {
     width: 28px;
     flex-shrink: 0;
-    background: #FDD835;
+    background: var(--automation-node-user-tab);
     display: flex;
     align-items: center;
     justify-content: center;
   }
   .icon {
     font-size: 16px;
-    color: #201500;
+    color: var(--automation-node-user-bg);
     font-variation-settings: 'FILL' 1;
   }
   .content {
@@ -93,7 +93,7 @@
     display: flex;
     align-items: center;
     gap: 2px;
-    color: #a18a3a;
+    color: var(--automation-node-user-meta);
     min-width: 0;
   }
   .meta-icon { font-size: 11px; flex-shrink: 0; }

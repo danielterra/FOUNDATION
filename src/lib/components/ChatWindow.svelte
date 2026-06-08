@@ -4,7 +4,6 @@
 	import { createEntitySubscription } from '$lib/realtime/subscriptions';
 	import { openEntity } from '$lib/blackboard';
 	import { marked } from 'marked';
-	import Card from './Card.svelte';
 	import ChatAttachmentPreview from './ChatAttachmentPreview.svelte';
 	import ChatInputArea from './ChatInputArea.svelte';
 	import ConversationBar from './ConversationBar.svelte';

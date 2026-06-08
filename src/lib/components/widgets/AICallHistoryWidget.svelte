@@ -175,13 +175,13 @@
   .ah-root { padding: 8px; font-size: 0.82em; display: flex; flex-direction: column; gap: 8px; overflow: auto; }
   .ah-filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .ah-filters label { display: flex; gap: 4px; align-items: center; }
-  .ah-filters input { border: 1px solid var(--border-color, #ccc); border-radius: var(--radius); padding: 2px 4px; }
-  .ah-hint { color: var(--text-muted, #888); margin: 0; }
+  .ah-filters input { border: 1px solid var(--border); border-radius: var(--radius); padding: 2px 4px; }
+  .ah-hint { color: var(--muted-foreground); margin: 0; }
   .ah-section-title { font-weight: 600; cursor: pointer; padding: 4px 0; user-select: none; }
   .ah-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-  .ah-table th, .ah-table td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border-color, #eee); white-space: nowrap; }
-  .ah-table th { font-weight: 600; color: var(--text-muted, #666); }
+  .ah-table th, .ah-table td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .ah-table th { font-weight: 600; color: var(--muted-foreground); }
   .ah-model { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
-  .ah-date { font-size: 0.9em; color: var(--text-muted, #888); }
+  .ah-date { font-size: 0.9em; color: var(--muted-foreground); }
   .ah-cost { font-weight: 600; }
 </style>

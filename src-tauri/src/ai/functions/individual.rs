@@ -438,6 +438,7 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
         let mut allowed_statuses: Vec<serde_json::Value> = Vec::new();
         let mut required_fields: Vec<String> = Vec::new();
         let mut seen_required = std::collections::HashSet::new();
+        let mut class_ai_behavior_rules: Vec<String> = Vec::new();
 
         for class_iri in &class_iris {
             let status_iris = crate::owl::get_all_iri_properties(
@@ -461,6 +462,26 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
                     required_fields.push(r.property_iri);
                 }
             }
+
+            if let Ok(Some(class)) = crate::owl::Class::get(conn, class_iri) {
+                for (pred, val) in &class.concept_properties {
+                    if pred == "foundation:aiBehaviorRules" {
+                        if let Some(rule) = val.as_literal() {
+                            class_ai_behavior_rules.push(rule);
+                        }
+                    }
+                }
+            }
+        }
+
+        for (i, (prop_iri, _)) in individual.properties.iter().enumerate() {
+            let ai_behavior_rules = Property::get(conn, prop_iri)
+                .ok()
+                .flatten()
+                .and_then(|p| p.ai_behavior_rules);
+            if let (Some(entry), Some(rules)) = (properties.get_mut(i), ai_behavior_rules) {
+                entry["aiBehaviorRules"] = serde_json::json!(rules);
+            }
         }
 
         let is_locked = crate::owl::is_system_locked(conn, iri);
@@ -478,6 +499,7 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
             "backlinks": backlinks,
             "allowedStatuses": allowed_statuses,
             "requiredFields": required_fields,
+            "classAiBehaviorRules": class_ai_behavior_rules,
         });
         if !applicable_automations.is_empty() {
             result["applicableAutomations"] = serde_json::json!(applicable_automations);

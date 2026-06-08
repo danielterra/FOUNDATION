@@ -1,4 +1,9 @@
 <script>
+  import * as Select from '$lib/components/ui/select';
+  import * as RadioGroup from '$lib/components/ui/radio-group';
+  import { Checkbox } from '$lib/components/ui/checkbox';
+  import { Label } from '$lib/components/ui/label';
+
   let { value = '', onconfirm, oncancel } = $props();
 
   function parseRrule(s) {
@@ -126,19 +131,28 @@
     <!-- Frequência -->
     <div class="field-row">
       <span class="field-label">Frequência:</span>
-      <select class="freq-select" bind:value={mode}>
-        <option value="none">Nunca</option>
-        <option value="hourly">A Cada Hora</option>
-        <option value="daily">Diariamente</option>
-        <option value="weekdays">Dias de Semana</option>
-        <option value="weekends">Fins de Semana</option>
-        <option value="weekly">Semanalmente</option>
-        <option value="biweekly">Quinzenalmente</option>
-        <option value="monthly">Mensalmente</option>
-        <option value="quarterly">A Cada 3 Meses</option>
-        <option value="semiannual">A Cada 6 Meses</option>
-        <option value="yearly">Anualmente</option>
-      </select>
+      <Select.Root
+        type="single"
+        value={mode}
+        onValueChange={(v) => { if (v) mode = v; }}
+      >
+        <Select.Trigger class="freq-select-trigger">
+          <Select.Value />
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value="none">Nunca</Select.Item>
+          <Select.Item value="hourly">A Cada Hora</Select.Item>
+          <Select.Item value="daily">Diariamente</Select.Item>
+          <Select.Item value="weekdays">Dias de Semana</Select.Item>
+          <Select.Item value="weekends">Fins de Semana</Select.Item>
+          <Select.Item value="weekly">Semanalmente</Select.Item>
+          <Select.Item value="biweekly">Quinzenalmente</Select.Item>
+          <Select.Item value="monthly">Mensalmente</Select.Item>
+          <Select.Item value="quarterly">A Cada 3 Meses</Select.Item>
+          <Select.Item value="semiannual">A Cada 6 Meses</Select.Item>
+          <Select.Item value="yearly">Anualmente</Select.Item>
+        </Select.Content>
+      </Select.Root>
     </div>
 
     <!-- Semanal: seletor de dias -->
@@ -158,38 +172,62 @@
     <!-- Mensal / Trimestral / Semestral -->
     {#if mode === 'monthly' || mode === 'quarterly' || mode === 'semiannual'}
       <div class="monthly-options">
-        <label class="radio-row">
-          <input type="radio" name="monthly-mode" value="day" bind:group={monthlyMode} />
-          <span>Cada</span>
-        </label>
-        {#if monthlyMode === 'day'}
-          <div class="day-grid">
-            {#each DAY_GRID as d}
-              <button
-                class="day-btn"
-                class:selected={monthlyDay === d}
-                onclick={() => monthlyDay = d}
-                type="button"
-              >{d}</button>
-            {/each}
+        <RadioGroup.Root
+          value={monthlyMode}
+          onValueChange={(v) => { if (v) monthlyMode = v; }}
+          class="monthly-radio-group"
+        >
+          <div class="radio-row">
+            <RadioGroup.Item value="day" id="monthly-mode-day" />
+            <Label for="monthly-mode-day">Cada</Label>
           </div>
-        {/if}
-        <label class="radio-row">
-          <input type="radio" name="monthly-mode" value="ordinal" bind:group={monthlyMode} />
-          <span>No(a):</span>
-        </label>
+          {#if monthlyMode === 'day'}
+            <div class="day-grid">
+              {#each DAY_GRID as d}
+                <button
+                  class="day-btn"
+                  class:selected={monthlyDay === d}
+                  onclick={() => monthlyDay = d}
+                  type="button"
+                >{d}</button>
+              {/each}
+            </div>
+          {/if}
+          <div class="radio-row">
+            <RadioGroup.Item value="ordinal" id="monthly-mode-ordinal" />
+            <Label for="monthly-mode-ordinal">No(a):</Label>
+          </div>
+        </RadioGroup.Root>
         {#if monthlyMode === 'ordinal'}
           <div class="ordinal-row">
-            <select bind:value={ordinalPos} class="ordinal-select">
-              {#each ORDINALS as o}
-                <option value={o.value}>{o.label}</option>
-              {/each}
-            </select>
-            <select bind:value={ordinalWd} class="ordinal-select">
-              {#each WD_OPTIONS as wd}
-                <option value={wd.code}>{wd.label}</option>
-              {/each}
-            </select>
+            <Select.Root
+              type="single"
+              value={String(ordinalPos)}
+              onValueChange={(v) => { if (v) ordinalPos = parseInt(v, 10); }}
+            >
+              <Select.Trigger class="ordinal-select-trigger">
+                <Select.Value />
+              </Select.Trigger>
+              <Select.Content>
+                {#each ORDINALS as o}
+                  <Select.Item value={String(o.value)}>{o.label}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <Select.Root
+              type="single"
+              value={ordinalWd}
+              onValueChange={(v) => { if (v) ordinalWd = v; }}
+            >
+              <Select.Trigger class="ordinal-select-trigger">
+                <Select.Value />
+              </Select.Trigger>
+              <Select.Content>
+                {#each WD_OPTIONS as wd}
+                  <Select.Item value={wd.code}>{wd.label}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
           </div>
         {/if}
       </div>
@@ -207,22 +245,43 @@
           >{m}</button>
         {/each}
       </div>
-      <label class="checkbox-row">
-        <input type="checkbox" bind:checked={yearlyUseOrdinal} />
+      <label class="checkbox-row" for="yearly-ordinal-check">
+        <Checkbox
+          id="yearly-ordinal-check"
+          bind:checked={yearlyUseOrdinal}
+        />
         <span>No(a):</span>
       </label>
       {#if yearlyUseOrdinal}
         <div class="ordinal-row">
-          <select bind:value={ordinalPos} class="ordinal-select">
-            {#each ORDINALS as o}
-              <option value={o.value}>{o.label}</option>
-            {/each}
-          </select>
-          <select bind:value={ordinalWd} class="ordinal-select">
-            {#each WD_OPTIONS as wd}
-              <option value={wd.code}>{wd.label}</option>
-            {/each}
-          </select>
+          <Select.Root
+            type="single"
+            value={String(ordinalPos)}
+            onValueChange={(v) => { if (v) ordinalPos = parseInt(v, 10); }}
+          >
+            <Select.Trigger class="ordinal-select-trigger">
+              <Select.Value />
+            </Select.Trigger>
+            <Select.Content>
+              {#each ORDINALS as o}
+                <Select.Item value={String(o.value)}>{o.label}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+          <Select.Root
+            type="single"
+            value={ordinalWd}
+            onValueChange={(v) => { if (v) ordinalWd = v; }}
+          >
+            <Select.Trigger class="ordinal-select-trigger">
+              <Select.Value />
+            </Select.Trigger>
+            <Select.Content>
+              {#each WD_OPTIONS as wd}
+                <Select.Item value={wd.code}>{wd.label}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
         </div>
       {/if}
     {/if}
@@ -257,7 +316,8 @@
     font-size: 13px;
   }
 
-  .freq-select, .ordinal-select {
+  :global(.freq-select-trigger),
+  :global(.ordinal-select-trigger) {
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
     border: none;
     border-radius: var(--radius);
@@ -266,10 +326,22 @@
     font-size: 13px;
     padding: 4px 8px;
     cursor: pointer;
+    height: auto;
   }
 
-  .freq-select { flex: 1; }
-  .ordinal-select { flex: 1; }
+  :global(.freq-select-trigger) {
+    flex: 1;
+  }
+
+  :global(.ordinal-select-trigger) {
+    flex: 1;
+  }
+
+  :global(.monthly-radio-group) {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
 
   .weekday-grid {
     display: flex;
@@ -309,7 +381,6 @@
     color: var(--color-neutral-active);
   }
 
-  .radio-row input { accent-color: var(--color-interactive); }
 
   .day-grid {
     display: grid;
@@ -370,7 +441,6 @@
     color: var(--color-neutral-active);
   }
 
-  .checkbox-row input { accent-color: var(--color-interactive); }
 
   .btn-row {
     display: flex;

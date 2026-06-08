@@ -5,6 +5,7 @@
   import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import mermaid from 'mermaid';
   import WidgetContainer from './WidgetContainer.svelte';
+  import { Button } from '$lib/components/ui/button';
 
   let { widgetId, entityId = '', conversationIri = null, windowState = 'normal', onWindowStateChange } = $props();
 
@@ -256,24 +257,14 @@
 </script>
 
 {#snippet editActions()}
-  <button class="action-btn confirm-btn" onclick={saveContent} title="Save">
-    <span class="material-symbols-outlined">check</span>
-  </button>
-  <button class="action-btn" onclick={cancelEdit} title="Cancel">
-    <span class="material-symbols-outlined">close</span>
-  </button>
+  <Button variant="ghost" size="icon" class="confirm-action-btn" onclick={saveContent} title="Save"><span class="material-symbols-outlined">check</span></Button>
+  <Button variant="ghost" size="icon" onclick={cancelEdit} title="Cancel"><span class="material-symbols-outlined">close</span></Button>
 {/snippet}
 
 {#snippet normalActions()}
-  <button class="action-btn" onclick={resetView} title="Reset view">
-    <span class="material-symbols-outlined">center_focus_strong</span>
-  </button>
-  <button class="action-btn" onclick={() => { draftContent = content; editMode = true; }} title="Edit diagram">
-    <span class="material-symbols-outlined">edit</span>
-  </button>
-  <button class="action-btn" onclick={openInspector} title="Open inspector">
-    <span class="material-symbols-outlined">info</span>
-  </button>
+  <Button variant="ghost" size="icon" onclick={resetView} title="Reset view"><span class="material-symbols-outlined">center_focus_strong</span></Button>
+  <Button variant="ghost" size="icon" onclick={() => { draftContent = content; editMode = true; }} title="Edit diagram"><span class="material-symbols-outlined">edit</span></Button>
+  <Button variant="ghost" size="icon" onclick={openInspector} title="Open inspector"><span class="material-symbols-outlined">info</span></Button>
 {/snippet}
 
 <WidgetContainer
@@ -329,34 +320,13 @@
 </WidgetContainer>
 
 <style>
-  .action-btn {
-    background: none;
-    border: none;
-    padding: 4px;
-    cursor: pointer;
-    color: var(--color-interactive);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
+  :global(.confirm-action-btn) {
+    color: var(--color-success) !important;
   }
 
-  .action-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    color: var(--color-neutral-active);
-  }
-
-  .action-btn .material-symbols-outlined {
-    font-size: 18px;
-  }
-
-  .confirm-btn {
-    color: var(--color-success, #22c55e);
-  }
-
-  .confirm-btn:hover {
-    background: color-mix(in srgb, var(--color-success, #22c55e) 15%, transparent);
-    color: var(--color-success, #22c55e);
+  :global(.confirm-action-btn:hover) {
+    background: color-mix(in srgb, var(--color-success) 15%, transparent) !important;
+    color: var(--color-success) !important;
   }
 
   .loading {
@@ -452,8 +422,8 @@
     align-items: flex-start;
     gap: 8px;
     padding: 12px;
-    background: color-mix(in srgb, var(--color-error, #ef4444) 10%, transparent);
-    color: var(--color-error, #ef4444);
+    background: color-mix(in srgb, var(--color-error) 10%, transparent);
+    color: var(--color-error);
     font-size: 12px;
     z-index: 1;
   }
