@@ -66,14 +66,14 @@
     height: 16px;
     padding: 0 4px;
     border-radius: var(--radius);
-    background: var(--color-danger, #ef4444);
-    color: white;
+    background: var(--destructive);
+    color: var(--destructive-foreground);
     font-size: 9px;
     font-weight: 700;
     display: flex;
     align-items: center;
     justify-content: center;
     pointer-events: none;
-    box-shadow: 0 0 0 2px var(--color-surface-0);
+    box-shadow: 0 0 0 2px var(--background);
   }
 </style>

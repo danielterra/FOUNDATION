@@ -1,5 +1,7 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
+	import { Button } from '$lib/components/ui/button';
+	import { Textarea } from '$lib/components/ui/textarea';
 
 	let { q, answer = null, isLast, conversationId } = $props();
 
@@ -45,7 +47,7 @@
 		{#if q.question_type === 'single'}
 			<div class="question-options">
 				{#each (q.options ?? []) as option}
-					<button class="option-btn" onclick={() => answerQuestion(q.id, option)}>{option}</button>
+					<Button variant="ghost" class="option-btn" onclick={() => answerQuestion(q.id, option)}>{option}</Button>
 				{/each}
 			</div>
 		{:else if q.question_type === 'multi'}
@@ -57,12 +59,12 @@
 					</label>
 				{/each}
 			</div>
-			<button class="question-submit" onclick={() => answerQuestion(q.id, selectedOptions)}>Submit</button>
+			<Button variant="ghost" class="question-submit" onclick={() => answerQuestion(q.id, selectedOptions)}>Submit</Button>
 		{:else}
-			<textarea class="question-textarea" bind:value={textInput} placeholder="Type your answer..."></textarea>
-			<button class="question-submit" onclick={() => answerQuestion(q.id, textInput)}>Submit</button>
+			<Textarea bind:value={textInput} placeholder="Type your answer..." class="question-textarea" />
+			<Button variant="ghost" class="question-submit" onclick={() => answerQuestion(q.id, textInput)}>Submit</Button>
 		{/if}
-		<button class="question-dismiss" onclick={() => dismissQuestion(q.id)}>Cancel</button>
+		<Button variant="ghost" class="question-dismiss" onclick={() => dismissQuestion(q.id)}>Cancel</Button>
 	{:else}
 		<div class="question-answered">Answered</div>
 	{/if}
@@ -74,7 +76,7 @@
 		flex-direction: column;
 		gap: 8px;
 		padding: 10px 12px;
-		background: color-mix(in srgb, var(--color-neutral-active) 6%, transparent);
+		background: var(--muted);
 		margin-top: 4px;
 	}
 
@@ -86,7 +88,7 @@
 
 	.question-icon {
 		font-size: 14px;
-		color: var(--color-neutral-disabled);
+		color: var(--muted-foreground);
 	}
 
 	.question-label {
@@ -94,12 +96,12 @@
 		font-weight: 600;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
-		color: var(--color-neutral-disabled);
+		color: var(--muted-foreground);
 	}
 
 	.question-text {
 		font-size: 14px;
-		color: var(--color-neutral-active);
+		color: var(--accent-foreground);
 		line-height: 1.5;
 	}
 
@@ -107,21 +109,18 @@
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
+		align-items: flex-start;
 	}
 
-	.option-btn {
-		text-align: left;
-		padding: 6px 10px;
-		border: none;
-		background: color-mix(in srgb, var(--color-interactive) 8%, transparent);
-		color: var(--color-neutral-active);
-		font-size: 12px;
-		cursor: pointer;
-		transition: background 0.15s;
-	}
-
-	.option-btn:active {
-		background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
+	:global(.option-btn) {
+		text-align: left !important;
+		justify-content: flex-start !important;
+		font-size: 12px !important;
+		height: auto !important;
+		padding: 6px 10px !important;
+		background: color-mix(in srgb, var(--primary) 8%, transparent) !important;
+		color: var(--accent-foreground) !important;
+		width: 100% !important;
 	}
 
 	.option-checkbox-label {
@@ -129,74 +128,48 @@
 		align-items: center;
 		gap: 8px;
 		font-size: 12px;
-		color: var(--color-neutral-active);
+		color: var(--accent-foreground);
 		cursor: pointer;
 		padding: 4px 0;
 	}
 
 	.option-checkbox {
-		accent-color: var(--color-interactive);
+		accent-color: var(--primary);
 		width: 14px;
 		height: 14px;
 		cursor: pointer;
 		flex-shrink: 0;
 	}
 
-	.question-textarea {
-		width: 100%;
-		min-height: 72px;
-		padding: 8px 10px;
-		border: none;
-		background: color-mix(in srgb, var(--color-black) 20%, transparent);
-		color: var(--color-neutral-active);
-		font-size: 12px;
-		font-family: inherit;
-		resize: vertical;
-		box-sizing: border-box;
-		outline: none;
+	:global(.question-textarea) {
+		min-height: 72px !important;
+		font-size: 12px !important;
 	}
 
-	.question-submit {
+	:global(.question-submit) {
 		align-self: flex-end;
-		padding: 5px 14px;
-		border: none;
-		background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-		color: var(--color-interactive);
-		font-size: 12px;
-		font-weight: 500;
-		cursor: pointer;
-		transition: background 0.15s;
-	}
-
-	.question-submit:active {
-		background: color-mix(in srgb, var(--color-interactive) 25%, transparent);
+		font-size: 12px !important;
+		font-weight: 500 !important;
+		color: var(--primary) !important;
 	}
 
 	.question-answered {
 		font-size: 11px;
-		color: var(--color-neutral-disabled);
+		color: var(--muted-foreground);
 		font-style: italic;
 		opacity: 0.6;
 	}
 
 	.question-answer {
 		font-size: 14px;
-		color: var(--color-neutral-active);
+		color: var(--accent-foreground);
 		padding: 6px 10px;
-		background: color-mix(in srgb, var(--color-neutral-active) 8%, transparent);
+		background: var(--input);
 	}
 
-	.question-dismiss {
+	:global(.question-dismiss) {
 		align-self: flex-end;
-		background: transparent;
-		border: none;
-		color: var(--color-neutral-disabled);
-		padding: 4px 10px;
-		font-size: 11px;
-		cursor: pointer;
-	}
-
-	.question-dismiss:active {
-		background: color-mix(in srgb, var(--color-neutral-disabled) 15%, transparent);
+		color: var(--muted-foreground) !important;
+		font-size: 11px !important;
 	}
 </style>

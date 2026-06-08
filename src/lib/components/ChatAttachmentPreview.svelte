@@ -1,4 +1,6 @@
 <script>
+	import { Button } from '$lib/components/ui/button';
+
 	let { pendingAttachments, onRemove } = $props();
 
 	function formatFileSize(bytes) {
@@ -19,13 +21,15 @@
 				</span>
 				<span class="attachment-name">{attachment.fileName}</span>
 				<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
-				<button
-					class="remove-attachment"
+				<Button
+					variant="ghost"
+					size="icon-sm"
 					onclick={() => onRemove(attachment.iri)}
 					aria-label="Remove attachment"
+					class="remove-attachment"
 				>
 					<span class="material-symbols-outlined">close</span>
-				</button>
+				</Button>
 			</div>
 		{/each}
 	</div>
@@ -38,7 +42,7 @@
 		gap: 8px;
 		margin-bottom: 12px;
 		padding: 12px;
-		background: color-mix(in srgb, var(--color-white) 5%, transparent);
+		background: var(--muted);
 		border-radius: var(--radius);
 	}
 
@@ -47,49 +51,30 @@
 		align-items: center;
 		gap: 8px;
 		padding: 8px;
-		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+		background: var(--input);
 		border-radius: var(--radius);
 		font-size: 14px;
 	}
 
 	.attachment-item .material-symbols-outlined {
 		font-size: 20px;
-		color: var(--color-interactive);
+		color: var(--primary);
 	}
 
 	.attachment-name {
 		flex: 1;
-		color: var(--color-neutral-active);
+		color: var(--accent-foreground);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
 	.attachment-size {
-		color: var(--color-neutral);
+		color: var(--foreground);
 		font-size: 11px;
 	}
 
-	.remove-attachment {
-		width: 24px;
-		height: 24px;
-		background: transparent;
-		border: none;
-		border-radius: var(--radius);
-		color: var(--color-neutral);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: all 0.2s;
-	}
-
-	.remove-attachment:hover {
-		background: color-mix(in srgb, var(--color-white) 10%, transparent);
-		color: #f44336;
-	}
-
-	.remove-attachment .material-symbols-outlined {
-		font-size: 16px;
+	:global(.remove-attachment:hover) {
+		color: var(--destructive) !important;
 	}
 </style>

@@ -3,6 +3,8 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
+	import { Checkbox } from '$lib/components/ui/checkbox';
+	import * as Select from '$lib/components/ui/select';
 	import posthog from 'posthog-js';
 
 	let { onClose } = $props();
@@ -340,7 +342,7 @@
 	}
 
 	async function onServiceChange(e) {
-		selectedServiceIri = e.target.value;
+		selectedServiceIri = typeof e === 'string' ? e : e.target.value;
 		selectedModelIri = '';
 		selectedOpenRouterModelId = '';
 		loadedOpenRouterModelId = '';
@@ -636,11 +638,20 @@
 				{#if services.length > 0}
 					<label class="field-label" for="settings-provider-select">Provedor</label>
 					<div class="field-row">
-						<select id="settings-provider-select" class="select-input" value={selectedServiceIri} onchange={onServiceChange}>
-							{#each services as svc}
-								<option value={svc.iri}>{svc.label}</option>
-							{/each}
-						</select>
+						<Select.Root
+							type="single"
+							value={selectedServiceIri}
+							onValueChange={async (v) => { if (v) await onServiceChange(v); }}
+						>
+							<Select.Trigger id="settings-provider-select" class="flex-1">
+								<Select.Value placeholder="Selecionar provedor" />
+							</Select.Trigger>
+							<Select.Content>
+								{#each services as svc}
+									<Select.Item value={svc.iri}>{svc.label}</Select.Item>
+								{/each}
+							</Select.Content>
+						</Select.Root>
 					</div>
 
 					{#if !selectedServiceIsLocal}
@@ -679,12 +690,21 @@
 					{#if selectedServiceIsOpenRouter && openRouterModels.length > 0}
 						<label class="field-label" for="settings-or-model-select">Modelo (OpenRouter)</label>
 						<div class="field-row">
-							<select id="settings-or-model-select" class="select-input" bind:value={selectedOpenRouterModelId}>
-								<option value="">Selecione um modelo…</option>
-								{#each openRouterModels as m}
-									<option value={m.id}>{m.name} — {(m.contextLength / 1000).toFixed(0)}k ctx · in ${(m.inputCostPerToken * 1_000_000).toFixed(2)} / out ${(m.outputCostPerToken * 1_000_000).toFixed(2)} por 1M</option>
-								{/each}
-							</select>
+							<Select.Root
+								type="single"
+								value={selectedOpenRouterModelId}
+								onValueChange={(v) => { if (v !== undefined) selectedOpenRouterModelId = v; }}
+							>
+								<Select.Trigger id="settings-or-model-select" class="flex-1">
+									<Select.Value placeholder="Selecione um modelo…" />
+								</Select.Trigger>
+								<Select.Content>
+									<Select.Item value="">Selecione um modelo…</Select.Item>
+									{#each openRouterModels as m}
+										<Select.Item value={m.id}>{m.name} — {(m.contextLength / 1000).toFixed(0)}k ctx · in ${(m.inputCostPerToken * 1_000_000).toFixed(2)} / out ${(m.outputCostPerToken * 1_000_000).toFixed(2)} por 1M</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
 						</div>
 					{:else if selectedServiceIsOpenRouter && apiKey.trim() && openRouterModels.length === 0}
 						<div class="field-row">
@@ -702,18 +722,24 @@
 								</div>
 							{/each}
 							<div class="field-row" style="width:100%;">
-								<select id="settings-fallback-add" class="select-input" style="flex:1;" onchange={(e) => {
-									const id = e.target.value;
-									if (id && !fallbackModelIds.includes(id)) {
-										fallbackModelIds = [...fallbackModelIds, id];
-									}
-									e.target.value = '';
-								}}>
-									<option value="">Adicionar modelo de fallback…</option>
-									{#each openRouterModels.filter(m => !fallbackModelIds.includes(m.id)) as m}
-										<option value={m.id}>{m.name}</option>
-									{/each}
-								</select>
+								<Select.Root
+									type="single"
+									value=""
+									onValueChange={(v) => {
+										if (v && !fallbackModelIds.includes(v)) {
+											fallbackModelIds = [...fallbackModelIds, v];
+										}
+									}}
+								>
+									<Select.Trigger id="settings-fallback-add" class="flex-1">
+										<Select.Value placeholder="Adicionar modelo de fallback…" />
+									</Select.Trigger>
+									<Select.Content>
+										{#each openRouterModels.filter(m => !fallbackModelIds.includes(m.id)) as m}
+											<Select.Item value={m.id}>{m.name}</Select.Item>
+										{/each}
+									</Select.Content>
+								</Select.Root>
 							</div>
 						</div>
 					{/if}
@@ -721,12 +747,20 @@
 					{#if !selectedServiceIsOpenRouter && models.length > 0}
 						<label class="field-label" for="settings-model-select">Modelo padrão</label>
 						<div class="field-row">
-							<select id="settings-model-select" class="select-input" bind:value={selectedModelIri}>
-								<option value="">Selecione um modelo…</option>
-								{#each models as model}
-									<option value={model.iri}>{model.label}</option>
-								{/each}
-							</select>
+							<Select.Root
+								type="single"
+								value={selectedModelIri}
+								onValueChange={(v) => { if (v !== undefined) selectedModelIri = v; }}
+							>
+								<Select.Trigger id="settings-model-select" class="flex-1">
+									<Select.Value placeholder="Selecione um modelo…" />
+								</Select.Trigger>
+								<Select.Content>
+									{#each models as model}
+										<Select.Item value={model.iri}>{model.label}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
 						</div>
 						{#if !selectedServiceIsLocal && !apiKey.trim()}
 							<p class="feedback error">Informe a chave de API antes de ativar este provedor.</p>
@@ -882,7 +916,7 @@
 
 						<div class="field-row imap-options-row">
 							<label class="checkbox-label">
-								<input type="checkbox" bind:checked={imapForm.use_tls} />
+								<Checkbox bind:checked={imapForm.use_tls} />
 								Usar TLS
 							</label>
 							<label class="checkbox-label" style="margin-left:auto">
@@ -898,7 +932,7 @@
 								<div class="imap-folders">
 									{#each imapAvailableFolders as folder}
 										<label class="checkbox-label folder-label">
-											<input type="checkbox" checked={imapSelectedFolders.includes(folder)} onchange={() => toggleImapFolder(folder)} />
+											<Checkbox checked={imapSelectedFolders.includes(folder)} onCheckedChange={() => toggleImapFolder(folder)} />
 											{folder}
 										</label>
 									{/each}
@@ -983,10 +1017,9 @@
 					Privacidade
 				</h3>
 				<label class="analytics-toggle">
-					<input
-						type="checkbox"
+					<Checkbox
 						checked={analyticsEnabled}
-						onchange={(e) => toggleAnalytics(e.target.checked)}
+						onCheckedChange={(v) => toggleAnalytics(!!v)}
 					/>
 					<span class="analytics-toggle-text">
 						<strong>Compartilhar dados de uso anônimos</strong>
@@ -1062,7 +1095,7 @@
 	.panel-title {
 		font-size: 15px;
 		font-weight: 600;
-		color: var(--color-neutral-active, #e0e0e0);
+		color: var(--color-neutral-active);
 	}
 
 	.panel-body {
@@ -1092,17 +1125,17 @@
 
 	.hint {
 		font-size: 14px;
-		color: var(--color-neutral, #888);
+		color: var(--color-neutral);
 		margin: 0;
 	}
 
 	.hint strong {
-		color: var(--color-neutral-active, #e0e0e0);
+		color: var(--color-neutral-active);
 	}
 
 	.log-path {
 		font-size: 11px;
-		color: var(--color-neutral, #888);
+		color: var(--color-neutral);
 		word-break: break-all;
 		margin: 0;
 		font-family: monospace;
@@ -1114,14 +1147,13 @@
 		align-items: center;
 	}
 
-	.text-input,
-	.select-input {
+	.text-input {
 		flex: 1;
 		min-width: 0;
 		background: var(--color-surface-3);
 		border: none;
 		border-radius: var(--radius);
-		color: var(--color-neutral-active, #e0e0e0);
+		color: var(--color-neutral-active);
 		font-family: var(--font-body);
 		font-size: 14px;
 		padding: 7px 10px;
@@ -1130,32 +1162,16 @@
 		box-sizing: border-box;
 	}
 
-	.select-input {
-		appearance: none;
-		-webkit-appearance: none;
-		-moz-appearance: none;
-		padding-right: 32px;
-		background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23bfbfbf' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
-		background-repeat: no-repeat;
-		background-position: right 10px center;
-		cursor: pointer;
-	}
-
-	.select-input option {
-		background: var(--color-surface-2);
-		color: var(--color-neutral-active);
-	}
-
 	/* save-btn / danger-btn replaced by <Button> component */
 
 	.feedback {
 		font-size: 12px;
-		color: var(--color-interactive, #7c6fff);
+		color: var(--color-interactive);
 		margin: 0;
 	}
 
 	.feedback.error {
-		color: #e57373;
+		color: var(--color-danger);
 	}
 
 	.model-status-icon {
@@ -1165,24 +1181,24 @@
 	}
 
 	.model-status-icon.installed {
-		color: #66bb6a;
+		color: var(--color-success);
 	}
 
 	.progress-bar-track {
 		height: 4px;
-		background: color-mix(in srgb, var(--color-white, #fff) 10%, transparent);
+		background: color-mix(in srgb, var(--color-white) 10%, transparent);
 		width: 100%;
 	}
 
 	.progress-bar-fill {
 		height: 100%;
-		background: var(--color-interactive, #7c6fff);
+		background: var(--color-interactive);
 		transition: width 0.25s linear;
 	}
 
 	.progress-detail {
 		font-size: 11px;
-		color: var(--color-neutral, #888);
+		color: var(--color-neutral);
 		margin: 0;
 	}
 
@@ -1198,12 +1214,12 @@
 
 	.imap-status-icon {
 		font-size: 16px;
-		color: var(--color-neutral, #888);
+		color: var(--color-neutral);
 		flex-shrink: 0;
 	}
 
 	.imap-status-icon.connected {
-		color: #66bb6a;
+		color: var(--color-success);
 	}
 
 	.sync-history {
@@ -1219,16 +1235,16 @@
 	.sync-table th, .sync-table td {
 		text-align: left;
 		padding: 3px 8px;
-		color: var(--color-text-secondary, #aaa);
+		color: var(--color-neutral);
 	}
 
 	.sync-table th {
 		font-weight: 600;
-		color: var(--color-text-muted, #888);
+		color: var(--color-neutral);
 	}
 
 	.sync-table .sync-error {
-		color: var(--color-error, #e57373);
+		color: var(--color-error);
 		max-width: 300px;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -1245,7 +1261,7 @@
 
 	.imap-account-label {
 		font-size: 13px;
-		color: var(--color-neutral-active, #e0e0e0);
+		color: var(--color-neutral-active);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -1253,7 +1269,7 @@
 
 	.imap-account-host {
 		font-size: 11px;
-		color: var(--color-neutral, #888);
+		color: var(--color-neutral);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -1280,7 +1296,7 @@
 		align-items: center;
 		gap: 6px;
 		font-size: 13px;
-		color: var(--color-neutral, #888);
+		color: var(--color-neutral);
 		cursor: pointer;
 	}
 
@@ -1318,13 +1334,13 @@
 		margin: 4px 0 0;
 		padding-left: 20px;
 		font-size: 12px;
-		color: var(--color-neutral, #888);
+		color: var(--color-neutral);
 		line-height: 1.6;
 	}
 
 	.claude-steps em {
 		font-style: normal;
-		color: var(--color-neutral-active, #e0e0e0);
+		color: var(--color-neutral-active);
 	}
 
 	.claude-steps code {
@@ -1344,12 +1360,9 @@
 		cursor: pointer;
 	}
 
-	.analytics-toggle input[type="checkbox"] {
+	.analytics-toggle :global([data-slot="checkbox"]) {
 		margin-top: 2px;
 		flex-shrink: 0;
-		accent-color: var(--color-interactive);
-		width: 14px;
-		height: 14px;
 	}
 
 	.analytics-toggle-text {

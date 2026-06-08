@@ -1073,7 +1073,7 @@
 		height: 100%;
 		display: flex;
 		flex-direction: column;
-		background: color-mix(in srgb, var(--color-white) 7%, var(--color-black));
+		background: var(--card);
 		border-radius: var(--radius);
 		overflow: hidden;
 	}

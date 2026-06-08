@@ -1,7 +1,8 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
 	import { tick } from 'svelte';
-	import { focus } from '$lib/utils/actions';
+	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
 
 	let {
 		conversations = $bindable([]),
@@ -16,6 +17,7 @@
 	let renameText = $state('');
 	let confirmDeleteIri = $state(null);
 	let searchInputEl = $state(null);
+	let renameInputEl = $state(null);
 
 	const activeLabel = $derived(
 		conversations.find(c => c.iri === activeConversationIri)?.label ?? 'Select conversation'
@@ -88,6 +90,12 @@
 			conversations = await invoke('chat__list_conversations');
 		}
 	}
+
+	$effect(() => {
+		if (renamingIri && renameInputEl) {
+			renameInputEl.focus();
+		}
+	});
 </script>
 
 <div class="conversation-bar">
@@ -106,8 +114,8 @@
 		<div class="conversation-dropdown">
 			<div class="dropdown-search-row">
 				<span class="material-symbols-outlined search-icon">search</span>
-				<input
-					bind:this={searchInputEl}
+				<Input
+					bind:ref={searchInputEl}
 					bind:value={searchQuery}
 					class="dropdown-search-input"
 					placeholder="Search conversations…"
@@ -118,48 +126,53 @@
 				{#each filteredConversations as conv (conv.iri)}
 					<div class="dropdown-item" class:active={conv.iri === activeConversationIri}>
 						{#if renamingIri === conv.iri}
-							<input
+							<Input
+								bind:ref={renameInputEl}
 								class="item-rename-input"
 								bind:value={renameText}
 								onkeydown={(e) => {
 									if (e.key === 'Enter') confirmRename();
 									else if (e.key === 'Escape') { renamingIri = null; }
 								}}
-								use:focus
 							/>
-							<button class="item-icon-btn confirm" onclick={confirmRename} title="Confirm">
+							<Button variant="ghost" size="icon-sm" onclick={confirmRename} title="Confirm" aria-label="Confirm rename">
 								<span class="material-symbols-outlined">check</span>
-							</button>
-							<button class="item-icon-btn cancel" onclick={() => renamingIri = null} title="Cancel">
+							</Button>
+							<Button variant="ghost" size="icon-sm" onclick={() => renamingIri = null} title="Cancel" aria-label="Cancel rename">
 								<span class="material-symbols-outlined">close</span>
-							</button>
+							</Button>
 						{:else if confirmDeleteIri === conv.iri}
 							<span class="item-delete-label">Delete?</span>
-							<button class="item-icon-btn confirm" onclick={confirmDelete} title="Confirm delete">
+							<Button variant="ghost" size="icon-sm" onclick={confirmDelete} title="Confirm delete" aria-label="Confirm delete">
 								<span class="material-symbols-outlined">check</span>
-							</button>
-							<button class="item-icon-btn cancel" onclick={() => confirmDeleteIri = null} title="Cancel">
+							</Button>
+							<Button variant="ghost" size="icon-sm" onclick={() => confirmDeleteIri = null} title="Cancel" aria-label="Cancel delete">
 								<span class="material-symbols-outlined">close</span>
-							</button>
+							</Button>
 						{:else}
 							<button class="item-name" onclick={() => selectConversation(conv.iri)}>
 								{conv.label}
 							</button>
 							<div class="item-actions">
-								<button
-									class="item-icon-btn"
+								<Button
+									variant="ghost"
+									size="icon-sm"
 									onclick={(e) => { e.stopPropagation(); startRename(conv.iri); }}
 									title="Rename"
+									aria-label="Rename conversation"
 								>
 									<span class="material-symbols-outlined">edit</span>
-								</button>
-								<button
-									class="item-icon-btn danger"
+								</Button>
+								<Button
+									variant="ghost"
+									size="icon-sm"
 									onclick={(e) => { e.stopPropagation(); startDelete(conv.iri); }}
 									title="Delete"
+									aria-label="Delete conversation"
+									class="danger-btn"
 								>
 									<span class="material-symbols-outlined">delete</span>
-								</button>
+								</Button>
 							</div>
 						{/if}
 					</div>
@@ -188,7 +201,7 @@
 		gap: 4px;
 		background: transparent;
 		border: none;
-		color: var(--color-neutral);
+		color: var(--foreground);
 		font-size: 12px;
 		cursor: pointer;
 		padding: 6px 0;
@@ -197,7 +210,7 @@
 	}
 
 	.conversation-trigger:hover {
-		color: var(--color-neutral-active);
+		color: var(--accent-foreground);
 	}
 
 	.trigger-label {
@@ -229,7 +242,7 @@
 		left: 0;
 		right: 0;
 		z-index: 100;
-		background: color-mix(in srgb, var(--color-white) 6%, var(--color-black));
+		background: var(--popover);
 		box-shadow: 0 8px 24px color-mix(in srgb, var(--color-black) 60%, transparent);
 		border-radius: var(--radius);
 		display: flex;
@@ -248,25 +261,17 @@
 
 	.search-icon {
 		font-size: 14px;
-		color: var(--color-neutral-disabled);
+		color: var(--muted-foreground);
 		flex-shrink: 0;
 	}
 
-	.dropdown-search-input {
-		flex: 1;
-		background: transparent;
-		border: none;
-		color: var(--color-neutral-active);
-		font-size: 12px;
-		min-width: 0;
-	}
-
-	.dropdown-search-input:focus {
-		outline: none;
-	}
-
-	.dropdown-search-input::placeholder {
-		color: var(--color-neutral-disabled);
+	:global(.dropdown-search-input) {
+		background: transparent !important;
+		border: none !important;
+		box-shadow: none !important;
+		font-size: 12px !important;
+		height: auto !important;
+		padding: 0 !important;
 	}
 
 	.dropdown-list {
@@ -288,18 +293,18 @@
 	}
 
 	.dropdown-item.active {
-		background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
+		background: color-mix(in srgb, var(--primary) 12%, transparent);
 	}
 
 	.dropdown-item:hover:not(.active) {
-		background: color-mix(in srgb, var(--color-white) 5%, transparent);
+		background: var(--accent);
 	}
 
 	.item-name {
 		flex: 1;
 		background: transparent;
 		border: none;
-		color: var(--color-neutral);
+		color: var(--foreground);
 		font-size: 12px;
 		cursor: pointer;
 		text-align: left;
@@ -311,11 +316,11 @@
 	}
 
 	.dropdown-item.active .item-name {
-		color: var(--color-neutral-active);
+		color: var(--accent-foreground);
 	}
 
 	.item-name:hover {
-		color: var(--color-neutral-active);
+		color: var(--accent-foreground);
 	}
 
 	.item-actions {
@@ -327,67 +332,31 @@
 		transition: opacity 0.1s;
 	}
 
-	.item-rename-input {
-		flex: 1;
-		background: transparent;
-		border: none;
-		color: var(--color-neutral-active);
-		font-size: 12px;
-		padding: 2px 0;
-		min-width: 0;
-	}
-
-	.item-rename-input:focus {
-		outline: none;
+	:global(.item-rename-input) {
+		flex: 1 !important;
+		background: transparent !important;
+		border: none !important;
+		box-shadow: none !important;
+		font-size: 12px !important;
+		height: auto !important;
+		padding: 2px 0 !important;
+		min-width: 0 !important;
 	}
 
 	.item-delete-label {
 		flex: 1;
 		font-size: 12px;
-		color: var(--color-danger);
+		color: var(--destructive);
 	}
 
-	.item-icon-btn {
-		width: 22px;
-		height: 22px;
-		background: transparent;
-		border: none;
-		border-radius: var(--radius);
-		color: var(--color-neutral-disabled);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		padding: 0;
-		transition: all 0.1s;
-	}
-
-	.item-icon-btn:hover {
-		color: var(--color-neutral-active);
-		background: color-mix(in srgb, var(--color-white) 8%, transparent);
-	}
-
-	.item-icon-btn.confirm:hover {
-		color: var(--color-success);
-	}
-
-	.item-icon-btn.cancel:hover {
-		color: var(--color-danger);
-	}
-
-	.item-icon-btn.danger:hover {
-		color: var(--color-danger);
-	}
-
-	.item-icon-btn .material-symbols-outlined {
-		font-size: 14px;
+	:global(.danger-btn:hover) {
+		color: var(--destructive) !important;
 	}
 
 	.dropdown-empty {
 		padding: 12px 10px;
 		font-size: 12px;
-		color: var(--color-neutral-disabled);
+		color: var(--muted-foreground);
 		text-align: center;
 	}
 </style>

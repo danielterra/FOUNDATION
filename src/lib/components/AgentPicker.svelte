@@ -77,15 +77,16 @@
 		left: 0;
 		z-index: 101;
 		min-width: 220px;
-		background: var(--color-surface, #1e1e1e);
+		background: var(--popover);
 		padding: 6px;
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+		border-radius: var(--radius);
+		box-shadow: 0 8px 24px color-mix(in srgb, var(--color-black) 60%, transparent);
 	}
 
 	.picker-title {
 		font-size: 11px;
 		font-weight: 600;
-		color: var(--color-neutral);
+		color: var(--muted-foreground);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		padding: 4px 8px 6px;
@@ -99,19 +100,20 @@
 		padding: 8px 10px;
 		border: none;
 		background: transparent;
-		color: var(--color-neutral-active);
+		color: var(--accent-foreground);
 		cursor: pointer;
 		text-align: left;
 		transition: background 0.12s;
+		border-radius: var(--radius);
 	}
 
 	.agent-row:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+		background: var(--accent);
 	}
 
 	.agent-row.active {
-		background: color-mix(in srgb, var(--color-interactive) 14%, transparent);
-		color: var(--color-interactive);
+		background: color-mix(in srgb, var(--primary) 14%, transparent);
+		color: var(--primary);
 	}
 
 	.agent-row.unavailable {
@@ -122,12 +124,13 @@
 	.agent-icon {
 		width: 28px;
 		height: 28px;
-		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+		background: var(--muted);
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		flex-shrink: 0;
 		overflow: hidden;
+		border-radius: var(--radius);
 	}
 
 	.agent-icon img {
@@ -151,13 +154,14 @@
 
 	.active-badge {
 		font-size: 16px;
-		color: var(--color-interactive);
+		color: var(--primary);
 	}
 
 	.unavailable-badge {
 		font-size: 10px;
-		color: var(--color-neutral);
-		background: color-mix(in srgb, var(--color-white) 8%, transparent);
+		color: var(--muted-foreground);
+		background: var(--muted);
 		padding: 2px 5px;
+		border-radius: var(--radius);
 	}
 </style>

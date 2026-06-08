@@ -7,6 +7,7 @@
 	import Search from '$lib/components/graph/Search.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import { calculateGraphLayout, extractRelationships, calculateBoundingBox } from '$lib/utils/graphLayout';
+	import { Button } from '$lib/components/ui/button';
 
 	let canvasComponent = $state();
 	let showSetupWizard = $state(false);
@@ -191,20 +192,28 @@
 					<Search onSelectResult={handleSearch} />
 				</div>
 				<div class="zoom-controls">
-					<button onclick={() => canvasComponent?.zoomOut()} title="Zoom out (⌘-)">−</button>
+					<Button variant="ghost" size="icon" onclick={() => canvasComponent?.zoomOut()} aria-label="Zoom out (⌘-)">
+						<span class="material-symbols-outlined">remove</span>
+					</Button>
 					<span class="zoom-level">{Math.round(zoomLevel * 100)}%</span>
-					<button onclick={() => canvasComponent?.zoomIn()} title="Zoom in (⌘+)">+</button>
-					<button onclick={() => canvasComponent?.resetZoom()} title="Reset zoom (⌘0)">⟲</button>
+					<Button variant="ghost" size="icon" onclick={() => canvasComponent?.zoomIn()} aria-label="Zoom in (⌘+)">
+						<span class="material-symbols-outlined">add</span>
+					</Button>
+					<Button variant="ghost" size="icon" onclick={() => canvasComponent?.resetZoom()} aria-label="Reset zoom (⌘0)">
+						<span class="material-symbols-outlined">refresh</span>
+					</Button>
 				</div>
 				<div class="layout-controls">
-					<button
+					<Button
+						variant="ghost"
+						size="sm"
 						onclick={applyAutoLayout}
 						title="Auto-layout graph"
 						disabled={inspectorPanels.length === 0}
 					>
 						<span class="material-symbols-outlined">account_tree</span>
 						Layout
-					</button>
+					</Button>
 				</div>
 			</div>
 		</div>
@@ -306,25 +315,6 @@
 		padding: 6px 12px;
 	}
 
-	.zoom-controls button {
-		background: none;
-		border: none;
-		color: var(--color-neutral);
-		font-size: 18px;
-		font-weight: 700;
-		cursor: pointer;
-		padding: 4px 8px;
-		transition: background 0.2s;
-		min-width: 28px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.zoom-controls button:hover {
-		background: color-mix(in srgb, var(--color-neutral) 10%, transparent);
-	}
-
 	.zoom-level {
 		color: var(--color-neutral-disabled);
 		font-size: 12px;
@@ -337,33 +327,6 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-	}
-
-	.layout-controls button {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		background: var(--color-surface-2);
-		border-radius: var(--radius);
-		color: var(--color-neutral);
-		font-size: 14px;
-		font-weight: 600;
-		cursor: pointer;
-		padding: 8px 16px;
-		transition: background 0.2s;
-	}
-
-	.layout-controls button:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-neutral) 10%, transparent);
-	}
-
-	.layout-controls button:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.layout-controls button .material-symbols-outlined {
-		font-size: 18px;
 	}
 
 	/* Canvas Panels */

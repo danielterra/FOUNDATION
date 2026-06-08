@@ -1,5 +1,6 @@
 <script>
 	import ThinkingDots from './ThinkingDots.svelte';
+	import { Button } from '$lib/components/ui/button';
 
 	let {
 		inputText = $bindable(''),
@@ -47,9 +48,9 @@
 			<span class="ai-status-text">{aiStatus.status} ({elapsedSeconds}s)</span>
 		</div>
 		{#if onCancelAI}
-			<button class="cancel-ai-btn" onclick={onCancelAI} title="Stop (ESC)">
+			<Button variant="ghost" size="icon" onclick={onCancelAI} title="Stop (ESC)" aria-label="Stop AI">
 				<span class="material-symbols-outlined">stop_circle</span>
-			</button>
+			</Button>
 		{/if}
 	</div>
 {/if}
@@ -59,21 +60,17 @@
 	<div class="edit-banner">
 		<span class="material-symbols-outlined">edit</span>
 		<span class="edit-banner-text">Editing message</span>
-		<button class="edit-cancel-btn" onclick={onCancelEdit} aria-label="Cancel edit">
+		<Button variant="ghost" size="icon" onclick={onCancelEdit} aria-label="Cancel edit">
 			<span class="material-symbols-outlined">close</span>
-		</button>
+		</Button>
 	</div>
 {/if}
 
 <!-- Input -->
 <div class="chat-input">
-	<button
-		class="attach-btn"
-		onclick={openFilePicker}
-		aria-label="Attach file"
-	>
+	<Button variant="ghost" size="icon" onclick={openFilePicker} aria-label="Attach file">
 		<span class="material-symbols-outlined">attach_file</span>
-	</button>
+	</Button>
 	<textarea
 		bind:this={textareaElement}
 		bind:value={inputText}
@@ -82,16 +79,16 @@
 		placeholder="Ask me anything..."
 		rows="1"
 	></textarea>
-	<button
+	<Button
 		onclick={onSend}
 		disabled={!inputText.trim() && !hasPendingAttachments}
 		aria-label="Send"
-		class:loading={isLoading}
+		class={isLoading ? 'send-btn-loading' : ''}
 	>
 		<span class="material-symbols-outlined">
 			{isLoading ? 'hourglass_empty' : 'send'}
 		</span>
-	</button>
+	</Button>
 </div>
 
 <style>
@@ -111,22 +108,6 @@
 		display: flex;
 		align-items: center;
 		gap: 12px;
-	}
-
-	.cancel-ai-btn {
-		background: none;
-		border: none;
-		cursor: pointer;
-		color: var(--color-transition);
-		padding: 0;
-		display: flex;
-		align-items: center;
-		opacity: 0.6;
-		flex-shrink: 0;
-	}
-
-	.cancel-ai-btn .material-symbols-outlined {
-		font-size: 20px;
 	}
 
 	.phase-icon {
@@ -185,51 +166,12 @@
 		font-weight: 500;
 	}
 
-	.edit-cancel-btn {
-		background: none;
-		border: none;
-		cursor: pointer;
-		color: var(--color-interactive);
-		padding: 0;
-		display: flex;
-		align-items: center;
-		opacity: 0.7;
-		flex-shrink: 0;
-	}
-
-	.edit-cancel-btn .material-symbols-outlined {
-		font-size: 16px;
-	}
-
 	/* Input */
 	.chat-input {
 		display: flex;
 		gap: 8px;
 		flex-shrink: 0;
 		align-items: flex-end;
-	}
-
-	.attach-btn {
-		width: 40px;
-		height: 40px;
-		background: transparent;
-		border: none;
-		border-radius: var(--radius);
-		color: var(--color-neutral);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-	}
-
-	.attach-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.attach-btn .material-symbols-outlined {
-		font-size: 20px;
 	}
 
 	.chat-input textarea {
@@ -244,13 +186,13 @@
 		min-height: 40px;
 		max-height: 300px;
 		transition: height 0.1s;
-		background: color-mix(in srgb, var(--color-white) 5%, transparent);
-		color: var(--color-neutral-active);
+		background: var(--muted);
+		color: var(--foreground);
 		overflow-y: auto;
 	}
 
 	.chat-input textarea::placeholder {
-		color: var(--color-neutral-disabled);
+		color: var(--muted-foreground);
 	}
 
 	.chat-input textarea:focus {
@@ -258,40 +200,16 @@
 	}
 
 	.chat-input textarea:disabled {
-		background: color-mix(in srgb, var(--color-white) 3%, transparent);
+		background: var(--input);
 		cursor: not-allowed;
 		opacity: 0.5;
 	}
 
-	.chat-input button {
-		width: 40px;
-		height: 40px;
-		background: var(--color-interactive);
-		color: var(--color-neutral-on-interactive);
-		border: none;
-		border-radius: var(--radius);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
+	:global(.send-btn-loading) {
+		background: var(--color-transition) !important;
 	}
 
-	.chat-input button:disabled {
-		background: var(--color-neutral-disabled);
-		cursor: not-allowed;
-		opacity: 0.5;
-	}
-
-	.chat-input button.loading {
-		background: var(--color-transition);
-	}
-
-	.chat-input button .material-symbols-outlined {
-		font-size: 20px;
-	}
-
-	.chat-input button.loading .material-symbols-outlined {
+	:global(.send-btn-loading .material-symbols-outlined) {
 		animation: pulse 1.5s ease-in-out infinite;
 	}
 

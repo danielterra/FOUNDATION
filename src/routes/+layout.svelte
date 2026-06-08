@@ -1,6 +1,5 @@
 <script lang="ts">
   import '../app.css';
-  import '$lib/colors.css';
   import '$lib/base.css';
   import '$lib/fonts.css';
   import '$lib/markdown.css';

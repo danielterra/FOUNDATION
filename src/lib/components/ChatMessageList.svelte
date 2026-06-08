@@ -82,7 +82,7 @@
 		align-items: center;
 		justify-content: center;
 		height: 100%;
-		color: var(--color-neutral);
+		color: var(--muted-foreground);
 		gap: 12px;
 	}
 
@@ -97,9 +97,9 @@
 		justify-content: center;
 		gap: 8px;
 		padding: 12px;
-		color: var(--color-neutral);
+		color: var(--muted-foreground);
 		font-size: 14px;
-		background: color-mix(in srgb, var(--color-white) 5%, transparent);
+		background: var(--muted);
 		margin-bottom: 12px;
 	}
 
@@ -129,10 +129,10 @@
 	}
 
 	.chat-messages::-webkit-scrollbar-thumb {
-		background: color-mix(in srgb, var(--color-white) 20%, transparent);
+		background: var(--border);
 	}
 
 	.chat-messages::-webkit-scrollbar-thumb:hover {
-		background: color-mix(in srgb, var(--color-white) 30%, transparent);
+		background: var(--muted-foreground);
 	}
 </style>

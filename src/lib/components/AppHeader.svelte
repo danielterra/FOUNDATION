@@ -18,7 +18,7 @@
     height: var(--app-header-height, 36px);
     display: flex;
     align-items: stretch;
-    background: var(--color-surface-1);
+    background: var(--card);
     flex-shrink: 0;
     z-index: 200;
     user-select: none;
@@ -30,7 +30,7 @@
     padding: 0 1rem;
     font-size: 0.8rem;
     font-weight: 600;
-    color: var(--color-neutral-active);
+    color: var(--accent-foreground);
     letter-spacing: 0.08em;
   }
 

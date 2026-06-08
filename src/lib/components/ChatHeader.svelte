@@ -123,10 +123,10 @@
 	.agent-avatar {
 		width: 36px;
 		height: 36px;
-		background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
+		background: color-mix(in srgb, var(--primary) 18%, transparent);
 		border: none;
 		border-radius: var(--radius);
-		color: var(--color-interactive);
+		color: var(--primary);
 		cursor: pointer;
 		display: flex;
 		align-items: center;
@@ -135,7 +135,7 @@
 	}
 
 	.agent-avatar.picker-open {
-		background: color-mix(in srgb, var(--color-interactive) 28%, transparent);
+		background: color-mix(in srgb, var(--primary) 28%, transparent);
 	}
 
 	.agent-avatar .material-symbols-outlined {
@@ -171,7 +171,7 @@
 		display: block;
 		font-size: 14px;
 		font-weight: 600;
-		color: var(--color-neutral-active);
+		color: var(--accent-foreground);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -179,12 +179,12 @@
 
 	.agent-model {
 		font-size: 10px;
-		color: var(--color-neutral);
+		color: var(--foreground);
 		white-space: nowrap;
 	}
 
 	.agent-name-btn:hover .agent-name {
-		color: var(--color-interactive);
+		color: var(--primary);
 	}
 
 	.chat-header-right {

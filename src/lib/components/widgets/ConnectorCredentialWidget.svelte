@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import WidgetContainer from './WidgetContainer.svelte';
   import { Button } from '$lib/components/ui/button';
+  import * as Select from '$lib/components/ui/select';
 
   let { widgetId, entityId = '', windowState = 'normal', onWindowStateChange } = $props();
 
@@ -170,12 +171,21 @@
   <div class="widget-content">
     <div class="field-group">
       <label class="field-label" for="field-auth-type">Auth Type</label>
-      <select id="field-auth-type" class="field-select" bind:value={authType}>
-        <option value="api_key">API Key</option>
-        <option value="token">Bearer Token</option>
-        <option value="username_password">Username / Password</option>
-        <option value="oauth2">OAuth2</option>
-      </select>
+      <Select.Root
+        type="single"
+        value={authType}
+        onValueChange={(v) => { if (v) authType = v; }}
+      >
+        <Select.Trigger id="field-auth-type" class="select-trigger-override">
+          <Select.Value />
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value="api_key">API Key</Select.Item>
+          <Select.Item value="token">Bearer Token</Select.Item>
+          <Select.Item value="username_password">Username / Password</Select.Item>
+          <Select.Item value="oauth2">OAuth2</Select.Item>
+        </Select.Content>
+      </Select.Root>
     </div>
 
     {#if authType === 'api_key'}
@@ -384,8 +394,7 @@
     letter-spacing: 0.04em;
   }
 
-  .field-input,
-  .field-select {
+  .field-input {
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
     border: none;
     padding: 8px 10px;
@@ -394,9 +403,19 @@
     outline: none;
   }
 
-  .field-select option {
-    background: var(--color-surface-3);
+  :global(.select-trigger-override) {
+    background: color-mix(in srgb, var(--color-white) 8%, transparent);
+    border: none;
+    border-radius: 0;
     color: var(--color-neutral-active);
+    font-size: 14px;
+    height: auto;
+    padding: 8px 10px;
+    box-shadow: none;
+  }
+
+  :global(.select-trigger-override:hover) {
+    background: color-mix(in srgb, var(--color-white) 14%, transparent);
   }
 
   .status-error,

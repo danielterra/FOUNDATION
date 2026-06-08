@@ -10,9 +10,9 @@
 		<Card class="py-2 px-3 gap-0">
 			<header class="floating-header">
 				<span class="screen-indicator">{screenName}</span>
-				<button class="search-trigger" onclick={onOpenSearch} aria-label="Search (/)">
+				<Button variant="ghost" size="icon" onclick={onOpenSearch} aria-label="Search (/)">
 					<span class="material-symbols-outlined">search</span>
-				</button>
+				</Button>
 			</header>
 		</Card>
 
@@ -49,26 +49,5 @@
 	.screen-indicator {
 		font-size: 0.875rem;
 		color: var(--color-neutral);
-	}
-
-	.search-trigger {
-		background: none;
-		border: none;
-		cursor: pointer;
-		color: var(--color-neutral);
-		padding: 0.25rem;
-		display: flex;
-		align-items: center;
-		transition: color 0.15s, background 0.15s;
-		margin-left: 0.25rem;
-	}
-
-	.search-trigger:hover {
-		color: var(--color-neutral-active);
-		background: color-mix(in srgb, var(--color-white) 8%, transparent);
-	}
-
-	.search-trigger span {
-		font-size: 20px;
 	}
 </style>

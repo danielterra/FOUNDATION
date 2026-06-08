@@ -7,6 +7,7 @@
 	import moment from 'moment';
 	import { modal } from '$lib/stores/modal';
 	import MarkdownValue from './widgets/inspector/MarkdownValue.svelte';
+	import { Button } from '$lib/components/ui/button';
 
 	marked.setOptions({ breaks: true, gfm: true });
 
@@ -326,18 +327,18 @@
 				{/if}
 			</div>
 			<div class="message-action-bar">
-				<button class="action-btn" onclick={copyMessage} title="Copy message">
+				<Button variant="ghost" size="icon-sm" onclick={copyMessage} title="Copy message" aria-label="Copy message">
 					<span class="material-symbols-outlined">{copySuccess ? 'check' : 'content_copy'}</span>
-				</button>
+				</Button>
 				{#if unit.type === 'user' && onEdit}
-					<button class="action-btn" onclick={handleEdit} title="Edit message">
+					<Button variant="ghost" size="icon-sm" onclick={handleEdit} title="Edit message" aria-label="Edit message">
 						<span class="material-symbols-outlined">edit</span>
-					</button>
+					</Button>
 				{/if}
 				{#if onRetry}
-					<button class="action-btn" onclick={handleRetry} title="Retry">
+					<Button variant="ghost" size="icon-sm" onclick={handleRetry} title="Retry" aria-label="Retry">
 						<span class="material-symbols-outlined">refresh</span>
-					</button>
+					</Button>
 				{/if}
 			</div>
 		</div>
@@ -378,25 +379,6 @@
 	.message:hover .message-action-bar {
 		opacity: 1;
 		pointer-events: auto;
-	}
-
-	.action-btn {
-		width: 24px;
-		height: 24px;
-		background: transparent;
-		border: none;
-		color: var(--color-interactive);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: color 0.15s, background 0.15s;
-		padding: 0;
-		opacity: 0.7;
-	}
-
-	.action-btn .material-symbols-outlined {
-		font-size: 14px;
 	}
 
 	.message-content {
@@ -550,8 +532,8 @@
 		gap: 2px;
 		font-size: 9px;
 		font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
-		color: #989898;
-		background: color-mix(in srgb, var(--color-white) 6%, transparent);
+		color: var(--muted-foreground);
+		background: var(--muted);
 		border-radius: var(--radius);
 		padding: 1px 6px;
 		line-height: 1.6;
@@ -682,15 +664,15 @@
 		align-items: flex-start;
 		gap: 10px;
 		padding: 10px 14px;
-		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
-		border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
+		background: var(--muted);
+		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		width: 100%;
 	}
 
 	.compaction-icon {
 		font-size: 18px;
-		color: var(--color-accent);
+		color: var(--muted-foreground);
 		flex-shrink: 0;
 		margin-top: 1px;
 		font-variation-settings: 'FILL' 1;
@@ -708,13 +690,13 @@
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		color: var(--color-accent);
+		color: var(--muted-foreground);
 		opacity: 0.8;
 	}
 
 	.compaction-text {
 		font-size: 13px;
-		color: var(--color-text-secondary);
+		color: var(--foreground);
 		line-height: 1.5;
 		white-space: pre-wrap;
 		word-break: break-word;

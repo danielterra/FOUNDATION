@@ -1,7 +1,7 @@
 <script>
-	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { Card } from '$lib/components/ui/card';
+	import { Button } from '$lib/components/ui/button';
 	import PropertyRow from '$lib/components/graph/PropertyRow.svelte';
 	import PropertyGroup from '$lib/components/graph/PropertyGroup.svelte';
 
@@ -177,10 +177,12 @@
 					</div>
 				</div>
 				<div class="header-buttons">
-					<button class="fold-button" onclick={toggleFold} type="button">
+					<Button variant="ghost" size="icon" onclick={toggleFold} aria-label={isFolded ? 'Expandir painel' : 'Recolher painel'}>
 						<span class="material-symbols-outlined">{isFolded ? 'unfold_more' : 'unfold_less'}</span>
-					</button>
-					<button class="close-button" onclick={onClose} type="button">✕</button>
+					</Button>
+					<Button variant="ghost" size="icon" onclick={onClose} aria-label="Fechar painel" class="hover:text-destructive">
+						<span class="material-symbols-outlined">close</span>
+					</Button>
 				</div>
 			</div>
 
@@ -243,7 +245,9 @@
 					</div>
 				</div>
 				<div class="header-buttons">
-					<button class="close-button" onclick={onClose} type="button">✕</button>
+					<Button variant="ghost" size="icon" onclick={onClose} aria-label="Fechar painel" class="hover:text-destructive">
+						<span class="material-symbols-outlined">close</span>
+					</Button>
 				</div>
 			</div>
 
@@ -430,40 +434,6 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
-	}
-
-	.fold-button,
-	.close-button {
-		background: none;
-		border: none;
-		color: var(--color-neutral);
-		cursor: pointer;
-		padding: 4px;
-		line-height: 1;
-		transition: background 0.2s, color 0.2s;
-		flex-shrink: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.fold-button {
-		font-size: 20px;
-		color: var(--color-interactive);
-	}
-
-	.fold-button:hover {
-		background: var(--color-neutral-dim);
-		color: var(--color-primary);
-	}
-
-	.close-button {
-		font-size: 18px;
-	}
-
-	.close-button:hover {
-		background: var(--color-danger-dim);
-		color: var(--color-danger);
 	}
 
 	.panel-content {

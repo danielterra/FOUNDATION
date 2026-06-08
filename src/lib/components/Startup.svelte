@@ -6,6 +6,8 @@
   import SetupWizard from "$lib/components/SetupWizard.svelte";
   import ImportProgress from "$lib/components/ImportProgress.svelte";
   import Activity from "$lib/components/Activity.svelte";
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
 
   // null = verificando, true = configurada, false = precisa configurar
   let folderConfigured = $state(null);
@@ -354,26 +356,26 @@
         <h2>Onde salvar seus dados?</h2>
         <p class="folder-hint">Escolha a pasta onde o FOUNDATION vai armazenar seu banco de dados e arquivos.</p>
         <div class="folder-row">
-          <input
-            class="folder-input"
+          <Input
             type="text"
             bind:value={folderPath}
             placeholder="/caminho/para/pasta"
           />
-          <button class="folder-browse-btn" onclick={selectFolder}>
+          <Button variant="ghost" size="icon" onclick={selectFolder} title="Selecionar pasta">
             <span class="material-symbols-outlined">folder_open</span>
-          </button>
+          </Button>
         </div>
         {#if folderError}
           <p class="folder-error">{folderError}</p>
         {/if}
-        <button
+        <Button
           class="folder-confirm-btn"
+          variant="default"
           onclick={confirmFolder}
           disabled={folderSaving || !folderPath.trim()}
         >
           {folderSaving ? 'Iniciando…' : 'Continuar'}
-        </button>
+        </Button>
       </div>
     </div>
 
@@ -413,32 +415,32 @@
 
         <div class="error-actions">
           {#if isCorruptionError(initError)}
-            <button class="error-btn primary" onclick={startRecovery} disabled={recoveryRunning}>
+            <Button variant="default" class="error-action-btn" onclick={startRecovery} disabled={recoveryRunning}>
               <span class="material-symbols-outlined">healing</span>
               Recuperar dados automaticamente
-            </button>
-            <button class="error-btn" onclick={switchFolder} disabled={switchingFolder}>
+            </Button>
+            <Button variant="secondary" class="error-action-btn" onclick={switchFolder} disabled={switchingFolder}>
               <span class="material-symbols-outlined">drive_file_move</span>
               {switchingFolder ? 'Reiniciando…' : 'Escolher outra pasta de dados'}
-            </button>
+            </Button>
           {:else}
-            <button class="error-btn primary" onclick={switchFolder} disabled={switchingFolder}>
+            <Button variant="default" class="error-action-btn" onclick={switchFolder} disabled={switchingFolder}>
               <span class="material-symbols-outlined">drive_file_move</span>
               {switchingFolder ? 'Reiniciando…' : 'Escolher outra pasta de dados'}
-            </button>
+            </Button>
           {/if}
-          <button class="error-btn" onclick={openDataFolder}>
+          <Button variant="secondary" class="error-action-btn" onclick={openDataFolder}>
             <span class="material-symbols-outlined">folder_open</span>
             Abrir pasta atual no Explorer
-          </button>
-          <button class="error-btn" onclick={retryInit}>
+          </Button>
+          <Button variant="secondary" class="error-action-btn" onclick={retryInit}>
             <span class="material-symbols-outlined">refresh</span>
             Tentar novamente
-          </button>
-          <button class="error-btn ghost" onclick={copyErrorDetails}>
+          </Button>
+          <Button variant="ghost" class="error-action-btn" onclick={copyErrorDetails}>
             <span class="material-symbols-outlined">content_copy</span>
             {copyFeedback || 'Copiar detalhes'}
-          </button>
+          </Button>
         </div>
 
         {#if isCorruptionError(initError)}
@@ -463,21 +465,21 @@
               <br /><code>{recoveryResult.workspace}</code>
             </p>
             <div class="recovery-actions">
-              <button class="error-btn primary" onclick={finishRecoveryAndReload}>
+              <Button variant="default" class="error-action-btn" onclick={finishRecoveryAndReload}>
                 <span class="material-symbols-outlined">restart_alt</span>
                 Continuar
-              </button>
-              <button class="error-btn" onclick={openRecoveryWorkspace}>
+              </Button>
+              <Button variant="secondary" class="error-action-btn" onclick={openRecoveryWorkspace}>
                 <span class="material-symbols-outlined">folder_open</span>
                 Abrir pasta do backup
-              </button>
+              </Button>
             </div>
           {:else if recoveryError}
             <span class="material-symbols-outlined recovery-icon error-color">error</span>
             <h2>Falha na recuperação</h2>
             <p class="recovery-error-msg">{recoveryError}</p>
             <p class="recovery-hint">O arquivo original foi restaurado. Você pode tentar novamente ou usar outra pasta de dados.</p>
-            <button class="error-btn" onclick={() => { recoveryError = null; }}>Fechar</button>
+            <Button variant="secondary" class="error-action-btn" onclick={() => { recoveryError = null; }}>Fechar</Button>
           {:else}
             <span class="material-symbols-outlined recovery-icon spinning">progress_activity</span>
             <h2>Recuperando dados…</h2>
@@ -614,41 +616,9 @@
     width: 100%;
   }
 
-  .folder-input {
+  .folder-row :global([data-slot="input"]) {
     flex: 1;
-    background: var(--color-surface-2);
-    color: var(--color-neutral-active);
-    border: none;
-    padding: 0.625rem 0.875rem;
-    font-size: 0.875rem;
-    border-radius: var(--radius);
     min-width: 0;
-  }
-
-  .folder-input:focus {
-    outline: none;
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-interactive) 30%, transparent);
-  }
-
-  .folder-browse-btn {
-    background: var(--color-surface-2);
-    color: var(--color-neutral);
-    border: none;
-    padding: 0.625rem 0.75rem;
-    border-radius: var(--radius);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    transition: background 0.15s;
-  }
-
-  .folder-browse-btn:hover {
-    background: var(--color-surface-3);
-    color: var(--color-neutral-active);
-  }
-
-  .folder-browse-btn .material-symbols-outlined {
-    font-size: 1.125rem;
   }
 
   .folder-error {
@@ -658,31 +628,14 @@
     text-align: center;
   }
 
-  .folder-confirm-btn {
-    background: var(--color-interactive);
-    color: var(--color-neutral-on-interactive);
-    border: none;
-    padding: 0.875rem 3rem;
-    font-size: 1rem;
-    font-weight: 600;
+  :global(.folder-confirm-btn) {
+    width: 100% !important;
+    margin-top: 0.5rem;
     text-transform: uppercase;
     letter-spacing: 0.125rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    margin-top: 0.5rem;
-    width: 100%;
-  }
-
-  .folder-confirm-btn:hover:not(:disabled) {
-    background: var(--color-interactive-hover);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 16px color-mix(in srgb, var(--color-interactive) 40%, transparent);
-  }
-
-  .folder-confirm-btn:disabled {
-    background: var(--color-interactive-disabled);
-    cursor: not-allowed;
-    transform: none;
+    padding-top: 0.875rem !important;
+    padding-bottom: 0.875rem !important;
+    font-size: 1rem !important;
   }
 
   /* --- Error screen --- */
@@ -784,52 +737,8 @@
     margin-top: 0.5rem;
   }
 
-  .error-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    background: var(--color-surface-2);
-    color: var(--color-neutral-active);
-    border: none;
-    padding: 0.75rem 1rem;
-    font-size: 0.875rem;
-    border-radius: var(--radius);
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-
-  .error-btn:hover:not(:disabled) {
-    background: var(--color-surface-3);
-  }
-
-  .error-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .error-btn .material-symbols-outlined {
-    font-size: 1.125rem;
-  }
-
-  .error-btn.primary {
-    background: var(--color-interactive);
-    color: var(--color-neutral-on-interactive);
-    font-weight: 600;
-  }
-
-  .error-btn.primary:hover:not(:disabled) {
-    background: var(--color-interactive-hover);
-  }
-
-  .error-btn.ghost {
-    background: transparent;
-    color: var(--color-neutral);
-  }
-
-  .error-btn.ghost:hover {
-    background: var(--color-surface-2);
-    color: var(--color-neutral-active);
+  :global(.error-action-btn) {
+    width: 100% !important;
   }
 
   .recovery-hint {
@@ -884,7 +793,7 @@
   }
 
   .recovery-icon.success {
-    color: var(--color-success, #4ade80);
+    color: var(--color-success);
   }
 
   .recovery-icon.error-color {
@@ -936,7 +845,7 @@
     overflow-y: auto;
   }
 
-  .recovery-modal .error-btn {
+  .recovery-modal :global(.error-action-btn) {
     margin-top: 0.5rem;
     min-width: 200px;
   }

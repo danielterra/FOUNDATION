@@ -1,6 +1,10 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
 	import posthog from 'posthog-js';
+	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
+	import { Checkbox } from '$lib/components/ui/checkbox';
+	import * as Select from '$lib/components/ui/select';
 
 	let { onComplete = () => {} } = $props();
 
@@ -228,19 +232,18 @@
 				<span class="material-symbols-outlined step-icon">waving_hand</span>
 				<h2>Bem-vindo ao FOUNDATION</h2>
 				<p class="subtitle">Vamos configurar tudo em poucos minutos. Primeiro, como podemos te chamar?</p>
-				<input
-					class="field"
+				<Input
 					type="text"
 					placeholder="Seu nome"
 					bind:value={personName}
-					bind:this={nameInputEl}
+					bind:ref={nameInputEl}
 					onkeydown={(e) => e.key === 'Enter' && personName.trim() && (step = 2)}
 				/>
 			</div>
 			<div class="footer">
-				<button class="btn-primary" onclick={() => step = 2} disabled={!personName.trim()}>
+				<Button variant="default" onclick={() => step = 2} disabled={!personName.trim()}>
 					Continuar
-				</button>
+				</Button>
 			</div>
 
 		<!-- ── step 2: e-mail ── -->
@@ -288,16 +291,16 @@
 						{#if selectedProviderId === 'custom'}
 							<div class="field-group">
 								<label for="email-host">Servidor IMAP</label>
-								<input id="email-host" class="field" type="text" placeholder="imap.exemplo.com" bind:value={emailHost} />
+								<Input id="email-host" type="text" placeholder="imap.exemplo.com" bind:value={emailHost} />
 							</div>
 							<div class="field-row">
 								<div class="field-group">
 									<label for="email-port">Porta</label>
-									<input id="email-port" class="field" type="number" bind:value={emailPort} />
+									<Input id="email-port" type="number" bind:value={emailPort} />
 								</div>
 								<div class="field-group checkbox-group">
-									<label for="email-tls">
-										<input id="email-tls" type="checkbox" bind:checked={emailUseTls} />
+									<label for="email-tls" class="checkbox-row">
+										<Checkbox id="email-tls" bind:checked={emailUseTls} />
 										Usar TLS
 									</label>
 								</div>
@@ -306,7 +309,7 @@
 
 						<div class="field-group">
 							<label for="email-username">Usuário (e-mail)</label>
-							<input id="email-username" class="field" type="email" placeholder="seu@email.com" bind:value={emailUsername} />
+							<Input id="email-username" type="email" placeholder="seu@email.com" bind:value={emailUsername} />
 						</div>
 
 						<div class="field-group">
@@ -316,11 +319,11 @@
 									<span class="hint">— {selectedProvider.passwordHint}</span>
 								{/if}
 							</label>
-							<input id="email-password" class="field" type="password" placeholder="••••••••••••" bind:value={emailPassword} />
+							<Input id="email-password" type="password" placeholder="••••••••••••" bind:value={emailPassword} />
 						</div>
 
-						<button
-							class="btn-test"
+						<Button
+							variant="secondary"
 							onclick={testEmailConnection}
 							disabled={emailTesting || !emailUsername.trim() || !emailPassword.trim() || !emailHost.trim()}
 						>
@@ -331,7 +334,7 @@
 								<span class="material-symbols-outlined">wifi_tethering</span>
 								Testar conexão
 							{/if}
-						</button>
+						</Button>
 
 						{#if emailTestResult === 'ok'}
 							<p class="test-ok">
@@ -348,10 +351,10 @@
 				{/if}
 			</div>
 			<div class="footer">
-				<button class="btn-secondary" onclick={() => step = 1}>Voltar</button>
-				<button class="btn-primary" onclick={() => step = 3} disabled={!emailValid}>
+				<Button variant="ghost" onclick={() => step = 1}>Voltar</Button>
+				<Button variant="default" onclick={() => step = 3} disabled={!emailValid}>
 					Continuar
-				</button>
+				</Button>
 			</div>
 
 		<!-- ── step 3: ia ── -->
@@ -406,16 +409,15 @@
 						<div class="field-group">
 							<label for="api-key">Chave de API</label>
 							<div class="field-row">
-								<input
+								<Input
 									id="api-key"
-									class="field"
 									type={showApiKey ? 'text' : 'password'}
 									placeholder="sk-ant-…"
 									bind:value={apiKey}
 								/>
-								<button class="btn-icon" onclick={() => showApiKey = !showApiKey} title={showApiKey ? 'Ocultar' : 'Mostrar'}>
+								<Button variant="ghost" size="icon" onclick={() => showApiKey = !showApiKey} title={showApiKey ? 'Ocultar' : 'Mostrar'}>
 									<span class="material-symbols-outlined">{showApiKey ? 'visibility_off' : 'visibility'}</span>
-								</button>
+								</Button>
 							</div>
 						</div>
 					</div>
@@ -432,14 +434,14 @@
 				{/if}
 			</div>
 			<div class="footer">
-				<button class="btn-secondary" onclick={() => step = 2}>Voltar</button>
-				<button
-					class="btn-primary"
+				<Button variant="ghost" onclick={() => step = 2}>Voltar</Button>
+				<Button
+					variant="default"
 					onclick={() => step = 4}
 					disabled={!aiChoice || (aiChoice === 'chat' && !apiKey.trim())}
 				>
 					Continuar
-				</button>
+				</Button>
 			</div>
 
 		<!-- ── step 4: pronto ── -->
@@ -465,7 +467,7 @@
 				</div>
 
 				<label class="consent-row">
-					<input type="checkbox" bind:checked={analyticsConsent} />
+					<Checkbox bind:checked={analyticsConsent} />
 					<span>
 						Compartilhar dados de uso anônimos para nos ajudar a melhorar o FOUNDATION.
 						Nenhuma informação pessoal ou conteúdo de e-mail é enviado.
@@ -480,10 +482,10 @@
 				{/if}
 			</div>
 			<div class="footer">
-				<button class="btn-secondary" onclick={() => { step = 3; submitError = ''; }}>Voltar</button>
-				<button class="btn-primary" onclick={finish} disabled={isSubmitting}>
+				<Button variant="ghost" onclick={() => { step = 3; submitError = ''; }}>Voltar</Button>
+				<Button variant="default" onclick={finish} disabled={isSubmitting}>
 					{isSubmitting ? 'Configurando…' : 'Começar'}
-				</button>
+				</Button>
 			</div>
 		{/if}
 
@@ -573,7 +575,7 @@
 	}
 
 	.done-icon {
-		color: var(--color-success, #4caf50);
+		color: var(--color-success);
 	}
 
 	h2 {
@@ -590,24 +592,6 @@
 		line-height: 1.6;
 	}
 
-	/* campo de texto */
-	.field {
-		width: 100%;
-		box-sizing: border-box;
-		background: var(--color-surface-2);
-		color: var(--color-neutral-active);
-		border: 1px solid transparent;
-		border-radius: var(--radius);
-		padding: 0.625rem 0.875rem;
-		font-size: 0.9375rem;
-		transition: border-color 0.15s;
-	}
-
-	.field:focus {
-		outline: none;
-		border-color: var(--color-interactive);
-	}
-
 	.field-group {
 		display: flex;
 		flex-direction: column;
@@ -618,10 +602,6 @@
 		display: flex;
 		gap: 0.625rem;
 		align-items: flex-end;
-	}
-
-	.field-row .field {
-		flex: 1;
 	}
 
 	label {
@@ -639,7 +619,8 @@
 		opacity: 0.75;
 	}
 
-	.checkbox-group label {
+	.checkbox-row {
+		display: flex;
 		flex-direction: row;
 		align-items: center;
 		gap: 0.5rem;
@@ -753,36 +734,6 @@
 		padding: 1rem 1rem 1rem 2rem;
 	}
 
-	.btn-test {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.5rem;
-		background: var(--color-surface-2);
-		color: var(--color-neutral);
-		border: 1.5px solid color-mix(in srgb, var(--color-neutral) 20%, transparent);
-		border-radius: var(--radius);
-		padding: 0.625rem 1.25rem;
-		font-size: 0.875rem;
-		cursor: pointer;
-		transition: all 0.15s;
-	}
-
-	.btn-test:hover:not(:disabled) {
-		background: var(--color-surface-3);
-		color: var(--color-neutral-active);
-		border-color: var(--color-interactive);
-	}
-
-	.btn-test:disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
-	}
-
-	.btn-test .material-symbols-outlined {
-		font-size: 1.125rem;
-	}
-
 	@keyframes spin {
 		to { transform: rotate(360deg); }
 	}
@@ -797,7 +748,7 @@
 		align-items: center;
 		gap: 0.4rem;
 		font-size: 0.8125rem;
-		color: var(--color-success, #4caf50);
+		color: var(--color-success);
 		margin: 0;
 	}
 
@@ -904,23 +855,6 @@
 		text-decoration: underline;
 	}
 
-	.btn-icon {
-		flex-shrink: 0;
-		background: var(--color-surface-2);
-		color: var(--color-neutral);
-		border: none;
-		padding: 0.625rem 0.75rem;
-		border-radius: var(--radius);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		transition: background 0.15s;
-	}
-
-	.btn-icon:hover {
-		background: var(--color-surface-3);
-	}
-
 	/* mcp info */
 	.mcp-info {
 		padding: 1rem;
@@ -989,12 +923,9 @@
 		text-align: left;
 	}
 
-	.consent-row input[type="checkbox"] {
+	.consent-row :global([data-slot="checkbox"]) {
 		margin-top: 0.15rem;
 		flex-shrink: 0;
-		accent-color: var(--color-interactive);
-		width: 1rem;
-		height: 1rem;
 	}
 
 	/* erro de submissão */
@@ -1023,45 +954,5 @@
 		border-top: 1px solid color-mix(in srgb, var(--color-neutral) 10%, transparent);
 	}
 
-	.btn-primary {
-		background: var(--color-interactive);
-		color: var(--color-neutral-on-interactive);
-		border: none;
-		padding: 0.75rem 2rem;
-		font-size: 0.9375rem;
-		font-weight: 600;
-		letter-spacing: 0.05rem;
-		border-radius: var(--radius);
-		cursor: pointer;
-		transition: all 0.15s;
-	}
 
-	.btn-primary:hover:not(:disabled) {
-		background: var(--color-interactive-hover);
-		transform: translateY(-1px);
-		box-shadow: 0 4px 12px color-mix(in srgb, var(--color-interactive) 35%, transparent);
-	}
-
-	.btn-primary:disabled {
-		background: var(--color-interactive-disabled);
-		cursor: not-allowed;
-		transform: none;
-		box-shadow: none;
-	}
-
-	.btn-secondary {
-		background: transparent;
-		color: var(--color-neutral);
-		border: 1.5px solid color-mix(in srgb, var(--color-neutral) 25%, transparent);
-		padding: 0.75rem 1.5rem;
-		font-size: 0.9375rem;
-		border-radius: var(--radius);
-		cursor: pointer;
-		transition: all 0.15s;
-	}
-
-	.btn-secondary:hover {
-		background: var(--color-surface-2);
-		color: var(--color-neutral-active);
-	}
 </style>

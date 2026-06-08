@@ -59,7 +59,7 @@
 	.progress-bar {
 		width: 200px;
 		height: 8px;
-		background: var(--color-black);
+		background: var(--background);
 		overflow: hidden;
 	}
 
@@ -81,7 +81,7 @@
 		background: linear-gradient(
 			90deg,
 			transparent,
-			rgba(255, 255, 255, 0.4),
+			color-mix(in srgb, var(--accent-foreground) 40%, transparent),
 			transparent
 		);
 		animation: shimmer 2s ease-in-out infinite;

@@ -163,7 +163,7 @@
 		font-size: 11px;
 		color: var(--color-neutral);
 		padding: 2px 6px;
-		background: color-mix(in srgb, var(--color-white) 5%, transparent);
+		background: var(--color-surface-3);
 		flex-shrink: 0;
 	}
 </style>

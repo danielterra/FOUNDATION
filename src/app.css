@@ -1,14 +1,20 @@
 /*
- * FOUNDATION — Tailwind v4 base + shadcn-svelte token bridge
+ * FOUNDATION — Tokens canônicos + Tailwind v4 + shadcn-svelte bridge
  *
- * Importa o engine de utilitários do Tailwind e declara as CSS vars
- * que o shadcn-svelte espera, mapeadas para as vars semânticas em
- * src/lib/colors.css (fonte de verdade de cor).
+ * Este arquivo é a FONTE ÚNICA de tokens de cor, espaçamento e raio.
+ * Não existe mais src/lib/colors.css — tudo foi absorvido aqui.
  *
- * Dark-only: o app não tem tema claro. O bloco .dark abaixo é estático
- * e fixado na raiz em app.html via class="dark". color-scheme: dark
- * garante que os controles do UA (scrollbar, inputs nativos) também
- * entrem no modo escuro.
+ * Estrutura:
+ *   1. @layer declaration (prioridade crescente)
+ *   2. @import tailwindcss
+ *   3. :root — tokens semânticos FOUNDATION (paleta base, derivações, surface, radius)
+ *   4. :root — tokens de domínio BPMN (--automation-node-* / --automation-io-label-*)
+ *   5. @layer base — shadcn-svelte bridge (.dark), border global, body
+ *   6. @theme — expõe tokens shadcn como utilitários Tailwind v4
+ *
+ * Dark-only: o app não tem tema claro. O bloco .dark é estático e fixado
+ * na raiz em app.html via class="dark". color-scheme: dark garante que os
+ * controles do UA (scrollbar, inputs nativos) também entrem no modo escuro.
  *
  * Ordem das @layer (prioridade crescente — última declarada vence):
  *   foundation-reset → theme → base → components → utilities
@@ -22,29 +28,143 @@
 
 @import "tailwindcss";
 
-/*
- * Mapeamento de tokens shadcn → vars semânticas FOUNDATION.
- * Definidos no escopo .dark (estático na raiz) para que as
- * utilidades Tailwind dark:* e os componentes shadcn funcionem
- * sem depender de media query prefers-color-scheme.
+/* ============================================================
+ * TOKENS SEMÂNTICOS FOUNDATION
  *
- * colors.css precisa já ter sido carregado antes deste arquivo
- * para que as vars --color-* estejam disponíveis.
- */
-/*
- * Paleta de identidade categórica BPMN — tokens por tipo de nó.
+ * Paleta base, derivações color-mix() e escala de superfícies.
+ * Declarados em :root antes de qualquer bloco que os leia
+ * (o bloco .dark abaixo, o @theme e os tokens de domínio
+ * --automation-node-* todos dependem destas definições).
+ * ============================================================ */
+
+:root {
+  /* --------------------------------------------------------
+   * CORES BASE — valores primitivos
+   * Todas as outras cores derivam destas
+   * -------------------------------------------------------- */
+
+  --color-interactive-base: #ff8c42;
+  --color-transition-base:  #a855f7;
+  --color-danger-base:      #ff3b3b;
+  --color-warning-base:     #fbbf24;
+  --color-success-base:     #4caf50;
+  --color-error-base:       #f44336;
+  --color-black:            rgb(0, 0, 0);
+  --color-white:            rgb(255, 255, 255);
+
+  /* --------------------------------------------------------
+   * INTERACTIVE — elementos com os quais o usuário interage
+   * -------------------------------------------------------- */
+
+  --color-interactive:          var(--color-interactive-base);
+  --color-interactive-hover:    color-mix(in srgb, var(--color-interactive-base) 85%, white);
+  --color-interactive-active:   color-mix(in srgb, var(--color-interactive-base) 70%, white);
+  --color-interactive-disabled: color-mix(in srgb, var(--color-interactive-base) 30%, black);
+
+  /* --------------------------------------------------------
+   * TRANSITION — elementos em transição / carregamento
+   * -------------------------------------------------------- */
+
+  --color-transition: var(--color-transition-base);
+
+  /* --------------------------------------------------------
+   * DANGER — ações destrutivas, erros graves
+   * -------------------------------------------------------- */
+
+  --color-danger:          var(--color-danger-base);
+  --color-danger-hover:    color-mix(in srgb, var(--color-danger-base) 85%, white);
+  --color-danger-active:   color-mix(in srgb, var(--color-danger-base) 70%, white);
+  --color-danger-disabled: color-mix(in srgb, var(--color-danger-base) 30%, black);
+
+  /* --------------------------------------------------------
+   * WARNING — avisos, estados degradados
+   * -------------------------------------------------------- */
+
+  --color-warning:          var(--color-warning-base);
+  --color-warning-hover:    color-mix(in srgb, var(--color-warning-base) 85%, white);
+  --color-warning-active:   color-mix(in srgb, var(--color-warning-base) 70%, white);
+  --color-warning-disabled: color-mix(in srgb, var(--color-warning-base) 30%, black);
+
+  /* --------------------------------------------------------
+   * NEUTRAL — texto, edges, elementos sem cor semântica
+   * -------------------------------------------------------- */
+
+  --color-neutral:              color-mix(in srgb, var(--color-white) 85%, black);
+  --color-neutral-hover:        color-mix(in srgb, var(--color-white) 92%, black);
+  --color-neutral-active:       var(--color-white);
+  --color-neutral-disabled:     color-mix(in srgb, var(--color-white) 30%, black);
+  --color-neutral-on-interactive: var(--color-black);
+  --color-neutral-secondary:    color-mix(in srgb, var(--color-white) 55%, black);
+  --color-neutral-dark:         color-mix(in srgb, var(--color-white) 15%, black);
+
+  /* --------------------------------------------------------
+   * SUCCESS — confirmação, sucesso
+   * -------------------------------------------------------- */
+
+  --color-success:       var(--color-success-base);
+  --color-success-hover: color-mix(in srgb, var(--color-success-base) 85%, white);
+
+  /* --------------------------------------------------------
+   * ERROR — falha técnica
+   * -------------------------------------------------------- */
+
+  --color-error: var(--color-error-base);
+
+  /* --------------------------------------------------------
+   * SURFACE — hierarquia de elevação (0 = fundo, 4 = mais elevado)
+   * Cada nível ~5% mais claro que o anterior.
+   * -------------------------------------------------------- */
+
+  --color-surface-0: var(--color-black);
+  --color-surface-1: color-mix(in srgb, var(--color-white)  5%, var(--color-black));
+  --color-surface-2: color-mix(in srgb, var(--color-white) 10%, var(--color-black));
+  --color-surface-3: color-mix(in srgb, var(--color-white) 15%, var(--color-black));
+  --color-surface-4: color-mix(in srgb, var(--color-white) 20%, var(--color-black));
+
+  /* --------------------------------------------------------
+   * ACCENT — hover de item em lista elevada (= surface-4)
+   * Definido canonicamente aqui para evitar dependência do
+   * @theme como único veículo de resolução.
+   * -------------------------------------------------------- */
+
+  --color-accent: var(--color-surface-4);
+
+  /* --------------------------------------------------------
+   * LAYOUT
+   * -------------------------------------------------------- */
+
+  --app-header-height: 36px;
+
+  /* --------------------------------------------------------
+   * LEGADOS ELEVADOS — tokens com fallback, agora canônicos
+   * Usados por componentes que precisam de superfície elevada
+   * sem nomear surface-N diretamente.
+   * -------------------------------------------------------- */
+
+  --color-bg-elevated: var(--color-surface-3);
+
+  /* --------------------------------------------------------
+   * TIPOGRAFIA — famílias de fonte (complementa fonts.css)
+   * -------------------------------------------------------- */
+
+  --font-mono: 'Monaspace Krypton', 'SF Mono', 'Monaco', 'Courier New', monospace;
+
+  /* --------------------------------------------------------
+   * RADIUS — raio de borda único da aplicação
+   * Exceções documentadas: 50% (círculo) e 999px (pill).
+   * -------------------------------------------------------- */
+
+  --radius: 10px;
+}
+
+/* ============================================================
+ * TOKENS DE DOMÍNIO BPMN
  *
- * Cada tipo de nó de automação tem uma cor de identidade visual distinta
- * (não um papel semântico — não colapse tipos distintos num mesmo token).
- * Trio por tipo: bg (fundo escuro do nó), tab (cor viva da aba lateral),
- * text (cor do texto/ícone principal dentro do nó).
- *
- * Nós com papel semântico claro (eventos de início/fim) reutilizam
- * --color-success / --color-danger da paleta semântica.
- * O token --color-warning já cobre o aviso de tool calling do AgentTask.
- *
- * Dark-only: estas variáveis não têm bloco light — o app é dark-only.
- */
+ * Paleta de identidade categórica por tipo de nó de automação.
+ * Não são tokens semânticos — cada tipo de nó tem cor distinta.
+ * Dark-only: sem bloco light.
+ * ============================================================ */
+
 :root {
   /* task — slate/cinza */
   --automation-node-task-bg:   #1a1f2e;
@@ -93,12 +213,12 @@
   --automation-node-subprocess-tab:  #00ACC1;
   --automation-node-subprocess-text: #80deea;
 
-  /* start-event / timer-start — derivados de --color-success (verde semântico) */
+  /* start-event / timer-start — derivados de --color-success */
   --automation-node-start-bg:   color-mix(in srgb, var(--color-success-base) 18%, black);
   --automation-node-start-tab:  var(--color-success-base);
   --automation-node-start-text: color-mix(in srgb, var(--color-success-base) 65%, white);
 
-  /* end-event — derivado de --color-danger (vermelho semântico) */
+  /* end-event — derivado de --color-danger */
   --automation-node-end-bg:   color-mix(in srgb, var(--color-danger-base) 18%, black);
   --automation-node-end-tab:  var(--color-danger-base);
   --automation-node-end-text: color-mix(in srgb, var(--color-danger-base) 65%, white);
@@ -125,46 +245,41 @@
 
   .dark {
     /* Superfícies — hierarquia de elevação crescente */
-    --background: var(--color-surface-0);   /* fundo da app: preto puro */
-    --card: var(--color-surface-1);         /* painéis / widgets */
-    --popover: var(--color-surface-3);      /* dropdowns / tooltips elevados */
-    --muted: var(--color-surface-2);        /* áreas silenciadas / separadores */
-    --accent: var(--color-surface-4);       /* hover de item em lista elevada */
+    --background: var(--color-surface-0);
+    --card:       var(--color-surface-1);
+    --popover:    var(--color-surface-3);
+    --muted:      var(--color-surface-2);
+    --accent:     var(--color-surface-4);
 
     /* Texto */
-    --foreground: var(--color-neutral);             /* texto principal */
-    --card-foreground: var(--color-neutral);
+    --foreground:         var(--color-neutral);
+    --card-foreground:    var(--color-neutral);
     --popover-foreground: var(--color-neutral);
-    --muted-foreground: var(--color-neutral-disabled);
-    --accent-foreground: var(--color-neutral-active);
+    --muted-foreground:   var(--color-neutral-disabled);
+    --accent-foreground:  var(--color-neutral-active);
 
     /* Interação — laranja semântico */
-    --primary: var(--color-interactive);
+    --primary:            var(--color-interactive);
     --primary-foreground: var(--color-neutral-on-interactive);
 
     /* Secundário — muted como base neutra secundária */
-    --secondary: var(--color-surface-2);
+    --secondary:            var(--color-surface-2);
     --secondary-foreground: var(--color-neutral);
 
     /* Perigo / destrutivo */
-    --destructive: var(--color-danger);
+    --destructive:            var(--color-danger);
     --destructive-foreground: var(--color-neutral-active);
 
     /* Borda e input */
     --border: var(--color-surface-3);
-    --input: var(--color-surface-2);
+    --input:  var(--color-surface-2);
 
     /* Foco-visível unificado */
     --ring: var(--color-interactive);
 
-    /* Raio — reutiliza o --radius existente */
     --radius: 10px;
   }
 
-  /*
-   * color-scheme: dark garante que controles nativos do UA
-   * (scrollbars, date pickers, etc.) também entrem no modo escuro.
-   */
   html.dark {
     color-scheme: dark;
   }
@@ -175,25 +290,27 @@
    * Expõe os tokens shadcn como variáveis CSS para o Tailwind v4.
    * As utilidades bg-background, text-foreground, border-border, etc.
    * são geradas automaticamente a partir destes tokens.
+   *
+   * --color-accent não está aqui: já é definido canonicamente em :root
+   * como token de primeira classe (= --color-surface-4).
    */
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
+  --color-background:         var(--background);
+  --color-foreground:         var(--foreground);
+  --color-card:               var(--card);
+  --color-card-foreground:    var(--card-foreground);
+  --color-popover:            var(--popover);
   --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
+  --color-primary:            var(--primary);
   --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
+  --color-secondary:          var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
+  --color-muted:              var(--muted);
+  --color-muted-foreground:   var(--muted-foreground);
+  --color-accent-foreground:  var(--accent-foreground);
+  --color-destructive:        var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --radius-DEFAULT: var(--radius);
+  --color-border:             var(--border);
+  --color-input:              var(--input);
+  --color-ring:               var(--ring);
+  --radius-DEFAULT:           var(--radius);
 }

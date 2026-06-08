@@ -50,7 +50,7 @@
 <div class="import-container">
 	{#if error}
 		<div class="error">
-			<div class="error-icon">❌</div>
+			<span class="material-symbols-outlined error-icon">error</span>
 			<h2>Import Error</h2>
 			<p>{error}</p>
 		</div>
@@ -75,6 +75,7 @@
 	.error-icon {
 		font-size: 3rem;
 		margin-bottom: 1rem;
+		color: var(--color-danger);
 	}
 
 	.error h2 {

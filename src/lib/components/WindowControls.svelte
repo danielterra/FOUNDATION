@@ -62,7 +62,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--color-neutral-active);
+    color: var(--accent-foreground);
     cursor: pointer;
     transition: background 0.1s;
   }
@@ -72,11 +72,11 @@
   }
 
   .ctrl:hover {
-    background: color-mix(in srgb, var(--color-white) 10%, transparent);
+    background: color-mix(in srgb, var(--accent-foreground) 10%, transparent);
   }
 
   .ctrl.close:hover {
-    background: #e81123;
-    color: white;
+    background: var(--destructive);
+    color: var(--destructive-foreground);
   }
 </style>
