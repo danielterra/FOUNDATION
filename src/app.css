@@ -155,6 +155,21 @@
    * -------------------------------------------------------- */
 
   --radius: 10px;
+
+  /* --------------------------------------------------------
+   * Z-INDEX — escala canônica de empilhamento
+   * Widgets ficam na faixa widget-min…widget-max (100–9000).
+   * Elementos portalizados (dropdown, tooltip, dialog, toast)
+   * sempre saem acima de qualquer widget empilhado.
+   * -------------------------------------------------------- */
+
+  --z-base:       0;
+  --z-widget-min: 100;
+  --z-widget-max: 9000;
+  --z-dropdown:   9100;
+  --z-tooltip:    9300;
+  --z-dialog:     99999;
+  --z-toast:      100000;
 }
 
 /* ============================================================
@@ -283,6 +298,14 @@
   html.dark {
     color-scheme: dark;
   }
+}
+
+@layer utilities {
+  .z-dropdown   { z-index: var(--z-dropdown); }
+  .z-tooltip     { z-index: var(--z-tooltip); }
+  .z-dialog      { z-index: var(--z-dialog); }
+  .z-toast       { z-index: var(--z-toast); }
+  .z-widget-max  { z-index: var(--z-widget-max); }
 }
 
 @theme {

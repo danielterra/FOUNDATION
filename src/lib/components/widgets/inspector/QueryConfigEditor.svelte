@@ -1,4 +1,5 @@
 <script>
+  import { untrack } from 'svelte';
   import { Input } from '$lib/components/ui/input';
   import * as Select from '$lib/components/ui/select';
 
@@ -15,7 +16,7 @@
     }
   }
 
-  const init = parseConfig(value);
+  const init = untrack(() => parseConfig(value));
   let targetClass = $state(init.targetClass);
   let filters = $state(init.filters.map(f => ({ ...f })));
 

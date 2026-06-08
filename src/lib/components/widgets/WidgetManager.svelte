@@ -20,7 +20,9 @@
 
   let { activeBlackboardIri = null, activeConversationIri = null } = $props();
 
+  // Mirrors --z-widget-min and --z-widget-max from app.css
   const BASE_WIDGET_Z_INDEX = 100;
+  const MAX_WIDGET_Z_INDEX = 9000;
   const WIDGET_FLY_DURATION = 600;
   const MIN_WIDGET_WIDTH = 200;
   const MIN_WIDGET_HEIGHT = 100;
@@ -146,7 +148,7 @@
   });
 
   function bringToFront(widgetId) {
-    topZIndex++;
+    topZIndex = Math.min(topZIndex + 1, MAX_WIDGET_Z_INDEX);
     widgets = widgets.map(w =>
       w.id === widgetId ? { ...w, zIndex: topZIndex } : w
     );
@@ -363,7 +365,7 @@
         return;
       }
 
-      topZIndex++;
+      topZIndex = Math.min(topZIndex + 1, MAX_WIDGET_Z_INDEX);
       const newWidget = { ...w, zIndex: topZIndex };
 
       newWidget.position = constrainToBounds(newWidget.position, newWidget.size, newWidget.size.height);

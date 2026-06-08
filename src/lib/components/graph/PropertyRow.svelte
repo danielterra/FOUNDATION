@@ -31,10 +31,12 @@
 		return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(num);
 	}
 
-	const displayValue = isCurrencyCode(unitLabel) && !isNaN(Number(value))
-		? formatCurrency(value, unitLabel)
-		: (valueLabel || value);
-	const iconType = valueIcon ? getIconType(valueIcon) : null;
+	const displayValue = $derived(
+		isCurrencyCode(unitLabel) && !isNaN(Number(value))
+			? formatCurrency(value, unitLabel)
+			: (valueLabel || value)
+	);
+	const iconType = $derived(valueIcon ? getIconType(valueIcon) : null);
 </script>
 
 {#snippet pillContent()}

@@ -1,8 +1,10 @@
 <script>
+  import { untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { Input } from '$lib/components/ui/input';
   import { Textarea } from '$lib/components/ui/textarea';
   import * as Select from '$lib/components/ui/select';
+  import EntitySearchCombobox from './EntitySearchCombobox.svelte';
 
   let {
     mode = 'add',
@@ -24,21 +26,16 @@
 
   const NUMERIC_TYPES = new Set(['xsd:integer', 'xsd:decimal']);
 
-  let label = $state(initialValues.label ?? '');
-  let propertyType = $state(initialValues.propertyType ?? 'datatype');
-  let range = $state(initialValues.range ?? 'xsd:string');
-  let unit = $state(initialValues.unit ?? '');
-  let comment = $state(initialValues.comment ?? '');
+  let label = $state(untrack(() => initialValues.label ?? ''));
+  let propertyType = $state(untrack(() => initialValues.propertyType ?? 'datatype'));
+  let range = $state(untrack(() => initialValues.range ?? 'xsd:string'));
+  let unit = $state(untrack(() => initialValues.unit ?? ''));
+  let comment = $state(untrack(() => initialValues.comment ?? ''));
 
-  let classQuery = $state('');
-  let classResults = $state([]);
-  let classSearching = $state(false);
-  let showClassDropdown = $state(false);
-  let selectedClassName = $state(
+  let selectedClassName = $state(untrack(() =>
     initialValues.rangeLabel ?? (initialValues.range && !initialValues.range.startsWith('xsd:') ? initialValues.range : '')
-  );
+  ));
 
-  let debounceTimer = null;
   let labelInputRef = $state(null);
 
   $effect(() => {
@@ -54,7 +51,6 @@
       if (range.startsWith('xsd:')) {
         range = '';
         selectedClassName = '';
-        classQuery = '';
       }
     }
   });
@@ -68,43 +64,19 @@
     (!needsUnit || unit.trim().length > 0)
   );
 
-  async function searchClasses(q) {
-    if (!q.trim()) {
-      classResults = [];
-      showClassDropdown = false;
-      return;
-    }
-    classSearching = true;
-    try {
-      const raw = await invoke('owl__search_entities', { query: q, limit: 15, typeIri: 'owl:Class' });
-      classResults = JSON.parse(raw);
-      showClassDropdown = classResults.length > 0;
-    } catch {
-      classResults = [];
-    } finally {
-      classSearching = false;
-    }
-  }
-
-  function onClassQueryInput(e) {
-    classQuery = e.target.value;
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => searchClasses(classQuery), 250);
+  async function classSearchFn(query) {
+    const raw = await invoke('owl__search_entities', { query, limit: 15, typeIri: 'owl:Class' });
+    return JSON.parse(raw);
   }
 
   function selectClass(result) {
     range = result.id;
     selectedClassName = result.label;
-    classQuery = '';
-    classResults = [];
-    showClassDropdown = false;
   }
 
   function clearClass() {
     range = '';
     selectedClassName = '';
-    classQuery = '';
-    classResults = [];
   }
 
   function handleSave() {
@@ -186,29 +158,14 @@
           </div>
         {:else}
           <div class="cpf-class-search-wrap">
-            <Input
-              class="cpf-input"
-              type="text"
+            <EntitySearchCombobox
+              searchFn={classSearchFn}
+              debounceMs={250}
+              onSelect={selectClass}
               placeholder="Search for a class…"
-              value={classQuery}
-              oninput={onClassQueryInput}
-              onkeydown={(e) => { if (e.key === 'Escape') { oncancel(); } }}
+              emptyText="No class found."
+              {saving}
             />
-            {#if classSearching}
-              <span class="material-symbols-outlined cpf-spinner">progress_activity</span>
-            {/if}
-            {#if showClassDropdown}
-              <div class="cpf-dropdown">
-                {#each classResults as result}
-                  <button class="cpf-dropdown-item" onclick={() => selectClass(result)}>
-                    {#if result.icon}
-                      <span class="material-symbols-outlined cpf-item-icon">{result.icon}</span>
-                    {/if}
-                    <span>{result.label}</span>
-                  </button>
-                {/each}
-              </div>
-            {/if}
           </div>
         {/if}
       </div>
@@ -352,25 +309,11 @@
   .cpf-class-picker {
     flex: 1;
     min-width: 0;
-    position: relative;
   }
 
   .cpf-class-search-wrap {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-
-  :global(.cpf-class-search-wrap [data-slot="input"].cpf-input) {
-    width: 100%;
-  }
-
-  .cpf-spinner {
-    position: absolute;
-    right: 8px;
-    font-size: 14px;
-    color: var(--color-neutral);
-    animation: spin 1s linear infinite;
+    flex: 1;
+    min-width: 0;
   }
 
   .cpf-selected-class {
@@ -404,42 +347,6 @@
 
   .cpf-clear-btn .material-symbols-outlined {
     font-size: 14px;
-  }
-
-  .cpf-dropdown {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    right: 0;
-    background: var(--color-bg-elevated, var(--color-black));
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    z-index: 100;
-    max-height: 180px;
-    overflow-y: auto;
-  }
-
-  .cpf-dropdown-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    padding: 7px 10px;
-    background: none;
-    border: none;
-    color: var(--color-neutral-active);
-    font-family: var(--font-body);
-    font-size: 14px;
-    cursor: pointer;
-    text-align: left;
-  }
-
-  .cpf-dropdown-item:hover {
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-  }
-
-  .cpf-item-icon {
-    font-size: 14px;
-    color: var(--color-neutral);
   }
 
   .cpf-actions {

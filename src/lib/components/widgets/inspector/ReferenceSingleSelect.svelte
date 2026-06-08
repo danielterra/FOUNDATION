@@ -1,7 +1,7 @@
-<script>
+<script lang="ts">
   import { invoke } from '@tauri-apps/api/core'
   import { convertFileSrc } from '@tauri-apps/api/core'
-  import { Input } from '$lib/components/ui/input'
+  import EntitySearchCombobox from './EntitySearchCombobox.svelte'
 
   let {
     propertyIri,
@@ -13,62 +13,34 @@
     oncancel,
   } = $props()
 
-  let query = $state('')
-  let results = $state([])
-  let searching = $state(false)
-  let showDropdown = $state(false)
-  let debounceTimer = null
-  let searchInputRef = $state(null)
-
-  $effect(() => {
-    if (!currentValue && searchInputRef) searchInputRef.focus()
-  })
-
-  function isIconUrl(icon) {
-    if (!icon) return false
-    return icon.startsWith('http://') || icon.startsWith('https://') ||
-           icon.startsWith('data:') || icon.startsWith('file://') || icon.startsWith('/')
+  function isIconUrl(icon: string): boolean {
+    return (
+      icon.startsWith('http://') ||
+      icon.startsWith('https://') ||
+      icon.startsWith('data:') ||
+      icon.startsWith('file://') ||
+      icon.startsWith('/')
+    )
   }
 
-  function getIconUrl(icon) {
-    if (!icon) return ''
+  function getIconUrl(icon: string): string {
     if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''))
     if (icon.startsWith('/')) return convertFileSrc(icon)
     return icon
   }
 
-  async function search(q) {
-    if (!q.trim()) {
-      results = []
-      showDropdown = false
-      return
-    }
-    searching = true
-    try {
-      const raw = await invoke('owl__search_entities', {
-        query: q,
-        limit: 20,
-        typeIri: rangeClassIri ?? null,
-      })
-      results = JSON.parse(raw)
-      showDropdown = results.length > 0
-    } catch {
-      results = []
-    } finally {
-      searching = false
-    }
+  async function searchFn(query: string) {
+    const raw = await invoke<string>('owl__search_entities', {
+      query,
+      limit: 20,
+      typeIri: rangeClassIri ?? null,
+    })
+    return JSON.parse(raw) as Array<{ id: string; label: string; icon?: string | null }>
   }
 
-  function onInput(e) {
-    query = e.target.value
-    clearTimeout(debounceTimer)
-    debounceTimer = setTimeout(() => search(query), 200)
-  }
-
-  async function selectResult(result) {
+  async function handleSelect(item: { id: string; label: string; icon?: string | null }) {
     if (saving) return
-    showDropdown = false
-    await onsave(propertyIri, [result.id])
+    await onsave(propertyIri, [item.id])
   }
 
   async function clear() {
@@ -88,58 +60,23 @@
         {/if}
       {/if}
       <span class="current-label">{currentValue.label ?? currentValue.iri}</span>
-      <button class="clear-btn" onclick={clear} disabled={saving} title="Remover">
+      <button class="clear-btn" onclick={clear} disabled={saving} aria-label="Remover">
         <span class="material-symbols-outlined">close</span>
       </button>
     </div>
   {/if}
 
-  <div class="search-row">
-    <span class="material-symbols-outlined search-icon">search</span>
-    <Input
-      bind:ref={searchInputRef}
-      class="search-input"
-      type="text"
-      placeholder="Buscar {rangeClassLabel ?? 'entidade'}…"
-      value={query}
-      oninput={onInput}
-      onfocus={() => { if (results.length > 0) showDropdown = true }}
-      onblur={() => setTimeout(() => { showDropdown = false }, 150)}
-    />
-    {#if searching}
-      <span class="material-symbols-outlined search-spin">progress_activity</span>
-    {/if}
-  </div>
-
-  {#if showDropdown}
-    <div class="dropdown">
-      {#each results as result (result.id)}
-        {@const isCurrent = currentValue?.iri === result.id}
-        <button
-          class="dropdown-item"
-          class:current={isCurrent}
-          onmousedown={(e) => e.preventDefault()}
-          onclick={() => selectResult(result)}
-          disabled={saving}
-        >
-          {#if result.icon}
-            {#if isIconUrl(result.icon)}
-              <img src={getIconUrl(result.icon)} alt="" class="item-img" />
-            {:else}
-              <span class="material-symbols-outlined item-icon">{result.icon}</span>
-            {/if}
-          {/if}
-          <span class="item-label">{result.label}</span>
-          {#if isCurrent}
-            <span class="material-symbols-outlined item-check">check</span>
-          {/if}
-        </button>
-      {/each}
-    </div>
-  {/if}
+  <EntitySearchCombobox
+    {searchFn}
+    debounceMs={200}
+    onSelect={handleSelect}
+    placeholder="Buscar {rangeClassLabel ?? 'entidade'}…"
+    emptyText="Nenhuma entidade encontrada."
+    {saving}
+  />
 
   <div class="actions-row">
-    <button class="cancel-btn" onmousedown={(e) => e.preventDefault()} onclick={oncancel} disabled={saving}>
+    <button class="cancel-btn" onclick={oncancel} disabled={saving}>
       <span class="material-symbols-outlined">close</span>
       Cancelar
     </button>
@@ -206,99 +143,6 @@
     font-size: 14px;
   }
 
-  .search-row {
-    position: relative;
-    display: flex;
-    align-items: center;
-    background: color-mix(in srgb, var(--color-black) 50%, transparent);
-  }
-
-  .search-icon {
-    font-size: 14px;
-    color: var(--color-neutral);
-    opacity: 0.5;
-    padding-left: 8px;
-    flex-shrink: 0;
-  }
-
-  :global([data-slot="input"].search-input) {
-    flex: 1;
-    background: transparent;
-    border: none;
-    color: var(--color-neutral-active);
-    font-family: var(--font-body);
-    font-size: 14px;
-    padding: 6px 8px;
-    height: auto;
-    border-radius: 0;
-    box-shadow: none;
-  }
-
-  .search-spin {
-    position: absolute;
-    right: 8px;
-    font-size: 14px;
-    color: var(--color-neutral);
-    animation: spin 1s linear infinite;
-    flex-shrink: 0;
-  }
-
-  .dropdown {
-    background: color-mix(in srgb, var(--color-black) 90%, transparent);
-    max-height: 200px;
-    overflow-y: auto;
-  }
-
-  .dropdown-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    padding: 7px 10px;
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-neutral-active);
-    font-family: var(--font-body);
-    font-size: 14px;
-    text-align: left;
-  }
-
-  .dropdown-item.current {
-    color: var(--color-interactive);
-  }
-
-  .dropdown-item:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .item-icon {
-    font-size: 16px;
-    color: var(--color-interactive);
-    flex-shrink: 0;
-  }
-
-  .item-img {
-    width: 18px;
-    height: 18px;
-    object-fit: cover;
-    flex-shrink: 0;
-  }
-
-  .item-label {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .item-check {
-    font-size: 14px;
-    color: var(--color-interactive);
-    flex-shrink: 0;
-  }
-
   .actions-row {
     display: flex;
     align-items: center;
@@ -326,10 +170,5 @@
 
   .cancel-btn .material-symbols-outlined {
     font-size: 14px;
-  }
-
-  @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
   }
 </style>

@@ -46,6 +46,11 @@
 
   function rruleLabel(rrule) {
     if (!rrule) return 'Nunca';
+    if (rrule.includes('FREQ=MINUTELY')) {
+      const m = rrule.match(/INTERVAL=(\d+)/);
+      const n = m ? parseInt(m[1], 10) : 1;
+      return n === 1 ? 'A Cada Minuto' : `A Cada ${n} Minutos`;
+    }
     if (rrule.includes('FREQ=HOURLY')) return 'A Cada Hora';
     if (rrule.includes('BYDAY=MO,TU,WE,TH,FR')) return 'Dias de Semana';
     if (rrule.includes('BYDAY=SA,SU')) return 'Fins de Semana';

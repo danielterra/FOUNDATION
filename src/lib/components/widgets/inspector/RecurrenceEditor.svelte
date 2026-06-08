@@ -1,4 +1,5 @@
 <script>
+  import { untrack } from 'svelte';
   import * as Select from '$lib/components/ui/select';
   import * as RadioGroup from '$lib/components/ui/radio-group';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -10,6 +11,7 @@
     const def = {
       mode: 'none', weeklyDays: ['MO'], monthlyMode: 'day', monthlyDay: 1,
       ordinalPos: 1, ordinalWd: 'SU', yearlyMonth: 1, yearlyUseOrdinal: false,
+      minuteInterval: 15,
     };
     if (!s) return def;
     const raw = s.replace(/^RRULE:/, '');
@@ -24,6 +26,7 @@
     const bymonthday = parseInt(p.BYMONTHDAY || '0', 10);
     const bymonth = parseInt(p.BYMONTH || '0', 10);
 
+    if (freq === 'MINUTELY') return { ...def, mode: 'minutely', minuteInterval: interval };
     if (freq === 'HOURLY') return { ...def, mode: 'hourly' };
     if (freq === 'DAILY') return { ...def, mode: 'daily' };
     if (freq === 'WEEKLY') {
@@ -57,8 +60,9 @@
     return def;
   }
 
-  const init = parseRrule(value);
+  const init = untrack(() => parseRrule(value));
   let mode = $state(init.mode);
+  let minuteInterval = $state(init.minuteInterval);
   let weeklyDays = $state(init.weeklyDays);
   let monthlyMode = $state(init.monthlyMode);
   let monthlyDay = $state(init.monthlyDay);
@@ -69,6 +73,10 @@
 
   function buildRrule() {
     if (mode === 'none') return '';
+    if (mode === 'minutely') {
+      const clamped = Math.min(59, Math.max(1, parseInt(String(minuteInterval), 10) || 1));
+      return `FREQ=MINUTELY;INTERVAL=${clamped}`;
+    }
     if (mode === 'hourly') return 'FREQ=HOURLY;INTERVAL=1';
     if (mode === 'daily') return 'FREQ=DAILY;INTERVAL=1';
     if (mode === 'weekdays') return 'FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,TU,WE,TH,FR';
@@ -141,6 +149,7 @@
         </Select.Trigger>
         <Select.Content>
           <Select.Item value="none">Nunca</Select.Item>
+          <Select.Item value="minutely">A Cada N Minutos</Select.Item>
           <Select.Item value="hourly">A Cada Hora</Select.Item>
           <Select.Item value="daily">Diariamente</Select.Item>
           <Select.Item value="weekdays">Dias de Semana</Select.Item>
@@ -154,6 +163,26 @@
         </Select.Content>
       </Select.Root>
     </div>
+
+    <!-- Minutos -->
+    {#if mode === 'minutely'}
+      <div class="field-row">
+        <span class="field-label">A cada:</span>
+        <input
+          class="minute-input"
+          type="number"
+          min="1"
+          max="59"
+          step="1"
+          value={minuteInterval}
+          oninput={(e) => {
+            const raw = parseInt(e.currentTarget.value, 10);
+            minuteInterval = isNaN(raw) ? 1 : Math.min(59, Math.max(1, raw));
+          }}
+        />
+        <span class="field-label">minuto(s)</span>
+      </div>
+    {/if}
 
     <!-- Semanal: seletor de dias -->
     {#if mode === 'weekly' || mode === 'biweekly'}
@@ -426,6 +455,26 @@
   .month-btn.selected {
     background: var(--color-interactive);
     color: var(--color-neutral-active);
+  }
+
+  .minute-input {
+    width: 60px;
+    background: color-mix(in srgb, var(--color-white) 8%, transparent);
+    border: none;
+    border-radius: var(--radius);
+    color: var(--color-neutral-active);
+    font-family: var(--font-body);
+    font-size: 13px;
+    padding: 4px 8px;
+    text-align: center;
+    appearance: textfield;
+    -moz-appearance: textfield;
+    outline: none;
+  }
+
+  .minute-input::-webkit-inner-spin-button,
+  .minute-input::-webkit-outer-spin-button {
+    opacity: 1;
   }
 
   .ordinal-row {
