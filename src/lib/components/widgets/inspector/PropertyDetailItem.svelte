@@ -1,6 +1,7 @@
 <script>
   import { slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
+  import { Button } from '$lib/components/ui/button';
   import FileGrid from './FileGrid.svelte';
   import PropertyEditForm from './PropertyEditForm.svelte';
   import PropertyValuesGroup from './PropertyValuesGroup.svelte';
@@ -10,6 +11,7 @@
   import RecurrenceEditor from './RecurrenceEditor.svelte';
   import QueryConfigEditor from './QueryConfigEditor.svelte';
   import { Input } from '$lib/components/ui/input';
+  import * as Tooltip from '$lib/components/ui/tooltip';
 
   let {
     detailGroup,
@@ -24,8 +26,6 @@
     onSaveCardinality = null,
     onSaveQueryConfig = null,
     onLoadMoreBacklinks = null,
-    onShowHint,
-    onHideHint,
   } = $props();
 
   let editingKey = $state(null);
@@ -346,8 +346,9 @@
       />
     {/if}
     <div class="edit-actions">
-      <button
-        class="edit-save-btn"
+      <Button
+        variant="default"
+        size="sm"
         onmousedown={(e) => e.preventDefault()}
         onclick={() => saveEdit(propertyIri)}
         disabled={saving}
@@ -358,15 +359,16 @@
           <span class="material-symbols-outlined">check</span>
         {/if}
         Save
-      </button>
-      <button
-        class="edit-cancel-btn"
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
         onmousedown={(e) => e.preventDefault()}
         onclick={cancelEdit}
       >
         <span class="material-symbols-outlined">close</span>
         Cancel
-      </button>
+      </Button>
     </div>
   </div>
 {/snippet}
@@ -385,8 +387,9 @@
       }}
     />
     <div class="edit-actions">
-      <button
-        class="edit-save-btn"
+      <Button
+        variant="default"
+        size="sm"
         onmousedown={(e) => e.preventDefault()}
         onclick={() => saveEdit(propertyIri)}
         disabled={saving}
@@ -397,15 +400,16 @@
           <span class="material-symbols-outlined">check</span>
         {/if}
         Save
-      </button>
-      <button
-        class="edit-cancel-btn"
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
         onmousedown={(e) => e.preventDefault()}
         onclick={cancelEdit}
       >
         <span class="material-symbols-outlined">close</span>
         Cancel
-      </button>
+      </Button>
     </div>
   </div>
 {/snippet}
@@ -415,13 +419,26 @@
     <div class="detail-name field-label">
       {detailGroup.propertyLabel}
       {#if detailGroup.propertyComment || detailGroup.sourceClassLabel}
-        <span
-          class="material-symbols-outlined prop-info"
-          role="img"
-          aria-label="Ajuda sobre {detailGroup.propertyLabel}"
-          onmouseenter={(e) => onShowHint(e, detailGroup.propertyComment, detailGroup.sourceClassLabel, detailGroup.sourceClassIcon)}
-          onmouseleave={onHideHint}
-        >info</span>
+        <Tooltip.Root>
+          <Tooltip.Trigger class="prop-info-trigger" aria-label="Ajuda sobre {detailGroup.propertyLabel}">
+            <span class="material-symbols-outlined prop-info" aria-hidden="true">info</span>
+          </Tooltip.Trigger>
+          <Tooltip.Content class="prop-hint-content">
+            {#if detailGroup.propertyComment}
+              <p class="prop-hint-desc">{detailGroup.propertyComment}</p>
+            {/if}
+            {#if detailGroup.sourceClassLabel}
+              <div class="prop-hint-source" class:with-sep={detailGroup.propertyComment}>
+                <span class="prop-hint-chip">
+                  {#if detailGroup.sourceClassIcon}
+                    <span class="material-symbols-outlined prop-hint-chip-icon">{detailGroup.sourceClassIcon}</span>
+                  {/if}
+                  {detailGroup.sourceClassLabel}
+                </span>
+              </div>
+            {/if}
+          </Tooltip.Content>
+        </Tooltip.Root>
       {/if}
       {#if detailGroup.isObjectProperty}
         <span class="detail-type detail-type-object">
@@ -570,8 +587,9 @@
         />
       </div>
       <div class="edit-actions">
-        <button
-          class="edit-save-btn"
+        <Button
+          variant="default"
+          size="sm"
           onmousedown={(e) => e.preventDefault()}
           onclick={() => saveCardinalityEdit(detailGroup.property)}
           disabled={savingCardinality}
@@ -582,15 +600,16 @@
             <span class="material-symbols-outlined">check</span>
           {/if}
           Save
-        </button>
-        <button
-          class="edit-cancel-btn"
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           onmousedown={(e) => e.preventDefault()}
           onclick={cancelCardinalityEdit}
         >
           <span class="material-symbols-outlined">close</span>
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   {/if}
@@ -782,16 +801,83 @@
     min-width: 0;
   }
 
+  :global(.prop-info-trigger) {
+    display: inline-flex;
+    align-items: center;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: default;
+    flex-shrink: 0;
+    color: inherit;
+    line-height: 1;
+    border-radius: 2px;
+    outline: none;
+  }
+
+  :global(.prop-info-trigger:focus-visible) {
+    outline: 1px solid var(--color-interactive);
+    outline-offset: 1px;
+  }
+
   .prop-info {
     font-size: 14px;
     color: var(--color-neutral);
     opacity: 0.45;
-    cursor: default;
     user-select: none;
     flex-shrink: 0;
+    pointer-events: none;
   }
 
-  .prop-info:hover {
+  :global(.prop-info-trigger:hover) .prop-info,
+  :global(.prop-info-trigger:focus-visible) .prop-info {
+    opacity: 0.8;
+  }
+
+  :global(.prop-hint-content) {
+    background: color-mix(in srgb, var(--color-black) 88%, var(--color-white) 12%);
+    border: none;
+    padding: 8px 10px;
+    min-width: 160px;
+    max-width: 260px;
+    font-family: var(--font-body);
+    box-shadow: 0 4px 16px color-mix(in srgb, var(--color-black) 60%, transparent);
+    text-transform: none;
+    letter-spacing: normal;
+    border-radius: var(--radius);
+  }
+
+  :global(.prop-hint-content .prop-hint-desc) {
+    font-size: 11px;
+    color: var(--color-neutral-active);
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  :global(.prop-hint-content .prop-hint-source) {
+    display: flex;
+    align-items: center;
+  }
+
+  :global(.prop-hint-content .prop-hint-source.with-sep) {
+    margin-top: 6px;
+    padding-top: 6px;
+  }
+
+  :global(.prop-hint-content .prop-hint-chip) {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px 2px 5px;
+    background: color-mix(in srgb, var(--color-neutral) 14%, transparent);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--color-neutral);
+    border-radius: 4px;
+  }
+
+  :global(.prop-hint-content .prop-hint-chip-icon) {
+    font-size: 12px;
     opacity: 0.8;
   }
 
@@ -1036,48 +1122,6 @@
   .edit-actions {
     display: flex;
     gap: 6px;
-  }
-
-  .edit-save-btn,
-  .edit-cancel-btn {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    border: none;
-    cursor: pointer;
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
-    transition: background 0.15s;
-  }
-
-  .edit-save-btn {
-    background: color-mix(in srgb, var(--color-interactive) 25%, transparent);
-    color: var(--color-interactive);
-  }
-
-  .edit-save-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-interactive) 40%, transparent);
-  }
-
-  .edit-save-btn:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-
-  .edit-cancel-btn {
-    background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
-    color: var(--color-neutral);
-  }
-
-  .edit-cancel-btn:hover {
-    background: color-mix(in srgb, var(--color-neutral) 22%, transparent);
-  }
-
-  .edit-save-btn .material-symbols-outlined,
-  .edit-cancel-btn .material-symbols-outlined {
-    font-size: 14px;
   }
 
   .spinning-small {

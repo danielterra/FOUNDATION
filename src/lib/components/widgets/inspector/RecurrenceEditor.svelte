@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import * as Select from '$lib/components/ui/select';
   import * as RadioGroup from '$lib/components/ui/radio-group';
+  import * as ToggleGroup from '$lib/components/ui/toggle-group';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Label } from '$lib/components/ui/label';
 
@@ -102,14 +103,6 @@
     return '';
   }
 
-  function toggleDay(code) {
-    if (weeklyDays.includes(code)) {
-      if (weeklyDays.length > 1) weeklyDays = weeklyDays.filter(d => d !== code);
-    } else {
-      weeklyDays = [...weeklyDays, code];
-    }
-  }
-
   function confirm() { onconfirm(buildRrule()); }
 
   const WEEKDAYS = [
@@ -186,16 +179,18 @@
 
     <!-- Semanal: seletor de dias -->
     {#if mode === 'weekly' || mode === 'biweekly'}
-      <div class="weekday-grid">
+      <ToggleGroup.Root
+        type="multiple"
+        value={weeklyDays}
+        onValueChange={(v) => { if (v.length > 0) weeklyDays = v; }}
+        class="weekday-grid"
+      >
         {#each WEEKDAYS as wd}
-          <button
-            class="wd-btn"
-            class:selected={weeklyDays.includes(wd.code)}
-            onclick={() => toggleDay(wd.code)}
-            type="button"
-          >{wd.label}</button>
+          <ToggleGroup.Item value={wd.code} class="wd-btn" aria-label={wd.label}>
+            {wd.label}
+          </ToggleGroup.Item>
         {/each}
-      </div>
+      </ToggleGroup.Root>
     {/if}
 
     <!-- Mensal / Trimestral / Semestral -->
@@ -211,16 +206,18 @@
             <Label for="monthly-mode-day">Cada</Label>
           </div>
           {#if monthlyMode === 'day'}
-            <div class="day-grid">
+            <ToggleGroup.Root
+              type="single"
+              value={String(monthlyDay)}
+              onValueChange={(v) => { if (v) monthlyDay = parseInt(v, 10); }}
+              class="day-grid"
+            >
               {#each DAY_GRID as d}
-                <button
-                  class="day-btn"
-                  class:selected={monthlyDay === d}
-                  onclick={() => monthlyDay = d}
-                  type="button"
-                >{d}</button>
+                <ToggleGroup.Item value={String(d)} class="day-btn">
+                  {d}
+                </ToggleGroup.Item>
               {/each}
-            </div>
+            </ToggleGroup.Root>
           {/if}
           <div class="radio-row">
             <RadioGroup.Item value="ordinal" id="monthly-mode-ordinal" />
@@ -264,16 +261,18 @@
 
     <!-- Anual -->
     {#if mode === 'yearly'}
-      <div class="month-grid">
+      <ToggleGroup.Root
+        type="single"
+        value={String(yearlyMonth)}
+        onValueChange={(v) => { if (v) yearlyMonth = parseInt(v, 10); }}
+        class="month-grid"
+      >
         {#each MONTHS as m, i}
-          <button
-            class="month-btn"
-            class:selected={yearlyMonth === i + 1}
-            onclick={() => yearlyMonth = i + 1}
-            type="button"
-          >{m}</button>
+          <ToggleGroup.Item value={String(i + 1)} class="month-btn">
+            {m}
+          </ToggleGroup.Item>
         {/each}
-      </div>
+      </ToggleGroup.Root>
       <label class="checkbox-row" for="yearly-ordinal-check">
         <Checkbox
           id="yearly-ordinal-check"
@@ -372,26 +371,22 @@
     gap: 8px;
   }
 
-  .weekday-grid {
+  :global([data-slot="toggle-group"].weekday-grid) {
     display: flex;
     gap: 4px;
     justify-content: center;
   }
 
-  .wd-btn {
+  :global([data-slot="toggle-group-item"].wd-btn) {
     width: 34px;
     height: 34px;
     border-radius: 50%;
-    border: none;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    color: var(--color-neutral);
-    font-family: var(--font-body);
     font-size: 12px;
     font-weight: 600;
-    cursor: pointer;
   }
 
-  .wd-btn.selected {
+  :global([data-slot="toggle-group-item"].wd-btn[data-state="on"]) {
     background: var(--color-interactive);
     color: var(--color-neutral-active);
   }
@@ -411,48 +406,40 @@
   }
 
 
-  .day-grid {
+  :global([data-slot="toggle-group"].day-grid) {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
     gap: 3px;
   }
 
-  .day-btn {
+  :global([data-slot="toggle-group-item"].day-btn) {
     padding: 4px 2px;
     border-radius: var(--radius);
-    border: none;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    color: var(--color-neutral);
-    font-family: var(--font-body);
     font-size: 11px;
-    cursor: pointer;
     text-align: center;
   }
 
-  .day-btn.selected {
+  :global([data-slot="toggle-group-item"].day-btn[data-state="on"]) {
     background: var(--color-interactive);
     color: var(--color-neutral-active);
   }
 
-  .month-grid {
+  :global([data-slot="toggle-group"].month-grid) {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 4px;
   }
 
-  .month-btn {
+  :global([data-slot="toggle-group-item"].month-btn) {
     padding: 6px 4px;
     border-radius: var(--radius);
-    border: none;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    color: var(--color-neutral);
-    font-family: var(--font-body);
     font-size: 12px;
-    cursor: pointer;
     text-align: center;
   }
 
-  .month-btn.selected {
+  :global([data-slot="toggle-group-item"].month-btn[data-state="on"]) {
     background: var(--color-interactive);
     color: var(--color-neutral-active);
   }

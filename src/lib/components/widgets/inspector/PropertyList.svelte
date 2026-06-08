@@ -1,7 +1,7 @@
 <script>
   import PropertyDetailItem from './PropertyDetailItem.svelte';
   import BigNumberCard from './BigNumberCard.svelte';
-  import PropertyHint from './PropertyHint.svelte';
+  import * as Tooltip from '$lib/components/ui/tooltip';
   import { sticky } from '$lib/utils/actions';
   import { onMount } from 'svelte';
 
@@ -49,27 +49,6 @@
     scheduleTick();
     return () => clearTimeout(tickTimer);
   });
-
-  let hintVisible = $state(false);
-  let hintX = $state(0);
-  let hintY = $state(0);
-  let hintDesc = $state('');
-  let hintSourceLabel = $state('');
-  let hintSourceIcon = $state('');
-
-  function showHint(e, desc, sourceLabel, sourceIcon) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    hintDesc = desc ?? '';
-    hintSourceLabel = sourceLabel ?? '';
-    hintSourceIcon = sourceIcon ?? '';
-    hintX = rect.left + rect.width / 2;
-    hintY = rect.top - 8;
-    hintVisible = true;
-  }
-
-  function hideHint() {
-    hintVisible = false;
-  }
 
   function isNumericType(datatype) {
     return datatype === 'xsd:decimal' || datatype === 'xsd:integer' ||
@@ -176,15 +155,6 @@
   });
 </script>
 
-<PropertyHint
-  visible={hintVisible}
-  x={hintX}
-  y={hintY}
-  desc={hintDesc}
-  sourceLabel={hintSourceLabel}
-  sourceIcon={hintSourceIcon}
-/>
-
 {#snippet sourceGroups(groups, sepTop = 0)}
   {#each groups as sourceGroup}
     {#if sourceGroup.sourceClassLabel}
@@ -204,71 +174,69 @@
         {onSaveCardinality}
         {onSaveQueryConfig}
         {onLoadMoreBacklinks}
-        onShowHint={showHint}
-        onHideHint={hideHint}
       />
     {/each}
   {/each}
 {/snippet}
 
-{#if properties?.length > 0}
-  <div class="details-list">
+<Tooltip.Provider delayDuration={200}>
+  {#if properties?.length > 0}
+    <div class="details-list">
 
-    {#if sections.mode === 'class'}
+      {#if sections.mode === 'class'}
 
-      {#if sections.allCount > 0}
-        <div class="section-body">
-          {@render sourceGroups(sections.all)}
-        </div>
-      {/if}
-
-    {:else}
-
-      {#if sections.calculatedCount > 0}
-        <div class="section">
-          <div class="section-header" use:sticky={{ top: 0 }}>
-            <span class="material-symbols-outlined section-calc-icon">calculate</span>
-            <span class="section-divider">Calculado</span>
-            <span class="section-count">{sections.calculatedCount}</span>
-          </div>
+        {#if sections.allCount > 0}
           <div class="section-body">
-            {#if sections.calculatedNumeric.length > 0}
-              <div class="big-numbers-grid">
-                {#each sections.calculatedNumeric as detailGroup (detailGroup._groupKey)}
-                  <BigNumberCard {detailGroup} />
-                {/each}
-              </div>
-            {/if}
-            {#each sections.calculatedOther as detailGroup (detailGroup._groupKey)}
-              <PropertyDetailItem
-                {detailGroup}
-                {isClass}
-                {now}
-                {entityId}
-                {openEntityInspector}
-                {onSave}
-                {onSaveReference}
-                {onRemoveProperty}
-                {onSaveCardinality}
-                {onSaveQueryConfig}
-                onShowHint={showHint}
-                onHideHint={hideHint}
-              />
-            {/each}
+            {@render sourceGroups(sections.all)}
           </div>
-        </div>
+        {/if}
+
+      {:else}
+
+        {#if sections.calculatedCount > 0}
+          <div class="section">
+            <div class="section-header" use:sticky={{ top: 0 }}>
+              <span class="material-symbols-outlined section-calc-icon">calculate</span>
+              <span class="section-divider">Calculado</span>
+              <span class="section-count">{sections.calculatedCount}</span>
+            </div>
+            <div class="section-body">
+              {#if sections.calculatedNumeric.length > 0}
+                <div class="big-numbers-grid">
+                  {#each sections.calculatedNumeric as detailGroup (detailGroup._groupKey)}
+                    <BigNumberCard {detailGroup} />
+                  {/each}
+                </div>
+              {/if}
+              {#each sections.calculatedOther as detailGroup (detailGroup._groupKey)}
+                <PropertyDetailItem
+                  {detailGroup}
+                  {isClass}
+                  {now}
+                  {entityId}
+                  {openEntityInspector}
+                  {onSave}
+                  {onSaveReference}
+                  {onRemoveProperty}
+                  {onSaveCardinality}
+                  {onSaveQueryConfig}
+                />
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        {#if sections.allCount > 0}
+          <div class="section-body">
+            {@render sourceGroups(sections.all, 0)}
+          </div>
+        {/if}
+
       {/if}
 
-      {#if sections.allCount > 0}
-        <div class="section-body">
-          {@render sourceGroups(sections.all, 0)}
-        </div>
-      {/if}
-
-    {/if}
-
-  </div>
-{/if}
+    </div>
+  {/if}
+</Tooltip.Provider>
 
 <style>
   .details-list {

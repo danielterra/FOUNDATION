@@ -1,0 +1,8 @@
+[package]
+name = "deps-check"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "deps-check"
+path = "src/main.rs"

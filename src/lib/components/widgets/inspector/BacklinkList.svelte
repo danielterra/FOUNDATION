@@ -1,15 +1,29 @@
-<script>
+<script lang="ts">
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import { slide } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
+  import * as Collapsible from '$lib/components/ui/collapsible';
 
-  let { backlinks, openEntityInspector } = $props();
+  interface BacklinkEntity {
+    iri: string;
+    label: string;
+    icon: string | null;
+    status: { color?: string; iri: string; label: string } | null;
+  }
 
-  let collapsedGroups = $state(new Set());
-  let initialized = $state(false);
+  interface BacklinkGroup {
+    key: string;
+    propertyLabel: string;
+    className: string;
+    totalCount: number | null;
+    entities: Record<string, BacklinkEntity>;
+  }
+
+  let { backlinks, openEntityInspector }: {
+    backlinks: any[];
+    openEntityInspector: (iri: string) => void;
+  } = $props();
 
   const groups = $derived(
-    (backlinks ?? []).reduce((acc, backlink) => {
+    (backlinks ?? []).reduce<Record<string, BacklinkGroup>>((acc, backlink: any) => {
       const key = `${backlink.property}:${backlink.sourceClass || 'unknown'}`;
       if (!acc[key]) {
         acc[key] = {
@@ -25,38 +39,42 @@
         acc[key].entities[iri] = {
           iri,
           label: backlink.valueLabel || iri,
-          icon: backlink.valueIcon,
-          status: backlink.valueStatus
+          icon: backlink.valueIcon ?? null,
+          status: backlink.valueStatus ?? null
         };
       }
       return acc;
     }, {})
   );
 
+  let openStates = $state<Map<string, boolean>>(new Map());
+
   $effect(() => {
     const keys = Object.keys(groups);
-    if (keys.length > 0 && !initialized) {
-      collapsedGroups = new Set(keys);
-      initialized = true;
+    if (keys.length > 0 && openStates.size === 0) {
+      const m = new Map<string, boolean>();
+      for (const k of keys) m.set(k, false);
+      openStates = m;
     }
   });
 
-  function toggleGroup(key) {
-    if (collapsedGroups.has(key)) {
-      collapsedGroups.delete(key);
-    } else {
-      collapsedGroups.add(key);
-    }
-    collapsedGroups = new Set(collapsedGroups);
+  function getOpen(key: string): boolean {
+    return openStates.get(key) ?? false;
   }
 
-  function isIconUrl(icon) {
+  function setOpen(key: string, val: boolean) {
+    const m = new Map(openStates);
+    m.set(key, val);
+    openStates = m;
+  }
+
+  function isIconUrl(icon: string | null): boolean {
     if (!icon) return false;
     return icon.startsWith('http://') || icon.startsWith('https://') ||
            icon.startsWith('data:') || icon.startsWith('file://') || icon.startsWith('/');
   }
 
-  function getIconUrl(icon) {
+  function getIconUrl(icon: string): string {
     if (!icon) return '';
     if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:'))
       return icon;
@@ -68,57 +86,61 @@
 
 {#if backlinks?.length > 0}
   <div class="backlinks-list">
-    {#each Object.values(groups) as group}
+    {#each Object.values(groups) as group (group.key)}
       {@const entities = Object.values(group.entities)}
-      {@const isCollapsed = collapsedGroups.has(group.key)}
-      <div class="group" transition:slide={{ duration: 300, easing: cubicOut }}>
-        <button class="group-header" onclick={() => toggleGroup(group.key)}>
-          <span class="material-symbols-outlined chevron" class:expanded={!isCollapsed}>
-            chevron_right
-          </span>
-          <span class="group-label">
-            <span class="group-class">{group.className}</span>
-            <span class="group-arrow">→</span>
-            <span class="group-prop">{group.propertyLabel}</span>
-          </span>
-          <span class="group-count">{group.totalCount ?? entities.length}</span>
-        </button>
+      <div class="group">
+        <Collapsible.Root
+          open={getOpen(group.key)}
+          onOpenChange={(val) => setOpen(group.key, val)}
+        >
+          <Collapsible.Trigger class="group-header">
+            <span class="material-symbols-outlined chevron">
+              chevron_right
+            </span>
+            <span class="group-label">
+              <span class="group-class">{group.className}</span>
+              <span class="group-arrow">→</span>
+              <span class="group-prop">{group.propertyLabel}</span>
+            </span>
+            <span class="group-count">{group.totalCount ?? entities.length}</span>
+          </Collapsible.Trigger>
 
-        {#if !isCollapsed}
-          <div class="entity-list" transition:slide={{ duration: 300, easing: cubicOut }}>
-            {#each entities as entity}
-              <div
-                class="entity-item clickable"
-                role="button"
-                tabindex="0"
-                onclick={() => openEntityInspector(entity.iri)}
-                onkeydown={(e) => e.key === 'Enter' && openEntityInspector(entity.iri)}
-              >
-                {#if entity.icon}
-                  {#if isIconUrl(entity.icon)}
-                    <img src={getIconUrl(entity.icon)} alt="" class="entity-icon-image" />
+          <Collapsible.Content>
+            <div class="entity-list">
+              {#each entities as entity}
+                <div
+                  class="entity-item clickable"
+                  role="button"
+                  tabindex="0"
+                  onclick={() => openEntityInspector(entity.iri)}
+                  onkeydown={(e) => e.key === 'Enter' && openEntityInspector(entity.iri)}
+                >
+                  {#if entity.icon}
+                    {#if isIconUrl(entity.icon)}
+                      <img src={getIconUrl(entity.icon)} alt="" class="entity-icon-image" />
+                    {:else}
+                      <span class="material-symbols-outlined entity-icon">{entity.icon}</span>
+                    {/if}
                   {:else}
-                    <span class="material-symbols-outlined entity-icon">{entity.icon}</span>
+                    <span class="material-symbols-outlined entity-icon">link</span>
                   {/if}
-                {:else}
-                  <span class="material-symbols-outlined entity-icon">link</span>
-                {/if}
-                <span class="entity-label">{entity.label}</span>
-                {#if entity.status}
-                  <span
-                    class="inline-status"
-                    style="--status-color: {entity.status.color || 'var(--color-neutral)'}"
-                    title={entity.status.iri}
-                  >
-                    <span class="material-symbols-outlined inline-status-icon">radio_button_checked</span>
-                    <span class="inline-status-label">{entity.status.label}</span>
-                  </span>
-                {/if}
-                <span class="material-symbols-outlined arrow">arrow_forward</span>
-              </div>
-            {/each}
-          </div>
-        {/if}
+                  <span class="entity-label">{entity.label}</span>
+                  {#if entity.status}
+                    <span
+                      class="inline-status"
+                      style="--status-color: {entity.status.color || 'var(--color-neutral)'}"
+                      title={entity.status.iri}
+                    >
+                      <span class="material-symbols-outlined inline-status-icon">radio_button_checked</span>
+                      <span class="inline-status-label">{entity.status.label}</span>
+                    </span>
+                  {/if}
+                  <span class="material-symbols-outlined arrow">arrow_forward</span>
+                </div>
+              {/each}
+            </div>
+          </Collapsible.Content>
+        </Collapsible.Root>
       </div>
     {/each}
   </div>
@@ -137,7 +159,7 @@
     flex-direction: column;
   }
 
-  .group-header {
+  :global(.group-header) {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -150,7 +172,7 @@
     text-align: left;
   }
 
-  .group-header:hover {
+  :global(.group-header:hover) {
     background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
   }
 
@@ -162,7 +184,7 @@
     flex-shrink: 0;
   }
 
-  .chevron.expanded {
+  :global([data-state="open"]) .chevron {
     transform: rotate(90deg);
   }
 

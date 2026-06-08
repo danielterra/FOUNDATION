@@ -1,9 +1,11 @@
 <script>
   import { untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Textarea } from '$lib/components/ui/textarea';
   import * as Select from '$lib/components/ui/select';
+  import * as ToggleGroup from '$lib/components/ui/toggle-group';
   import EntitySearchCombobox from './EntitySearchCombobox.svelte';
 
   let {
@@ -107,26 +109,22 @@
 
   <div class="cpf-row">
     <span class="cpf-label">Type</span>
-    <div class="cpf-type-select">
-      <button
-        class="cpf-type-btn"
-        class:active={propertyType === 'datatype'}
-        onclick={() => propertyType = 'datatype'}
-        disabled={mode === 'edit'}
-      >
+    <ToggleGroup.Root
+      type="single"
+      value={propertyType}
+      disabled={mode === 'edit'}
+      onValueChange={(v) => { if (v) propertyType = v; }}
+      class="cpf-type-select"
+    >
+      <ToggleGroup.Item value="datatype" class="cpf-type-btn">
         <span class="material-symbols-outlined cpf-type-icon">data_object</span>
         Datatype
-      </button>
-      <button
-        class="cpf-type-btn"
-        class:active={propertyType === 'object'}
-        onclick={() => propertyType = 'object'}
-        disabled={mode === 'edit'}
-      >
+      </ToggleGroup.Item>
+      <ToggleGroup.Item value="object" class="cpf-type-btn">
         <span class="material-symbols-outlined cpf-type-icon">link</span>
         Object
-      </button>
-    </div>
+      </ToggleGroup.Item>
+    </ToggleGroup.Root>
   </div>
 
   <div class="cpf-row">
@@ -197,18 +195,18 @@
   </div>
 
   <div class="cpf-actions">
-    <button class="cpf-save-btn" onclick={handleSave} disabled={!canSave || saving}>
+    <Button variant="default" size="sm" onclick={handleSave} disabled={!canSave || saving}>
       {#if saving}
         <span class="material-symbols-outlined spinning-small">progress_activity</span>
       {:else}
         <span class="material-symbols-outlined">{mode === 'add' ? 'add' : 'check'}</span>
       {/if}
       {mode === 'add' ? 'Add property' : 'Save'}
-    </button>
-    <button class="cpf-cancel-btn" onclick={oncancel}>
+    </Button>
+    <Button variant="ghost" size="sm" onclick={oncancel}>
       <span class="material-symbols-outlined">close</span>
       Cancel
-    </button>
+    </Button>
   </div>
 </div>
 
@@ -272,34 +270,19 @@
     cursor: pointer;
   }
 
-  .cpf-type-select {
+  :global([data-slot="toggle-group"].cpf-type-select) {
     display: flex;
     gap: 4px;
     flex: 1;
   }
 
-  .cpf-type-btn {
+  :global([data-slot="toggle-group-item"].cpf-type-btn) {
     display: flex;
     align-items: center;
     gap: 4px;
     padding: 4px 10px;
-    border: none;
-    background: transparent;
-    color: var(--color-neutral);
-    font-family: var(--font-body);
     font-size: 12px;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-  }
-
-  .cpf-type-btn.active {
-    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
-    color: var(--color-interactive);
-  }
-
-  .cpf-type-btn:disabled {
-    opacity: 0.5;
-    cursor: default;
+    border-radius: 0;
   }
 
   .cpf-type-icon {
@@ -353,48 +336,6 @@
     display: flex;
     gap: 6px;
     margin-top: 2px;
-  }
-
-  .cpf-save-btn,
-  .cpf-cancel-btn {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 5px 12px;
-    border: none;
-    cursor: pointer;
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
-    transition: background 0.15s;
-  }
-
-  .cpf-save-btn {
-    background: color-mix(in srgb, var(--color-interactive) 25%, transparent);
-    color: var(--color-interactive);
-  }
-
-  .cpf-save-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-interactive) 40%, transparent);
-  }
-
-  .cpf-save-btn:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .cpf-cancel-btn {
-    background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
-    color: var(--color-neutral);
-  }
-
-  .cpf-cancel-btn:hover {
-    background: color-mix(in srgb, var(--color-neutral) 22%, transparent);
-  }
-
-  .cpf-save-btn .material-symbols-outlined,
-  .cpf-cancel-btn .material-symbols-outlined {
-    font-size: 14px;
   }
 
   .spinning-small {

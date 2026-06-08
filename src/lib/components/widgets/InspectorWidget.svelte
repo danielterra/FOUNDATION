@@ -12,6 +12,7 @@
   import InspectorClassView from './inspector/InspectorClassView.svelte';
   import WidgetContainer from './WidgetContainer.svelte';
   import { Button } from '$lib/components/ui/button';
+  import * as Popover from '$lib/components/ui/popover';
 
   let {
     entityId, widgetId, refreshKey = 0, windowState = 'normal',
@@ -48,8 +49,7 @@
   let applicableAutomations = $state([]);
   let runningAutomationIri = $state(null);
   let togglingLock = $state(false);
-  let showStatusPicker = $state(false);
-  let statusBadgeWrapperEl = $state(null);
+  let statusPickerOpen = $state(false);
   let deleteSuccess = $state(false);
   let showAddPropertyForm = $state(false);
   let savingClassProperty = $state(false);
@@ -418,7 +418,7 @@
   }
 
   async function updateStatus(statusIri) {
-    showStatusPicker = false;
+    statusPickerOpen = false;
     try {
       await invoke('widget_inspector__update_status', { entityId, statusIri });
     } catch (err) {
@@ -493,17 +493,6 @@
     untrack(() => scheduleLoad());
   });
 
-  $effect(() => {
-    if (!showStatusPicker) return;
-    function handleDocClick(e) {
-      if (statusBadgeWrapperEl && !statusBadgeWrapperEl.contains(e.target)) {
-        showStatusPicker = false;
-      }
-    }
-    document.addEventListener('click', handleDocClick, true);
-    return () => document.removeEventListener('click', handleDocClick, true);
-  });
-
   // When entityId changes (widget navigates to another entity), reset the subscription.
   // loadEntity() declares the full flat set; this effect only seeds the anchor before
   // the first load so updates that arrive during the load aren't dropped.
@@ -558,29 +547,36 @@
       {/if}
       <Button variant="ghost" size="icon" title="Copy IRI" onclick={copyEntityIri}><span class="material-symbols-outlined">content_copy</span></Button>
       {#if entityData?.status || (entityData?.allowedStatuses?.length > 0 && !entityData?.isClass && !isLocked)}
-        <div class="status-badge-wrapper" bind:this={statusBadgeWrapperEl}>
-          <button
-            class="status-badge"
-            class:clickable={entityData.allowedStatuses?.length > 0 && !isLocked}
-            style="--status-color: {entityData.status?.color || 'var(--color-neutral)'}"
-            title={isLocked ? 'Entity is system-locked' : (entityData.status?.iri ?? 'Definir status')}
-            onclick={() => {
-              if (entityData.allowedStatuses?.length > 0 && !isLocked) showStatusPicker = !showStatusPicker;
-            }}
+        <Popover.Root
+          bind:open={statusPickerOpen}
+          onOpenChange={(v) => { if (isLocked || !(entityData.allowedStatuses?.length > 0)) statusPickerOpen = false; }}
+        >
+          <Popover.Trigger
+            disabled={isLocked || !(entityData.allowedStatuses?.length > 0)}
           >
-            {#if entityData.status}
-              <span class="material-symbols-outlined status-badge-icon">{entityData.status.icon || 'radio_button_checked'}</span>
-              <span class="status-badge-label">{entityData.status.label}</span>
-            {:else}
-              <span class="material-symbols-outlined status-badge-icon">radio_button_unchecked</span>
-              <span class="status-badge-label">Status</span>
-            {/if}
-            {#if entityData.allowedStatuses?.length > 0}
-              <span class="material-symbols-outlined status-badge-chevron">expand_more</span>
-            {/if}
-          </button>
-          {#if showStatusPicker}
-            <div class="status-picker" role="listbox">
+            {#snippet child({ props })}
+              <button
+                {...props}
+                class="status-badge"
+                class:clickable={entityData.allowedStatuses?.length > 0 && !isLocked}
+                style="--status-color: {entityData.status?.color || 'var(--color-neutral)'}"
+                title={isLocked ? 'Entity is system-locked' : (entityData.status?.iri ?? 'Definir status')}
+              >
+                {#if entityData.status}
+                  <span class="material-symbols-outlined status-badge-icon">{entityData.status.icon || 'radio_button_checked'}</span>
+                  <span class="status-badge-label">{entityData.status.label}</span>
+                {:else}
+                  <span class="material-symbols-outlined status-badge-icon">radio_button_unchecked</span>
+                  <span class="status-badge-label">Status</span>
+                {/if}
+                {#if entityData.allowedStatuses?.length > 0}
+                  <span class="material-symbols-outlined status-badge-chevron">expand_more</span>
+                {/if}
+              </button>
+            {/snippet}
+          </Popover.Trigger>
+          <Popover.Content align="end" class="status-picker-content">
+            <div role="listbox" class="status-picker-list">
               {#each entityData.allowedStatuses as s}
                 <button
                   class="status-picker-item"
@@ -595,8 +591,8 @@
                 </button>
               {/each}
             </div>
-          {/if}
-        </div>
+          </Popover.Content>
+        </Popover.Root>
       {/if}
     {/snippet}
 
@@ -751,10 +747,6 @@
     font-size: 11px;
   }
 
-  .status-badge-wrapper {
-    position: relative;
-  }
-
   .status-badge {
     display: inline-flex;
     align-items: center;
@@ -788,20 +780,6 @@
     opacity: 0.7;
   }
 
-  .status-picker {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
-    z-index: 1000;
-    background: var(--color-surface-3);
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 160px;
-    box-shadow: 0 6px 20px color-mix(in srgb, var(--color-black) 50%, transparent);
-  }
-
   .status-picker-item {
     display: flex;
     align-items: center;
@@ -816,6 +794,17 @@
 
   .status-picker-item.active {
     background: color-mix(in srgb, var(--status-color) 30%, transparent);
+  }
+
+  :global(.status-picker-content) {
+    padding: 4px;
+    min-width: 160px;
+  }
+
+  :global(.status-picker-list) {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
 
   .content-scroll {

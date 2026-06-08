@@ -3,6 +3,7 @@
   import ClassPropertyForm from './ClassPropertyForm.svelte';
   import DisjointSelect from './DisjointSelect.svelte';
   import ProcessSelect from './ProcessSelect.svelte';
+  import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { sticky } from '$lib/utils/actions';
 
   let {
@@ -245,26 +246,38 @@
       </div>
     {/if}
 
-    {#if removeDisjointConfirm && removeDisjointConfirm.kind === 'all'}
-      <div class="remove-confirm-dialog">
-        <div class="remove-confirm-icon">
-          <span class="material-symbols-outlined">warning</span>
+    <AlertDialog.Root
+      open={!!(removeDisjointConfirm && removeDisjointConfirm.kind === 'all')}
+      onOpenChange={(v) => { if (!v) onCancelRemoveDisjoint?.(); }}
+    >
+      <AlertDialog.Content>
+        <div class="adlg-icon-row">
+          <span class="material-symbols-outlined adlg-warning-icon">warning</span>
         </div>
-        <div class="remove-confirm-body">
-          <p class="remove-confirm-msg">
-            Esta disjunção é parte de um <strong>conjunto n-ário</strong> com
-            {removeDisjointConfirm.members.length + 1} classes.
-            Remover qualquer membro retrai o conjunto inteiro — os outros pares
-            ({removeDisjointConfirm.members.map(m => m.label ?? m.iri).join(', ')})
-            também deixarão de ser disjuntos entre si.
-          </p>
-          <div class="remove-confirm-actions">
-            <button class="remove-confirm-proceed" onclick={() => onConfirmRemoveDisjoint?.()}>Remover conjunto</button>
-            <button class="remove-confirm-cancel" onclick={() => onCancelRemoveDisjoint?.()}>Cancelar</button>
-          </div>
+        <AlertDialog.Title class="adlg-title">Remover conjunto disjunto</AlertDialog.Title>
+        <AlertDialog.Description class="adlg-description">
+          Esta disjunção é parte de um <strong>conjunto n-ário</strong> com
+          {removeDisjointConfirm?.members?.length != null ? removeDisjointConfirm.members.length + 1 : 0} classes.
+          Remover qualquer membro retrai o conjunto inteiro — os outros pares
+          ({(removeDisjointConfirm?.members ?? []).map(m => m.label ?? m.iri).join(', ')})
+          também deixarão de ser disjuntos entre si.
+        </AlertDialog.Description>
+        <div class="adlg-actions">
+          <AlertDialog.Action
+            class="adlg-proceed"
+            onclick={() => onConfirmRemoveDisjoint?.()}
+          >
+            Remover conjunto
+          </AlertDialog.Action>
+          <AlertDialog.Cancel
+            class="adlg-cancel"
+            onclick={() => onCancelRemoveDisjoint?.()}
+          >
+            Cancelar
+          </AlertDialog.Cancel>
         </div>
-      </div>
-    {/if}
+      </AlertDialog.Content>
+    </AlertDialog.Root>
 
     <div class="item-list">
       {#each disjointGroups as group, gi (group.groupId ?? `pair-${gi}`)}
@@ -382,27 +395,39 @@
       oncancel={() => showAddPropertyForm = false}
     />
   {/if}
-  {#if removeConfirmProp}
-    <div class="remove-confirm-dialog">
-      <div class="remove-confirm-icon">
-        <span class="material-symbols-outlined">warning</span>
+  <AlertDialog.Root
+    open={!!removeConfirmProp}
+    onOpenChange={(v) => { if (!v) onCancelRemoveProperty?.(); }}
+  >
+    <AlertDialog.Content>
+      <div class="adlg-icon-row">
+        <span class="material-symbols-outlined adlg-warning-icon">warning</span>
       </div>
-      <div class="remove-confirm-body">
-        <p class="remove-confirm-msg">
-          <strong>{removeConfirmCount}</strong> individual{removeConfirmCount !== 1 ? 's' : ''} of this class
-          {removeConfirmCount !== 1 ? 'have' : 'has'} a value for <em>{removeConfirmProp.label}</em>.
-          Removing it will hide the property from the schema but existing values will be preserved.
-        </p>
-        {#if removeConfirmExamples.length > 0}
-          <p class="remove-confirm-examples">{removeConfirmExamples.join(', ')}{removeConfirmCount > removeConfirmExamples.length ? '…' : ''}</p>
-        {/if}
-        <div class="remove-confirm-actions">
-          <button class="remove-confirm-proceed" onclick={onConfirmRemoveProperty}>Remove anyway</button>
-          <button class="remove-confirm-cancel" onclick={onCancelRemoveProperty}>Cancel</button>
-        </div>
+      <AlertDialog.Title class="adlg-title">Remove property</AlertDialog.Title>
+      <AlertDialog.Description class="adlg-description">
+        <strong>{removeConfirmCount}</strong> individual{removeConfirmCount !== 1 ? 's' : ''} of this class
+        {removeConfirmCount !== 1 ? 'have' : 'has'} a value for <em>{removeConfirmProp?.label}</em>.
+        Removing it will hide the property from the schema but existing values will be preserved.
+      </AlertDialog.Description>
+      {#if (removeConfirmExamples?.length ?? 0) > 0}
+        <p class="adlg-examples">{removeConfirmExamples.join(', ')}{removeConfirmCount > removeConfirmExamples.length ? '…' : ''}</p>
+      {/if}
+      <div class="adlg-actions">
+        <AlertDialog.Action
+          class="adlg-proceed"
+          onclick={onConfirmRemoveProperty}
+        >
+          Remove anyway
+        </AlertDialog.Action>
+        <AlertDialog.Cancel
+          class="adlg-cancel"
+          onclick={onCancelRemoveProperty}
+        >
+          Cancel
+        </AlertDialog.Cancel>
       </div>
-    </div>
-  {/if}
+    </AlertDialog.Content>
+  </AlertDialog.Root>
 {/if}
 
 {#if entityData.instances?.length > 0}
@@ -544,77 +569,81 @@
     font-size: 14px;
   }
 
-  .remove-confirm-dialog {
+  .adlg-icon-row {
     display: flex;
-    gap: 10px;
-    padding: 12px;
-    background: color-mix(in srgb, var(--color-warning, #f59e0b) 8%, transparent);
-    margin-bottom: 8px;
+    justify-content: center;
   }
 
-  .remove-confirm-icon .material-symbols-outlined {
-    font-size: 20px;
-    color: var(--color-warning, #f59e0b);
+  .adlg-warning-icon {
+    font-size: 28px;
+    color: var(--color-warning);
   }
 
-  .remove-confirm-body {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .remove-confirm-msg {
+  :global([data-slot="alert-dialog-content"] .adlg-title) {
     font-family: var(--font-body);
-    font-size: 12px;
+    font-size: 15px;
+    font-weight: 700;
     color: var(--color-neutral-active);
+    text-align: center;
     margin: 0;
-    line-height: 1.5;
   }
 
-  .remove-confirm-examples {
+  :global([data-slot="alert-dialog-content"] .adlg-description) {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--color-neutral);
+    line-height: 1.5;
+    margin: 0;
+    text-align: center;
+  }
+
+  .adlg-examples {
     font-family: var(--font-body);
     font-size: 11px;
     color: var(--color-neutral);
     margin: 0;
     font-style: italic;
+    text-align: center;
   }
 
-  .remove-confirm-actions {
+  .adlg-actions {
     display: flex;
-    gap: 6px;
-    margin-top: 2px;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 4px;
   }
 
-  .remove-confirm-proceed {
-    padding: 4px 10px;
-    background: color-mix(in srgb, var(--color-error, #ef4444) 20%, transparent);
+  :global([data-slot="alert-dialog-content"] .adlg-proceed) {
+    padding: 6px 14px;
+    background: color-mix(in srgb, var(--color-danger) 20%, transparent);
     border: none;
-    color: var(--color-error, #ef4444);
+    color: var(--color-danger);
     font-family: var(--font-body);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
+    border-radius: var(--radius);
     transition: background 0.15s;
   }
 
-  .remove-confirm-proceed:hover {
-    background: color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent);
+  :global([data-slot="alert-dialog-content"] .adlg-proceed:hover) {
+    background: color-mix(in srgb, var(--color-danger) 30%, transparent);
   }
 
-  .remove-confirm-cancel {
-    padding: 4px 10px;
+  :global([data-slot="alert-dialog-content"] .adlg-cancel) {
+    padding: 6px 14px;
     background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
     border: none;
     color: var(--color-neutral);
     font-family: var(--font-body);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
+    border-radius: var(--radius);
     transition: background 0.15s;
   }
 
-  .remove-confirm-cancel:hover {
+  :global([data-slot="alert-dialog-content"] .adlg-cancel:hover) {
     background: color-mix(in srgb, var(--color-neutral) 22%, transparent);
   }
 

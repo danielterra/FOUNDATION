@@ -1,5 +1,6 @@
 <script>
   import { Textarea } from '$lib/components/ui/textarea';
+  import { Button } from '$lib/components/ui/button';
   import { cn } from '$lib/utils';
   let { propertyIri, draftValue = $bindable(), saving, mono = false, onsave, oncancel } = $props();
 
@@ -29,8 +30,9 @@
     }}
   />
   <div class="edit-actions">
-    <button
-      class="edit-save-btn"
+    <Button
+      variant="default"
+      size="sm"
       onmousedown={(e) => e.preventDefault()}
       onclick={() => onsave(propertyIri)}
       disabled={saving}
@@ -41,15 +43,16 @@
         <span class="material-symbols-outlined">check</span>
       {/if}
       Save
-    </button>
-    <button
-      class="edit-cancel-btn"
+    </Button>
+    <Button
+      variant="ghost"
+      size="sm"
       onmousedown={(e) => e.preventDefault()}
       onclick={oncancel}
     >
       <span class="material-symbols-outlined">close</span>
       Cancel
-    </button>
+    </Button>
   </div>
 </div>
 
@@ -88,48 +91,6 @@
   .edit-actions {
     display: flex;
     gap: 6px;
-  }
-
-  .edit-save-btn,
-  .edit-cancel-btn {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    border: none;
-    cursor: pointer;
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
-    transition: background 0.15s;
-  }
-
-  .edit-save-btn {
-    background: color-mix(in srgb, var(--color-interactive) 25%, transparent);
-    color: var(--color-interactive);
-  }
-
-  .edit-save-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-interactive) 40%, transparent);
-  }
-
-  .edit-save-btn:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-
-  .edit-cancel-btn {
-    background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
-    color: var(--color-neutral);
-  }
-
-  .edit-cancel-btn:hover {
-    background: color-mix(in srgb, var(--color-neutral) 22%, transparent);
-  }
-
-  .edit-save-btn .material-symbols-outlined,
-  .edit-cancel-btn .material-symbols-outlined {
-    font-size: 14px;
   }
 
   .spinning-small {
