@@ -4,6 +4,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { createEntitySubscription } from '$lib/realtime/subscriptions';
+  import { openEntity } from '$lib/blackboard';
   import { deleteConfirm } from '$lib/stores/deleteConfirm';
   import FilePreview from './inspector/FilePreview.svelte';
   import MetaFields from './inspector/MetaFields.svelte';
@@ -426,17 +427,7 @@
   }
 
   async function openEntityInspector(entityIri) {
-    try {
-      await invoke('widget_blackboard__add_widget', {
-        widgetType: '',
-        entityId: entityIri,
-        position: null,
-        size: null,
-        conversationId: conversationIri
-      });
-    } catch (err) {
-      console.error('Failed to open inspector:', err);
-    }
+    await openEntity(entityIri, conversationIri).catch(err => console.error('Failed to open entity:', err));
   }
 
   async function openWidgetForEntity(widgetType) {
@@ -679,6 +670,7 @@
                 p => p.property !== 'foundation:hasStatus' && p.property !== 'rdf:type')}
           requiredFields={entityData.requiredFields ?? []}
           isClass={entityData.isClass}
+          {entityId}
           {openEntityInspector}
           onSave={entityData.isClass || isLocked ? null : saveProperty}
           onSaveReference={entityData.isClass || isLocked ? null : saveReferences}

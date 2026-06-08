@@ -14,6 +14,7 @@
   import ThinkingDots from '$lib/components/ThinkingDots.svelte';
   import AppHeader from '$lib/components/AppHeader.svelte';
   import { appState } from '$lib/appState.svelte';
+  import { openEntity } from '$lib/blackboard';
   import { getCurrentWindow } from '@tauri-apps/api/window';
 
   type TaskCompletedEvent = {
@@ -28,10 +29,7 @@
   const TOAST_SUMMARY_MAX_CHARS = 80;
 
   function openTaskInspector(taskIri: string) {
-    invoke('widget_blackboard__add_widget', {
-      widgetType: 'inspector', entityId: taskIri,
-      position: null, size: null, conversationId: appState.activeConversationIri ?? null
-    }).catch(e => console.error('[toast] Failed to open inspector:', e));
+    openEntity(taskIri, appState.activeConversationIri).catch(e => console.error('[toast] Failed to open entity:', e));
   }
 
   let taskNotifications = $state<TaskNotification[]>([]);
@@ -126,7 +124,7 @@
     const anchor = (event.target as Element).closest('a');
     if (!anchor) return;
     const href = anchor.getAttribute('href');
-    if (!href || (!href.startsWith('http://') && !href.startsWith('https://'))) return;
+    if (!href || href.startsWith('#')) return;
     event.preventDefault();
     openUrl(href).catch(err => console.error('[App] Failed to open URL:', err));
   }

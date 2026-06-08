@@ -28,7 +28,8 @@ impl ActiveExecutions {
 }
 
 use super::context::{evaluate_condition, reachable_from};
-pub use super::context::{ExecutionContext, FlowMap, interpolate, interpolate_with_db};
+pub use super::context::{ExecutionContext, FlowMap, interpolate};
+pub use super::template_render::interpolate_with_db;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -170,7 +171,7 @@ fn create_execution_record(
         .ok()
         .flatten()
         .unwrap_or_else(|| process_iri.to_string());
-    let exec_label = format!("Execução: {}", process_label);
+    let exec_label = format!("Execution: {}", process_label);
     let ind = Individual::new(&exec_iri);
     ind.assert(conn, "foundation:WorkflowExecution", &exec_label, "play_circle", "process_automation")
         .map_err(|e| e.to_string())?;
@@ -186,6 +187,50 @@ fn create_execution_record(
     Ok(exec_iri)
 }
 
+/// Creates the control instance for a new execution and links it to the WorkflowExecution.
+///
+/// `controlClass` MUST be set on the process. A new individual of that class is created with
+/// `hasStatus=InProgress` and `executesProcess=process_iri`, and `controlInstance` is written
+/// on the `exec_iri`. The IRI of the typed control instance is returned.
+///
+/// Returns a validation error if `controlClass` is absent — the automation cannot execute.
+fn create_control_instance(
+    conn: &mut rusqlite::Connection,
+    exec_iri: &str,
+    process_iri: &str,
+) -> Result<String> {
+    let class_iri = crate::owl::get_iri_property(conn, process_iri, "foundation:controlClass")
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!(
+            "Automation {} has no controlClass defined and cannot execute. Configure controlClass before starting.",
+            process_iri
+        ))?;
+
+    let now_ms = Utc::now().timestamp_millis();
+    let class_local = class_iri.rsplit_once(':').map(|(_, l)| l).unwrap_or(&class_iri);
+    let instance_iri = format!("foundation:{}__{}", class_local, now_ms);
+
+    let process_label = crate::owl::get_literal_property(conn, process_iri, "rdfs:label")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| process_iri.to_string());
+
+    let ind = Individual::new(&instance_iri);
+    ind.assert(conn, &class_iri, &process_label, "play_circle", "process_automation")
+        .map_err(|e| e.to_string())?;
+    Individual::add_iri_value(conn, &instance_iri, "foundation:hasStatus", STATUS_IN_PROGRESS, "process_automation")
+        .map_err(|e| e.to_string())?;
+    Individual::add_iri_value(conn, &instance_iri, "foundation:executesProcess", process_iri, "process_automation")
+        .map_err(|e| e.to_string())?;
+
+    Individual::new(exec_iri)
+        .add_property(conn, "foundation:controlInstance",
+            vec![Object::Iri(instance_iri.clone())], "process_automation")
+        .map_err(|e| e.to_string())?;
+
+    Ok(instance_iri)
+}
+
 fn lit_datetime(ms: i64) -> Object {
     let dt = chrono::DateTime::from_timestamp_millis(ms)
         .unwrap_or_else(chrono::Utc::now);
@@ -196,11 +241,61 @@ fn lit_str(v: &str) -> Object {
     Object::Literal { value: v.to_string(), datatype: Some("xsd:string".to_string()), language: None }
 }
 
-fn looks_like_iri(s: &str) -> bool {
+pub(super) fn looks_like_iri(s: &str) -> bool {
     s.contains(':') && !s.contains(' ')
 }
 
-fn split_iri_lines(s: &str) -> Option<Vec<String>> {
+/// Parses `controlInstanceDefaults` JSON from `start_event_iri` and writes each key→value
+/// pair onto `instance_iri`. Values that look like IRIs are written as ObjectProperty triples;
+/// all others are written as xsd:string literals.
+///
+/// A missing, empty, or malformed defaults JSON is non-fatal: the instance is left unseeded
+/// and a warning is logged. Nothing is written for absent/null values.
+fn seed_control_instance_defaults(
+    conn: &mut rusqlite::Connection,
+    instance_iri: &str,
+    start_event_iri: &str,
+) -> Result<()> {
+    let defaults_json = match crate::owl::get_literal_property(conn, start_event_iri, "foundation:controlInstanceDefaults")
+        .map_err(|e| e.to_string())?
+    {
+        Some(v) if !v.trim().is_empty() => v,
+        _ => return Ok(()),
+    };
+
+    let map: std::collections::HashMap<String, serde_json::Value> =
+        match serde_json::from_str(&defaults_json) {
+            Ok(m) => m,
+            Err(e) => {
+                log_backend("warn", &format!(
+                    "[executor] invalid controlInstanceDefaults JSON in {}: {} — instance created without defaults",
+                    start_event_iri, e
+                ));
+                return Ok(());
+            }
+        };
+
+    for (prop_iri, val) in &map {
+        let value_str = match val {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        if value_str.is_empty() {
+            continue;
+        }
+        if looks_like_iri(&value_str) {
+            crate::owl::replace_all_property_iris(conn, instance_iri, prop_iri, &[value_str.as_str()], "process_automation")
+                .map_err(|e| e.to_string())?;
+        } else {
+            crate::owl::replace_all_property_literals(conn, instance_iri, prop_iri, &[value_str.as_str()], "process_automation")
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
+pub(super) fn split_iri_lines(s: &str) -> Option<Vec<String>> {
     let lines: Vec<String> = s
         .lines()
         .map(|l| l.trim().to_string())
@@ -221,6 +316,7 @@ fn create_step_record(
     exec_iri: &str,
     node_iri: &str,
     node_label: &str,
+    control_instance_iri: Option<&str>,
 ) -> Result<String> {
     let now_ms = Utc::now().timestamp_millis();
     let step_iri = format!("foundation:StepExecution_{}", now_ms);
@@ -233,6 +329,11 @@ fn create_step_record(
     ind.add_property(conn, "foundation:belongsToExecution",
         vec![Object::Iri(exec_iri.to_string())], "process_automation")
         .map_err(|e| e.to_string())?;
+    if let Some(ci) = control_instance_iri {
+        ind.add_property(conn, "foundation:controlInstance",
+            vec![Object::Iri(ci.to_string())], "process_automation")
+            .map_err(|e| e.to_string())?;
+    }
     ind.add_property(conn, "foundation:hasStatus",
         vec![Object::Iri(STATUS_IN_PROGRESS.to_string())], "process_automation")
         .map_err(|e| e.to_string())?;
@@ -271,21 +372,28 @@ fn finish_step_record(
         .map_err(|e| e.to_string())?;
     if let Some(val) = output.filter(|v| !v.is_empty()) {
         match split_iri_lines(val) {
-            Some(iris) if iris.len() == 1 => {
-                ind.add_property(conn, "foundation:outputValue",
-                    vec![Object::Iri(iris.into_iter().next().unwrap())], "process_automation")
-                    .map_err(|e| e.to_string())?;
-            }
             Some(iris) => {
-                let json = serde_json::to_string(&iris).map_err(|e| e.to_string())?;
-                ind.add_property(conn, "foundation:outputIRIs",
-                    vec![lit_str(&json)], "process_automation")
+                let iri_objects: Vec<Object> = iris.into_iter()
+                    .map(Object::Iri)
+                    .collect();
+                ind.add_property(conn, "foundation:executionOutput",
+                    iri_objects, "process_automation")
                     .map_err(|e| e.to_string())?;
             }
             None => {
-                ind.add_property(conn, "foundation:stepOutput",
+                ind.add_property(conn, "foundation:executionSummary",
                     vec![lit_str(val)], "process_automation")
                     .map_err(|e| e.to_string())?;
+                let embedded_iris: Vec<Object> = val
+                    .split_whitespace()
+                    .filter(|token| looks_like_iri(token))
+                    .map(|token| Object::Iri(token.to_string()))
+                    .collect();
+                if !embedded_iris.is_empty() {
+                    ind.add_property(conn, "foundation:executionOutput",
+                        embedded_iris, "process_automation")
+                        .map_err(|e| e.to_string())?;
+                }
             }
         }
     }
@@ -332,6 +440,15 @@ pub async fn run_process(app: &AppHandle, process_iri: &str, input_iri: Option<S
     run_process_with_context(app, process_iri, &mut ctx).await.map(|_| ())
 }
 
+/// Runs a BPMN process triggered by a TimerStartEvent, seeding controlInstanceDefaults
+/// onto the newly-created control instance before the first node executes.
+/// Only timer-triggered dispatches go through this path; external/manual runs use run_process.
+pub async fn run_process_from_timer(app: &AppHandle, process_iri: &str, start_event_iri: &str) -> Result<()> {
+    let mut ctx = ExecutionContext::new();
+    ctx.insert("__timerStartEvent".to_string(), start_event_iri.to_string());
+    run_process_with_context(app, process_iri, &mut ctx).await.map(|_| ())
+}
+
 /// Runs a BPMN process, propagating and updating the provided execution context.
 /// Returns the IRI of the EndEvent that terminated the process, if any.
 pub async fn run_process_with_context(
@@ -343,7 +460,7 @@ pub async fn run_process_with_context(
     let executor = app.state::<DbExecutor>();
 
     let triggered_by = ctx.get("inputIRIs").cloned();
-    let exec_iri = executor
+    let init_json = executor
         .write({
             let process_iri = process_iri.clone();
             move |conn| {
@@ -354,10 +471,32 @@ pub async fn run_process_with_context(
                             vec![Object::Iri(iri)], "process_automation")
                         .map_err(|e| e.to_string())?;
                 }
-                Ok(exec_iri)
+                let control_instance_iri = match create_control_instance(conn, &exec_iri, &process_iri) {
+                    Ok(iri) => iri,
+                    Err(e) => {
+                        let _ = finish_execution_record(conn, &exec_iri, Some(&e));
+                        return Err(e);
+                    }
+                };
+                serde_json::to_string(&(exec_iri, control_instance_iri))
+                    .map_err(|e| e.to_string())
             }
         })
         .await?;
+    let (exec_iri, control_instance_iri): (String, String) =
+        serde_json::from_str(&init_json).map_err(|e| e.to_string())?;
+
+    ctx.insert("self".to_string(), control_instance_iri.clone());
+
+    if let Some(start_event_iri) = ctx.get("__timerStartEvent").cloned() {
+        let instance_iri_clone = control_instance_iri.clone();
+        executor
+            .write(move |conn| {
+                seed_control_instance_defaults(conn, &instance_iri_clone, &start_event_iri)?;
+                Ok(String::new())
+            })
+            .await?;
+    }
 
     if let Err(e) = app.emit("automation-execution-started", serde_json::json!({
         "processIri": process_iri,
@@ -386,8 +525,15 @@ pub async fn run_process_with_context(
     executor
         .write({
             let exec_iri = exec_iri.clone();
+            let control_instance_iri = control_instance_iri.clone();
             let error = run_result.as_ref().err().cloned();
-            move |conn| finish_execution_record(conn, &exec_iri, error.as_deref())
+            move |conn| {
+                finish_execution_record(conn, &exec_iri, error.as_deref())?;
+                let terminal_status = if error.is_none() { STATUS_COMPLETED } else { STATUS_FAILED };
+                Individual::add_iri_value(conn, &control_instance_iri, "foundation:hasStatus", terminal_status, "process_automation")
+                    .map_err(|e| e.to_string())?;
+                Ok(exec_iri)
+            }
         })
         .await?;
 
@@ -541,12 +687,13 @@ async fn execute_nodes(
             .await
             .unwrap_or_else(|_| node_iri.clone());
 
+        let control_instance_iri = ctx.get("self").cloned();
         let step_iri = executor
             .write({
                 let exec_iri = exec_iri.to_string();
                 let node_iri = node_iri.clone();
                 let node_label = node_label.clone();
-                move |conn| create_step_record(conn, &exec_iri, &node_iri, &node_label)
+                move |conn| create_step_record(conn, &exec_iri, &node_iri, &node_label, control_instance_iri.as_deref())
             })
             .await?;
 
@@ -596,6 +743,11 @@ async fn execute_nodes(
             }
             "NOVAMessageTask" => {
                 super::nova_message_task::execute_nova_message_task(app, &node_iri, ctx)
+                    .await
+                    .map(|_| String::new())
+            }
+            "TemplateTask" => {
+                super::template_task::execute_template_task(app, &node_iri, ctx)
                     .await
                     .map(|_| String::new())
             }
@@ -884,6 +1036,21 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
     let skip_vec: Vec<String> = serde_json::from_str(&skip_json).unwrap_or_default();
     let skip_set: HashSet<String> = skip_vec.into_iter().collect();
 
+    let control_self = executor
+        .read({
+            let exec_iri = exec_iri.to_string();
+            move |conn| {
+                crate::owl::get_iri_property(conn, &exec_iri, "foundation:controlInstance")
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!(
+                        "Execution {} has no controlInstance — cannot resume without a typed instance.",
+                        exec_iri
+                    ))
+            }
+        })
+        .await?;
+    ctx.insert("self".to_string(), control_self);
+
     log_backend("info", &format!(
         "[executor] Resuming execution {} from node {} (skip_set: {} nodes)",
         exec_iri, node_iri, skip_set.len()
@@ -920,7 +1087,15 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
         .write({
             let exec_iri = exec_iri.to_string();
             let error = run_result.as_ref().err().cloned();
-            move |conn| finish_execution_record(conn, &exec_iri, error.as_deref())
+            move |conn| {
+                finish_execution_record(conn, &exec_iri, error.as_deref())?;
+                let terminal_status = if error.is_none() { STATUS_COMPLETED } else { STATUS_FAILED };
+                if let Ok(Some(ci_iri)) = crate::owl::get_iri_property(conn, &exec_iri, "foundation:controlInstance") {
+                    Individual::add_iri_value(conn, &ci_iri, "foundation:hasStatus", terminal_status, "process_automation")
+                        .map_err(|e| e.to_string())?;
+                }
+                Ok(exec_iri)
+            }
         })
         .await?;
 

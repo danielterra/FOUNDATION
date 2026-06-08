@@ -77,7 +77,7 @@ pub async fn save_trace(
     }).await?;
 
     log_backend("info", &format!(
-        "[TRACE] Salvo AgentTrace_{} — {} passos, razão: {}, {}ms, tokens: {}in/{}out",
+        "[TRACE] Saved AgentTrace_{} — {} steps, reason: {}, {}ms, tokens: {}in/{}out",
         timestamp, steps.len(), termination_reason, duration_ms,
         total_input_tokens, total_output_tokens,
     ));
@@ -119,19 +119,19 @@ mod tests {
     use crate::eavto::test_helpers::setup_test_db;
 
     #[test]
-    fn make_step_trunca_entrada_longa() {
+    fn make_step_truncates_long_input() {
         let long_iri = "A".repeat(300);
         let input = serde_json::json!({"iris": [long_iri]});
         let step = make_step(1, "describe_individual", &input, "ok", false, 42);
-        assert!(step.input_snippet.ends_with('…'), "deve terminar com reticências");
-        assert!(step.input_snippet.chars().count() <= 202, "snippet não deve ultrapassar 201 chars + reticências");
+        assert!(step.input_snippet.ends_with('…'), "should end with an ellipsis");
+        assert!(step.input_snippet.chars().count() <= 202, "snippet should not exceed 201 chars + ellipsis");
     }
 
     #[test]
-    fn make_step_nao_trunca_entrada_curta() {
+    fn make_step_does_not_truncate_short_input() {
         let input = serde_json::json!({"query": "hello"});
         let step = make_step(1, "search", &input, "3 results", false, 10);
-        assert!(!step.input_snippet.ends_with('…'), "não deve truncar entradas curtas");
+        assert!(!step.input_snippet.ends_with('…'), "should not truncate short inputs");
         assert_eq!(step.tool, "search");
         assert_eq!(step.iteration, 1);
         assert_eq!(step.duration_ms, 10);
@@ -139,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn make_step_erro_preserva_flag() {
+    fn make_step_error_preserves_flag() {
         let input = serde_json::json!({"iris": ["foundation:X"]});
         let step = make_step(2, "describe_individual", &input, r#"{"success":false,"error":"not found"}"#, true, 5);
         assert!(step.is_error);
@@ -147,7 +147,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn save_trace_grava_individual_no_db() {
+    async fn save_trace_writes_individual_to_db() {
         let conn = setup_test_db();
         let executor = DbExecutor::new_in_memory(conn);
 
@@ -160,11 +160,11 @@ mod tests {
             &executor, "foundation:Conv_test_123",
             &steps, "end_turn", 1, 100, 50, 500,
         ).await;
-        assert!(result.is_ok(), "save_trace falhou: {:?}", result.err());
+        assert!(result.is_ok(), "save_trace failed: {:?}", result.err());
     }
 
     #[tokio::test]
-    async fn save_trace_nao_grava_sem_atividade() {
+    async fn save_trace_does_not_write_without_activity() {
         let conn = setup_test_db();
         let executor = DbExecutor::new_in_memory(conn);
 
@@ -172,11 +172,11 @@ mod tests {
             &executor, "foundation:Conv_empty",
             &[], "end_turn", 0, 0, 0, 50,
         ).await;
-        assert!(result.is_ok(), "deve retornar Ok mesmo sem nada para salvar");
+        assert!(result.is_ok(), "should return Ok even with nothing to save");
     }
 
     #[tokio::test]
-    async fn save_trace_com_erro_registra_corretamente() {
+    async fn save_trace_with_error_records_correctly() {
         let conn = setup_test_db();
         let executor = DbExecutor::new_in_memory(conn);
 
@@ -190,6 +190,6 @@ mod tests {
             &executor, "foundation:Conv_loop",
             &steps, "loop_detected", 3, 300, 150, 1200,
         ).await;
-        assert!(result.is_ok(), "save_trace falhou para loop_detected: {:?}", result.err());
+        assert!(result.is_ok(), "save_trace failed for loop_detected: {:?}", result.err());
     }
 }

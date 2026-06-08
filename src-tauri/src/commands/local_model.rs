@@ -99,7 +99,7 @@ pub async fn setup__download_local_model(
     download_state: State<'_, LocalModelDownloadState>,
 ) -> Result<(), String> {
     if download_state.is_downloading.swap(true, Ordering::SeqCst) {
-        return Err("Download já em andamento".to_string());
+        return Err("Download already in progress".to_string());
     }
 
     download_state.cancel_flag.store(false, Ordering::SeqCst);
@@ -108,7 +108,7 @@ pub async fn setup__download_local_model(
     let cancel_flag = download_state.cancel_flag.clone();
 
     let download_path = user_model_path(&app)
-        .ok_or_else(|| "Não foi possível determinar o diretório de dados".to_string())?;
+        .ok_or_else(|| "Could not determine the data directory".to_string())?;
 
     let app_clone = app.clone();
     tokio::spawn(async move {
@@ -123,7 +123,7 @@ pub async fn setup__download_local_model(
             }
             Err(ref e) if e == "cancelled" => {
                 let _ = app_clone.emit("local-model-download-error", serde_json::json!({
-                    "error": "Download cancelado",
+                    "error": "Download cancelled",
                     "cancelled": true
                 }));
             }
@@ -145,7 +145,7 @@ async fn do_download(
 ) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Erro ao criar diretório: {}", e))?;
+            .map_err(|e| format!("Error creating directory: {}", e))?;
     }
 
     // Keep partial file alongside final path to support resume
@@ -159,7 +159,7 @@ async fn do_download(
 
     let client = reqwest::Client::builder()
         .build()
-        .map_err(|e| format!("Erro ao criar cliente HTTP: {}", e))?;
+        .map_err(|e| format!("Error creating HTTP client: {}", e))?;
 
     let mut req = client.get(MODEL_DOWNLOAD_URL);
     if existing_size > 0 {
@@ -167,11 +167,11 @@ async fn do_download(
     }
 
     let response = req.send().await
-        .map_err(|e| format!("Erro de conexão: {}", e))?;
+        .map_err(|e| format!("Connection error: {}", e))?;
 
     let status = response.status();
     if !status.is_success() && status.as_u16() != 206 {
-        return Err(format!("Servidor retornou: {}", status));
+        return Err(format!("Server returned: {}", status));
     }
 
     let is_resume = status.as_u16() == 206;
@@ -188,10 +188,10 @@ async fn do_download(
         std::fs::OpenOptions::new()
             .append(true)
             .open(&partial_path)
-            .map_err(|e| format!("Erro ao abrir arquivo parcial: {}", e))?
+            .map_err(|e| format!("Error opening partial file: {}", e))?
     } else {
         std::fs::File::create(&partial_path)
-            .map_err(|e| format!("Erro ao criar arquivo: {}", e))?
+            .map_err(|e| format!("Error creating file: {}", e))?
     };
 
     let mut downloaded = if is_resume { existing_size } else { 0 };
@@ -204,8 +204,8 @@ async fn do_download(
             return Err("cancelled".to_string());
         }
 
-        let chunk = chunk.map_err(|e| format!("Erro ao receber dados: {}", e))?;
-        file.write_all(&chunk).map_err(|e| format!("Erro ao escrever arquivo: {}", e))?;
+        let chunk = chunk.map_err(|e| format!("Error receiving data: {}", e))?;
+        file.write_all(&chunk).map_err(|e| format!("Error writing file: {}", e))?;
         downloaded += chunk.len() as u64;
 
         if last_emit.elapsed().as_millis() >= 250 {
@@ -223,11 +223,11 @@ async fn do_download(
         }
     }
 
-    file.flush().map_err(|e| format!("Erro ao finalizar escrita: {}", e))?;
+    file.flush().map_err(|e| format!("Error finalizing write: {}", e))?;
     drop(file);
 
     std::fs::rename(&partial_path, dest)
-        .map_err(|e| format!("Erro ao mover arquivo para destino: {}", e))?;
+        .map_err(|e| format!("Error moving file to destination: {}", e))?;
 
     Ok(())
 }

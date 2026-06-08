@@ -1,4 +1,5 @@
 mod context;
+pub mod template_render;
 pub mod scheduler;
 pub mod executor;
 pub mod trigger;
@@ -8,6 +9,7 @@ pub mod agent_task;
 pub mod code_task;
 pub mod request_task;
 pub mod nova_message_task;
+pub mod template_task;
 pub mod task_manager;
 pub mod task_scheduler;
 pub mod task_blocker;

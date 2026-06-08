@@ -35,7 +35,7 @@ fn default_order_direction() -> String {
 }
 
 pub fn parse_query_config(json: &str) -> Result<QueryConfig, String> {
-    serde_json::from_str(json).map_err(|e| format!("JSON inválido para queryConfig: {}", e))
+    serde_json::from_str(json).map_err(|e| format!("Invalid JSON for queryConfig: {}", e))
 }
 
 pub fn validate_query_config(
@@ -51,7 +51,7 @@ pub fn validate_query_config(
 
     if !class_exists {
         return Err(crate::owl::OwlError::ValidationError(format!(
-            "targetClass '{}' não existe no grafo", config.target_class
+            "targetClass '{}' does not exist in the graph", config.target_class
         )));
     }
 
@@ -62,7 +62,7 @@ pub fn validate_query_config(
     for filter in &config.filters {
         if !VALID_OPERATORS.contains(&filter.operator.as_str()) {
             return Err(crate::owl::OwlError::ValidationError(format!(
-                "Operador de filtro inválido: '{}'. Operadores aceitos: {}",
+                "Invalid filter operator: '{}'. Accepted operators: {}",
                 filter.operator,
                 VALID_OPERATORS.join(", ")
             )));
@@ -79,7 +79,7 @@ pub fn validate_query_config(
 
         if !prop_exists {
             return Err(crate::owl::OwlError::ValidationError(format!(
-                "property_iri '{}' nos filtros não existe no grafo", filter.property_iri
+                "property_iri '{}' in filters does not exist in the graph", filter.property_iri
             )));
         }
     }
@@ -88,7 +88,7 @@ pub fn validate_query_config(
         let dir = ob.direction.to_ascii_lowercase();
         if dir != "asc" && dir != "desc" {
             return Err(crate::owl::OwlError::ValidationError(format!(
-                "Direção inválida em orderBy: '{}'. Use 'asc' ou 'desc'", ob.direction
+                "Invalid direction in orderBy: '{}'. Use 'asc' or 'desc'", ob.direction
             )));
         }
         let prop_exists: bool = conn.query_row(
@@ -98,7 +98,7 @@ pub fn validate_query_config(
         ).unwrap_or(false);
         if !prop_exists {
             return Err(crate::owl::OwlError::ValidationError(format!(
-                "property_iri '{}' em orderBy não existe no grafo", ob.property_iri
+                "property_iri '{}' in orderBy does not exist in the graph", ob.property_iri
             )));
         }
     }
@@ -203,7 +203,7 @@ pub fn evaluate_query(
                     "gte" => ">=",
                     "lte" => "<=",
                     unknown => return Err(crate::owl::OwlError::ValidationError(format!(
-                        "Operador de filtro desconhecido: '{}'", unknown
+                        "Unknown filter operator: '{}'", unknown
                     ))),
                 };
 

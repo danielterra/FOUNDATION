@@ -103,13 +103,16 @@ impl SubscriptionRegistry {
         }
     }
 
-    /// Returns events with tx > since_tx in ascending tx order (ring path).
+    /// Returns events with tx >= since_tx in ascending tx order (ring path).
+    /// The inclusive lower-bound covers the edge case where the frontend snapshot
+    /// captured exactly the TX of a message that was not yet delivered — using `>`
+    /// would permanently drop that event from replay.
     /// Callers fall back to the triples table when the ring does not cover the cursor.
     pub fn replay_since(&self, since_tx: i64) -> Vec<ReplayEvent> {
         self.inner.lock()
             .map(|guard| {
                 guard.ring.iter()
-                    .filter(|e| e.tx > since_tx)
+                    .filter(|e| e.tx >= since_tx)
                     .cloned()
                     .collect()
             })
@@ -305,7 +308,7 @@ pub async fn events__set_subscriptions_v2(
     Ok(())
 }
 
-/// Returns events from the ring with tx > since_tx. Falls back to the triples table
+/// Returns events from the ring with tx >= since_tx. Falls back to the triples table
 /// when the ring does not cover the cursor (ring_min_tx > since_tx).
 #[tauri::command]
 #[allow(non_snake_case)]
@@ -318,24 +321,37 @@ pub async fn events__replay_since(
     if ring_min <= since_tx {
         // Ring covers the cursor — fast path, no DB access.
         let events = registry.replay_since(since_tx);
-        return Ok(events.into_iter().map(|e| serde_json::json!({
-            "tx": e.tx,
-            "event": e.event_name,
-            "entityId": e.entity_id,
-            "changedPredicates": e.changed_predicates,
-            "classIri": e.class_iri,
-            "predicate": e.predicate,
-            "objectValue": e.object_value,
-        })).collect());
+
+        // Dedup within the replay window: the subscription gap may have already
+        // delivered some of these events before the frontend called replay.
+        // Emitting the same (entityId, eventName) pair twice causes the bubble
+        // to re-render with stale data and can produce visible duplicates.
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        let deduplicated: Vec<serde_json::Value> = events
+            .into_iter()
+            .filter(|e| seen.insert((e.entity_id.clone(), e.event_name.clone())))
+            .map(|e| serde_json::json!({
+                "tx": e.tx,
+                "event": e.event_name,
+                "entityId": e.entity_id,
+                "changedPredicates": e.changed_predicates,
+                "classIri": e.class_iri,
+                "predicate": e.predicate,
+                "objectValue": e.object_value,
+            }))
+            .collect();
+
+        return Ok(deduplicated);
     }
 
     // Ring does not cover the cursor — fall back to triples table.
-    // Querying all subjects written after since_tx and returning them as entity-updated events.
+    // Uses >= since_tx (inclusive) so that a triple whose TX equals the frontend
+    // snapshot is never silently dropped from replay (same rationale as the ring path).
     executor.read(move |conn| {
         let mut stmt = conn.prepare(
             "SELECT DISTINCT t.subject, t.predicate, t.tx
              FROM triples t
-             WHERE t.tx > ?1 AND t.retracted = 0
+             WHERE t.tx >= ?1 AND t.retracted = 0
              ORDER BY t.tx ASC
              LIMIT 500"
         ).map_err(|e| e.to_string())?;
@@ -347,14 +363,21 @@ pub async fn events__replay_since(
         .filter_map(|r| r.ok())
         .collect();
 
-        let events: Vec<serde_json::Value> = rows.into_iter().map(|(subject, predicate, tx)| {
-            serde_json::json!({
-                "tx": tx,
-                "event": "entity-updated",
-                "entityId": subject,
-                "changedPredicates": [predicate],
+        // Dedup by entityId on the DB path as well — the same subject can appear in
+        // multiple triples within the window; one entity-updated per entity is enough.
+        let mut seen: HashSet<String> = HashSet::new();
+        let events: Vec<serde_json::Value> = rows
+            .into_iter()
+            .filter(|(subject, _, _)| seen.insert(subject.clone()))
+            .map(|(subject, predicate, tx)| {
+                serde_json::json!({
+                    "tx": tx,
+                    "event": "entity-updated",
+                    "entityId": subject,
+                    "changedPredicates": [predicate],
+                })
             })
-        }).collect();
+            .collect();
 
         Ok(events)
     }).await

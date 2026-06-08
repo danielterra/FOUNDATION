@@ -3,7 +3,7 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import NumberFlow from '@number-flow/svelte';
   import MarkdownValue from './MarkdownValue.svelte';
-  import HtmlValue from './HtmlValue.svelte';
+  import SafeHtmlFrame from './SafeHtmlFrame.svelte';
   import PropertyEditForm from './PropertyEditForm.svelte';
   import RecurrenceEditor from './RecurrenceEditor.svelte';
   import { focus } from '$lib/utils/actions';
@@ -15,6 +15,7 @@
     editingDatatype,
     draftValue = $bindable(),
     saving,
+    mono = false,
     now,
     onSaveEdit,
     onCancelEdit,
@@ -343,11 +344,12 @@
               propertyIri={detailGroup.property}
               bind:draftValue
               {saving}
+              {mono}
               onsave={onSaveEdit}
               oncancel={onCancelEdit}
             />
           {:else}
-            <HtmlValue value={val.value} />
+            <SafeHtmlFrame value={val.value} mode="contained" maxHeight={300} />
           {/if}
         {:else if val.datatype === 'foundation:markdown'}
           {#if editingKey === editKey(detailGroup.property, idx)}
@@ -355,6 +357,7 @@
               propertyIri={detailGroup.property}
               bind:draftValue
               {saving}
+              {mono}
               onsave={onSaveEdit}
               oncancel={onCancelEdit}
             />
@@ -374,6 +377,7 @@
               propertyIri={detailGroup.property}
               bind:draftValue
               {saving}
+              {mono}
               onsave={onSaveEdit}
               oncancel={onCancelEdit}
             />
@@ -385,7 +389,7 @@
               </button>
             </div>
           {:else}
-            <div class="value-plain">{val.value}</div>
+            <div class="value-plain" class:value-mono={mono}>{val.value}</div>
           {/if}
         {:else if isNumericType(val.datatype)}
           {#if editingKey === editKey(detailGroup.property, idx)}
@@ -549,6 +553,11 @@
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  .value-mono {
+    font-family: var(--font-mono, monospace);
+    font-size: 13px;
   }
 
   .unit {

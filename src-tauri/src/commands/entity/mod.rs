@@ -131,6 +131,8 @@ pub struct PropertyValue {
     pub ai_behavior_rules: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query_config: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_property_picker: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -251,6 +253,71 @@ pub async fn inspector__get_backlink_page(
         }).collect();
 
         serde_json::to_string(&items).map_err(|e| e.to_string())
+    }).await
+}
+
+/// Returns the properties applicable to the outputProperty picker of a FlowNode.
+///
+/// Resolution chain:
+///   node_iri --foundation:partOfProcess--> Automation
+///   Automation --foundation:controlClass--> controlClass (owl:Class)
+///   Result = properties whose rdfs:domain ⊑ controlClass (including superclasses)
+///
+/// Returns empty list (not an error) when controlClass cannot be resolved.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn inspector__get_applicable_properties(
+    node_iri: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor.read(move |conn| {
+        let automation_iri = crate::owl::get_iri_property(conn, &node_iri, "foundation:partOfProcess")
+            .map_err(|e| e.to_string())?;
+
+        let control_class_iri = automation_iri.as_deref()
+            .and_then(|auto_iri| {
+                crate::owl::get_iri_property(conn, auto_iri, "foundation:controlClass")
+                    .ok()
+                    .flatten()
+            });
+
+        if control_class_iri.is_none() {
+            let result = serde_json::json!({
+                "controlClass": null,
+                "controlClassResolved": false,
+                "properties": []
+            });
+            return serde_json::to_string(&result).map_err(|e| e.to_string());
+        }
+
+        let control_class_iri = control_class_iri.unwrap();
+
+        let ancestor_iris = crate::owl::Class::get_ancestor_iris(conn, &control_class_iri)
+            .map_err(|e| e.to_string())?;
+
+        let raw_props = crate::owl::Class::get_properties_for_domain_classes(
+            conn,
+            &ancestor_iris,
+            &[],
+        ).map_err(|e| e.to_string())?;
+
+        let properties: Vec<serde_json::Value> = raw_props.into_iter().map(|(iri, label, icon, range, property_type)| {
+            serde_json::json!({
+                "iri": iri,
+                "label": label,
+                "icon": icon,
+                "range": range,
+                "propertyType": property_type
+            })
+        }).collect();
+
+        let result = serde_json::json!({
+            "controlClass": control_class_iri,
+            "controlClassResolved": true,
+            "properties": properties
+        });
+
+        serde_json::to_string(&result).map_err(|e| e.to_string())
     }).await
 }
 
@@ -1015,6 +1082,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             ai_behavior_rules: None,
             is_query_property: false,
             query_config: None,
+            is_property_picker: None,
         });
     }
 
@@ -1047,6 +1115,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             ai_behavior_rules: None,
             is_query_property: false,
             query_config: None,
+            is_property_picker: None,
         });
     }
 
@@ -1118,6 +1187,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             ai_behavior_rules,
             is_query_property: prop.query_config.is_some(),
             query_config: prop.query_config.clone(),
+            is_property_picker: None,
         });
     }
 
@@ -1169,6 +1239,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             ai_behavior_rules: None,
             is_query_property: false,
             query_config: None,
+            is_property_picker: None,
         });
     }
 
@@ -1245,6 +1316,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             ai_behavior_rules: None,
             is_query_property: false,
             query_config: None,
+            is_property_picker: None,
         });
     }
 

@@ -342,7 +342,7 @@ mod tests {
             Triple::new("foundation:Task_sched_done", "rdf:type", Object::Iri("foundation:Task".to_string())),
             Triple::new("foundation:Task_sched_done", "foundation:assignee", Object::Iri("foundation:Agent_sched_done".to_string())),
             Triple::new("foundation:Task_sched_done", "foundation:result", Object::Literal {
-                value: "concluído".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+                value: "completed".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
             Triple::new("foundation:Task_sched_done", "foundation:scheduledAt", Object::Literal {
                 value: "2099-01-01T10:00:00Z".to_string(),
@@ -473,7 +473,7 @@ mod tests {
                 language: None,
             }),
             Triple::new("foundation:Task_done", "foundation:result", Object::Literal {
-                value: "resultado".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+                value: "result".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
             Triple::new("foundation:Agent_done", "rdf:type", Object::Iri("foundation:SoftwareAgent".to_string())),
         ]);

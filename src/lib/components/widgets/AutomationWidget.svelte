@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
   import { createEntitySubscription } from '$lib/realtime/subscriptions'
+  import { openEntity } from '$lib/blackboard'
   import { SvelteFlow, Controls, Background, BackgroundVariant } from '@xyflow/svelte'
   import '@xyflow/svelte/dist/style.css'
   import { applyDagreLayout } from './automation/layout.js'
@@ -215,14 +216,7 @@
         conversationId: conversationIri,
       }).catch(e => console.error('Failed to open sub-process widget:', e))
     } else {
-      await invoke('widget_blackboard__add_widget', {
-        widgetType: 'inspector',
-        entityId: node.id,
-        content: null,
-        position: null,
-        size: null,
-        conversationId: conversationIri,
-      }).catch(e => console.error('Failed to open inspector:', e))
+      await openEntity(node.id, conversationIri).catch(e => console.error('Failed to open entity:', e))
     }
   }
 

@@ -5,13 +5,13 @@ include!(concat!(env!("OUT_DIR"), "/material_symbols.rs"));
 pub const MATERIAL_SYMBOLS_LIBRARY_IRI: &str = "foundation:IconLibrary_1772733525675";
 
 /// Converts an icon symbol name to its canonical IRI.
-/// e.g. "person" â†’ "foundation:icon-material-symbols-name-person"
+/// e.g. "person" → "foundation:icon-material-symbols-name-person"
 pub fn icon_name_to_iri(name: &str) -> String {
     format!("foundation:icon-material-symbols-name-{name}")
 }
 
 /// Resolves an icon IRI to its display value (symbol name or URL).
-/// Only Material Symbols IRIs are valid â€” file icons are always stored as literals.
+/// Only Material Symbols IRIs are valid — file icons are always stored as literals.
 pub fn icon_iri_to_display(_conn: &Connection, iri: &str) -> Option<String> {
     if let Some(key) = iri.strip_prefix("foundation:icon-material-symbols-name-") {
         return Some(key.to_string());
@@ -108,7 +108,7 @@ pub fn validate_icon(conn: &Connection, icon: &str) -> crate::owl::Result<()> {
 }
 
 /// Seeds all Material Symbols icons into the ontology if not already up to date.
-/// Uses a single batch transaction for performance. Idempotent â€” safe to call every startup.
+/// Uses a single batch transaction for performance. Idempotent — safe to call every startup.
 pub fn seed_icon_library(conn: &mut Connection) {
     let current_version = MATERIAL_SYMBOLS_VERSION;
 
@@ -121,7 +121,7 @@ pub fn seed_icon_library(conn: &mut Connection) {
     .flatten();
 
     if seeded_version.as_deref() == Some(current_version) {
-        // Verify icons are actually present â€” version marker alone isn't enough
+        // Verify icons are actually present — version marker alone isn't enough
         let sample_iri = icon_name_to_iri("home");
         let icons_present = crate::owl::get_literal_property(conn, &sample_iri, "foundation:iconKey")
             .ok()
@@ -139,7 +139,7 @@ pub fn seed_icon_library(conn: &mut Connection) {
     crate::diagnostics::log_backend(
         "info",
         &format!(
-            "Seeding {} Material Symbols icons (v{current_version})â€¦",
+            "Seeding {} Material Symbols icons (v{current_version})…",
             MATERIAL_SYMBOLS.len()
         ),
     );
@@ -154,7 +154,7 @@ mod tests {
     use crate::eavto::{Triple, Object};
     use crate::eavto::store;
 
-    // â”€â”€ icon_name_to_iri â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── icon_name_to_iri ─────────────────────────────────────────────────────────
 
     #[test]
     fn test_icon_name_to_iri() {
@@ -168,7 +168,7 @@ mod tests {
         );
     }
 
-    // â”€â”€ icon_iri_to_display â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── icon_iri_to_display ──────────────────────────────────────────────────────
 
     #[test]
     fn test_icon_iri_to_display_symbol() {
@@ -210,7 +210,7 @@ mod tests {
         );
     }
 
-    // â”€â”€ icon_store_value â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── icon_store_value ─────────────────────────────────────────────────────────
 
     #[test]
     fn test_icon_store_value_symbol_name_uses_has_icon_iri() {
@@ -247,7 +247,7 @@ mod tests {
         assert!(matches!(obj, Object::Literal { ref value, .. } if value == "data:image/png;base64,abc"));
     }
 
-    // â”€â”€ seed_icon_library â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── seed_icon_library ────────────────────────────────────────────────────────
 
     #[test]
     fn test_seed_icon_library_seeds_known_icons() {
@@ -302,7 +302,7 @@ mod tests {
         assert!(matches!(&result.triples[0].object, Object::Iri(iri) if iri == &home_iri));
     }
 
-    // â”€â”€ validate_icon â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── validate_icon ────────────────────────────────────────────────────────────
 
     #[test]
     fn test_validate_icon_valid_symbol_name() {

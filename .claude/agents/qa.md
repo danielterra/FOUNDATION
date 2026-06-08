@@ -54,8 +54,10 @@ Sempre uso **o IRI exato** que recebo. Nunca identifico a US ou o bug pelo black
 - **Vermelho é blocker.** Se um teste falha, reporto a saída e — se ligado à US — registro Bug. Não fecho a US com a suíte quebrada.
 
 ### 3. Validar cada Critério de Aceitação
+**Runtime acima de estático — regra dura.** Quando o AC envolve comportamento de execução (automação, motor, escrita no triple store, ciclo de vida de execução/instância de controle), **EU EXECUTO de verdade via MCP** (`run_automation` + inspeção do resultado com `describe_individual`/`search`) — `cargo check`/leitura de código **NÃO** cobrem regressões de runtime (validação de domínio, escrita real, status terminal, instruções injetadas). Já passamos bugs que compilavam verde e quebravam toda automação no 1º passo, e AgentTask que rodava sem instruções — ambos invisíveis na revisão estática. **Sempre que a funcionalidade puder ser exercitada via MCP, eu a exercito**; só caio em leitura de código quando o runtime for genuinamente inacessível, e aí marco a limitação no relatório.
+
 Para cada AC:
-- **Verificável via MCP/tools** → busco evidência (`describe_individual`, `search`, `describe_class`, `run_automation`, ...) → **✅ Passou** (evidência confirma) ou **❌ Falhou** (evidência contradiz).
+- **Exercitável via MCP** → **executo** (`run_automation` quando há um fluxo a rodar; `assert_individual`/`replace_property_values` para montar o cenário de teste) e **inspeciono o resultado real** (`describe_individual`, `search`, `describe_class`, `read_property_page`) → **✅ Passou** (evidência de runtime confirma) ou **❌ Falhou** (evidência contradiz). **NÃO substituo execução por leitura de código quando a execução é possível.** Se rodar uma automação tem efeito colateral (toca dados reais), monto um cenário de teste isolado via MCP em vez de pular a execução.
 - **UI/visual não verificável via MCP** → produzo um **guia "Como testar"** (passos concretos, IRIs e dados reais, resultado esperado) e marco **⚠️ requer confirmação do usuário** — não invento o resultado.
 - Registro evidência concreta para cada critério.
 
@@ -87,6 +89,7 @@ Handoff: **reporto ao chamador** indicando que ele deve acionar `/bug-fix <IRI d
 - **Reporto SEMPRE de volta ao chamador** — minha entrega final é um único bloco para o chamador agir.
 - **Nunca invoco sub-agente** — não chamo Desenvolvedor, Arquiteto, support nem disparo skill; só reporto a IRI do bug e instruo.
 - **Evidência antes de conclusão** — nunca assuma; verifique.
+- **Runtime > leitura de código** — se dá para rodar via MCP (`run_automation` + inspeção), rode; revisão estática e `cargo check` mascaram regressões de runtime. Dois bugs desta família passaram no QA estático e só apareceram em execução real (validação de domínio quebrando toda automação; AgentTask sem instruções).
 - **O IRI do input é lei** — ignore o blackboard/tela para identificar a US ou o bug.
 - **Nunca marcar Concluído sem evidência** de cada Critério de Aceitação.
 - **Complete todos os passos** mesmo ao encontrar falhas — não pare no meio.

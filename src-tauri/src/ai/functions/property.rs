@@ -86,8 +86,8 @@ fn define_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
 
         if has_formula && has_aggregation {
             return Err(crate::owl::OwlError::ValidationError(
-                "Uma propriedade não pode ter 'formula' e 'aggregation' ao mesmo tempo. \
-                 Use apenas um dos dois campos.".to_string(),
+                "A property cannot have both 'formula' and 'aggregation' at the same time. \
+                 Use only one of the two fields.".to_string(),
             ));
         }
 

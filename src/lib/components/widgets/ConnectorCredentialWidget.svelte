@@ -13,11 +13,42 @@
   let testResult = $state(null);
   let saveError = $state(null);
 
-  // Form fields
+  // Form fields — existing auth types
   let apiKeyValue = $state('');
   let tokenValue = $state('');
   let username = $state('');
   let password = $state('');
+
+  // Form fields — OAuth2
+  let oauth2ClientId = $state('');
+  let oauth2ClientSecret = $state('');
+  let oauth2TokenUrl = $state('');
+  let oauth2Scopes = $state('');
+  let oauth2ScopeInput = $state('');
+  let oauth2ShowSecret = $state(false);
+  // IRI da credencial OAuth2 salva (retornado pelo save, usado para test/summary)
+  let oauth2CredentialIri = $state('');
+
+  function oauth2ScopeList() {
+    return oauth2Scopes
+      .split(' ')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+  }
+
+  function addScope() {
+    const trimmed = oauth2ScopeInput.trim();
+    if (!trimmed) return;
+    const existing = oauth2ScopeList();
+    if (!existing.includes(trimmed)) {
+      oauth2Scopes = [...existing, trimmed].join(' ');
+    }
+    oauth2ScopeInput = '';
+  }
+
+  function removeScope(scope) {
+    oauth2Scopes = oauth2ScopeList().filter(s => s !== scope).join(' ');
+  }
 
   async function loadConnector() {
     if (!entityId) return;
@@ -29,6 +60,17 @@
       const summary = await invoke('connector__get_credential_summary', { connectorIri: entityId });
       isConfigured = summary.is_configured;
       if (summary.auth_type) authType = summary.auth_type;
+
+      if (summary.auth_type === 'oauth2' && summary.credential_iri) {
+        oauth2CredentialIri = summary.credential_iri;
+        const oauth2Summary = await invoke('connector__get_oauth2_summary', {
+          credIri: summary.credential_iri,
+        });
+        oauth2ClientId = oauth2Summary.client_id ?? '';
+        oauth2ClientSecret = oauth2Summary.client_secret ?? '';
+        oauth2TokenUrl = oauth2Summary.token_url ?? '';
+        oauth2Scopes = oauth2Summary.scopes ?? '';
+      }
     } catch {
       connectorLabel = entityId;
     }
@@ -41,13 +83,23 @@
     testResult = null;
     try {
       let credential = { auth_type: authType };
-      if (authType === 'api_key') credential.value = apiKeyValue;
-      else if (authType === 'token') credential.value = tokenValue;
-      else if (authType === 'username_password') {
+      if (authType === 'api_key') {
+        credential.value = apiKeyValue;
+      } else if (authType === 'token') {
+        credential.value = tokenValue;
+      } else if (authType === 'username_password') {
         credential.username = username;
         credential.password = password;
+      } else if (authType === 'oauth2') {
+        credential.client_id = oauth2ClientId;
+        credential.client_secret = oauth2ClientSecret;
+        credential.token_url = oauth2TokenUrl;
+        if (oauth2Scopes.trim()) credential.scopes = oauth2Scopes.trim();
       }
-      await invoke('connector__save_credential', { connectorIri: entityId, credential });
+      const result = await invoke('connector__save_credential', { connectorIri: entityId, credential });
+      if (authType === 'oauth2') {
+        oauth2CredentialIri = String(result);
+      }
       isConfigured = true;
     } catch (err) {
       saveError = String(err);
@@ -61,8 +113,13 @@
     testing = true;
     testResult = null;
     try {
-      const msg = await invoke('connector__test_auth', { connectorIri: entityId });
-      testResult = { ok: true, message: msg };
+      if (authType === 'oauth2') {
+        await invoke('connector__test_oauth2_auth', { credIri: oauth2CredentialIri });
+        testResult = { ok: true, message: 'Autenticação OAuth2 bem-sucedida' };
+      } else {
+        const msg = await invoke('connector__test_auth', { connectorIri: entityId });
+        testResult = { ok: true, message: msg };
+      }
     } catch (err) {
       testResult = { ok: false, message: String(err) };
     } finally {
@@ -118,6 +175,7 @@
         <option value="api_key">API Key</option>
         <option value="token">Bearer Token</option>
         <option value="username_password">Username / Password</option>
+        <option value="oauth2">OAuth2</option>
       </select>
     </div>
 
@@ -163,6 +221,99 @@
           placeholder="Enter password…"
           bind:value={password}
         />
+      </div>
+    {:else if authType === 'oauth2'}
+      <div class="field-group">
+        <label class="field-label" for="field-oauth2-client-id">Client ID</label>
+        <input
+          id="field-oauth2-client-id"
+          class="field-input"
+          type="text"
+          placeholder="Client ID…"
+          bind:value={oauth2ClientId}
+          disabled={saving}
+        />
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="field-oauth2-client-secret">Client Secret</label>
+        <div class="secret-row">
+          <input
+            id="field-oauth2-client-secret"
+            class="field-input secret-input"
+            type={oauth2ShowSecret ? 'text' : 'password'}
+            placeholder={isConfigured && !oauth2ClientSecret ? '••••••••' : 'Client Secret…'}
+            bind:value={oauth2ClientSecret}
+            disabled={saving}
+            autocomplete="new-password"
+          />
+          <button
+            class="secret-toggle"
+            type="button"
+            onclick={() => oauth2ShowSecret = !oauth2ShowSecret}
+            aria-label={oauth2ShowSecret ? 'Ocultar client secret' : 'Mostrar client secret'}
+            tabindex="0"
+          >
+            <span class="material-symbols-outlined">
+              {oauth2ShowSecret ? 'visibility_off' : 'visibility'}
+            </span>
+          </button>
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="field-oauth2-token-url">Token URL</label>
+        <input
+          id="field-oauth2-token-url"
+          class="field-input"
+          type="text"
+          placeholder="https://auth.example.com/token"
+          bind:value={oauth2TokenUrl}
+          disabled={saving}
+        />
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="field-oauth2-scope-input">Scopes</label>
+        <div class="scopes-field">
+          {#if oauth2ScopeList().length > 0}
+            <div class="scope-chips">
+              {#each oauth2ScopeList() as scope (scope)}
+                <span class="scope-chip">
+                  <span class="scope-chip-label">{scope}</span>
+                  <button
+                    class="scope-chip-remove"
+                    type="button"
+                    onclick={() => removeScope(scope)}
+                    aria-label="Remover scope {scope}"
+                    disabled={saving}
+                  >
+                    <span class="material-symbols-outlined">close</span>
+                  </button>
+                </span>
+              {/each}
+            </div>
+          {/if}
+          <div class="scope-add-row">
+            <input
+              id="field-oauth2-scope-input"
+              class="field-input scope-add-input"
+              type="text"
+              placeholder="Adicionar scope…"
+              bind:value={oauth2ScopeInput}
+              disabled={saving}
+              onkeydown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); addScope(); }
+              }}
+            />
+            <button
+              class="scope-add-btn"
+              type="button"
+              onclick={addScope}
+              disabled={saving || !oauth2ScopeInput.trim()}
+              aria-label="Adicionar scope"
+            >
+              <span class="material-symbols-outlined">add</span>
+            </button>
+          </div>
+        </div>
       </div>
     {/if}
 
@@ -329,5 +480,124 @@
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  .secret-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+
+  .secret-input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .secret-toggle {
+    background: color-mix(in srgb, var(--color-white) 8%, transparent);
+    border: none;
+    padding: 8px 10px;
+    cursor: pointer;
+    color: var(--color-neutral);
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    transition: color 0.15s, background 0.15s;
+  }
+
+  .secret-toggle:hover {
+    color: var(--color-neutral-active);
+    background: color-mix(in srgb, var(--color-white) 14%, transparent);
+  }
+
+  .secret-toggle .material-symbols-outlined {
+    font-size: 18px;
+  }
+
+  .scopes-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .scope-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .scope-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px 3px 8px;
+    background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
+    color: var(--color-interactive);
+  }
+
+  .scope-chip-label {
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .scope-chip-remove {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--color-interactive);
+    display: flex;
+    align-items: center;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+  }
+
+  .scope-chip-remove:hover {
+    opacity: 1;
+  }
+
+  .scope-chip-remove:disabled {
+    cursor: not-allowed;
+    opacity: 0.3;
+  }
+
+  .scope-chip-remove .material-symbols-outlined {
+    font-size: 14px;
+  }
+
+  .scope-add-row {
+    display: flex;
+    gap: 0;
+    align-items: center;
+  }
+
+  .scope-add-input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .scope-add-btn {
+    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
+    border: none;
+    padding: 8px 10px;
+    cursor: pointer;
+    color: var(--color-interactive);
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+
+  .scope-add-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-interactive) 35%, transparent);
+  }
+
+  .scope-add-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .scope-add-btn .material-symbols-outlined {
+    font-size: 18px;
   }
 </style>

@@ -100,7 +100,7 @@ pub async fn imap__save_account(
                 .map_err(|e| format!("credentialValue: {}", e))?;
             set_prop(conn, &iri, "foundation:hasCredential", vec![Object::Iri(cred_iri)], "imap")?;
         } else if existing_cred.is_none() {
-            return Err("Senha obrigatória para nova conta".to_string());
+            return Err("Password required for a new account".to_string());
         }
 
         Ok(iri)
@@ -151,7 +151,7 @@ pub async fn imap__test_connection(
 ) -> Result<String, String> {
     tokio::task::spawn_blocking(move || -> Result<String, String> {
         connect_and_login(&host, port, use_tls, &username, &password)?;
-        Ok(format!("Conexão com {}:{} bem-sucedida.", host, port))
+        Ok(format!("Connection to {}:{} succeeded.", host, port))
     }).await.map_err(|e| format!("Task error: {}", e))?
 }
 
@@ -167,25 +167,25 @@ pub fn connect_and_login(
 
     if use_tls {
         let tcp = std::net::TcpStream::connect(addr)
-            .map_err(|e| format!("Conexão TCP falhou: {}", e))?;
+            .map_err(|e| format!("TCP connection failed: {}", e))?;
         tcp.set_read_timeout(Some(timeout)).ok();
         tcp.set_write_timeout(Some(timeout)).ok();
         let tls = native_tls::TlsConnector::new()
             .map_err(|e| format!("TLS init: {}", e))?;
         let tls_stream = tls.connect(host, tcp)
-            .map_err(|e| format!("TLS handshake falhou: {}", e))?;
+            .map_err(|e| format!("TLS handshake failed: {}", e))?;
         let mut session = imap::Client::new(tls_stream)
             .login(username, password)
-            .map_err(|(e, _)| format!("Login falhou: {}", e))?;
+            .map_err(|(e, _)| format!("Login failed: {}", e))?;
         session.logout().ok();
     } else {
         let stream = std::net::TcpStream::connect(addr)
-            .map_err(|e| format!("Conexão falhou: {}", e))?;
+            .map_err(|e| format!("Connection failed: {}", e))?;
         stream.set_read_timeout(Some(timeout)).ok();
         stream.set_write_timeout(Some(timeout)).ok();
         let mut session = imap::Client::new(stream)
             .login(username, password)
-            .map_err(|(e, _)| format!("Login falhou: {}", e))?;
+            .map_err(|(e, _)| format!("Login failed: {}", e))?;
         session.logout().ok();
     }
     Ok(())

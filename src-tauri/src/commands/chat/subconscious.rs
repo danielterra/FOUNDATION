@@ -60,7 +60,7 @@ fn resolve_possessive_entities(content: &str, conn: &rusqlite::Connection) -> Ve
         if let Some(label) = pred_label {
             if lower_words.iter().any(|w| *w == label.to_lowercase()) {
                 // Use inverseLabel (from DomainLabel) when available — it describes
-                // the relationship from the matched entity's perspective (e.g. "filho" for "mãe").
+                // the relationship from the matched entity's perspective (e.g. "son" for "mother").
                 let inverse_label: Option<String> = conn.query_row(
                     "SELECT object_value FROM triples
                      WHERE predicate = 'foundation:inverseLabel' AND retracted = 0
@@ -109,7 +109,7 @@ pub fn run_subconscious(content: &str, exclude_iri: Option<&str>, conn: &Connect
     let mut entities: Vec<SubconsciousEntity> = Vec::new();
     let mut seen_iris: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    // Resolve possessive pronouns → ThisUser properties (e.g. "minha mãe" → Andrea Terra)
+    // Resolve possessive pronouns → ThisUser properties (e.g. "my mother" → Andrea Terra)
     for (iri, score, rel_label) in resolve_possessive_entities(content, conn) {
         if exclude_iri.map_or(false, |ex| ex == iri) { continue; }
         if !seen_iris.insert(iri.clone()) { continue; }
@@ -428,9 +428,10 @@ mod tests {
 
     #[test]
     fn test_extract_chunk_query_keeps_short_meaningful_words() {
+        // PT input: "mãe" (3 chars, not a stopword) must be kept; "me" (2 chars) must be filtered.
         let q = extract_chunk_query("quando minha mãe precisa me pagar");
-        assert!(q.contains("mãe"), "deve manter 'mãe' (3 chars, não é stopword)");
-        assert!(!q.contains(" me ") && !q.ends_with(" me"), "deve filtrar 'me' (2 chars)");
+        assert!(q.contains("mãe"), "should keep 'mãe' (3 chars, not a stopword)");
+        assert!(!q.contains(" me ") && !q.ends_with(" me"), "should filter 'me' (2 chars)");
     }
 
     #[test]

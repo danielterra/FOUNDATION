@@ -66,6 +66,7 @@ pub struct ToolLoopOutput {
 
 pub struct CompletionResult {
     pub output_iri: String,
+    pub output_value: String,
     pub message: String,
 }
 
@@ -176,6 +177,10 @@ pub async fn run_tool_loop(
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
+                    let output_value = tc.input.get("output_value")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let msg = tc.input.get("message")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
@@ -201,7 +206,7 @@ pub async fn run_tool_loop(
                         role: "user".to_string(),
                         content: MessageContent::ContentBlocks(result_blocks),
                     });
-                    completion = Some(CompletionResult { output_iri, message: msg });
+                    completion = Some(CompletionResult { output_iri, output_value, message: msg });
                     break 'outer;
                 }
             }

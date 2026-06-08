@@ -727,17 +727,17 @@ fn test_get_entity_status_info_returns_none_when_no_status() {
     assert!(result.is_none());
 }
 
-// ── search com filtro de classe (@-syntax backend contract) ──────────────
+// ── search with class filter (@-syntax backend contract) ──────────────
 
 #[test]
 fn test_search_classes_empty_query_returns_all_classes() {
     let mut conn = setup_test_db();
-    create_class(&mut conn, "foundation:Task", "Tarefa");
+    create_class(&mut conn, "foundation:Task", "Task");
     create_class(&mut conn, "foundation:Bug", "Bug");
-    create_class(&mut conn, "foundation:Project", "Projeto");
+    create_class(&mut conn, "foundation:Project", "Project");
 
     let result = search_classes(&conn, "", 100).unwrap();
-    assert_eq!(result.len(), 3, "query vazio deve retornar todas as classes");
+    assert_eq!(result.len(), 3, "empty query must return all classes");
     let ids: Vec<&str> = result.iter().map(|r| r.id.as_str()).collect();
     assert!(ids.contains(&"foundation:Task"));
     assert!(ids.contains(&"foundation:Bug"));
@@ -747,31 +747,31 @@ fn test_search_classes_empty_query_returns_all_classes() {
 #[test]
 fn test_search_with_class_iri_returns_only_instances_of_that_class() {
     let mut conn = setup_test_db();
-    create_individual(&mut conn, "foundation:TaskA", "foundation:Task", "Tarefa A");
-    create_individual(&mut conn, "foundation:TaskB", "foundation:Task", "Tarefa B");
+    create_individual(&mut conn, "foundation:TaskA", "foundation:Task", "Task A");
+    create_individual(&mut conn, "foundation:TaskB", "foundation:Task", "Task B");
     create_individual(&mut conn, "foundation:BugX", "foundation:Bug", "Bug X");
 
     let tokens: Vec<String> = vec![];
     let (results, _) = search(&conn, &tokens, None, Some("foundation:Task"), None, false, 100, 0).unwrap();
 
-    assert_eq!(results.len(), 2, "deve retornar apenas instâncias de foundation:Task");
+    assert_eq!(results.len(), 2, "must return only instances of foundation:Task");
     let ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
     assert!(ids.contains(&"foundation:TaskA"));
     assert!(ids.contains(&"foundation:TaskB"));
-    assert!(!ids.contains(&"foundation:BugX"), "instâncias de outra classe não devem aparecer");
+    assert!(!ids.contains(&"foundation:BugX"), "instances of another class must not appear");
 }
 
 #[test]
 fn test_search_with_class_iri_and_text_tokens_filters_both() {
     let mut conn = setup_test_db();
-    create_individual(&mut conn, "foundation:TaskFoo", "foundation:Task", "Tarefa Foo");
-    create_individual(&mut conn, "foundation:TaskBar", "foundation:Task", "Tarefa Bar");
+    create_individual(&mut conn, "foundation:TaskFoo", "foundation:Task", "Task Foo");
+    create_individual(&mut conn, "foundation:TaskBar", "foundation:Task", "Task Bar");
     create_individual(&mut conn, "foundation:BugFoo", "foundation:Bug", "Bug Foo");
 
     let tokens = vec!["foo".to_string()];
     let (results, _) = search(&conn, &tokens, None, Some("foundation:Task"), None, false, 100, 0).unwrap();
 
-    assert_eq!(results.len(), 1, "deve filtrar por classe E por texto");
+    assert_eq!(results.len(), 1, "must filter by class AND by text");
     assert_eq!(results[0].id, "foundation:TaskFoo");
 }
 

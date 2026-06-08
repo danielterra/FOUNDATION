@@ -768,9 +768,9 @@ fn build_openai_tools(tools: &[ToolDefinition]) -> Vec<serde_json::Value> {
     })).collect()
 }
 
-// OpenRouter server tools (web_search/web_fetch) são executadas pelo próprio OpenRouter
-// server-side e funcionam com qualquer modelo (doc oficial). Override total quando
-// provider é OpenRouter — independente de capability do modelo.
+// OpenRouter server tools (web_search/web_fetch) are executed by OpenRouter itself
+// server-side and work with any model (per official docs). Full override when the
+// provider is OpenRouter — regardless of the model's capability.
 fn inject_openrouter_web_tools(body: &mut serde_json::Value, base_url: &str) {
     if !base_url.contains("openrouter.ai") {
         return;
@@ -874,15 +874,15 @@ impl OpenRouterProvider {
             let user_message = match status.as_u16() {
                 429 => {
                     if friendly_error.contains("rate-limited") || friendly_error.contains("rate limit") {
-                        format!("Limite de requisições atingido: {}\n\nTente novamente em alguns segundos, ou configure sua própria chave de API nas configurações.", friendly_error)
+                        format!("Rate limit reached: {}\n\nTry again in a few seconds, or configure your own API key in settings.", friendly_error)
                     } else {
-                        format!("Muitas requisições (429): {}", friendly_error)
+                        format!("Too many requests (429): {}", friendly_error)
                     }
                 },
-                401 => format!("Chave de API inválida ou expirada. Verifique suas configurações.\n\nDetalhes: {}", friendly_error),
-                403 => format!("Acesso negado. Verifique suas permissões ou chave de API.\n\nDetalhes: {}", friendly_error),
-                500 | 502 | 503 | 504 => format!("Erro no servidor do provedor ({}). Tente novamente em alguns minutos.\n\nDetalhes: {}", status, friendly_error),
-                _ => format!("Erro {} do OpenRouter: {}", status, friendly_error),
+                401 => format!("Invalid or expired API key. Check your settings.\n\nDetails: {}", friendly_error),
+                403 => format!("Access denied. Check your permissions or API key.\n\nDetails: {}", friendly_error),
+                500 | 502 | 503 | 504 => format!("Provider server error ({}). Try again in a few minutes.\n\nDetails: {}", status, friendly_error),
+                _ => format!("OpenRouter error {}: {}", status, friendly_error),
             };
 
             return Err(user_message);
@@ -1102,15 +1102,15 @@ impl OpenRouterProvider {
             let user_message = match status.as_u16() {
                 429 => {
                     if friendly_error.contains("rate-limited") || friendly_error.contains("rate limit") {
-                        format!("Limite de requisições atingido: {}\n\nTente novamente em alguns segundos, ou configure sua própria chave de API nas configurações.", friendly_error)
+                        format!("Rate limit reached: {}\n\nTry again in a few seconds, or configure your own API key in settings.", friendly_error)
                     } else {
-                        format!("Muitas requisições (429): {}", friendly_error)
+                        format!("Too many requests (429): {}", friendly_error)
                     }
                 },
-                401 => format!("Chave de API inválida ou expirada. Verifique suas configurações.\n\nDetalhes: {}", friendly_error),
-                403 => format!("Acesso negado. Verifique suas permissões ou chave de API.\n\nDetalhes: {}", friendly_error),
-                500 | 502 | 503 | 504 => format!("Erro no servidor do provedor ({}). Tente novamente em alguns minutos.\n\nDetalhes: {}", status, friendly_error),
-                _ => format!("Erro {} do OpenRouter: {}", status, friendly_error),
+                401 => format!("Invalid or expired API key. Check your settings.\n\nDetails: {}", friendly_error),
+                403 => format!("Access denied. Check your permissions or API key.\n\nDetails: {}", friendly_error),
+                500 | 502 | 503 | 504 => format!("Provider server error ({}). Try again in a few minutes.\n\nDetails: {}", status, friendly_error),
+                _ => format!("OpenRouter error {}: {}", status, friendly_error),
             };
 
             return Err(user_message);

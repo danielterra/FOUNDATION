@@ -1,4 +1,5 @@
 use super::*;
+use crate::process_automation::executor::interpolate;
 use crate::eavto::Object;
 
 // ── str_lit ───────────────────────────────────────────────────────────────────

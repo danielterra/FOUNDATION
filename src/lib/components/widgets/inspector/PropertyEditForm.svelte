@@ -1,6 +1,6 @@
 <script>
   import { focus } from '$lib/utils/actions';
-  let { propertyIri, draftValue = $bindable(), saving, onsave, oncancel } = $props();
+  let { propertyIri, draftValue = $bindable(), saving, mono = false, onsave, oncancel } = $props();
 
   let textareaEl = $state(null);
 
@@ -15,6 +15,7 @@
 <div class="edit-container">
   <textarea
     class="edit-textarea"
+    class:mono
     bind:value={draftValue}
     bind:this={textareaEl}
     onblur={() => onsave(propertyIri)}
@@ -72,6 +73,11 @@
     box-sizing: border-box;
     outline: none;
     overflow-y: auto;
+  }
+
+  .edit-textarea.mono {
+    font-family: var(--font-mono, monospace);
+    font-size: 13px;
   }
 
   .edit-actions {

@@ -248,7 +248,7 @@ fn record_connection_error(
 
     let ts = chrono::Utc::now().timestamp_millis();
     let notif_iri = format!("foundation:AINotification_{}", ts);
-    let title = "Falha na conexão IMAP";
+    let title = "IMAP connection failure";
     Individual::new(&notif_iri)
         .assert(conn, "foundation:AINotification", title, "warning", "imap")
         .map_err(|e| format!("notif: {}", e))?;

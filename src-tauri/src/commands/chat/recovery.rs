@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn has_pending_user_message_retorna_true_quando_ultimo_e_user_com_texto() {
+    fn has_pending_user_message_returns_true_when_last_is_user_with_text() {
         let mut conn = setup_test_db();
         insert_msg(&mut conn, "foundation:Msg1", "foundation:ConvA", "assistant", 1_000);
         insert_msg(&mut conn, "foundation:Msg2", "foundation:ConvA", "user", 2_000);
@@ -243,17 +243,17 @@ mod tests {
     }
 
     #[test]
-    fn has_pending_user_message_retorna_false_quando_ultimo_e_tool_result() {
+    fn has_pending_user_message_returns_false_when_last_is_tool_result() {
         let mut conn = setup_test_db();
         insert_msg(&mut conn, "foundation:Msg1", "foundation:ConvA", "assistant", 1_000);
         insert_msg(&mut conn, "foundation:Msg2", "foundation:ConvA", "user", 2_000);
         attach_tool_result_block(&mut conn, "foundation:Msg2", "anthropic:Block1");
         assert!(!has_pending_user_message(&conn, "foundation:ConvA"),
-            "mensagem de tool result não deve ser tratada como mensagem pendente do usuário");
+            "a tool result message should not be treated as a pending user message");
     }
 
     #[test]
-    fn has_pending_user_message_retorna_false_quando_ultimo_e_assistant() {
+    fn has_pending_user_message_returns_false_when_last_is_assistant() {
         let mut conn = setup_test_db();
         insert_msg(&mut conn, "foundation:Msg1", "foundation:ConvA", "user", 1_000);
         attach_text_block(&mut conn, "foundation:Msg1", "anthropic:Block1");
@@ -262,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn has_pending_user_message_retorna_false_em_conversa_vazia() {
+    fn has_pending_user_message_returns_false_on_empty_conversation() {
         let conn = setup_test_db();
         assert!(!has_pending_user_message(&conn, "foundation:ConvEmpty"));
     }

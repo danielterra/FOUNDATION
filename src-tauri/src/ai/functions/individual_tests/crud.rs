@@ -281,7 +281,7 @@ fn test_retract_individual_response_no_cascade_no_summary() {
 fn test_remove_domain_retracts_property_values_from_instances() {
     let mut conn = setup_test_db();
 
-    // Classe e propriedade de teste
+    // Test class and property
     Class::new("foundation:Widget")
         .assert(&mut conn, ClassType::OwlClass, "Widget", "https://example.com/widget.svg", None, "test")
         .unwrap();
@@ -290,7 +290,7 @@ fn test_remove_domain_retracts_property_values_from_instances() {
             &["foundation:Widget"], Some("xsd:string"), None, "test")
         .unwrap();
 
-    // 3 instâncias com valor em widgetColor
+    // 3 instances with a widgetColor value
     for (iri, color) in [
         ("foundation:Widget_A", "red"),
         ("foundation:Widget_B", "green"),
@@ -309,25 +309,25 @@ fn test_remove_domain_retracts_property_values_from_instances() {
             .unwrap();
     }
 
-    // Confirma que os valores existem antes do cascade
+    // Confirm the values exist before the cascade
     for iri in ["foundation:Widget_A", "foundation:Widget_B", "foundation:Widget_C"] {
         let count = Individual::get_property_count(&conn, iri, "foundation:widgetColor").unwrap();
-        assert_eq!(count, 1, "{} deve ter 1 valor de widgetColor antes do cascade", iri);
+        assert_eq!(count, 1, "{} should have 1 widgetColor value before the cascade", iri);
     }
 
-    // Remove foundation:Widget do domínio → deve cascatear e retrair os valores
+    // Remove foundation:Widget from the domain → should cascade and retract the values
     let args = serde_json::json!({
         "iri": "foundation:widgetColor",
         "property_iri": "rdfs:domain",
         "values": ["foundation:Widget"]
     });
     let result = remove_property_values_one(&mut conn, &args);
-    assert!(result.success, "remove_property_values deve ter sucesso: {:?}", result.error);
+    assert!(result.success, "remove_property_values should succeed: {:?}", result.error);
 
-    // Verifica que os valores foram retratados em todas as instâncias
+    // Verify the values were retracted on all instances
     for iri in ["foundation:Widget_A", "foundation:Widget_B", "foundation:Widget_C"] {
         let count = Individual::get_property_count(&conn, iri, "foundation:widgetColor").unwrap();
-        assert_eq!(count, 0, "{} não deve ter valores de widgetColor após cascade", iri);
+        assert_eq!(count, 0, "{} should have no widgetColor values after the cascade", iri);
     }
 }
 

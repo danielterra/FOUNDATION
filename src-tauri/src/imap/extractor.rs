@@ -58,7 +58,7 @@ fn store_email_inner(
     let ts = chrono::Utc::now().timestamp_millis();
     let email_iri = format!("foundation:Email_{}", ts);
     let label = if email.subject.is_empty() {
-        "(sem assunto)".to_string()
+        "(no subject)".to_string()
     } else {
         email.subject.chars().take(80).collect()
     };
@@ -264,9 +264,9 @@ fn html_lit(v: &str) -> Object {
     Object::Literal { value: v.to_string(), datatype: Some("rdf:HTML".to_string()), language: None }
 }
 
-/// mailparse devolve a string Date: bruta do header (geralmente RFC2822).
-/// Os campos xsd:dateTime do graph esperam RFC3339, então convertemos antes
-/// de gravar — caso contrário queries por data falham silenciosamente.
+/// mailparse returns the raw Date: header string (usually RFC2822).
+/// The graph's xsd:dateTime fields expect RFC3339, so we convert before
+/// writing — otherwise date queries fail silently.
 fn normalize_to_rfc3339(raw: &str) -> Option<String> {
     if let Ok(dt) = chrono::DateTime::parse_from_rfc2822(raw) {
         return Some(dt.to_rfc3339());

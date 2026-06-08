@@ -313,11 +313,11 @@ fn store_calculated_value(
     );
 }
 
-/// Decide o `object_datatype` a gravar para um valor calculado, consultando
-/// `rdfs:range` da propriedade. Resultados de fórmula/agregação são sempre
-/// numéricos: ranges inteiros viram `xsd:integer`, demais ranges (xsd:decimal,
-/// xsd:float, xsd:double, sem range, etc.) viram `xsd:decimal` — assim downstream
-/// trata o literal como número e formata corretamente.
+/// Decides the `object_datatype` to store for a calculated value, consulting the
+/// property's `rdfs:range`. Formula/aggregation results are always numeric:
+/// integer ranges become `xsd:integer`, all other ranges (xsd:decimal,
+/// xsd:float, xsd:double, no range, etc.) become `xsd:decimal` — so downstream
+/// treats the literal as a number and formats it correctly.
 fn resolve_calculated_datatype(conn: &Connection, property_iri: &str) -> String {
     const INTEGER_RANGES: &[&str] = &[
         "xsd:integer", "xsd:int", "xsd:long", "xsd:short", "xsd:byte",
@@ -775,10 +775,10 @@ mod tests {
     #[test]
     fn test_store_calculated_value_replaces_existing() {
         let mut conn = setup_test_db();
-        // Insere uma transação prévia para que o autoincrement de transactions comece em 1,
-        // e o triple antigo usa tx=1; o próximo assert_triples vai criar tx=2 e vencer.
-        // Valores são numéricos pois store_calculated_value grava como xsd:decimal,
-        // que exige value parsável como f64.
+        // Insert a prior transaction so the transactions autoincrement starts at 1,
+        // and the old triple uses tx=1; the next assert_triples will create tx=2 and win.
+        // Values are numeric because store_calculated_value writes as xsd:decimal,
+        // which requires a value parseable as f64.
         conn.execute("INSERT INTO transactions (origin, created_at) VALUES ('test', 0)", []).unwrap();
         conn.execute(
             "INSERT INTO triples (subject, predicate, object_value, object_type, origin_id, tx, created_at, retracted)
@@ -799,8 +799,8 @@ mod tests {
 
     #[test]
     fn test_store_calculated_value_uses_xsd_decimal_by_default() {
-        // Regressão: Bug_1777120091054 — antes, o datatype era hardcoded como xsd:string
-        // mesmo para propriedades com range numérico no schema.
+        // Regression: Bug_1777120091054 — previously the datatype was hardcoded as xsd:string
+        // even for properties with a numeric range in the schema.
         let mut conn = setup_test_db();
         store_calculated_value(&mut conn, "foundation:Instance1", "foundation:score", "42.5");
 
@@ -815,11 +815,11 @@ mod tests {
 
     #[test]
     fn test_store_calculated_value_uses_xsd_integer_when_range_is_integer() {
-        // Regressão: Bug_1777120091054 — propriedades com range xsd:integer devem
-        // ser gravadas como xsd:integer, não como xsd:string.
+        // Regression: Bug_1777120091054 — properties with range xsd:integer must
+        // be stored as xsd:integer, not as xsd:string.
         let mut conn = setup_test_db();
-        // Instala o range de foundation:itemCount via assert_triples para que a query
-        // de schema enxergue o triple (passando pela view triples_current corretamente).
+        // Install the range of foundation:itemCount via assert_triples so the schema
+        // query sees the triple (going through the triples_current view correctly).
         use crate::eavto::{store, Triple, Object};
         let range_triple = Triple::new(
             "foundation:itemCount",

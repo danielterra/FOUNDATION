@@ -180,7 +180,7 @@ mod tests {
         vec![
             Triple::new(iri, "rdf:type", Object::Iri("foundation:Task".to_string())),
             Triple::new(iri, "foundation:result", Object::Literal {
-                value: "concluído".to_string(),
+                value: "completed".to_string(),
                 datatype: Some("xsd:string".to_string()),
                 language: None,
             }),
@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn tarefa_e_desbloqueada_quando_bloqueadora_tem_resultado() {
+    fn task_is_unblocked_when_blocker_has_result() {
         let mut conn = setup_test_db();
 
         insert(&mut conn, &task_done("foundation:TaskA"));
@@ -205,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn tarefa_com_multiplos_bloqueadores_so_e_desbloqueada_quando_todos_tem_resultado() {
+    fn task_with_multiple_blockers_is_unblocked_only_when_all_have_result() {
         let mut conn = setup_test_db();
 
         insert(&mut conn, &task_done("foundation:TaskA"));
@@ -216,23 +216,23 @@ mod tests {
             Triple::new("foundation:TaskC", "foundation:blockedBy", Object::Iri("foundation:TaskB".to_string())),
         ]);
 
-        // A tem resultado — C não deve ser desbloqueada pois B ainda não tem
+        // A has a result — C must not be unblocked because B still has none
         check_and_unblock(&mut conn, "foundation:TaskA");
         let status = get_iri_property(&conn, "foundation:TaskC", "foundation:hasStatus").unwrap();
-        assert_eq!(status, Some("foundation:Blocked".to_string()), "C deve permanecer Bloqueada");
+        assert_eq!(status, Some("foundation:Blocked".to_string()), "C must remain Blocked");
 
-        // B recebe resultado — agora todos os blockers estão concluídos
+        // B receives a result — now all blockers are completed
         insert(&mut conn, &[Triple::new(
             "foundation:TaskB", "foundation:result",
-            Object::Literal { value: "feito".to_string(), datatype: Some("xsd:string".to_string()), language: None },
+            Object::Literal { value: "done".to_string(), datatype: Some("xsd:string".to_string()), language: None },
         )]);
         check_and_unblock(&mut conn, "foundation:TaskB");
         let status = get_iri_property(&conn, "foundation:TaskC", "foundation:hasStatus").unwrap();
-        assert_eq!(status, Some(STATUS_PENDING.to_string()), "C deve ser desbloqueada");
+        assert_eq!(status, Some(STATUS_PENDING.to_string()), "C must be unblocked");
     }
 
     #[test]
-    fn tarefa_sem_bloqueadores_nao_e_afetada_por_check_and_unblock() {
+    fn task_without_blockers_is_not_affected_by_check_and_unblock() {
         let mut conn = setup_test_db();
 
         insert(&mut conn, &task_done("foundation:TaskA"));
@@ -241,11 +241,11 @@ mod tests {
         check_and_unblock(&mut conn, "foundation:TaskA");
 
         let status = get_iri_property(&conn, "foundation:TaskB", "foundation:hasStatus").unwrap();
-        assert!(status.is_none(), "B não deve ser alterada pois não tem blockedBy");
+        assert!(status.is_none(), "B must not be changed because it has no blockedBy");
     }
 
     #[test]
-    fn tarefa_e_bloqueada_automaticamente_ao_receber_blocked_by() {
+    fn task_is_blocked_automatically_when_receiving_blocked_by() {
         let mut conn = setup_test_db();
 
         insert(&mut conn, &task_pending("foundation:TaskA"));
@@ -258,11 +258,11 @@ mod tests {
         check_and_block(&mut conn, "foundation:TaskB");
 
         let status = get_iri_property(&conn, "foundation:TaskB", "foundation:hasStatus").unwrap();
-        assert_eq!(status, Some(STATUS_BLOCKED.to_string()), "B deve ser bloqueada");
+        assert_eq!(status, Some(STATUS_BLOCKED.to_string()), "B must be blocked");
     }
 
     #[test]
-    fn tarefa_nao_e_bloqueada_se_blocker_ja_tem_resultado() {
+    fn task_is_not_blocked_if_blocker_already_has_result() {
         let mut conn = setup_test_db();
 
         insert(&mut conn, &task_done("foundation:TaskA"));
@@ -275,6 +275,6 @@ mod tests {
         check_and_block(&mut conn, "foundation:TaskB");
 
         let status = get_iri_property(&conn, "foundation:TaskB", "foundation:hasStatus").unwrap();
-        assert!(status.is_none(), "B não deve ser bloqueada pois A já tem resultado");
+        assert!(status.is_none(), "B must not be blocked because A already has a result");
     }
 }

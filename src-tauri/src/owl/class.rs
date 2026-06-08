@@ -386,6 +386,112 @@ impl Class {
         Ok(result)
     }
 
+    /// Get the given class IRI plus all ancestor class IRIs (BFS traversal upward via rdfs:subClassOf).
+    pub fn get_ancestor_iris(conn: &Connection, class_iri: &str) -> Result<Vec<String>> {
+        let mut result = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+
+        queue.push_back(class_iri.to_string());
+
+        while let Some(current) = queue.pop_front() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            result.push(current.clone());
+            let parents = query::get_by_entity_predicate(conn, &current, rdfs::SUB_CLASS_OF)?;
+            for triple in parents.triples {
+                if let Some(parent_iri) = triple.object.as_iri() {
+                    if !visited.contains(parent_iri) {
+                        queue.push_back(parent_iri.to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Get all properties whose rdfs:domain is in `domain_class_iris`.
+    ///
+    /// Returns `(property_iri, label, icon, first_range, property_type_str)` tuples.
+    /// Fully parametric — no Foundation/Anthropic IRIs hardcoded.
+    pub fn get_properties_for_domain_classes(
+        conn: &Connection,
+        domain_class_iris: &[String],
+        property_type_iris: &[&str],
+    ) -> Result<Vec<(String, Option<String>, Option<String>, Option<String>, String)>> {
+        if domain_class_iris.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut prop_iris: Vec<String> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for class_iri in domain_class_iris {
+            let result = query::get_by_predicate_object(conn, rdfs::DOMAIN, class_iri)?;
+            for triple in result.triples {
+                if seen.insert(triple.subject.clone()) {
+                    prop_iris.push(triple.subject);
+                }
+            }
+        }
+
+        if prop_iris.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let prop_triples_map = query::batch_load_triples_for_subjects(conn, &prop_iris)?;
+
+        let mut results = Vec::new();
+        for prop_iri in &prop_iris {
+            let triples = match prop_triples_map.get(prop_iri) {
+                Some(t) => t,
+                None => continue,
+            };
+
+            let prop_type_iri = triples.iter()
+                .filter(|t| t.predicate == rdf::TYPE)
+                .find_map(|t| t.object.as_iri().map(|s| s.to_string()));
+
+            let prop_type_str = prop_type_iri.as_deref().unwrap_or("");
+            let matches_type = property_type_iris.is_empty()
+                || property_type_iris.iter().any(|&pt| pt == prop_type_str);
+            if !matches_type {
+                continue;
+            }
+
+            let label = triples.iter()
+                .find(|t| t.predicate == rdfs::LABEL)
+                .and_then(|t| t.object.as_literal());
+
+            let icon = triples.iter()
+                .find(|t| t.predicate == "foundation:icon")
+                .and_then(|t| t.object.as_literal().or_else(|| t.object.as_iri().map(|s| s.to_string())));
+
+            let range = triples.iter()
+                .find(|t| t.predicate == rdfs::RANGE)
+                .and_then(|t| t.object.as_iri().map(|s| s.to_string()));
+
+            let type_category = match prop_type_str {
+                t if t == "owl:ObjectProperty" => "object",
+                t if t == "owl:DatatypeProperty" => "datatype",
+                _ => "datatype",
+            };
+
+            results.push((
+                prop_iri.clone(),
+                label,
+                icon,
+                range,
+                type_category.to_string(),
+            ));
+        }
+
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(results)
+    }
+
     /// Replace the label of an existing class
     pub fn set_label(conn: &mut Connection, iri: &str, label: &str, origin: &str) -> Result<()> {
         let old = query::get_by_entity_predicate(conn, iri, rdfs::LABEL)?;

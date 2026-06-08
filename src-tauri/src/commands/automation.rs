@@ -487,8 +487,23 @@ pub async fn automation__run(
     input_iri: Option<String>,
     dry_run: Option<bool>,
     app: AppHandle,
+    executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let dry_run = dry_run.unwrap_or(false);
+
+    executor.read({
+        let automation_iri = automation_iri.clone();
+        move |conn| {
+            get_iri_property(conn, &automation_iri, "foundation:controlClass")
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!(
+                    "Automation {} has no controlClass defined and cannot run. Configure controlClass before starting.",
+                    automation_iri
+                ))
+                .map(|_| ())
+        }
+    }).await?;
+
     tauri::async_runtime::spawn(async move {
         if let Err(e) = crate::process_automation::executor::run_process(&app, &automation_iri, input_iri, dry_run).await {
             crate::commands::log_backend("error", &format!("[automation] Run failed for {}: {}", automation_iri, e));
@@ -556,7 +571,9 @@ pub struct StepExecutionDetail {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output: Option<String>,
+    pub summary: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub refs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -574,6 +591,8 @@ pub struct WorkflowExecutionDetail {
     pub status_icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_instance_iri: Option<String>,
     pub steps: Vec<StepExecutionDetail>,
 }
 
@@ -628,6 +647,9 @@ pub async fn automation__get_execution(
         let error_message = get_literal_property(conn, &execution_iri, "foundation:errorMessage")
             .map_err(|e| e.to_string())?;
 
+        let control_instance_iri = get_iri_property(conn, &execution_iri, "foundation:controlInstance")
+            .map_err(|e| e.to_string())?;
+
         let step_iris = get_all_iri_properties(conn, &execution_iri, "foundation:hasStepExecutions")
             .map_err(|e| e.to_string())?;
 
@@ -658,11 +680,10 @@ pub async fn automation__get_execution(
             let finished_at = get_literal_property(conn, &step_iri, "foundation:stepFinishedAt")
                 .map_err(|e| e.to_string())?;
 
-            let output_iri = get_iri_property(conn, &step_iri, "foundation:outputValue")
+            let summary = get_literal_property(conn, &step_iri, "foundation:executionSummary")
                 .map_err(|e| e.to_string())?;
-            let output_text = get_literal_property(conn, &step_iri, "foundation:stepOutput")
+            let refs = get_all_iri_properties(conn, &step_iri, "foundation:executionOutput")
                 .map_err(|e| e.to_string())?;
-            let output = output_iri.or(output_text);
 
             let error = get_literal_property(conn, &step_iri, "foundation:stepError")
                 .map_err(|e| e.to_string())?;
@@ -687,7 +708,8 @@ pub async fn automation__get_execution(
                 status_icon: step_status_icon,
                 started_at,
                 finished_at,
-                output,
+                summary,
+                refs,
                 error,
                 conversation_iri,
                 messages,
@@ -704,6 +726,7 @@ pub async fn automation__get_execution(
             status_color: exec_status_color,
             status_icon: exec_status_icon,
             error_message,
+            control_instance_iri,
             steps,
         };
 

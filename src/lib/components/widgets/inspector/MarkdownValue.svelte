@@ -33,6 +33,7 @@
 <script>
   import { marked } from 'marked';
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+  import { openUrl } from '@tauri-apps/plugin-opener';
 
   let { value, openEntityInspector = null } = $props();
 
@@ -128,6 +129,16 @@
     let current = params;
 
     function handleClick(e) {
+      const a = e.target.closest('a[href]');
+      if (a) {
+        const href = a.getAttribute('href');
+        if (href && !href.startsWith('#')) {
+          e.preventDefault();
+          e.stopPropagation();
+          openUrl(href).catch(() => {});
+          return;
+        }
+      }
       if (!current.onIriClick) return;
       const pill = e.target.closest('[data-iri]');
       if (pill) { e.stopPropagation(); current.onIriClick(pill.dataset.iri); }

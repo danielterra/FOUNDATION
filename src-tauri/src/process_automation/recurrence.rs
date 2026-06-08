@@ -220,62 +220,62 @@ mod tests {
     }
 
     #[test]
-    fn proxima_ocorrencia_diaria() {
+    fn next_occurrence_daily() {
         let rrule = parse_rrule("FREQ=DAILY;INTERVAL=1").unwrap();
         let next = next_occurrence(&rrule, dt(2026, 4, 20)).unwrap();
         assert_eq!(next.date(), NaiveDate::from_ymd_opt(2026, 4, 21).unwrap());
     }
 
     #[test]
-    fn proxima_ocorrencia_semanal_segunda() {
-        // 2026-04-20 é segunda-feira; próxima segunda = 2026-04-27
+    fn next_occurrence_weekly_monday() {
+        // 2026-04-20 is a Monday; next Monday = 2026-04-27
         let rrule = parse_rrule("FREQ=WEEKLY;INTERVAL=1;BYDAY=MO").unwrap();
         let next = next_occurrence(&rrule, dt(2026, 4, 20)).unwrap();
         assert_eq!(next.date(), NaiveDate::from_ymd_opt(2026, 4, 27).unwrap());
     }
 
     #[test]
-    fn proxima_ocorrencia_semanal_proxima_sexta_a_partir_de_segunda() {
-        // 2026-04-20 é segunda; próxima sexta = 2026-04-24
+    fn next_occurrence_weekly_next_friday_from_monday() {
+        // 2026-04-20 is a Monday; next Friday = 2026-04-24
         let rrule = parse_rrule("FREQ=WEEKLY;INTERVAL=1;BYDAY=FR").unwrap();
         let next = next_occurrence(&rrule, dt(2026, 4, 20)).unwrap();
         assert_eq!(next.date(), NaiveDate::from_ymd_opt(2026, 4, 24).unwrap());
     }
 
     #[test]
-    fn proxima_ocorrencia_mensal_dia_15_antes_do_dia() {
-        // from=2026-04-20 → dia 15 do próximo mês = 2026-05-15
+    fn next_occurrence_monthly_day_15_before_the_day() {
+        // from=2026-04-20 → day 15 of next month = 2026-05-15
         let rrule = parse_rrule("FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=15").unwrap();
         let next = next_occurrence(&rrule, dt(2026, 4, 20)).unwrap();
         assert_eq!(next.date(), NaiveDate::from_ymd_opt(2026, 5, 15).unwrap());
     }
 
     #[test]
-    fn proxima_ocorrencia_mensal_dia_31_em_fevereiro_clamp() {
-        // BYMONTHDAY=31, from=2026-01-31 → fevereiro não tem 31 → 2026-02-28
+    fn next_occurrence_monthly_day_31_in_february_clamp() {
+        // BYMONTHDAY=31, from=2026-01-31 → February has no 31 → 2026-02-28
         let rrule = parse_rrule("FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=31").unwrap();
         let next = next_occurrence(&rrule, dt(2026, 1, 31)).unwrap();
         assert_eq!(next.date(), NaiveDate::from_ymd_opt(2026, 2, 28).unwrap());
     }
 
     #[test]
-    fn proxima_ocorrencia_mensal_primeiro_domingo() {
-        // BYDAY=1SU, from=2026-04-20 → 1º domingo de maio = 2026-05-03
+    fn next_occurrence_monthly_first_sunday() {
+        // BYDAY=1SU, from=2026-04-20 → 1st Sunday of May = 2026-05-03
         let rrule = parse_rrule("FREQ=MONTHLY;INTERVAL=1;BYDAY=1SU").unwrap();
         let next = next_occurrence(&rrule, dt(2026, 4, 20)).unwrap();
         assert_eq!(next.date(), NaiveDate::from_ymd_opt(2026, 5, 3).unwrap());
     }
 
     #[test]
-    fn proxima_ocorrencia_anual() {
-        // from=2026-04-13 → próximo ano mesmo dia = 2027-04-13
+    fn next_occurrence_yearly() {
+        // from=2026-04-13 → next year same day = 2027-04-13
         let rrule = parse_rrule("FREQ=YEARLY;INTERVAL=1;BYMONTH=4;BYMONTHDAY=13").unwrap();
         let next = next_occurrence(&rrule, dt(2026, 4, 13)).unwrap();
         assert_eq!(next.date(), NaiveDate::from_ymd_opt(2027, 4, 13).unwrap());
     }
 
     #[test]
-    fn proxima_ocorrencia_minuto() {
+    fn next_occurrence_minutely() {
         let rrule = parse_rrule("FREQ=MINUTELY;INTERVAL=15").unwrap();
         let from = dt(2026, 4, 20);
         let next = next_occurrence(&rrule, from).unwrap();
@@ -283,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn proxima_ocorrencia_hora() {
+    fn next_occurrence_hourly() {
         let rrule = parse_rrule("FREQ=HOURLY;INTERVAL=1").unwrap();
         let from = dt(2026, 4, 20);
         let next = next_occurrence(&rrule, from).unwrap();
@@ -291,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_rrule_com_prefixo_rrule() {
+    fn parse_rrule_with_rrule_prefix() {
         let rrule = parse_rrule("RRULE:FREQ=DAILY;INTERVAL=2");
         assert!(rrule.is_some());
         let rrule = rrule.unwrap();
@@ -299,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_rrule_freq_invalida_retorna_none() {
+    fn parse_rrule_invalid_freq_returns_none() {
         assert!(parse_rrule("FREQ=INVALID").is_none());
     }
 }

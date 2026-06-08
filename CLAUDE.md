@@ -13,6 +13,11 @@
 - **AUTOMATION-REACTIVE** — data acts on itself: writes notify, readevopsrs run, widgets refresh. ALWAYS route entity writes through the notify→emit path so readevopsrs and UI converge automatically; NEVER bypass with direct `app.emit` or out-of-band SQL.
 - ALWAYS evaluate every design/code decision against these four pillars. A change that violates one is a blocker.
 
+## Design defaults — pre-production
+- NEVER add fallback paths, backward-compatibility shims, legacy branches or graceful-degradation defaults without EXPRESS user permission — the system is pre-production.
+- ALWAYS implement ONE canonical behavior; when the model changes, migrate existing data/individuals to the new model instead of branching to keep the old one working.
+- ALWAYS surface any design tension that tempts a fallback and ask the user before adding one.
+
 ## Foundation vocabulary — domain entities
 - `foundation:Project` / `foundation:SoftwareFeature` / `foundation:UserStory` / `foundation:ArchitectureDecisionRecord` (ADR) — work planning.
 - `foundation:SoftwareAgent` — product-side agent personas only: NOVA (`foundation:LocalAIAssistant`), Automator, etc. **Dev-process personas (architect, support, ux, developer-backend, developer-frontend, qa, devops) live in [.claude/agents/](.claude/agents/) — NEVER in the ontology**. Process roles are tooling, not product.
@@ -61,6 +66,7 @@
 - NEVER run INSERT/UPDATE/DELETE/DROP/TRUNCATE without explicit user confirmation — SELECT only.
 - ALWAYS use MCP tools for ALL DB access (reads and writes) — never raw SQL.
 - If app is not running, report findings and wait for user to start it.
+- If a Foundation MCP tool is unavailable, ALWAYS wait 1 minute and retry automatically — on auto, never stopping to ask; NEVER fall back to curl/SQLite and NEVER ask the user to reconnect.
 
 ## Triples table columns
 - `object`: IRIs/blank nodes (`object_type = 'iri'` or `'blank'`).
@@ -99,8 +105,10 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 
 ## Dev commands
 - NEVER run `npm run tauri dev` / `npm run build` — user manages those.
+- ALWAYS rely on automatic rebuild — the user's running `tauri dev` recompiles on every Rust file change; NEVER ask the user to rebuild or restart after a backend edit.
 - NEVER kill Tauri processes (pkill, killall, taskkill).
 - Validate Rust with `cargo check` or `cargo build --manifest-path src-tauri/Cargo.toml`.
+- ALWAYS validate with `cargo test` (or `cargo check --tests`) when touching a file that has a `#[cfg(test)]` module — plain `cargo check` skips test code and misses test-only compile errors.
 - Logs: `npm run logs [N]`.
 
 ## Cargo cache rules

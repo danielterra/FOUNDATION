@@ -8,9 +8,12 @@ use crate::commands::log_backend;
 use crate::eavto::{Object, Triple};
 use crate::owl::{DbExecutor, Individual};
 
+const DEBOUNCE_MS: u64 = 150;
+
 pub struct SchedulerState {
     pub handles: Mutex<Vec<JoinHandle<()>>>,
     reload_lock: tokio::sync::Mutex<()>,
+    debounce_handle: tokio::sync::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl SchedulerState {
@@ -18,6 +21,7 @@ impl SchedulerState {
         Self {
             handles: Mutex::new(Vec::new()),
             reload_lock: tokio::sync::Mutex::new(()),
+            debounce_handle: tokio::sync::Mutex::new(None),
         }
     }
 }
@@ -28,6 +32,7 @@ struct TimerDef {
     process_iri: String,
     cron_expr: String,
     timer_def_iri: String,
+    start_event_iri: String,
     last_run_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -93,7 +98,7 @@ fn collect_timer_definitions(
             })
             .max();
 
-        timers.push(TimerDef { process_iri, cron_expr, timer_def_iri, last_run_at });
+        timers.push(TimerDef { process_iri, cron_expr, timer_def_iri, start_event_iri: start_event_iri.to_string(), last_run_at });
     }
     Ok(timers)
 }
@@ -149,7 +154,7 @@ pub async fn start(app: AppHandle) {
         Ok(h) => h,
         Err(e) => e.into_inner(),
     };
-    for TimerDef { process_iri, cron_expr, timer_def_iri, last_run_at } in timer_defs {
+    for TimerDef { process_iri, cron_expr, timer_def_iri, start_event_iri, last_run_at } in timer_defs {
         let schedule = match Schedule::from_str(&cron_expr) {
             Ok(s) => s,
             Err(e) => {
@@ -171,7 +176,7 @@ pub async fn start(app: AppHandle) {
                             "[scheduler] Catch-up: running missed execution of {} (was due at {})",
                             process_iri, missed
                         ));
-                        if let Err(e) = super::executor::run_process(&app_clone, &process_iri, None, false).await {
+                        if let Err(e) = super::executor::run_process_from_timer(&app_clone, &process_iri, &start_event_iri).await {
                             log_backend("error", &format!("[scheduler] Catch-up error for {}: {}", process_iri, e));
                         }
                         record_last_run(&app_clone, &timer_def_iri).await;
@@ -183,7 +188,7 @@ pub async fn start(app: AppHandle) {
                 let now = chrono::Utc::now();
                 let delay = (next - now).to_std().unwrap_or_default();
                 tokio::time::sleep(delay).await;
-                if let Err(e) = super::executor::run_process(&app_clone, &process_iri, None, false).await {
+                if let Err(e) = super::executor::run_process_from_timer(&app_clone, &process_iri, &start_event_iri).await {
                     log_backend("error", &format!("[scheduler] Error running process {}: {}", process_iri, e));
                 }
                 record_last_run(&app_clone, &timer_def_iri).await;
@@ -193,31 +198,40 @@ pub async fn start(app: AppHandle) {
     }
 }
 
-/// Registers event listeners that reload the scheduler when TimerEventDefinitions are created,
-/// modified, or deleted.
+/// Registers an event listener that reloads the scheduler when TimerEventDefinitions or
+/// TimerStartEvents are created, modified, or deleted via any path (MCP, UI, automation).
+///
+/// Uses entity-changed-internal (non-gated) so writes that bypass the UI subscription
+/// registry — e.g. MCP tool calls — are correctly observed.
+///
+/// A 150 ms debounce coalesces the burst of triples emitted during a single MCP creation
+/// into one reload instead of N, without introducing external dependencies.
 pub fn listen_for_new_timers(app: AppHandle) {
     use tauri::Listener;
 
-    let app_for_created = app.clone();
-    app.listen("entity-created", move |event| {
+    app.clone().listen("entity-changed-internal", move |event| {
         if let Some(entity_id) = parse_entity_id(event.payload()) {
-            let app2 = app_for_created.clone();
+            let app2 = app.clone();
             tauri::async_runtime::spawn(async move {
-                if is_timer_event_definition(&app2, &entity_id, false).await {
-                    reload(app2).await;
+                if !is_timer_event_definition(&app2, &entity_id, true).await {
+                    return;
                 }
-            });
-        }
-    });
 
-    let app_for_updated = app.clone();
-    app.listen("entity-updated", move |event| {
-        if let Some(entity_id) = parse_entity_id(event.payload()) {
-            let app2 = app_for_updated.clone();
-            tauri::async_runtime::spawn(async move {
-                if is_timer_event_definition(&app2, &entity_id, true).await {
-                    reload(app2).await;
+                let state = match app2.try_state::<SchedulerState>() {
+                    Some(s) => s,
+                    None => return,
+                };
+
+                let mut pending = state.debounce_handle.lock().await;
+                if let Some(prev) = pending.take() {
+                    prev.abort();
                 }
+
+                let app3 = app2.clone();
+                *pending = Some(tokio::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(DEBOUNCE_MS)).await;
+                    reload(app3).await;
+                }));
             });
         }
     });
@@ -243,7 +257,7 @@ async fn is_timer_event_definition(app: &AppHandle, entity_id: &str, include_ret
             };
 
             // Fast type check before loading the full individual with backlinks —
-            // entity-updated fires for every write so we must not pay Individual::get
+            // entity-changed-internal fires for every write so we must not pay Individual::get
             // (which loads backlinks) for unrelated high-cardinality entities.
             let is_candidate = crate::owl::is_instance_of(conn, &entity_id, "foundation:automation_TimerEventDefinition")
                 || crate::owl::is_instance_of(conn, &entity_id, "foundation:automation_TimerStartEvent");
@@ -318,6 +332,7 @@ mod scheduler_tests {
         assert_eq!(timers.len(), 1);
         assert_eq!(timers[0].process_iri, "foundation:Process1");
         assert_eq!(timers[0].cron_expr, "0 * * * * *");
+        assert_eq!(timers[0].start_event_iri, "foundation:Start1");
         assert!(timers[0].last_run_at.is_none());
     }
 

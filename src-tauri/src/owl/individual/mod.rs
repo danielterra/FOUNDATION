@@ -9,11 +9,13 @@ mod find;
 mod properties;
 mod lock;
 mod timestamps;
+mod materialize;
 
 pub use timestamps::{touch, LAST_UPDATED_AT};
+pub use materialize::{materialize_individual_shallow, ShallowValue};
 
 pub use properties::{
-    get_all_iri_properties, replace_all_property_iris,
+    get_all_iri_properties, replace_all_property_iris, replace_all_property_literals,
     get_literal_property, get_all_literal_properties, get_iri_property,
     has_property_iri, has_property_literal,
     is_instance_of, is_subclass_of, find_entities_with_property, find_entities_with_predicate,

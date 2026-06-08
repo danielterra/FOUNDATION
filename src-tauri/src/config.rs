@@ -11,7 +11,7 @@ fn config_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
         .map(|dir| dir.join("config.json"))
-        .map_err(|e| format!("Não foi possível determinar o diretório de configuração: {}", e))
+        .map_err(|e| format!("Could not determine the configuration directory: {}", e))
 }
 
 pub fn get_foundation_dir(app: &tauri::AppHandle) -> PathBuf {

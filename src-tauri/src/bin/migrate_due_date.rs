@@ -1,12 +1,12 @@
-/// Migração: copia foundation:dueDate → foundation:scheduledAt para tasks.
+/// Migration: copies foundation:dueDate → foundation:scheduledAt for tasks.
 ///
-/// Regra: se uma foundation:Task tem dueDate mas não tem scheduledAt,
-/// copia o valor com horário de meio-dia (12:00:00+00:00) como padrão.
-/// Tasks que já têm scheduledAt são ignoradas.
+/// Rule: if a foundation:Task has a dueDate but no scheduledAt,
+/// copy the value with a noon time (12:00:00+00:00) as the default.
+/// Tasks that already have scheduledAt are ignored.
 ///
-/// Uso:
-///   cargo run --bin migrate_due_date             # dry-run (padrão)
-///   cargo run --bin migrate_due_date -- --apply  # aplica as mudanças
+/// Usage:
+///   cargo run --bin migrate_due_date             # dry-run (default)
+///   cargo run --bin migrate_due_date -- --apply  # applies the changes
 
 use rusqlite::{Connection, Result, params};
 use std::path::PathBuf;
@@ -29,8 +29,8 @@ fn get_or_create_origin(conn: &Connection, name: &str) -> Result<i64> {
     }
 }
 
-/// Converte "2026-04-08" → "2026-04-08T12:00:00+00:00".
-/// Se o valor já tiver um 'T' (já é datetime), retorna como está.
+/// Converts "2026-04-08" → "2026-04-08T12:00:00+00:00".
+/// If the value already has a 'T' (already a datetime), returns it as is.
 fn to_noon_datetime(date_str: &str) -> String {
     if date_str.contains('T') {
         date_str.to_string()
@@ -45,14 +45,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let db_path = get_db_path();
     println!("Database: {}", db_path.display());
     if !db_path.exists() {
-        eprintln!("Erro: banco não encontrado em {}", db_path.display());
+        eprintln!("Error: database not found at {}", db_path.display());
         std::process::exit(1);
     }
 
     let mut conn = Connection::open(&db_path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
 
-    // Tasks com dueDate mas sem scheduledAt (valor mais recente do dueDate, ignorando retracted).
+    // Tasks with dueDate but no scheduledAt (latest dueDate value, ignoring retracted).
     let candidates: Vec<(String, String)> = {
         let mut stmt = conn.prepare("
             SELECT t.subject, t.object_value
@@ -84,11 +84,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     };
 
     if candidates.is_empty() {
-        println!("Nenhuma task para migrar.");
+        println!("No tasks to migrate.");
         return Ok(());
     }
 
-    println!("\n{} task(s) para migrar:\n", candidates.len());
+    println!("\n{} task(s) to migrate:\n", candidates.len());
     for (iri, due_date) in &candidates {
         let scheduled_at = to_noon_datetime(due_date);
         println!("  {} | dueDate={} → scheduledAt={}", iri, due_date, scheduled_at);
@@ -96,13 +96,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     if !apply_mode {
         println!(
-            "\n[DRY RUN] Nenhuma alteração feita.\n\
-             Execute com --apply para aplicar a migração."
+            "\n[DRY RUN] No changes made.\n\
+             Run with --apply to apply the migration."
         );
         return Ok(());
     }
 
-    println!("\nAplicando migração...");
+    println!("\nApplying migration...");
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -133,6 +133,6 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     tx.commit()?;
 
-    println!("\nConcluído. {} task(s) migradas.", migrated);
+    println!("\nDone. {} task(s) migrated.", migrated);
     Ok(())
 }

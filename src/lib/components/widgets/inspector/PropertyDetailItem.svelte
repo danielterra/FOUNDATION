@@ -6,6 +6,7 @@
   import PropertyValuesGroup from './PropertyValuesGroup.svelte';
   import ReferenceSelect from './ReferenceSelect.svelte';
   import ReferenceSingleSelect from './ReferenceSingleSelect.svelte';
+  import PropertySelect from './PropertySelect.svelte';
   import RecurrenceEditor from './RecurrenceEditor.svelte';
   import QueryConfigEditor from './QueryConfigEditor.svelte';
   import { focus } from '$lib/utils/actions';
@@ -14,6 +15,7 @@
     detailGroup,
     isClass = false,
     now,
+    entityId = null,
     openEntityInspector,
     onSave = null,
     onSaveReference = null,
@@ -30,6 +32,7 @@
   let draftValue = $state('');
   let editingDatatype = $state(null);
   let saving = $state(false);
+  let saveError = $state(null);
   let editingRefKey = $state(null);
   let savingRef = $state(false);
   let editingCardinalityKey = $state(null);
@@ -87,24 +90,37 @@
     editingKey = editKey(propertyIri, valueIdx);
     editingDatatype = datatype;
     draftValue = toInputValue(currentValue ?? '', datatype);
+    saveError = null;
   }
 
   function cancelEdit() {
     editingKey = null;
     draftValue = '';
     editingDatatype = null;
+    saveError = null;
+  }
+
+  function extractErrorLine(errMsg) {
+    const match = String(errMsg).match(/line\s+(\d+)/i) || String(errMsg).match(/(\d+):\d+/);
+    return match ? `Linha ${match[1]}` : null;
   }
 
   async function saveEdit(propertyIri) {
     if (!onSave || saving) return;
     saving = true;
+    saveError = null;
     try {
       await onSave(propertyIri, fromInputValue(draftValue, editingDatatype), editingDatatype);
-    } finally {
-      saving = false;
       editingKey = null;
       draftValue = '';
       editingDatatype = null;
+    } catch (err) {
+      const msg = String(err);
+      const line = extractErrorLine(msg);
+      const detail = msg.replace(/^.*?error[:\s]*/i, '').split('\n')[0].trim();
+      saveError = line ? `${line}: ${detail}` : detail;
+    } finally {
+      saving = false;
     }
   }
 
@@ -386,7 +402,7 @@
         <span
           class="material-symbols-outlined prop-info"
           role="img"
-          aria-label="Property info"
+          aria-label="Ajuda sobre {detailGroup.propertyLabel}"
           onmouseenter={(e) => onShowHint(e, detailGroup.propertyComment, detailGroup.sourceClassLabel, detailGroup.sourceClassIcon)}
           onmouseleave={onHideHint}
         >info</span>
@@ -484,6 +500,14 @@
           >
             <span class="material-symbols-outlined">edit</span>
           </button>
+        {:else if onSaveReference && detailGroup.isPropertyPicker && !detailGroup.isCalculated && !detailGroup.sourceClass}
+          <button
+            class="edit-btn"
+            title="Selecionar propriedade"
+            onclick={() => startRefEdit(detailGroup.property)}
+          >
+            <span class="material-symbols-outlined">edit</span>
+          </button>
         {/if}
         {#if onClearProperty && !detailGroup.isCalculated && !detailGroup.isEmpty}
           <button
@@ -565,7 +589,19 @@
   {/if}
 
   {#if editingRefKey === detailGroup.property}
-    {#if detailGroup.maxCount === 1}
+    {#if detailGroup.isPropertyPicker}
+      <PropertySelect
+        nodeIri={entityId}
+        propertyIri={detailGroup.property}
+        currentValue={detailGroup.values[0] ? {
+          iri: detailGroup.values[0].value,
+          label: detailGroup.values[0].valueLabel ?? detailGroup.values[0].value,
+        } : null}
+        saving={savingRef}
+        onsave={saveRefEdit}
+        oncancel={cancelRefEdit}
+      />
+    {:else if detailGroup.maxCount === 1}
       <ReferenceSingleSelect
         propertyIri={detailGroup.property}
         rangeClassIri={detailGroup.rangeClassIri}
@@ -621,6 +657,7 @@
           propertyIri={detailGroup.property}
           bind:draftValue
           {saving}
+          mono={detailGroup.property === 'foundation:script'}
           onsave={saveEdit}
           oncancel={cancelEdit}
         />
@@ -684,6 +721,7 @@
       {editingDatatype}
       bind:draftValue
       {saving}
+      mono={detailGroup.property === 'foundation:script'}
       {now}
       onSaveEdit={saveEdit}
       onCancelEdit={cancelEdit}
@@ -699,6 +737,12 @@
         {/if}
       </button>
     {/if}
+  {/if}
+  {#if saveError}
+    <div class="save-error" role="alert">
+      <span class="material-symbols-outlined save-error-icon">error</span>
+      <span class="save-error-text">{saveError}</span>
+    </div>
   {/if}
 </div>
 
@@ -1047,5 +1091,29 @@
 
   .load-more-btn .material-symbols-outlined {
     font-size: 14px;
+  }
+
+  .save-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 6px 8px;
+    background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  }
+
+  .save-error-icon {
+    font-size: 14px;
+    color: var(--color-error);
+    flex-shrink: 0;
+    line-height: 1.4;
+  }
+
+  .save-error-text {
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    color: var(--color-error);
+    line-height: 1.4;
+    word-break: break-word;
   }
 </style>

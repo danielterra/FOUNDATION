@@ -116,8 +116,8 @@
             </span>
             <div class="step-body">
               <span class="step-label">{step.label}</span>
-              {#if step.output}
-                <span class="step-output">{step.output}</span>
+              {#if step.summary}
+                <span class="step-output">{step.summary}</span>
               {/if}
             </div>
           </li>

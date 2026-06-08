@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { createEntitySubscription } from '$lib/realtime/subscriptions';
+  import { openEntity } from '$lib/blackboard';
   import WidgetContainer from './WidgetContainer.svelte';
 
   let { widgetId, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props();
@@ -295,13 +296,7 @@
     event.stopPropagation();
     if (!source?.iri) return;
     try {
-      await invoke('widget_blackboard__add_widget', {
-        widgetType: 'inspector',
-        entityId: source.iri,
-        position: null,
-        size: null,
-        conversationId: conversationIri,
-      });
+      await openEntity(source.iri, conversationIri);
     } catch (err) {
       console.error('[NotificationCenter] Failed to open source', err);
     }

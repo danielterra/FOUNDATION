@@ -9,7 +9,7 @@ const MODEL_E4B: &str = concat!(
 fn speak_tool() -> ToolDefinition {
     ToolDefinition {
         name: "speak".to_string(),
-        description: "Responde ao usuário com texto".to_string(),
+        description: "Respond to the user with text".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {"message": {"type": "string"}},
@@ -71,10 +71,10 @@ fn build_turns(
 async fn run_and_parse(model_path: &str, messages: &[(String, String)])
     -> (String, Option<String>, Option<String>)
 {
-    let model = load_model(model_path).await.expect("falha ao carregar modelo");
+    let model = load_model(model_path).await.expect("failed to load model");
     let mut raw = String::new();
     run_inference(&model, messages, |p| { raw.push_str(&p); true })
-        .expect("inferência falhou");
+        .expect("inference failed");
     println!("\n--- raw output ---\n{:?}\n---", raw);
     let tc = parse_all_tool_calls_from_output(&raw).into_iter().next();
     let name = tc.as_ref().map(|t| t.name.clone());
@@ -85,10 +85,10 @@ async fn run_and_parse(model_path: &str, messages: &[(String, String)])
 async fn run_and_parse_all(model_path: &str, messages: &[(String, String)])
     -> (String, Vec<ToolCall>)
 {
-    let model = load_model(model_path).await.expect("falha ao carregar modelo");
+    let model = load_model(model_path).await.expect("failed to load model");
     let mut raw = String::new();
     run_inference(&model, messages, |p| { raw.push_str(&p); true })
-        .expect("inferência falhou");
+        .expect("inference failed");
     println!("\n--- raw output (all calls) ---\n{:?}\n---", raw);
     let calls = parse_all_tool_calls_from_output(&raw);
     (raw, calls)
@@ -108,34 +108,34 @@ fn messages_with_injection(system: &str, user: &str) -> Vec<(String, String)> {
 }
 
 // =========================================================================
-// Extração de texto
+// Text extraction
 // =========================================================================
 
 #[test]
 fn extract_text_from_text_variant() {
-    let content = MessageContent::Text("Olá mundo".to_string());
-    assert_eq!(extract_text_content(&content), "Olá mundo");
+    let content = MessageContent::Text("Hello world".to_string());
+    assert_eq!(extract_text_content(&content), "Hello world");
 }
 
 #[test]
-fn extract_text_from_content_blocks_inclui_text_e_tool_use() {
+fn extract_text_from_content_blocks_includes_text_and_tool_use() {
     let content = MessageContent::ContentBlocks(vec![
-        ContentBlock::Text { text: "primeira linha".to_string() },
+        ContentBlock::Text { text: "first line".to_string() },
         ContentBlock::ToolUse {
             id: "tu_1".to_string(),
             name: "search".to_string(),
             input: serde_json::json!({"query": "test"}),
         },
-        ContentBlock::Text { text: "segunda linha".to_string() },
+        ContentBlock::Text { text: "second line".to_string() },
     ]);
     let result = extract_text_content(&content);
-    assert!(result.contains("primeira linha"));
+    assert!(result.contains("first line"));
     assert!(result.contains("search"));
-    assert!(result.contains("segunda linha"));
+    assert!(result.contains("second line"));
 }
 
 #[test]
-fn extract_text_tool_use_gera_formato_nativo() {
+fn extract_text_tool_use_produces_native_format() {
     let content = MessageContent::ContentBlocks(vec![
         ContentBlock::ToolUse {
             id: "tu_1".to_string(),
@@ -144,129 +144,129 @@ fn extract_text_tool_use_gera_formato_nativo() {
         },
     ]);
     let result = extract_text_content(&content);
-    assert!(result.contains("<|tool_call>call:describe_individual"), "deve usar formato nativo");
-    assert!(result.contains("<tool_call|>"), "deve fechar com <tool_call|>");
-    assert!(result.contains("foundation:X"), "deve incluir os args");
+    assert!(result.contains("<|tool_call>call:describe_individual"), "should use the native format");
+    assert!(result.contains("<tool_call|>"), "should close with <tool_call|>");
+    assert!(result.contains("foundation:X"), "should include the args");
 }
 
 #[test]
-fn extract_text_tool_result_gera_texto_legivel() {
+fn extract_text_tool_result_produces_readable_text() {
     let content = MessageContent::ContentBlocks(vec![
         ContentBlock::ToolResult {
             tool_use_id: "tu_1".to_string(),
-            content: serde_json::json!("Resultado da ferramenta aqui"),
+            content: serde_json::json!("Tool result goes here"),
             is_error: None,
         },
     ]);
     let result = extract_text_content(&content);
-    assert!(result.contains("Resultado da ferramenta aqui"), "deve incluir o conteúdo do resultado");
+    assert!(result.contains("Tool result goes here"), "should include the result content");
 }
 
 // =========================================================================
-// Parser Python speak()
+// Python speak() parser
 // =========================================================================
 
 #[test]
-fn parser_python_extrai_mensagem_aspas_duplas() {
-    let raw = r#"speak(message="Olá! Como posso ajudar?")"#;
-    assert_eq!(parse_python_speak_output(raw), "Olá! Como posso ajudar?");
+fn parser_python_extracts_message_double_quotes() {
+    let raw = r#"speak(message="Hi! How can I help?")"#;
+    assert_eq!(parse_python_speak_output(raw), "Hi! How can I help?");
 }
 
 #[test]
-fn parser_python_extrai_mensagem_aspas_simples() {
-    let raw = "speak(message='Olá mundo')";
-    assert_eq!(parse_python_speak_output(raw), "Olá mundo");
+fn parser_python_extracts_message_single_quotes() {
+    let raw = "speak(message='Hello world')";
+    assert_eq!(parse_python_speak_output(raw), "Hello world");
 }
 
 #[test]
-fn parser_python_remove_marcador_end_of_turn() {
-    let raw = "speak(message=\"Resposta\")\n<end_of_turn>";
-    assert_eq!(parse_python_speak_output(raw), "Resposta");
+fn parser_python_removes_end_of_turn_marker() {
+    let raw = "speak(message=\"Response\")\n<end_of_turn>";
+    assert_eq!(parse_python_speak_output(raw), "Response");
 }
 
 #[test]
-fn parser_python_remove_marcador_eos() {
-    let raw = "speak(message=\"Resposta\")<eos>";
-    assert_eq!(parse_python_speak_output(raw), "Resposta");
+fn parser_python_removes_eos_marker() {
+    let raw = "speak(message=\"Response\")<eos>";
+    assert_eq!(parse_python_speak_output(raw), "Response");
 }
 
 #[test]
-fn parser_python_trata_aspas_escapadas() {
-    let raw = r#"speak(message="Ele disse \"olá\" para mim")"#;
-    assert_eq!(parse_python_speak_output(raw), r#"Ele disse "olá" para mim"#);
+fn parser_python_handles_escaped_quotes() {
+    let raw = r#"speak(message="He said \"hi\" to me")"#;
+    assert_eq!(parse_python_speak_output(raw), r#"He said "hi" to me"#);
 }
 
 #[test]
-fn parser_python_usa_ultimo_speak_quando_modelo_escreve_raciocinio_antes() {
-    let raw = "Deixa eu pensar...\nspeak(message=\"Resposta final\")";
-    assert_eq!(parse_python_speak_output(raw), "Resposta final");
+fn parser_python_uses_last_speak_when_model_writes_reasoning_first() {
+    let raw = "Let me think...\nspeak(message=\"Final response\")";
+    assert_eq!(parse_python_speak_output(raw), "Final response");
 }
 
 #[test]
-fn parser_python_fallback_para_texto_limpo_sem_speak() {
-    let raw = "Resposta sem wrapper\n<end_of_turn>";
-    assert_eq!(parse_python_speak_output(raw), "Resposta sem wrapper");
+fn parser_python_fallback_to_clean_text_without_speak() {
+    let raw = "Response without wrapper\n<end_of_turn>";
+    assert_eq!(parse_python_speak_output(raw), "Response without wrapper");
 }
 
 #[test]
-fn parser_python_fallback_string_vazia() {
+fn parser_python_fallback_empty_string() {
     assert_eq!(parse_python_speak_output(""), "");
 }
 
 #[test]
-fn parser_python_speak_com_iris_none_extrai_so_message() {
-    let raw = r#"speak(message="Olá!", iris=None)"#;
-    assert_eq!(parse_python_speak_output(raw), "Olá!");
+fn parser_python_speak_with_iris_none_extracts_only_message() {
+    let raw = r#"speak(message="Hi!", iris=None)"#;
+    assert_eq!(parse_python_speak_output(raw), "Hi!");
 }
 
 // =========================================================================
-// Parser — formato nativo Gemma 4 (<|tool_call>call:name{args}<tool_call|>)
+// Parser — Gemma 4 native format (<|tool_call>call:name{args}<tool_call|>)
 // =========================================================================
 
 #[test]
-fn parse_tool_call_speak_basico() {
-    let raw = "<|tool_call>call:speak{message:<|\"|>Olá!<|\"|>}<tool_call|>";
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("deve parsear speak");
+fn parse_tool_call_speak_basic() {
+    let raw = "<|tool_call>call:speak{message:<|\"|>Hi!<|\"|>}<tool_call|>";
+    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("should parse speak");
     assert_eq!(tc.name, "speak");
-    assert_eq!(tc.input["message"], "Olá!");
+    assert_eq!(tc.input["message"], "Hi!");
 }
 
 #[test]
 fn parse_tool_call_search() {
-    let raw = "<|tool_call>call:search{query:<|\"|>capital do Brasil<|\"|>}<tool_call|>";
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("deve parsear search");
+    let raw = "<|tool_call>call:search{query:<|\"|>capital of Brazil<|\"|>}<tool_call|>";
+    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("should parse search");
     assert_eq!(tc.name, "search");
-    assert_eq!(tc.input["query"], "capital do Brasil");
+    assert_eq!(tc.input["query"], "capital of Brazil");
 }
 
 #[test]
-fn parse_tool_call_ignora_marcadores_eot() {
+fn parse_tool_call_ignores_eot_markers() {
     let raw = "<|tool_call>call:speak{message:<|\"|>ok<|\"|>}<tool_call|>\n<end_of_turn>";
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("deve parsear com EOT");
+    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("should parse with EOT");
     assert_eq!(tc.name, "speak");
     assert_eq!(tc.input["message"], "ok");
 }
 
 #[test]
-fn parse_tool_call_sem_closing_tag() {
+fn parse_tool_call_without_closing_tag() {
     let raw = "<|tool_call>call:search{query:<|\"|>test<|\"|>}";
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("deve parsear sem closing tag");
+    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("should parse without closing tag");
     assert_eq!(tc.name, "search");
 }
 
 #[test]
-fn parse_tool_call_retorna_vazio_sem_tag() {
-    assert!(parse_all_tool_calls_from_output("texto sem tag").is_empty());
+fn parse_tool_call_returns_empty_without_tag() {
+    assert!(parse_all_tool_calls_from_output("text without a tag").is_empty());
     assert!(parse_all_tool_calls_from_output("").is_empty());
 }
 
 #[test]
-fn parse_tool_call_retorna_vazio_sem_marcador_nativo() {
+fn parse_tool_call_returns_empty_without_native_marker() {
     assert!(parse_all_tool_calls_from_output("call:speak{message:<|\"|>ok<|\"|>}").is_empty());
 }
 
 #[test]
-fn parse_tool_call_multiplos_retorna_todos() {
+fn parse_tool_call_multiple_returns_all() {
     let raw = "<|tool_call>call:search{query:<|\"|>x<|\"|>}<tool_call|>\n<|tool_call>call:speak{message:<|\"|>ok<|\"|>}<tool_call|>";
     let calls = parse_all_tool_calls_from_output(raw);
     assert_eq!(calls.len(), 2);
@@ -275,28 +275,28 @@ fn parse_tool_call_multiplos_retorna_todos() {
 }
 
 #[test]
-fn parse_tool_call_com_array_de_iris() {
-    let raw = "<|tool_call>call:speak{message:<|\"|>Aqui está.<|\"|>,iris:[<|\"|>foundation:Task_1<|\"|>]}<tool_call|>";
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("deve parsear speak com iris");
+fn parse_tool_call_with_iris_array() {
+    let raw = "<|tool_call>call:speak{message:<|\"|>Here it is.<|\"|>,iris:[<|\"|>foundation:Task_1<|\"|>]}<tool_call|>";
+    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("should parse speak with iris");
     assert_eq!(tc.name, "speak");
-    assert_eq!(tc.input["message"], "Aqui está.");
+    assert_eq!(tc.input["message"], "Here it is.");
     assert_eq!(tc.input["iris"][0], "foundation:Task_1");
 }
 
 #[test]
-fn parse_tool_call_formato_legado_como_fallback() {
-    let raw = "tool_call\n{\"name\": \"speak\", \"input\": {\"message\": \"Olá!\"}}\n</tool_call>";
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("formato legado deve funcionar como fallback");
+fn parse_tool_call_legacy_format_as_fallback() {
+    let raw = "tool_call\n{\"name\": \"speak\", \"input\": {\"message\": \"Hi!\"}}\n</tool_call>";
+    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("legacy format should work as fallback");
     assert_eq!(tc.name, "speak");
-    assert_eq!(tc.input["message"], "Olá!");
+    assert_eq!(tc.input["message"], "Hi!");
 }
 
 #[test]
-fn parse_tool_call_formato_xml_como_fallback() {
-    let raw = r#"<tool_call>{"name": "speak", "input": {"message": "Olá!"}}</tool_call>"#;
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("formato XML deve funcionar como fallback");
+fn parse_tool_call_xml_format_as_fallback() {
+    let raw = r#"<tool_call>{"name": "speak", "input": {"message": "Hi!"}}</tool_call>"#;
+    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("XML format should work as fallback");
     assert_eq!(tc.name, "speak");
-    assert_eq!(tc.input["message"], "Olá!");
+    assert_eq!(tc.input["message"], "Hi!");
 }
 
 // =========================================================================
@@ -304,34 +304,34 @@ fn parse_tool_call_formato_xml_como_fallback() {
 // =========================================================================
 
 #[test]
-fn gemma_args_string_simples() {
-    let val = parse_gemma_native_args("{message:<|\"|>Olá mundo<|\"|>}");
-    assert_eq!(val["message"], "Olá mundo");
+fn gemma_args_simple_string() {
+    let val = parse_gemma_native_args("{message:<|\"|>Hello world<|\"|>}");
+    assert_eq!(val["message"], "Hello world");
 }
 
 #[test]
-fn gemma_args_multiplos_campos() {
+fn gemma_args_multiple_fields() {
     let val = parse_gemma_native_args("{query:<|\"|>test<|\"|>,class_iri:<|\"|>foundation:Task<|\"|>}");
     assert_eq!(val["query"], "test");
     assert_eq!(val["class_iri"], "foundation:Task");
 }
 
 #[test]
-fn gemma_args_com_array() {
+fn gemma_args_with_array() {
     let val = parse_gemma_native_args("{message:<|\"|>ok<|\"|>,iris:[<|\"|>foundation:Task_1<|\"|>]}");
     assert_eq!(val["message"], "ok");
     assert_eq!(val["iris"][0], "foundation:Task_1");
 }
 
 #[test]
-fn gemma_args_array_multiplos_itens() {
+fn gemma_args_array_multiple_items() {
     let val = parse_gemma_native_args("{iris:[<|\"|>foundation:A<|\"|>,<|\"|>foundation:B<|\"|>]}");
     assert_eq!(val["iris"][0], "foundation:A");
     assert_eq!(val["iris"][1], "foundation:B");
 }
 
 #[test]
-fn gemma_args_vazio() {
+fn gemma_args_empty() {
     let val = parse_gemma_native_args("{}");
     assert!(val.as_object().unwrap().is_empty());
 }
@@ -478,21 +478,21 @@ fn format_tools_multiplas_ferramentas() {
 // =========================================================================
 
 #[tokio::test]
-#[ignore = "requer resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
+#[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
 async fn integracao_modelo_carrega_e_cache_funciona() {
-    let m1 = load_model(MODEL_E4B).await.expect("falha ao carregar modelo");
+    let m1 = load_model(MODEL_E4B).await.expect("failed to load model");
     let m2 = load_model(MODEL_E4B).await.expect("falha no cache");
     assert!(Arc::ptr_eq(&m1, &m2), "segunda chamada deve retornar o mesmo Arc");
 }
 
 #[tokio::test]
-#[ignore = "requer resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
+#[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
 async fn integracao_modelo_usa_formato_tool_call() {
-    let model = load_model(MODEL_E4B).await.expect("falha ao carregar modelo");
+    let model = load_model(MODEL_E4B).await.expect("failed to load model");
     let msgs = messages_with_injection("Você é um assistente útil.", "Diga apenas 'olá'.");
 
     let mut raw = String::new();
-    run_inference(&model, &msgs, |p| { raw.push_str(&p); true }).expect("inferência falhou");
+    run_inference(&model, &msgs, |p| { raw.push_str(&p); true }).expect("inference failed");
 
     println!("raw output: {:?}", raw);
 
@@ -502,13 +502,13 @@ async fn integracao_modelo_usa_formato_tool_call() {
 }
 
 #[tokio::test]
-#[ignore = "requer resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
+#[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
 async fn integracao_parser_extrai_mensagem_limpa() {
-    let model = load_model(MODEL_E4B).await.expect("falha ao carregar modelo");
+    let model = load_model(MODEL_E4B).await.expect("failed to load model");
     let msgs = messages_with_injection("Você é um assistente útil.", "Diga apenas 'olá'.");
 
     let mut raw = String::new();
-    run_inference(&model, &msgs, |p| { raw.push_str(&p); true }).expect("inferência falhou");
+    run_inference(&model, &msgs, |p| { raw.push_str(&p); true }).expect("inference failed");
 
     println!("raw output: {:?}", raw);
 
@@ -523,12 +523,12 @@ async fn integracao_parser_extrai_mensagem_limpa() {
 }
 
 #[tokio::test]
-#[ignore = "requer resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
+#[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
 async fn integracao_modelo_retorna_stats_de_tokens() {
-    let model = load_model(MODEL_E4B).await.expect("falha ao carregar modelo");
+    let model = load_model(MODEL_E4B).await.expect("failed to load model");
     let msgs = messages_with_injection("Você é um assistente útil.", "Diga apenas 'olá'.");
 
-    let stats = run_inference(&model, &msgs, |_| true).expect("inferência falhou");
+    let stats = run_inference(&model, &msgs, |_| true).expect("inference failed");
 
     assert!(stats.prompt_tokens > 0, "prompt_tokens deve ser > 0");
     assert!(stats.completion_tokens > 0, "completion_tokens deve ser > 0");
@@ -536,16 +536,16 @@ async fn integracao_modelo_retorna_stats_de_tokens() {
 }
 
 #[tokio::test]
-#[ignore = "requer resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
+#[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
 async fn integracao_modelo_responde_em_portugues() {
-    let model = load_model(MODEL_E4B).await.expect("falha ao carregar modelo");
+    let model = load_model(MODEL_E4B).await.expect("failed to load model");
     let msgs = messages_with_injection(
         "Você é um assistente útil. Responda sempre em português.",
         "Qual é a capital do Brasil?",
     );
 
     let mut raw = String::new();
-    run_inference(&model, &msgs, |p| { raw.push_str(&p); true }).expect("inferência falhou");
+    run_inference(&model, &msgs, |p| { raw.push_str(&p); true }).expect("inference failed");
 
     let message = parse_all_tool_calls_from_output(&raw)
         .into_iter()
@@ -562,7 +562,7 @@ async fn integracao_modelo_responde_em_portugues() {
 }
 
 #[tokio::test]
-#[ignore = "requer resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
+#[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
 async fn integracao_modelo_nao_encontrado_retorna_erro_claro() {
     let result = load_model("/tmp/modelo_inexistente.gguf").await;
     let err = result.expect_err("esperava Err, mas load_model retornou Ok");
@@ -574,7 +574,7 @@ async fn integracao_modelo_nao_encontrado_retorna_erro_claro() {
 // =========================================================================
 
 #[tokio::test]
-#[ignore = "requer resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
+#[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
 async fn cenario_speak_simples() {
     let tools = vec![speak_tool()];
     let msgs = build_turns(
@@ -589,7 +589,7 @@ async fn cenario_speak_simples() {
 }
 
 #[tokio::test]
-#[ignore = "requer resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
+#[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
 async fn cenario_speak_apos_resultado_de_ferramenta() {
     let tools = vec![speak_tool(), search_tool()];
     let msgs = build_turns(
@@ -621,7 +621,7 @@ async fn cenario_speak_apos_resultado_de_ferramenta() {
 }
 
 #[tokio::test]
-#[ignore = "requer resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
+#[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
 async fn cenario_sem_loop_de_ferramenta() {
     let tools = vec![speak_tool(), describe_tool()];
     let msgs = build_turns(
@@ -655,7 +655,7 @@ async fn cenario_sem_loop_de_ferramenta() {
 }
 
 #[tokio::test]
-#[ignore = "requer resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
+#[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
 async fn cenario_multitool_na_mesma_resposta() {
     let tools = vec![speak_tool(), describe_tool()];
     let msgs = build_turns(
@@ -686,7 +686,7 @@ async fn cenario_multitool_na_mesma_resposta() {
 }
 
 #[tokio::test]
-#[ignore = "requer resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
+#[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
 async fn cenario_speak_sem_artefatos_de_sistema() {
     let tools = vec![speak_tool(), search_tool()];
     let msgs = build_turns(

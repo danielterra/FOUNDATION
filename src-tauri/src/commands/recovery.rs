@@ -50,13 +50,13 @@ fn locate_sqlite3(app: &AppHandle) -> Result<PathBuf, String> {
         let resource = app
             .path()
             .resource_dir()
-            .map_err(|e| format!("resource_dir indisponível: {e}"))?
+            .map_err(|e| format!("resource_dir unavailable: {e}"))?
             .join("sqlite3.exe");
         if resource.is_file() {
             return Ok(resource);
         }
         return Err(format!(
-            "sqlite3.exe não encontrado em {}. Reinstale o aplicativo.",
+            "sqlite3.exe not found in {}. Reinstall the application.",
             resource.display()
         ));
     }
@@ -69,7 +69,7 @@ fn locate_sqlite3(app: &AppHandle) -> Result<PathBuf, String> {
                 return Ok(PathBuf::from(c));
             }
         }
-        Err("sqlite3 não encontrado no sistema. Instale o pacote sqlite3.".into())
+        Err("sqlite3 not found on the system. Install the sqlite3 package.".into())
     }
 }
 
@@ -136,11 +136,11 @@ fn run_sqlite3(sqlite3: &Path, args: &[&str]) -> Result<(), String> {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let output = cmd.output().map_err(|e| format!("falha ao executar sqlite3: {e}"))?;
+    let output = cmd.output().map_err(|e| format!("failed to run sqlite3: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
-            "sqlite3 retornou erro (exit={:?}): {}",
+            "sqlite3 returned an error (exit={:?}): {}",
             output.status.code(),
             stderr.trim()
         ));
@@ -153,9 +153,9 @@ fn move_or_copy(src: &Path, dst: &Path) -> Result<(), String> {
         return Ok(());
     }
     std::fs::copy(src, dst)
-        .map_err(|e| format!("Falha ao copiar {} → {}: {e}", src.display(), dst.display()))?;
+        .map_err(|e| format!("Failed to copy {} → {}: {e}", src.display(), dst.display()))?;
     std::fs::remove_file(src)
-        .map_err(|e| format!("Falha ao remover origem {}: {e}", src.display()))?;
+        .map_err(|e| format!("Failed to remove source {}: {e}", src.display()))?;
     Ok(())
 }
 
@@ -165,23 +165,23 @@ pub async fn recover_database(app: AppHandle) -> Result<RecoveryResult, String> 
     let db_path = foundation_dir.join("FOUNDATION.db");
 
     if !db_path.is_file() {
-        return Err(format!("Banco não encontrado em {}", db_path.display()));
+        return Err(format!("Database not found at {}", db_path.display()));
     }
 
     let sqlite3 = locate_sqlite3(&app)?;
-    emit_progress(&app, "verifying", "Verificando integridade do banco");
+    emit_progress(&app, "verifying", "Checking database integrity");
 
     if !is_db_corrupt(&db_path) {
-        return Err("O banco abriu normalmente — não há corrupção a recuperar.".into());
+        return Err("The database opened normally — there is no corruption to recover.".into());
     }
 
     let ts = timestamp();
     let downloads = dirs::download_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
-        .ok_or_else(|| "Não foi possível localizar a pasta Downloads".to_string())?;
+        .ok_or_else(|| "Could not locate the Downloads folder".to_string())?;
     let workspace = downloads.join(format!("Foundation-recovery-{ts}"));
     std::fs::create_dir_all(&workspace)
-        .map_err(|e| format!("Falha ao criar pasta de trabalho {}: {e}", workspace.display()))?;
+        .map_err(|e| format!("Failed to create workspace folder {}: {e}", workspace.display()))?;
 
     let backup_path = workspace.join(format!("FOUNDATION.db.corrupt-{ts}.bak"));
     let sql_dump_path = workspace.join(format!("FOUNDATION.recover-{ts}.sql"));
@@ -193,7 +193,7 @@ pub async fn recover_database(app: AppHandle) -> Result<RecoveryResult, String> 
         &app,
         "backup",
         &format!(
-            "Movendo arquivo corrompido para {}",
+            "Moving corrupt file to {}",
             workspace.file_name().unwrap_or_default().to_string_lossy()
         ),
     );
@@ -213,10 +213,10 @@ pub async fn recover_database(app: AppHandle) -> Result<RecoveryResult, String> 
 
     match result {
         Ok(triples_recovered) => {
-            emit_progress(&app, "finalizing", "Instalando banco recuperado");
+            emit_progress(&app, "finalizing", "Installing recovered database");
             move_or_copy(&new_db_path, &db_path)?;
             let _ = std::fs::remove_file(&sql_dump_path);
-            emit_progress(&app, "done", "Recuperação concluída");
+            emit_progress(&app, "done", "Recovery complete");
             Ok(RecoveryResult {
                 backup_path: backup_path.to_string_lossy().to_string(),
                 new_db_path: db_path.to_string_lossy().to_string(),
@@ -225,12 +225,12 @@ pub async fn recover_database(app: AppHandle) -> Result<RecoveryResult, String> 
             })
         }
         Err(e) => {
-            emit_progress(&app, "rollback", "Restaurando arquivo corrompido");
+            emit_progress(&app, "rollback", "Restoring corrupt file");
             let _ = std::fs::remove_file(&new_db_path);
             if let Err(restore_err) = move_or_copy(&backup_path, &db_path) {
                 return Err(format!(
-                    "Recuperação falhou: {e}. Falha adicional ao restaurar backup ({restore_err}). \
-                     O arquivo original está em {}",
+                    "Recovery failed: {e}. Additional failure restoring backup ({restore_err}). \
+                     The original file is at {}",
                     backup_path.display()
                 ));
             }
@@ -250,7 +250,7 @@ fn do_recovery_steps(
     emit_progress(
         app,
         "dumping",
-        &format!("Extraindo dados ({} MB de origem)", original_size / (1024 * 1024)),
+        &format!("Extracting data ({} MB of source)", original_size / (1024 * 1024)),
     );
 
     let stop_dump = Arc::new(AtomicBool::new(false));
@@ -264,7 +264,7 @@ fn do_recovery_steps(
 
     let dump_result = (|| -> Result<(), String> {
         let sql_file = std::fs::File::create(sql_dump_path)
-            .map_err(|e| format!("Falha ao criar arquivo de dump: {e}"))?;
+            .map_err(|e| format!("Failed to create dump file: {e}"))?;
         let mut cmd = Command::new(sqlite3);
         cmd.arg(backup_path)
             .arg(".recover")
@@ -278,11 +278,11 @@ fn do_recovery_steps(
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let output = cmd.output().map_err(|e| format!("falha ao executar sqlite3 .recover: {e}"))?;
+        let output = cmd.output().map_err(|e| format!("failed to run sqlite3 .recover: {e}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(format!(
-                "sqlite3 .recover falhou (exit={:?}): {}",
+                "sqlite3 .recover failed (exit={:?}): {}",
                 output.status.code(),
                 stderr.trim()
             ));
@@ -298,7 +298,7 @@ fn do_recovery_steps(
     emit_progress(
         app,
         "importing",
-        &format!("Importando para banco novo ({} MB de SQL)", dump_size / (1024 * 1024)),
+        &format!("Importing into new database ({} MB of SQL)", dump_size / (1024 * 1024)),
     );
 
     let stop_import = Arc::new(AtomicBool::new(false));
@@ -327,14 +327,14 @@ fn do_recovery_steps(
     let _ = import_watcher.join();
     import_result?;
 
-    emit_progress(app, "verifying", "Verificando banco recuperado");
+    emit_progress(app, "verifying", "Checking recovered database");
     let conn = Connection::open(new_db_path)
-        .map_err(|e| format!("Não foi possível abrir banco recuperado: {e}"))?;
+        .map_err(|e| format!("Could not open recovered database: {e}"))?;
     let integrity: String = conn
         .query_row("PRAGMA integrity_check;", [], |r| r.get(0))
-        .map_err(|e| format!("integrity_check falhou: {e}"))?;
+        .map_err(|e| format!("integrity_check failed: {e}"))?;
     if integrity != "ok" {
-        return Err(format!("Banco recuperado ainda inconsistente: {integrity}"));
+        return Err(format!("Recovered database still inconsistent: {integrity}"));
     }
     let triples: i64 = conn
         .query_row("SELECT COUNT(*) FROM triples;", [], |r| r.get(0))

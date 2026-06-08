@@ -1,16 +1,16 @@
-/// Palavras curtas (≤3 chars) sem valor semântico para busca, cobertas em PT/EN/ES.
-/// Mantidas fora do código principal para facilitar manutenção.
+/// Short words (≤3 chars) with no semantic value for search, covering PT/EN/ES.
+/// Kept out of the main code for easier maintenance.
 pub const STOPWORDS: &[&str] = &[
-    // ── Português ──────────────────────────────────────────────────────────────
-    // preposições e contrações
+    // ── Portuguese ─────────────────────────────────────────────────────────────
+    // prepositions and contractions
     "com", "por", "dos", "das", "nos", "nas", "num", "dum", "pra", "pro",
-    // conjunções
+    // conjunctions
     "mas", "nem", "que",
-    // pronomes
+    // pronouns
     "ele", "ela", "seu", "sua", "lhe", "nós",
-    // verbos auxiliares e cópula
+    // auxiliary verbs and copula
     "vai", "vou", "tem", "ter", "ser", "foi", "era", "são", "dão", "hei", "diz",
-    // advérbios / partículas
+    // adverbs / particles
     "sim", "ora", "bem", "aí", "eis", "uns",
 
     // ── English ────────────────────────────────────────────────────────────────
@@ -26,15 +26,15 @@ pub const STOPWORDS: &[&str] = &[
     // adverbs / particles
     "not", "too", "how", "why", "who", "yes", "now", "new", "old", "etc",
 
-    // ── Español ────────────────────────────────────────────────────────────────
-    // artículos y contracciones
+    // ── Spanish ────────────────────────────────────────────────────────────────
+    // articles and contractions
     "los", "las", "del", "una", "uno",
-    // preposiciones y conjunciones
+    // prepositions and conjunctions
     "con", "sin",
-    // pronombres
+    // pronouns
     "sus", "mis", "tus", "les", "ese", "esa", "eso",
-    // verbos
+    // verbs
     "fue", "hay", "son", "han",
-    // adverbios
+    // adverbs
     "así", "aún", "más", "muy", "tan", "tal",
 ];

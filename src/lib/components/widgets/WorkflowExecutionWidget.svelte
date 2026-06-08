@@ -4,6 +4,7 @@
   import { listen } from '@tauri-apps/api/event'
   import { createEntitySubscription } from '$lib/realtime/subscriptions'
   import ChatMessageBubble from '../ChatMessageBubble.svelte'
+  import MarkdownValue from './inspector/MarkdownValue.svelte'
   import WidgetContainer from './WidgetContainer.svelte'
 
   let { widgetId, entityId, conversationIri = null, windowState = 'normal', onWindowStateChange } = $props()
@@ -119,6 +120,29 @@
     }).catch(() => {})
   }
 
+  async function openControlInstanceInspector() {
+    if (!detail?.control_instance_iri) return
+    await invoke('widget_blackboard__add_widget', {
+      widgetType: 'inspector',
+      entityId: detail.control_instance_iri,
+      content: null,
+      position: null,
+      size: null,
+      conversationId: conversationIri,
+    }).catch(() => {})
+  }
+
+  async function openEntityInspector(iri) {
+    await invoke('widget_blackboard__add_widget', {
+      widgetType: 'inspector',
+      entityId: iri,
+      content: null,
+      position: null,
+      size: null,
+      conversationId: conversationIri,
+    }).catch(() => {})
+  }
+
   async function closeWidget() {
     await invoke('widget_blackboard__remove_widget', { widgetId }).catch(() => {})
   }
@@ -176,13 +200,13 @@
     {#if detail}
       <span
         class="status-badge"
-        style="color: {detail.status_color ?? '#94A3B8'}"
+        style="color: {detail.status_color ?? 'var(--color-neutral-disabled)'}"
       >
         <span class="material-symbols-outlined status-icon" class:spinning={isInProgress(detail.status_label)}>{detail.status_icon ?? 'help'}</span>
         <span class="status-label">{detail.status_label}</span>
       </span>
     {/if}
-    <button class="action-btn" onclick={openInspector} title="Open inspector">
+    <button class="action-btn" aria-label="Abrir inspetor da execução" onclick={openInspector} title="Open inspector">
       <span class="material-symbols-outlined">info</span>
     </button>
   {/snippet}
@@ -202,33 +226,36 @@
         <div class="execution-error">
           <span class="material-symbols-outlined">error</span>
           <span class="error-message-text">{detail.error_message}</span>
-          <button class="error-dismiss" onclick={() => errorDismissed = detail.error_message} title="Dismiss">
+          <button class="error-dismiss" aria-label="Dispensar erro" onclick={() => errorDismissed = detail.error_message} title="Dismiss">
             <span class="material-symbols-outlined">close</span>
           </button>
         </div>
       {/if}
 
       {#if detail.steps.length === 0}
-        <div class="center-state muted">No steps recorded yet…</div>
+        <div class="center-state muted">Nenhum passo registrado ainda…</div>
       {:else}
-        <div class="steps">
+        <div class="steps" role="list" aria-live="polite" aria-atomic="false" aria-label="Passos da execução">
           {#each detail.steps as step (step.iri)}
             {@const isExpanded = expandedStep === step.iri}
             {@const duration = formatDuration(step.started_at, step.finished_at)}
-            <div class="step" class:expanded={isExpanded}>
+            <div class="step" class:expanded={isExpanded} role="listitem">
               <button
                 class="step-header"
+                aria-expanded={isExpanded}
+                aria-label={step.node_label}
                 onclick={() => expandedStep = isExpanded ? null : step.iri}
+                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); expandedStep = isExpanded ? null : step.iri } }}
               >
                 <span
                   class="material-symbols-outlined step-icon"
                   class:spinning={isInProgress(step.status_label)}
-                  style="color: {step.status_color ?? '#94A3B8'}"
+                  style="color: {step.status_color ?? 'var(--color-neutral-disabled)'}"
                 >{step.status_icon ?? 'radio_button_unchecked'}</span>
                 <span class="material-symbols-outlined step-type-icon">{nodeIcon(step.node_type)}</span>
                 <span class="step-label">{step.node_label}</span>
                 <span class="step-duration">{duration ?? ''}</span>
-                {#if step.error || step.output || step.messages.length > 0}
+                {#if (step.refs?.length > 0) || step.summary || step.error || step.messages.length > 0}
                   <span class="material-symbols-outlined step-chevron" class:rotated={isExpanded}>
                     expand_more
                   </span>
@@ -243,10 +270,17 @@
                       <pre class="detail-content error-text">{step.error}</pre>
                     </div>
                   {/if}
-                  {#if step.output}
+                  {#if (step.refs?.length > 0) || step.summary}
                     <div class="detail-section">
-                      <span class="detail-label">Output</span>
-                      <pre class="detail-content">{step.output}</pre>
+                      <span class="detail-label">Resultado</span>
+                      <div class="detail-content detail-content-output">
+                        {#if step.refs?.length > 0}
+                          <MarkdownValue value={step.refs.join(' ')} {openEntityInspector} />
+                        {/if}
+                        {#if step.summary}
+                          <MarkdownValue value={step.summary} {openEntityInspector} />
+                        {/if}
+                      </div>
                     </div>
                   {/if}
                   {#if step.messages.length > 0}
@@ -276,6 +310,19 @@
       {/if}
     {/if}
   </div>
+
+  {#if detail?.control_instance_iri}
+    <div class="widget-footer">
+      <button
+        class="footer-btn"
+        aria-label="Abrir inspetor da instância de controle"
+        onclick={openControlInstanceInspector}
+      >
+        <span class="material-symbols-outlined">open_in_new</span>
+        Abrir instância de controle
+      </button>
+    </div>
+  {/if}
 </WidgetContainer>
 
 <style>
@@ -334,9 +381,9 @@
     gap: 8px;
     margin: 12px;
     padding: 10px 12px;
-    background: color-mix(in srgb, #EF4444 12%, transparent);
+    background: color-mix(in srgb, var(--color-danger) 12%, transparent);
     font-size: 12px;
-    color: #FCA5A5;
+    color: var(--color-danger-hover);
   }
 
   .execution-error .material-symbols-outlined {
@@ -354,7 +401,7 @@
     border: none;
     padding: 0;
     cursor: pointer;
-    color: #FCA5A5;
+    color: var(--color-danger-hover);
     opacity: 0.6;
     display: flex;
     align-items: center;
@@ -472,13 +519,20 @@
     overflow-y: auto;
   }
 
+  .detail-content-output {
+    font-family: inherit;
+    white-space: normal;
+    display: flex;
+    flex-direction: column;
+  }
+
   .error-section .detail-content {
-    color: #FCA5A5;
-    background: color-mix(in srgb, #EF4444 8%, transparent);
+    color: var(--color-danger-hover);
+    background: color-mix(in srgb, var(--color-danger) 8%, transparent);
   }
 
   .error-text {
-    color: #FCA5A5;
+    color: var(--color-danger-hover);
   }
 
   .messages {
@@ -496,6 +550,43 @@
     gap: 8px;
     font-size: 10px;
     color: var(--color-neutral-disabled);
+  }
+
+  .widget-footer {
+    flex-shrink: 0;
+    display: flex;
+    padding: 0;
+    background: color-mix(in srgb, var(--color-interactive) 8%, transparent);
+  }
+
+  .footer-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px 12px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-interactive);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+    transition: background 0.15s;
+  }
+
+  .footer-btn:hover {
+    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
+  }
+
+  .footer-btn:active {
+    background: color-mix(in srgb, var(--color-interactive) 22%, transparent);
+  }
+
+  .footer-btn .material-symbols-outlined {
+    font-size: 16px;
+    flex-shrink: 0;
   }
 
   @keyframes spin {

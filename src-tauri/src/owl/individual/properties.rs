@@ -36,6 +36,31 @@ pub fn replace_all_property_iris(
     Ok(())
 }
 
+/// Replace all literal (xsd:string) values for a predicate on an entity with a new set
+pub fn replace_all_property_literals(
+    conn: &mut Connection,
+    entity: &str,
+    predicate: &str,
+    values: &[&str],
+    origin: &str,
+) -> Result<()> {
+    let old = query::get_by_entity_predicate(conn, entity, predicate)?;
+    for triple in old.triples {
+        store::retract_triples(conn, &[Triple::new(entity, predicate, triple.object)], origin)?;
+    }
+    let new_triples: Vec<Triple> = values.iter()
+        .map(|value| Triple::new(entity, predicate, Object::Literal {
+            value: value.to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }))
+        .collect();
+    if !new_triples.is_empty() {
+        store::assert_triples(conn, &new_triples, origin)?;
+    }
+    Ok(())
+}
+
 /// Returns the first literal value of a property for an entity
 pub fn get_literal_property(
     conn: &Connection,

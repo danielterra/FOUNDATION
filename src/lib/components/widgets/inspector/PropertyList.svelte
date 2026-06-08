@@ -7,6 +7,7 @@
 
   let {
     properties, requiredFields = [], isClass = false,
+    entityId = null,
     openEntityInspector, onSave, onSaveReference,
     onClearProperty = null,
     onRemoveProperty = null,
@@ -101,6 +102,7 @@
           rangeClassIcon: prop.rangeClassIcon,
           isCalculated: prop.isCalculated ?? false,
           isQueryProperty: prop.isQueryProperty ?? false,
+          isPropertyPicker: prop.isPropertyPicker ?? false,
           queryConfig: prop.queryConfig ?? null,
           isEmpty: prop.isEmpty ?? false,
           minCount: prop.minCount ?? null,
@@ -193,6 +195,7 @@
         {detailGroup}
         {isClass}
         {now}
+        {entityId}
         {openEntityInspector}
         {onSave}
         {onSaveReference}
@@ -241,6 +244,7 @@
                 {detailGroup}
                 {isClass}
                 {now}
+                {entityId}
                 {openEntityInspector}
                 {onSave}
                 {onSaveReference}

@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use tauri_plugin_opener::OpenerExt;
+
 mod namespaces;
 pub mod diagnostics;
 mod commands;
@@ -104,10 +106,10 @@ pub struct SystemInfo {
 #[derive(Clone, serde::Serialize)]
 pub struct ImportProgress {
     pub stage: String,       // "core", "dtype", "foundation"
-    pub current_file: String, // Nome do arquivo sendo importado
-    pub current: u32,        // Arquivo atual (1-based)
-    pub total: u32,          // Total de arquivos
-    pub triples: u64,        // Total de triples importados até agora
+    pub current_file: String, // Name of the file being imported
+    pub current: u32,        // Current file (1-based)
+    pub total: u32,          // Total number of files
+    pub triples: u64,        // Total triples imported so far
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -127,6 +129,35 @@ pub fn run() {
         .manage(realtime::SubscriptionRegistry::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
+
+            let window_config = app.config().app.windows.first()
+                .expect("tauri.conf.json must declare at least one window");
+            let opener_handle = app_handle.clone();
+            let nav_handle = app_handle.clone();
+            tauri::WebviewWindowBuilder::from_config(&app_handle, window_config)?
+                .on_new_window(move |url, _features| {
+                    let scheme = url.scheme();
+                    if scheme == "http" || scheme == "https" || scheme == "mailto" {
+                        let _ = opener_handle.opener().open_url(url.as_str(), None::<&str>);
+                        tauri::webview::NewWindowResponse::Deny
+                    } else {
+                        tauri::webview::NewWindowResponse::Allow
+                    }
+                })
+                .on_navigation(move |url| {
+                    let scheme = url.scheme();
+                    if scheme == "http" || scheme == "https" || scheme == "mailto" {
+                        let host = url.host_str().unwrap_or("");
+                        if host == "localhost" || host == "ipc.localhost" || host == "asset.localhost" {
+                            return true;
+                        }
+                        let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
+                        return false;
+                    }
+                    true
+                })
+                .build()?;
+
             tauri::async_runtime::spawn(mcp::serve(app_handle.clone()));
             process_automation::trigger::register_listeners(app_handle.clone());
             process_automation::scheduler::listen_for_new_timers(app_handle.clone());
@@ -153,6 +184,7 @@ pub fn run() {
             commands::agent__set_ai_config,
             commands::inspector__get_entity,
             commands::inspector__get_backlink_page,
+            commands::inspector__get_applicable_properties,
             commands::owl__search_entities,
             commands::graph__get_node_type_config,
             commands::notification__count_pending,
@@ -220,6 +252,8 @@ pub fn run() {
             commands::connector__save_credential,
             commands::connector__get_credential_summary,
             commands::connector__test_auth,
+            commands::connector__get_oauth2_summary,
+            commands::connector__test_oauth2_auth,
             commands::connector__export_package,
             commands::connector__import_package,
             commands::automation__get_graph,

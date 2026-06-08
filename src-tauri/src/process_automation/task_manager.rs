@@ -162,7 +162,7 @@ pub(crate) fn maybe_execute_task_for_entity(app: AppHandle, entity_id: String) {
                 if let Some(executor) = app2.try_state::<DbExecutor>() {
                     let task_for_write = task_iri.clone();
                     let err_for_write = e.clone();
-                    let prefix = if is_config_error(&e) { "Erro de configuração" } else { "Erro de execução" };
+                    let prefix = if is_config_error(&e) { "Configuration error" } else { "Execution error" };
                     let result_write = executor.write(move |conn| -> Result<String> {
                         set_result(conn, &task_for_write, &format!("{}: {}", prefix, err_for_write))?;
                         set_status(conn, &task_for_write, "foundation:Rejected")?;
@@ -339,7 +339,7 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
                 .unwrap_or(None)
                 .is_none()
             {
-                let fallback = if last_text.is_empty() { "Concluído." } else { &last_text };
+                let fallback = if last_text.is_empty() { "Completed." } else { &last_text };
                 set_result(conn, &task_iri_done, fallback)?;
             }
             set_status(conn, &task_iri_done, "foundation:Completed")?;
@@ -379,7 +379,7 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
 }
 
 fn format_delegation_result(task_iri: &str, label: &str, result: &str) -> String {
-    format!("[Resultado da tarefa delegada: \"{}\" (`{}`)]\n\n{}", label, task_iri, result)
+    format!("[Delegated task result: \"{}\" (`{}`)]\n\n{}", label, task_iri, result)
 }
 
 async fn inject_and_trigger_conversation(
@@ -448,7 +448,7 @@ pub fn check_and_recur(conn: &mut rusqlite::Connection, task_iri: &str) {
         Some(r) => r,
         None => {
             crate::commands::log_backend("warn", &format!(
-                "[recurrence] RRULE inválida para {}: {}", task_iri, rrule_str
+                "[recurrence] invalid RRULE for {}: {}", task_iri, rrule_str
             ));
             return;
         }
@@ -459,7 +459,7 @@ pub fn check_and_recur(conn: &mut rusqlite::Connection, task_iri: &str) {
         Some(dt) => dt,
         None => {
             crate::commands::log_backend("error", &format!(
-                "[recurrence] não foi possível calcular próxima data para {}", task_iri
+                "[recurrence] could not compute next date for {}", task_iri
             ));
             return;
         }
@@ -520,20 +520,20 @@ pub fn check_and_recur(conn: &mut rusqlite::Connection, task_iri: &str) {
 
     if let Err(e) = store::assert_triples(conn, &triples, "recurrence") {
         crate::commands::log_backend("error", &format!(
-            "[recurrence] falha ao criar task: {}", e
+            "[recurrence] failed to create task: {}", e
         ));
         return;
     }
 
     if let Err(e) = crate::owl::replace_all_property_iris(conn, task_iri, "foundation:nextTask", &[&new_iri], "recurrence") {
         crate::commands::log_backend("error", &format!(
-            "[recurrence] falha ao setar nextTask: {}", e
+            "[recurrence] failed to set nextTask: {}", e
         ));
         return;
     }
 
     crate::commands::log_backend("info", &format!(
-        "[recurrence] criada {} a partir de {} ({})", new_iri, task_iri, next_iso
+        "[recurrence] created {} from {} ({})", new_iri, task_iri, next_iso
     ));
 }
 
@@ -616,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn test_set_started_at_persiste_datetime() {
+    fn test_set_started_at_persists_datetime() {
         let mut conn = setup_test_db();
         insert(&mut conn, &task_triples("foundation:Task_test1", Some("foundation:Agent1")));
 
@@ -625,7 +625,7 @@ mod tests {
 
         let started = get_literal_property(&conn, "foundation:Task_test1", "foundation:startedAt")
             .unwrap();
-        assert!(started.is_some(), "deve ter startedAt após set_started_at");
+        assert!(started.is_some(), "must have startedAt after set_started_at");
     }
 
     #[test]
@@ -635,7 +635,7 @@ mod tests {
 
         let result = get_iri_property(&conn, "foundation:Task_noagent", "foundation:assignee")
             .unwrap();
-        assert!(result.is_none(), "task sem assignee deve retornar None");
+        assert!(result.is_none(), "task without assignee must return None");
     }
 
     fn task_with_result(task_iri: &str) -> Vec<Triple> {
@@ -645,32 +645,32 @@ mod tests {
                 value: task_iri.to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
             Triple::new(task_iri, "foundation:result", Object::Literal {
-                value: "resultado concluído".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+                value: "completed result".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
         ]
     }
 
     #[test]
-    fn task_sem_recorrencia_nao_cria_nova_task() {
+    fn task_without_recurrence_does_not_create_new_task() {
         let mut conn = setup_test_db();
         insert(&mut conn, &task_with_result("foundation:Task_norec"));
 
         check_and_recur(&mut conn, "foundation:Task_norec");
 
         let next = get_iri_property(&conn, "foundation:Task_norec", "foundation:nextTask").unwrap();
-        assert!(next.is_none(), "sem recorrência não deve criar nextTask");
+        assert!(next.is_none(), "without recurrence it must not create nextTask");
     }
 
     #[test]
-    fn task_recorrente_concluida_cria_nova_task_pendente() {
+    fn completed_recurring_task_creates_new_pending_task() {
         let mut conn = setup_test_db();
         insert(&mut conn, &[
             Triple::new("foundation:Task_rec1", "rdf:type", Object::Iri("foundation:Task".to_string())),
             Triple::new("foundation:Task_rec1", "rdfs:label", Object::Literal {
-                value: "Reunião semanal".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+                value: "Weekly meeting".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
             Triple::new("foundation:Task_rec1", "foundation:result", Object::Literal {
-                value: "concluído".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+                value: "completed".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
             Triple::new("foundation:Task_rec1", "foundation:recurrence", Object::Literal {
                 value: "FREQ=DAILY;INTERVAL=1".to_string(), datatype: Some("xsd:string".to_string()), language: None,

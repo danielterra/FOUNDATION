@@ -10,6 +10,7 @@
   import NotificationBell from '$lib/components/NotificationBell.svelte';
   import HeaderActions from '$lib/components/HeaderActions.svelte';
   import { appState } from '$lib/appState.svelte';
+  import { openEntity } from '$lib/blackboard';
   import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
 
@@ -75,15 +76,9 @@
   async function handleSearchResult(entityId) {
     if (!activeBlackboardIri) return;
     try {
-      await invoke('widget_blackboard__add_widget', {
-        widgetType: 'inspector',
-        entityId,
-        position: null,
-        size: null,
-        blackboardId: activeBlackboardIri
-      });
+      await openEntity(entityId, activeConversationIri);
     } catch (e) {
-      console.error('Failed to open inspector:', e);
+      console.error('Failed to open entity:', e);
     }
   }
 

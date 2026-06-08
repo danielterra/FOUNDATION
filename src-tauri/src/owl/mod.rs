@@ -44,11 +44,12 @@ pub fn assert_raw_triples(conn: &mut Connection, triples: &[Triple], origin: &st
 
 pub use individual::{
     is_system_locked, set_system_locked, check_system_locked,
-    get_all_iri_properties, replace_all_property_iris,
+    get_all_iri_properties, replace_all_property_iris, replace_all_property_literals,
     get_literal_property, get_all_literal_properties, get_iri_property,
     has_property_iri, has_property_literal,
     is_instance_of, is_subclass_of, find_entities_with_property, find_entities_with_predicate,
     touch, LAST_UPDATED_AT,
+    materialize_individual_shallow, ShallowValue,
 };
 
 #[derive(Debug)]

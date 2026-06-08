@@ -3,9 +3,9 @@ use tokio::runtime::Handle;
 
 use crate::ai::functions::{execute_tool, ToolCall};
 use crate::commands::log_backend;
-use crate::owl::{get_literal_property, DbExecutor};
+use crate::owl::{get_iri_property, get_literal_property, replace_all_property_iris, replace_all_property_literals, DbExecutor};
 
-use super::executor::{interpolate, ExecutionContext};
+use super::executor::{interpolate, split_iri_lines, ExecutionContext};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -27,16 +27,64 @@ pub async fn execute_code_task(
         })
         .await?;
 
+    let output_property_iri = executor
+        .read({
+            let node_iri = node_iri.to_string();
+            move |conn| {
+                get_iri_property(conn, &node_iri, "foundation:outputProperty")
+                    .map_err(|e| e.to_string())
+            }
+        })
+        .await?;
+
     let script = interpolate(&script, ctx);
     let ctx_clone = ctx.clone();
     let app_clone = app.clone();
     let handle = Handle::current();
 
-    tokio::task::spawn_blocking(move || {
+    let output = tokio::task::spawn_blocking(move || {
         run_script(&script, &ctx_clone, &app_clone, &handle)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+
+    if let (Some(prop), Some(control)) = (output_property_iri, ctx.get("self").cloned()) {
+        if !output.is_empty() {
+            let prop_log = prop.clone();
+            let control_log = control.clone();
+            let out_clone = output.clone();
+            executor
+                .write(move |conn| {
+                    match split_iri_lines(&out_clone) {
+                        Some(iris) => {
+                            let refs: Vec<&str> = iris.iter().map(|s| s.as_str()).collect();
+                            replace_all_property_iris(conn, &control, &prop, &refs, "process_automation")
+                                .map_err(|e| e.to_string())?;
+                        }
+                        None => {
+                            replace_all_property_literals(conn, &control, &prop, &[out_clone.as_str()], "process_automation")
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
+                    Ok(String::new())
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    log_backend("error", &format!(
+                        "[code_task] failed to write output to outputProperty {} on {}: {}",
+                        prop_log, control_log, e
+                    ));
+                    String::new()
+                });
+        } else {
+            log_backend("warn", &format!(
+                "[code_task] outputProperty {} configured but script returned empty string — controlInstance {} was not written",
+                prop, control
+            ));
+        }
+    }
+
+    Ok(output)
 }
 
 fn json_value_to_dynamic(v: serde_json::Value) -> rhai::Dynamic {
@@ -155,10 +203,120 @@ fn run_script(
             .join(&sep)
     });
 
+    engine.register_fn("owl_get_property", {
+        let app = app.clone();
+        let handle = handle.clone();
+        move |iri: String, prop_iri: String| -> String {
+            let args = serde_json::json!({"iris": [iri]});
+            let call = ToolCall { name: "describe_individual".to_string(), arguments: args };
+            let executor = app.state::<DbExecutor>();
+            let result_json = handle
+                .block_on(executor.read(move |conn| {
+                    let r = crate::ai::functions::execute_read_only_tool(conn, &call);
+                    serde_json::to_string(&r.result).map_err(|e| e.to_string())
+                }))
+                .unwrap_or_default();
+            let v: serde_json::Value = serde_json::from_str(&result_json).unwrap_or(serde_json::Value::Null);
+            v["individuals"][0]["properties"]
+                .as_array()
+                .and_then(|arr| arr.iter().find(|p| p["property"].as_str() == Some(&prop_iri)))
+                .and_then(|p| p["value"].as_str())
+                .unwrap_or_default()
+                .to_string()
+        }
+    });
+
+    engine.register_fn("owl_set_property", {
+        let app = app.clone();
+        let handle = handle.clone();
+        move |iri: String, prop_iri: String, value: String| -> String {
+            let tool_name = "replace_property_values".to_string();
+            if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
+                log_backend("info", &format!("[code_task] dry_run: intercepted owl_set_property on {} {}", iri, prop_iri));
+                return dry_run_mock(&tool_name);
+            }
+            let args = serde_json::json!({
+                "operations": [{"iri": iri, "property_iri": prop_iri, "values": [value]}]
+            });
+            let call = ToolCall { name: tool_name, arguments: args };
+            let executor = app.state::<DbExecutor>();
+            let app_inner = app.clone();
+            handle
+                .block_on(executor.write(move |conn| {
+                    let r = execute_tool(conn, &call, Some(&app_inner), None);
+                    serde_json::to_string(&serde_json::json!({
+                        "success": r.success,
+                        "result": r.result,
+                        "error": r.error,
+                    }))
+                    .map_err(|e| e.to_string())
+                }))
+                .unwrap_or_else(|e| {
+                    serde_json::json!({"success": false, "result": null, "error": e}).to_string()
+                })
+        }
+    });
+
+    engine.register_fn("owl_assert", {
+        let app = app.clone();
+        let handle = handle.clone();
+        move |class_iri: String, label: String| -> String {
+            let tool_name = "assert_individual".to_string();
+            if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
+                log_backend("info", &format!("[code_task] dry_run: intercepted owl_assert for class {}", class_iri));
+                return dry_run_mock(&tool_name);
+            }
+            let args = serde_json::json!({
+                "operations": [{"class_iri": class_iri, "label": label}]
+            });
+            let call = ToolCall { name: tool_name, arguments: args };
+            let executor = app.state::<DbExecutor>();
+            let app_inner = app.clone();
+            let result_json = handle
+                .block_on(executor.write(move |conn| {
+                    let r = execute_tool(conn, &call, Some(&app_inner), None);
+                    serde_json::to_string(&serde_json::json!({
+                        "success": r.success,
+                        "result": r.result,
+                        "error": r.error,
+                    }))
+                    .map_err(|e| e.to_string())
+                }))
+                .unwrap_or_else(|e| {
+                    serde_json::json!({"success": false, "result": null, "error": e}).to_string()
+                });
+            let v: serde_json::Value = serde_json::from_str(&result_json).unwrap_or(serde_json::Value::Null);
+            v["result"]["results"][0]["iri"].as_str().unwrap_or("").to_string()
+        }
+    });
+
+    engine.register_fn("owl_read_file", |path: String| -> String {
+        std::fs::read_to_string(&path).unwrap_or_default()
+    });
+
     log_backend("info", "[code_task] Evaluating Rhai script");
 
-    let dynamic: rhai::Dynamic = engine.eval(script).map_err(|e| e.to_string())?;
+    let dynamic: rhai::Dynamic = engine.eval(script).map_err(|e| extract_rhai_message(*e))?;
     Ok(dynamic.try_cast::<String>().unwrap_or_default())
+}
+
+/// Extracts a human-readable message from a Rhai evaluation error.
+///
+/// For `throw "msg"` the inner Dynamic is a string; for other runtime errors
+/// the message is taken from the inner Dynamic's string representation when
+/// available, and falls back to the full error display otherwise.
+fn extract_rhai_message(err: rhai::EvalAltResult) -> String {
+    match err {
+        rhai::EvalAltResult::ErrorRuntime(val, _) => {
+            let s = val.clone().try_cast::<String>().unwrap_or_else(|| val.to_string());
+            if s.is_empty() {
+                "Script runtime error".to_string()
+            } else {
+                s
+            }
+        }
+        other => other.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -287,5 +445,25 @@ mod tests {
             .unwrap();
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(v["result"]["live"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn extract_rhai_message_returns_thrown_string_without_position_noise() {
+        let mut engine = rhai::Engine::new();
+        engine.set_max_operations(1_000_000);
+        let err = engine.eval::<rhai::Dynamic>(r#"throw "validation failed""#)
+            .unwrap_err();
+        let msg = extract_rhai_message(*err);
+        assert_eq!(msg, "validation failed", "expected clean message, got: {}", msg);
+    }
+
+    #[test]
+    fn extract_rhai_message_non_runtime_falls_back_to_display() {
+        let mut engine = rhai::Engine::new();
+        engine.set_max_operations(1_000_000);
+        let err = engine.eval::<rhai::Dynamic>("let x = ;")
+            .unwrap_err();
+        let msg = extract_rhai_message(*err);
+        assert!(!msg.is_empty(), "expected non-empty fallback message");
     }
 }

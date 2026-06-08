@@ -3,9 +3,9 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::ai::{ChatMessage};
 use crate::ai::providers::{MessageContent, ContentBlock, ToolDefinition};
 use crate::ai::functions::get_tool_definitions;
-use crate::owl::{DbExecutor, get_literal_property, get_iri_property, get_all_iri_properties, Individual, Object};
+use crate::owl::{DbExecutor, get_literal_property, get_iri_property, get_all_iri_properties, replace_all_property_iris, replace_all_property_literals, Individual, Object};
 
-use super::executor::ExecutionContext;
+use super::executor::{ExecutionContext, interpolate_with_db};
 use super::tool_loop::{ToolLoopConfig, CompletionToolConfig, run_tool_loop};
 use super::agent_runner::resolve_agent_config;
 
@@ -48,12 +48,28 @@ pub(super) fn to_storage_blocks(content: &MessageContent) -> Vec<crate::commands
 fn task_complete_tool(output_class: Option<&str>) -> ToolDefinition {
     let (description, output_iri_description) = match output_class {
         Some(class) => (
-            format!("Signal explicit completion of this AgentTask. You MUST pass the IRI of a {} individual in output_iri — the executor forwards it to the next step as its input.", class),
-            format!("The IRI of the {} individual produced by this task (e.g. 'foundation:Task_1234567890'). Must exist in the ontology before calling this tool.", class),
+            format!(
+                "Signal explicit completion of this AgentTask. \
+                 Use output_iri when the deliverable is an ontology entity (IRI of a {} individual). \
+                 Use output_value when the deliverable is textual (a summary, string, or any free-form text). \
+                 Pass exactly one of the two; the executor stores it on the configured output property.",
+                class
+            ),
+            format!(
+                "The IRI of the {} individual produced by this task (e.g. 'foundation:Task_1234567890'). \
+                 Must exist in the ontology before calling this tool. \
+                 Use this when the target property is an ObjectProperty (links to an entity). \
+                 Use output_value instead when the target property is a DatatypeProperty (stores text).",
+                class
+            ),
         ),
         None => (
-            "Signal explicit completion of this AgentTask. Pass the single output IRI (the main entity produced by this task) in output_iri — the executor forwards it to the next step as its input.".to_string(),
-            "The single IRI produced by this task, forwarded as input to the next step.".to_string(),
+            "Signal explicit completion of this AgentTask. \
+             Use output_iri when the deliverable is an ontology entity/IRI (ObjectProperty target). \
+             Use output_value when the deliverable is free-form text (DatatypeProperty target, e.g. a summary or description). \
+             Pass exactly one of the two; the executor stores it on the configured output property.".to_string(),
+            "The single IRI produced by this task (e.g. 'foundation:Foo_123'), forwarded as input to the next step. \
+             Use this only when the target property is an ObjectProperty. Use output_value for text deliverables.".to_string(),
         ),
     };
     ToolDefinition {
@@ -63,19 +79,15 @@ fn task_complete_tool(output_class: Option<&str>) -> ToolDefinition {
             "type": "object",
             "properties": {
                 "output_iri": { "type": "string", "description": output_iri_description },
+                "output_value": {
+                    "type": "string",
+                    "description": "The textual deliverable produced by this task (a summary, description, or any string value). Use this when the target output property is a DatatypeProperty. Use output_iri instead when the target property links to an ontology entity."
+                },
                 "message": { "type": "string", "description": "Optional message summarising the outcome." }
             },
             "required": []
         }),
     }
-}
-
-fn interpolate(template: &str, ctx: &ExecutionContext) -> String {
-    let mut result = template.to_string();
-    for (key, value) in ctx {
-        result = result.replace(&format!("{{{{{}}}}}", key), value);
-    }
-    result
 }
 
 pub async fn create_conversation(
@@ -135,7 +147,7 @@ pub async fn execute_agent_task(
 ) -> Result<String> {
     let executor = app.state::<DbExecutor>();
 
-    let (label, description, agent_iri, allowed_tool_names, output_class) = executor
+    let (label, instructions, agent_iri, allowed_tool_names, output_class, output_property_iri) = executor
         .read({
             let node_iri = node_iri.to_string();
             move |conn| {
@@ -143,7 +155,7 @@ pub async fn execute_agent_task(
                     .map_err(|e| e.to_string())?
                     .unwrap_or_else(|| node_iri.clone());
 
-                let description = get_literal_property(conn, &node_iri, "rdfs:comment")
+                let instructions = get_literal_property(conn, &node_iri, "foundation:instructions")
                     .map_err(|e| e.to_string())?
                     .unwrap_or_default();
 
@@ -160,14 +172,17 @@ pub async fn execute_agent_task(
                 let output_class = get_iri_property(conn, &node_iri, "foundation:outputClass")
                     .map_err(|e| e.to_string())?;
 
-                Ok((label, description, agent_iri, allowed_tool_names, output_class))
+                let output_property_iri = get_iri_property(conn, &node_iri, "foundation:outputProperty")
+                    .map_err(|e| e.to_string())?;
+
+                Ok((label, instructions, agent_iri, allowed_tool_names, output_class, output_property_iri))
             }
         })
         .await?;
 
     let agent_config = resolve_agent_config(&executor, &agent_iri).await?;
 
-    let resolved_description = interpolate(&description, ctx);
+    let resolved_instructions = interpolate_with_db(&instructions, ctx, &executor).await;
 
     let ctx_section = if ctx.is_empty() {
         String::new()
@@ -232,7 +247,7 @@ pub async fn execute_agent_task(
     let current_datetime = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let task_prompt = format!(
         "currentDateTime: {}\n\nYou are executing the automation task: **{}**{}\n\n## Instructions\n{}\n\nComplete this task and respond with the result.",
-        current_datetime, label, ctx_section, resolved_description
+        current_datetime, label, ctx_section, resolved_instructions
     );
 
     let mut tools: Vec<ToolDefinition> = if allowed_tool_names.is_empty() {
@@ -273,6 +288,54 @@ pub async fn execute_agent_task(
 
     let output = run_tool_loop(&executor, &agent_config.provider, initial_messages, loop_config).await?;
 
+    let deliverable_iri = output.completion.as_ref()
+        .and_then(|c| {
+            let s = c.output_iri.as_str();
+            if !s.is_empty() && s.contains(':') && !s.contains(' ') { Some(s.to_string()) } else { None }
+        });
+
+    let deliverable_text = output.completion.as_ref()
+        .and_then(|c| {
+            if !c.output_value.is_empty() { Some(c.output_value.clone()) } else { None }
+        });
+
+    if let (Some(prop), Some(control)) = (output_property_iri, ctx.get("self").cloned()) {
+        let prop_log = prop.clone();
+        let control_log = control.clone();
+        if let Some(deliverable) = deliverable_iri {
+            let prop_clone = prop.clone();
+            let control_clone = control.clone();
+            executor.write(move |conn| {
+                replace_all_property_iris(conn, &control_clone, &prop_clone, &[deliverable.as_str()], "process_automation")
+                    .map_err(|e| e.to_string())?;
+                Ok(String::new())
+            }).await.unwrap_or_else(|e| {
+                crate::commands::log_backend("error", &format!(
+                    "[agent_task] failed to write deliverable IRI to outputProperty {}: {}", prop_log, e
+                ));
+                String::new()
+            });
+        } else if let Some(text) = deliverable_text {
+            let prop_clone = prop.clone();
+            let control_clone = control.clone();
+            executor.write(move |conn| {
+                replace_all_property_literals(conn, &control_clone, &prop_clone, &[text.as_str()], "process_automation")
+                    .map_err(|e| e.to_string())?;
+                Ok(String::new())
+            }).await.unwrap_or_else(|e| {
+                crate::commands::log_backend("error", &format!(
+                    "[agent_task] failed to write deliverable text to outputProperty {}: {}", prop_log, e
+                ));
+                String::new()
+            });
+        } else {
+            crate::commands::log_backend("warn", &format!(
+                "[agent_task] outputProperty {} configured but no deliverable (output_iri/output_value) produced — controlInstance {} was not written",
+                prop_log, control_log
+            ));
+        }
+    }
+
     let conv_iri = create_conversation(&executor, step_iri, "foundation:generatedByStep", &label, Some(&agent_iri)).await;
     persist_messages(&executor, &conv_iri, &output.messages, &agent_config.model_identifier).await;
 
@@ -283,7 +346,7 @@ pub async fn execute_agent_task(
     })).ok();
 
     match output.completion {
-        Some(c) => Ok(if !c.output_iri.is_empty() { c.output_iri } else { c.message }),
+        Some(c) => Ok(if !c.output_iri.is_empty() { c.output_iri } else if !c.output_value.is_empty() { c.output_value } else { c.message }),
         None => Ok(output.last_text),
     }
 }

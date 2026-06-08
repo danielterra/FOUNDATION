@@ -97,7 +97,7 @@ pub async fn run_conversation_loop(
     // instead of reloading the full history from DB every turn.
     if !silent {
         app.emit("ai-status", serde_json::json!({
-            "status": "Carregando histórico...", "phase": "prep", "conversationId": conversation_id
+            "status": "Loading history...", "phase": "prep", "conversationId": conversation_id
         })).ok();
     }
     let history_start = std::time::Instant::now();
@@ -314,7 +314,7 @@ pub async fn run_conversation_loop(
 
         if !silent {
             app.emit("ai-status", serde_json::json!({
-                "status": "Aguardando resposta...",
+                "status": "Waiting for response...",
                 "phase": "llm",
                 "conversationId": conversation_id,
             })).ok();
@@ -358,12 +358,12 @@ pub async fn run_conversation_loop(
             None => {
                 none_stop_retries += 1;
                 if none_stop_retries >= 3 {
-                    loop_error = Some("API retornou resposta truncada (stop_reason=None) 3 vezes consecutivas".to_string());
+                    loop_error = Some("API returned a truncated response (stop_reason=None) 3 consecutive times".to_string());
                     termination_reason = "error";
                     break 'main;
                 }
                 log_backend("warn", &format!(
-                    "[ENGINE] stop_reason=None — resposta truncada, retentativa {}/3",
+                    "[ENGINE] stop_reason=None — truncated response, retry {}/3",
                     none_stop_retries
                 ));
                 continue;
@@ -415,11 +415,11 @@ pub async fn run_conversation_loop(
             *count += 1;
             if *count >= 3 {
                 log_backend("warn", &format!(
-                    "[ENGINE] Loop detectado — '{}' chamada {} vezes com os mesmos argumentos",
+                    "[ENGINE] Loop detected — '{}' called {} times with the same arguments",
                     tc.name, count
                 ));
                 loop_error = Some(format!(
-                    "Loop detectado: a ferramenta '{}' foi chamada {} vezes consecutivas com os mesmos argumentos",
+                    "Loop detected: the tool '{}' was called {} consecutive times with the same arguments",
                     tc.name, count
                 ));
                 termination_reason = "loop_detected";

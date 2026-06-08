@@ -196,7 +196,16 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             (None, None, effective_dt, None)
         };
 
-        let (range_class_iri, range_class_label, range_class_icon) = if is_object_property {
+        let is_property_picker = if is_object_property {
+            matches!(
+                prop_ranges.first().map(|s| s.as_str()),
+                Some("rdf:Property") | Some("owl:ObjectProperty") | Some("owl:DatatypeProperty")
+            )
+        } else {
+            false
+        };
+
+        let (range_class_iri, range_class_label, range_class_icon) = if is_object_property && !is_property_picker {
             prop_ranges.first().map(|range_iri| {
                 let range_thing = thing_cache.get(range_iri)
                     .cloned()
@@ -273,6 +282,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             max_count: None,
             ai_behavior_rules,
             query_config: None,
+            is_property_picker: if is_property_picker { Some(true) } else { None },
         });
     }
 
@@ -318,7 +328,16 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         (None, None)
                     };
 
-                    let (range_class_iri, range_class_label, range_class_icon) = if is_object_property {
+                    let is_property_picker = if is_object_property {
+                        matches!(
+                            prop.ranges.first().map(|s| s.as_str()),
+                            Some("rdf:Property") | Some("owl:ObjectProperty") | Some("owl:DatatypeProperty")
+                        )
+                    } else {
+                        false
+                    };
+
+                    let (range_class_iri, range_class_label, range_class_icon) = if is_object_property && !is_property_picker {
                         prop.ranges.first().map(|range_iri| {
                             let range_thing = thing_cache.get(range_iri)
                                 .cloned()
@@ -365,6 +384,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         max_count: None,
                         ai_behavior_rules,
                         query_config: None,
+                        is_property_picker: if is_property_picker { Some(true) } else { None },
                     });
                 }
             }
@@ -654,6 +674,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             max_count: None,
             ai_behavior_rules: None,
             query_config: None,
+            is_property_picker: None,
         });
     }
 

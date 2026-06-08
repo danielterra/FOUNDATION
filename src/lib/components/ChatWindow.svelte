@@ -2,6 +2,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { onMount, tick } from 'svelte';
 	import { createEntitySubscription } from '$lib/realtime/subscriptions';
+	import { openEntity } from '$lib/blackboard';
 	import { marked } from 'marked';
 	import Card from './Card.svelte';
 	import ChatAttachmentPreview from './ChatAttachmentPreview.svelte';
@@ -179,7 +180,11 @@
 			// Skip if we already have it (idempotent).
 			if (messages.some(m => m.iri === newIri)) return;
 
+			// Capture version before any await so a concurrent conversation switch
+			// can be detected; results from a stale conversation are discarded.
+			const joinedSetVersion = loadMessagesVersion;
 			const unit = await invoke('chat__get_message_by_iri', { messageIri: newIri }).catch(() => null);
+			if (loadMessagesVersion !== joinedSetVersion) return;
 			if (!unit) {
 				// question or pure tool_result — reload the full set once to resolve the answer.
 				const version = ++loadMessagesVersion;
@@ -438,16 +443,7 @@
 	}
 
 	async function openEntityInspector(entityIri) {
-		try {
-			await invoke('widget_blackboard__add_widget', {
-				widgetType: '',
-				entityId: entityIri,
-				position: null,
-				size: null,
-				conversationId: activeConversationIri
-			});
-		} catch (_err) {
-		}
+		await openEntity(entityIri, activeConversationIri).catch(() => {});
 	}
 
 	async function openAgentInspector() {
@@ -525,16 +521,17 @@
 		const version = ++loadMessagesVersion;
 		const convIri = activeConversationIri;
 		try {
-			// Fetch messages and the max(tx) of this snapshot in parallel.
-			const [result, snapTx] = await Promise.all([
-				invoke('chat__get_recent_messages', {
-					limit: messageLimit,
-					conversationId: convIri,
-				}),
-				invoke('chat__get_conversation_snapshot_tx', {
-					conversationId: convIri,
-				}).catch(() => 0),
-			]);
+			// Serial fetch: snapshotTx must be captured AFTER get_recent_messages so it
+			// represents a TX <= the max TX already present in the returned messages —
+			// any message with tx == snapshotTx is already in the result set, and any
+			// tx > snapshotTx will be caught by replayMissed().
+			const result = await invoke('chat__get_recent_messages', {
+				limit: messageLimit,
+				conversationId: convIri,
+			});
+			const snapTx = await invoke('chat__get_conversation_snapshot_tx', {
+				conversationId: convIri,
+			}).catch(() => 0);
 			if (version !== loadMessagesVersion) return;
 			hasMoreMessages = result.messages.length === messageLimit;
 			messages = result.messages;

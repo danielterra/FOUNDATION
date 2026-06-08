@@ -64,7 +64,7 @@ async fn run_compaction(
     cfg: CompactionConfig,
 ) -> Result<(), String> {
     app.emit("ai-status", serde_json::json!({
-        "status": "Compactando histórico...",
+        "status": "Compacting history...",
         "conversationId": conversation_id
     })).ok();
 
@@ -107,10 +107,10 @@ async fn run_compaction(
     }
 
     let prompt = format!(
-        "Crie um resumo compacto desta conversa preservando: objetivos do usuário, \
-         decisões tomadas, contexto técnico importante, e IRIs/entidades relevantes mencionados. \
-         Escreva em português, de forma densa e factual, sem introdução ou conclusão.\n\n\
-         CONVERSA:\n{}", history_text
+        "Create a compact summary of this conversation preserving: the user's goals, \
+         decisions made, important technical context, and relevant IRIs/entities mentioned. \
+         Write densely and factually, without introduction or conclusion.\n\n\
+         CONVERSATION:\n{}", history_text
     );
 
     let provider = build_provider(&cfg);

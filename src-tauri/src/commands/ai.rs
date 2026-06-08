@@ -240,20 +240,20 @@ pub async fn ai__validate_provider_key(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|e| format!("Falha ao criar cliente HTTP: {}", e))?;
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
     let response = client
         .get(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .send()
         .await
-        .map_err(|e| format!("URL inacessível ({}): {}", url, e))?;
+        .map_err(|e| format!("URL unreachable ({}): {}", url, e))?;
 
     match response.status().as_u16() {
         200..=299 => Ok(()),
-        401 => Err("Chave de API inválida (401 Unauthorized).".to_string()),
-        403 => Err("Acesso negado (403 Forbidden). Verifique a chave de API.".to_string()),
-        code => Err(format!("Falha na validação: HTTP {}.", code)),
+        401 => Err("Invalid API key (401 Unauthorized).".to_string()),
+        403 => Err("Access denied (403 Forbidden). Check the API key.".to_string()),
+        code => Err(format!("Validation failed: HTTP {}.", code)),
     }
 }
 

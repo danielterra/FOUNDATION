@@ -15,6 +15,7 @@
   import AIConversationWidget from './AIConversationWidget.svelte';
   import NotificationCenterWidget from './NotificationCenterWidget.svelte';
   import AICallHistoryWidget from './AICallHistoryWidget.svelte';
+  import EmailViewerWidget from './EmailViewerWidget.svelte';
   import WidgetSidebar from './WidgetSidebar.svelte';
 
   let { activeBlackboardIri = null, activeConversationIri = null } = $props();
@@ -450,6 +451,8 @@
       <NotificationCenterWidget widgetId={widget.id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} conversationIri={activeConversationIri} />
     {:else if widget.widget_type === 'ai_call_history'}
       <AICallHistoryWidget widgetId={widget.id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
+    {:else if widget.widget_type === 'email_viewer'}
+      <EmailViewerWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {/if}
   </div>
 {/each}
