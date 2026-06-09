@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{AppHandle, Listener, Manager};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc::unbounded_channel, mpsc::UnboundedSender, oneshot};
 use crate::owl::{DbExecutor, query_property};
 use crate::eavto::{store, Triple, Object};
 
@@ -10,21 +10,16 @@ const DRAIN_TIMEOUT_SECS: u64 = 10;
 #[derive(Debug)]
 pub enum WorkerCommand {
     Enqueue { entity_iri: String },
-    /// Internal: signals that all outstanding jobs for `entity_iri` have been
-    /// processed. The worker sends this to itself after `process_entity_update`
-    /// returns so that `await_drained` callers are notified atomically.
-    Drained { entity_iri: String },
 }
 
 pub struct QueryWorker {
-    pub sender: mpsc::Sender<WorkerCommand>,
+    pub sender: UnboundedSender<WorkerCommand>,
     waiters: Mutex<HashMap<String, Vec<oneshot::Sender<()>>>>,
 }
 
 impl QueryWorker {
     pub fn spawn(app: AppHandle, executor: DbExecutor) -> Self {
-        let (tx, mut rx) = mpsc::channel::<WorkerCommand>(1024);
-        let self_tx = tx.clone();
+        let (tx, mut rx) = unbounded_channel::<WorkerCommand>();
 
         let worker = QueryWorker {
             sender: tx,
@@ -32,25 +27,18 @@ impl QueryWorker {
         };
 
         tauri::async_runtime::spawn(async move {
-            while let Some(cmd) = rx.recv().await {
-                match cmd {
-                    WorkerCommand::Enqueue { entity_iri } => {
-                        process_entity_update(&app, &executor, &entity_iri).await;
-                        let _ = self_tx.try_send(WorkerCommand::Drained {
-                            entity_iri,
-                        });
-                    }
-                    WorkerCommand::Drained { entity_iri } => {
-                        if let Some(w) = app.try_state::<QueryWorker>() {
-                            let senders: Vec<oneshot::Sender<()>> = w
-                                .waiters
-                                .lock()
-                                .map(|mut map| map.remove(&entity_iri).unwrap_or_default())
-                                .unwrap_or_default();
-                            for s in senders {
-                                let _ = s.send(());
-                            }
-                        }
+            while let Some(WorkerCommand::Enqueue { entity_iri }) = rx.recv().await {
+                process_entity_update(&app, &executor, &entity_iri).await;
+                // Resolve waiters inline — no channel round-trip that could be
+                // silently dropped when the channel is saturated.
+                if let Some(w) = app.try_state::<QueryWorker>() {
+                    let senders: Vec<oneshot::Sender<()>> = w
+                        .waiters
+                        .lock()
+                        .map(|mut map| map.remove(&entity_iri).unwrap_or_default())
+                        .unwrap_or_default();
+                    for s in senders {
+                        let _ = s.send(());
                     }
                 }
             }
@@ -70,9 +58,11 @@ impl QueryWorker {
             let mut map = self.waiters.lock().map_err(|e| e.to_string())?;
             map.entry(entity_iri.to_string()).or_default().push(tx);
         }
-        let _ = self.sender.try_send(WorkerCommand::Enqueue {
-            entity_iri: entity_iri.to_string(),
-        });
+        self.sender
+            .send(WorkerCommand::Enqueue {
+                entity_iri: entity_iri.to_string(),
+            })
+            .map_err(|_| format!("query_worker channel closed for {}", entity_iri))?;
         tokio::time::timeout(
             std::time::Duration::from_secs(DRAIN_TIMEOUT_SECS),
             rx,
@@ -97,7 +87,7 @@ pub fn register_listener(app: AppHandle) {
             Some(w) => w,
             None => return,
         };
-        let _ = worker.sender.try_send(WorkerCommand::Enqueue { entity_iri });
+        let _ = worker.sender.send(WorkerCommand::Enqueue { entity_iri });
     });
 }
 
