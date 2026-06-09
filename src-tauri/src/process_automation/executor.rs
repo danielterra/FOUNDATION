@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use chrono::Utc;
+use futures_util::FutureExt;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::log_backend;
@@ -245,6 +246,16 @@ pub(super) fn looks_like_iri(s: &str) -> bool {
     s.contains(':') && !s.contains(' ')
 }
 
+/// Strips leading and trailing punctuation that prose or markdown can attach to
+/// an IRI token (backticks, brackets, parentheses, quotes, commas, periods,
+/// semicolons). The inner colon that separates namespace from local-name is
+/// never removed: `strip_token_punctuation` only peels characters from the
+/// edges, so `foundation:Task_123` is left intact while `` `foundation:Task_123` ``
+/// becomes `foundation:Task_123`.
+pub(super) fn strip_token_punctuation(s: &str) -> &str {
+    s.trim_matches(|c: char| matches!(c, '`' | '\'' | '"' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | '.' | ';' | ':'))
+}
+
 /// Parses `controlInstanceDefaults` JSON from `start_event_iri` and writes each key→value
 /// pair onto `instance_iri`. Values that look like IRIs are written as ObjectProperty triples;
 /// all others are written as xsd:string literals.
@@ -386,8 +397,16 @@ fn finish_step_record(
                     .map_err(|e| e.to_string())?;
                 let embedded_iris: Vec<Object> = val
                     .split_whitespace()
-                    .filter(|token| looks_like_iri(token))
-                    .map(|token| Object::Iri(token.to_string()))
+                    .filter_map(|token| {
+                        let clean = strip_token_punctuation(token);
+                        if !looks_like_iri(clean) {
+                            return None;
+                        }
+                        let exists = crate::owl::get_iri_property(conn, clean, "rdf:type")
+                            .map(|opt| opt.is_some())
+                            .unwrap_or(false);
+                        if exists { Some(Object::Iri(clean.to_string())) } else { None }
+                    })
                     .collect();
                 if !embedded_iris.is_empty() {
                     ind.add_property(conn, "foundation:executionOutput",
@@ -688,6 +707,11 @@ async fn execute_nodes(
             .unwrap_or_else(|_| node_iri.clone());
 
         let control_instance_iri = ctx.get("self").cloned();
+        let iteration_of = ctx.get("__iterationOf").cloned();
+        let iteration_index: Option<usize> = ctx.get("__iterationIndex")
+            .and_then(|v| v.parse().ok());
+        let iteration_total: Option<usize> = ctx.get("__iterationTotal")
+            .and_then(|v| v.parse().ok());
         let step_iri = executor
             .write({
                 let exec_iri = exec_iri.to_string();
@@ -697,13 +721,25 @@ async fn execute_nodes(
             })
             .await?;
 
-        app.emit("automation-step-progress", serde_json::json!({
-            "executionIri": exec_iri,
-            "stepIri": step_iri,
-            "nodeIri": node_iri,
-            "nodeLabel": node_label,
-            "status": "started",
-        })).ok();
+        {
+            let mut payload = serde_json::json!({
+                "executionIri": exec_iri,
+                "stepIri": step_iri,
+                "nodeIri": node_iri,
+                "nodeLabel": node_label,
+                "status": "started",
+            });
+            if let Some(ref iri) = iteration_of {
+                payload["iterationOf"] = serde_json::Value::String(iri.clone());
+                if let Some(idx) = iteration_index {
+                    payload["iterationIndex"] = serde_json::Value::Number(idx.into());
+                }
+                if let Some(total) = iteration_total {
+                    payload["iterationTotal"] = serde_json::Value::Number(total.into());
+                }
+            }
+            app.emit("automation-step-progress", payload).ok();
+        }
 
         {
             let step = step_iri.clone();
@@ -814,15 +850,40 @@ async fn execute_nodes(
             })
             .await?;
 
+        // Wait for the QueryWorker to recompute all query/formula-derived properties
+        // on the control instance before advancing to the next node. Without this
+        // barrier, a headless execution would read stale (empty) query-property values
+        // because `entity-changed-internal` is async and the worker may not have
+        // finished materialising when the next node reads `ctx["self"]`.
+        if let Some(ref ci_iri) = ctx.get("self").cloned() {
+            if let Some(worker) = app.try_state::<crate::owl::query_worker::QueryWorker>() {
+                if let Err(timeout_msg) = worker.await_drained(ci_iri).await {
+                    return Err(timeout_msg);
+                }
+            }
+        }
+
         if let Some(ref e) = step_error {
-            app.emit("automation-step-progress", serde_json::json!({
-                "executionIri": exec_iri,
-                "stepIri": step_iri,
-                "nodeIri": node_iri,
-                "nodeLabel": node_label,
-                "status": "failed",
-                "error": e,
-            })).ok();
+            {
+                let mut payload = serde_json::json!({
+                    "executionIri": exec_iri,
+                    "stepIri": step_iri,
+                    "nodeIri": node_iri,
+                    "nodeLabel": node_label,
+                    "status": "failed",
+                    "error": e,
+                });
+                if let Some(ref iri) = iteration_of {
+                    payload["iterationOf"] = serde_json::Value::String(iri.clone());
+                    if let Some(idx) = iteration_index {
+                        payload["iterationIndex"] = serde_json::Value::Number(idx.into());
+                    }
+                    if let Some(total) = iteration_total {
+                        payload["iterationTotal"] = serde_json::Value::Number(total.into());
+                    }
+                }
+                app.emit("automation-step-progress", payload).ok();
+            }
 
             let fallback = executor
                 .read({
@@ -843,13 +904,25 @@ async fn execute_nodes(
             return Err(e.clone());
         }
 
-        app.emit("automation-step-progress", serde_json::json!({
-            "executionIri": exec_iri,
-            "stepIri": step_iri,
-            "nodeIri": node_iri,
-            "nodeLabel": node_label,
-            "status": "completed",
-        })).ok();
+        {
+            let mut payload = serde_json::json!({
+                "executionIri": exec_iri,
+                "stepIri": step_iri,
+                "nodeIri": node_iri,
+                "nodeLabel": node_label,
+                "status": "completed",
+            });
+            if let Some(ref iri) = iteration_of {
+                payload["iterationOf"] = serde_json::Value::String(iri.clone());
+                if let Some(idx) = iteration_index {
+                    payload["iterationIndex"] = serde_json::Value::Number(idx.into());
+                }
+                if let Some(total) = iteration_total {
+                    payload["iterationTotal"] = serde_json::Value::Number(total.into());
+                }
+            }
+            app.emit("automation-step-progress", payload).ok();
+        }
 
         if let Some(value) = output.filter(|v| !v.is_empty()) {
             ctx.insert("inputIRIs".to_string(), value);
@@ -882,17 +955,23 @@ async fn run_sub_process(
 ) -> Result<()> {
     let executor = app.state::<DbExecutor>();
 
-    let called_iri = executor
+    let (called_iri, loop_collection, is_sequential, max_concurrency) = executor
         .read({
             let node_iri = node_iri.to_string();
             move |conn| {
-                let result = query::get_by_entity_predicate(conn, &node_iri, "foundation:calledElement")
+                let called = crate::owl::get_iri_property(conn, &node_iri, "foundation:calledElement")
                     .map_err(|e| e.to_string())?;
-                Ok(result
-                    .triples
-                    .first()
-                    .and_then(|t| t.object.as_iri())
-                    .map(|s| s.to_string()))
+                let loop_collection = crate::owl::get_literal_property(conn, &node_iri, "foundation:loopCollection")
+                    .map_err(|e| e.to_string())?;
+                let is_sequential = crate::owl::get_literal_property(conn, &node_iri, "foundation:isSequential")
+                    .map_err(|e| e.to_string())?
+                    .map(|v| v != "false")
+                    .unwrap_or(true);
+                let max_concurrency = crate::owl::get_literal_property(conn, &node_iri, "foundation:maxConcurrency")
+                    .map_err(|e| e.to_string())?
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(4);
+                Ok((called, loop_collection, is_sequential, max_concurrency))
             }
         })
         .await?;
@@ -905,30 +984,217 @@ async fn run_sub_process(
         return Ok(());
     };
 
-    log_backend("info", &format!("[executor] SubProcess {} calling {}", node_iri, called));
-    let end_event_iri = Box::pin(run_process_with_context(app, &called, ctx)).await?;
+    let Some(collection_predicate) = loop_collection else {
+        // Single-instance path: unchanged behaviour.
+        log_backend("info", &format!("[executor] SubProcess {} calling {}", node_iri, called));
+        let end_event_iri = Box::pin(run_process_with_context(app, &called, ctx)).await?;
 
-    if let Some(ref end_iri) = end_event_iri {
-        let next_node = executor
-            .read({
-                let subprocess_iri = node_iri.to_string();
-                let end_iri = end_iri.clone();
-                move |conn| resolve_segway(conn, &subprocess_iri, &end_iri)
+        if let Some(ref end_iri) = end_event_iri {
+            let next_node = executor
+                .read({
+                    let subprocess_iri = node_iri.to_string();
+                    let end_iri = end_iri.clone();
+                    move |conn| resolve_segway(conn, &subprocess_iri, &end_iri)
+                })
+                .await?;
+
+            if let Some(next_iri) = next_node {
+                log_backend("info", &format!(
+                    "[executor] SubProcess {} routed via EndEvent {} → {}",
+                    node_iri, end_iri, next_iri
+                ));
+                ctx.insert(SEGWAY_NEXT_KEY.to_string(), next_iri);
+            } else {
+                log_backend("warn", &format!(
+                    "[executor] SubProcess {} has no Segway for EndEvent {} — continuing linearly",
+                    node_iri, end_iri
+                ));
+            }
+        }
+
+        return Ok(());
+    };
+
+    // Loop path: iterate over the collection stored in the parent control instance.
+    let parent_self_iri = ctx.get("self").cloned().unwrap_or_default();
+    let items: Vec<String> = executor
+        .read({
+            let parent_self_iri = parent_self_iri.clone();
+            let collection_predicate = collection_predicate.clone();
+            move |conn| {
+                crate::owl::get_all_property_values(conn, &parent_self_iri, &collection_predicate)
+                    .map_err(|e| e.to_string())
+            }
+        })
+        .await?;
+
+    if items.is_empty() {
+        log_backend("info", &format!(
+            "[executor] SubProcess {} loop on '{}': collection empty — 0 iterations, continuing",
+            node_iri, collection_predicate
+        ));
+        return Ok(());
+    }
+
+    log_backend("info", &format!(
+        "[executor] SubProcess {} loop on '{}': {} items, sequential={}, max_concurrency={}",
+        node_iri, collection_predicate, items.len(), is_sequential, max_concurrency
+    ));
+
+    // Each iteration result: (child_control_instance_iri_or_empty, optional_error).
+    let mut iteration_results: Vec<(String, Option<String>)> = Vec::with_capacity(items.len());
+
+    if is_sequential {
+        for (idx, item) in items.iter().enumerate() {
+            let mut child_ctx = ctx.clone();
+            child_ctx.insert("inputIRIs".to_string(), item.clone());
+            child_ctx.insert("__iterationOf".to_string(), parent_self_iri.clone());
+            child_ctx.insert("__iterationIndex".to_string(), idx.to_string());
+            child_ctx.insert("__iterationTotal".to_string(), items.len().to_string());
+
+            log_backend("info", &format!(
+                "[executor] SubProcess {} loop iteration {}/{}: item={}",
+                node_iri, idx + 1, items.len(), item
+            ));
+
+            let outcome = Box::pin(run_process_with_context(app, &called, &mut child_ctx)).await;
+            let child_self = child_ctx.get("self").cloned().unwrap_or_default();
+
+            match outcome {
+                Ok(_) => iteration_results.push((child_self, None)),
+                Err(e) => {
+                    log_backend("warn", &format!(
+                        "[executor] SubProcess {} loop iteration {} failed: {}",
+                        node_iri, idx + 1, e
+                    ));
+                    iteration_results.push((child_self, Some(e)));
+                }
+            }
+        }
+    } else {
+        // Parallel path: run up to max_concurrency iterations concurrently per window.
+        // Uses chunked join_all (no Send required) instead of tokio::spawn.
+        let total = items.len();
+        for (chunk_start, chunk) in items.chunks(max_concurrency).enumerate() {
+            let base_idx = chunk_start * max_concurrency;
+            let mut child_ctxs: Vec<ExecutionContext> = chunk
+                .iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    let mut c = ctx.clone();
+                    c.insert("inputIRIs".to_string(), item.clone());
+                    c.insert("__iterationOf".to_string(), parent_self_iri.clone());
+                    c.insert("__iterationIndex".to_string(), (base_idx + i).to_string());
+                    c.insert("__iterationTotal".to_string(), total.to_string());
+                    c
+                })
+                .collect();
+
+            for (i, ctx_ref) in child_ctxs.iter().enumerate() {
+                log_backend("info", &format!(
+                    "[executor] SubProcess {} loop iteration {}/{}: item={}",
+                    node_iri, base_idx + i + 1, total,
+                    ctx_ref.get("inputIRIs").cloned().unwrap_or_default()
+                ));
+            }
+
+            // Drive all futures in this window concurrently on the current task.
+            // Each future has its own child_ctx so there is no shared mutable state.
+            // AssertUnwindSafe + catch_unwind isolates panics inside a single iteration:
+            // a panic is mapped to Err for that slot and the join_all continues normally.
+            let futures: Vec<_> = child_ctxs
+                .iter_mut()
+                .map(|c| {
+                    let fut = Box::pin(run_process_with_context(app, &called, c));
+                    std::panic::AssertUnwindSafe(fut).catch_unwind()
+                })
+                .collect();
+
+            let chunk_results = futures_util::future::join_all(futures).await;
+
+            for (i, unwind_result) in chunk_results.into_iter().enumerate() {
+                let child_self = child_ctxs[i].get("self").cloned().unwrap_or_default();
+                let outcome: Result<Option<String>> = match unwind_result {
+                    Ok(r) => r,
+                    Err(panic_payload) => {
+                        let msg = panic_payload
+                            .downcast_ref::<&str>()
+                            .copied()
+                            .or_else(|| panic_payload.downcast_ref::<String>().map(|s| s.as_str()))
+                            .unwrap_or("unknown panic");
+                        Err(format!("iteration panicked: {}", msg))
+                    }
+                };
+                match outcome {
+                    Ok(_) => iteration_results.push((child_self, None)),
+                    Err(e) => {
+                        log_backend("warn", &format!(
+                            "[executor] SubProcess {} loop iteration {} failed: {}",
+                            node_iri, base_idx + i + 1, e
+                        ));
+                        iteration_results.push((child_self, Some(e)));
+                    }
+                }
+            }
+        }
+    }
+
+    // Link each child control instance back to the parent via foundation:iterationOf.
+    let parent_self_for_link = parent_self_iri.clone();
+    let children_for_link: Vec<String> = iteration_results
+        .iter()
+        .filter(|(iri, _)| !iri.is_empty())
+        .map(|(iri, _)| iri.clone())
+        .collect();
+
+    if !children_for_link.is_empty() {
+        let job_ids_json = executor
+            .write({
+                let parent_self_for_link = parent_self_for_link.clone();
+                move |conn| {
+                    let mut all_job_ids: Vec<String> = Vec::new();
+                    for child_iri in &children_for_link {
+                        Individual::add_iri_value(
+                            conn,
+                            child_iri,
+                            "foundation:iterationOf",
+                            &parent_self_for_link,
+                            "process_automation",
+                        )
+                        .map_err(|e| e.to_string())?;
+                        let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
+                            conn,
+                            child_iri,
+                            "foundation:iterationOf",
+                        );
+                        all_job_ids.extend(job_ids);
+                    }
+                    serde_json::to_string(&all_job_ids).map_err(|e| e.to_string())
+                }
             })
             .await?;
 
-        if let Some(next_iri) = next_node {
-            log_backend("info", &format!(
-                "[executor] SubProcess {} routed via EndEvent {} → {}",
-                node_iri, end_iri, next_iri
-            ));
-            ctx.insert(SEGWAY_NEXT_KEY.to_string(), next_iri);
-        } else {
-            log_backend("warn", &format!(
-                "[executor] SubProcess {} has no Segway for EndEvent {} — continuing linearly",
-                node_iri, end_iri
-            ));
+        let job_ids: Vec<String> = serde_json::from_str(&job_ids_json).unwrap_or_default();
+        if let Some(worker) = app.try_state::<crate::owl::formula_worker::FormulaWorker>() {
+            for job_id in job_ids {
+                let _ = worker.sender.try_send(
+                    crate::owl::formula_worker::WorkerCommand::Enqueue { job_id },
+                );
+            }
         }
+    }
+
+    let failure_count = iteration_results.iter().filter(|(_, e)| e.is_some()).count();
+    if failure_count > 0 {
+        log_backend("warn", &format!(
+            "[executor] SubProcess {} loop completed: {}/{} iterations failed (errors captured for US3 aggregation)",
+            node_iri, failure_count, iteration_results.len()
+        ));
+    } else {
+        log_backend("info", &format!(
+            "[executor] SubProcess {} loop completed: all {} iterations succeeded",
+            node_iri, iteration_results.len()
+        ));
     }
 
     Ok(())

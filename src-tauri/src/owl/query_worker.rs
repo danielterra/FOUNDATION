@@ -1,47 +1,104 @@
+use std::collections::HashMap;
+use std::sync::Mutex;
 use tauri::{AppHandle, Listener, Manager};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use crate::owl::{DbExecutor, query_property};
 use crate::eavto::{store, Triple, Object};
+
+const DRAIN_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Debug)]
 pub enum WorkerCommand {
     Enqueue { entity_iri: String },
+    /// Internal: signals that all outstanding jobs for `entity_iri` have been
+    /// processed. The worker sends this to itself after `process_entity_update`
+    /// returns so that `await_drained` callers are notified atomically.
+    Drained { entity_iri: String },
 }
 
 pub struct QueryWorker {
     pub sender: mpsc::Sender<WorkerCommand>,
+    waiters: Mutex<HashMap<String, Vec<oneshot::Sender<()>>>>,
 }
 
 impl QueryWorker {
     pub fn spawn(app: AppHandle, executor: DbExecutor) -> Self {
         let (tx, mut rx) = mpsc::channel::<WorkerCommand>(1024);
+        let self_tx = tx.clone();
+
+        let worker = QueryWorker {
+            sender: tx,
+            waiters: Mutex::new(HashMap::new()),
+        };
 
         tauri::async_runtime::spawn(async move {
             while let Some(cmd) = rx.recv().await {
                 match cmd {
                     WorkerCommand::Enqueue { entity_iri } => {
                         process_entity_update(&app, &executor, &entity_iri).await;
+                        let _ = self_tx.try_send(WorkerCommand::Drained {
+                            entity_iri,
+                        });
+                    }
+                    WorkerCommand::Drained { entity_iri } => {
+                        if let Some(w) = app.try_state::<QueryWorker>() {
+                            let senders: Vec<oneshot::Sender<()>> = w
+                                .waiters
+                                .lock()
+                                .map(|mut map| map.remove(&entity_iri).unwrap_or_default())
+                                .unwrap_or_default();
+                            for s in senders {
+                                let _ = s.send(());
+                            }
+                        }
                     }
                 }
             }
         });
 
-        QueryWorker { sender: tx }
+        worker
+    }
+
+    /// Enqueue `entity_iri` for recompute and wait until the worker has processed
+    /// all outstanding jobs for it, or until `DRAIN_TIMEOUT_SECS` elapses.
+    ///
+    /// Returns `Ok(())` when the worker confirmed completion, `Err(String)` on
+    /// timeout (caller should fail the step with a clear message).
+    pub async fn await_drained(&self, entity_iri: &str) -> Result<(), String> {
+        let (tx, rx) = oneshot::channel::<()>();
+        {
+            let mut map = self.waiters.lock().map_err(|e| e.to_string())?;
+            map.entry(entity_iri.to_string()).or_default().push(tx);
+        }
+        let _ = self.sender.try_send(WorkerCommand::Enqueue {
+            entity_iri: entity_iri.to_string(),
+        });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(DRAIN_TIMEOUT_SECS),
+            rx,
+        )
+        .await
+        .map_err(|_| format!(
+            "timeout waiting for derived materialization of control instance {}",
+            entity_iri
+        ))?
+        .map_err(|_| format!(
+            "drain channel closed unexpectedly for {}",
+            entity_iri
+        ))
     }
 }
 
 pub fn register_listener(app: AppHandle) {
-    for event_name in ["entity-created", "entity-updated"] {
-        let app_clone = app.clone();
-        app.listen(event_name, move |event| {
-            let Some(entity_iri) = parse_entity_id(event.payload()) else { return };
-            let worker = match app_clone.try_state::<QueryWorker>() {
-                Some(w) => w,
-                None => return,
-            };
-            let _ = worker.sender.try_send(WorkerCommand::Enqueue { entity_iri });
-        });
-    }
+    let app_clone = app.clone();
+    app.listen("entity-changed-internal", move |event| {
+        let Some(entity_iri) = parse_entity_id(event.payload()) else { return };
+        let worker = match app_clone.try_state::<QueryWorker>() {
+            Some(w) => w,
+            None => return,
+        };
+        let _ = worker.sender.try_send(WorkerCommand::Enqueue { entity_iri });
+    });
 }
 
 fn parse_entity_id(payload: &str) -> Option<String> {
@@ -258,4 +315,145 @@ fn update_query_property_triples(
     }
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn setup_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                origin TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE origins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
+             );
+             CREATE TABLE triples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL,
+                predicate TEXT NOT NULL,
+                object TEXT,
+                object_value TEXT,
+                object_type TEXT NOT NULL,
+                object_datatype TEXT,
+                object_language TEXT,
+                object_number REAL,
+                object_integer INTEGER,
+                object_datetime INTEGER,
+                object_boolean INTEGER,
+                tx INTEGER NOT NULL DEFAULT 0,
+                origin_id INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL DEFAULT 0,
+                retracted INTEGER NOT NULL DEFAULT 0
+             );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn count_triples(conn: &Connection, subject: &str, predicate: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = ? AND retracted = 0",
+            rusqlite::params![subject, predicate],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+    }
+
+    fn max_tx(conn: &Connection, subject: &str, predicate: &str) -> i64 {
+        conn.query_row(
+            "SELECT COALESCE(MAX(tx), 0) FROM triples WHERE subject = ? AND predicate = ?",
+            rusqlite::params![subject, predicate],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+    }
+
+    /// Calling `update_query_property_triples` twice with the same set must not
+    /// write a new TX on the second call (idempotent — prevents oscillation loops).
+    #[test]
+    fn test_no_write_when_set_unchanged() {
+        let mut conn = setup_db();
+        let owner = "foundation:Owner1";
+        let prop = "foundation:queryProp";
+        let values = vec!["foundation:A".to_string(), "foundation:B".to_string()];
+
+        let changed_first = update_query_property_triples(&mut conn, owner, prop, &values).unwrap();
+        assert!(changed_first, "first write must report changed=true");
+
+        let tx_after_first = max_tx(&conn, owner, prop);
+        let changed_second = update_query_property_triples(&mut conn, owner, prop, &values).unwrap();
+        assert!(!changed_second, "second write with identical set must not write (changed=false)");
+
+        let tx_after_second = max_tx(&conn, owner, prop);
+        assert_eq!(
+            tx_after_first, tx_after_second,
+            "TX must not advance when the set is already current"
+        );
+    }
+
+    /// When the result set changes (A,B → A,B,C), a new TX is written and `changed=true`.
+    #[test]
+    fn test_write_when_set_grows() {
+        let mut conn = setup_db();
+        let owner = "foundation:Owner2";
+        let prop = "foundation:queryProp";
+
+        let first = vec!["foundation:A".to_string(), "foundation:B".to_string()];
+        let _ = update_query_property_triples(&mut conn, owner, prop, &first).unwrap();
+        let tx_v1 = max_tx(&conn, owner, prop);
+
+        let second = vec![
+            "foundation:A".to_string(),
+            "foundation:B".to_string(),
+            "foundation:C".to_string(),
+        ];
+        let changed = update_query_property_triples(&mut conn, owner, prop, &second).unwrap();
+        assert!(changed);
+        assert!(
+            max_tx(&conn, owner, prop) > tx_v1,
+            "TX must advance when the result set grows"
+        );
+    }
+
+    /// Clearing the set (new_results = []) must retract and report changed=true,
+    /// without generating a new IRI triple.
+    #[test]
+    fn test_clear_retracts_and_reports_changed() {
+        let mut conn = setup_db();
+        let owner = "foundation:Owner3";
+        let prop = "foundation:queryProp";
+
+        let initial = vec!["foundation:A".to_string()];
+        let _ = update_query_property_triples(&mut conn, owner, prop, &initial).unwrap();
+
+        let changed = update_query_property_triples(&mut conn, owner, prop, &[]).unwrap();
+        assert!(changed, "clearing must report changed=true");
+        assert_eq!(
+            count_triples(&conn, owner, prop),
+            0,
+            "all triples must be retracted after clearing"
+        );
+    }
+
+    /// Calling update once with A then again with A must converge: second call
+    /// is a no-op, ensuring the query→formula→query chain terminates in ≤ 2 cycles.
+    #[test]
+    fn test_convergence_idempotent_in_two_cycles() {
+        let mut conn = setup_db();
+        let owner = "foundation:Owner4";
+        let prop = "foundation:queryPropCycle";
+        let values = vec!["foundation:X".to_string()];
+
+        let c1 = update_query_property_triples(&mut conn, owner, prop, &values).unwrap();
+        assert!(c1);
+        let c2 = update_query_property_triples(&mut conn, owner, prop, &values).unwrap();
+        assert!(!c2, "second cycle with same result must not trigger further writes");
+    }
 }

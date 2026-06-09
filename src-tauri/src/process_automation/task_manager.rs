@@ -680,36 +680,36 @@ mod tests {
         check_and_recur(&mut conn, "foundation:Task_rec1");
 
         let next_iri = get_iri_property(&conn, "foundation:Task_rec1", "foundation:nextTask").unwrap();
-        assert!(next_iri.is_some(), "deve ter criado nextTask");
+        assert!(next_iri.is_some(), "must have created nextTask");
         let new_task = next_iri.unwrap();
         let result = get_literal_property(&conn, &new_task, "foundation:result").unwrap();
-        assert!(result.is_none(), "nova task não deve ter resultado ainda");
+        assert!(result.is_none(), "new task must not have a result yet");
         let started = get_literal_property(&conn, &new_task, "foundation:startedAt").unwrap();
-        assert!(started.is_none(), "nova task não deve ter startedAt ainda");
+        assert!(started.is_none(), "new task must not have startedAt yet");
         let label = get_literal_property(&conn, &new_task, "rdfs:label").unwrap();
-        assert_eq!(label.as_deref(), Some("Reunião semanal"), "deve preservar o label");
+        assert_eq!(label.as_deref(), Some("Weekly meeting"), "must preserve the label");
     }
 
     #[test]
-    fn resultado_delegado_formatado_contem_label_e_resultado() {
-        let msg = format_delegation_result("foundation:Task_123", "Analisar dados", "Crescimento de 15%");
-        assert!(msg.contains("Analisar dados"));
-        assert!(msg.contains("Crescimento de 15%"));
+    fn formatted_delegated_result_contains_label_and_result() {
+        let msg = format_delegation_result("foundation:Task_123", "Analyze data", "15% growth");
+        assert!(msg.contains("Analyze data"));
+        assert!(msg.contains("15% growth"));
         assert!(msg.contains("foundation:Task_123"));
     }
 
     #[test]
-    fn task_sem_delegated_from_conversation_nao_tem_conv_iri() {
+    fn task_without_delegated_from_conversation_has_no_conv_iri() {
         let mut conn = setup_test_db();
         insert(&mut conn, &task_triples("foundation:Task_nodelegation", Some("foundation:Agent1")));
 
         let conv_iri = get_iri_property(&conn, "foundation:Task_nodelegation", "foundation:delegatedFromConversation")
             .unwrap();
-        assert!(conv_iri.is_none(), "task sem delegatedFromConversation deve retornar None");
+        assert!(conv_iri.is_none(), "task without delegatedFromConversation must return None");
     }
 
     #[test]
-    fn task_com_delegated_from_conversation_tem_conv_iri() {
+    fn task_with_delegated_from_conversation_has_conv_iri() {
         let mut conn = setup_test_db();
         let mut triples = task_triples("foundation:Task_delegated", Some("foundation:Agent1"));
         triples.push(Triple::new(
@@ -725,15 +725,15 @@ mod tests {
     }
 
     #[test]
-    fn idempotencia_check_and_recur_duas_vezes() {
+    fn idempotency_check_and_recur_twice() {
         let mut conn = setup_test_db();
         insert(&mut conn, &[
             Triple::new("foundation:Task_rec2", "rdf:type", Object::Iri("foundation:Task".to_string())),
             Triple::new("foundation:Task_rec2", "rdfs:label", Object::Literal {
-                value: "Tarefa recorrente".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+                value: "Recurring task".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
             Triple::new("foundation:Task_rec2", "foundation:result", Object::Literal {
-                value: "concluído".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+                value: "completed".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
             Triple::new("foundation:Task_rec2", "foundation:recurrence", Object::Literal {
                 value: "FREQ=DAILY;INTERVAL=1".to_string(), datatype: Some("xsd:string".to_string()), language: None,
@@ -747,19 +747,19 @@ mod tests {
             &conn, "foundation:Task_rec2", "foundation:nextTask"
         ).unwrap();
         let active: Vec<_> = result.triples.iter().filter(|t| !t.retracted).collect();
-        assert_eq!(active.len(), 1, "deve haver exatamente uma nextTask, não duplicatas");
+        assert_eq!(active.len(), 1, "there must be exactly one nextTask, no duplicates");
     }
 
     #[test]
-    fn recorrencia_copia_delegated_from_conversation_e_demais_props() {
+    fn recurrence_copies_delegated_from_conversation_and_other_props() {
         let mut conn = setup_test_db();
         insert(&mut conn, &[
             Triple::new("foundation:Task_fullcopy", "rdf:type", Object::Iri("foundation:Task".to_string())),
             Triple::new("foundation:Task_fullcopy", "rdfs:label", Object::Literal {
-                value: "Triagem de emails".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+                value: "Email triage".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
             Triple::new("foundation:Task_fullcopy", "foundation:result", Object::Literal {
-                value: "concluído".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+                value: "completed".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
             Triple::new("foundation:Task_fullcopy", "foundation:recurrence", Object::Literal {
                 value: "FREQ=HOURLY;INTERVAL=1".to_string(), datatype: Some("xsd:string".to_string()), language: None,
@@ -767,7 +767,7 @@ mod tests {
             Triple::new("foundation:Task_fullcopy", "foundation:delegatedFromConversation",
                 Object::Iri("foundation:Conv_test".to_string())),
             Triple::new("foundation:Task_fullcopy", "foundation:aiBehaviorRules", Object::Literal {
-                value: "Processar apenas emails não lidos.".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+                value: "Process only unread emails.".to_string(), datatype: Some("xsd:string".to_string()), language: None,
             }),
             Triple::new("foundation:Task_fullcopy", "foundation:dueDate", Object::Literal {
                 value: "2026-12-31T23:59:59Z".to_string(), datatype: Some("xsd:dateTime".to_string()), language: None,
@@ -779,21 +779,21 @@ mod tests {
         check_and_recur(&mut conn, "foundation:Task_fullcopy");
 
         let next_iri = get_iri_property(&conn, "foundation:Task_fullcopy", "foundation:nextTask")
-            .unwrap().expect("deve ter criado nextTask");
+            .unwrap().expect("must have created nextTask");
 
         let conv = get_iri_property(&conn, &next_iri, "foundation:delegatedFromConversation").unwrap();
-        assert_eq!(conv.as_deref(), Some("foundation:Conv_test"), "delegatedFromConversation deve ser copiado");
+        assert_eq!(conv.as_deref(), Some("foundation:Conv_test"), "delegatedFromConversation must be copied");
 
         let rules = get_literal_property(&conn, &next_iri, "foundation:aiBehaviorRules").unwrap();
-        assert!(rules.is_some(), "aiBehaviorRules deve ser copiado");
+        assert!(rules.is_some(), "aiBehaviorRules must be copied");
 
         let due = get_literal_property(&conn, &next_iri, "foundation:dueDate").unwrap();
-        assert!(due.is_some(), "dueDate deve ser copiado");
+        assert!(due.is_some(), "dueDate must be copied");
 
         let related = get_iri_property(&conn, &next_iri, "foundation:relatedTo").unwrap();
-        assert_eq!(related.as_deref(), Some("foundation:Process_email"), "relatedTo deve ser copiado");
+        assert_eq!(related.as_deref(), Some("foundation:Process_email"), "relatedTo must be copied");
 
         let result = get_literal_property(&conn, &next_iri, "foundation:result").unwrap();
-        assert!(result.is_none(), "result não deve ser copiado para a nova task");
+        assert!(result.is_none(), "result must not be copied to the new task");
     }
 }

@@ -1,4 +1,5 @@
-<script>
+<script lang="ts">
+  import type { Snippet } from 'svelte'
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { Button } from '$lib/components/ui/button';
 
@@ -14,6 +15,18 @@
     headerExtra,
     headerSubtitle,
     children,
+  }: {
+    icon?: string
+    iconSrc?: string | null
+    title?: string
+    windowState?: string
+    onWindowStateChange?: (state: string) => void
+    onClose?: () => void
+    canExpand?: boolean
+    headerActions?: Snippet
+    headerExtra?: Snippet
+    headerSubtitle?: Snippet
+    children?: Snippet
   } = $props();
 
   function toggleMinimize() {
@@ -24,7 +37,7 @@
     onWindowStateChange?.(windowState === 'maximized' ? 'normal' : 'maximized');
   }
 
-  function resolveIconSrc(src) {
+  function resolveIconSrc(src: string): string {
     if (!src) return '';
     if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:')) return src;
     if (src.startsWith('file://')) return convertFileSrc(src.replace(/^file:\/\//, ''));

@@ -121,7 +121,7 @@ fn resolve_ref_value(conn: &Connection, instance_iri: &str, ref_iri: &str) -> Op
         return evaluate_formula_for_instance_raw(conn, instance_iri, ref_iri).ok();
     }
 
-    // Propriedades numéricas sem valor armazenado valem zero — evita falha na fórmula
+    // Numeric properties without a stored value default to zero — avoids formula failure
     if is_numeric_property(conn, ref_iri) {
         return Some("0".to_string());
     }
@@ -179,13 +179,13 @@ pub fn evaluate_formula_for_instance_raw(
     }
 }
 
-/// Format an `f64` resultado de fórmula/agregação como string limpa,
-/// suprimindo o ruído IEEE 754 característico de somas de decimais.
+/// Format an `f64` formula/aggregation result as a clean string,
+/// suppressing the IEEE 754 noise typical of decimal sums.
 ///
-/// Inteiros (incluindo `42.0`) viram `"42"` sem casas. Não-inteiros são
-/// arredondados para 10 casas decimais e os zeros à direita são removidos
-/// — isso elimina caudas como `0.580000000024` mantendo precisão suficiente
-/// para a maioria dos casos (moeda, percentuais, ratios).
+/// Integers (including `42.0`) become `"42"` with no decimals. Non-integers are
+/// rounded to 10 decimal places and trailing zeros are stripped
+/// — this eliminates tails like `0.580000000024` while keeping enough precision
+/// for most cases (currency, percentages, ratios).
 pub fn format_calculated_number(value: f64) -> String {
     if !value.is_finite() {
         return format!("{}", value);
@@ -470,8 +470,8 @@ mod tests {
 
     #[test]
     fn format_calculated_number_supresses_ieee_754_noise_on_decimal_sums() {
-        // Regressão: Bug_1777120091054 — somas em f64 vazam ruído IEEE 754
-        // (ex.: -100.50 + (-200.25) + ... = -20389.580000000024).
+        // Regression: Bug_1777120091054 — f64 sums leak IEEE 754 noise
+        // (e.g.: -100.50 + (-200.25) + ... = -20389.580000000024).
         assert_eq!(format_calculated_number(-20389.580000000024_f64), "-20389.58");
         assert_eq!(format_calculated_number(35554.910000000025_f64), "35554.91");
         assert_eq!(format_calculated_number(1114.729999999974_f64), "1114.73");
@@ -495,8 +495,8 @@ mod tests {
 
     #[test]
     fn format_calculated_number_handles_non_finite() {
-        // NaN/Infinity caem no fallback de format!("{}", ...) ainda que o
-        // produto raramente os produza — o importante é não quebrar.
+        // NaN/Infinity fall back to format!("{}", ...) even though the
+        // product rarely produces them — the point is not to crash.
         let nan = format_calculated_number(f64::NAN);
         assert!(nan.contains("NaN"));
         assert_eq!(format_calculated_number(f64::INFINITY), "inf");

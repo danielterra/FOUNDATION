@@ -2,7 +2,10 @@
 
 ## Meta
 - ALWAYS update this file immediately when user corrects you or states a preference.
+- NEVER use the memory system (`memory/` files, MEMORY.md). ALL learnings, feedback and preferences live in THIS file (CLAUDE.md) — it is the single source of truth.
 - ALWAYS respond to the user in Portuguese.
+- ALWAYS ask one validation item at a time, NEVER several at once; for multiple questions use AskUserQuestion (the UI component), NEVER plain-text question lists.
+- NEVER touch git without an explicit order (no stash/checkout/reset/commit/push); validate fixes on the current working tree. Read-only git (status/diff/log) is free.
 - ALWAYS keep this file in en-US, terse, bullet-only with ALWAYS/NEVER prefixes, H1/H2 headers only, zero prose or boilerplate.
 - ALWAYS name skills as `entity-action` (e.g. `ontology-create`, `ontology-change`, `widget-remove`, `release-create`). NEVER use other naming patterns.
 
@@ -17,6 +20,7 @@
 - NEVER add fallback paths, backward-compatibility shims, legacy branches or graceful-degradation defaults without EXPRESS user permission — the system is pre-production.
 - ALWAYS implement ONE canonical behavior; when the model changes, migrate existing data/individuals to the new model instead of branching to keep the old one working.
 - ALWAYS surface any design tension that tempts a fallback and ask the user before adding one.
+- NEVER add a fallback/default branch in render dispatch maps either (e.g. a `bpmn_FlowNode → NodeTask` catch-all in a frontend node-type map) — fix the real cause so every concrete type maps to its own component; a missing mapping is a bug to fix, not to mask.
 
 ## Foundation vocabulary — domain entities
 - `foundation:Project` / `foundation:SoftwareFeature` / `foundation:UserStory` / `foundation:ArchitectureDecisionRecord` (ADR) — work planning.
@@ -142,8 +146,20 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 ## TODO doc filenames
 - Format: `YYYYMMDD-HHMMSS-description.md` (e.g. `20260228-192519-layer-violations-fix.md`).
 
+## Gotchas & learnings
+- `run_automation(dry_run:true)` mocks ONLY script-level writes (the Rhai `mcp()`/`owl_set_property` bridge). The engine STILL creates and PERSISTS control instances (and loop iteration instances + `iterationOf` links), and AgentTask STILL calls the AI. NOT side-effect-free — clean orphan control instances after a dry run; expect AI cost/latency.
+- Plain-JS `.svelte` (no `lang="ts"`) is NOT type-checked by svelte-check / `npm run check` — orphan refs to removed vars pass 0/0 but throw `ReferenceError` at runtime, visible ONLY in the webview F12 console (NOT `npm run logs`, which is backend only). ALWAYS validate plain-JS components by RUNNING; sweep manually for orphan refs.
+- Automation diagram nodes: characteristics / metadata / extra info render as a PILL (rounded chip, `border-radius:999px`), NEVER loose text — consistent with the progress badge. Static characteristic = neutral/subtle pill; dynamic state = colored pill.
+- QA validates by RUNNING via MCP (`run_automation` + inspect the entity created AFTER the fix — recompute triggers are NOT retroactive), NEVER static review alone; `cargo check`/review has let runtime bugs through.
+- Agent CONFIGURES/queries via ontology (sources, mappings, MCP tools); the MOTOR (workers/engine) EXECUTES; widgets are ontology views for end-user personas. Model accordingly.
+- `hasStatus` is DERIVED from properties (startedAt/result/scheduledAt), NEVER a control gate — recurrence/scheduler/engine mechanisms must not depend on hasStatus to decide whether to run.
+- Schema > Prompt: to force a field in a tool call, put it in the tool `input_schema` `required`, NOT "you MUST include X" in the system prompt — small models ignore the prompt but respect the schema.
+- IMAP: use `BODY.PEEK[]` on fetch and `uid_store(+FLAGS \Seen)` ONLY after the email is persisted (commit); a persistence failure must leave the email unread.
+- MCP Foundation unavailable / transient drop mid-flow: wait 60–180s and retry automatically — NEVER curl/SQLite, NEVER ask the user to reconnect.
+
 ## Code style
 - ALWAYS write scripts in Rust — never Node, Python, or shell.
 - Comments: WHY only. NEVER write WHAT comments, commented-out code, or TODO/FIXME markers.
 - NEVER suppress warnings or errors.
 - NEVER add redundant wrapper functions — if existing functions cover it, don't wrap.
+- NEVER leave dead code — unused imports, unreachable map keys/branches, orphan components or files, code only reachable by a path that never executes. If a fix exposes dead code, DELETE it in the same change.

@@ -44,6 +44,7 @@ pub fn assert_raw_triples(conn: &mut Connection, triples: &[Triple], origin: &st
 
 pub use individual::{
     is_system_locked, set_system_locked, check_system_locked,
+    get_all_property_values,
     get_all_iri_properties, replace_all_property_iris, replace_all_property_literals,
     get_literal_property, get_all_literal_properties, get_iri_property,
     has_property_iri, has_property_literal,

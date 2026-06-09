@@ -39,8 +39,8 @@ fn func_from_name(name: &str) -> Option<AggregationFunc> {
 /// - `SOMA({{sourceProp}}.subProp)` — Sum, Avg, Min, Max require a sub-property
 /// - `CONTAR({{sourceProp}})` — Count does not accept a sub-property
 ///
-/// A direção de navegação (direta ou inversa) é determinada automaticamente em tempo de
-/// avaliação comparando o tipo da instância com o `rdfs:domain` da `sourceProp`.
+/// Navigation direction (forward or inverse) is determined automatically at evaluation
+/// time by comparing the instance type with the `rdfs:domain` of `sourceProp`.
 pub fn parse_aggregation_call(s: &str) -> Result<AggregationCall, String> {
     let s = s.trim();
 
@@ -206,11 +206,11 @@ pub fn validate_aggregation_references(
     Ok(())
 }
 
-/// Determina se a navegação deve ser inversa comparando o tipo da instância
-/// com o `rdfs:domain` da propriedade.
+/// Determines whether navigation should be inverse by comparing the instance type
+/// with the property's `rdfs:domain`.
 ///
-/// - Se o tipo da instância coincidir com o domínio → navegação direta (subject = instance)
-/// - Caso contrário → navegação inversa (object = instance)
+/// - If the instance type matches the domain → forward navigation (subject = instance)
+/// - Otherwise → inverse navigation (object = instance)
 fn is_inverse_navigation(conn: &Connection, instance_iri: &str, source_prop: &str) -> bool {
     let domain: Option<String> = conn.query_row(
         "SELECT object FROM triples \

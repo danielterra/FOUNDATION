@@ -3,6 +3,7 @@ use crate::eavto::test_helpers::setup_test_db;
 use crate::eavto::{store, Triple, Object};
 use crate::core_ontology::search::{search_classes, search_individuals, search_instances, search};
 use crate::core_ontology::status::{validate_allowed_status, resolve_status_appearance, get_entity_status_info};
+use crate::owl::get_all_property_values;
 
 #[test]
 fn test_replace_all_property_iris_saves_all_values() {
@@ -514,6 +515,57 @@ fn test_get_all_iri_properties_ignores_literals() {
     ], "test").unwrap();
     let result = get_all_iri_properties(&conn, "foundation:E", "foundation:tag").unwrap();
     assert!(result.is_empty());
+}
+
+// ── get_all_property_values ───────────────────────────────────────────────
+
+#[test]
+fn test_get_all_property_values_three_mixed_in_order() {
+    let mut conn = setup_test_db();
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:E", "foundation:items", Object::Iri("foundation:A".to_string())),
+        Triple::new("foundation:E", "foundation:items", Object::Iri("foundation:B".to_string())),
+        Triple::new("foundation:E", "foundation:items", lit("literal-c")),
+    ], "test").unwrap();
+    let result = get_all_property_values(&conn, "foundation:E", "foundation:items").unwrap();
+    assert_eq!(result.len(), 3);
+    assert!(result.contains(&"foundation:A".to_string()));
+    assert!(result.contains(&"foundation:B".to_string()));
+    assert!(result.contains(&"literal-c".to_string()));
+}
+
+#[test]
+fn test_get_all_property_values_single_iri() {
+    let mut conn = setup_test_db();
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:E", "foundation:ref", Object::Iri("foundation:Target".to_string())),
+    ], "test").unwrap();
+    let result = get_all_property_values(&conn, "foundation:E", "foundation:ref").unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0], "foundation:Target");
+}
+
+#[test]
+fn test_get_all_property_values_absent_returns_empty() {
+    let conn = setup_test_db();
+    let result = get_all_property_values(&conn, "foundation:E", "foundation:ref").unwrap();
+    assert!(result.is_empty());
+
+    let json = serde_json::to_string(&result).unwrap();
+    assert_eq!(json, "[]");
+}
+
+#[test]
+fn test_get_all_property_values_prefers_iri_over_literal_coalesce() {
+    let mut conn = setup_test_db();
+    store::assert_triples(&mut conn, &[
+        Triple::new("foundation:E", "foundation:mixed", Object::Iri("foundation:IriVal".to_string())),
+        Triple::new("foundation:E", "foundation:mixed", lit("lit-val")),
+    ], "test").unwrap();
+    let result = get_all_property_values(&conn, "foundation:E", "foundation:mixed").unwrap();
+    assert_eq!(result.len(), 2);
+    assert!(result.contains(&"foundation:IriVal".to_string()));
+    assert!(result.contains(&"lit-val".to_string()));
 }
 
 #[test]

@@ -2,6 +2,20 @@ use crate::eavto::Connection;
 use crate::eavto::{store, query, Triple, Object};
 use crate::owl::{Result, vocabulary};
 
+/// Returns all current values for a predicate on an entity as strings,
+/// preferring the IRI form and falling back to the literal form (COALESCE semantics).
+/// Preserves insertion order. Returns an empty Vec when the predicate is absent.
+pub fn get_all_property_values(
+    conn: &Connection,
+    entity: &str,
+    predicate: &str,
+) -> Result<Vec<String>> {
+    let result = query::get_by_entity_predicate(conn, entity, predicate)?;
+    Ok(result.triples.iter()
+        .filter_map(|t| t.object.as_iri().map(|s| s.to_string()).or_else(|| t.object.as_literal()))
+        .collect())
+}
+
 /// Returns all IRI values for a predicate on an entity
 pub fn get_all_iri_properties(
     conn: &Connection,

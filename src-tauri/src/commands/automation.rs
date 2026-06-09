@@ -55,6 +55,14 @@ pub struct AutomationGraphNode {
     pub output_classes: Vec<ClassRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timer_cycle: Option<String>,
+    #[serde(rename = "isMultiInstance", skip_serializing_if = "Option::is_none")]
+    pub is_multi_instance: Option<bool>,
+    #[serde(rename = "isSequential", skip_serializing_if = "Option::is_none")]
+    pub is_sequential: Option<bool>,
+    #[serde(rename = "batchTotal", skip_serializing_if = "Option::is_none")]
+    pub batch_total: Option<usize>,
+    #[serde(rename = "realType")]
+    pub real_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +93,49 @@ fn extract_local_name(iri: &str) -> &str {
         .or_else(|| iri.rsplit_once('#').map(|(_, local)| local))
         .or_else(|| iri.rsplit_once('/').map(|(_, local)| local))
         .unwrap_or(iri)
+}
+
+/// Returns the most specific rdf:type IRI among all types declared on a flow node.
+///
+/// All declared types are filtered to those that are subclasses of
+/// `foundation:automation_FlowNode` (concrete, renderable) and then ranked by
+/// specificity: if type A is a subclass of type B, A wins. The winner is the leaf
+/// in the subClassOf chain among the candidates.
+///
+/// Returns `Err` when no renderable concrete type is found, which indicates invalid
+/// data that must be fixed at the source rather than silently defaulted.
+fn most_specific_flow_node_type(conn: &Connection, node_iri: &str) -> Result<String, String> {
+    let all_types = get_all_iri_properties(conn, node_iri, rdf::TYPE)
+        .map_err(|e| e.to_string())?;
+
+    let mut candidates: Vec<String> = all_types
+        .into_iter()
+        .filter(|t| is_subclass_of(conn, t, "foundation:automation_FlowNode"))
+        .collect();
+
+    if candidates.is_empty() {
+        return Err(format!(
+            "node {} has no rdf:type that is a subclass of automation_FlowNode — data is invalid",
+            node_iri
+        ));
+    }
+
+    // Keep only the most specific: remove any candidate that has a strictly more
+    // specific sibling (i.e. another candidate that is_subclass_of it but is not it).
+    let snapshot = candidates.clone();
+    candidates.retain(|candidate| {
+        !snapshot.iter().any(|other| {
+            other != candidate && is_subclass_of(conn, other, candidate)
+        })
+    });
+
+    // After pruning, exactly one leaf should remain in well-formed data.
+    // If multiple unrelated leaves remain (parallel roots), take the first
+    // alphabetically for determinism — that scenario is itself a data oddity.
+    candidates.sort();
+    candidates.into_iter().next().ok_or_else(|| {
+        format!("node {} has no concrete rdf:type after specificity filtering", node_iri)
+    })
 }
 
 /// Resolves the canonical bpmn_* render type for a node by walking rdfs:subClassOf
@@ -146,12 +197,10 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
 
         let mut nodes: Vec<AutomationGraphNode> = Vec::new();
         for node_iri in flow_node_iris {
-            let type_iri = get_iri_property(conn, &node_iri, rdf::TYPE)
-                .map_err(|e| e.to_string())?
-                .unwrap_or_default();
+            let type_iri = most_specific_flow_node_type(conn, &node_iri)?;
             // bpmn_* canonical type sent to the frontend renderer
             let node_type = resolve_bpmn_render_type(conn, &type_iri);
-            // original local name used for property-specific reads
+            // concrete local name used for property-specific reads
             let raw_type = extract_local_name(&type_iri).to_string();
 
             let mut label = get_literal_property(conn, &node_iri, rdfs::LABEL)
@@ -202,11 +251,14 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                     if let Some(ref process_iri) = invokes_process {
                         let sub_nodes = get_members_by_part_of_process(conn, process_iri, false)?;
                         for sub_iri in &sub_nodes {
-                            let sub_type = get_iri_property(conn, sub_iri, rdf::TYPE)
+                            let sub_is_start = get_all_iri_properties(conn, sub_iri, rdf::TYPE)
                                 .map_err(|e| e.to_string())?
-                                .map(|t| extract_local_name(&t).to_string())
-                                .unwrap_or_default();
-                            if sub_type == "automation_StartEvent" || sub_type == "process_StartEvent" {
+                                .iter()
+                                .any(|t| {
+                                    is_subclass_of(conn, t, "foundation:automation_StartEvent")
+                                        || is_subclass_of(conn, t, "foundation:process_StartEvent")
+                                });
+                            if sub_is_start {
                                 if let Ok(Some(c)) = get_iri_property(conn, sub_iri, "foundation:inputClass") {
                                     in_lbl = get_literal_property(conn, &c, rdfs::LABEL).map_err(|e| e.to_string())?;
                                     in_icon = {
@@ -324,6 +376,21 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                 None
             };
 
+            let (is_multi_instance, is_sequential, batch_total) = if raw_type == "automation_SubProcess" {
+                let loop_col = get_literal_property(conn, &node_iri, "foundation:loopCollection")
+                    .map_err(|e| e.to_string())?;
+                if loop_col.is_some() {
+                    let seq_val = get_literal_property(conn, &node_iri, "foundation:isSequential")
+                        .map_err(|e| e.to_string())?
+                        .map(|v| v != "false");
+                    (Some(true), seq_val, None)
+                } else {
+                    (None, None, None)
+                }
+            } else {
+                (None, None, None)
+            };
+
             let (uses_tools, assigned_to_roles, assigned_to_users) = if raw_type == "automation_UserTask" {
                 let tool_iris = get_all_iri_properties(conn, &node_iri, "foundation:usesTool")
                     .map_err(|e| e.to_string())?;
@@ -368,6 +435,10 @@ pub fn build_automation_graph(conn: &rusqlite::Connection, automation_iri: &str)
                 assigned_to_users,
                 output_classes,
                 timer_cycle,
+                is_multi_instance,
+                is_sequential,
+                batch_total,
+                real_type: raw_type,
             });
         }
 

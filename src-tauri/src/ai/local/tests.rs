@@ -341,15 +341,15 @@ fn gemma_args_empty() {
 // =========================================================================
 
 #[test]
-fn stream_processor_emite_texto_normal() {
+fn stream_processor_emits_normal_text() {
     let mut p = StreamProcessor::new();
-    let (emit, stop) = p.feed("olá mundo");
-    assert_eq!(emit.as_deref(), Some("olá mundo"));
+    let (emit, stop) = p.feed("hello world");
+    assert_eq!(emit.as_deref(), Some("hello world"));
     assert!(!stop);
 }
 
 #[test]
-fn stream_processor_suprime_tool_call_nativo() {
+fn stream_processor_suppresses_native_tool_call() {
     let mut p = StreamProcessor::new();
     let tokens = ["<|tool_call>", "call:speak{message:", "<|\"|>", "ok", "<|\"|>}", "<tool_call|>"];
     let mut emitted = String::new();
@@ -357,11 +357,11 @@ fn stream_processor_suprime_tool_call_nativo() {
         let (emit, _) = p.feed(tok);
         if let Some(t) = emit { emitted.push_str(&t); }
     }
-    assert!(emitted.is_empty(), "nenhum texto deve ter sido emitido: {:?}", emitted);
+    assert!(emitted.is_empty(), "no text should have been emitted: {:?}", emitted);
 }
 
 #[test]
-fn stream_processor_suprime_tool_call_xml() {
+fn stream_processor_suppresses_xml_tool_call() {
     let mut p = StreamProcessor::new();
     let tokens = ["<tool", "_call>", "{\"name\":", "\"speak\",", "\"input\":", "{\"message\":\"ok\"}}", "</tool_call>"];
     let mut emitted = String::new();
@@ -371,32 +371,32 @@ fn stream_processor_suprime_tool_call_xml() {
         if let Some(t) = emit { emitted.push_str(&t); }
         if stop { stopped = true; break; }
     }
-    assert!(emitted.is_empty(), "nenhum texto deve ter sido emitido: {:?}", emitted);
-    assert!(!stopped, "não deve parar após </tool_call> — processamento continua");
+    assert!(emitted.is_empty(), "no text should have been emitted: {:?}", emitted);
+    assert!(!stopped, "must not stop after </tool_call> — processing continues");
 }
 
 #[test]
-fn stream_processor_emite_texto_antes_de_tool_call_xml() {
+fn stream_processor_emits_text_before_xml_tool_call() {
     let mut p = StreamProcessor::new();
-    let (emit, _) = p.feed("texto antes");
-    assert_eq!(emit.as_deref(), Some("texto antes"));
+    let (emit, _) = p.feed("text before");
+    assert_eq!(emit.as_deref(), Some("text before"));
     let (emit2, _) = p.feed("<tool_call>");
     assert!(emit2.is_none());
     assert_eq!(p.state, StreamState::InToolCall);
 }
 
 #[test]
-fn stream_processor_falso_alarme_emite_lookahead() {
+fn stream_processor_false_alarm_emits_lookahead() {
     let mut p = StreamProcessor::new();
     let (e1, _) = p.feed("<");
     assert!(e1.is_none());
-    let (e2, _) = p.feed("p>algum html que nao é tool call longo o suficiente");
-    assert!(e2.is_some(), "deve ter feito flush do lookahead");
+    let (e2, _) = p.feed("p>some html that is not a tool call long enough");
+    assert!(e2.is_some(), "must have flushed the lookahead");
     assert_eq!(p.state, StreamState::Text);
 }
 
 #[test]
-fn stream_processor_flush_pending_text_retorna_lookahead_nao_emitido() {
+fn stream_processor_flush_pending_text_returns_unemitted_lookahead() {
     let mut p = StreamProcessor::new();
     p.feed("<poss");
     let pending = p.flush_pending_text();
@@ -405,33 +405,33 @@ fn stream_processor_flush_pending_text_retorna_lookahead_nao_emitido() {
 }
 
 // =========================================================================
-// Truncamento de contexto
+// Context truncation
 // =========================================================================
 
 #[test]
-fn truncate_nao_remove_quando_cabem() {
+fn truncate_does_not_remove_when_they_fit() {
     let mut msgs = vec![
-        ("system".to_string(), "system prompt curto".to_string()),
-        ("user".to_string(), "mensagem curta".to_string()),
+        ("system".to_string(), "short system prompt".to_string()),
+        ("user".to_string(), "short message".to_string()),
     ];
     truncate_messages_if_needed(&mut msgs);
     assert_eq!(msgs.len(), 2);
 }
 
 #[test]
-fn truncate_remove_mensagens_antigas_mantendo_sistema_e_ultima() {
+fn truncate_removes_old_messages_keeping_system_and_last() {
     let large = "x".repeat(MAX_PROMPT_CHARS / 2 + 100);
     let mut msgs = vec![
         ("system".to_string(), "system".to_string()),
         ("user".to_string(), large.clone()),
-        ("assistant".to_string(), "resposta".to_string()),
-        ("user".to_string(), "ultima mensagem".to_string()),
+        ("assistant".to_string(), "answer".to_string()),
+        ("user".to_string(), "last message".to_string()),
     ];
     truncate_messages_if_needed(&mut msgs);
     assert_eq!(msgs[0].0, "system");
-    assert_eq!(msgs.last().unwrap().1, "ultima mensagem");
+    assert_eq!(msgs.last().unwrap().1, "last message");
     let total: usize = msgs.iter().map(|(_, c)| c.len()).sum();
-    assert!(total <= MAX_PROMPT_CHARS, "total {} > limite {}", total, MAX_PROMPT_CHARS);
+    assert!(total <= MAX_PROMPT_CHARS, "total {} > limit {}", total, MAX_PROMPT_CHARS);
 }
 
 // =========================================================================
@@ -439,12 +439,12 @@ fn truncate_remove_mensagens_antigas_mantendo_sistema_e_ultima() {
 // =========================================================================
 
 #[test]
-fn format_tools_vazio_retorna_vazio() {
+fn format_tools_empty_returns_empty() {
     assert_eq!(format_tools_for_prompt(&[]), "");
 }
 
 #[test]
-fn format_tools_contem_nome_e_formato() {
+fn format_tools_contains_name_and_format() {
     let tools = vec![speak_tool()];
     let prompt = format_tools_for_prompt(&tools);
     assert!(prompt.contains("speak"));
@@ -454,12 +454,12 @@ fn format_tools_contem_nome_e_formato() {
 }
 
 #[test]
-fn format_tools_multiplas_ferramentas() {
+fn format_tools_multiple_tools() {
     let tools = vec![
         speak_tool(),
         ToolDefinition {
             name: "search".to_string(),
-            description: "Busca no grafo".to_string(),
+            description: "Search the graph".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -474,22 +474,22 @@ fn format_tools_multiplas_ferramentas() {
 }
 
 // =========================================================================
-// Testes de integração — requerem o modelo GGUF em disco
+// Integration tests — require the GGUF model on disk
 // =========================================================================
 
 #[tokio::test]
 #[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
-async fn integracao_modelo_carrega_e_cache_funciona() {
+async fn integration_model_loads_and_cache_works() {
     let m1 = load_model(MODEL_E4B).await.expect("failed to load model");
-    let m2 = load_model(MODEL_E4B).await.expect("falha no cache");
-    assert!(Arc::ptr_eq(&m1, &m2), "segunda chamada deve retornar o mesmo Arc");
+    let m2 = load_model(MODEL_E4B).await.expect("cache failure");
+    assert!(Arc::ptr_eq(&m1, &m2), "second call must return the same Arc");
 }
 
 #[tokio::test]
 #[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
-async fn integracao_modelo_usa_formato_tool_call() {
+async fn integration_model_uses_tool_call_format() {
     let model = load_model(MODEL_E4B).await.expect("failed to load model");
-    let msgs = messages_with_injection("Você é um assistente útil.", "Diga apenas 'olá'.");
+    let msgs = messages_with_injection("You are a helpful assistant.", "Say only 'hello'.");
 
     let mut raw = String::new();
     run_inference(&model, &msgs, |p| { raw.push_str(&p); true }).expect("inference failed");
@@ -497,15 +497,15 @@ async fn integracao_modelo_usa_formato_tool_call() {
     println!("raw output: {:?}", raw);
 
     let tc = parse_all_tool_calls_from_output(&raw).into_iter().next();
-    assert!(tc.is_some(), "modelo não gerou tool call. Output: {:?}", raw);
+    assert!(tc.is_some(), "model did not generate a tool call. Output: {:?}", raw);
     assert_eq!(tc.unwrap().name, "speak");
 }
 
 #[tokio::test]
 #[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
-async fn integracao_parser_extrai_mensagem_limpa() {
+async fn integration_parser_extracts_clean_message() {
     let model = load_model(MODEL_E4B).await.expect("failed to load model");
-    let msgs = messages_with_injection("Você é um assistente útil.", "Diga apenas 'olá'.");
+    let msgs = messages_with_injection("You are a helpful assistant.", "Say only 'hello'.");
 
     let mut raw = String::new();
     run_inference(&model, &msgs, |p| { raw.push_str(&p); true }).expect("inference failed");
@@ -513,31 +513,31 @@ async fn integracao_parser_extrai_mensagem_limpa() {
     println!("raw output: {:?}", raw);
 
     let tc = parse_all_tool_calls_from_output(&raw).into_iter().next();
-    assert!(tc.is_some(), "modelo não gerou tool call. Output: {:?}", raw);
+    assert!(tc.is_some(), "model did not generate a tool call. Output: {:?}", raw);
     let message = tc.unwrap().input["message"].as_str().unwrap_or("").to_string();
 
     println!("parsed message: {:?}", message);
-    assert!(!message.is_empty(), "mensagem parseada está vazia");
-    assert!(!message.contains("tool_call"), "tag tool_call vazou para a mensagem");
-    assert!(!message.contains("<end_of_turn>"), "marcador EOT não foi removido");
+    assert!(!message.is_empty(), "parsed message is empty");
+    assert!(!message.contains("tool_call"), "tool_call tag leaked into the message");
+    assert!(!message.contains("<end_of_turn>"), "EOT marker was not removed");
 }
 
 #[tokio::test]
 #[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
-async fn integracao_modelo_retorna_stats_de_tokens() {
+async fn integration_model_returns_token_stats() {
     let model = load_model(MODEL_E4B).await.expect("failed to load model");
-    let msgs = messages_with_injection("Você é um assistente útil.", "Diga apenas 'olá'.");
+    let msgs = messages_with_injection("You are a helpful assistant.", "Say only 'hello'.");
 
     let stats = run_inference(&model, &msgs, |_| true).expect("inference failed");
 
-    assert!(stats.prompt_tokens > 0, "prompt_tokens deve ser > 0");
-    assert!(stats.completion_tokens > 0, "completion_tokens deve ser > 0");
+    assert!(stats.prompt_tokens > 0, "prompt_tokens must be > 0");
+    assert!(stats.completion_tokens > 0, "completion_tokens must be > 0");
     println!("prompt: {} tokens, completion: {} tokens", stats.prompt_tokens, stats.completion_tokens);
 }
 
 #[tokio::test]
 #[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
-async fn integracao_modelo_responde_em_portugues() {
+async fn integration_model_responds_in_portuguese() {
     let model = load_model(MODEL_E4B).await.expect("failed to load model");
     let msgs = messages_with_injection(
         "Você é um assistente útil. Responda sempre em português.",
@@ -557,25 +557,25 @@ async fn integracao_modelo_responde_em_portugues() {
     let lower = message.to_lowercase();
     assert!(
         lower.contains("brasília") || lower.contains("brasilia"),
-        "resposta não mencionou Brasília. Got: {:?}", message
+        "response did not mention Brasília. Got: {:?}", message
     );
 }
 
 #[tokio::test]
 #[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
-async fn integracao_modelo_nao_encontrado_retorna_erro_claro() {
-    let result = load_model("/tmp/modelo_inexistente.gguf").await;
-    let err = result.expect_err("esperava Err, mas load_model retornou Ok");
-    assert!(err.contains("not found"), "erro deveria mencionar 'not found': {}", err);
+async fn integration_model_not_found_returns_clear_error() {
+    let result = load_model("/tmp/nonexistent_model.gguf").await;
+    let err = result.expect_err("expected Err, but load_model returned Ok");
+    assert!(err.contains("not found"), "error should mention 'not found': {}", err);
 }
 
 // =========================================================================
-// Testes de cenário: tool loop, artefatos de sistema, multi-turn
+// Scenario tests: tool loop, system artifacts, multi-turn
 // =========================================================================
 
 #[tokio::test]
 #[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
-async fn cenario_speak_simples() {
+async fn scenario_speak_simple() {
     let tools = vec![speak_tool()];
     let msgs = build_turns(
         "You are a helpful assistant.",
@@ -583,14 +583,14 @@ async fn cenario_speak_simples() {
         vec![("user", MessageContent::Text("What is 2 + 2?".into()))],
     );
     let (_, name, msg) = run_and_parse(MODEL_E4B, &msgs).await;
-    assert_eq!(name.as_deref(), Some("speak"), "deve chamar speak");
-    let msg = msg.expect("speak deve ter message");
-    assert!(msg.contains('4'), "resposta deve conter '4'. Got: {:?}", msg);
+    assert_eq!(name.as_deref(), Some("speak"), "must call speak");
+    let msg = msg.expect("speak must have message");
+    assert!(msg.contains('4'), "answer must contain '4'. Got: {:?}", msg);
 }
 
 #[tokio::test]
 #[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
-async fn cenario_speak_apos_resultado_de_ferramenta() {
+async fn scenario_speak_after_tool_result() {
     let tools = vec![speak_tool(), search_tool()];
     let msgs = build_turns(
         "You are a helpful assistant.",
@@ -614,15 +614,15 @@ async fn cenario_speak_apos_resultado_de_ferramenta() {
         ],
     );
     let (_, name, msg) = run_and_parse(MODEL_E4B, &msgs).await;
-    assert_eq!(name.as_deref(), Some("speak"), "deve chamar speak após ter o resultado");
-    let msg = msg.expect("speak deve ter message");
+    assert_eq!(name.as_deref(), Some("speak"), "must call speak after having the result");
+    let msg = msg.expect("speak must have message");
     println!("speak message: {:?}", msg);
-    assert!(!msg.is_empty(), "mensagem não pode estar vazia");
+    assert!(!msg.is_empty(), "message cannot be empty");
 }
 
 #[tokio::test]
 #[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
-async fn cenario_sem_loop_de_ferramenta() {
+async fn scenario_no_tool_loop() {
     let tools = vec![speak_tool(), describe_tool()];
     let msgs = build_turns(
         "You are a helpful assistant.",
@@ -647,16 +647,16 @@ async fn cenario_sem_loop_de_ferramenta() {
     );
     let (_, name, msg) = run_and_parse(MODEL_E4B, &msgs).await;
     assert_ne!(name.as_deref(), Some("describe_individual"),
-        "não deve repetir describe_individual. Got: {:?}", name);
-    assert_eq!(name.as_deref(), Some("speak"), "deve chamar speak com o resumo");
-    let msg = msg.expect("speak deve ter message");
+        "must not repeat describe_individual. Got: {:?}", name);
+    assert_eq!(name.as_deref(), Some("speak"), "must call speak with the summary");
+    let msg = msg.expect("speak must have message");
     println!("speak message: {:?}", msg);
     assert!(!msg.is_empty());
 }
 
 #[tokio::test]
 #[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
-async fn cenario_multitool_na_mesma_resposta() {
+async fn scenario_multitool_in_same_response() {
     let tools = vec![speak_tool(), describe_tool()];
     let msgs = build_turns(
         "You are a helpful assistant. When the user asks to describe multiple entities, \
@@ -675,19 +675,19 @@ async fn cenario_multitool_na_mesma_resposta() {
         calls.iter().map(|c| &c.name).collect::<Vec<_>>());
     assert!(
         calls.len() >= 2,
-        "deve emitir pelo menos 2 tool_calls na mesma resposta. Obteve {} — raw: {:?}",
+        "must emit at least 2 tool_calls in the same response. Got {} — raw: {:?}",
         calls.len(), raw
     );
     let names: Vec<&str> = calls.iter().map(|c| c.name.as_str()).collect();
     assert!(
         names.contains(&"describe_individual"),
-        "deve chamar describe_individual. Obteve: {:?}", names
+        "must call describe_individual. Got: {:?}", names
     );
 }
 
 #[tokio::test]
 #[ignore = "requires resources/models/gemma-4-E4B-it-Q4_K_M.gguf (~4.6 GB)"]
-async fn cenario_speak_sem_artefatos_de_sistema() {
+async fn scenario_speak_without_system_artifacts() {
     let tools = vec![speak_tool(), search_tool()];
     let msgs = build_turns(
         "You are a helpful assistant.",
@@ -713,9 +713,9 @@ async fn cenario_speak_sem_artefatos_de_sistema() {
     let (_, _, msg) = run_and_parse(MODEL_E4B, &msgs).await;
     let msg = msg.unwrap_or_default();
     println!("speak message: {:?}", msg);
-    assert!(!msg.contains("<start_of_turn>"), "artefato <start_of_turn> no speak");
-    assert!(!msg.contains("<end_of_turn>"), "artefato <end_of_turn> no speak");
-    assert!(!msg.contains("[called "), "prefixo [called] vazou para o speak");
-    assert!(!msg.contains("<result>"), "tag <result> vazou para o speak");
-    assert!(!msg.contains("<action>"), "tag <action> vazou para o speak");
+    assert!(!msg.contains("<start_of_turn>"), "<start_of_turn> artifact in speak");
+    assert!(!msg.contains("<end_of_turn>"), "<end_of_turn> artifact in speak");
+    assert!(!msg.contains("[called "), "[called] prefix leaked into speak");
+    assert!(!msg.contains("<result>"), "<result> tag leaked into speak");
+    assert!(!msg.contains("<action>"), "<action> tag leaked into speak");
 }

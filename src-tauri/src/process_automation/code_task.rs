@@ -1,9 +1,10 @@
+use chrono::Utc;
 use tauri::{AppHandle, Manager};
 use tokio::runtime::Handle;
 
 use crate::ai::functions::{execute_tool, ToolCall};
 use crate::commands::log_backend;
-use crate::owl::{get_iri_property, get_literal_property, replace_all_property_iris, replace_all_property_literals, DbExecutor};
+use crate::owl::{get_all_property_values, get_iri_property, get_literal_property, replace_all_property_iris, replace_all_property_literals, DbExecutor};
 
 use super::executor::{interpolate, split_iri_lines, ExecutionContext};
 
@@ -160,7 +161,8 @@ fn run_script(
     engine.register_fn("mcp", {
         let app = app.clone();
         let handle = handle.clone();
-        move |tool_name: String, params_json: String| -> String {
+        move |tool_name: rhai::ImmutableString, params_json: rhai::ImmutableString| -> String {
+            let tool_name = tool_name.to_string();
             if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
                 log_backend("info", &format!("[code_task] dry_run: intercepted write tool '{}'", tool_name));
                 return dry_run_mock(&tool_name);
@@ -188,55 +190,64 @@ fn run_script(
 
     engine.register_fn("ctx_get", {
         let ctx = ctx.clone();
-        move |key: String| -> String { ctx.get(&key).cloned().unwrap_or_default() }
+        move |key: rhai::ImmutableString| -> String { ctx.get(key.as_str()).cloned().unwrap_or_default() }
     });
 
-    engine.register_fn("parse_json", |json_str: String| -> rhai::Dynamic {
+    engine.register_fn("parse_json", |json_str: rhai::ImmutableString| -> rhai::Dynamic {
         let v: serde_json::Value = serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
         json_value_to_dynamic(v)
     });
 
-    engine.register_fn("join", |arr: rhai::Array, sep: String| -> String {
+    engine.register_fn("join", |arr: rhai::Array, sep: rhai::ImmutableString| -> String {
         arr.iter()
             .map(|d| d.clone().try_cast::<String>().unwrap_or_default())
             .collect::<Vec<_>>()
-            .join(&sep)
+            .join(sep.as_str())
     });
 
     engine.register_fn("owl_get_property", {
         let app = app.clone();
         let handle = handle.clone();
-        move |iri: String, prop_iri: String| -> String {
-            let args = serde_json::json!({"iris": [iri]});
-            let call = ToolCall { name: "describe_individual".to_string(), arguments: args };
+        move |iri: rhai::ImmutableString, prop_iri: rhai::ImmutableString| -> String {
+            let iri_s = iri.to_string();
+            let prop_iri_s = prop_iri.to_string();
             let executor = app.state::<DbExecutor>();
-            let result_json = handle
+            let values = handle
                 .block_on(executor.read(move |conn| {
-                    let r = crate::ai::functions::execute_read_only_tool(conn, &call);
-                    serde_json::to_string(&r.result).map_err(|e| e.to_string())
+                    get_all_property_values(conn, &iri_s, &prop_iri_s).map_err(|e| e.to_string())
                 }))
                 .unwrap_or_default();
-            let v: serde_json::Value = serde_json::from_str(&result_json).unwrap_or(serde_json::Value::Null);
-            v["individuals"][0]["properties"]
-                .as_array()
-                .and_then(|arr| arr.iter().find(|p| p["property"].as_str() == Some(&prop_iri)))
-                .and_then(|p| p["value"].as_str())
-                .unwrap_or_default()
-                .to_string()
+            serde_json::to_string(&values).unwrap_or_else(|_| "[]".to_string())
+        }
+    });
+
+    engine.register_fn("owl_get_one", {
+        let app = app.clone();
+        let handle = handle.clone();
+        move |iri: rhai::ImmutableString, prop_iri: rhai::ImmutableString| -> String {
+            let iri_s = iri.to_string();
+            let prop_iri_s = prop_iri.to_string();
+            let executor = app.state::<DbExecutor>();
+            let values = handle
+                .block_on(executor.read(move |conn| {
+                    get_all_property_values(conn, &iri_s, &prop_iri_s).map_err(|e| e.to_string())
+                }))
+                .unwrap_or_default();
+            values.into_iter().next().unwrap_or_default()
         }
     });
 
     engine.register_fn("owl_set_property", {
         let app = app.clone();
         let handle = handle.clone();
-        move |iri: String, prop_iri: String, value: String| -> String {
+        move |iri: rhai::ImmutableString, prop_iri: rhai::ImmutableString, value: rhai::ImmutableString| -> String {
             let tool_name = "replace_property_values".to_string();
             if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
                 log_backend("info", &format!("[code_task] dry_run: intercepted owl_set_property on {} {}", iri, prop_iri));
                 return dry_run_mock(&tool_name);
             }
             let args = serde_json::json!({
-                "operations": [{"iri": iri, "property_iri": prop_iri, "values": [value]}]
+                "operations": [{"iri": iri.as_str(), "property_iri": prop_iri.as_str(), "values": [value.as_str()]}]
             });
             let call = ToolCall { name: tool_name, arguments: args };
             let executor = app.state::<DbExecutor>();
@@ -260,14 +271,14 @@ fn run_script(
     engine.register_fn("owl_assert", {
         let app = app.clone();
         let handle = handle.clone();
-        move |class_iri: String, label: String| -> String {
+        move |class_iri: rhai::ImmutableString, label: rhai::ImmutableString| -> String {
             let tool_name = "assert_individual".to_string();
             if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
                 log_backend("info", &format!("[code_task] dry_run: intercepted owl_assert for class {}", class_iri));
                 return dry_run_mock(&tool_name);
             }
             let args = serde_json::json!({
-                "operations": [{"class_iri": class_iri, "label": label}]
+                "operations": [{"class_iri": class_iri.as_str(), "label": label.as_str()}]
             });
             let call = ToolCall { name: tool_name, arguments: args };
             let executor = app.state::<DbExecutor>();
@@ -290,8 +301,18 @@ fn run_script(
         }
     });
 
-    engine.register_fn("owl_read_file", |path: String| -> String {
-        std::fs::read_to_string(&path).unwrap_or_default()
+    engine.register_fn("owl_read_file", |path: rhai::ImmutableString| -> String {
+        std::fs::read_to_string(path.as_str()).unwrap_or_default()
+    });
+
+    engine.register_fn("today", || -> String {
+        Utc::now().format("%Y-%m-%d").to_string()
+    });
+
+    engine.register_fn("today_plus", |days: i64| -> String {
+        (Utc::now() + chrono::Duration::days(days))
+            .format("%Y-%m-%d")
+            .to_string()
     });
 
     log_backend("info", "[code_task] Evaluating Rhai script");
@@ -326,11 +347,11 @@ mod tests {
     fn test_engine(ctx: ExecutionContext) -> rhai::Engine {
         let mut engine = rhai::Engine::new();
         engine.set_max_operations(1_000_000);
-        engine.register_fn("mcp", |_: String, _: String| -> String {
+        engine.register_fn("mcp", |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String {
             r#"{"success":true,"result":null,"error":null}"#.to_string()
         });
-        engine.register_fn("ctx_get", move |key: String| -> String {
-            ctx.get(&key).cloned().unwrap_or_default()
+        engine.register_fn("ctx_get", move |key: rhai::ImmutableString| -> String {
+            ctx.get(key.as_str()).cloned().unwrap_or_default()
         });
         engine
     }
@@ -374,8 +395,8 @@ mod tests {
     fn script_sandbox_enforces_operation_limit() {
         let mut engine = rhai::Engine::new();
         engine.set_max_operations(100);
-        engine.register_fn("ctx_get", |_: String| -> String { String::new() });
-        engine.register_fn("mcp", |_: String, _: String| -> String { String::new() });
+        engine.register_fn("ctx_get", |_: rhai::ImmutableString| -> String { String::new() });
+        engine.register_fn("mcp", |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String { String::new() });
         let result = engine.eval::<rhai::Dynamic>("loop {}");
         assert!(result.is_err());
     }
@@ -384,15 +405,15 @@ mod tests {
         let mut engine = rhai::Engine::new();
         engine.set_max_operations(1_000_000);
         let dry_run = ctx.get("dryRun").map(|v| v == "true").unwrap_or(false);
-        engine.register_fn("mcp", move |tool_name: String, _params: String| -> String {
+        engine.register_fn("mcp", move |tool_name: rhai::ImmutableString, _params: rhai::ImmutableString| -> String {
             if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
-                dry_run_mock(&tool_name)
+                dry_run_mock(tool_name.as_str())
             } else {
                 r#"{"success":true,"result":{"live":true},"error":null}"#.to_string()
             }
         });
-        engine.register_fn("ctx_get", move |key: String| -> String {
-            ctx.get(&key).cloned().unwrap_or_default()
+        engine.register_fn("ctx_get", move |key: rhai::ImmutableString| -> String {
+            ctx.get(key.as_str()).cloned().unwrap_or_default()
         });
         engine
     }

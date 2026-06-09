@@ -15,6 +15,7 @@ pub use timestamps::{touch, LAST_UPDATED_AT};
 pub use materialize::{materialize_individual_shallow, ShallowValue};
 
 pub use properties::{
+    get_all_property_values,
     get_all_iri_properties, replace_all_property_iris, replace_all_property_literals,
     get_literal_property, get_all_literal_properties, get_iri_property,
     has_property_iri, has_property_literal,

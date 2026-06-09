@@ -127,9 +127,16 @@ async fn validate_code_task(app: &AppHandle, entity_id: &str) {
 
 fn compile_script(script: &str) -> Result<(), String> {
     let mut engine = rhai::Engine::new();
-    engine.register_fn("mcp", |_: String, _: String| -> String { String::new() });
-    engine.register_fn("ctx_get", |_: String| -> String { String::new() });
-    engine.register_fn("parse_json", |_: String| -> rhai::Dynamic { rhai::Dynamic::UNIT });
-    engine.register_fn("join", |_: rhai::Array, _: String| -> String { String::new() });
+    engine.register_fn("mcp", |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String { String::new() });
+    engine.register_fn("ctx_get", |_: rhai::ImmutableString| -> String { String::new() });
+    engine.register_fn("parse_json", |_: rhai::ImmutableString| -> rhai::Dynamic { rhai::Dynamic::UNIT });
+    engine.register_fn("join", |_: rhai::Array, _: rhai::ImmutableString| -> String { String::new() });
+    engine.register_fn("owl_get_property", |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String { String::new() });
+    engine.register_fn("owl_get_one", |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String { String::new() });
+    engine.register_fn("owl_set_property", |_: rhai::ImmutableString, _: rhai::ImmutableString, _: rhai::ImmutableString| -> String { String::new() });
+    engine.register_fn("owl_assert", |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String { String::new() });
+    engine.register_fn("owl_read_file", |_: rhai::ImmutableString| -> String { String::new() });
+    engine.register_fn("today", || -> String { String::new() });
+    engine.register_fn("today_plus", |_: i64| -> String { String::new() });
     engine.compile(script).map(|_| ()).map_err(|e| e.to_string())
 }

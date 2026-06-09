@@ -874,8 +874,20 @@ pub async fn load_conversation_history(
     let selected = executor.read(move |conn| {
         let t0 = std::time::Instant::now();
 
-        let iris_desc = crate::core_ontology::chat::find_messages_by_conversation(conn, &conversation_id, usize::MAX, 0)
-            .map_err(|e| format!("Failed to query messages: {}", e))?;
+        // If a compaction exists, only load messages after the last summarized message.
+        // The compaction message itself is included because its sentAt > summaryUpToMessage.sentAt.
+        // This avoids batch-loading thousands of already-summarized messages.
+        let since_rfc = crate::owl::get_iri_property(conn, &conversation_id, "foundation:summaryUpToMessage")
+            .ok()
+            .flatten()
+            .and_then(|iri| crate::owl::get_literal_property(conn, &iri, "foundation:sentAt").ok().flatten());
+
+        let iris_desc = match since_rfc.as_deref() {
+            Some(since) => crate::core_ontology::chat::find_messages_by_conversation_since(conn, &conversation_id, since)
+                .map_err(|e| format!("Failed to query messages since cutoff: {}", e))?,
+            None => crate::core_ontology::chat::find_messages_by_conversation(conn, &conversation_id, usize::MAX, 0)
+                .map_err(|e| format!("Failed to query messages: {}", e))?,
+        };
         let t1 = std::time::Instant::now();
 
         if iris_desc.is_empty() {

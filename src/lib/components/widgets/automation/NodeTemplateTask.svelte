@@ -8,7 +8,7 @@
 <div class="node-wrap">
   <div class="node">
     <div class="side-tab">
-      <span class="material-symbols-outlined icon">terminal</span>
+      <span class="material-symbols-outlined icon">text_snippet</span>
     </div>
     <div class="content">
       <span class="label">{data.label}</span>
@@ -33,19 +33,19 @@
     align-items: stretch;
     width: 220px;
     cursor: pointer;
-    background: var(--automation-node-script-bg);
-    color: var(--automation-node-script-text);
+    background: var(--automation-node-code-bg);
+    color: var(--automation-node-code-text);
     overflow: hidden;
   }
   .side-tab {
     width: 28px;
     flex-shrink: 0;
-    background: var(--automation-node-script-tab);
+    background: var(--automation-node-code-tab);
     display: flex;
     align-items: center;
     justify-content: center;
   }
-  .icon { font-size: 16px; color: var(--automation-node-script-bg); font-variation-settings: 'FILL' 1; }
+  .icon { font-size: 16px; color: var(--automation-node-code-bg); font-variation-settings: 'FILL' 1; }
   .content { display: flex; flex-direction: column; justify-content: center; padding: 8px 10px; min-width: 0; flex: 1; }
   .label { font-size: 12px; font-weight: 500; line-height: 1.3; }
 </style>

@@ -1,5 +1,42 @@
 use crate::owl::{Connection, Individual, OwlError};
 
+/// Returns IRIs of messages in `conversation_iri` with sentAt > `since_rfc3339`, ordered
+/// newest-first. The compaction message (if any) is included because its sentAt is always
+/// after the summarized messages.
+pub fn find_messages_by_conversation_since(
+    conn: &Connection,
+    conversation_iri: &str,
+    since_rfc3339: &str,
+) -> Result<Vec<String>, OwlError> {
+    let sql = "
+        SELECT subject FROM (
+            SELECT t_conv.subject, MAX(t_sent.object_value) AS ts
+            FROM (
+                SELECT subject, retracted,
+                       MAX(tx) OVER (PARTITION BY subject, predicate) AS max_tx, tx
+                FROM triples
+                WHERE predicate = 'foundation:partOfConversation'
+                  AND (object = ?1 OR object_value = ?1)
+            ) t_conv
+            INNER JOIN triples t_sent
+                ON t_conv.subject = t_sent.subject
+               AND t_sent.predicate = 'foundation:sentAt'
+               AND t_sent.retracted = 0
+            WHERE t_conv.tx = t_conv.max_tx AND t_conv.retracted = 0
+            GROUP BY t_conv.subject
+            HAVING MAX(t_sent.object_value) > ?2
+        )
+        ORDER BY ts DESC
+    ";
+    let mut stmt = conn.prepare(sql).map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+    let iris = stmt
+        .query_map(rusqlite::params![conversation_iri, since_rfc3339], |row| row.get(0))
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+    Ok(iris)
+}
+
 /// Returns IRIs of messages in `conversation_iri` ordered by sentAt descending (newest first).
 /// Pass `limit = usize::MAX` for no limit.
 pub fn find_messages_by_conversation(

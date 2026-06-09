@@ -488,8 +488,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 3px 0px;
-    background: color-mix(in srgb, var(--color-black) 30%, transparent);
+    padding: 8px;
+    border: 1px solid #ffffff05;
+    border-radius: 5px;
   }
 
   .value-large {
@@ -539,7 +540,7 @@
   }
 
   .clickable:hover {
-    background: color-mix(in srgb, var(--color-interactive) 20%, transparent) !important;
+    background: color-mix(in srgb, var(--color-interactive) 5%, transparent) !important;
   }
 
   .clickable:active {
@@ -561,7 +562,6 @@
     font-family: var(--font-body);
     font-size: 14px;
     color: var(--color-neutral-active);
-    flex: 1;
   }
 
   .value-plain {
@@ -633,7 +633,7 @@
     background: color-mix(in srgb, var(--status-color) 18%, transparent);
     border: none;
     flex-shrink: 0;
-    margin-left: auto;
+    border-radius: 10px;
   }
 
   .inline-status-icon {

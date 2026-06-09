@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
@@ -14,35 +14,33 @@
   import NodeEndEvent     from './automation/NodeEndEvent.svelte'
   import NodeAgentTask    from './automation/NodeAgentTask.svelte'
   import NodeCodeTask     from './automation/NodeCodeTask.svelte'
-  import NodeScriptTask   from './automation/NodeScriptTask.svelte'
   import NodeRequestTask  from './automation/NodeRequestTask.svelte'
   import NodeUserTask     from './automation/NodeUserTask.svelte'
   import NodeGateway      from './automation/NodeGateway.svelte'
   import NodeSubProcess        from './automation/NodeSubProcess.svelte'
   import NodeNOVAMessageTask   from './automation/NodeNOVAMessageTask.svelte'
-  import NodeTask              from './automation/NodeTask.svelte'
+  import NodeTemplateTask      from './automation/NodeTemplateTask.svelte'
+
+  interface BatchProgress {
+    done: number
+    failed: number
+    total: number | null
+  }
 
   let { widgetId, entityId, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props()
 
   const nodeTypes = {
-    bpmn_StartEvent:      NodeStartEvent,
-    bpmn_EndEvent:        NodeEndEvent,
-    bpmn_Gateway:         NodeGateway,
-    bpmn_Task:            NodeTask,
-    bpmn_SubProcess:      NodeSubProcess,
-    // automation-specific subtypes resolved via bpmn_* traversal but kept for
-    // backward compat with any cached widget state that still carries the old type
     automation_StartEvent:       NodeStartEvent,
     automation_TimerStartEvent:  NodeTimerStartEvent,
     automation_EndEvent:         NodeEndEvent,
-    automation_AgentTask:        NodeAgentTask,
-    automation_CodeTask:         NodeCodeTask,
-    automation_ScriptTask:       NodeScriptTask,
-    automation_RequestTask:      NodeRequestTask,
-    automation_UserTask:         NodeUserTask,
     automation_Gateway:          NodeGateway,
     automation_SubProcess:       NodeSubProcess,
+    automation_AgentTask:        NodeAgentTask,
+    automation_CodeTask:         NodeCodeTask,
     automation_NOVAMessageTask:  NodeNOVAMessageTask,
+    automation_RequestTask:      NodeRequestTask,
+    automation_UserTask:         NodeUserTask,
+    automation_TemplateTask:     NodeTemplateTask,
   }
 
   let automationLabel = $state('')
@@ -54,17 +52,37 @@
   let hoveredNodeId = $state(null)
   let running = $state(false)
 
-  let execNodeStatus = $state(new Map())
-  let activeExecutionIri = $state(null)
-  let activeStepLabel = $state(null)
+  let execNodeStatus = $state(new Map<string, { statusLabel: string; statusColor: string; statusIcon: string }>())
+  let batchProgressMap = $state(new Map<string, BatchProgress>())
+  let iterationOfToNodeId = new Map<string, string>()
+  let activeExecutionIri = $state<string | null>(null)
+  let activeStepLabel = $state<string | null>(null)
 
   const nodesWithExecStatus = $derived(
-    execNodeStatus.size === 0
+    execNodeStatus.size === 0 && batchProgressMap.size === 0
       ? nodes
       : nodes.map(n => {
           const s = execNodeStatus.get(n.id)
-          if (!s) return n
-          return { ...n, data: { ...n.data, status: s.statusLabel, statusColor: s.statusColor, statusIcon: s.statusIcon } }
+          const bp = batchProgressMap.get(n.id)
+          if (!s && !bp) return n
+
+          let statusOverride = s ? { status: s.statusLabel, statusColor: s.statusColor, statusIcon: s.statusIcon } : {}
+          if (bp && bp.total !== null && bp.done + bp.failed >= bp.total) {
+            if (bp.failed > 0) {
+              statusOverride = { status: 'Failed', statusColor: 'var(--color-danger)', statusIcon: 'error' }
+            } else {
+              statusOverride = { status: 'Done', statusColor: 'var(--color-success)', statusIcon: 'check_circle' }
+            }
+          }
+
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              ...statusOverride,
+              ...(bp ? { batchProgress: bp } : {}),
+            }
+          }
         })
   )
 
@@ -117,16 +135,16 @@
         invoke('automation__get_graph', { processIri: entityId }),
         invoke('chat__get_conversation_snapshot_tx', { conversationId: entityId }).catch(() => 0),
       ])
-      const data = JSON.parse(raw)
+      const data = JSON.parse(raw as string)
       automationLabel = data.process_label
       isExecutable = data.is_executable ?? false
 
-      const flowNodes = data.nodes.map(n => ({
-        id: n.id,
-        type: n.type,
+      const flowNodes = data.nodes.map((n: Record<string, unknown>) => ({
+        id: n.id as string,
+        type: n.realType as string,
         data: {
           label: n.label,
-          nodeType: n.type,
+          nodeType: n.realType,
           assignedAgent: n.assigned_agent ?? null,
           assignedAgentIri: n.assigned_agent_iri ?? null,
           invokesProcess: n.invokes_process ?? null,
@@ -143,11 +161,13 @@
           assignedToUsers: n.assigned_to_users ?? [],
           outputClasses: n.output_classes ?? [],
           timerCycle: n.timer_cycle ?? null,
+          isMultiInstance: n.isMultiInstance === true ? true : undefined,
+          isSequential: n.isMultiInstance === true ? (n.isSequential !== false) : undefined,
         },
         position: { x: 0, y: 0 },
       }))
 
-      const gatewayIds = new Set(data.nodes.filter(n => n.type === 'bpmn_Gateway' || n.type === 'automation_Gateway').map(n => n.id))
+      const gatewayIds = new Set(data.nodes.filter(n => n.realType === 'automation_Gateway').map(n => n.id))
 
       const flowEdges = data.edges.map(e => {
         const isErrorEdge = e.source_handle === 'error'
@@ -174,7 +194,7 @@
         iris.add(n.invokes_process)
         try {
           const subRaw = await invoke('automation__get_graph', { processIri: n.invokes_process })
-          const subData = JSON.parse(subRaw)
+          const subData = JSON.parse(subRaw as string)
           subData.nodes.forEach(sn => iris.add(sn.id))
         } catch {}
       }
@@ -186,7 +206,7 @@
         predicate: 'foundation:partOfProcess',
         objectValue: entityId,
       }])
-      snapshotTx = /** @type {number} */ (snapTx)
+      snapshotTx = snapTx as number
       entitySub.setSinceTx(snapshotTx)
       entitySub.replayMissed()
     } catch (e) {
@@ -250,10 +270,12 @@
   onMount(async () => {
     await loadGraph()
     unlistenExecStarted = await listen('automation-execution-started', (event) => {
-      if (event.payload.processIri !== entityId) return
-      const execIri = event.payload.executionIri
+      if ((event.payload as Record<string, unknown>).processIri !== entityId) return
+      const execIri = (event.payload as Record<string, unknown>).executionIri as string
       activeExecutionIri = execIri
       execNodeStatus = new Map()
+      batchProgressMap = new Map()
+      iterationOfToNodeId = new Map()
       activeStepLabel = null
       running = true
       // Register creation-query for new StepExecution entities belonging to this execution (US5).
@@ -275,7 +297,7 @@
           // The stream already showed ephemeral progress; this ensures the final state is durable.
           const stepIri = event.entityId
           invoke('inspector__get_entity', { entityId: stepIri }).then((resultStr) => {
-            const data = JSON.parse(resultStr)
+            const data = JSON.parse(resultStr as string)
             const props = data?.properties ?? []
             const statusProp = props.find(p => p.property === 'foundation:hasStatus')
             const execStepProp = props.find(p => p.property === 'foundation:executesStep')
@@ -304,8 +326,48 @@
       }])
     })
     unlistenStepProgress = await listen('automation-step-progress', (event) => {
-      if (event.payload.executionIri !== activeExecutionIri) return
-      const { nodeIri, nodeLabel, status } = event.payload
+      const payload = event.payload as {
+        executionIri: string
+        nodeIri: string
+        nodeLabel: string
+        status: 'started' | 'completed' | 'failed'
+        iterationOf?: string
+        iterationIndex?: number
+        iterationTotal?: number
+      }
+      if (payload.executionIri !== activeExecutionIri) return
+      const { nodeIri, nodeLabel, status } = payload
+
+      if (payload.iterationOf != null && payload.iterationTotal != null) {
+        const iterIri = payload.iterationOf
+        const total = payload.iterationTotal
+
+        let nodeId = iterationOfToNodeId.get(iterIri)
+        if (nodeId == null) {
+          const alreadyMapped = new Set(iterationOfToNodeId.values())
+          const candidate = nodes.find(n => n.data?.isMultiInstance && !alreadyMapped.has(n.id))
+          nodeId = candidate ? candidate.id : iterIri
+          iterationOfToNodeId.set(iterIri, nodeId)
+        }
+
+        const prev = batchProgressMap.get(nodeId) ?? { done: 0, failed: 0, total: null }
+        const next: BatchProgress = {
+          done: prev.done + (status === 'completed' ? 1 : 0),
+          failed: prev.failed + (status === 'failed' ? 1 : 0),
+          total,
+        }
+        const bpMap = new Map(batchProgressMap)
+        bpMap.set(nodeId, next)
+        batchProgressMap = bpMap
+
+        const statusMap = new Map(execNodeStatus)
+        if (!statusMap.has(nodeId)) {
+          statusMap.set(nodeId, { statusLabel: 'Running', statusColor: 'var(--color-warning)', statusIcon: 'progress_activity' })
+          execNodeStatus = statusMap
+        }
+        return
+      }
+
       const map = new Map(execNodeStatus)
       if (status === 'started') {
         map.set(nodeIri, { statusLabel: 'Running', statusColor: 'var(--color-warning)', statusIcon: 'progress_activity' })
@@ -320,7 +382,8 @@
       execNodeStatus = map
     })
     unlistenExecFinished = await listen('automation-execution-finished', (event) => {
-      if (event.payload.executionIri !== activeExecutionIri) return
+      const p = event.payload as { executionIri: string }
+      if (p.executionIri !== activeExecutionIri) return
       running = false
       activeStepLabel = null
     })
@@ -366,7 +429,7 @@
       </div>
     {:else}
       <SvelteFlow
-        {nodes}
+        nodes={nodesWithExecStatus}
         edges={displayEdges}
         {nodeTypes}
         fitView
@@ -377,7 +440,7 @@
         onnodepointerleave={() => hoveredNodeId = null}
       >
         <Controls />
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.08)" />
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
       </SvelteFlow>
     {/if}
   </div>
