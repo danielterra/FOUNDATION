@@ -21,3 +21,4 @@ Starts the dev server as the PM2 process `foundation-dev` (defined in `ecosystem
 - ALWAYS use PM2 — never spawn `npm run tauri dev` directly (unmanaged orphan).
 - NEVER start when status is already `online`.
 - The first boot after schema migrations can legitimately take minutes (e.g. one-shot VACUUM) — check the log for `[STARTUP]` progress lines before declaring a hang.
+- No console window should ever appear: in debug the exe hides its own orphan console (`hide_orphan_console` in `src-tauri/src/main.rs`). A visible blank console window = regression of that guard (and the user closing it kills the server).
