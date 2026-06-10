@@ -7,6 +7,10 @@ use crate::diagnostics::log_backend;
 
 const DB_BUSY_TIMEOUT_SECS: u64 = 30;
 
+/// PRAGMA user_version value written after the one-time startup VACUUM completes.
+/// Any value >= this means the VACUUM already ran — skip on subsequent boots.
+const USER_VERSION_VACUUM_DONE: i64 = 1;
+
 #[derive(Debug)]
 pub enum DbError {
     ConnectionError(rusqlite::Error),
@@ -156,6 +160,8 @@ fn initialize_db_with_progress(
     run_migrations(&conn)?;
     ensure_query_stats(&conn);
     log_backend("info", &format!("[STARTUP] migrations={}ms", t_startup.elapsed().as_millis()));
+
+    run_vacuum_once(&conn, app);
 
     // The Tantivy index lives in OS-local app data (never synced to iCloud /
     // OneDrive / Dropbox). Cloud sync of the index is harmful: it has hundreds
@@ -374,6 +380,62 @@ pub(crate) fn migrate_is_current(conn: &Connection) -> Result<(), DbError> {
     }
 
     Ok(())
+}
+
+fn run_vacuum_once(conn: &Connection, app: Option<&tauri::AppHandle>) {
+    use tauri::Emitter;
+
+    let user_version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    if user_version >= USER_VERSION_VACUUM_DONE {
+        log_backend("debug", "[STARTUP] VACUUM already done (user_version >= 1), skipping");
+        return;
+    }
+
+    let pages_before: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0)).unwrap_or(0);
+    let page_size: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap_or(4096);
+    let bytes_before = pages_before * page_size;
+
+    if let Some(handle) = app {
+        let _ = handle.emit("import-progress", serde_json::json!({ "stage": "Compacting database" }));
+    }
+
+    log_backend("info", &format!(
+        "[STARTUP] VACUUM starting — DB size before: {:.1} MB",
+        bytes_before as f64 / 1_048_576.0,
+    ));
+
+    let t = std::time::Instant::now();
+    match conn.execute_batch("VACUUM") {
+        Ok(()) => {
+            let elapsed = t.elapsed().as_millis();
+            let pages_after: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0)).unwrap_or(0);
+            let bytes_after = pages_after * page_size;
+            log_backend("info", &format!(
+                "[STARTUP] VACUUM complete in {}ms — before: {:.1} MB, after: {:.1} MB, freed: {:.1} MB",
+                elapsed,
+                bytes_before as f64 / 1_048_576.0,
+                bytes_after as f64 / 1_048_576.0,
+                (bytes_before - bytes_after) as f64 / 1_048_576.0,
+            ));
+
+            if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)") {
+                log_backend("warn", &format!("[STARTUP] WAL checkpoint after VACUUM failed: {}", e));
+            }
+
+            if let Err(e) = conn.execute_batch(&format!("PRAGMA user_version = {}", USER_VERSION_VACUUM_DONE)) {
+                log_backend("warn", &format!("[STARTUP] Failed to set user_version after VACUUM: {}", e));
+            }
+        }
+        Err(e) => {
+            log_backend("warn", &format!(
+                "[STARTUP] VACUUM failed (will retry next boot): {}",
+                e,
+            ));
+        }
+    }
 }
 
 fn run_migrations(conn: &Connection) -> Result<(), DbError> {

@@ -310,16 +310,16 @@ fn update_query_property_triples(
     property_iri: &str,
     new_results: &[String],
 ) -> Result<bool, crate::owl::OwlError> {
-    // Read current values at MAX(tx) only. Per the immutability model, the latest TX
-    // is the source of truth; reading from triples_current (which only filters by
-    // retracted=0) would return historical values too, causing spurious diffs.
+    // is_current marks the single latest TX per (subject, predicate). Combined with
+    // retracted=0, this is precisely the set of current values — no correlated
+    // MAX(tx) subquery needed. The invariant is maintained eagerly by assert_triples
+    // and retract_triples on every write.
     let current: Vec<String> = {
         let mut stmt = conn.prepare(
             "SELECT t.object FROM triples t \
              WHERE t.subject = ? AND t.predicate = ? \
                AND t.retracted = 0 AND t.object IS NOT NULL \
-               AND t.tx = (SELECT MAX(tx) FROM triples \
-                           WHERE subject = t.subject AND predicate = t.predicate)"
+               AND t.is_current = 1"
         ).map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
         let rows: Vec<String> = stmt
             .query_map(rusqlite::params![owner_iri, property_iri], |row| row.get::<_, String>(0))
@@ -407,16 +407,24 @@ mod tests {
 
     fn insert_triple_iri(conn: &Connection, subject: &str, predicate: &str, object: &str, tx: i64) {
         conn.execute(
-            "INSERT INTO triples (subject, predicate, object, object_type, tx, origin_id, created_at, retracted)
-             VALUES (?1, ?2, ?3, 'iri', ?4, 1, 0, 0)",
+            "UPDATE triples SET is_current = 0 WHERE subject = ?1 AND predicate = ?2",
+            rusqlite::params![subject, predicate],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object, object_type, tx, origin_id, created_at, retracted, is_current)
+             VALUES (?1, ?2, ?3, 'iri', ?4, 1, 0, 0, 1)",
             rusqlite::params![subject, predicate, object, tx],
         ).unwrap();
     }
 
     fn insert_triple_literal(conn: &Connection, subject: &str, predicate: &str, value: &str, tx: i64) {
         conn.execute(
-            "INSERT INTO triples (subject, predicate, object_value, object_type, tx, origin_id, created_at, retracted)
-             VALUES (?1, ?2, ?3, 'literal', ?4, 1, 0, 0)",
+            "UPDATE triples SET is_current = 0 WHERE subject = ?1 AND predicate = ?2",
+            rusqlite::params![subject, predicate],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object_value, object_type, tx, origin_id, created_at, retracted, is_current)
+             VALUES (?1, ?2, ?3, 'literal', ?4, 1, 0, 0, 1)",
             rusqlite::params![subject, predicate, value, tx],
         ).unwrap();
     }

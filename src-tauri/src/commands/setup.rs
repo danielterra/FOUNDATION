@@ -159,9 +159,7 @@ pub async fn initialize_app(
                                     let subject_type: Option<String> = conn.query_row(
                                         "SELECT object FROM triples
                                          WHERE subject = ?1 AND predicate = 'rdf:type'
-                                           AND retracted = 0
-                                           AND tx = (SELECT MAX(tx) FROM triples
-                                                      WHERE subject = ?1 AND predicate = 'rdf:type')",
+                                           AND retracted = 0 AND is_current = 1",
                                         rusqlite::params![subject],
                                         |row| row.get(0),
                                     ).ok();

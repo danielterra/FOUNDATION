@@ -240,7 +240,7 @@ fn find_by_literal(conn: &Connection, predicate: &str, value: &str) -> Result<Ve
         .prepare(
             "SELECT subject FROM triples t \
              WHERE t.predicate = ?1 AND t.object_value = ?2 AND t.retracted = 0 \
-             AND t.tx = (SELECT MAX(tx) FROM triples WHERE subject = t.subject AND predicate = t.predicate) \
+               AND t.is_current = 1 \
              LIMIT 1",
         )
         .map_err(|e| e.to_string())?;

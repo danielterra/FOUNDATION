@@ -189,8 +189,7 @@ fn search_global_sql_fallback(
     let all_iris: Vec<String> = conn
         .prepare(
             "SELECT DISTINCT subject FROM triples t
-             WHERE predicate = 'rdfs:label' AND retracted = 0
-               AND t.tx = (SELECT MAX(tx) FROM triples WHERE subject = t.subject AND predicate = 'rdfs:label')",
+             WHERE predicate = 'rdfs:label' AND retracted = 0 AND t.is_current = 1",
         )
         .map_err(|e| OwlError::DatabaseError(e.to_string()))?
         .query_map([], |row| row.get(0))

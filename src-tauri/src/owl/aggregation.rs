@@ -270,7 +270,7 @@ pub fn evaluate_aggregation_for_instance(
         let mut stmt = conn.prepare(
             "SELECT DISTINCT object FROM triples \
              WHERE subject = ?1 AND predicate = ?2 AND retracted = 0 AND object IS NOT NULL \
-               AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ?1 AND predicate = ?2)",
+               AND is_current = 1",
         ).map_err(|e| format!("Erro na query: {}", e))?;
         let rows = stmt.query_map(rusqlite::params![instance_iri, call.source_prop], |row| {
             row.get::<_, String>(0)

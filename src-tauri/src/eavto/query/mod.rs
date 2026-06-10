@@ -311,7 +311,7 @@ pub fn get_backlinks_grouped_limited(
                AND t.retracted = 0
                AND t.predicate != 'rdf:type'
                AND t.subject != ?1
-               AND t.tx = (SELECT MAX(tx) FROM triples WHERE subject = t.subject AND predicate = t.predicate)
+               AND t.is_current = 1
              GROUP BY t.subject, t.predicate
          ),
          subject_class AS (
@@ -392,7 +392,7 @@ pub fn get_backlinks_page(
               AND t.retracted = 0
               AND t.predicate = ?2
               AND t.subject != ?1
-              AND t.tx = (SELECT MAX(tx) FROM triples WHERE subject = t.subject AND predicate = t.predicate)
+              AND t.is_current = 1
             GROUP BY t.subject
         ),
         subject_class AS (

@@ -1365,9 +1365,7 @@ pub async fn chat__get_conversation_snapshot_tx(
                  WHERE predicate = 'foundation:partOfConversation'
                    AND object = ?1
                    AND retracted = 0
-                   AND tx = (SELECT MAX(tx) FROM triples t2
-                              WHERE t2.subject = triples.subject
-                                AND t2.predicate = triples.predicate)
+                   AND is_current = 1
              )",
             rusqlite::params![conversation_id],
             |row| row.get(0),

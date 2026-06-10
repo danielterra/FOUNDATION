@@ -102,10 +102,9 @@ pub fn evaluate_formula_for_instance(
 fn resolve_ref_value(conn: &Connection, instance_iri: &str, ref_iri: &str) -> Option<String> {
     let stored = conn.query_row(
         "SELECT object_value FROM triples \
-         WHERE subject = ? AND predicate = ? AND retracted = 0 \
-         AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ? AND predicate = ?) \
+         WHERE subject = ? AND predicate = ? AND retracted = 0 AND is_current = 1 \
          LIMIT 1",
-        rusqlite::params![instance_iri, ref_iri, instance_iri, ref_iri],
+        rusqlite::params![instance_iri, ref_iri],
         |row| row.get::<_, Option<String>>(0),
     ).ok().flatten();
 
