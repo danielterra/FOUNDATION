@@ -1,13 +1,20 @@
-﻿// ============================================================================
+// ============================================================================
 // EAVTO Executor Module
 // ============================================================================
 // Provides async execution for database operations to avoid blocking the UI
 //
 // Architecture:
 // - Single writer thread with sequential queue for writes
-// - Read pool of N persistent connections â€" avoids the WAL scan overhead on
-//   every call (SQLite must scan the entire WAL to build a read snapshot when
-//   opening a new connection; with a large WAL this dominates read latency)
+// - Read pool of N pre-warmed persistent connections (N = clamp(2× logical cores,
+//   min 8, max 16)) — avoids the WAL scan overhead on every call (SQLite must scan
+//   the entire WAL to build a read snapshot when opening a new connection; with a
+//   large WAL this dominates read latency)
+// - Admission control: read() acquires a semaphore permit (capacity = N) BEFORE
+//   spawn_blocking, so at most N reads are in flight at any time. Callers queue
+//   instead of opening unbounded temporary connections, which would cause WAL
+//   oversubscription and read-mark buildup
+// - Pool drain after a TRUNCATE checkpoint leaves it empty; read() rehydrates by
+//   opening a fresh connection (bounded by the semaphore, not by pool size)
 // - WAL mode allows concurrent reads and writes at the SQLite file level
 // - All operations are async to avoid blocking Tauri's event loop
 // ============================================================================
@@ -16,34 +23,50 @@ use rusqlite::Connection;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Semaphore, OwnedSemaphorePermit};
 use crate::eavto::store::WrittenTriple;
 
-const READ_POOL_SIZE: usize = 100;
 const WAL_TRUNCATE_INTERVAL: u32 = 200;
 const WAL_PASSIVE_INTERVAL: u32 = 50;
 
+/// Warn when a read caller waits this long for a semaphore permit — indicates
+/// sustained overload or a permit leak.
+const PERMIT_WARN_SECS: u64 = 1;
+
+fn compute_pool_size() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    (cores * 2).clamp(8, 16)
+}
+
 /// Executor for database operations.
 /// Writes are sequential (single writer thread). Reads reuse a pool of
-/// persistent connections so the WAL scan happens once at startup, not per call.
+/// pre-warmed persistent connections; admission is controlled by a semaphore
+/// so at most N reads are in flight concurrently.
 pub struct DbExecutor {
     write_tx: mpsc::UnboundedSender<WriteTask>,
     db_path: PathBuf,
     /// Sends (subject_predicates, iri_objects, written_triples) written by each transaction so callers can emit events.
     notify_tx: Option<mpsc::UnboundedSender<(HashMap<String, Vec<String>>, Vec<String>, Vec<WrittenTriple>)>>,
     read_pool: Arc<Mutex<Vec<Connection>>>,
-    /// Cumulative count of temporary connections opened due to pool exhaustion.
-    temp_conn_count: Arc<AtomicUsize>,
-    /// Connections currently checked out (in a spawn_blocking closure, not yet returned).
-    /// Must be 0 when the app is idle — any non-zero value indicates a leak.
-    in_flight: Arc<AtomicUsize>,
+    /// Limits concurrent reads to pool capacity — callers wait here instead of
+    /// opening unbounded temporary connections.
+    read_semaphore: Arc<Semaphore>,
+    /// Pre-warmed pool capacity (= semaphore permits = N).
+    read_pool_cap: usize,
 }
 
 /// A write task to be executed sequentially
 struct WriteTask {
     operation: Box<dyn FnOnce(&mut Connection) -> Result<String, String> + Send>,
     result_tx: oneshot::Sender<Result<String, String>>,
+}
+
+fn open_pool_connection(db_path: &PathBuf) -> Option<Connection> {
+    let conn = Connection::open(db_path).ok()?;
+    conn.busy_timeout(std::time::Duration::from_secs(30)).ok()?;
+    Some(conn)
 }
 
 impl DbExecutor {
@@ -64,11 +87,29 @@ impl DbExecutor {
         let (write_tx, mut write_rx) = mpsc::unbounded_channel::<WriteTask>();
         let notify_tx_thread = notify_tx.clone();
 
-        // Pool starts empty â€" connections are added lazily as reads complete.
-        // Every 200 writes the pool is drained and a TRUNCATE checkpoint runs so the
-        // WAL does not grow unboundedly (pool read-marks would otherwise block PASSIVE
-        // checkpoints indefinitely).
-        let read_pool = Arc::new(Mutex::new(Vec::<Connection>::new()));
+        let pool_cap = compute_pool_size();
+        let read_semaphore = Arc::new(Semaphore::new(pool_cap));
+
+        // Pre-warm the pool with N persistent connections so the first burst of
+        // reads does not pay the WAL-scan cost of opening fresh connections.
+        let read_pool = Arc::new(Mutex::new(Vec::<Connection>::with_capacity(pool_cap)));
+        {
+            let mut guard = read_pool.lock().unwrap_or_else(|e| e.into_inner());
+            let mut opened = 0usize;
+            for _ in 0..pool_cap {
+                match open_pool_connection(&db_path) {
+                    Some(c) => { guard.push(c); opened += 1; }
+                    None => {
+                        crate::diagnostics::log_backend("warn",
+                            "[DB] Pre-warm: failed to open a connection, continuing with fewer");
+                    }
+                }
+            }
+            crate::diagnostics::log_backend("info", &format!(
+                "[DB] Read pool ready: cap={} warmed={}", pool_cap, opened
+            ));
+        }
+
         let pool_for_checkpoint = read_pool.clone();
 
         std::thread::spawn(move || {
@@ -102,8 +143,11 @@ impl DbExecutor {
 
                 write_count += 1;
                 if write_count % WAL_TRUNCATE_INTERVAL == 0 {
-                    // Pool read-marks block TRUNCATE checkpoints indefinitely â€" drain the
+                    // Pool read-marks block TRUNCATE checkpoints indefinitely — drain the
                     // pool first so the WAL can be zeroed and does not grow unboundedly.
+                    // read() rehydrates after the drain: with a permit in hand and an empty
+                    // pool it opens a fresh connection rather than waiting, eliminating the
+                    // deadlock that existed when read() blocked waiting for a pool connection.
                     let old_conns = {
                         let mut guard = pool_for_checkpoint
                             .lock()
@@ -111,7 +155,7 @@ impl DbExecutor {
                         std::mem::take(&mut *guard)
                     };
                     drop(old_conns);
-                    // Retry up to 3Ã— with a brief pause to let in-progress readers finish.
+                    // Retry up to 3× with a brief pause to let in-progress readers finish.
                     let mut truncated = false;
                     for attempt in 0..3u8 {
                         if attempt > 0 {
@@ -234,7 +278,7 @@ impl DbExecutor {
                             result_tx,
                         });
                         if sent.is_err() {
-                            break; // write channel closed â€" app is shutting down
+                            break; // write channel closed — app is shutting down
                         }
                     }
                 })
@@ -246,20 +290,25 @@ impl DbExecutor {
             db_path,
             notify_tx,
             read_pool,
-            temp_conn_count: Arc::new(AtomicUsize::new(0)),
-            in_flight: Arc::new(AtomicUsize::new(0)),
+            read_semaphore,
+            read_pool_cap: pool_cap,
         }
     }
 
     /// Create an executor backed by an in-memory database (for CI/test use only).
-    /// Reads always open a fresh empty in-memory DB, so only the write connection
-    /// holds state â€" reads will return empty results.
+    /// Each read connection is an independent empty in-memory DB — only the write
+    /// connection holds state, so reads return empty results. This matches the
+    /// previous behaviour and is intentional for isolation in unit tests.
     pub fn new_in_memory(conn: Connection) -> Self {
         Self::new(conn, PathBuf::from(":memory:"))
     }
 
     /// Execute a read operation using a pooled connection.
-    /// If all pool connections are in use, opens a temporary one.
+    ///
+    /// Acquires a semaphore permit before spawning the blocking task so at most
+    /// N reads are in flight concurrently. If the pool is empty (e.g. right after
+    /// a checkpoint drain) a new connection is opened — the semaphore ensures this
+    /// is bounded.
     pub async fn read<F, R>(&self, operation: F) -> Result<R, String>
     where
         F: FnOnce(&Connection) -> Result<R, String> + Send + 'static,
@@ -267,71 +316,52 @@ impl DbExecutor {
     {
         let path = self.db_path.clone();
         let pool = self.read_pool.clone();
-        let temp_counter = self.temp_conn_count.clone();
-        let in_flight = self.in_flight.clone();
+        let cap = self.read_pool_cap;
+
+        // Acquire permit before spawn_blocking. This is the admission gate: if all
+        // N connections are in use, the caller suspends here rather than opening an
+        // extra connection that would inflate WAL read-marks and cause oversubscription.
+        let t0 = std::time::Instant::now();
+        let permit: OwnedSemaphorePermit = self.read_semaphore.clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| e.to_string())?;
+        let wait = t0.elapsed();
+        if wait.as_secs() >= PERMIT_WARN_SECS {
+            crate::diagnostics::log_backend("warn", &format!(
+                "[DB] Read waited {:.1}s for semaphore permit — sustained overload or permit leak",
+                wait.as_secs_f64()
+            ));
+        }
 
         tokio::task::spawn_blocking(move || {
-            let (conn_opt, pool_before) = pool.lock()
-                .map(|mut g| { let before = g.len(); let c = g.pop(); (c, before) })
-                .unwrap_or((None, 0));
+            // Permit lives inside spawn_blocking so it is released only after the
+            // connection is back in the pool, keeping the invariant: permit held ↔
+            // connection in use.
+            let _permit = permit;
 
-            let (conn, from_pool) = match conn_opt {
-                Some(c) => {
-                    let flight = in_flight.fetch_add(1, Ordering::Relaxed) + 1;
-                    crate::diagnostics::log_backend("debug", &format!(
-                        "[DB] Pool hit: conn taken (pool {}->{} cap={} in_flight={})",
-                        pool_before, pool_before - 1, READ_POOL_SIZE, flight
-                    ));
-                    (c, true)
-                }
+            let conn = match pool.lock().map(|mut g| g.pop()).unwrap_or(None) {
+                Some(c) => c,
                 None => {
-                    let temp_total = temp_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                    let flight = in_flight.fetch_add(1, Ordering::Relaxed) + 1;
-                    crate::diagnostics::log_backend("warn", &format!(
-                        "[DB] Pool exhausted: opening temp conn (avail=0 cap={READ_POOL_SIZE} temp_total={temp_total} in_flight={flight})"
-                    ));
+                    // Pool was drained by a checkpoint. Open a fresh connection — bounded
+                    // by the semaphore, so this cannot cause unbounded oversubscription.
                     let c = Connection::open(&path).map_err(|e| e.to_string())?;
                     c.busy_timeout(std::time::Duration::from_secs(30)).map_err(|e| e.to_string())?;
-                    (c, false)
+                    c
                 }
             };
 
             let result = operation(&conn);
 
-            // Return to pool regardless of origin so the pool grows organically from
-            // its initial empty state. Without this, from_pool is always false (pool
-            // starts empty), connections are never returned, and every read opens a
-            // fresh temporary connection indefinitely.
+            // Release WAL read mark before returning to pool so idle connections
+            // do not block TRUNCATE checkpoints and grow the WAL.
+            let _ = conn.execute_batch("BEGIN DEFERRED; COMMIT;");
             if let Ok(mut guard) = pool.lock() {
-                if guard.len() < READ_POOL_SIZE {
-                    // Release WAL read mark before returning to pool.
-                    // Without this the connection holds its snapshot indefinitely while
-                    // idle, blocking TRUNCATE checkpoints and growing the WAL.
-                    let _ = conn.execute_batch("BEGIN DEFERRED; COMMIT;");
-                    let pool_after = guard.len() + 1;
+                if guard.len() < cap {
                     guard.push(conn);
-                    let flight = in_flight.fetch_sub(1, Ordering::Relaxed) - 1;
-                    crate::diagnostics::log_backend("debug", &format!(
-                        "[DB] Pool {}: conn returned (pool {}->{} cap={} in_flight={})",
-                        if from_pool { "return" } else { "grow" },
-                        pool_after - 1, pool_after, READ_POOL_SIZE, flight
-                    ));
-                    if flight == 0 {
-                        crate::diagnostics::log_backend("debug",
-                            "[DB] All connections returned to pool (in_flight=0)");
-                    }
-                } else {
-                    let flight = in_flight.fetch_sub(1, Ordering::Relaxed) - 1;
-                    crate::diagnostics::log_backend("debug", &format!(
-                        "[DB] Pool full: {} conn dropped (pool={} cap={} in_flight={})",
-                        if from_pool { "pool" } else { "temp" },
-                        guard.len(), READ_POOL_SIZE, flight
-                    ));
-                    if flight == 0 {
-                        crate::diagnostics::log_backend("debug",
-                            "[DB] All connections returned to pool (in_flight=0)");
-                    }
                 }
+                // Silently drop if pool is at capacity (can happen transiently after
+                // a checkpoint re-opens connections beyond the original warmed set).
             }
 
             result
@@ -365,9 +395,8 @@ impl Clone for DbExecutor {
             db_path: self.db_path.clone(),
             notify_tx: self.notify_tx.clone(),
             read_pool: self.read_pool.clone(),
-            temp_conn_count: self.temp_conn_count.clone(),
-            in_flight: self.in_flight.clone(),
+            read_semaphore: self.read_semaphore.clone(),
+            read_pool_cap: self.read_pool_cap,
         }
     }
 }
-

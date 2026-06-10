@@ -5,7 +5,12 @@ use tokio::sync::{mpsc::unbounded_channel, mpsc::UnboundedSender, oneshot};
 use crate::owl::{DbExecutor, query_property};
 use crate::eavto::{store, Triple, Object};
 
-const DRAIN_TIMEOUT_SECS: u64 = 10;
+/// Timeout for a single `await_drained` call. With admission control in the
+/// executor, materialization always completes — it may just be queued behind
+/// long-running readers (e.g. parallel AgentTasks holding permits across LLM
+/// tool loops). 60s covers that tail; the timeout exists only to surface a
+/// genuinely stuck worker, so a wide window beats failing healthy executions.
+const DRAIN_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Debug)]
 pub enum WorkerCommand {
@@ -48,10 +53,7 @@ impl QueryWorker {
     }
 
     /// Enqueue `entity_iri` for recompute and wait until the worker has processed
-    /// all outstanding jobs for it, or until `DRAIN_TIMEOUT_SECS` elapses.
-    ///
-    /// Returns `Ok(())` when the worker confirmed completion, `Err(String)` on
-    /// timeout (caller should fail the step with a clear message).
+    /// all outstanding jobs for it. Returns `Ok(())` on success.
     pub async fn await_drained(&self, entity_iri: &str) -> Result<(), String> {
         let (tx, rx) = oneshot::channel::<()>();
         {
@@ -63,19 +65,23 @@ impl QueryWorker {
                 entity_iri: entity_iri.to_string(),
             })
             .map_err(|_| format!("query_worker channel closed for {}", entity_iri))?;
-        tokio::time::timeout(
+
+        match tokio::time::timeout(
             std::time::Duration::from_secs(DRAIN_TIMEOUT_SECS),
             rx,
         )
         .await
-        .map_err(|_| format!(
-            "timeout waiting for derived materialization of control instance {}",
-            entity_iri
-        ))?
-        .map_err(|_| format!(
-            "drain channel closed unexpectedly for {}",
-            entity_iri
-        ))
+        {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(format!(
+                "drain channel closed unexpectedly for {}",
+                entity_iri
+            )),
+            Err(_) => Err(format!(
+                "timeout waiting for derived materialization of {}",
+                entity_iri
+            )),
+        }
     }
 }
 
