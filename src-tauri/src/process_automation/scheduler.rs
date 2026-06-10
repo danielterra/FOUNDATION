@@ -10,6 +10,11 @@ use crate::owl::{DbExecutor, Individual};
 
 const DEBOUNCE_MS: u64 = 150;
 
+/// Minimum delay between consecutive catch-up executions during startup.
+/// Keeps the DB connection pool from being saturated when many timers have
+/// accumulated missed runs after a long offline period.
+const CATCHUP_INTER_DELAY_MS: u64 = 500;
+
 pub struct SchedulerState {
     pub handles: Mutex<Vec<JoinHandle<()>>>,
     reload_lock: tokio::sync::Mutex<()>,
@@ -128,7 +133,9 @@ async fn record_last_run(app: &AppHandle, timer_def_iri: &str) {
     }
 }
 
-/// Collects all active TimerEventDefinitions with a timeCycle, spawns one tokio task per schedule.
+/// Loads all active TimerEventDefinitions, runs any missed catch-up executions
+/// sequentially (rate-limited by `CATCHUP_INTER_DELAY_MS`), then spawns one
+/// long-running tokio task per timer for the recurring schedule.
 pub async fn start(app: AppHandle) {
     let executor = match app.try_state::<DbExecutor>() {
         Some(e) => e,
@@ -150,10 +157,24 @@ pub async fn start(app: AppHandle) {
         None => return,
     };
 
-    let mut handles = match state.handles.lock() {
-        Ok(h) => h,
-        Err(e) => e.into_inner(),
-    };
+    // Phase 1 — sequential catch-up.
+    //
+    // All missed executions are run one-at-a-time with a short inter-delay so the
+    // DB connection pool is never saturated by a simultaneous burst. Each iteration
+    // awaits the previous one before proceeding, giving the pool time to drain.
+    //
+    // Phase 2 — spawn continuous schedule tasks — runs only after all catch-ups
+    // have finished, so the pool is quiescent when recurring timers start competing.
+    struct ScheduleEntry {
+        process_iri: String,
+        start_event_iri: String,
+        timer_def_iri: String,
+        schedule: Schedule,
+    }
+
+    let mut entries: Vec<ScheduleEntry> = Vec::with_capacity(timer_defs.len());
+    let catch_up_threshold = chrono::Utc::now() - chrono::Duration::seconds(60);
+
     for TimerDef { process_iri, cron_expr, timer_def_iri, start_event_iri, last_run_at } in timer_defs {
         let schedule = match Schedule::from_str(&cron_expr) {
             Ok(s) => s,
@@ -163,27 +184,33 @@ pub async fn start(app: AppHandle) {
             }
         };
 
-        let app_clone = app.clone();
-        let handle = tokio::spawn(async move {
-            // Catch-up: if the app was offline during a scheduled time, execute once.
-            // Only triggers when a previous run was recorded (last_run_at is set) and
-            // the next scheduled time after it already passed (with 60s grace margin).
-            if let Some(last) = last_run_at {
-                let catch_up_threshold = chrono::Utc::now() - chrono::Duration::seconds(60);
-                if let Some(missed) = schedule.after(&last).next() {
-                    if missed < catch_up_threshold {
-                        log_backend("info", &format!(
-                            "[scheduler] Catch-up: running missed execution of {} (was due at {})",
-                            process_iri, missed
-                        ));
-                        if let Err(e) = super::executor::run_process_from_timer(&app_clone, &process_iri, &start_event_iri).await {
-                            log_backend("error", &format!("[scheduler] Catch-up error for {}: {}", process_iri, e));
-                        }
-                        record_last_run(&app_clone, &timer_def_iri).await;
+        if let Some(last) = last_run_at {
+            if let Some(missed) = schedule.after(&last).next() {
+                if missed < catch_up_threshold {
+                    log_backend("info", &format!(
+                        "[scheduler] Catch-up: running missed execution of {} (was due at {})",
+                        process_iri, missed
+                    ));
+                    if let Err(e) = super::executor::run_process_from_timer(&app, &process_iri, &start_event_iri).await {
+                        log_backend("error", &format!("[scheduler] Catch-up error for {}: {}", process_iri, e));
                     }
+                    record_last_run(&app, &timer_def_iri).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(CATCHUP_INTER_DELAY_MS)).await;
                 }
             }
+        }
 
+        entries.push(ScheduleEntry { process_iri, start_event_iri, timer_def_iri, schedule });
+    }
+
+    // Phase 2 — spawn one long-running task per timer for the recurring schedule.
+    let mut handles = match state.handles.lock() {
+        Ok(h) => h,
+        Err(e) => e.into_inner(),
+    };
+    for ScheduleEntry { process_iri, start_event_iri, timer_def_iri, schedule } in entries {
+        let app_clone = app.clone();
+        let handle = tokio::spawn(async move {
             for next in schedule.upcoming(chrono::Utc) {
                 let now = chrono::Utc::now();
                 let delay = (next - now).to_std().unwrap_or_default();
