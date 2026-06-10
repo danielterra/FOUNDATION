@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Listener, Manager};
 use tokio::sync::{mpsc::unbounded_channel, mpsc::UnboundedSender, oneshot};
 use crate::owl::{DbExecutor, query_property};
@@ -22,6 +22,13 @@ pub struct QueryWorker {
     waiters: Mutex<HashMap<String, Vec<oneshot::Sender<()>>>>,
 }
 
+/// Parsed query property with its domain classes, loaded once and cached between writes.
+struct CachedQueryProperty {
+    property_iri: String,
+    config: query_property::QueryConfig,
+    domains: Vec<String>,
+}
+
 impl QueryWorker {
     pub fn spawn(app: AppHandle, executor: DbExecutor) -> Self {
         let (tx, mut rx) = unbounded_channel::<WorkerCommand>();
@@ -32,8 +39,10 @@ impl QueryWorker {
         };
 
         tauri::async_runtime::spawn(async move {
+            let mut cache: Option<Arc<Vec<CachedQueryProperty>>> = None;
+
             while let Some(WorkerCommand::Enqueue { entity_iri }) = rx.recv().await {
-                process_entity_update(&app, &executor, &entity_iri).await;
+                process_entity_update(&app, &executor, &entity_iri, &mut cache).await;
                 // Resolve waiters inline — no channel round-trip that could be
                 // silently dropped when the channel is saturated.
                 if let Some(w) = app.try_state::<QueryWorker>() {
@@ -102,12 +111,38 @@ fn parse_entity_id(payload: &str) -> Option<String> {
     v["entityId"].as_str().map(String::from)
 }
 
-async fn process_entity_update(app: &AppHandle, executor: &DbExecutor, entity_iri: &str) {
+async fn process_entity_update(
+    app: &AppHandle,
+    executor: &DbExecutor,
+    entity_iri: &str,
+    cache: &mut Option<Arc<Vec<CachedQueryProperty>>>,
+) {
     let entity = entity_iri.to_string();
+    let snapshot = cache.clone();
 
-    let jobs: Vec<(String, String, query_property::QueryConfig)> = executor.read(move |conn| {
-        Ok(collect_affected_jobs(conn, &entity))
+    type ReadResult = (Vec<(String, String, query_property::QueryConfig)>, Option<Arc<Vec<CachedQueryProperty>>>);
+
+    let result: ReadResult = executor.read(move |conn| {
+        let needs_reload = snapshot.is_none()
+            || snapshot.as_ref().map_or(false, |s| s.iter().any(|e| e.property_iri == entity))
+            || has_query_config(conn, &entity);
+
+        let entries: Arc<Vec<CachedQueryProperty>> = if needs_reload {
+            Arc::new(load_query_property_cache(conn))
+        } else {
+            snapshot.unwrap()
+        };
+
+        let refreshed = if needs_reload { Some(entries.clone()) } else { None };
+        let jobs = collect_affected_jobs(conn, &entity, &entries);
+        Ok((jobs, refreshed))
     }).await.unwrap_or_default();
+
+    let (jobs, refreshed) = result;
+
+    if let Some(r) = refreshed {
+        *cache = Some(r);
+    }
 
     if jobs.is_empty() {
         return;
@@ -161,33 +196,65 @@ async fn process_entity_update(app: &AppHandle, executor: &DbExecutor, entity_ir
     }
 }
 
+/// Returns true if `entity_iri` is the subject of any current `foundation:queryConfig` triple.
+/// Used to decide cache invalidation without a full reload.
+fn has_query_config(conn: &rusqlite::Connection, entity_iri: &str) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM triples_current WHERE subject = ? AND predicate = 'foundation:queryConfig' LIMIT 1",
+        rusqlite::params![entity_iri],
+        |_| Ok(true),
+    ).unwrap_or(false)
+}
+
+/// Loads all query properties with their domain classes into a flat cache.
+/// Called only on cache miss or invalidation — not on every entity write.
+fn load_query_property_cache(conn: &rusqlite::Connection) -> Vec<CachedQueryProperty> {
+    let mut stmt = match conn.prepare(
+        "SELECT subject, object_value FROM triples_current WHERE predicate = 'foundation:queryConfig'"
+    ) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+
+    let pairs: Vec<(String, String)> = stmt.query_map(rusqlite::params![], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })
+    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .unwrap_or_default();
+
+    pairs.into_iter().filter_map(|(iri, json)| {
+        let config = query_property::parse_query_config(&json).ok()?;
+        let domains = get_property_domains(conn, &iri);
+        Some(CachedQueryProperty { property_iri: iri, config, domains })
+    }).collect()
+}
+
 fn collect_affected_jobs(
     conn: &rusqlite::Connection,
     entity_iri: &str,
+    entries: &[CachedQueryProperty],
 ) -> Vec<(String, String, query_property::QueryConfig)> {
     let entity_types = get_types(conn, entity_iri);
-    let all_query_props = load_all_query_properties(conn);
     let mut jobs: Vec<(String, String, query_property::QueryConfig)> = Vec::new();
 
-    for (prop_iri, config) in &all_query_props {
-        let entity_is_target = entity_types.contains(&config.target_class);
+    for entry in entries {
+        let entity_is_target = entity_types.contains(&entry.config.target_class);
 
         if entity_is_target {
             // Scenario A: entity is of targetClass → re-eval all owner instances
-            let owners = find_owners_for_property(conn, prop_iri);
+            let owners = find_owners_for_domains(conn, &entry.domains);
             for owner_iri in owners {
-                if !jobs.iter().any(|(o, p, _)| o == &owner_iri && p == prop_iri) {
-                    jobs.push((owner_iri, prop_iri.clone(), config.clone()));
+                if !jobs.iter().any(|(o, p, _)| o == &owner_iri && p == &entry.property_iri) {
+                    jobs.push((owner_iri, entry.property_iri.clone(), entry.config.clone()));
                 }
             }
         }
 
         // Scenario B: entity itself is an owner of this property
-        let owner_classes = get_property_domains(conn, prop_iri);
-        if entity_types.iter().any(|t| owner_classes.contains(t))
-            && !jobs.iter().any(|(o, p, _)| o == entity_iri && p == prop_iri)
+        if entity_types.iter().any(|t| entry.domains.contains(t))
+            && !jobs.iter().any(|(o, p, _)| o == entity_iri && p == &entry.property_iri)
         {
-            jobs.push((entity_iri.to_string(), prop_iri.clone(), config.clone()));
+            jobs.push((entity_iri.to_string(), entry.property_iri.clone(), entry.config.clone()));
         }
     }
 
@@ -206,26 +273,6 @@ fn get_types(conn: &rusqlite::Connection, iri: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn load_all_query_properties(conn: &rusqlite::Connection) -> Vec<(String, query_property::QueryConfig)> {
-    let mut stmt = match conn.prepare(
-        "SELECT subject, object_value FROM triples_current WHERE predicate = 'foundation:queryConfig'"
-    ) {
-        Ok(s) => s,
-        Err(_) => return vec![],
-    };
-    stmt.query_map(rusqlite::params![], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })
-    .map(|rows| {
-        rows.filter_map(|r| r.ok())
-            .filter_map(|(iri, json)| {
-                query_property::parse_query_config(&json).ok().map(|cfg| (iri, cfg))
-            })
-            .collect()
-    })
-    .unwrap_or_default()
-}
-
 fn get_property_domains(conn: &rusqlite::Connection, property_iri: &str) -> Vec<String> {
     let mut stmt = match conn.prepare(
         "SELECT object FROM triples_current WHERE subject = ? AND predicate = 'rdfs:domain'"
@@ -238,10 +285,9 @@ fn get_property_domains(conn: &rusqlite::Connection, property_iri: &str) -> Vec<
         .unwrap_or_default()
 }
 
-fn find_owners_for_property(conn: &rusqlite::Connection, property_iri: &str) -> Vec<String> {
-    let domain_classes = get_property_domains(conn, property_iri);
+fn find_owners_for_domains(conn: &rusqlite::Connection, domains: &[String]) -> Vec<String> {
     let mut owners = Vec::new();
-    for class_iri in domain_classes {
+    for class_iri in domains {
         let mut stmt = match conn.prepare(
             "SELECT DISTINCT subject FROM triples_current \
              WHERE predicate = 'rdf:type' AND object = ?"
@@ -347,10 +393,35 @@ mod tests {
                 origin_id INTEGER NOT NULL DEFAULT 1,
                 created_at INTEGER NOT NULL DEFAULT 0,
                 retracted INTEGER NOT NULL DEFAULT 0
-             );",
+             );
+             CREATE VIEW IF NOT EXISTS triples_current AS
+             SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                    object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
+             FROM triples t
+             WHERE t.retracted = 0
+               AND t.tx = (
+                   SELECT MAX(tx) FROM triples
+                   WHERE subject = t.subject AND predicate = t.predicate
+               );",
         )
         .unwrap();
         conn
+    }
+
+    fn insert_triple_iri(conn: &Connection, subject: &str, predicate: &str, object: &str, tx: i64) {
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object, object_type, tx, origin_id, created_at, retracted)
+             VALUES (?1, ?2, ?3, 'iri', ?4, 1, 0, 0)",
+            rusqlite::params![subject, predicate, object, tx],
+        ).unwrap();
+    }
+
+    fn insert_triple_literal(conn: &Connection, subject: &str, predicate: &str, value: &str, tx: i64) {
+        conn.execute(
+            "INSERT INTO triples (subject, predicate, object_value, object_type, tx, origin_id, created_at, retracted)
+             VALUES (?1, ?2, ?3, 'literal', ?4, 1, 0, 0)",
+            rusqlite::params![subject, predicate, value, tx],
+        ).unwrap();
     }
 
     fn count_triples(conn: &Connection, subject: &str, predicate: &str) -> i64 {
@@ -451,5 +522,122 @@ mod tests {
         assert!(c1);
         let c2 = update_query_property_triples(&mut conn, owner, prop, &values).unwrap();
         assert!(!c2, "second cycle with same result must not trigger further writes");
+    }
+
+    /// `load_query_property_cache` retorna config + domains a partir de triples inseridas.
+    #[test]
+    fn test_load_query_property_cache_returns_config_and_domains() {
+        let conn = setup_db();
+        let prop = "foundation:myQueryProp";
+        let config_json = r#"{"targetClass":"foundation:Task","filters":[]}"#;
+
+        insert_triple_literal(&conn, prop, "foundation:queryConfig", config_json, 1);
+        insert_triple_iri(&conn, prop, "rdfs:domain", "foundation:Project", 1);
+
+        let cache = load_query_property_cache(&conn);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache[0].property_iri, prop);
+        assert_eq!(cache[0].config.target_class, "foundation:Task");
+        assert_eq!(cache[0].domains, vec!["foundation:Project".to_string()]);
+    }
+
+    /// `collect_affected_jobs` cenário A: entity é do targetClass → owner recebe job.
+    #[test]
+    fn test_collect_affected_jobs_scenario_a_entity_is_target() {
+        let conn = setup_db();
+        let prop = "foundation:myQueryProp";
+        let config_json = r#"{"targetClass":"foundation:Task","filters":[]}"#;
+        let owner = "foundation:proj1";
+        let task = "foundation:task1";
+
+        insert_triple_literal(&conn, prop, "foundation:queryConfig", config_json, 1);
+        insert_triple_iri(&conn, prop, "rdfs:domain", "foundation:Project", 1);
+        insert_triple_iri(&conn, owner, "rdf:type", "foundation:Project", 1);
+        insert_triple_iri(&conn, task, "rdf:type", "foundation:Task", 1);
+
+        let cache = load_query_property_cache(&conn);
+        let jobs = collect_affected_jobs(&conn, task, &cache);
+
+        assert_eq!(jobs.len(), 1, "one job expected for owner");
+        assert_eq!(jobs[0].0, owner);
+        assert_eq!(jobs[0].1, prop);
+    }
+
+    /// `collect_affected_jobs` cenário B: entity é o owner → recebe job para si.
+    #[test]
+    fn test_collect_affected_jobs_scenario_b_entity_is_owner() {
+        let conn = setup_db();
+        let prop = "foundation:myQueryProp";
+        let config_json = r#"{"targetClass":"foundation:Task","filters":[]}"#;
+        let owner = "foundation:proj1";
+
+        insert_triple_literal(&conn, prop, "foundation:queryConfig", config_json, 1);
+        insert_triple_iri(&conn, prop, "rdfs:domain", "foundation:Project", 1);
+        insert_triple_iri(&conn, owner, "rdf:type", "foundation:Project", 1);
+
+        let cache = load_query_property_cache(&conn);
+
+        // No task instances → scenario A produces nothing.
+        // Owner itself triggers scenario B.
+        let jobs = collect_affected_jobs(&conn, owner, &cache);
+        assert!(jobs.iter().any(|(o, p, _)| o == owner && p == prop));
+    }
+
+    /// Invalidação: entity cujo IRI está no cache como property_iri → needs_reload=true.
+    #[test]
+    fn test_needs_reload_when_entity_is_cached_property() {
+        let conn = setup_db();
+        let prop = "foundation:myQueryProp";
+        let config_json = r#"{"targetClass":"foundation:Task","filters":[]}"#;
+        insert_triple_literal(&conn, prop, "foundation:queryConfig", config_json, 1);
+
+        let cache = Arc::new(load_query_property_cache(&conn));
+        let snapshot = Some(cache.clone());
+
+        let needs_reload = snapshot.is_none()
+            || snapshot.as_ref().map_or(false, |s| s.iter().any(|e| e.property_iri == prop))
+            || has_query_config(&conn, prop);
+
+        assert!(needs_reload, "property IRI presente no cache deve forçar reload");
+    }
+
+    /// Invalidação: entity alheia ao cache sem queryConfig → sem reload.
+    #[test]
+    fn test_no_reload_for_unrelated_entity() {
+        let conn = setup_db();
+        let prop = "foundation:myQueryProp";
+        let config_json = r#"{"targetClass":"foundation:Task","filters":[]}"#;
+        insert_triple_literal(&conn, prop, "foundation:queryConfig", config_json, 1);
+
+        let cache = Arc::new(load_query_property_cache(&conn));
+        let snapshot = Some(cache.clone());
+        let unrelated = "foundation:someOtherEntity";
+
+        let needs_reload = snapshot.is_none()
+            || snapshot.as_ref().map_or(false, |s| s.iter().any(|e| e.property_iri == unrelated))
+            || has_query_config(&conn, unrelated);
+
+        assert!(!needs_reload, "entity alheia não deve forçar reload");
+    }
+
+    /// Invalidação: entity com triple queryConfig → needs_reload=true mesmo ausente do cache anterior.
+    #[test]
+    fn test_needs_reload_when_entity_has_query_config_triple() {
+        let conn = setup_db();
+        let prop = "foundation:existingProp";
+        let new_prop = "foundation:newQueryProp";
+        let config_json = r#"{"targetClass":"foundation:Task","filters":[]}"#;
+
+        insert_triple_literal(&conn, prop, "foundation:queryConfig", config_json, 1);
+        let cache = Arc::new(load_query_property_cache(&conn));
+
+        insert_triple_literal(&conn, new_prop, "foundation:queryConfig", config_json, 2);
+        let snapshot = Some(cache.clone());
+
+        let needs_reload = snapshot.is_none()
+            || snapshot.as_ref().map_or(false, |s| s.iter().any(|e| e.property_iri == new_prop))
+            || has_query_config(&conn, new_prop);
+
+        assert!(needs_reload, "nova queryConfig triple deve forçar reload");
     }
 }
