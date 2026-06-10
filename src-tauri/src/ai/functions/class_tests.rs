@@ -1,4 +1,4 @@
-use super::{define_class_one, retract_class_one};
+use super::{define_class_one, retract_class_one, describe_class};
 use crate::eavto::{store, Triple, Object};
 use crate::eavto::test_helpers::setup_test_db;
 
@@ -981,4 +981,111 @@ fn test_allowed_statuses_persisted_via_execute_tool_with_add_properties() {
         vec!["foundation:StatusActive"],
         "allowed_statuses must be persisted via execute_tool when combined with add_properties"
     );
+}
+
+// ── propertyType field in describe_class ─────────────────────────────────────
+
+fn setup_class_with_mixed_properties(conn: &mut crate::eavto::Connection) {
+    store::assert_triples(conn, &[
+        Triple::new("test:MyClass", "rdf:type", Object::Iri("owl:Class".to_string())),
+        Triple::new("test:MyClass", "rdfs:label", Object::Literal {
+            value: "My Class".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+    ], "test").unwrap();
+
+    crate::owl::Property::new("test:valueProp")
+        .assert(conn, crate::owl::PropertyType::DatatypeProperty, "value prop", None,
+            &["test:MyClass"], Some("xsd:string"), None, "test").unwrap();
+
+    crate::owl::Property::new("test:referenceProp")
+        .assert(conn, crate::owl::PropertyType::ObjectProperty, "reference prop", None,
+            &["test:MyClass"], Some("test:OtherClass"), None, "test").unwrap();
+
+    crate::owl::Property::new("test:calcProp")
+        .assert(conn, crate::owl::PropertyType::DatatypeProperty, "calc prop", None,
+            &["test:MyClass"], Some("xsd:decimal"), Some("unit:Meter"), "test").unwrap();
+    store::assert_triples(conn, &[
+        Triple::new("test:calcProp", "foundation:formula", Object::Literal {
+            value: "{{test:valueProp}}".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+    ], "test").unwrap();
+
+    crate::owl::Property::new("test:queryProp")
+        .assert(conn, crate::owl::PropertyType::ObjectProperty, "query prop", None,
+            &["test:MyClass"], Some("test:OtherClass"), None, "test").unwrap();
+    store::assert_triples(conn, &[
+        Triple::new("test:queryProp", "foundation:queryConfig", Object::Literal {
+            value: r#"{"targetClass":"test:OtherClass","filters":[]}"#.to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }),
+    ], "test").unwrap();
+}
+
+#[test]
+fn test_describe_class_property_type_value() {
+    let mut conn = setup_test_db();
+    setup_class_with_mixed_properties(&mut conn);
+
+    let result = describe_class(&conn, &serde_json::json!({"iris": ["test:MyClass"]}));
+    assert!(result.success, "describe_class must succeed: {:?}", result.error);
+
+    let classes = result.result.unwrap();
+    let properties = classes["classes"][0]["properties"].as_array().unwrap();
+    let prop = properties.iter().find(|p| p["property"] == "test:valueProp")
+        .expect("test:valueProp must be in properties");
+    assert_eq!(prop["propertyType"], "value",
+        "DatatypeProperty without formula must yield propertyType='value'");
+}
+
+#[test]
+fn test_describe_class_property_type_reference() {
+    let mut conn = setup_test_db();
+    setup_class_with_mixed_properties(&mut conn);
+
+    let result = describe_class(&conn, &serde_json::json!({"iris": ["test:MyClass"]}));
+    assert!(result.success);
+
+    let classes = result.result.unwrap();
+    let properties = classes["classes"][0]["properties"].as_array().unwrap();
+    let prop = properties.iter().find(|p| p["property"] == "test:referenceProp")
+        .expect("test:referenceProp must be in properties");
+    assert_eq!(prop["propertyType"], "reference",
+        "ObjectProperty without queryConfig must yield propertyType='reference'");
+}
+
+#[test]
+fn test_describe_class_property_type_calculation() {
+    let mut conn = setup_test_db();
+    setup_class_with_mixed_properties(&mut conn);
+
+    let result = describe_class(&conn, &serde_json::json!({"iris": ["test:MyClass"]}));
+    assert!(result.success);
+
+    let classes = result.result.unwrap();
+    let properties = classes["classes"][0]["properties"].as_array().unwrap();
+    let prop = properties.iter().find(|p| p["property"] == "test:calcProp")
+        .expect("test:calcProp must be in properties");
+    assert_eq!(prop["propertyType"], "calculation",
+        "DatatypeProperty with formula must yield propertyType='calculation'");
+}
+
+#[test]
+fn test_describe_class_property_type_query() {
+    let mut conn = setup_test_db();
+    setup_class_with_mixed_properties(&mut conn);
+
+    let result = describe_class(&conn, &serde_json::json!({"iris": ["test:MyClass"]}));
+    assert!(result.success);
+
+    let classes = result.result.unwrap();
+    let properties = classes["classes"][0]["properties"].as_array().unwrap();
+    let prop = properties.iter().find(|p| p["property"] == "test:queryProp")
+        .expect("test:queryProp must be in properties");
+    assert_eq!(prop["propertyType"], "query",
+        "ObjectProperty with queryConfig must yield propertyType='query'");
 }

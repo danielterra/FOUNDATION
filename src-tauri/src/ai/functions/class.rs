@@ -165,6 +165,35 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
         let related_processes = super::find_related_processes_for_class(conn, iri);
         let is_locked = crate::owl::is_system_locked(conn, iri);
 
+        let properties_array: Vec<serde_json::Value> = concept.properties.iter()
+            .map(|(prop_iri, source)| {
+                let prop = crate::owl::Property::get(conn, prop_iri).ok().flatten();
+                let label = prop.as_ref().and_then(|p| p.label.clone());
+                let ai_behavior_rules = prop.as_ref().and_then(|p| p.ai_behavior_rules.clone());
+                let is_object_property = prop.as_ref().map(|p|
+                    p.property_type == crate::owl::PropertyType::ObjectProperty
+                ).unwrap_or(false);
+                let property_type_str = prop.as_ref()
+                    .map(|p| p.classification().as_str())
+                    .unwrap_or("value");
+                let range: Vec<serde_json::Value> = prop.as_ref()
+                    .map(|p| p.ranges.iter().map(|r| {
+                        let range_label = crate::owl::Thing::get(conn, r).label;
+                        serde_json::json!({"iri": r, "label": range_label})
+                    }).collect())
+                    .unwrap_or_default();
+                serde_json::json!({
+                    "property": prop_iri,
+                    "label": label,
+                    "source": source,
+                    "isObjectProperty": is_object_property,
+                    "propertyType": property_type_str,
+                    "range": range,
+                    "aiBehaviorRules": ai_behavior_rules,
+                })
+            })
+            .collect();
+
         let mut response = serde_json::json!({
             "iri": concept.iri,
             "label": concept.label,
@@ -188,28 +217,7 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
                 "label": t.label,
                 "icon": t.icon,
             })).collect::<Vec<_>>(),
-            "properties": concept.properties.iter().map(|(prop_iri, source)| {
-                let prop = crate::owl::Property::get(conn, prop_iri).ok().flatten();
-                let label = prop.as_ref().and_then(|p| p.label.clone());
-                let ai_behavior_rules = prop.as_ref().and_then(|p| p.ai_behavior_rules.clone());
-                let is_object_property = prop.as_ref().map(|p|
-                    p.property_type == crate::owl::PropertyType::ObjectProperty
-                ).unwrap_or(false);
-                let range: Vec<serde_json::Value> = prop.as_ref()
-                    .map(|p| p.ranges.iter().map(|r| {
-                        let range_label = crate::owl::Thing::get(conn, r).label;
-                        serde_json::json!({"iri": r, "label": range_label})
-                    }).collect())
-                    .unwrap_or_default();
-                serde_json::json!({
-                    "property": prop_iri,
-                    "label": label,
-                    "source": source,
-                    "isObjectProperty": is_object_property,
-                    "range": range,
-                    "aiBehaviorRules": ai_behavior_rules,
-                })
-            }).collect::<Vec<_>>(),
+            "properties": properties_array,
             "instanceCount": concept.backlinks.len(),
             "allowedStatuses": allowed_statuses,
             "requiredFields": required_fields,

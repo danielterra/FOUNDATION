@@ -305,12 +305,19 @@ impl Individual {
     }
 
     pub fn serializable_properties(&self, conn: &Connection) -> Vec<serde_json::Value> {
-        use crate::owl::Property;
+        use crate::owl::{Property, PropertyClassification};
 
         self.properties.iter().map(|(prop_iri, value)| {
-            let unit = Property::get(conn, prop_iri).ok()
-                .flatten()
-                .and_then(|p| p.unit);
+            let prop = Property::get(conn, prop_iri).ok().flatten();
+            let unit = prop.as_ref().and_then(|p| p.unit.clone());
+
+            let property_type_str: &str = match prop.as_ref() {
+                Some(p) => p.classification().as_str(),
+                None => match value {
+                    Object::Iri(_) | Object::Blank(_) => PropertyClassification::Reference.as_str(),
+                    _ => PropertyClassification::Value.as_str(),
+                },
+            };
 
             let json_value: serde_json::Value = match value {
                 Object::Integer(i) => serde_json::json!(i),
@@ -341,6 +348,7 @@ impl Individual {
             let mut entry = serde_json::json!({
                 "property": prop_iri,
                 "value": json_value,
+                "propertyType": property_type_str,
             });
             if let Some(unit_iri) = unit {
                 entry["unit"] = serde_json::json!(unit_iri);

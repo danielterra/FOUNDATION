@@ -563,7 +563,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "describe_class".to_string(),
             array_mode: false,
-            description: "Fetch full schema for one or more classes: properties, subclasses, restrictions, allowed statuses.".to_string(),
+            description: "Fetch full schema for one or more classes: properties, subclasses, restrictions, allowed statuses. Each entry in the `properties` array includes a `propertyType` field: `value` (plain literal), `calculation` (formula/aggregation), `reference` (ObjectProperty pointing to an individual), or `query` (ObjectProperty resolved via a stored query).".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iris".to_string(),
@@ -578,7 +578,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "describe_individual".to_string(),
             array_mode: false,
-            description: "Fetch full details for one or more individuals: all property values, backlinks, and allowed statuses.".to_string(),
+            description: "Fetch full details for one or more individuals: all property values, backlinks, and allowed statuses. Each entry in the `properties` array includes a `propertyType` field: `value` (plain literal), `calculation` (formula/aggregation), `reference` (ObjectProperty or built-in IRI link), or `query` (ObjectProperty resolved via a stored query).".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iris".to_string(),

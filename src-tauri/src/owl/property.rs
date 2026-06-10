@@ -476,6 +476,49 @@ pub enum PropertyType {
     AnnotationProperty,
 }
 
+/// Semantic classification of a property for AI-facing output.
+/// Derived purely from already-loaded struct fields — no DB access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropertyClassification {
+    /// ObjectProperty with a query_config — values are computed via a stored query.
+    Query,
+    /// ObjectProperty without query_config — points to another individual.
+    Reference,
+    /// Non-object property with a formula or aggregation expression.
+    Calculation,
+    /// Non-object property with a plain literal value.
+    Value,
+}
+
+impl PropertyClassification {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Query => "query",
+            Self::Reference => "reference",
+            Self::Calculation => "calculation",
+            Self::Value => "value",
+        }
+    }
+}
+
+impl Property {
+    /// Returns the semantic classification of this property.
+    /// Axis: ObjectProperty takes precedence; within non-object, formula/aggregation → calculation.
+    pub fn classification(&self) -> PropertyClassification {
+        if self.property_type == PropertyType::ObjectProperty {
+            if self.query_config.is_some() {
+                PropertyClassification::Query
+            } else {
+                PropertyClassification::Reference
+            }
+        } else if self.formula.is_some() || self.aggregation.is_some() {
+            PropertyClassification::Calculation
+        } else {
+            PropertyClassification::Value
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "property_tests.rs"]
 mod tests;

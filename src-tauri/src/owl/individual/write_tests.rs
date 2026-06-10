@@ -737,6 +737,185 @@ fn test_add_property_replaces_existing_values() {
     assert_eq!(result.triples[0].object.as_literal().unwrap(), "replaced");
 }
 
+// ── propertyType field in serializable_properties ────────────────────────────
+
+#[test]
+fn test_serializable_properties_property_type_value() {
+    let conn = setup_test_db();
+
+    let ind = Individual {
+        iri: "test:Subject".to_string(),
+        label: None, icon: None, comment: None, types: vec![],
+        properties: vec![("foundation:name".to_string(), Object::Literal {
+            value: "Alice".to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        })],
+        property_tx: vec![0],
+        backlinks: vec![],
+    };
+
+    let props = ind.serializable_properties(&conn);
+    assert_eq!(props[0]["propertyType"], "value",
+        "literal without ontology definition must be 'value'");
+}
+
+#[test]
+fn test_serializable_properties_property_type_reference_builtin() {
+    let conn = setup_test_db();
+
+    let ind = Individual {
+        iri: "test:Subject".to_string(),
+        label: None, icon: None, comment: None, types: vec![],
+        properties: vec![("rdf:type".to_string(), Object::Iri("foundation:MyClass".to_string()))],
+        property_tx: vec![0],
+        backlinks: vec![],
+    };
+
+    let props = ind.serializable_properties(&conn);
+    assert_eq!(props[0]["propertyType"], "reference",
+        "built-in IRI-valued property (rdf:type) must fall back to 'reference'");
+}
+
+#[test]
+fn test_serializable_properties_property_type_reference_defined() {
+    let mut conn = setup_test_db();
+
+    Property::new("test:relProp").assert(
+        &mut conn,
+        PropertyType::ObjectProperty,
+        "rel prop",
+        None,
+        &[],
+        Some("test:Target"),
+        None,
+        "test",
+    ).unwrap();
+
+    let ind = Individual {
+        iri: "test:Subject".to_string(),
+        label: None, icon: None, comment: None, types: vec![],
+        properties: vec![("test:relProp".to_string(), Object::Iri("test:Target_1".to_string()))],
+        property_tx: vec![0],
+        backlinks: vec![],
+    };
+
+    let props = ind.serializable_properties(&conn);
+    assert_eq!(props[0]["propertyType"], "reference",
+        "defined ObjectProperty without queryConfig must be 'reference'");
+}
+
+#[test]
+fn test_serializable_properties_property_type_calculation() {
+    let mut conn = setup_test_db();
+
+    Property::new("test:calcProp").assert(
+        &mut conn,
+        PropertyType::DatatypeProperty,
+        "calc prop",
+        None,
+        &[],
+        Some("xsd:decimal"),
+        Some("unit:Meter"),
+        "test",
+    ).unwrap();
+
+    conn.execute(
+        "INSERT INTO transactions (origin, created_at) VALUES ('test', 0)",
+        [],
+    ).unwrap();
+    let tx_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted) \
+         VALUES ('test:calcProp', 'foundation:formula', '{{test:other}} * 2', 'literal', 'xsd:string', 1, ?, 0, 0)",
+        rusqlite::params![tx_id],
+    ).unwrap();
+
+    let ind = Individual {
+        iri: "test:Subject".to_string(),
+        label: None, icon: None, comment: None, types: vec![],
+        properties: vec![("test:calcProp".to_string(), Object::Number(3.14))],
+        property_tx: vec![0],
+        backlinks: vec![],
+    };
+
+    let props = ind.serializable_properties(&conn);
+    assert_eq!(props[0]["propertyType"], "calculation",
+        "DatatypeProperty with formula must be 'calculation'");
+}
+
+#[test]
+fn test_serializable_properties_property_type_query() {
+    let mut conn = setup_test_db();
+
+    Property::new("test:queryProp").assert(
+        &mut conn,
+        PropertyType::ObjectProperty,
+        "query prop",
+        None,
+        &[],
+        Some("test:Target"),
+        None,
+        "test",
+    ).unwrap();
+
+    conn.execute(
+        "INSERT INTO transactions (origin, created_at) VALUES ('test', 0)",
+        [],
+    ).unwrap();
+    let tx_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO triples (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted) \
+         VALUES ('test:queryProp', 'foundation:queryConfig', '{\"targetClass\":\"test:Target\",\"filters\":[]}', 'literal', 'xsd:string', 1, ?, 0, 0)",
+        rusqlite::params![tx_id],
+    ).unwrap();
+
+    let ind = Individual {
+        iri: "test:Subject".to_string(),
+        label: None, icon: None, comment: None, types: vec![],
+        properties: vec![("test:queryProp".to_string(), Object::Iri("test:Target_1".to_string()))],
+        property_tx: vec![0],
+        backlinks: vec![],
+    };
+
+    let props = ind.serializable_properties(&conn);
+    assert_eq!(props[0]["propertyType"], "query",
+        "ObjectProperty with queryConfig must be 'query'");
+}
+
+#[test]
+fn test_serializable_properties_property_type_always_present() {
+    let conn = setup_test_db();
+
+    let ind = Individual {
+        iri: "test:Subject".to_string(),
+        label: None, icon: None, comment: None, types: vec![],
+        properties: vec![
+            ("rdf:type".to_string(), Object::Iri("foundation:MyClass".to_string())),
+            ("rdfs:label".to_string(), Object::Literal {
+                value: "My Label".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }),
+            ("foundation:unknown".to_string(), Object::Integer(42)),
+        ],
+        property_tx: vec![0, 0, 0],
+        backlinks: vec![],
+    };
+
+    let props = ind.serializable_properties(&conn);
+    for entry in &props {
+        let pt = entry.get("propertyType").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(!pt.is_empty(),
+            "propertyType must be non-empty for every entry, got empty on property '{}'",
+            entry["property"]);
+        assert!(
+            matches!(pt, "value" | "calculation" | "reference" | "query"),
+            "propertyType must be one of the four canonical values, got '{}' on property '{}'",
+            pt, entry["property"]);
+    }
+}
+
 #[test]
 fn test_append_property_respects_max_cardinality() {
     use crate::owl::cardinality::{set_class_cardinality_restrictions, PropertyRestriction};
