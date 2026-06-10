@@ -278,6 +278,8 @@ pub fn run() {
             commands::settings__save_foundation_dir,
             commands::settings__set_foundation_dir,
             commands::settings__connect_claude_desktop,
+            commands::settings__get_history_retention_days,
+            commands::settings__set_history_retention_days,
             commands::recover_database,
             realtime::events__set_subscriptions,
             realtime::events__set_subscriptions_v2,

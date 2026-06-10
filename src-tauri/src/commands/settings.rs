@@ -1,6 +1,10 @@
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
+
+use crate::owl::{DbExecutor, Individual, Object};
+
+const HISTORY_RETENTION_DAYS_SETTING_IRI: &str = "foundation:SoftwareSetting_1781110491934";
 
 #[tauri::command]
 pub async fn settings__is_folder_configured(app: AppHandle) -> bool {
@@ -68,4 +72,46 @@ pub async fn settings__connect_claude_desktop(app: AppHandle) -> Result<String, 
         .map_err(|e| format!("failed to open the folder in Explorer: {e}"))?;
 
     Ok(target.to_string_lossy().to_string())
+}
+
+/// Returns the currently configured history retention period in days (0 = never purge).
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn settings__get_history_retention_days(
+    executor: State<'_, DbExecutor>,
+) -> Result<u32, String> {
+    executor.read(|conn| {
+        let days = Individual::get(conn, HISTORY_RETENTION_DAYS_SETTING_IRI)
+            .ok()
+            .flatten()
+            .and_then(|s| s.properties.iter()
+                .find(|(k, _)| k == "foundation:settingValue")
+                .and_then(|(_, v)| v.as_literal())
+                .and_then(|v| v.parse::<u32>().ok()))
+            .unwrap_or(7);
+        Ok(days)
+    }).await
+}
+
+/// Persists the history retention period in days (0 = never purge).
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn settings__set_history_retention_days(
+    days: u32,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    executor.write(move |conn| {
+        let setting = Individual::get(conn, HISTORY_RETENTION_DAYS_SETTING_IRI)
+            .map_err(|e| format!("Failed to get HistoryRetentionDaysSetting: {}", e))?
+            .ok_or_else(|| "HistoryRetentionDaysSetting not found".to_string())?;
+
+        setting.add_property(conn, "foundation:settingValue", vec![Object::Literal {
+            value: days.to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }], "settings").map_err(|e| format!("Failed to update settingValue: {}", e))?;
+
+        Ok(String::new())
+    }).await?;
+    Ok(())
 }

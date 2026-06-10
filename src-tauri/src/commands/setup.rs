@@ -290,15 +290,34 @@ async fn recover_pending_jobs(
 }
 
 fn purge_old_retractions(conn: &Connection) {
-    const SEVEN_DAYS_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+    let retention_days = Individual::get(conn, "foundation:SoftwareSetting_1781110491934")
+        .ok()
+        .flatten()
+        .and_then(|s| s.properties.iter()
+            .find(|(k, _)| k == "foundation:settingValue")
+            .and_then(|(_, v)| v.as_literal())
+            .and_then(|v| v.parse::<u64>().ok()))
+        .unwrap_or_else(|| {
+            super::log_backend("warn", "[STARTUP] HistoryRetentionDaysSetting missing or unparseable — defaulting to 7 days");
+            7
+        });
+
+    if retention_days == 0 {
+        super::log_backend("info", "[STARTUP] History retention set to 0 — skipping purge (eternal history)");
+        return;
+    }
+
+    let retention_ms = (retention_days as i64) * 24 * 60 * 60 * 1000;
     let cutoff_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
-        - SEVEN_DAYS_MS;
+        - retention_ms;
 
     match purge_superseded_triples(conn, cutoff_ms) {
-        Ok(n) if n > 0 => super::log_backend("info", &format!("[STARTUP] Purged {} superseded triples older than 7 days", n)),
+        Ok(n) if n > 0 => super::log_backend("info", &format!(
+            "[STARTUP] Purged {} superseded triples older than {} days", n, retention_days
+        )),
         Ok(_) => {}
         Err(e) => super::log_backend("warn", &format!("[STARTUP] Failed to purge old retractions: {}", e)),
     }

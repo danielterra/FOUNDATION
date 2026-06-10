@@ -108,6 +108,27 @@
 	let foundationDirMessage = $state('');
 	let foundationDirError = $state(false);
 
+	// --- History Retention ---
+	let historyRetentionDays = $state(0);
+	let loadedHistoryRetentionDays = $state(0);
+	let historyRetentionLoading = $state(false);
+	let historyRetentionLoadError = $state(false);
+	let historyRetentionSaving = $state(false);
+	let historyRetentionMessage = $state('');
+	let historyRetentionError = $state(false);
+
+	let historyRetentionInputValue = $state('');
+
+	let historyRetentionValid = $derived(
+		historyRetentionInputValue !== ''
+		&& Number.isInteger(Number(historyRetentionInputValue))
+		&& Number(historyRetentionInputValue) >= 0
+	);
+	let historyRetentionDirty = $derived(
+		historyRetentionValid && Number(historyRetentionInputValue) !== loadedHistoryRetentionDays
+	);
+	let historyRetentionCanSave = $derived(historyRetentionValid && historyRetentionDirty);
+
 	// --- IMAP ---
 	let imapAccounts = $state([]);
 	let imapEditing = $state(null); // null = hidden, 'new' = new form, iri = editing existing
@@ -130,7 +151,7 @@
 	});
 
 	async function loadAll() {
-		await Promise.all([loadModelData(), loadLogPath(), loadLocalModelStatus(), loadImapAccounts(), loadFoundationDir()]);
+		await Promise.all([loadModelData(), loadLogPath(), loadLocalModelStatus(), loadImapAccounts(), loadFoundationDir(), loadHistoryRetention()]);
 		await loadApiKeyForService(selectedServiceIri);
 		if (selectedServiceIsOpenRouter && apiKey.trim()) {
 			await loadOpenRouterModels();
@@ -143,6 +164,41 @@
 			foundationDir = await invoke('settings__get_foundation_dir');
 		} catch {
 			// ignore
+		}
+	}
+
+	async function loadHistoryRetention() {
+		historyRetentionLoading = true;
+		historyRetentionLoadError = false;
+		historyRetentionMessage = '';
+		try {
+			const days = await invoke('settings__get_history_retention_days');
+			historyRetentionDays = days;
+			loadedHistoryRetentionDays = days;
+			historyRetentionInputValue = String(days);
+		} catch {
+			historyRetentionLoadError = true;
+		} finally {
+			historyRetentionLoading = false;
+		}
+	}
+
+	async function saveHistoryRetention() {
+		if (!historyRetentionCanSave) return;
+		historyRetentionSaving = true;
+		historyRetentionMessage = '';
+		historyRetentionError = false;
+		try {
+			const days = Number(historyRetentionInputValue);
+			await invoke('settings__set_history_retention_days', { days });
+			loadedHistoryRetentionDays = days;
+			historyRetentionDays = days;
+			historyRetentionMessage = 'Configuração salva.';
+		} catch (e) {
+			historyRetentionMessage = String(e);
+			historyRetentionError = true;
+		} finally {
+			historyRetentionSaving = false;
 		}
 	}
 
@@ -986,6 +1042,55 @@
 
 			<section class="settings-section">
 				<h3 class="section-title">
+					<span class="material-symbols-outlined">history</span>
+					Histórico de Dados
+				</h3>
+				<p class="hint">Versões antigas dos seus dados são removidas automaticamente ao iniciar o app. Defina por quantos dias elas ficam preservadas.</p>
+				{#if historyRetentionLoading}
+					<p class="hint">Carregando…</p>
+				{:else if historyRetentionLoadError}
+					<p class="feedback error">Não foi possível carregar a configuração.</p>
+				{:else}
+					<label class="field-label" for="settings-history-retention">Período de retenção</label>
+					<div class="field-row">
+						<Input
+							id="settings-history-retention"
+							class="retention-input"
+							type="number"
+							min="0"
+							step="1"
+							inputmode="numeric"
+							aria-describedby="settings-history-retention-helper"
+							bind:value={historyRetentionInputValue}
+						/>
+						<span class="retention-suffix">dias</span>
+					</div>
+					{#if !historyRetentionValid && historyRetentionInputValue !== ''}
+						<p class="feedback error" id="settings-history-retention-helper" aria-live="polite">
+							Informe um número inteiro de dias (0 ou mais).
+						</p>
+					{:else}
+						<p class="hint retention-helper" id="settings-history-retention-helper" aria-live="polite">
+							{#if historyRetentionValid && Number(historyRetentionInputValue) === 0}
+								0 = nunca apagar. Todo o histórico será preservado para sempre.
+							{:else if historyRetentionValid}
+								Versões com mais de {historyRetentionInputValue} dias serão removidas no próximo início do app.
+							{/if}
+						</p>
+					{/if}
+					<div class="field-row">
+						<Button variant="default" onclick={saveHistoryRetention} disabled={historyRetentionSaving || !historyRetentionCanSave}>
+							{historyRetentionSaving ? 'Salvando…' : 'Salvar'}
+						</Button>
+					</div>
+					{#if historyRetentionMessage}
+						<p class="feedback" class:error={historyRetentionError}>{historyRetentionMessage}</p>
+					{/if}
+				{/if}
+			</section>
+
+			<section class="settings-section">
+				<h3 class="section-title">
 					<span class="material-symbols-outlined">extension</span>
 					Claude Desktop
 				</h3>
@@ -1306,6 +1411,24 @@
 		display: inline-block;
 		padding: 4px 6px;
 		height: auto;
+	}
+
+	:global([data-slot="input"].retention-input) {
+		flex: none;
+		width: 64px;
+		display: inline-block;
+		padding: 4px 6px;
+		height: auto;
+	}
+
+	.retention-suffix {
+		font-size: 13px;
+		color: var(--color-neutral);
+		white-space: nowrap;
+	}
+
+	.retention-helper {
+		min-height: 1.4em;
 	}
 
 	.imap-folders {
