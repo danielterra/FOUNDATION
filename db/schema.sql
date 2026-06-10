@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS triples (
   tx INTEGER NOT NULL,             -- Transaction ID (references transactions.tx)
   origin_id INTEGER NOT NULL,      -- Origin ID (references origins.id)
   retracted INTEGER NOT NULL DEFAULT 0,  -- 0 = active, 1 = retracted
+  is_current INTEGER NOT NULL DEFAULT 1, -- 1 iff tx = MAX(tx) for this (subject, predicate) pair
   created_at INTEGER NOT NULL,     -- Physical timestamp (Unix epoch milliseconds)
 
   FOREIGN KEY (origin_id) REFERENCES origins(id),
@@ -206,19 +207,24 @@ CREATE INDEX IF NOT EXISTS idx_ontology_files_modified ON ontology_files(last_mo
 -- ============================================================================
 
 -- Current state view: active triples only.
--- A triple is active when retracted=0 AND its tx equals the maximum tx for its (subject, predicate)
--- pair — meaning it belongs to the latest assertion group. This supports append-only group semantics
--- where asserting new values creates a new group under a higher tx, automatically superseding the
--- prior group.
+-- is_current=1 marks rows whose tx equals MAX(tx) for their (subject, predicate) pair.
+-- The write path in store.rs maintains this flag eagerly, so no correlated subquery is needed here.
+-- Tombstones (retracted=1 at the highest tx) are excluded by the retracted=0 filter, correctly
+-- representing an empty property without leaking the sentinel row.
 CREATE VIEW IF NOT EXISTS triples_current AS
 SELECT subject, predicate, object, object_value, object_datatype, object_language,
        object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
-FROM triples t
-WHERE t.retracted = 0
-  AND t.tx = (
-      SELECT MAX(tx) FROM triples
-      WHERE subject = t.subject AND predicate = t.predicate
-  );
+FROM triples
+WHERE is_current = 1 AND retracted = 0;
+
+-- Partial index for the dominant read pattern (current, non-retracted rows by subject/predicate).
+-- Predicate mirrors the view's WHERE clause so the planner can satisfy it by implication.
+CREATE INDEX IF NOT EXISTS idx_cur_spo ON triples(subject, predicate)
+    WHERE is_current = 1 AND retracted = 0;
+
+-- Partial index for predicate/object lookups (e.g. backlink scans, class queries).
+CREATE INDEX IF NOT EXISTS idx_cur_pos ON triples(predicate, object, object_value)
+    WHERE is_current = 1 AND retracted = 0;
 
 -- Entity view: All subjects with at least one currently-active triple
 CREATE VIEW IF NOT EXISTS entities AS

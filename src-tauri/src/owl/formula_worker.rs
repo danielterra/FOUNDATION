@@ -689,17 +689,14 @@ mod tests {
                 tx INTEGER NOT NULL DEFAULT 0,
                 origin_id INTEGER NOT NULL DEFAULT 1,
                 created_at INTEGER NOT NULL DEFAULT 0,
-                retracted INTEGER NOT NULL DEFAULT 0
+                retracted INTEGER NOT NULL DEFAULT 0,
+                is_current INTEGER NOT NULL DEFAULT 1
             );
             CREATE VIEW IF NOT EXISTS triples_current AS
             SELECT subject, predicate, object, object_value, object_datatype, object_language,
                    object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
-            FROM triples t
-            WHERE t.retracted = 0
-              AND t.tx = (
-                  SELECT MAX(tx) FROM triples
-                  WHERE subject = t.subject AND predicate = t.predicate
-              );
+            FROM triples
+            WHERE is_current = 1 AND retracted = 0;
         ").unwrap();
         conn
     }

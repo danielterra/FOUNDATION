@@ -308,13 +308,7 @@ fn purge_old_retractions(conn: &Connection) {
 
 fn purge_superseded_triples(conn: &Connection, cutoff_ms: i64) -> rusqlite::Result<usize> {
     conn.execute(
-        "DELETE FROM triples
-         WHERE created_at < ?1
-           AND tx < (
-               SELECT MAX(tx) FROM triples t2
-               WHERE t2.subject = triples.subject
-                 AND t2.predicate = triples.predicate
-           )",
+        "DELETE FROM triples WHERE created_at < ?1 AND is_current = 0",
         rusqlite::params![cutoff_ms],
     )
 }
@@ -324,11 +318,11 @@ mod tests {
     use super::purge_superseded_triples;
     use crate::eavto::test_helpers::setup_test_db;
 
-    fn insert_triple(conn: &rusqlite::Connection, subject: &str, predicate: &str, value: &str, tx: i64, created_at: i64, retracted: i64) {
+    fn insert_triple(conn: &rusqlite::Connection, subject: &str, predicate: &str, value: &str, tx: i64, created_at: i64, retracted: i64, is_current: i64) {
         conn.execute(
-            "INSERT INTO triples (subject, predicate, object_value, object_type, tx, origin_id, created_at, retracted)
-             VALUES (?1, ?2, ?3, 'literal', ?4, 1, ?5, ?6)",
-            rusqlite::params![subject, predicate, value, tx, created_at, retracted],
+            "INSERT INTO triples (subject, predicate, object_value, object_type, tx, origin_id, created_at, retracted, is_current)
+             VALUES (?1, ?2, ?3, 'literal', ?4, 1, ?5, ?6, ?7)",
+            rusqlite::params![subject, predicate, value, tx, created_at, retracted, is_current],
         ).unwrap();
     }
 
@@ -357,9 +351,9 @@ mod tests {
         insert_tx(&conn, 1);
         insert_tx(&conn, 2);
         // tx=1 group (old, superseded by tx=2)
-        insert_triple(&conn, "ex:A", "ex:p", "v1", 1, OLD, 0);
+        insert_triple(&conn, "ex:A", "ex:p", "v1", 1, OLD, 0, 0);
         // tx=2 group (current)
-        insert_triple(&conn, "ex:A", "ex:p", "v2", 2, OLD, 0);
+        insert_triple(&conn, "ex:A", "ex:p", "v2", 2, OLD, 0, 1);
 
         let deleted = purge_superseded_triples(&conn, CUTOFF).unwrap();
 
@@ -378,7 +372,7 @@ mod tests {
         let conn = setup_test_db();
         insert_tx(&conn, 1);
         // Only one tx — it IS the max, so it must never be deleted
-        insert_triple(&conn, "ex:A", "ex:p", "v1", 1, OLD, 0);
+        insert_triple(&conn, "ex:A", "ex:p", "v1", 1, OLD, 0, 1);
 
         let deleted = purge_superseded_triples(&conn, CUTOFF).unwrap();
 
@@ -393,9 +387,9 @@ mod tests {
         insert_tx(&conn, 1);
         insert_tx(&conn, 2);
         // tx=1 group (old active values, now superseded)
-        insert_triple(&conn, "ex:A", "ex:p", "v1", 1, OLD, 0);
+        insert_triple(&conn, "ex:A", "ex:p", "v1", 1, OLD, 0, 0);
         // tx=2 sentinel (marks property as empty, retracted=1, it IS the current max)
-        insert_triple(&conn, "ex:A", "ex:p", "sentinel", 2, OLD, 1);
+        insert_triple(&conn, "ex:A", "ex:p", "sentinel", 2, OLD, 1, 1);
 
         let deleted = purge_superseded_triples(&conn, CUTOFF).unwrap();
 
@@ -424,8 +418,8 @@ mod tests {
         insert_tx(&conn, 1);
         insert_tx(&conn, 2);
         // tx=1 group is superseded but was created recently — must not be deleted
-        insert_triple(&conn, "ex:A", "ex:p", "v1", 1, RECENT, 0);
-        insert_triple(&conn, "ex:A", "ex:p", "v2", 2, RECENT, 0);
+        insert_triple(&conn, "ex:A", "ex:p", "v1", 1, RECENT, 0, 0);
+        insert_triple(&conn, "ex:A", "ex:p", "v2", 2, RECENT, 0, 1);
 
         let deleted = purge_superseded_triples(&conn, CUTOFF).unwrap();
 
@@ -439,11 +433,11 @@ mod tests {
         insert_tx(&conn, 1);
         insert_tx(&conn, 2);
         // tx=1 group has 3 values (old, superseded)
-        insert_triple(&conn, "ex:A", "ex:tags", "a", 1, OLD, 0);
-        insert_triple(&conn, "ex:A", "ex:tags", "b", 1, OLD, 0);
-        insert_triple(&conn, "ex:A", "ex:tags", "c", 1, OLD, 0);
+        insert_triple(&conn, "ex:A", "ex:tags", "a", 1, OLD, 0, 0);
+        insert_triple(&conn, "ex:A", "ex:tags", "b", 1, OLD, 0, 0);
+        insert_triple(&conn, "ex:A", "ex:tags", "c", 1, OLD, 0, 0);
         // tx=2 group is current
-        insert_triple(&conn, "ex:A", "ex:tags", "d", 2, OLD, 0);
+        insert_triple(&conn, "ex:A", "ex:tags", "d", 2, OLD, 0, 1);
 
         let deleted = purge_superseded_triples(&conn, CUTOFF).unwrap();
 

@@ -163,8 +163,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let mut total_retracted: usize = 0;
     for (subject, _) in &orphans {
-        // Immutable model: insert one retracted row per predicate (latest tx as template)
-        // so that MAX(tx) for each (subject, predicate) points to a retracted row.
+        // Immutable model: insert one retracted tombstone per predicate (latest-tx row as template)
+        // so that the new highest tx for each (subject, predicate) is a tombstone.
         let n = tx.execute(
             "INSERT INTO triples (subject, predicate, object, object_value, object_datatype,
                                   object_language, object_type, object_number, object_integer,
@@ -173,11 +173,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     object_language, object_type, object_number, object_integer,
                     object_boolean, ?1, ?2, 1, ?3
              FROM triples t
-             WHERE t.subject = ?4 AND t.retracted = 0
-               AND t.tx = (SELECT MAX(t2.tx) FROM triples t2
-                           WHERE t2.subject = ?4 AND t2.predicate = t.predicate)
+             WHERE t.subject = ?4 AND t.is_current = 1
              GROUP BY t.predicate",
             params![tx_id, origin_id, now, subject],
+        )?;
+        tx.execute(
+            "UPDATE triples SET is_current = 0
+             WHERE subject = ?1 AND is_current = 1 AND tx < ?2",
+            params![subject, tx_id],
         )?;
         total_retracted += n;
     }

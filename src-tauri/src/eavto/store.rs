@@ -241,6 +241,13 @@ fn do_assert_triples(
         insert_triple(tx, &triples[idx], tx_id, origin_id, now)?;
     }
 
+    for ((subject, predicate), incoming_indices) in &groups {
+        let had_inserts = incoming_indices.iter().any(|i| indices_to_insert.contains(i));
+        if had_inserts {
+            demote_superseded(tx, subject, predicate, tx_id)?;
+        }
+    }
+
     {
         let mut stmt = tx.prepare(
             "SELECT subject, predicate, object_datatype, object_number, object_integer
@@ -407,12 +414,13 @@ fn do_append_triples(
                     object_boolean, ?1, ?2, 0, ?3
              FROM triples
              WHERE subject = ?4 AND predicate = ?5 AND retracted = 0
-               AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ?4 AND predicate = ?5)",
+               AND is_current = 1 AND tx < ?1",
             rusqlite::params![tx_id, origin_id, now, subject, predicate],
         )?;
         for &idx in new_indices {
             insert_triple(tx, &triples[idx], tx_id, origin_id, now)?;
         }
+        demote_superseded(tx, subject, predicate, tx_id)?;
     }
 
     Ok(tx_id)
@@ -552,7 +560,7 @@ fn do_retract_triples(
                         object_boolean, ?1, ?2, 1, ?3
                  FROM triples
                  WHERE subject = ?4 AND predicate = ?5 AND retracted = 0
-                   AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ?4 AND predicate = ?5)
+                   AND is_current = 1 AND tx < ?1
                  LIMIT 1",
                 rusqlite::params![tx_id, origin_id, now, w.subject, w.predicate],
             )?;
@@ -562,9 +570,31 @@ fn do_retract_triples(
                 insert_triple(tx, &triple, tx_id, origin_id, now)?;
             }
         }
+        demote_superseded(tx, &w.subject, &w.predicate, tx_id)?;
     }
 
     Ok(tx_id)
+}
+
+/// Mark all rows for (subject, predicate) with tx < tx_id as non-current.
+///
+/// Called once per (subject, predicate) group immediately after the new rows are
+/// inserted, within the same transaction. Tombstones are demoted too — a superseded
+/// tombstone is no longer current even though retracted=1.
+///
+/// Uses idx_spr (subject, predicate, retracted, tx); the omitted retracted filter is
+/// intentional so superseded tombstones are also covered.
+fn demote_superseded(
+    tx: &rusqlite::Connection,
+    subject: &str,
+    predicate: &str,
+    tx_id: i64,
+) -> rusqlite::Result<usize> {
+    tx.execute(
+        "UPDATE triples SET is_current = 0
+         WHERE subject = ?1 AND predicate = ?2 AND is_current = 1 AND tx < ?3",
+        rusqlite::params![subject, predicate, tx_id],
+    )
 }
 
 /// Represents an existing active triple row fetched from the DB for comparison.
@@ -579,8 +609,7 @@ struct ExistingRow {
 }
 
 /// Fetch all currently-active rows for a given (subject, predicate) pair.
-/// A row is active when retracted=0 AND its tx equals the MAX(tx) for that (subject, predicate)
-/// — i.e., all members of the latest group for this SP pair.
+/// Uses `is_current = 1` maintained by the write path instead of a correlated MAX(tx) subquery.
 fn fetch_existing_rows(
     tx: &rusqlite::Connection,
     subject: &str,
@@ -590,8 +619,7 @@ fn fetch_existing_rows(
         "SELECT object, object_value, object_datatype, object_language,
                 object_integer, object_number, object_boolean
          FROM triples
-         WHERE subject = ?1 AND predicate = ?2 AND retracted = 0
-           AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ?1 AND predicate = ?2)",
+         WHERE subject = ?1 AND predicate = ?2 AND retracted = 0 AND is_current = 1",
     )?;
     let rows = stmt.query_map([subject, predicate], |row| {
         Ok(ExistingRow {
@@ -1025,6 +1053,9 @@ fn do_rename_iri(
                 now,
             ],
         )?;
+
+        demote_superseded(tx, &row.subject, &row.predicate, tx_id)?;
+        demote_superseded(tx, new_subject, &row.predicate, tx_id)?;
     }
 
     Ok(())

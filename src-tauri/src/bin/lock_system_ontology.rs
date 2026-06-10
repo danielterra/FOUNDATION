@@ -255,6 +255,12 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 1, 0, ?2, ?3, ?4)",
             params![iri, origin_id, tx_id, now],
         )?;
+        tx.execute(
+            "UPDATE triples SET is_current = 0
+             WHERE subject = ?1 AND predicate = 'foundation:isSystemLocked'
+               AND is_current = 1 AND tx < ?2",
+            params![iri, tx_id],
+        )?;
         locked += 1;
     }
     tx.commit()?;

@@ -284,42 +284,6 @@ fn drop_object_datetime_if_exists(conn: &Connection) -> Result<(), DbError> {
         CREATE INDEX IF NOT EXISTS idx_subject_retracted ON triples(subject, retracted, tx);
         CREATE INDEX IF NOT EXISTS idx_tx ON triples(tx);
 
-        CREATE VIEW triples_current AS
-        SELECT subject, predicate, object, object_value, object_datatype, object_language,
-               object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
-        FROM triples t
-        WHERE t.retracted = 0
-          AND t.tx = (
-              SELECT MAX(tx) FROM triples
-              WHERE subject = t.subject AND predicate = t.predicate
-          );
-
-        CREATE VIEW entities AS
-        SELECT DISTINCT subject
-        FROM triples
-        WHERE retracted = 0;
-
-        CREATE VIEW ontology_classes AS
-        SELECT DISTINCT subject as class_id,
-            (SELECT object_value FROM triples WHERE subject = class_id AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1) as label,
-            (SELECT object_value FROM triples WHERE subject = class_id AND predicate = 'rdfs:comment' AND retracted = 0 LIMIT 1) as comment,
-            (SELECT object FROM triples WHERE subject = class_id AND predicate = 'rdfs:subClassOf' AND retracted = 0 LIMIT 1) as parent_class
-        FROM triples
-        WHERE predicate = 'rdf:type'
-            AND object IN ('owl:Class', 'rdfs:Class')
-            AND retracted = 0;
-
-        CREATE VIEW ontology_properties AS
-        SELECT DISTINCT subject as property_id,
-            (SELECT object FROM triples WHERE subject = property_id AND predicate = 'rdf:type' AND retracted = 0 LIMIT 1) as property_type,
-            (SELECT object_value FROM triples WHERE subject = property_id AND predicate = 'rdfs:label' AND retracted = 0 LIMIT 1) as label,
-            (SELECT object FROM triples WHERE subject = property_id AND predicate = 'rdfs:domain' AND retracted = 0 LIMIT 1) as domain,
-            (SELECT object FROM triples WHERE subject = property_id AND predicate = 'rdfs:range' AND retracted = 0 LIMIT 1) as range
-        FROM triples
-        WHERE predicate = 'rdf:type'
-            AND object IN ('owl:ObjectProperty', 'owl:DatatypeProperty', 'owl:AnnotationProperty', 'rdf:Property')
-            AND retracted = 0;
-
         COMMIT;
     ")?;
     conn.execute_batch("PRAGMA foreign_keys = ON")?;
@@ -350,8 +314,71 @@ fn ensure_query_stats(conn: &Connection) {
     }
 }
 
+/// One-shot migration: adds the `is_current` column and backfills it.
+///
+/// is_current = 1 iff tx = MAX(tx) for a given (subject, predicate) pair.
+/// Every new INSERT in the write path maintains this invariant eagerly so that
+/// `triples_current` never needs a correlated subquery.
+///
+/// Idempotent: when the column already exists this function returns immediately.
+pub(crate) fn migrate_is_current(conn: &Connection) -> Result<(), DbError> {
+    let col_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('triples') WHERE name = 'is_current'",
+        [],
+        |row| row.get::<_, i64>(0),
+    ).map(|c| c > 0).unwrap_or(false);
+
+    if col_exists {
+        return Ok(());
+    }
+
+    let t = std::time::Instant::now();
+    log_backend("info", "[STARTUP] is_current migration: adding column and backfilling");
+
+    conn.execute_batch("
+        BEGIN;
+        ALTER TABLE triples ADD COLUMN is_current INTEGER NOT NULL DEFAULT 1;
+        UPDATE triples SET is_current = 0
+        WHERE rowid IN (
+            SELECT t.rowid
+            FROM triples t
+            JOIN (
+                SELECT subject, predicate, MAX(tx) AS max_tx
+                FROM triples
+                GROUP BY subject, predicate
+            ) m ON m.subject = t.subject AND m.predicate = t.predicate
+            WHERE t.tx < m.max_tx
+        );
+        COMMIT;
+    ")?;
+
+    let demoted: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM triples WHERE is_current = 0",
+        [],
+        |row| row.get(0),
+    ).unwrap_or(0);
+    log_backend("info", &format!(
+        "[STARTUP] is_current migration: {} rows demoted in {}ms",
+        demoted,
+        t.elapsed().as_millis(),
+    ));
+
+    let t_analyze = std::time::Instant::now();
+    if let Err(e) = conn.execute_batch("ANALYZE triples;") {
+        log_backend("warn", &format!("[STARTUP] is_current migration ANALYZE failed: {}", e));
+    } else {
+        log_backend("info", &format!(
+            "[STARTUP] is_current migration ANALYZE complete in {}ms",
+            t_analyze.elapsed().as_millis(),
+        ));
+    }
+
+    Ok(())
+}
+
 fn run_migrations(conn: &Connection) -> Result<(), DbError> {
     drop_object_datetime_if_exists(conn)?;
+    migrate_is_current(conn)?;
     conn.execute_batch("
         CREATE TABLE IF NOT EXISTS formula_recalc_jobs (
             id              TEXT    PRIMARY KEY,
@@ -394,12 +421,8 @@ fn run_migrations(conn: &Connection) -> Result<(), DbError> {
         CREATE VIEW IF NOT EXISTS triples_current AS
         SELECT subject, predicate, object, object_value, object_datatype, object_language,
                object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
-        FROM triples t
-        WHERE t.retracted = 0
-          AND t.tx = (
-              SELECT MAX(tx) FROM triples
-              WHERE subject = t.subject AND predicate = t.predicate
-          );
+        FROM triples
+        WHERE is_current = 1 AND retracted = 0;
 
         CREATE VIEW IF NOT EXISTS entities AS
         SELECT DISTINCT subject FROM triples_current;
@@ -430,6 +453,13 @@ fn run_migrations(conn: &Connection) -> Result<(), DbError> {
         WHERE predicate = 'rdf:type'
           AND object IN ('owl:ObjectProperty', 'owl:DatatypeProperty',
                          'owl:AnnotationProperty', 'rdf:Property');
+    ")?;
+
+    conn.execute_batch("
+        CREATE INDEX IF NOT EXISTS idx_cur_spo ON triples(subject, predicate)
+            WHERE is_current = 1 AND retracted = 0;
+        CREATE INDEX IF NOT EXISTS idx_cur_pos ON triples(predicate, object, object_value)
+            WHERE is_current = 1 AND retracted = 0;
     ")?;
 
     conn.execute_batch("

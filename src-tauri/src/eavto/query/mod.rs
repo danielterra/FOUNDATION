@@ -50,9 +50,9 @@ pub fn find_parent_by_linked_id_and_scope(
 }
 
 /// SQL fragment that ensures the row is the latest assertion for its
-/// (subject, predicate) group — i.e., no newer tx exists for the same group.
-const AND_IS_CURRENT: &str =
-    "AND t.tx = (SELECT MAX(tx) FROM triples WHERE subject = t.subject AND predicate = t.predicate)";
+/// (subject, predicate) group. The `is_current` flag is maintained eagerly by
+/// the write path so no correlated subquery is needed.
+const AND_IS_CURRENT: &str = "AND t.is_current = 1";
 
 pub fn get_by_entity(conn: &Connection, entity: &str) -> Result<QueryResult> {
     let mut stmt = conn.prepare(

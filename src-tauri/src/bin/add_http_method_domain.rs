@@ -123,6 +123,12 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             params![PROP_IRI, domain, tx_id, origin_id, now],
         )?;
     }
+    tx.execute(
+        "UPDATE triples SET is_current = 0
+         WHERE subject = ?1 AND predicate = 'rdfs:domain'
+           AND is_current = 1 AND tx < ?2",
+        params![PROP_IRI, tx_id],
+    )?;
 
     tx.commit()?;
 

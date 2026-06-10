@@ -387,6 +387,207 @@ fn test_assert_multivalue_partial_overlap_only_changes_diff() {
     assert_eq!(a_rows, 2, "A appears in original group (tx=1) and new group (tx=2) under group semantics");
 }
 
+// ── is_current invariant tests ────────────────────────────────────────────────
+
+#[test]
+fn test_assert_supersedes_sets_is_current() {
+    let mut conn = setup_test_db();
+
+    let mk = |v: &str| Triple {
+        subject: "ex:S".to_string(),
+        predicate: "ex:p".to_string(),
+        object: Object::Literal { value: v.to_string(), datatype: Some("xsd:string".to_string()), language: None },
+        tx: 0, created_at: 0, origin_id: 1, retracted: false,
+    };
+
+    assert_triples(&mut conn, &[mk("old")], "test").unwrap();
+    assert_triples(&mut conn, &[mk("new")], "test").unwrap();
+
+    let old_current: i64 = conn.query_row(
+        "SELECT is_current FROM triples WHERE subject='ex:S' AND predicate='ex:p' AND object_value='old'",
+        [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(old_current, 0, "superseded row must have is_current=0");
+
+    let new_current: i64 = conn.query_row(
+        "SELECT is_current FROM triples WHERE subject='ex:S' AND predicate='ex:p' AND object_value='new'",
+        [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(new_current, 1, "new row must have is_current=1");
+
+    let view_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM triples_current WHERE subject='ex:S' AND predicate='ex:p'",
+        [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(view_count, 1, "view must show only the current row");
+
+    let view_val: String = conn.query_row(
+        "SELECT object_value FROM triples_current WHERE subject='ex:S' AND predicate='ex:p'",
+        [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(view_val, "new");
+}
+
+#[test]
+fn test_multivalue_group_all_is_current() {
+    let mut conn = setup_test_db();
+
+    let mk = |v: &str| Triple {
+        subject: "ex:S".to_string(),
+        predicate: "ex:tags".to_string(),
+        object: Object::Literal { value: v.to_string(), datatype: Some("xsd:string".to_string()), language: None },
+        tx: 0, created_at: 0, origin_id: 1, retracted: false,
+    };
+
+    append_triples(&mut conn, &[mk("A"), mk("B")], "test").unwrap();
+    assert_triples(&mut conn, &[mk("A"), mk("C")], "test").unwrap();
+
+    let current_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM triples WHERE subject='ex:S' AND predicate='ex:tags' AND is_current=1",
+        [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(current_count, 2, "new group (A+C) must have both rows as is_current=1");
+
+    let old_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM triples WHERE subject='ex:S' AND predicate='ex:tags' AND is_current=0",
+        [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(old_count, 2, "old group (A+B from first append) must be demoted");
+}
+
+#[test]
+fn test_retract_tombstone_is_current_view_empty() {
+    let mut conn = setup_test_db();
+
+    let t = Triple {
+        subject: "ex:S".to_string(),
+        predicate: "ex:p".to_string(),
+        object: Object::Literal { value: "v".to_string(), datatype: Some("xsd:string".to_string()), language: None },
+        tx: 0, created_at: 0, origin_id: 1, retracted: false,
+    };
+    assert_triples(&mut conn, &[t.clone()], "test").unwrap();
+    retract_triples(&mut conn, &[t], "test").unwrap();
+
+    let tombstone: (i64, i64) = conn.query_row(
+        "SELECT is_current, retracted FROM triples ORDER BY tx DESC LIMIT 1",
+        [], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).unwrap();
+    assert_eq!(tombstone, (1, 1), "tombstone must be is_current=1 AND retracted=1");
+
+    let view_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM triples_current WHERE subject='ex:S' AND predicate='ex:p'",
+        [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(view_count, 0, "view must be empty after retraction");
+
+    let old_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM triples WHERE subject='ex:S' AND predicate='ex:p' AND is_current=0",
+        [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(old_rows, 1, "original active row must be demoted");
+}
+
+#[test]
+fn test_reassert_after_retract_is_current() {
+    let mut conn = setup_test_db();
+
+    let t = Triple {
+        subject: "ex:S".to_string(),
+        predicate: "ex:p".to_string(),
+        object: Object::Literal { value: "v".to_string(), datatype: Some("xsd:string".to_string()), language: None },
+        tx: 0, created_at: 0, origin_id: 1, retracted: false,
+    };
+    assert_triples(&mut conn, &[t.clone()], "test").unwrap();
+    retract_triples(&mut conn, &[t.clone()], "test").unwrap();
+    assert_triples(&mut conn, &[t], "test").unwrap();
+
+    let view_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM triples_current WHERE subject='ex:S' AND predicate='ex:p'",
+        [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(view_count, 1, "view must show the re-asserted value");
+
+    let current_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM triples WHERE subject='ex:S' AND predicate='ex:p' AND is_current=1",
+        [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(current_count, 1, "exactly one row must be is_current=1 after re-assert");
+}
+
+#[test]
+fn test_append_extends_group_is_current() {
+    let mut conn = setup_test_db();
+
+    let mk = |v: &str| Triple {
+        subject: "ex:S".to_string(),
+        predicate: "ex:tags".to_string(),
+        object: Object::Literal { value: v.to_string(), datatype: Some("xsd:string".to_string()), language: None },
+        tx: 0, created_at: 0, origin_id: 1, retracted: false,
+    };
+
+    append_triples(&mut conn, &[mk("A"), mk("B")], "test").unwrap();
+    append_triples(&mut conn, &[mk("C")], "test").unwrap();
+
+    let current: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT object_value FROM triples_current WHERE subject='ex:S' AND predicate='ex:tags' ORDER BY object_value"
+        ).unwrap();
+        stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+    };
+    assert_eq!(current, vec!["A", "B", "C"], "append must include prior values copied forward");
+
+    let old_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM triples WHERE subject='ex:S' AND predicate='ex:tags' AND is_current=0",
+        [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(old_count, 2, "original A+B rows must be demoted after second append");
+}
+
+#[test]
+fn test_migrate_is_current_backfill_and_idempotent() {
+    use crate::eavto::connection::migrate_is_current;
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch("
+        CREATE TABLE origins (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE);
+        CREATE TABLE transactions (tx INTEGER PRIMARY KEY AUTOINCREMENT, origin TEXT NOT NULL, created_at INTEGER NOT NULL);
+        CREATE TABLE triples (
+            subject TEXT NOT NULL, predicate TEXT NOT NULL,
+            object TEXT, object_value TEXT, object_type TEXT NOT NULL,
+            object_datatype TEXT, object_language TEXT,
+            object_number REAL, object_integer INTEGER, object_boolean INTEGER,
+            tx INTEGER NOT NULL, origin_id INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL DEFAULT 0, retracted INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO origins (name) VALUES ('test');
+        INSERT INTO transactions (origin, created_at) VALUES ('test', 0);
+        INSERT INTO transactions (origin, created_at) VALUES ('test', 1);
+        INSERT INTO triples (subject, predicate, object_value, object_type, tx, retracted)
+            VALUES ('ex:S', 'ex:p', 'old', 'literal', 1, 0);
+        INSERT INTO triples (subject, predicate, object_value, object_type, tx, retracted)
+            VALUES ('ex:S', 'ex:p', 'new', 'literal', 2, 0);
+    ").unwrap();
+
+    migrate_is_current(&conn).unwrap();
+
+    let old_ic: i64 = conn.query_row(
+        "SELECT is_current FROM triples WHERE object_value='old'", [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(old_ic, 0, "old row must be demoted");
+
+    let new_ic: i64 = conn.query_row(
+        "SELECT is_current FROM triples WHERE object_value='new'", [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(new_ic, 1, "new row must be current");
+
+    migrate_is_current(&conn).unwrap();
+
+    let count_after: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM triples WHERE is_current=0", [], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(count_after, 1, "idempotent: second call must not change state");
+}
+
 #[test]
 fn test_assert_triples_uses_savepoint_in_batch() {
     let mut conn = setup_test_db();

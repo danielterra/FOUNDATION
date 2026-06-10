@@ -128,6 +128,12 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                      ?3, ?4, 0, ?5)",
             params![iri, scheduled_at, tx_id, origin_id, now],
         )?;
+        tx.execute(
+            "UPDATE triples SET is_current = 0
+             WHERE subject = ?1 AND predicate = 'foundation:scheduledAt'
+               AND is_current = 1 AND tx < ?2",
+            params![iri, tx_id],
+        )?;
         migrated += 1;
     }
 

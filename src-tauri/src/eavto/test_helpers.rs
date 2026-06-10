@@ -45,6 +45,7 @@ pub fn setup_test_db() -> Connection {
             origin_id INTEGER NOT NULL,
             created_at INTEGER NOT NULL,
             retracted INTEGER NOT NULL DEFAULT 0,
+            is_current INTEGER NOT NULL DEFAULT 1,
             FOREIGN KEY (tx) REFERENCES transactions(tx),
             FOREIGN KEY (origin_id) REFERENCES origins(id)
         );
@@ -54,16 +55,13 @@ pub fn setup_test_db() -> Connection {
         CREATE INDEX IF NOT EXISTS idx_triples_object ON triples(object);
         CREATE INDEX IF NOT EXISTS idx_triples_tx ON triples(tx);
         CREATE INDEX IF NOT EXISTS idx_triples_retracted ON triples(retracted);
+        CREATE INDEX IF NOT EXISTS idx_spr ON triples(subject, predicate, retracted, tx);
 
         CREATE VIEW IF NOT EXISTS triples_current AS
         SELECT subject, predicate, object, object_value, object_datatype, object_language,
                object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
-        FROM triples t
-        WHERE t.retracted = 0
-          AND t.tx = (
-              SELECT MAX(tx) FROM triples
-              WHERE subject = t.subject AND predicate = t.predicate
-          );
+        FROM triples
+        WHERE is_current = 1 AND retracted = 0;
 
         CREATE TABLE IF NOT EXISTS metadata (
             key TEXT PRIMARY KEY,
