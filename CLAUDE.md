@@ -107,13 +107,19 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - **Commands** (`src-tauri/src/commands/`): Tauri commands and business logic. Imports from `core_ontology/` and `owl/`. NEVER imports from `eavto/` directly.
 - ALWAYS enforce: each layer imports ONLY from the layer directly below it. Skipping layers is a blocker.
 
+## Dev server lifecycle — Claude's responsibility
+- Claude OWNS the dev server lifecycle via PM2 (process `foundation-dev`, defined in `ecosystem.config.cjs`). The user no longer manages it.
+- ALWAYS use the skills: `/server-start`, `/server-stop`, `/server-restart` — NEVER spawn `npm run tauri dev` directly and NEVER `pm2 restart` (skips orphan sweep).
+- ALWAYS kill processes ONLY through the skills' managed paths (PM2 + targeted orphan sweep of `FOUNDATION.exe`); NEVER kill unrelated node/cargo processes.
+- If the app is down and Claude needs it (MCP, QA, validation), start it via `/server-start` — do not ask the user.
+- Vite SSR zombie (`transport invoke timed out ... vite:invoke fetchModule`, or boot stalled at `MCP server listening` with no `[STARTUP]`/`[FRONTEND]` lines): run `/server-restart` with cache clean (`node_modules/.vite` + `.svelte-kit`) — recurring issue.
+
 ## Dev commands
-- NEVER run `npm run tauri dev` / `npm run build` — user manages those.
-- ALWAYS rely on automatic rebuild — the user's running `tauri dev` recompiles on every Rust file change; NEVER ask the user to rebuild or restart after a backend edit.
-- NEVER kill Tauri processes (pkill, killall, taskkill).
+- ALWAYS rely on automatic rebuild — the running `tauri dev` recompiles on every Rust file change; no restart needed after a backend edit.
+- NEVER run `npm run build` — production builds only via release flow.
 - Validate Rust with `cargo check` or `cargo build --manifest-path src-tauri/Cargo.toml`.
 - ALWAYS validate with `cargo test` (or `cargo check --tests`) when touching a file that has a `#[cfg(test)]` module — plain `cargo check` skips test code and misses test-only compile errors.
-- Logs: `npm run logs [N]`.
+- Logs: `npm run logs [N]` (backend); `pm2 logs foundation-dev --lines N --nostream` (vite/tauri stdout).
 
 ## Cargo cache rules
 - `cargo check` and `cargo build` do NOT share codegen cache. Check → `.rmeta` only; build → `.rlib`/`.o`.
