@@ -471,21 +471,23 @@
     {#if isClass}
       <div class="class-prop-actions">
         {#if onSaveQueryConfig && detailGroup.isQueryProperty && !detailGroup.sourceClassLabel}
-          <button
-            class="edit-btn"
-            class:active={editingQueryConfigKey === detailGroup.property}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            class={editingQueryConfigKey === detailGroup.property ? 'edit-btn active' : 'edit-btn'}
             title="Editar query config"
             onclick={() => {
               editingQueryConfigKey = editingQueryConfigKey === detailGroup.property ? null : detailGroup.property;
             }}
           >
             <span class="material-symbols-outlined">manage_search</span>
-          </button>
+          </Button>
         {/if}
         {#if onSaveCardinality && !detailGroup.sourceClassLabel}
-          <button
-            class="edit-btn"
-            class:active={editingCardinalityKey === detailGroup.property}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            class={editingCardinalityKey === detailGroup.property ? 'edit-btn active' : 'edit-btn'}
             title="Edit cardinality"
             onclick={() => {
               if (editingCardinalityKey === detailGroup.property) {
@@ -496,60 +498,72 @@
             }}
           >
             <span class="material-symbols-outlined">rule</span>
-          </button>
+          </Button>
         {/if}
-        <button
+        <Button
+          variant="ghost"
+          size="icon-sm"
           class="edit-btn"
           title="Inspect property"
           onclick={() => openEntityInspector(detailGroup.property)}
         >
           <span class="material-symbols-outlined">open_in_new</span>
-        </button>
+        </Button>
         {#if onRemoveProperty && !detailGroup.sourceClassLabel}
-          <button
+          <Button
+            variant="ghost"
+            size="icon-sm"
             class="edit-btn remove-btn"
             title="Remove property"
             onclick={() => onRemoveProperty(detailGroup.property, detailGroup.propertyLabel)}
           >
             <span class="material-symbols-outlined">delete</span>
-          </button>
+          </Button>
         {/if}
       </div>
     {:else}
       <div class="prop-actions">
         {#if onSave && !detailGroup.isObjectProperty && !detailGroup.isCalculated && (isTextEditable(detailGroup.datatype) || isDateType(detailGroup.datatype) || isNumericType(detailGroup.datatype) || isRruleType(detailGroup.datatype) || isQueryConfigProperty(detailGroup.property)) && (detailGroup.isEmpty || detailGroup.values.length <= 1)}
-          <button
+          <Button
+            variant="ghost"
+            size="icon-sm"
             class="edit-btn"
             title="Edit"
             onclick={() => startEdit(detailGroup.property, detailGroup.values[0]?.value ?? '', 0, detailGroup.datatype ?? null)}
           >
             <span class="material-symbols-outlined">edit</span>
-          </button>
+          </Button>
         {:else if onSaveReference && detailGroup.isObjectProperty && !detailGroup.isCalculated && !detailGroup.sourceClass}
-          <button
+          <Button
+            variant="ghost"
+            size="icon-sm"
             class="edit-btn"
             title="Edit"
             onclick={() => startRefEdit(detailGroup.property)}
           >
             <span class="material-symbols-outlined">edit</span>
-          </button>
+          </Button>
         {:else if onSaveReference && detailGroup.isPropertyPicker && !detailGroup.isCalculated && !detailGroup.sourceClass}
-          <button
+          <Button
+            variant="ghost"
+            size="icon-sm"
             class="edit-btn"
             title="Selecionar propriedade"
             onclick={() => startRefEdit(detailGroup.property)}
           >
             <span class="material-symbols-outlined">edit</span>
-          </button>
+          </Button>
         {/if}
         {#if onClearProperty && !detailGroup.isCalculated && !detailGroup.isEmpty}
-          <button
+          <Button
+            variant="ghost"
+            size="icon-sm"
             class="edit-btn clear-btn"
             title="Limpar valor"
             onclick={() => onClearProperty(detailGroup.property)}
           >
             <span class="material-symbols-outlined">backspace</span>
-          </button>
+          </Button>
         {/if}
       </div>
     {/if}
@@ -764,14 +778,14 @@
       {openEntityInspector}
     />
     {#if hasMore && onLoadMoreBacklinks}
-      <button class="load-more-btn" onclick={loadMore} disabled={loadingMore}>
+      <Button variant="ghost" size="sm" class="load-more-btn" onclick={loadMore} disabled={loadingMore}>
         {#if loadingMore}
           <span class="material-symbols-outlined spinning-small">progress_activity</span>
         {:else}
           <span class="material-symbols-outlined">expand_more</span>
           Carregar mais ({detailGroup.groupTotal - detailGroup.values.length - extraValues.length})
         {/if}
-      </button>
+      </Button>
     {/if}
   {/if}
   {#if saveError}
@@ -958,33 +972,23 @@
     opacity: 0.4;
   }
 
-  .edit-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
+  :global([data-slot="button"].edit-btn) {
     color: var(--color-interactive);
     opacity: 0;
-    padding: 2px;
-    display: flex;
-    align-items: center;
     transition: color 0.15s, opacity 0.15s;
     flex-shrink: 0;
   }
 
-  .edit-btn .material-symbols-outlined {
-    font-size: 14px;
-  }
-
-  .edit-btn:hover {
+  :global([data-slot="button"].edit-btn:hover) {
     color: var(--color-neutral-active);
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
   }
 
-  .detail-item:hover .edit-btn {
+  .detail-item:hover :global([data-slot="button"].edit-btn) {
     opacity: 1;
   }
 
-  .edit-btn.active {
+  :global([data-slot="button"].edit-btn.active) {
     color: var(--color-interactive);
     background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
   }
@@ -1001,7 +1005,7 @@
     flex-shrink: 0;
   }
 
-  .remove-btn:hover {
+  :global([data-slot="button"].remove-btn:hover) {
     color: var(--color-error, #ef4444) !important;
   }
 
@@ -1133,29 +1137,16 @@
     to { transform: rotate(360deg); }
   }
 
-  .load-more-btn {
-    display: flex;
-    align-items: center;
-    gap: 4px;
+  :global([data-slot="button"].load-more-btn) {
     margin-top: 6px;
-    padding: 4px 0;
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
     color: var(--color-interactive);
     opacity: 0.7;
+    font-size: 12px;
+    padding-inline: 0;
   }
 
-  .load-more-btn:disabled {
-    cursor: default;
+  :global([data-slot="button"].load-more-btn:disabled) {
     opacity: 0.4;
-  }
-
-  .load-more-btn .material-symbols-outlined {
-    font-size: 14px;
   }
 
   .save-error {

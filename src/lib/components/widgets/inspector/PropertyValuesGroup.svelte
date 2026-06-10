@@ -354,10 +354,10 @@
             </span>
           {/if}
         {:else if isUrl(val.datatype)}
-          <button class="url-value" onclick={() => openUrl_(val.value)} title={val.value}>
+          <Button variant="ghost" class="url-value" onclick={() => openUrl_(val.value)} title={val.value}>
             <span class="value-text">{val.valueLabel || val.value}</span>
             <span class="material-symbols-outlined url-open-icon">open_in_new</span>
-          </button>
+          </Button>
         {:else if val.datatype === 'rdf:HTML'}
           {#if editingKey === editKey(detailGroup.property, idx)}
             <PropertyEditForm
@@ -384,9 +384,9 @@
           {:else if (val.value ?? '').length > 50_000}
             <div class="value-large">
               <pre class="value-pre">{val.value}</pre>
-              <button class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
+              <Button variant="ghost" size="icon-sm" class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
                 <span class="material-symbols-outlined">content_copy</span>
-              </button>
+              </Button>
             </div>
           {:else}
             <MarkdownValue value={val.value} {openEntityInspector} />
@@ -404,9 +404,9 @@
           {:else if (val.value ?? '').length > 50_000}
             <div class="value-large">
               <pre class="value-pre">{val.value}</pre>
-              <button class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
+              <Button variant="ghost" size="icon-sm" class="copy-btn" onclick={() => navigator.clipboard.writeText(val.value)} title="Copy value">
                 <span class="material-symbols-outlined">content_copy</span>
-              </button>
+              </Button>
             </div>
           {:else}
             <div class="value-plain" class:value-mono={mono}>{val.value}</div>
@@ -514,24 +514,13 @@
     margin: 0;
   }
 
-  .copy-btn {
+  :global([data-slot="button"].copy-btn) {
     align-self: flex-end;
-    background: none;
-    border: none;
-    cursor: pointer;
     color: var(--color-neutral);
-    padding: 2px;
-    display: flex;
-    align-items: center;
-    transition: color 0.15s;
   }
 
-  .copy-btn:hover {
+  :global([data-slot="button"].copy-btn:hover) {
     color: var(--color-neutral-active);
-  }
-
-  .copy-btn .material-symbols-outlined {
-    font-size: 16px;
   }
 
   .clickable {
@@ -602,20 +591,14 @@
     font-style: italic;
   }
 
-  .url-value {
-    display: flex;
-    align-items: center;
-    gap: 4px;
+  :global([data-slot="button"].url-value) {
     flex: 1;
-    background: none;
-    border: none;
+    justify-content: flex-start;
     padding: 0;
-    cursor: pointer;
     color: var(--color-interactive);
-    text-align: left;
   }
 
-  .url-value:hover .value-text {
+  :global([data-slot="button"].url-value:hover) .value-text {
     text-decoration: underline;
   }
 

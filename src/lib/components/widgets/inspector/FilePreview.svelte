@@ -1,6 +1,7 @@
 <script>
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { openPath } from '@tauri-apps/plugin-opener';
+  import { Button } from '$lib/components/ui/button';
 
   let { entityData } = $props();
 
@@ -100,14 +101,16 @@
         {/if}
       </div>
 
-      <button
+      <Button
+        variant="ghost"
+        size="icon-sm"
         class="file-preview-open"
         onclick={() => openFile(rawFilePath)}
         title="Abrir no app padrão"
         aria-label="Abrir no app padrão"
       >
         <span class="material-symbols-outlined">open_in_new</span>
-      </button>
+      </Button>
     </div>
   </div>
 {/if}
@@ -190,20 +193,15 @@
     color: var(--color-neutral);
   }
 
-  .file-preview-open {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  :global([data-slot="button"].file-preview-open) {
     width: 28px;
     height: 28px;
     padding: 0;
-    background: transparent;
     color: var(--color-interactive);
-    cursor: pointer;
     flex-shrink: 0;
   }
 
-  .file-preview-open .material-symbols-outlined {
+  :global([data-slot="button"].file-preview-open .material-symbols-outlined) {
     font-size: 18px;
   }
 </style>

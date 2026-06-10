@@ -1,6 +1,7 @@
 <script>
 	import ThinkingDots from './ThinkingDots.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import { Textarea } from '$lib/components/ui/textarea';
 
 	let {
 		inputText = $bindable(''),
@@ -71,14 +72,14 @@
 	<Button variant="ghost" size="icon" onclick={openFilePicker} aria-label="Attach file">
 		<span class="material-symbols-outlined">attach_file</span>
 	</Button>
-	<textarea
-		bind:this={textareaElement}
+	<Textarea
+		bind:ref={textareaElement}
 		bind:value={inputText}
 		onkeydown={onKeydown}
 		onpaste={onPaste}
 		placeholder="Ask me anything..."
-		rows="1"
-	></textarea>
+		rows={1}
+	/>
 	<Button
 		onclick={onSend}
 		disabled={!inputText.trim() && !hasPendingAttachments}
@@ -174,9 +175,10 @@
 		align-items: flex-end;
 	}
 
-	.chat-input textarea {
+	.chat-input :global([data-slot="textarea"]) {
 		flex: 1;
 		border: none;
+		box-shadow: none;
 		border-radius: var(--radius);
 		padding: 10px 16px;
 		font-family: inherit;
@@ -189,17 +191,18 @@
 		background: var(--muted);
 		color: var(--foreground);
 		overflow-y: auto;
+		field-sizing: unset;
 	}
 
-	.chat-input textarea::placeholder {
+	.chat-input :global([data-slot="textarea"]::placeholder) {
 		color: var(--muted-foreground);
 	}
 
-	.chat-input textarea:focus {
+	.chat-input :global([data-slot="textarea"]:focus) {
 		outline: none;
 	}
 
-	.chat-input textarea:disabled {
+	.chat-input :global([data-slot="textarea"]:disabled) {
 		background: var(--input);
 		cursor: not-allowed;
 		opacity: 0.5;

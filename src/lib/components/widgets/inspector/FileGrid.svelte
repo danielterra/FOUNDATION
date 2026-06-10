@@ -1,6 +1,7 @@
 <script>
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { openPath } from '@tauri-apps/plugin-opener';
+  import { Button } from '$lib/components/ui/button';
 
   let { values, openEntityInspector } = $props();
 
@@ -51,7 +52,8 @@
     {@const cleanPath = getFileDisplayPath(val.fileInfo?.filePath)}
     {@const fileName = val.fileInfo?.fileName || val.valueLabel || val.value}
     {@const fileSize = val.fileInfo?.fileSize}
-    <button
+    <Button
+      variant="ghost"
       class="file-grid-card"
       onclick={() => val.fileInfo ? openFileFromInfo(val.fileInfo) : openEntityInspector(val.value)}
       title={fileName}
@@ -71,7 +73,7 @@
           <span class="file-grid-size">{formatFileSize(fileSize)}</span>
         {/if}
       </div>
-    </button>
+    </Button>
   {/each}
 </div>
 
@@ -83,18 +85,21 @@
     margin-top: 4px;
   }
 
-  .file-grid-card {
+  :global([data-slot="button"].file-grid-card) {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    height: auto;
+    width: 100%;
+    align-items: flex-start;
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     padding: 8px;
     cursor: pointer;
     transition: background 0.15s, transform 0.15s;
-    text-align: left;
+    border-radius: 0;
   }
 
-  .file-grid-card:hover {
+  :global([data-slot="button"].file-grid-card:hover) {
     background: color-mix(in srgb, var(--color-white) 10%, transparent);
     transform: translateY(-1px);
   }

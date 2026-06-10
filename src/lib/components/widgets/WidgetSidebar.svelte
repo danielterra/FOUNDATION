@@ -50,10 +50,9 @@
   </div>
   <div class="sidebar-list">
     {#each entries as entry (entry.id)}
-      <button
-        class="sidebar-entry"
-        class:is-focused={entry.isFocused}
-        class:is-minimized={entry.isMinimized}
+      <Button
+        variant="ghost"
+        class={`sidebar-entry${entry.isFocused ? ' is-focused' : ''}${entry.isMinimized ? ' is-minimized' : ''}`}
         title={entry.isMinimized ? `(minimizado) ${entry.title}` : entry.title}
         onclick={() => onSelect(entry.id)}
       >
@@ -63,7 +62,7 @@
           <span class="material-symbols-outlined entry-icon">{entry.icon}</span>
         {/if}
         <span class="entry-title">{entry.title}</span>
-      </button>
+      </Button>
     {/each}
   </div>
 </nav>
@@ -114,43 +113,44 @@
     min-height: 0;
   }
 
-  .sidebar-entry {
+  :global([data-slot="button"].sidebar-entry) {
     display: flex;
     flex-direction: row;
     align-items: center;
     gap: 8px;
     padding: 6px 10px;
-    border: none;
     border-radius: var(--radius);
     background: transparent;
     color: var(--muted-foreground);
-    cursor: pointer;
     min-width: 0;
     width: 100%;
-    text-align: left;
+    height: auto;
+    justify-content: flex-start;
+    font-size: inherit;
     transition: background 0.15s, color 0.15s;
   }
 
-  .sidebar-entry:hover {
+  :global([data-slot="button"].sidebar-entry:hover) {
     background: var(--accent);
     color: var(--accent-foreground);
   }
 
-  .sidebar-entry.is-focused {
+  :global([data-slot="button"].sidebar-entry.is-focused) {
     background: color-mix(in srgb, var(--primary) 20%, transparent);
     color: var(--primary);
   }
 
-  .sidebar-entry.is-focused:hover {
+  :global([data-slot="button"].sidebar-entry.is-focused:hover) {
     background: color-mix(in srgb, var(--primary) 30%, transparent);
+    color: var(--primary);
   }
 
-  .sidebar-entry.is-minimized {
+  :global([data-slot="button"].sidebar-entry.is-minimized) {
     opacity: 0.5;
     font-style: italic;
   }
 
-  .sidebar-entry.is-minimized:hover {
+  :global([data-slot="button"].sidebar-entry.is-minimized:hover) {
     opacity: 0.8;
   }
 

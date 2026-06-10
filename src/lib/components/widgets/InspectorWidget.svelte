@@ -519,7 +519,7 @@
         <div class="header-types">
           {#each entityData.types as type, idx}
             {#if idx > 0}<span class="type-separator">·</span>{/if}
-            <button class="type-link" onclick={() => openEntityInspector(type.iri)}>{type.label}</button>
+            <Button variant="ghost" class="type-link" onclick={() => openEntityInspector(type.iri)}>{type.label}</Button>
           {/each}
         </div>
       {/if}
@@ -578,9 +578,9 @@
           <Popover.Content align="end" class="status-picker-content">
             <div role="listbox" class="status-picker-list">
               {#each entityData.allowedStatuses as s}
-                <button
-                  class="status-picker-item"
-                  class:active={s.iri === entityData.status?.iri}
+                <Button
+                  variant="ghost"
+                  class={`status-picker-item${s.iri === entityData.status?.iri ? ' active' : ''}`}
                   style="--status-color: {s.color || 'var(--color-neutral)'}"
                   role="option"
                   aria-selected={s.iri === entityData.status?.iri}
@@ -588,7 +588,7 @@
                 >
                   <span class="material-symbols-outlined status-badge-icon">{s.icon || 'radio_button_checked'}</span>
                   <span class="status-badge-label">{s.label}</span>
-                </button>
+                </Button>
               {/each}
             </div>
           </Popover.Content>
@@ -678,7 +678,8 @@
         <div class="actions-bar">
           {#if isAutomationWithoutInputClass}
             {@const isRunning = runningAutomationIri === entityId}
-            <button
+            <Button
+              variant="ghost"
               class="action-bar-btn"
               onclick={() => runAutomation(entityId, null, entityData?.label)}
               disabled={isRunning}
@@ -687,11 +688,12 @@
                 {isRunning ? 'progress_activity' : 'play_circle'}
               </span>
               Run
-            </button>
+            </Button>
           {/if}
           {#each applicableAutomations as auto}
             {@const isAutoRunning = runningAutomationIri === auto.iri}
-            <button
+            <Button
+              variant="ghost"
               class="action-bar-btn"
               onclick={() => runAutomation(auto.iri, entityId, auto.label)}
               disabled={isAutoRunning}
@@ -701,7 +703,7 @@
                 {isAutoRunning ? 'progress_activity' : 'play_circle'}
               </span>
               {auto.label}
-            </button>
+            </Button>
           {/each}
         </div>
       {/if}
@@ -730,15 +732,19 @@
     flex-wrap: wrap;
   }
 
-  .type-link {
-    background: none;
-    border: none;
+  :global([data-slot="button"].type-link) {
     padding: 0;
-    cursor: pointer;
+    height: auto;
     font-family: var(--font-body);
     font-size: 11px;
     color: var(--color-neutral-active);
     opacity: 0.7;
+  }
+
+  :global([data-slot="button"].type-link:hover) {
+    background: transparent;
+    opacity: 1;
+    color: var(--color-neutral-active);
   }
 
   .type-separator {
@@ -780,20 +786,24 @@
     opacity: 0.7;
   }
 
-  .status-picker-item {
+  :global([data-slot="button"].status-picker-item) {
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 5px 8px;
-    cursor: pointer;
-    background: transparent;
-    border: none;
+    height: auto;
     width: 100%;
-    text-align: left;
+    justify-content: flex-start;
+    border-radius: var(--radius);
   }
 
-  .status-picker-item.active {
+  :global([data-slot="button"].status-picker-item.active) {
     background: color-mix(in srgb, var(--status-color) 30%, transparent);
+  }
+
+  :global([data-slot="button"].status-picker-item:hover) {
+    background: color-mix(in srgb, var(--status-color) 15%, transparent);
+    color: inherit;
   }
 
   :global(.status-picker-content) {
@@ -884,34 +894,32 @@
     flex-wrap: 1;
   }
 
-  .action-bar-btn {
+  :global([data-slot="button"].action-bar-btn) {
     gap: 6px;
     padding: 8px 12px;
     background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
-    border: none;
     color: var(--color-interactive);
     font-family: var(--font-body);
     font-size: 12px;
     font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    height: auto;
     flex-shrink: 0;
+    border-radius: 0;
     overflow: hidden;
+    white-space: nowrap;
   }
 
-  .action-bar-btn .material-symbols-outlined {
+  :global([data-slot="button"].action-bar-btn .material-symbols-outlined) {
     font-size: 16px;
     flex-shrink: 0;
   }
 
-  .action-bar-btn:hover {
+  :global([data-slot="button"].action-bar-btn:hover) {
     background: color-mix(in srgb, var(--color-interactive) 22%, transparent);
     color: var(--color-neutral-active);
   }
 
-  .action-bar-btn:disabled {
+  :global([data-slot="button"].action-bar-btn:disabled) {
     opacity: 0.6;
     cursor: default;
   }

@@ -5,6 +5,8 @@
   import * as ToggleGroup from '$lib/components/ui/toggle-group';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Label } from '$lib/components/ui/label';
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
 
   let { value = '', onconfirm, oncancel } = $props();
 
@@ -161,7 +163,7 @@
     {#if mode === 'minutely'}
       <div class="field-row">
         <span class="field-label">A cada:</span>
-        <input
+        <Input
           class="minute-input"
           type="number"
           min="1"
@@ -316,8 +318,8 @@
 
     <!-- Botões -->
     <div class="btn-row">
-      <button class="btn-cancel" onclick={oncancel} type="button">Cancelar</button>
-      <button class="btn-ok" onclick={confirm} type="button">OK</button>
+      <Button type="button" variant="ghost" size="sm" onclick={oncancel}>Cancelar</Button>
+      <Button type="button" variant="default" size="sm" onclick={confirm}>OK</Button>
   </div>
 </div>
 
@@ -444,23 +446,24 @@
     color: var(--color-neutral-active);
   }
 
-  .minute-input {
+  :global([data-slot="input"].minute-input) {
     width: 60px;
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
     border: none;
-    border-radius: var(--radius);
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 13px;
     padding: 4px 8px;
     text-align: center;
+    height: auto;
+    outline: none;
+    box-shadow: none;
     appearance: textfield;
     -moz-appearance: textfield;
-    outline: none;
   }
 
-  .minute-input::-webkit-inner-spin-button,
-  .minute-input::-webkit-outer-spin-button {
+  :global([data-slot="input"].minute-input::-webkit-inner-spin-button),
+  :global([data-slot="input"].minute-input::-webkit-outer-spin-button) {
     opacity: 1;
   }
 
@@ -483,28 +486,5 @@
     gap: 10px;
     justify-content: flex-end;
     margin-top: 4px;
-  }
-
-  .btn-cancel {
-    padding: 7px 16px;
-    border-radius: var(--radius);
-    border: none;
-    background: transparent;
-    color: var(--color-neutral);
-    font-family: var(--font-body);
-    font-size: 13px;
-    cursor: pointer;
-  }
-
-  .btn-ok {
-    padding: 7px 20px;
-    border-radius: var(--radius);
-    border: none;
-    background: var(--color-interactive);
-    color: var(--color-neutral-active);
-    font-family: var(--font-body);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
   }
 </style>

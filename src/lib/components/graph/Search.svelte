@@ -5,6 +5,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { convertFileSrc } from '@tauri-apps/api/core';
 	import { Card } from '$lib/components/ui/card';
+	import { Button } from '$lib/components/ui/button';
 
 	let { onSelectResult } = $props();
 
@@ -323,10 +324,9 @@
 					<Card class="p-0 gap-0">
 						<div class="results-list">
 							{#each classResults as cls, index}
-								<button
-									type="button"
-									class="result-item class-item"
-									class:selected={index === classSelectedIndex}
+								<Button
+									variant="ghost"
+									class={`result-item class-item${index === classSelectedIndex ? ' selected' : ''}`}
 									onmousedown={(e) => { e.preventDefault(); selectClass(cls); }}
 								>
 									<div class="result-content">
@@ -343,7 +343,7 @@
 											<div class="result-label">@{cls.label}</div>
 										</div>
 									</div>
-								</button>
+								</Button>
 							{/each}
 						</div>
 					</Card>
@@ -355,10 +355,9 @@
 					<Card class="p-0 gap-0">
 						<div class="results-list">
 							{#each searchResults as result, index}
-								<button
-									type="button"
-									class="result-item"
-									class:selected={index === selectedIndex}
+								<Button
+									variant="ghost"
+									class={`result-item${index === selectedIndex ? ' selected' : ''}`}
 									onclick={() => handleResultClick(result)}
 								>
 									<div class="result-content">
@@ -401,7 +400,7 @@
 											{/if}
 										</div>
 									</div>
-								</button>
+								</Button>
 							{/each}
 						</div>
 					</Card>
@@ -467,10 +466,13 @@
 		min-width: 120px;
 		background: transparent;
 		border: none;
+		outline: none;
+		box-shadow: none;
 		color: var(--color-neutral-active);
 		font-size: 0.875rem;
 		padding: 0;
-		outline: none;
+		height: auto;
+		font-family: inherit;
 	}
 
 	.search-input::placeholder {
@@ -509,18 +511,19 @@
 		scroll-behavior: smooth;
 	}
 
-	.result-item {
+	:global([data-slot="button"].result-item) {
 		width: 100%;
 		padding: 0.75rem;
-		background: transparent;
-		border: none;
-		cursor: pointer;
-		text-align: left;
+		height: auto;
+		justify-content: flex-start;
+		border-radius: 0;
 		transition: background 0.15s;
 	}
 
-	.result-item.selected {
+	:global([data-slot="button"].result-item:hover),
+	:global([data-slot="button"].result-item.selected) {
 		background: color-mix(in srgb, var(--color-interactive) 10%, transparent);
+		color: inherit;
 	}
 
 	.result-content {

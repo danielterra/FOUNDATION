@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { Button } from '$lib/components/ui/button';
 
   type WindowHandle = {
     minimize: () => Promise<void>;
@@ -32,15 +33,15 @@
 
 {#if win}
   <div class="window-controls">
-    <button class="ctrl" onclick={() => win!.minimize()} aria-label="Minimizar" title="Minimizar">
+    <Button variant="ghost" class="ctrl" onclick={() => win!.minimize()} aria-label="Minimizar" title="Minimizar">
       <span class="material-symbols-outlined">horizontal_rule</span>
-    </button>
-    <button class="ctrl" onclick={() => win!.toggleMaximize()} aria-label={maximized ? 'Restaurar' : 'Maximizar'} title={maximized ? 'Restaurar' : 'Maximizar'}>
+    </Button>
+    <Button variant="ghost" class="ctrl" onclick={() => win!.toggleMaximize()} aria-label={maximized ? 'Restaurar' : 'Maximizar'} title={maximized ? 'Restaurar' : 'Maximizar'}>
       <span class="material-symbols-outlined">{maximized ? 'filter_none' : 'check_box_outline_blank'}</span>
-    </button>
-    <button class="ctrl close" onclick={() => win!.close()} aria-label="Fechar" title="Fechar">
+    </Button>
+    <Button variant="ghost" class="ctrl close" onclick={() => win!.close()} aria-label="Fechar" title="Fechar">
       <span class="material-symbols-outlined">close</span>
-    </button>
+    </Button>
   </div>
 {/if}
 
@@ -52,11 +53,11 @@
     flex-shrink: 0;
   }
 
-  .ctrl {
+  :global([data-slot="button"].ctrl) {
     width: 46px;
     height: 100%;
     background: none;
-    border: none;
+    border-radius: 0;
     padding: 0;
     margin: 0;
     display: flex;
@@ -67,15 +68,16 @@
     transition: background 0.1s;
   }
 
-  .ctrl .material-symbols-outlined {
+  :global([data-slot="button"].ctrl .material-symbols-outlined) {
     font-size: 16px;
   }
 
-  .ctrl:hover {
+  :global([data-slot="button"].ctrl:hover) {
     background: color-mix(in srgb, var(--accent-foreground) 10%, transparent);
+    color: var(--accent-foreground);
   }
 
-  .ctrl.close:hover {
+  :global([data-slot="button"].ctrl.close:hover) {
     background: var(--destructive);
     color: var(--destructive-foreground);
   }

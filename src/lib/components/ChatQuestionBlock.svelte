@@ -2,6 +2,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { Button } from '$lib/components/ui/button';
 	import { Textarea } from '$lib/components/ui/textarea';
+	import { Checkbox } from '$lib/components/ui/checkbox';
 
 	let { q, answer = null, isLast, conversationId } = $props();
 
@@ -54,7 +55,10 @@
 			<div class="question-options">
 				{#each (q.options ?? []) as option}
 					<label class="option-checkbox-label">
-						<input class="option-checkbox" type="checkbox" bind:group={selectedOptions} value={option} />
+						<Checkbox checked={selectedOptions.includes(option)} onCheckedChange={(checked) => {
+							if (checked) selectedOptions = [...selectedOptions, option];
+							else selectedOptions = selectedOptions.filter(o => o !== option);
+						}} />
 						{option}
 					</label>
 				{/each}
@@ -133,8 +137,7 @@
 		padding: 4px 0;
 	}
 
-	.option-checkbox {
-		accent-color: var(--primary);
+	:global(.option-checkbox) {
 		width: 14px;
 		height: 14px;
 		cursor: pointer;

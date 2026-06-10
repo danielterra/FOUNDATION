@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import { Input } from '$lib/components/ui/input';
   import * as Select from '$lib/components/ui/select';
+  import { Button } from '$lib/components/ui/button';
 
   let { value = '', onconfirm, oncancel } = $props();
 
@@ -78,10 +79,10 @@
   <div class="section">
     <div class="section-header">
       <span class="section-label">Filtros</span>
-      <button class="add-btn" onclick={addFilter} type="button">
+      <Button type="button" variant="ghost" size="sm" onclick={addFilter}>
         <span class="material-symbols-outlined">add</span>
         Adicionar filtro
-      </button>
+      </Button>
     </div>
 
     {#if filters.length === 0}
@@ -132,9 +133,9 @@
                 placeholder={"valor ou {{self.prop}}"}
               />
             {/if}
-            <button class="remove-btn" onclick={() => removeFilter(i)} type="button">
+            <Button type="button" variant="ghost" size="icon-sm" onclick={() => removeFilter(i)}>
               <span class="material-symbols-outlined">remove</span>
-            </button>
+            </Button>
           </div>
         {/each}
       </div>
@@ -142,8 +143,8 @@
   </div>
 
   <div class="btn-row">
-    <button class="btn-cancel" onclick={oncancel} type="button">Cancelar</button>
-    <button class="btn-ok" onclick={confirm} type="button">OK</button>
+    <Button type="button" variant="ghost" size="sm" onclick={oncancel}>Cancelar</Button>
+    <Button type="button" variant="default" size="sm" onclick={confirm}>OK</Button>
   </div>
 </div>
 
@@ -238,39 +239,6 @@
     padding: 0 2px;
   }
 
-  .add-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-interactive);
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
-    padding: 2px 4px;
-  }
-
-  .add-btn .material-symbols-outlined {
-    font-size: 14px;
-  }
-
-  .remove-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-neutral);
-    padding: 2px;
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-  }
-
-  .remove-btn .material-symbols-outlined {
-    font-size: 14px;
-  }
-
   .empty-filters {
     font-size: 12px;
     color: var(--color-neutral);
@@ -284,26 +252,5 @@
     gap: 10px;
     justify-content: flex-end;
     margin-top: 4px;
-  }
-
-  .btn-cancel {
-    padding: 7px 16px;
-    border: none;
-    background: transparent;
-    color: var(--color-neutral);
-    font-family: var(--font-body);
-    font-size: 13px;
-    cursor: pointer;
-  }
-
-  .btn-ok {
-    padding: 7px 20px;
-    border: none;
-    background: var(--color-interactive);
-    color: var(--color-neutral-active);
-    font-family: var(--font-body);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
   }
 </style>

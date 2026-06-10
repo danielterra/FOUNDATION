@@ -1,5 +1,6 @@
 <script>
 	import { convertFileSrc } from '@tauri-apps/api/core';
+	import { Button } from '$lib/components/ui/button';
 
 	let {
 		agents = [],
@@ -36,10 +37,9 @@
 <div class="picker" role="listbox" aria-label="Select AI Assistant">
 	<div class="picker-title">Switch Assistant</div>
 	{#each agents as agent (agent.iri)}
-		<button
-			class="agent-row"
-			class:active={agent.iri === activeAgentIri}
-			class:unavailable={!agent.available}
+		<Button
+			variant="ghost"
+			class={`agent-row${agent.iri === activeAgentIri ? ' active' : ''}${!agent.available ? ' unavailable' : ''}`}
 			disabled={!agent.available}
 			onclick={() => handleSelect(agent)}
 			role="option"
@@ -60,7 +60,7 @@
 			{#if !agent.available}
 				<span class="unavailable-badge">unavailable</span>
 			{/if}
-		</button>
+		</Button>
 	{/each}
 </div>
 
@@ -92,31 +92,30 @@
 		padding: 4px 8px 6px;
 	}
 
-	.agent-row {
+	:global([data-slot="button"].agent-row) {
 		display: flex;
 		align-items: center;
 		gap: 10px;
 		width: 100%;
 		padding: 8px 10px;
-		border: none;
-		background: transparent;
+		height: auto;
+		justify-content: flex-start;
 		color: var(--accent-foreground);
-		cursor: pointer;
-		text-align: left;
 		transition: background 0.12s;
 		border-radius: var(--radius);
 	}
 
-	.agent-row:hover:not(:disabled) {
+	:global([data-slot="button"].agent-row:hover:not(:disabled)) {
 		background: var(--accent);
+		color: var(--accent-foreground);
 	}
 
-	.agent-row.active {
+	:global([data-slot="button"].agent-row.active) {
 		background: color-mix(in srgb, var(--primary) 14%, transparent);
 		color: var(--primary);
 	}
 
-	.agent-row.unavailable {
+	:global([data-slot="button"].agent-row.unavailable) {
 		opacity: 0.4;
 		cursor: not-allowed;
 	}

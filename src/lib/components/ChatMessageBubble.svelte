@@ -183,11 +183,11 @@
 	<div class="message-content">
 		{#if unit.type === 'user' && unit.subconscious_entities?.length > 0}
 			{@const ctx = formatSubconsciousContext(unit.subconscious_entities)}
-			<button class="subconscious-chip-summary" onclick={() => openSubconsciousModal(unit.subconscious_entities)}>
+			<Button variant="ghost" class="subconscious-chip-summary" onclick={() => openSubconsciousModal(unit.subconscious_entities)}>
 				<span class="material-symbols-outlined subconscious-icon">neurology</span>
 				<span class="subconscious-summary-text">{subconsciousSummary(unit.subconscious_entities)}</span>
 				<span class="subconscious-tokens">~{estimateTokens(ctx).toLocaleString()} tokens</span>
-			</button>
+			</Button>
 		{/if}
 		<div class="message-bubble" class:streaming={isStreaming}>
 			{#if unit.type === 'user'}
@@ -198,7 +198,8 @@
 					<div class="message-attachments">
 						{#each unit.attachments as attachment}
 							{#if attachment.mimeType.startsWith('image/')}
-								<button
+								<Button
+									variant="ghost"
 									class="attachment-thumbnail attachment-image"
 									onclick={() => openFile(attachment.filePath)}
 									title="Click to open in default app"
@@ -211,9 +212,10 @@
 										<span class="attachment-name">{attachment.fileName}</span>
 										<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
 									</div>
-								</button>
+								</Button>
 							{:else if attachment.mimeType === 'application/pdf'}
-								<button
+								<Button
+									variant="ghost"
 									class="attachment-thumbnail attachment-pdf"
 									onclick={() => openFile(attachment.filePath)}
 									title="Click to open in default app"
@@ -225,9 +227,10 @@
 										<span class="attachment-name">{attachment.fileName}</span>
 										<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
 									</div>
-								</button>
+								</Button>
 							{:else}
-								<button
+								<Button
+									variant="ghost"
 									class="attachment-thumbnail attachment-file"
 									onclick={() => openFile(attachment.filePath)}
 									title="Click to open in default app"
@@ -239,17 +242,17 @@
 										<span class="attachment-name">{attachment.fileName}</span>
 										<span class="attachment-size">{formatFileSize(attachment.fileSize)}</span>
 									</div>
-								</button>
+								</Button>
 							{/if}
 						{/each}
 					</div>
 				{/if}
 			{:else if unit.type === 'text'}
 				{#if unit.reasoning && !isStreaming}
-					<button class="tool-chip-summary success" onclick={openReasoningModal}>
+					<Button variant="ghost" class="tool-chip-summary success" onclick={openReasoningModal}>
 						<span class="material-symbols-outlined tool-chip-icon">psychology</span>
 						<span class="tool-chip-name">Pensamentos</span>
-					</button>
+					</Button>
 				{/if}
 				{#if unit.text || isStreaming}
 					{#if isStreaming}
@@ -264,10 +267,10 @@
 				{/if}
 			{:else if unit.type === 'tool_use'}
 				{#if unit.reasoning}
-					<button class="tool-chip-summary success" onclick={openReasoningModal}>
+					<Button variant="ghost" class="tool-chip-summary success" onclick={openReasoningModal}>
 						<span class="material-symbols-outlined tool-chip-icon">psychology</span>
 						<span class="tool-chip-name">Pensamentos</span>
-					</button>
+					</Button>
 				{/if}
 				{#if unit.text}
 					<div class="message-text"><MarkdownValue value={unit.text} openEntityInspector={onEntityClick} /></div>
@@ -276,7 +279,8 @@
 					<div class="tool-chips">
 						{#each unit.tool_calls as tc}
 							{@const hasResult = tc.result !== null && tc.result !== undefined}
-							<button
+							<Button
+								variant="ghost"
 								class="tool-chip-summary {hasResult ? (tc.is_error ? 'error' : 'success') : 'pending'}"
 								onclick={() => openToolModal(tc)}
 							>
@@ -287,7 +291,7 @@
 								{#if tc.duration_ms != null}
 									<span class="tool-chip-duration">{(tc.duration_ms / 1000).toFixed(1)}s</span>
 								{/if}
-							</button>
+							</Button>
 						{/each}
 					</div>
 				{/if}
@@ -434,7 +438,7 @@
 		margin-top: 8px;
 	}
 
-	.attachment-thumbnail {
+	:global([data-slot="button"].attachment-thumbnail) {
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
@@ -445,15 +449,22 @@
 		transition: all 0.2s;
 		min-width: 150px;
 		max-width: 200px;
+		height: auto;
 		text-align: left;
+		align-items: flex-start;
+		justify-content: flex-start;
 		overflow: hidden;
 	}
 
-	.attachment-thumbnail:active {
+	:global([data-slot="button"].attachment-thumbnail:hover) {
+		background: color-mix(in srgb, var(--color-white) 12%, transparent);
+	}
+
+	:global([data-slot="button"].attachment-thumbnail:active) {
 		transform: translateY(0);
 	}
 
-	.attachment-image img {
+	:global([data-slot="button"].attachment-image img) {
 		width: 100%;
 		height: 120px;
 		object-fit: cover;
@@ -587,17 +598,20 @@
 		gap: 1px;
 	}
 
-	.tool-chip-summary {
+	:global([data-slot="button"].tool-chip-summary) {
 		display: flex;
 		align-items: center;
 		gap: 5px;
 		padding: 2px 0;
 		cursor: pointer;
 		user-select: none;
-		background: none;
-		border: none;
 		color: inherit;
 		width: fit-content;
+		height: auto;
+	}
+
+	:global([data-slot="button"].tool-chip-summary:hover) {
+		background: transparent;
 	}
 
 	.tool-chip-icon {
@@ -605,9 +619,9 @@
 		opacity: 0.7;
 	}
 
-	.tool-chip-summary.success .tool-chip-icon { color: var(--color-success); opacity: 1; }
-	.tool-chip-summary.error .tool-chip-icon { color: var(--color-error); opacity: 1; }
-	.tool-chip-summary.pending .tool-chip-icon { color: var(--color-transition); opacity: 1; animation: thinking-pulse 1.5s infinite ease-in-out; }
+	:global([data-slot="button"].tool-chip-summary.success .tool-chip-icon) { color: var(--color-success); opacity: 1; }
+	:global([data-slot="button"].tool-chip-summary.error .tool-chip-icon) { color: var(--color-error); opacity: 1; }
+	:global([data-slot="button"].tool-chip-summary.pending .tool-chip-icon) { color: var(--color-transition); opacity: 1; animation: thinking-pulse 1.5s infinite ease-in-out; }
 
 	.tool-chip-duration {
 		font-size: 10px;
@@ -617,7 +631,7 @@
 		white-space: nowrap;
 	}
 
-	.tool-chip-summary.pending .tool-chip-name { color: var(--color-transition); animation: thinking-pulse 1.5s infinite ease-in-out; }
+	:global([data-slot="button"].tool-chip-summary.pending .tool-chip-name) { color: var(--color-transition); animation: thinking-pulse 1.5s infinite ease-in-out; }
 
 	.tool-chip-name {
 		font-size: 11px;
@@ -627,7 +641,7 @@
 
 	@keyframes thinking-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
 
-	.subconscious-chip-summary {
+	:global([data-slot="button"].subconscious-chip-summary) {
 		display: inline-flex;
 		align-items: center;
 		gap: 5px;
@@ -639,7 +653,12 @@
 		font-size: 10px;
 		line-height: 1.4;
 		user-select: none;
-		border: none;
+		height: auto;
+	}
+
+	:global([data-slot="button"].subconscious-chip-summary:hover) {
+		background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
+		color: color-mix(in srgb, var(--color-interactive) 85%, var(--color-neutral-disabled));
 	}
 
 	.subconscious-icon {

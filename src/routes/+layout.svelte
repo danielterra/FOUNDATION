@@ -363,9 +363,9 @@
           {/if}
         </div>
         {#if run.status !== 'running'}
-          <button class="toast-close" onclick={(e) => { e.stopPropagation(); automationRuns = automationRuns.filter(r => r.executionIri !== run.executionIri); }}>
+          <Button variant="ghost" size="icon-sm" class="toast-close" onclick={(e) => { e.stopPropagation(); automationRuns = automationRuns.filter(r => r.executionIri !== run.executionIri); }}>
             <span class="material-symbols-outlined">close</span>
-          </button>
+          </Button>
         {/if}
       </div>
     {/each}
@@ -385,16 +385,13 @@
           {#if notif.result_summary}
             <span class="toast-detail">{notif.result_summary.slice(0, TOAST_SUMMARY_MAX_CHARS)}{notif.result_summary.length > TOAST_SUMMARY_MAX_CHARS ? '…' : ''}</span>
           {/if}
-          <button
-            class="toast-action-btn"
-            onclick={() => openTaskInspector(notif.task_iri)}
-          >
+          <Button variant="ghost" class="toast-action-btn" onclick={() => openTaskInspector(notif.task_iri)}>
             Ver tarefa
-          </button>
+          </Button>
         </div>
-        <button class="toast-close" onclick={() => { taskNotifications = taskNotifications.filter(n => n.id !== notif.id); }}>
+        <Button variant="ghost" size="icon-sm" class="toast-close" onclick={() => { taskNotifications = taskNotifications.filter(n => n.id !== notif.id); }}>
           <span class="material-symbols-outlined">close</span>
-        </button>
+        </Button>
       </div>
     {/each}
 
@@ -411,9 +408,9 @@
           <span class="toast-label">{sync.message}</span>
         </div>
         {#if sync.status !== 'running'}
-          <button class="toast-close" onclick={() => { imapSyncs = imapSyncs.filter(s => s.accountIri !== sync.accountIri); }}>
+          <Button variant="ghost" size="icon-sm" class="toast-close" onclick={() => { imapSyncs = imapSyncs.filter(s => s.accountIri !== sync.accountIri); }}>
             <span class="material-symbols-outlined">close</span>
-          </button>
+          </Button>
         {/if}
       </div>
     {/each}
@@ -431,9 +428,9 @@
           <span class="toast-label">{ext.message}</span>
         </div>
         {#if ext.status !== 'running'}
-          <button class="toast-close" onclick={() => { imapExtractions = imapExtractions.filter(e => e.emailIri !== ext.emailIri); }}>
+          <Button variant="ghost" size="icon-sm" class="toast-close" onclick={() => { imapExtractions = imapExtractions.filter(e => e.emailIri !== ext.emailIri); }}>
             <span class="material-symbols-outlined">close</span>
-          </button>
+          </Button>
         {/if}
       </div>
     {/each}
@@ -629,16 +626,21 @@
     line-height: 1.4;
   }
 
-  .toast-action-btn {
+  :global([data-slot="button"].toast-action-btn) {
     margin-top: 4px;
-    background: none;
     color: var(--color-success);
     font-family: var(--font-body);
     font-size: 11px;
     font-weight: 600;
     padding: 3px 8px;
-    cursor: pointer;
+    height: auto;
     align-self: flex-start;
+  }
+
+  :global([data-slot="button"].toast-action-btn:hover) {
+    background: transparent;
+    color: var(--color-success);
+    opacity: 0.8;
   }
 
   .toast-error {
@@ -647,19 +649,18 @@
     word-break: break-word;
   }
 
-  .toast-close {
-    background: none;
-    border: none;
-    padding: 2px;
-    cursor: pointer;
+  :global([data-slot="button"].toast-close) {
     color: var(--color-neutral-disabled);
     flex-shrink: 0;
-    display: flex;
-    align-items: center;
     align-self: flex-start;
   }
 
-  .toast-close .material-symbols-outlined {
+  :global([data-slot="button"].toast-close:hover) {
+    background: transparent;
+    color: var(--color-neutral);
+  }
+
+  :global([data-slot="button"].toast-close .material-symbols-outlined) {
     font-size: 16px;
   }
 

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { convertFileSrc } from '@tauri-apps/api/core'
   import { onDestroy } from 'svelte'
+  import { Input } from '$lib/components/ui/input'
+  import { Button } from '$lib/components/ui/button'
 
   type SearchResult = { id: string; label: string; icon?: string | null }
 
@@ -195,8 +197,8 @@
 <div class="esc-inline">
   <div class="esc-input-wrap">
     <span class="material-symbols-outlined esc-search-icon">search</span>
-    <input
-      bind:this={inputEl}
+    <Input
+      bind:ref={inputEl}
       type="text"
       class="esc-input"
       value={inputValue}
@@ -240,13 +242,12 @@
         <div class="esc-empty">{emptyText}</div>
       {:else}
         {#each results as item, i (item.id)}
-          <button
-            type="button"
-            class="esc-item"
-            class:esc-item-active={i === activeIndex}
+          <Button
+            variant="ghost"
+            class={`esc-item${i === activeIndex ? ' esc-item-active' : ''}`}
             role="option"
             aria-selected={i === activeIndex}
-            tabindex="-1"
+            tabindex={-1}
             onclick={() => selectItem(item)}
             onmouseenter={() => { activeIndex = i }}
           >
@@ -258,7 +259,7 @@
               {/if}
             {/if}
             <span class="esc-item-label">{item.label ?? item.id}</span>
-          </button>
+          </Button>
         {/each}
       {/if}
     </div>
@@ -287,23 +288,25 @@
     flex-shrink: 0;
   }
 
-  .esc-input {
+  :global([data-slot="input"].esc-input) {
     flex: 1;
     min-width: 0;
     background: none;
     border: none;
     outline: none;
+    box-shadow: none;
     font-family: var(--font-body);
     font-size: 14px;
     color: var(--color-neutral-active);
     padding: 0;
+    height: auto;
   }
 
-  .esc-input::placeholder {
+  :global([data-slot="input"].esc-input::placeholder) {
     color: var(--color-neutral-disabled);
   }
 
-  .esc-input:disabled {
+  :global([data-slot="input"].esc-input:disabled) {
     opacity: 0.5;
     cursor: default;
   }

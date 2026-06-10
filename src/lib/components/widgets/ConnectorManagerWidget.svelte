@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import WidgetContainer from './WidgetContainer.svelte';
   import { Button } from '$lib/components/ui/button';
+  import { Textarea } from '$lib/components/ui/textarea';
 
   let { widgetId, entityId = '', conversationIri = null, windowState = 'normal', onWindowStateChange } = $props();
 
@@ -142,13 +143,13 @@
     {:else}
       <div class="import-section">
         <label class="field-label" for="field-connector-json">Paste connector package JSON</label>
-        <textarea
+        <Textarea
           id="field-connector-json"
           class="json-input"
           placeholder={"{ \"schema_version\": \"1.0\", ... }"}
           bind:value={importText}
-          spellcheck="false"
-        ></textarea>
+          spellcheck={false}
+        />
         <div class="import-actions">
           <Button variant="default" onclick={importPackage} disabled={importing || !importText.trim()}>
             {#if importing}
@@ -290,17 +291,20 @@
     letter-spacing: 0.04em;
   }
 
-  .json-input {
+  :global([data-slot="textarea"].json-input) {
     flex: 1;
     min-height: 160px;
     background: color-mix(in srgb, var(--color-white) 6%, transparent);
     border: none;
+    box-shadow: none;
     padding: 10px;
     font-family: var(--font-mono, monospace);
     font-size: 12px;
     color: var(--color-neutral-active);
     outline: none;
     resize: vertical;
+    border-radius: 0;
+    field-sizing: unset;
   }
 
   .import-actions {

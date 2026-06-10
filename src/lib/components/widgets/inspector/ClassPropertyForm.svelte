@@ -150,9 +150,9 @@
           <div class="cpf-selected-class">
             <span class="material-symbols-outlined cpf-class-icon">category</span>
             <span class="cpf-class-name">{selectedClassName}</span>
-            <button class="cpf-clear-btn" onclick={clearClass} title="Clear">
+            <Button variant="ghost" size="icon-sm" class="cpf-clear-btn" onclick={clearClass} title="Clear">
               <span class="material-symbols-outlined">close</span>
-            </button>
+            </Button>
           </div>
         {:else}
           <div class="cpf-class-search-wrap">
@@ -318,17 +318,13 @@
     flex: 1;
   }
 
-  .cpf-clear-btn {
-    display: flex;
-    align-items: center;
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-neutral);
+  :global([data-slot="button"].cpf-clear-btn) {
+    height: auto;
     padding: 0;
+    color: var(--color-neutral);
   }
 
-  .cpf-clear-btn .material-symbols-outlined {
+  :global([data-slot="button"].cpf-clear-btn .material-symbols-outlined) {
     font-size: 14px;
   }
 

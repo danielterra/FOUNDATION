@@ -1,6 +1,7 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
+  import { Button } from '$lib/components/ui/button';
 
   let {
     nodeIri,
@@ -45,17 +46,17 @@
     <div class="current-value">
       <span class="material-symbols-outlined current-icon">output</span>
       <span class="current-label">{currentValue.label ?? currentValue.iri}</span>
-      <button class="clear-btn" onclick={clear} disabled={saving} title="Remover" aria-label="Remover propriedade selecionada">
+      <Button variant="ghost" size="icon-sm" onclick={clear} disabled={saving} title="Remover" aria-label="Remover propriedade selecionada">
         <span class="material-symbols-outlined">close</span>
-      </button>
+      </Button>
     </div>
   {/if}
 
   <div class="header-row">
     <span class="hint">Propriedades da controlClass</span>
-    <button class="cancel-btn" onclick={oncancel} disabled={saving} aria-label="Cancelar">
+    <Button variant="ghost" size="icon-sm" onclick={oncancel} disabled={saving} aria-label="Cancelar">
       <span class="material-symbols-outlined">close</span>
-    </button>
+    </Button>
   </div>
 
   {#if loading}
@@ -69,9 +70,9 @@
   {:else}
     <div class="dropdown">
       {#each properties as prop (prop.iri)}
-        <button
-          class="result"
-          class:selected={currentValue?.iri === prop.iri}
+        <Button
+          variant="ghost"
+          class={`result${currentValue?.iri === prop.iri ? ' selected' : ''}`}
           onclick={() => pick(prop.iri)}
           disabled={saving}
         >
@@ -80,7 +81,7 @@
           {#if prop.range}
             <span class="result-range">{prop.range.split(':').pop()}</span>
           {/if}
-        </button>
+        </Button>
       {/each}
     </div>
   {/if}
@@ -115,22 +116,6 @@
     font-family: var(--font-body);
   }
 
-  .clear-btn {
-    padding: 2px 4px;
-    background: transparent;
-    border: none;
-    color: var(--color-neutral);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-  }
-
-  .clear-btn .material-symbols-outlined { font-size: 14px; }
-
-  .clear-btn:hover:not(:disabled) {
-    color: var(--color-danger);
-  }
-
   .header-row {
     display: flex;
     align-items: center;
@@ -142,18 +127,6 @@
     font-size: 11px;
     color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
   }
-
-  .cancel-btn {
-    padding: 4px 8px;
-    background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
-    border: none;
-    color: var(--color-neutral);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-  }
-
-  .cancel-btn .material-symbols-outlined { font-size: 16px; }
 
   .state-msg {
     font-size: 12px;
@@ -179,29 +152,29 @@
     overflow-y: auto;
   }
 
-  .result {
+  :global([data-slot="button"].result) {
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 6px 10px;
-    background: transparent;
-    border: none;
+    height: auto;
+    justify-content: flex-start;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
     font-size: 13px;
-    cursor: pointer;
-    text-align: left;
+    border-radius: 0;
+    width: 100%;
   }
 
-  .result:hover:not(:disabled) {
+  :global([data-slot="button"].result:hover:not(:disabled)) {
     background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
   }
 
-  .result.selected {
+  :global([data-slot="button"].result.selected) {
     background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
   }
 
-  .result .material-symbols-outlined {
+  :global([data-slot="button"].result .material-symbols-outlined) {
     font-size: 16px;
     color: var(--color-interactive);
   }

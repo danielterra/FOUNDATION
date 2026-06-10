@@ -99,9 +99,9 @@
             {/if}
           {/if}
           <span class="chip-label">{item.label ?? item.iri}</span>
-          <button class="chip-remove" onclick={() => remove(item.iri)} aria-label="Remover {item.label ?? item.iri}">
+          <Button variant="ghost" class="chip-remove" onclick={() => remove(item.iri)} aria-label="Remover {item.label ?? item.iri}">
             <span class="material-symbols-outlined">close</span>
-          </button>
+          </Button>
         </span>
       {/each}
     </div>
@@ -190,23 +190,16 @@
     white-space: nowrap;
   }
 
-  .chip-remove {
-    background: none;
-    border: none;
+  :global([data-slot="button"].chip-remove) {
+    height: auto;
     padding: 0;
-    cursor: pointer;
+    width: auto;
     color: var(--color-neutral);
-    display: flex;
-    align-items: center;
-    transition: color 0.15s;
   }
 
-  .chip-remove:hover {
+  :global([data-slot="button"].chip-remove:hover) {
     color: var(--color-neutral-active);
-  }
-
-  .chip-remove .material-symbols-outlined {
-    font-size: 14px;
+    background: transparent;
   }
 
   .actions-row {

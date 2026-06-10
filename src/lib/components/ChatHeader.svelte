@@ -42,10 +42,9 @@
 <div class="chat-header">
 	<div class="chat-header-left">
 		<div class="agent-area">
-			<button
-				class="agent-avatar"
-				class:picker-open={pickerOpen}
-				class:has-image={isImageIcon(conversationAgent?.icon)}
+			<Button
+				variant="ghost"
+				class={`agent-avatar${pickerOpen ? ' picker-open' : ''}${isImageIcon(conversationAgent?.icon) ? ' has-image' : ''}`}
 				onclick={togglePicker}
 				title="Switch assistant"
 			>
@@ -54,13 +53,13 @@
 				{:else}
 					<span class="material-symbols-outlined">{conversationAgent?.icon || 'smart_toy'}</span>
 				{/if}
-			</button>
-			<button class="agent-name-btn" onclick={onOpenAgentInspector} title="Open in inspector">
+			</Button>
+			<Button variant="ghost" class="agent-name-btn" onclick={onOpenAgentInspector} title="Open in inspector">
 				<span class="agent-name">{conversationAgent?.label || 'AI Assistant'}</span>
 				{#if activeModelInfo?.modelLabel}
 					<span class="agent-model">{activeModelInfo.modelLabel}</span>
 				{/if}
-			</button>
+			</Button>
 
 			{#if pickerOpen}
 				<AgentPicker
@@ -120,51 +119,53 @@
 		gap: 8px;
 	}
 
-	.agent-avatar {
+	:global([data-slot="button"].agent-avatar) {
 		width: 36px;
 		height: 36px;
 		background: color-mix(in srgb, var(--primary) 18%, transparent);
-		border: none;
 		border-radius: var(--radius);
 		color: var(--primary);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: all 0.2s;
+		padding: 0;
+		flex-shrink: 0;
 	}
 
-	.agent-avatar.picker-open {
+	:global([data-slot="button"].agent-avatar:hover) {
+		background: color-mix(in srgb, var(--primary) 28%, transparent);
+		color: var(--primary);
+	}
+
+	:global([data-slot="button"].agent-avatar.picker-open) {
 		background: color-mix(in srgb, var(--primary) 28%, transparent);
 	}
 
-	.agent-avatar .material-symbols-outlined {
+	:global([data-slot="button"].agent-avatar .material-symbols-outlined) {
 		font-size: 18px;
 	}
 
-	.agent-avatar.has-image {
+	:global([data-slot="button"].agent-avatar.has-image) {
 		background: transparent;
-		border-color: transparent;
 		padding: 0;
 		overflow: hidden;
 	}
 
-	.agent-avatar img {
+	:global([data-slot="button"].agent-avatar img) {
 		width: 100%;
 		height: 100%;
 		object-fit: cover;
 	}
 
-	.agent-name-btn {
-		background: none;
-		border: none;
+	:global([data-slot="button"].agent-name-btn) {
 		padding: 0;
-		cursor: pointer;
 		min-width: 0;
 		flex: 1;
+		height: auto;
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
+	}
+
+	:global([data-slot="button"].agent-name-btn:hover) {
+		background: transparent;
 	}
 
 	.agent-name {
@@ -183,7 +184,7 @@
 		white-space: nowrap;
 	}
 
-	.agent-name-btn:hover .agent-name {
+	:global([data-slot="button"].agent-name-btn:hover) .agent-name {
 		color: var(--primary);
 	}
 

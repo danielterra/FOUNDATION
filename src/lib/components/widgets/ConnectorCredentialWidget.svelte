@@ -4,6 +4,7 @@
   import WidgetContainer from './WidgetContainer.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Select from '$lib/components/ui/select';
+  import { Input } from '$lib/components/ui/input';
 
   let { widgetId, entityId = '', windowState = 'normal', onWindowStateChange } = $props();
 
@@ -191,7 +192,7 @@
     {#if authType === 'api_key'}
       <div class="field-group">
         <label class="field-label" for="field-api-key">API Key</label>
-        <input
+        <Input
           id="field-api-key"
           class="field-input"
           type="password"
@@ -202,7 +203,7 @@
     {:else if authType === 'token'}
       <div class="field-group">
         <label class="field-label" for="field-bearer-token">Bearer Token</label>
-        <input
+        <Input
           id="field-bearer-token"
           class="field-input"
           type="password"
@@ -213,7 +214,7 @@
     {:else if authType === 'username_password'}
       <div class="field-group">
         <label class="field-label" for="field-username">Username</label>
-        <input
+        <Input
           id="field-username"
           class="field-input"
           type="text"
@@ -223,7 +224,7 @@
       </div>
       <div class="field-group">
         <label class="field-label" for="field-password">Password</label>
-        <input
+        <Input
           id="field-password"
           class="field-input"
           type="password"
@@ -234,7 +235,7 @@
     {:else if authType === 'oauth2'}
       <div class="field-group">
         <label class="field-label" for="field-oauth2-client-id">Client ID</label>
-        <input
+        <Input
           id="field-oauth2-client-id"
           class="field-input"
           type="text"
@@ -246,7 +247,7 @@
       <div class="field-group">
         <label class="field-label" for="field-oauth2-client-secret">Client Secret</label>
         <div class="secret-row">
-          <input
+          <Input
             id="field-oauth2-client-secret"
             class="field-input secret-input"
             type={oauth2ShowSecret ? 'text' : 'password'}
@@ -270,7 +271,7 @@
       </div>
       <div class="field-group">
         <label class="field-label" for="field-oauth2-token-url">Token URL</label>
-        <input
+        <Input
           id="field-oauth2-token-url"
           class="field-input"
           type="text"
@@ -303,7 +304,7 @@
             </div>
           {/if}
           <div class="scope-add-row">
-            <input
+            <Input
               id="field-oauth2-scope-input"
               class="field-input scope-add-input"
               type="text"
@@ -394,13 +395,15 @@
     letter-spacing: 0.04em;
   }
 
-  .field-input {
+  :global([data-slot="input"].field-input) {
     background: color-mix(in srgb, var(--color-white) 8%, transparent);
     border: none;
+    box-shadow: none;
+    border-radius: 0;
     padding: 8px 10px;
     font-size: 14px;
     color: var(--color-neutral-active);
-    outline: none;
+    height: auto;
   }
 
   :global(.select-trigger-override) {
@@ -471,7 +474,7 @@
     gap: 0;
   }
 
-  .secret-input {
+  :global([data-slot="input"].secret-input) {
     flex: 1;
     min-width: 0;
   }
@@ -541,7 +544,7 @@
     align-items: center;
   }
 
-  .scope-add-input {
+  :global([data-slot="input"].scope-add-input) {
     flex: 1;
     min-width: 0;
   }

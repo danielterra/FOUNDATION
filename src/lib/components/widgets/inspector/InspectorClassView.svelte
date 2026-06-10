@@ -4,6 +4,7 @@
   import DisjointSelect from './DisjointSelect.svelte';
   import ProcessSelect from './ProcessSelect.svelte';
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
+  import { Button } from '$lib/components/ui/button';
   import { sticky } from '$lib/utils/actions';
 
   let {
@@ -120,13 +121,14 @@
     <div class="section-label section-label-row" use:sticky={{ top: 0 }}>
       <span>Processos Relacionados</span>
       {#if !isLocked && onAddRelatedProcess}
-        <button
-          class="add-disjoint-btn"
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onclick={() => showAddRelatedProcessForm = !showAddRelatedProcessForm}
           title="Vincular processo ou automação"
         >
           <span class="material-symbols-outlined">{showAddRelatedProcessForm ? 'close' : 'add'}</span>
-        </button>
+        </Button>
       {/if}
     </div>
 
@@ -154,9 +156,9 @@
             <span class="item-label">{proc.label}</span>
           </div>
           {#if !isLocked && onRemoveRelatedProcess}
-            <button class="disjoint-remove" onclick={() => onRemoveRelatedProcess(proc.iri)} title="Desvincular">
+            <Button variant="ghost" size="icon-sm" class="disjoint-remove" onclick={() => onRemoveRelatedProcess(proc.iri)} title="Desvincular">
               <span class="material-symbols-outlined">close</span>
-            </button>
+            </Button>
           {/if}
         </div>
       {/each}
@@ -169,13 +171,14 @@
     <div class="section-label section-label-row" use:sticky={{ top: 0 }}>
       <span>Automações de Entrada</span>
       {#if !isLocked && onAddInputAutomation}
-        <button
-          class="add-disjoint-btn"
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onclick={() => showAddInputAutomationForm = !showAddInputAutomationForm}
           title="Vincular automação de entrada"
         >
           <span class="material-symbols-outlined">{showAddInputAutomationForm ? 'close' : 'add'}</span>
-        </button>
+        </Button>
       {/if}
     </div>
 
@@ -202,9 +205,9 @@
             <span class="item-label">{auto.label}</span>
           </div>
           {#if !isLocked && onRemoveInputAutomation}
-            <button class="disjoint-remove" onclick={() => onRemoveInputAutomation(auto.iri)} title="Desvincular">
+            <Button variant="ghost" size="icon-sm" class="disjoint-remove" onclick={() => onRemoveInputAutomation(auto.iri)} title="Desvincular">
               <span class="material-symbols-outlined">close</span>
-            </button>
+            </Button>
           {/if}
         </div>
       {/each}
@@ -217,13 +220,14 @@
     <div class="section-label section-label-row" use:sticky={{ top: 0 }}>
       <span>Classes Disjuntas</span>
       {#if !isLocked && onAddDisjoint}
-        <button
-          class="add-disjoint-btn"
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onclick={() => showAddDisjointForm = !showAddDisjointForm}
           title="Adicionar disjunção"
         >
           <span class="material-symbols-outlined">{showAddDisjointForm ? 'close' : 'add'}</span>
-        </button>
+        </Button>
       {/if}
     </div>
 
@@ -240,9 +244,9 @@
       <div class="disjoint-error">
         <span class="material-symbols-outlined">error</span>
         <span class="disjoint-error-msg">{disjointError}</span>
-        <button class="disjoint-error-close" onclick={() => onClearDisjointError?.()}>
+        <Button variant="ghost" size="icon-sm" onclick={() => onClearDisjointError?.()}>
           <span class="material-symbols-outlined">close</span>
-        </button>
+        </Button>
       </div>
     {/if}
 
@@ -301,9 +305,9 @@
               <span class="item-label">{m.label ?? m.iri}</span>
             </div>
             {#if !isLocked && onRequestRemoveDisjoint}
-              <button class="disjoint-remove" onclick={() => onRequestRemoveDisjoint(group)} title="Remover">
+              <Button variant="ghost" size="icon-sm" class="disjoint-remove" onclick={() => onRequestRemoveDisjoint(group)} title="Remover">
                 <span class="material-symbols-outlined">close</span>
-              </button>
+              </Button>
             {/if}
           </div>
         {:else}
@@ -312,9 +316,9 @@
               <span class="material-symbols-outlined">hub</span>
               <span class="disjoint-set-label">Conjunto disjunto</span>
               {#if !isLocked && onRequestRemoveDisjoint}
-                <button class="disjoint-remove" onclick={() => onRequestRemoveDisjoint(group)} title="Remover conjunto">
+                <Button variant="ghost" size="icon-sm" class="disjoint-remove" onclick={() => onRequestRemoveDisjoint(group)} title="Remover conjunto">
                   <span class="material-symbols-outlined">close</span>
-                </button>
+                </Button>
               {/if}
             </div>
             <div class="disjoint-set-members">
@@ -377,14 +381,15 @@
   <div class="class-props-header">
     <span class="class-props-title">Properties</span>
     {#if !isLocked}
-      <button
-        class="add-property-btn"
+      <Button
+        variant="ghost"
+        size="sm"
         onclick={() => showAddPropertyForm = !showAddPropertyForm}
         title="Add property"
       >
         <span class="material-symbols-outlined">{showAddPropertyForm ? 'close' : 'add'}</span>
         {showAddPropertyForm ? 'Cancel' : 'Add property'}
-      </button>
+      </Button>
     {/if}
   </div>
   {#if showAddPropertyForm}
@@ -546,29 +551,6 @@
     color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
   }
 
-  .add-property-btn {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    padding: 3px 8px;
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    border: none;
-    color: var(--color-interactive);
-    font-family: var(--font-body);
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-
-  .add-property-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 25%, transparent);
-  }
-
-  .add-property-btn .material-symbols-outlined {
-    font-size: 14px;
-  }
-
   .adlg-icon-row {
     display: flex;
     justify-content: center;
@@ -653,24 +635,6 @@
     justify-content: space-between;
   }
 
-  .add-disjoint-btn {
-    display: flex;
-    align-items: center;
-    padding: 2px 6px;
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
-    border: none;
-    color: var(--color-interactive);
-    cursor: pointer;
-  }
-
-  .add-disjoint-btn:hover {
-    background: color-mix(in srgb, var(--color-interactive) 25%, transparent);
-  }
-
-  .add-disjoint-btn .material-symbols-outlined {
-    font-size: 14px;
-  }
-
   .disjoint-item {
     justify-content: space-between;
     padding: 0;
@@ -684,23 +648,13 @@
     padding: 8px 12px;
   }
 
-  .disjoint-remove {
-    display: flex;
-    align-items: center;
-    padding: 4px 8px;
-    background: transparent;
-    border: none;
+  :global([data-slot="button"].disjoint-remove) {
     color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
-    cursor: pointer;
   }
 
-  .disjoint-remove:hover {
+  :global([data-slot="button"].disjoint-remove:hover) {
     color: var(--color-error, #ef4444);
     background: color-mix(in srgb, var(--color-error, #ef4444) 12%, transparent);
-  }
-
-  .disjoint-remove .material-symbols-outlined {
-    font-size: 16px;
   }
 
   .disjoint-set {
@@ -769,15 +723,4 @@
     line-height: 1.4;
   }
 
-  .disjoint-error-close {
-    background: transparent;
-    border: none;
-    color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
-    cursor: pointer;
-    padding: 0;
-  }
-
-  .disjoint-error-close .material-symbols-outlined {
-    font-size: 14px;
-  }
 </style>

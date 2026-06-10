@@ -255,10 +255,9 @@
 
 				<div class="provider-grid">
 					{#each PROVIDERS as provider}
-						<button
-							class="provider-card"
-							class:selected={selectedProviderId === provider.id}
-							class:disabled={provider.disabled}
+						<Button
+							variant="ghost"
+							class={`provider-card${selectedProviderId === provider.id ? ' selected' : ''}${provider.disabled ? ' disabled' : ''}`}
 							onclick={() => selectProvider(provider)}
 							disabled={provider.disabled}
 						>
@@ -267,17 +266,17 @@
 							{#if provider.disabled}
 								<span class="badge-soon">em breve</span>
 							{/if}
-						</button>
+						</Button>
 					{/each}
 				</div>
 
 				{#if selectedProvider && !selectedProvider.disabled}
 					<div class="email-form">
 						{#if selectedProvider.instructions.length > 0}
-							<button class="instructions-toggle" onclick={() => showInstructions = !showInstructions}>
+							<Button variant="ghost" class="instructions-toggle" onclick={() => showInstructions = !showInstructions}>
 								<span class="material-symbols-outlined">{showInstructions ? 'expand_less' : 'help_outline'}</span>
 								{showInstructions ? 'Ocultar instruções' : 'Como configurar o ' + selectedProvider.label + '?'}
-							</button>
+							</Button>
 
 							{#if showInstructions}
 								<ol class="instructions">
@@ -365,9 +364,9 @@
 				<p class="subtitle">Escolha como o FOUNDATION vai funcionar. Você pode mudar isso depois.</p>
 
 				<div class="ai-cards">
-					<button
-						class="ai-card"
-						class:selected={aiChoice === 'chat'}
+					<Button
+						variant="ghost"
+						class={`ai-card${aiChoice === 'chat' ? ' selected' : ''}`}
 						onclick={() => aiChoice = 'chat'}
 					>
 						<span class="material-symbols-outlined ai-card-icon">chat</span>
@@ -380,11 +379,11 @@
 								<span class="material-symbols-outlined">check_circle</span>
 							{/if}
 						</div>
-					</button>
+					</Button>
 
-					<button
-						class="ai-card"
-						class:selected={aiChoice === 'mcp'}
+					<Button
+						variant="ghost"
+						class={`ai-card${aiChoice === 'mcp' ? ' selected' : ''}`}
 						onclick={() => { aiChoice = 'mcp'; apiKey = ''; }}
 					>
 						<span class="material-symbols-outlined ai-card-icon">hub</span>
@@ -397,7 +396,7 @@
 								<span class="material-symbols-outlined">check_circle</span>
 							{/if}
 						</div>
-					</button>
+					</Button>
 				</div>
 
 				{#if aiChoice === 'chat'}
@@ -637,12 +636,13 @@
 		gap: 0.625rem;
 	}
 
-	.provider-card {
+	:global([data-slot="button"].provider-card) {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 0.375rem;
 		padding: 0.875rem 0.5rem;
+		height: auto;
 		background: var(--color-surface-2);
 		border: 1.5px solid transparent;
 		border-radius: var(--radius);
@@ -651,26 +651,26 @@
 		position: relative;
 	}
 
-	.provider-card:hover:not(.disabled) {
+	:global([data-slot="button"].provider-card:hover:not(.disabled)) {
 		background: var(--color-surface-3);
 	}
 
-	.provider-card.selected {
+	:global([data-slot="button"].provider-card.selected) {
 		border-color: var(--color-interactive);
 		background: color-mix(in srgb, var(--color-interactive) 8%, var(--color-surface-2));
 	}
 
-	.provider-card.disabled {
+	:global([data-slot="button"].provider-card.disabled) {
 		opacity: 0.4;
 		cursor: not-allowed;
 	}
 
-	.provider-card .material-symbols-outlined {
+	:global([data-slot="button"].provider-card .material-symbols-outlined) {
 		font-size: 1.5rem;
 		color: var(--color-neutral);
 	}
 
-	.provider-card.selected .material-symbols-outlined {
+	:global([data-slot="button"].provider-card.selected .material-symbols-outlined) {
 		color: var(--color-interactive);
 	}
 
@@ -702,24 +702,23 @@
 		padding-top: 0.5rem;
 	}
 
-	.instructions-toggle {
+	:global([data-slot="button"].instructions-toggle) {
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
-		background: none;
-		border: none;
 		color: var(--color-interactive);
 		font-size: 0.8125rem;
-		cursor: pointer;
 		padding: 0;
-		transition: opacity 0.15s;
+		height: auto;
 	}
 
-	.instructions-toggle:hover {
+	:global([data-slot="button"].instructions-toggle:hover) {
+		background: transparent;
 		opacity: 0.8;
+		color: var(--color-interactive);
 	}
 
-	.instructions-toggle .material-symbols-outlined {
+	:global([data-slot="button"].instructions-toggle .material-symbols-outlined) {
 		font-size: 1rem;
 	}
 
@@ -774,24 +773,26 @@
 		gap: 0.75rem;
 	}
 
-	.ai-card {
+	:global([data-slot="button"].ai-card) {
 		display: flex;
 		align-items: center;
 		gap: 1rem;
 		padding: 1rem 1.25rem;
+		height: auto;
+		justify-content: flex-start;
+		width: 100%;
 		background: var(--color-surface-2);
 		border: 1.5px solid transparent;
 		border-radius: var(--radius);
 		cursor: pointer;
-		text-align: left;
 		transition: all 0.15s;
 	}
 
-	.ai-card:hover {
+	:global([data-slot="button"].ai-card:hover) {
 		background: var(--color-surface-3);
 	}
 
-	.ai-card.selected {
+	:global([data-slot="button"].ai-card.selected) {
 		border-color: var(--color-interactive);
 		background: color-mix(in srgb, var(--color-interactive) 8%, var(--color-surface-2));
 	}
@@ -802,7 +803,7 @@
 		flex-shrink: 0;
 	}
 
-	.ai-card.selected .ai-card-icon {
+	:global([data-slot="button"].ai-card.selected .ai-card-icon) {
 		color: var(--color-interactive);
 	}
 

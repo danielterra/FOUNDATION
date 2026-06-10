@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core'
   import EntitySearchCombobox from './EntitySearchCombobox.svelte'
+  import { Button } from '$lib/components/ui/button'
 
   let {
     excludeIris = [],
@@ -45,9 +46,9 @@
         {saving}
       />
     </div>
-    <button class="cancel-btn" onclick={oncancel} disabled={saving} aria-label="Cancelar">
+    <Button variant="ghost" size="icon-sm" class="cancel-btn" onclick={oncancel} disabled={saving} aria-label="Cancelar">
       <span class="material-symbols-outlined">close</span>
-    </button>
+    </Button>
   </div>
 </div>
 
@@ -70,20 +71,19 @@
     min-width: 0;
   }
 
-  .cancel-btn {
+  :global([data-slot="button"].cancel-btn) {
     padding: 4px 8px;
+    height: auto;
     background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
-    border: none;
     color: var(--color-neutral);
-    cursor: pointer;
   }
 
-  .cancel-btn:disabled {
+  :global([data-slot="button"].cancel-btn:disabled) {
     opacity: 0.5;
     cursor: default;
   }
 
-  .cancel-btn .material-symbols-outlined {
+  :global([data-slot="button"].cancel-btn .material-symbols-outlined) {
     font-size: 16px;
   }
 </style>

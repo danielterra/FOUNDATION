@@ -237,7 +237,8 @@
             {@const isExpanded = expandedStep === step.iri}
             {@const duration = formatDuration(step.started_at, step.finished_at)}
             <div class="step" class:expanded={isExpanded} role="listitem">
-              <button
+              <Button
+                variant="ghost"
                 class="step-header"
                 aria-expanded={isExpanded}
                 aria-label={step.node_label}
@@ -257,7 +258,7 @@
                     expand_more
                   </span>
                 {/if}
-              </button>
+              </Button>
 
               {#if isExpanded}
                 <div class="step-detail">
@@ -415,22 +416,22 @@
     background: color-mix(in srgb, var(--color-white) 3%, transparent);
   }
 
-  .step-header {
+  :global([data-slot="button"].step-header) {
     display: flex;
     align-items: center;
     gap: 8px;
     width: 100%;
     padding: 8px 10px;
-    background: none;
-    border: none;
-    cursor: pointer;
-    text-align: left;
+    height: auto;
+    justify-content: flex-start;
     color: var(--color-neutral);
     transition: background 0.1s;
+    border-radius: 0;
   }
 
-  .step-header:hover {
+  :global([data-slot="button"].step-header:hover) {
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
+    color: var(--color-neutral);
   }
 
   .step-icon {

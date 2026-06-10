@@ -5,6 +5,8 @@
   import { openEntity } from '$lib/blackboard';
   import WidgetContainer from './WidgetContainer.svelte';
   import { Button } from '$lib/components/ui/button';
+  import * as Select from '$lib/components/ui/select';
+  import { Checkbox } from '$lib/components/ui/checkbox';
 
   let { widgetId, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props();
 
@@ -415,16 +417,26 @@
       </div>
     {:else}
       <div class="filter-bar">
-        <select class="filter-select" bind:value={filterType} aria-label="Filtrar por tipo">
-          {#each TYPE_FILTERS as f}
-            <option value={f.value}>{f.label}</option>
-          {/each}
-        </select>
-        <select class="filter-select" bind:value={filterStatus} aria-label="Filtrar por status">
-          {#each STATUS_FILTERS as f}
-            <option value={f.value}>{f.label}</option>
-          {/each}
-        </select>
+        <Select.Root type="single" bind:value={filterType}>
+          <Select.Trigger class="filter-select" aria-label="Filtrar por tipo">
+            <Select.Value />
+          </Select.Trigger>
+          <Select.Content>
+            {#each TYPE_FILTERS as f}
+              <Select.Item value={f.value}>{f.label}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+        <Select.Root type="single" bind:value={filterStatus}>
+          <Select.Trigger class="filter-select" aria-label="Filtrar por status">
+            <Select.Value />
+          </Select.Trigger>
+          <Select.Content>
+            {#each STATUS_FILTERS as f}
+              <Select.Item value={f.value}>{f.label}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
       </div>
       {#if filteredNotifications.length === 0}
         <div class="state-msg empty">
@@ -444,15 +456,14 @@
             class:selected={isSelected(notif.iri)}
           >
             <div class="notif-header-row">
-              <input
-                type="checkbox"
+              <Checkbox
                 class="select-checkbox"
                 checked={isSelected(notif.iri)}
-                onchange={() => toggleSelection(notif.iri)}
+                onCheckedChange={() => toggleSelection(notif.iri)}
                 aria-label="Selecionar notificação"
               />
-              <button
-                type="button"
+              <Button
+                variant="ghost"
                 class="notification-row"
                 onclick={() => toggleExpand(notif.iri)}
                 aria-expanded={expanded}
@@ -471,7 +482,7 @@
                 <span class="material-symbols-outlined chevron">
                   {expanded ? 'expand_less' : 'expand_more'}
                 </span>
-              </button>
+              </Button>
               {#if pending}
                 <Button
                   variant="ghost"
@@ -545,23 +556,13 @@
     flex-shrink: 0;
   }
 
-  .filter-select {
+  :global(.filter-select) {
     flex: 1;
     min-width: 0;
-    padding: 4px 8px;
-    background: var(--muted);
-    border: 1px solid var(--border);
-    color: var(--foreground);
     font-family: var(--font-body);
     font-size: 12px;
-    cursor: pointer;
-    appearance: auto;
-    border-radius: var(--radius);
-  }
-
-  .filter-select:focus {
-    outline: 1px solid var(--ring);
-    outline-offset: -1px;
+    height: auto;
+    padding: 4px 8px;
   }
 
   .header-counter {
@@ -626,31 +627,30 @@
     padding-left: 14px;
   }
 
-  .select-checkbox {
+  :global(.select-checkbox) {
     flex-shrink: 0;
     width: 14px;
     height: 14px;
     cursor: pointer;
-    accent-color: var(--primary);
     margin: 0;
   }
 
-  .notification-row {
+  :global([data-slot="button"].notification-row) {
     flex: 1;
     min-width: 0;
     display: flex;
     align-items: center;
     gap: 10px;
     padding: 10px 4px 10px 0;
-    background: none;
-    border: none;
-    text-align: left;
-    cursor: pointer;
+    height: auto;
+    justify-content: flex-start;
     color: var(--foreground);
+    border-radius: 0;
   }
 
-  .notification-row:hover {
+  :global([data-slot="button"].notification-row:hover) {
     background: var(--accent);
+    color: var(--foreground);
   }
 
   .type-icon {

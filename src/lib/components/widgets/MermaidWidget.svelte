@@ -6,6 +6,7 @@
   import mermaid from 'mermaid';
   import WidgetContainer from './WidgetContainer.svelte';
   import { Button } from '$lib/components/ui/button';
+  import { Textarea } from '$lib/components/ui/textarea';
 
   let { widgetId, entityId = '', conversationIri = null, windowState = 'normal', onWindowStateChange } = $props();
 
@@ -281,12 +282,12 @@
       <span class="material-symbols-outlined spinning">progress_activity</span>
     </div>
   {:else if editMode}
-    <textarea
+    <Textarea
       class="diagram-editor"
       bind:value={draftContent}
-      spellcheck="false"
+      spellcheck={false}
       placeholder="Enter Mermaid diagram source..."
-    ></textarea>
+    />
   {:else}
     <div class="diagram-view">
       {#if renderError}
@@ -351,12 +352,13 @@
     to { transform: rotate(360deg); }
   }
 
-  .diagram-editor {
+  :global([data-slot="textarea"].diagram-editor) {
     flex: 1;
     width: 100%;
     height: 100%;
     background: transparent;
     border: none;
+    box-shadow: none;
     outline: none;
     resize: none;
     padding: 16px;
@@ -365,6 +367,8 @@
     line-height: 1.6;
     color: var(--color-neutral-active);
     box-sizing: border-box;
+    min-height: unset;
+    field-sizing: unset;
   }
 
   .diagram-view {

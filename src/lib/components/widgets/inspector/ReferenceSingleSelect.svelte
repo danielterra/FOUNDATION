@@ -2,6 +2,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { convertFileSrc } from '@tauri-apps/api/core'
   import EntitySearchCombobox from './EntitySearchCombobox.svelte'
+  import { Button } from '$lib/components/ui/button'
 
   let {
     propertyIri,
@@ -60,9 +61,9 @@
         {/if}
       {/if}
       <span class="current-label">{currentValue.label ?? currentValue.iri}</span>
-      <button class="clear-btn" onclick={clear} disabled={saving} aria-label="Remover">
+      <Button variant="ghost" size="icon-sm" onclick={clear} disabled={saving} aria-label="Remover">
         <span class="material-symbols-outlined">close</span>
-      </button>
+      </Button>
     </div>
   {/if}
 
@@ -76,10 +77,10 @@
   />
 
   <div class="actions-row">
-    <button class="cancel-btn" onclick={oncancel} disabled={saving}>
+    <Button variant="ghost" size="sm" onclick={oncancel} disabled={saving}>
       <span class="material-symbols-outlined">close</span>
       Cancelar
-    </button>
+    </Button>
   </div>
 </div>
 
@@ -123,52 +124,10 @@
     white-space: nowrap;
   }
 
-  .clear-btn {
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    color: var(--color-neutral);
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-  }
-
-  .clear-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-
-  .clear-btn .material-symbols-outlined {
-    font-size: 14px;
-  }
-
   .actions-row {
     display: flex;
     align-items: center;
     justify-content: flex-end;
   }
 
-  .cancel-btn {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    border: none;
-    cursor: pointer;
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
-    background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
-    color: var(--color-neutral);
-  }
-
-  .cancel-btn:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .cancel-btn .material-symbols-outlined {
-    font-size: 14px;
-  }
 </style>

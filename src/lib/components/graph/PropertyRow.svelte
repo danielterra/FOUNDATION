@@ -1,4 +1,6 @@
 <script>
+	import { Button } from '$lib/components/ui/button';
+
 	let {
 		label = '',
 		comment = '',
@@ -61,14 +63,14 @@
 	</div>
 	<div class="property-value-container">
 		{#if onValueClick}
-			<button
-				type="button"
+			<Button
+				variant="ghost"
 				class="value-pill clickable"
 				onclick={onValueClick}
 				onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onValueClick(e)}
 			>
 				{@render pillContent()}
-			</button>
+			</Button>
 		{:else}
 			<div class="value-pill">
 				{@render pillContent()}
@@ -100,10 +102,12 @@
 	}
 
 	/* Base pill style */
-	button.value-pill {
+	:global([data-slot="button"].value-pill) {
 		font-family: inherit;
 		font-size: inherit;
 		text-align: left;
+		justify-content: flex-start;
+		height: auto;
 	}
 
 	.value-pill {
@@ -120,20 +124,20 @@
 	}
 
 	/* Clickable state */
-	.value-pill.clickable {
+	:global([data-slot="button"].value-pill.clickable) {
 		cursor: pointer;
 		transition: all 0.2s;
 	}
 
-	.value-pill.clickable:hover {
+	:global([data-slot="button"].value-pill.clickable:hover) {
 		background: color-mix(in srgb, var(--color-neutral) 8%, transparent);
 	}
 
-	.value-pill.clickable .value-icon .material-symbols-outlined {
+	:global([data-slot="button"].value-pill.clickable .value-icon .material-symbols-outlined) {
 		color: var(--color-interactive);
 	}
 
-	.value-pill.clickable:hover .value-icon .material-symbols-outlined {
+	:global([data-slot="button"].value-pill.clickable:hover .value-icon .material-symbols-outlined) {
 		color: color-mix(in srgb, var(--color-interactive) 80%, white);
 	}
 

@@ -99,15 +99,15 @@
 </script>
 
 <div class="conversation-bar">
-	<button
-		class="conversation-trigger"
-		class:open={isOpen}
+	<Button
+		variant="ghost"
+		class={`conversation-trigger${isOpen ? ' open' : ''}`}
 		onclick={() => isOpen ? closeDropdown() : openDropdown()}
 		title="Switch conversation"
 	>
 		<span class="trigger-label">{activeLabel}</span>
 		<span class="material-symbols-outlined trigger-chevron" class:rotated={isOpen}>expand_more</span>
-	</button>
+	</Button>
 
 	{#if isOpen}
 		<div class="dropdown-backdrop" onclick={closeDropdown} role="presentation"></div>
@@ -150,9 +150,9 @@
 								<span class="material-symbols-outlined">close</span>
 							</Button>
 						{:else}
-							<button class="item-name" onclick={() => selectConversation(conv.iri)}>
+							<Button variant="ghost" class="item-name" onclick={() => selectConversation(conv.iri)}>
 								{conv.label}
-							</button>
+							</Button>
 							<div class="item-actions">
 								<Button
 									variant="ghost"
@@ -194,22 +194,21 @@
 		flex-shrink: 0;
 	}
 
-	.conversation-trigger {
+	:global([data-slot="button"].conversation-trigger) {
 		flex: 1;
 		display: flex;
 		align-items: center;
 		gap: 4px;
-		background: transparent;
-		border: none;
 		color: var(--foreground);
 		font-size: 12px;
-		cursor: pointer;
 		padding: 6px 0;
 		min-width: 0;
-		text-align: left;
+		height: auto;
+		justify-content: flex-start;
 	}
 
-	.conversation-trigger:hover {
+	:global([data-slot="button"].conversation-trigger:hover) {
+		background: transparent;
 		color: var(--accent-foreground);
 	}
 
@@ -300,26 +299,26 @@
 		background: var(--accent);
 	}
 
-	.item-name {
+	:global([data-slot="button"].item-name) {
 		flex: 1;
-		background: transparent;
-		border: none;
 		color: var(--foreground);
 		font-size: 12px;
-		cursor: pointer;
 		text-align: left;
 		padding: 8px 0;
+		height: auto;
+		justify-content: flex-start;
 		overflow: hidden;
 		white-space: nowrap;
 		text-overflow: ellipsis;
 		min-width: 0;
 	}
 
-	.dropdown-item.active .item-name {
+	:global([data-slot="button"].item-name:hover) {
+		background: transparent;
 		color: var(--accent-foreground);
 	}
 
-	.item-name:hover {
+	.dropdown-item.active :global([data-slot="button"].item-name) {
 		color: var(--accent-foreground);
 	}
 
