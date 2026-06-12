@@ -65,11 +65,24 @@ fn next_iri_id() -> u64 {
     }
 }
 
+/// Returns `"rdfs:comment"` when the caller supplies a `comment`-named alias
+/// that is NOT already in the `rdfs` namespace (e.g. `"foundation:comment"` or
+/// bare `"comment"`). All other IRIs pass through unchanged.
+fn normalize_comment_alias(property_iri: &str) -> &str {
+    let local_name = property_iri.split(':').last().unwrap_or(property_iri);
+    if local_name == "comment" && !property_iri.starts_with("rdfs:") {
+        "rdfs:comment"
+    } else {
+        property_iri
+    }
+}
+
 fn build_objects(
     conn: &Connection,
     property_iri: &str,
     raw_values: &[Value],
 ) -> Result<Vec<Object>, crate::owl::OwlError> {
+    let property_iri = normalize_comment_alias(property_iri);
     let prop = Property::get(conn, property_iri)?;
     let is_iri = prop.as_ref()
         .map(|p| p.property_type == PropertyType::ObjectProperty)
@@ -711,7 +724,7 @@ fn add_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult {
         },
     };
 
-    let property_iri = match args.get("property_iri").and_then(|v| v.as_str()) {
+    let property_iri_raw = match args.get("property_iri").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => return ToolResult {
             success: false,
@@ -720,6 +733,7 @@ fn add_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult {
             concept: None,
         },
     };
+    let property_iri = normalize_comment_alias(property_iri_raw);
 
     let raw_values = match args.get("values").and_then(|v| v.as_array()) {
         Some(v) if !v.is_empty() => v,
@@ -793,7 +807,7 @@ fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResul
         },
     };
 
-    let property_iri = match args.get("property_iri").and_then(|v| v.as_str()) {
+    let property_iri_raw = match args.get("property_iri").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => return ToolResult {
             success: false,
@@ -802,6 +816,7 @@ fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResul
             concept: None,
         },
     };
+    let property_iri = normalize_comment_alias(property_iri_raw);
 
     let raw_values = match args.get("values").and_then(|v| v.as_array()) {
         Some(v) => v,

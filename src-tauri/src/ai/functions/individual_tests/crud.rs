@@ -486,3 +486,82 @@ fn test_assert_individual_accepts_builtin_owl_thing() {
     let result = assert_individual_one(&mut conn, &args);
     assert!(result.success, "owl:Thing must be accepted: {:?}", result.error);
 }
+
+// Regression: Bug_1780924603717 — agents commonly pass "foundation:comment" instead of
+// "rdfs:comment" because every other property_iri is in the foundation: namespace.
+// The backend must normalise any comment-named alias to rdfs:comment transparently.
+
+#[test]
+fn test_replace_property_values_foundation_comment_alias_stores_rdfs_comment() {
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+    create_task(&mut conn, "foundation:Task_comment_001");
+
+    let args = serde_json::json!({
+        "iri": "foundation:Task_comment_001",
+        "property_iri": "foundation:comment",
+        "values": ["This is a description via alias"]
+    });
+
+    let result = replace_property_values_one(&mut conn, &args);
+    assert!(result.success, "foundation:comment alias must succeed: {:?}", result.error);
+
+    let stored = crate::owl::get_literal_property(
+        &conn, "foundation:Task_comment_001", "rdfs:comment",
+    ).unwrap();
+    assert_eq!(
+        stored.as_deref(),
+        Some("This is a description via alias"),
+        "Value must be persisted under rdfs:comment, not foundation:comment",
+    );
+}
+
+#[test]
+fn test_add_property_values_bare_comment_alias_stores_rdfs_comment() {
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+    create_task(&mut conn, "foundation:Task_comment_002");
+
+    let args = serde_json::json!({
+        "iri": "foundation:Task_comment_002",
+        "property_iri": "comment",
+        "values": ["Bare comment alias"]
+    });
+
+    let result = add_property_values_one(&mut conn, &args);
+    assert!(result.success, "bare 'comment' alias must succeed: {:?}", result.error);
+
+    let stored = crate::owl::get_literal_property(
+        &conn, "foundation:Task_comment_002", "rdfs:comment",
+    ).unwrap();
+    assert_eq!(
+        stored.as_deref(),
+        Some("Bare comment alias"),
+        "Value must be persisted under rdfs:comment",
+    );
+}
+
+#[test]
+fn test_replace_property_values_rdfs_comment_direct_still_works() {
+    let mut conn = setup_test_db();
+    setup_task_class_with_statuses(&mut conn);
+    create_task(&mut conn, "foundation:Task_comment_003");
+
+    let args = serde_json::json!({
+        "iri": "foundation:Task_comment_003",
+        "property_iri": "rdfs:comment",
+        "values": ["Direct rdfs:comment"]
+    });
+
+    let result = replace_property_values_one(&mut conn, &args);
+    assert!(result.success, "rdfs:comment direct must continue to work: {:?}", result.error);
+
+    let stored = crate::owl::get_literal_property(
+        &conn, "foundation:Task_comment_003", "rdfs:comment",
+    ).unwrap();
+    assert_eq!(
+        stored.as_deref(),
+        Some("Direct rdfs:comment"),
+        "Value must be persisted under rdfs:comment",
+    );
+}

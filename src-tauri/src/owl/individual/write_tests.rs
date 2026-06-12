@@ -916,6 +916,95 @@ fn test_serializable_properties_property_type_always_present() {
     }
 }
 
+// Regression: Bug_1780923710393 — foundation:comment (non-existent property) produced a
+// misleading "no domain defined" error instead of "Property not found".
+#[test]
+fn test_add_property_nonexistent_property_returns_not_found() {
+    let mut conn = setup_test_db();
+
+    let c = Class::new("foundation:AcceptanceCriterion");
+    c.assert(&mut conn, ClassType::OwlClass, "AcceptanceCriterion", "https://example.com/ac.svg", None, "test").unwrap();
+
+    let ind = Individual::new("foundation:AC_1");
+    ind.assert(&mut conn, "foundation:AcceptanceCriterion", "AC 1", "https://example.com/ac.svg", "test").unwrap();
+
+    let result = ind.add_property(
+        &mut conn,
+        "foundation:comment",
+        vec![Object::Literal { value: "some text".to_string(), datatype: Some("xsd:string".to_string()), language: None }],
+        "test",
+    );
+
+    assert!(result.is_err(), "Non-existent property must be rejected");
+    if let Err(OwlError::NotFound(msg)) = &result {
+        assert!(msg.contains("Property not found"), "Error must say 'Property not found', got: {}", msg);
+        assert!(msg.contains("foundation:comment"), "Error must contain the property IRI");
+        assert!(msg.contains("rdfs:comment"), "Error must suggest rdfs:comment for 'comment' local name");
+        assert!(!msg.contains("no domain defined"), "Error must NOT contain the misleading 'no domain defined' text");
+    } else {
+        panic!("Expected NotFound error, got: {:?}", result);
+    }
+}
+
+#[test]
+fn test_append_property_nonexistent_property_returns_not_found() {
+    let mut conn = setup_test_db();
+
+    let c = Class::new("foundation:AcceptanceCriterion");
+    c.assert(&mut conn, ClassType::OwlClass, "AcceptanceCriterion", "https://example.com/ac.svg", None, "test").unwrap();
+
+    let ind = Individual::new("foundation:AC_1");
+    ind.assert(&mut conn, "foundation:AcceptanceCriterion", "AC 1", "https://example.com/ac.svg", "test").unwrap();
+
+    let result = ind.append_property(
+        &mut conn,
+        "foundation:comment",
+        vec![Object::Literal { value: "some text".to_string(), datatype: Some("xsd:string".to_string()), language: None }],
+        "test",
+    );
+
+    assert!(result.is_err(), "Non-existent property must be rejected in append_property");
+    if let Err(OwlError::NotFound(msg)) = &result {
+        assert!(msg.contains("Property not found"), "Error must say 'Property not found', got: {}", msg);
+        assert!(msg.contains("rdfs:comment"), "Error must suggest rdfs:comment");
+    } else {
+        panic!("Expected NotFound error, got: {:?}", result);
+    }
+}
+
+#[test]
+fn test_add_property_existing_property_wrong_domain_keeps_original_message() {
+    let mut conn = setup_test_db();
+
+    let class_a = Class::new("foundation:ClassA");
+    class_a.assert(&mut conn, ClassType::OwlClass, "ClassA", "https://example.com/a.svg", None, "test").unwrap();
+
+    let class_b = Class::new("foundation:ClassB");
+    class_b.assert(&mut conn, ClassType::OwlClass, "ClassB", "https://example.com/b.svg", None, "test").unwrap();
+
+    let prop = Property::new("foundation:propForA");
+    prop.assert(&mut conn, PropertyType::DatatypeProperty, "prop for A", None,
+        &["foundation:ClassA"], Some("xsd:string"), None, "test").unwrap();
+
+    let ind = Individual::new("foundation:B_1");
+    ind.assert(&mut conn, "foundation:ClassB", "B 1", "https://example.com/b.svg", "test").unwrap();
+
+    let result = ind.add_property(
+        &mut conn,
+        "foundation:propForA",
+        vec![Object::Literal { value: "val".to_string(), datatype: Some("xsd:string".to_string()), language: None }],
+        "test",
+    );
+
+    assert!(result.is_err(), "Property with wrong domain must be rejected");
+    if let Err(OwlError::InvalidOperation(msg)) = &result {
+        assert!(msg.contains("is not defined for"), "Error must contain 'is not defined for', got: {}", msg);
+        assert!(!msg.contains("Property not found"), "Must NOT use the NotFound message for an existing property");
+    } else {
+        panic!("Expected InvalidOperation error, got: {:?}", result);
+    }
+}
+
 #[test]
 fn test_append_property_respects_max_cardinality() {
     use crate::owl::cardinality::{set_class_cardinality_restrictions, PropertyRestriction};

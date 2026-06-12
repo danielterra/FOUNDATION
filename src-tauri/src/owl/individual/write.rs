@@ -1,5 +1,6 @@
 use super::*;
 use super::timestamps::touch;
+use crate::owl::Property;
 
 /// Generic: returns true if `property_iri` has a triple with `metadata_predicate`.
 /// Used by write hooks to decide whether to trigger recalculation.
@@ -136,6 +137,24 @@ impl Individual {
                 let individual_class = types_result.triples.first()
                     .and_then(|t| t.object.as_iri())
                     .unwrap_or("unknown");
+
+                let property_exists = Property::get(conn, property)
+                    .ok()
+                    .flatten()
+                    .is_some();
+
+                if !property_exists {
+                    let local_name = property.split(':').last().unwrap_or(property);
+                    let hint = if local_name == "comment" {
+                        " To annotate with a comment, use rdfs:comment (annotation property, domain rdfs:Resource).".to_string()
+                    } else {
+                        String::new()
+                    };
+                    return Err(OwlError::NotFound(
+                        format!("Property not found: {}.{}", property, hint)
+                    ));
+                }
+
                 let domains: Vec<String> = query::get_by_entity_predicate(conn, property, "rdfs:domain")
                     .map(|r| r.triples.iter().filter_map(|t| t.object.as_iri()).map(String::from).collect())
                     .unwrap_or_default();
@@ -250,6 +269,24 @@ impl Individual {
                 let individual_class = types_result.triples.first()
                     .and_then(|t| t.object.as_iri())
                     .unwrap_or("unknown");
+
+                let property_exists = Property::get(conn, property)
+                    .ok()
+                    .flatten()
+                    .is_some();
+
+                if !property_exists {
+                    let local_name = property.split(':').last().unwrap_or(property);
+                    let hint = if local_name == "comment" {
+                        " To annotate with a comment, use rdfs:comment (annotation property, domain rdfs:Resource).".to_string()
+                    } else {
+                        String::new()
+                    };
+                    return Err(OwlError::NotFound(
+                        format!("Property not found: {}.{}", property, hint)
+                    ));
+                }
+
                 let domains: Vec<String> = query::get_by_entity_predicate(conn, property, "rdfs:domain")
                     .map(|r| r.triples.iter().filter_map(|t| t.object.as_iri()).map(String::from).collect())
                     .unwrap_or_default();
