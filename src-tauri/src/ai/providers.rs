@@ -7,6 +7,31 @@ const WEB_FETCH_MAX_CONTENT_TOKENS: u32 = 100_000;
 const CLAUDE_CACHE_READ_PRICE_PER_MILLION_TOKENS: f64 = 2.70;
 const DEFAULT_MAX_TOKENS: u32 = 4096;
 
+/// Decodes as many complete UTF-8 characters as possible from `new_bytes`,
+/// prepending any leftover bytes from a previous call stored in `carry`.
+/// Bytes that do not yet form a complete character are left in `carry` for
+/// the next call.  After the stream ends the caller should check whether
+/// `carry` is non-empty and log a warning — a non-empty carry at EOF means
+/// the stream was truncated mid-codepoint.
+fn decode_utf8_incremental(carry: &mut Vec<u8>, new_bytes: &[u8]) -> String {
+    carry.extend_from_slice(new_bytes);
+    match std::str::from_utf8(carry) {
+        Ok(s) => {
+            let result = s.to_owned();
+            carry.clear();
+            result
+        }
+        Err(e) => {
+            let valid_up_to = e.valid_up_to();
+            let result = std::str::from_utf8(&carry[..valid_up_to])
+                .expect("valid_up_to guarantees valid UTF-8")
+                .to_owned();
+            carry.drain(..valid_up_to);
+            result
+        }
+    }
+}
+
 pub struct ClaudeProvider {
     api_key: String,
     client: reqwest::Client,
@@ -307,14 +332,14 @@ impl ClaudeProvider {
         let mut stop_reason: Option<String> = None;
         let mut usage: Option<UsageInfo> = None;
         let mut buf = String::new();
+        let mut utf8_carry: Vec<u8> = Vec::new();
         let conv_id = conversation_id.to_string();
 
         let mut stream = http_response.bytes_stream();
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.map_err(|e| format!("Stream read error: {}", e))?;
-            let text = std::str::from_utf8(&chunk)
-                .map_err(|e| format!("Stream UTF-8 error: {}", e))?;
-            buf.push_str(text);
+            let text = decode_utf8_incremental(&mut utf8_carry, &chunk);
+            buf.push_str(&text);
 
             // Process all complete lines in the buffer
             loop {
@@ -416,6 +441,13 @@ impl ClaudeProvider {
                     }
                 }
             }
+        }
+
+        if !utf8_carry.is_empty() {
+            crate::commands::log_backend("warn", &format!(
+                "[CLAUDE API] Stream ended with {} undecodable trailing byte(s): {:?}",
+                utf8_carry.len(), utf8_carry
+            ));
         }
 
         crate::commands::log_backend("info", &format!(
@@ -900,14 +932,14 @@ impl OpenRouterProvider {
         let mut usage: Option<UsageInfo> = None;
         let mut actual_model: Option<String> = None;
         let mut buf = String::new();
+        let mut utf8_carry: Vec<u8> = Vec::new();
         let conv_id = conversation_id.to_string();
 
         let mut stream = http_response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let bytes = chunk.map_err(|e| format!("Stream read error: {}", e))?;
-            let text = std::str::from_utf8(&bytes)
-                .map_err(|e| format!("Stream UTF-8 error: {}", e))?;
-            buf.push_str(text);
+            let text = decode_utf8_incremental(&mut utf8_carry, &bytes);
+            buf.push_str(&text);
 
             loop {
                 match buf.find('\n') {
@@ -998,6 +1030,13 @@ impl OpenRouterProvider {
                     }
                 }
             }
+        }
+
+        if !utf8_carry.is_empty() {
+            crate::commands::log_backend("warn", &format!(
+                "[OPENROUTER API] Stream ended with {} undecodable trailing byte(s): {:?}",
+                utf8_carry.len(), utf8_carry
+            ));
         }
 
         crate::commands::log_backend("info", &format!(
@@ -1152,6 +1191,64 @@ impl OpenRouterProvider {
             usage,
             model_used,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_utf8_incremental;
+
+    #[test]
+    fn incremental_decoder_handles_split_multibyte_codepoint() {
+        // "ã" is U+00E3, encoded as [0xC3, 0xA3] in UTF-8.
+        // Simulate the two-byte sequence arriving in two separate chunks.
+        let mut carry: Vec<u8> = Vec::new();
+
+        // First chunk: only the leading byte — must not produce output or panic.
+        let first = decode_utf8_incremental(&mut carry, &[0xC3]);
+        assert!(first.is_empty(), "no output expected when codepoint is incomplete");
+        assert_eq!(carry, vec![0xC3], "leading byte must be held in carry");
+
+        // Second chunk: the trailing byte — now the full codepoint can be decoded.
+        let second = decode_utf8_incremental(&mut carry, &[0xA3]);
+        assert_eq!(second, "ã", "complete codepoint must be decoded after second chunk");
+        assert!(carry.is_empty(), "carry must be empty after codepoint is complete");
+    }
+
+    #[test]
+    fn incremental_decoder_handles_ascii_without_carry() {
+        let mut carry: Vec<u8> = Vec::new();
+        let out = decode_utf8_incremental(&mut carry, b"hello");
+        assert_eq!(out, "hello");
+        assert!(carry.is_empty());
+    }
+
+    #[test]
+    fn incremental_decoder_handles_three_byte_codepoint_split_across_three_chunks() {
+        // "→" is U+2192, encoded as [0xE2, 0x86, 0x92].
+        let mut carry: Vec<u8> = Vec::new();
+
+        let a = decode_utf8_incremental(&mut carry, &[0xE2]);
+        assert!(a.is_empty());
+        assert_eq!(carry.len(), 1);
+
+        let b = decode_utf8_incremental(&mut carry, &[0x86]);
+        assert!(b.is_empty());
+        assert_eq!(carry.len(), 2);
+
+        let c = decode_utf8_incremental(&mut carry, &[0x92]);
+        assert_eq!(c, "→");
+        assert!(carry.is_empty());
+    }
+
+    #[test]
+    fn incremental_decoder_emits_complete_chars_before_partial_tail() {
+        // "ola" (ASCII) + leading byte of "ã" all arrive in one chunk.
+        // Expected: "ola" comes out, [0xC3] stays in carry.
+        let mut carry: Vec<u8> = Vec::new();
+        let out = decode_utf8_incremental(&mut carry, b"ola\xC3");
+        assert_eq!(out, "ola");
+        assert_eq!(carry, vec![0xC3]);
     }
 }
 
