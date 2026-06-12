@@ -67,50 +67,38 @@
 	}
 
 	function subconsciousSummary(entities) {
-		const relevant = entities.filter(e => !e.is_open_loop);
 		const openLoops = entities.filter(e => e.is_open_loop);
-		const groups = {};
-		for (const e of relevant) {
-			groups[e.type_label] = (groups[e.type_label] || 0) + 1;
-		}
-		const parts = Object.entries(groups).map(([type, count]) => `${count} ${type}`);
-		if (openLoops.length > 0) {
-			parts.push(`${openLoops.length} open loop${openLoops.length !== 1 ? 's' : ''}`);
-		}
-		return parts.join(', ');
+		const nonLoops = entities.filter(e => !e.is_open_loop);
+		const totalProps = entities.reduce((sum, e) => sum + (e.property_hits?.length ?? 0), 0);
+		const parts = [];
+		if (totalProps > 0) parts.push(`${totalProps} ${totalProps === 1 ? 'propriedade' : 'propriedades'}`);
+		if (nonLoops.length > 0) parts.push(`${nonLoops.length} ${nonLoops.length === 1 ? 'entidade' : 'entidades'}`);
+		if (openLoops.length > 0) parts.push(`${openLoops.length} open loop${openLoops.length !== 1 ? 's' : ''}`);
+		return parts.join(' · ');
 	}
 
-	function estimateTokens(text) {
-		return Math.ceil(text.length / 4);
-	}
-
-	function formatSubconsciousContext(entities) {
-		const relevant = entities.filter(e => !e.is_open_loop);
-		const openLoops = entities.filter(e => e.is_open_loop);
-		const lines = [];
-		if (relevant.length > 0) {
-			lines.push('## Memory Context');
-			lines.push('Relevant entities from your knowledge graph (ranked by relevance):');
-			relevant.forEach((e, i) => {
-				lines.push(`${i + 1}. "${e.label}" [${e.type_label}] — ${e.iri}`);
-				(e.properties ?? []).forEach(([key, val]) => lines.push(`   - ${key}: ${val}`));
-			});
-		}
-		if (openLoops.length > 0) {
-			if (lines.length > 0) lines.push('');
-			lines.push('## Open Loops');
-			lines.push('Pending problems and tasks requiring your attention:');
-			openLoops.forEach(e => {
-				lines.push(`- [${e.type_label}] "${e.label}" — ${e.iri}`);
-				(e.properties ?? []).forEach(([key, val]) => lines.push(`   - ${key}: ${val}`));
-			});
-		}
-		return lines.join('\n');
+	function estimateSubconsciousTokens(entities) {
+		const totalChars = entities.reduce((sum, e) => {
+			const propsChars = (e.property_hits ?? []).reduce((s, h) => s + h.prop_label.length + h.value.length, 0);
+			return sum + e.label.length + e.type_label.length + e.iri.length + propsChars;
+		}, 0);
+		return Math.ceil(totalChars / 4);
 	}
 
 	function openSubconsciousModal(entities) {
-		const ctx = formatSubconsciousContext(entities);
-		modal.set({ title: 'Contexto de Memória', html: marked.parse(ctx) });
+		modal.set({
+			title: 'Contexto de Memória',
+			component: {
+				type: 'subconscious',
+				props: {
+					entities,
+					onEntityClick: (iri) => {
+						modal.set(null);
+						onEntityClick?.(iri);
+					},
+				},
+			},
+		});
 	}
 
 	function openReasoningModal() {
@@ -182,11 +170,15 @@
 <div class="message {unit.type === 'user' ? 'user' : 'ai'}">
 	<div class="message-content">
 		{#if unit.type === 'user' && unit.subconscious_entities?.length > 0}
-			{@const ctx = formatSubconsciousContext(unit.subconscious_entities)}
-			<Button variant="ghost" class="subconscious-chip-summary" onclick={() => openSubconsciousModal(unit.subconscious_entities)}>
+			<Button
+				variant="ghost"
+				class="subconscious-chip-summary"
+				onclick={() => openSubconsciousModal(unit.subconscious_entities)}
+				aria-label={`Memória: ${subconsciousSummary(unit.subconscious_entities)}`}
+			>
 				<span class="material-symbols-outlined subconscious-icon">neurology</span>
 				<span class="subconscious-summary-text">{subconsciousSummary(unit.subconscious_entities)}</span>
-				<span class="subconscious-tokens">~{estimateTokens(ctx).toLocaleString()} tokens</span>
+				<span class="subconscious-tokens">~{estimateSubconsciousTokens(unit.subconscious_entities).toLocaleString()} tokens</span>
 			</Button>
 		{/if}
 		<div class="message-bubble" class:streaming={isStreaming}>

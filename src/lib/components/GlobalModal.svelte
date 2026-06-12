@@ -1,6 +1,7 @@
 <script lang="ts">
   import { modal } from '$lib/stores/modal';
   import * as Dialog from '$lib/components/ui/dialog';
+  import SubconsciousMemoryList from '$lib/components/SubconsciousMemoryList.svelte';
 
   function close() {
     modal.set(null);
@@ -32,10 +33,14 @@
         <Dialog.Title><span class="modal-title">{m.title}</span></Dialog.Title>
       </Dialog.Header>
       <div class="modal-body">
-        {#if m.html}
+        {#if m.component?.type === 'subconscious'}
+          <SubconsciousMemoryList
+            entities={m.component.props.entities}
+            onEntityClick={m.component.props.onEntityClick}
+          />
+        {:else if m.html}
           <div class="modal-markdown markdown-content">{@html m.html}</div>
-        {/if}
-        {#if m.sections?.length}
+        {:else if m.sections?.length}
           <div class="modal-sections">
             {#each m.sections as section}
               <div class="modal-section">

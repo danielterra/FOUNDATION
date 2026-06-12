@@ -182,3 +182,13 @@ pub fn find_entities_with_predicate(
         .filter(|s| seen.insert(s.clone()))
         .collect())
 }
+
+/// Returns all current triples for an entity (state from `triples_current`).
+/// Each (subject, predicate) group reflects the latest TX only — no historical rows.
+pub fn get_all_current_triples(
+    conn: &Connection,
+    entity: &str,
+) -> Result<Vec<crate::eavto::Triple>> {
+    let result = query::get_by_entity(conn, entity)?;
+    Ok(result.triples)
+}
