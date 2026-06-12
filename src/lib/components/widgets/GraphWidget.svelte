@@ -4,7 +4,6 @@
   import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import GraphVisualization from '../graph/GraphVisualization.svelte';
   import WidgetContainer from './WidgetContainer.svelte';
-  import { Button } from '$lib/components/ui/button';
 
   let { widgetId, entityId = '', conversationIri = null, windowState = 'normal', onWindowStateChange } = $props();
 
@@ -34,20 +33,6 @@
       await invoke('widget_blackboard__remove_widget', { widgetId });
     } catch (err) {
       console.error('Failed to remove widget:', err);
-    }
-  }
-
-  async function openInspector() {
-    try {
-      await invoke('widget_blackboard__add_widget', {
-        widgetType: 'inspector',
-        entityId,
-        position: null,
-        size: null,
-        conversationId: conversationIri,
-      });
-    } catch (err) {
-      console.error('Failed to open inspector:', err);
     }
   }
 
@@ -124,10 +109,9 @@
   {windowState}
   {onWindowStateChange}
   onClose={closeWidget}
+  {entityId}
+  {conversationIri}
 >
-  {#snippet headerActions()}
-    <Button variant="ghost" size="icon" onclick={openInspector} title="Open inspector"><span class="material-symbols-outlined">info</span></Button>
-  {/snippet}
 
   <div class="widget-content">
     {#if graphData}

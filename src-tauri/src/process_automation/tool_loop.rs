@@ -160,12 +160,36 @@ pub async fn run_tool_loop(
         }
         messages.push(assistant_msg);
 
-        if stop_reason != "tool_use" && stop_reason != "tool_calls" {
-            crate::commands::log_backend("info", &format!(
-                "[tool_loop] iter={} stop_reason={} — loop ended",
-                iteration, stop_reason
-            ));
-            break;
+        let wants_tools = stop_reason == "tool_use" || stop_reason == "tool_calls";
+
+        // A blank or unrecognised stop_reason is an anomalous provider response.
+        // If the model accumulated tool calls regardless (inferred by providers.rs),
+        // continue executing them. Otherwise surface the anomaly as an error so the
+        // task_manager records a real failure instead of masking it as "Completed.".
+        if !wants_tools {
+            if stop_reason.is_empty() && !response.tool_calls.is_empty() {
+                crate::commands::log_backend("warn", &format!(
+                    "[tool_loop] iter={} blank stop_reason but {} tool call(s) present — continuing",
+                    iteration, response.tool_calls.len()
+                ));
+            } else if stop_reason.is_empty() {
+                crate::commands::log_backend("error", &format!(
+                    "[tool_loop] iter={} blank stop_reason with no tool calls — aborting loop",
+                    iteration
+                ));
+                return Err(format!(
+                    "Provider returned an empty stop_reason at iteration {} with no tool calls. \
+                     This indicates a provider-side issue (context limit, partial response, or \
+                     model interruption). The task was not completed.",
+                    iteration
+                ));
+            } else {
+                crate::commands::log_backend("info", &format!(
+                    "[tool_loop] iter={} stop_reason={} — loop ended",
+                    iteration, stop_reason
+                ));
+                break;
+            }
         }
 
         let mut result_blocks: Vec<ContentBlock> = Vec::new();

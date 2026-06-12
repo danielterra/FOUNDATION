@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import { convertFileSrc } from '@tauri-apps/api/core';
+  import { convertFileSrc, invoke } from '@tauri-apps/api/core';
   import { Button } from '$lib/components/ui/button';
 
   let {
@@ -11,6 +11,9 @@
     onWindowStateChange,
     onClose,
     canExpand = true,
+    entityId,
+    canOpenInspector = true,
+    conversationIri = null,
     headerActions,
     headerExtra,
     headerSubtitle,
@@ -23,11 +26,25 @@
     onWindowStateChange?: (state: string) => void
     onClose?: () => void
     canExpand?: boolean
+    entityId?: string
+    canOpenInspector?: boolean
+    conversationIri?: string | null
     headerActions?: Snippet
     headerExtra?: Snippet
     headerSubtitle?: Snippet
     children?: Snippet
   } = $props();
+
+  function openInspector() {
+    if (!entityId) return;
+    invoke('widget_blackboard__add_widget', {
+      widgetType: 'inspector',
+      entityId,
+      position: null,
+      size: null,
+      conversationId: conversationIri ?? null,
+    }).catch(() => {});
+  }
 
   function toggleMinimize() {
     onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized');
@@ -70,6 +87,13 @@
         </div>
       {/if}
       <div class="header-controls">
+        {#if entityId && canOpenInspector}
+          <Button variant="ghost" size="icon"
+            aria-label="Abrir no inspetor"
+            title="Abrir no inspetor"
+            onclick={openInspector}
+          ><span class="material-symbols-outlined">info</span></Button>
+        {/if}
         <Button variant="ghost" size="icon"
           title={windowState === 'minimized' ? 'Restore' : 'Minimize'}
           onclick={toggleMinimize}

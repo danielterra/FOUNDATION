@@ -252,17 +252,6 @@
     }
   }
 
-  async function openInspector() {
-    await invoke('widget_blackboard__add_widget', {
-      widgetType: 'inspector',
-      entityId,
-      content: null,
-      position: null,
-      size: null,
-      conversationId: conversationIri,
-    }).catch(() => {})
-  }
-
   async function closeWidget() {
     await invoke('widget_blackboard__remove_widget', { widgetId }).catch(() => {})
   }
@@ -404,6 +393,8 @@
   {windowState}
   {onWindowStateChange}
   onClose={closeWidget}
+  {entityId}
+  {conversationIri}
 >
   {#snippet headerExtra()}
     {#if activeStepLabel}
@@ -414,7 +405,6 @@
         <span class="material-symbols-outlined">{running ? 'progress_activity' : 'play_arrow'}</span>
       </Button>
     {/if}
-    <Button variant="ghost" size="icon-sm" title="Abrir inspector" onclick={openInspector}><span class="material-symbols-outlined">info</span></Button>
   {/snippet}
 
   <div class="widget-content">

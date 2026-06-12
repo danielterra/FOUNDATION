@@ -110,17 +110,6 @@
     }
   }
 
-  async function openInspector() {
-    await invoke('widget_blackboard__add_widget', {
-      widgetType: 'inspector',
-      entityId,
-      content: null,
-      position: null,
-      size: null,
-      conversationId: conversationIri,
-    }).catch(() => {})
-  }
-
   async function openControlInstanceInspector() {
     if (!detail?.control_instance_iri) return
     await invoke('widget_blackboard__add_widget', {
@@ -190,6 +179,8 @@
   {windowState}
   {onWindowStateChange}
   onClose={closeWidget}
+  {entityId}
+  {conversationIri}
 >
   {#snippet headerExtra()}
     {#if detail}
@@ -207,7 +198,6 @@
         <span class="status-label">{detail.status_label}</span>
       </span>
     {/if}
-    <Button variant="ghost" size="icon" aria-label="Abrir inspetor da execução" onclick={openInspector} title="Open inspector"><span class="material-symbols-outlined">info</span></Button>
   {/snippet}
 
   <div class="body">

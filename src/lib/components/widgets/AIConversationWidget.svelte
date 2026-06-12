@@ -5,7 +5,7 @@
   import WidgetContainer from './WidgetContainer.svelte';
   import ChatMessageBubble from '../ChatMessageBubble.svelte';
 
-  let { widgetId, entityId = '', windowState = 'normal', onWindowStateChange } = $props();
+  let { widgetId, entityId = '', conversationIri = null, windowState = 'normal', onWindowStateChange } = $props();
 
   let messages = $state([]);
   let label = $state('');
@@ -82,6 +82,8 @@
   {windowState}
   {onWindowStateChange}
   onClose={closeWidget}
+  {entityId}
+  {conversationIri}
 >
   <div class="messages-scroll" bind:this={messagesEl}>
     {#if loading}

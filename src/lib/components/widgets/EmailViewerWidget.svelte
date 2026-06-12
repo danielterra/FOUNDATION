@@ -3,7 +3,6 @@
   import { invoke } from '@tauri-apps/api/core';
   import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import WidgetContainer from './WidgetContainer.svelte';
-  import { Button } from '$lib/components/ui/button';
   import SafeHtmlFrame from './inspector/SafeHtmlFrame.svelte';
 
   let {
@@ -73,16 +72,6 @@
     }
   }
 
-  async function openInspector() {
-    await invoke('widget_blackboard__add_widget', {
-      widgetType: 'inspector',
-      entityId,
-      position: null,
-      size: null,
-      conversationId: conversationIri,
-    }).catch(err => console.error('Failed to open inspector:', err));
-  }
-
   async function closeWidget() {
     try {
       await invoke('widget_blackboard__remove_widget', { widgetId });
@@ -119,10 +108,9 @@
     {windowState}
     {onWindowStateChange}
     onClose={closeWidget}
+    {entityId}
+    {conversationIri}
   >
-    {#snippet headerActions()}
-      <Button variant="ghost" size="icon" title="Abrir no Inspector" onclick={openInspector}><span class="material-symbols-outlined">open_in_new</span></Button>
-    {/snippet}
     {#snippet children()}
       <div class="email-body">
         {#if loading}

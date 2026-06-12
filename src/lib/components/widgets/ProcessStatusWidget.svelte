@@ -40,16 +40,6 @@
     }
   }
 
-  async function openInspector() {
-    await invoke('widget_blackboard__add_widget', {
-      widgetType: 'inspector',
-      entityId,
-      position: null,
-      size: null,
-      conversationId: null,
-    }).catch(() => {});
-  }
-
   async function closeWidget() {
     try {
       await invoke('widget_blackboard__remove_widget', { widgetId });
@@ -77,12 +67,12 @@
   {windowState}
   {onWindowStateChange}
   onClose={closeWidget}
+  {entityId}
 >
   {#snippet headerActions()}
     <Button variant="ghost" size="icon" class="run-btn-process" onclick={executeProcess} disabled={running} title="Run process">
       <span class="material-symbols-outlined">{running ? 'progress_activity' : 'play_arrow'}</span>
     </Button>
-    <Button variant="ghost" size="icon" onclick={openInspector} title="Open inspector"><span class="material-symbols-outlined">info</span></Button>
   {/snippet}
 
   <div class="widget-content">

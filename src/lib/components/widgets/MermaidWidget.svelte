@@ -200,16 +200,6 @@
     editMode = false;
   }
 
-  async function openInspector() {
-    await invoke('widget_blackboard__add_widget', {
-      widgetType: 'inspector',
-      entityId,
-      position: null,
-      size: null,
-      conversationId: conversationIri,
-    }).catch(() => {});
-  }
-
   async function closeWidget() {
     try {
       await invoke('widget_blackboard__remove_widget', { widgetId });
@@ -265,7 +255,6 @@
 {#snippet normalActions()}
   <Button variant="ghost" size="icon" onclick={resetView} title="Reset view"><span class="material-symbols-outlined">center_focus_strong</span></Button>
   <Button variant="ghost" size="icon" onclick={() => { draftContent = content; editMode = true; }} title="Edit diagram"><span class="material-symbols-outlined">edit</span></Button>
-  <Button variant="ghost" size="icon" onclick={openInspector} title="Open inspector"><span class="material-symbols-outlined">info</span></Button>
 {/snippet}
 
 <WidgetContainer
@@ -274,8 +263,9 @@
   {windowState}
   {onWindowStateChange}
   onClose={closeWidget}
-  overrideActions={editMode ? editActions : undefined}
-  headerActions={editMode ? undefined : normalActions}
+  {entityId}
+  {conversationIri}
+  headerActions={editMode ? editActions : normalActions}
 >
   {#if entityLoading}
     <div class="loading">

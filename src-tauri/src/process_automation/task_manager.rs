@@ -332,15 +332,30 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
     let last_text = output.last_text.clone();
     let delegated_conv_iri = executor
         .write(move |conn| -> Result<String> {
-            // Guarantee result is always set so the task is never re-run on the
-            // next startup (the AI should have called replace_property_values, but
-            // if it didn't we write the last message as a fallback).
+            // The agent must call replace_property_values to record its result.
+            // If it did not, we still write a result so the task is not retried on
+            // the next startup — but we surface the exact failure cause rather than
+            // masking it with a generic "Completed." that hides the real outcome.
             if get_literal_property(conn, &task_iri_done, "foundation:result")
                 .unwrap_or(None)
                 .is_none()
             {
-                let fallback = if last_text.is_empty() { "Completed." } else { &last_text };
-                set_result(conn, &task_iri_done, fallback)?;
+                let fallback = if last_text.is_empty() {
+                    "Agent completed without recording a result. \
+                     The agent did not call replace_property_values as required. \
+                     Review the task conversation for details."
+                        .to_string()
+                } else {
+                    format!(
+                        "Agent ended without calling replace_property_values. Last message: {}",
+                        last_text
+                    )
+                };
+                crate::commands::log_backend("warn", &format!(
+                    "[task_manager] task {} completed without agent-set result — writing diagnostic fallback",
+                    task_iri_done
+                ));
+                set_result(conn, &task_iri_done, &fallback)?;
             }
             set_status(conn, &task_iri_done, "foundation:Completed")?;
             super::task_blocker::check_and_unblock(conn, &task_iri_done);

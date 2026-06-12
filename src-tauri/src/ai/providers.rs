@@ -978,6 +978,12 @@ impl OpenRouterProvider {
                         };
 
                         let choice = &choices[0];
+                        // `finish_reason` arrives as a JSON string on the final chunk and as
+                        // JSON null on every preceding chunk. `as_str()` returns None for
+                        // Value::Null, so we only capture real string values here.
+                        // Additionally, some providers (e.g. context-limited runs on
+                        // OpenRouter) send `finish_reason: null` even on the last chunk; we
+                        // infer "tool_calls" from accumulated tool_states later in that case.
                         if let Some(fr) = choice["finish_reason"].as_str() {
                             if !fr.is_empty() && fr != "null" {
                                 stop_reason = Some(fr.to_string());
@@ -1039,6 +1045,35 @@ impl OpenRouterProvider {
             ));
         }
 
+        let tool_calls: Vec<crate::ai::ToolCall> = tool_states.into_iter()
+            .filter(|s| !s.name.is_empty())
+            .map(|s| {
+                let input = serde_json::from_str(&s.arguments)
+                    .unwrap_or(serde_json::Value::Object(Default::default()));
+                crate::ai::ToolCall { id: s.id, name: s.name, input }
+            })
+            .collect();
+
+        // When the provider omits finish_reason (sends null throughout), infer the
+        // stop reason from what was actually received so the tool_loop can proceed.
+        if stop_reason.is_none() {
+            if !tool_calls.is_empty() {
+                stop_reason = Some("tool_calls".to_string());
+                crate::commands::log_backend("warn",
+                    "[OPENROUTER API] finish_reason missing — inferred 'tool_calls' from accumulated tool call data"
+                );
+            } else if !text_content.is_empty() {
+                stop_reason = Some("stop".to_string());
+                crate::commands::log_backend("warn",
+                    "[OPENROUTER API] finish_reason missing — inferred 'stop' from non-empty text content"
+                );
+            } else {
+                crate::commands::log_backend("warn",
+                    "[OPENROUTER API] finish_reason missing and no tool calls or text content — loop will treat as anomalous stop"
+                );
+            }
+        }
+
         crate::commands::log_backend("info", &format!(
             "[OPENROUTER API] Stream complete. model={}, stop_reason={:?}",
             actual_model.as_deref().unwrap_or("unknown"), stop_reason
@@ -1048,15 +1083,6 @@ impl OpenRouterProvider {
                 "[OPENROUTER API] Tokens — input: {}, output: {}", u.input_tokens, u.output_tokens
             ));
         }
-
-        let tool_calls: Vec<crate::ai::ToolCall> = tool_states.into_iter()
-            .filter(|s| !s.name.is_empty())
-            .map(|s| {
-                let input = serde_json::from_str(&s.arguments)
-                    .unwrap_or(serde_json::Value::Object(Default::default()));
-                crate::ai::ToolCall { id: s.id, name: s.name, input }
-            })
-            .collect();
 
         Ok(crate::ai::GenerateResponse {
             content: text_content,
