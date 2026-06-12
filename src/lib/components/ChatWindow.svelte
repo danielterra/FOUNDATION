@@ -1,6 +1,6 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import { createEntitySubscription } from '$lib/realtime/subscriptions';
 	import { openEntity } from '$lib/blackboard';
 	import { marked } from 'marked';
@@ -39,7 +39,6 @@
 		!messages[messages.length - 1]?.answer
 	);
 	let chatContainer = $state(null);
-	let contentEl = $state(null);
 	let autoScroll = true;
 	let userLocation = $state(null);
 	let isInitialized = $state(false);
@@ -94,7 +93,7 @@
 		flushTimer = null;
 		if (reasoningBuf) { streamingReasoning += reasoningBuf; reasoningBuf = ''; }
 		if (speakBuf) { streamingSpeak += speakBuf; speakBuf = ''; }
-		scrollToBottom();
+		scrollToBottom(false);
 	}
 
 	function clearStreaming() {
@@ -217,7 +216,7 @@
 					...messages.map(m => m.iri).filter(Boolean)
 				]);
 			}
-			scrollToBottom();
+			scrollToBottom(false);
 			await loadConversations();
 			return;
 		}
@@ -540,9 +539,6 @@
 			conversationSub.replayMissed();
 			isLoadingMessages = false;
 			syncLoadingFromDb(result.is_processing, activeConversationIri);
-			await tick();
-			autoScroll = true;
-			if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
 		} catch (err) {
 			if (version !== loadMessagesVersion) return;
 			console.error('Failed to load messages:', err);
@@ -555,7 +551,6 @@
 		if (isLoadingMore || !hasMoreMessages) return;
 
 		isLoadingMore = true;
-		const previousScrollHeight = chatContainer?.scrollHeight || 0;
 
 		try {
 			messageLimit += MESSAGE_PAGE_SIZE;
@@ -566,13 +561,8 @@
 			});
 			hasMoreMessages = result.messages.length === messageLimit;
 			messages = result.messages;
-
-			setTimeout(() => {
-				if (chatContainer) {
-					const newScrollHeight = chatContainer.scrollHeight;
-					chatContainer.scrollTop = newScrollHeight - previousScrollHeight;
-				}
-			}, 0);
+			// column-reverse preserves the viewport position when content is added
+			// at the old-messages end (visually at the top), so no scrollTop adjustment needed.
 		} catch (err) {
 			console.error('Failed to load more messages:', err);
 		} finally {
@@ -582,25 +572,18 @@
 
 	function handleScroll() {
 		if (!chatContainer) return;
-		const distFromBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight;
-		autoScroll = distFromBottom < 50;
+		// In column-reverse layout the bottom anchor is scrollTop ≈ 0 (newest messages).
+		// scrollTop may be negative in some Chromium/WebView2 builds, so use Math.abs.
+		const absScrollTop = Math.abs(chatContainer.scrollTop);
+		autoScroll = absScrollTop < 50;
 		if (isLoadingMore) return;
-		if (chatContainer.scrollTop < SCROLL_LOAD_THRESHOLD) {
+		// The "load more" (older messages) trigger is at the visual top, which in
+		// column-reverse corresponds to the scrollable extent far from scrollTop=0.
+		const distFromOldEnd = chatContainer.scrollHeight - absScrollTop - chatContainer.clientHeight;
+		if (distFromOldEnd < SCROLL_LOAD_THRESHOLD) {
 			loadMoreMessages();
 		}
 	}
-
-	$effect(() => {
-		if (!contentEl || !chatContainer) return;
-		const obs = new ResizeObserver(() => {
-			if (autoScroll) {
-				chatContainer.scrollTop = chatContainer.scrollHeight;
-			}
-		});
-		obs.observe(contentEl);
-		obs.observe(chatContainer);
-		return () => obs.disconnect();
-	});
 
 	function startAIStatus(status, iri = activeConversationIri, phase = 'llm') {
 		const existing = convLoading[iri];
@@ -727,7 +710,7 @@
 				subconscious_entities: null,
 				timestamp: Date.now(),
 			}];
-			scrollToBottom();
+			scrollToBottom(true);
 		}
 
 		startAIStatus('Enviando...', convIri, 'prep');
@@ -751,13 +734,11 @@
 		});
 	}
 
-	function scrollToBottom() {
+	function scrollToBottom(force = false) {
+		if (!force && !autoScroll) return;
 		autoScroll = true;
-		if (chatContainer) {
-			requestAnimationFrame(() => {
-				chatContainer.scrollTop = chatContainer.scrollHeight;
-			});
-		}
+		// In column-reverse layout, scrollTop=0 is the bottom anchor (newest messages).
+		if (chatContainer) chatContainer.scrollTop = 0;
 	}
 
 	function cancelAI() {
@@ -1034,7 +1015,6 @@
 			{isLoadingMessages}
 			{isLoadingMore}
 			bind:chatContainer
-			bind:contentEl
 			onScroll={handleScroll}
 			onEdit={editMessage}
 			onRetry={retryMessage}

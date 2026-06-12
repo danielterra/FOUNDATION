@@ -7,54 +7,69 @@
 		isLoadingMessages,
 		isLoadingMore,
 		chatContainer = $bindable(null),
-		contentEl = $bindable(null),
 		onScroll,
 		onEdit,
 		onRetry,
 		onEntityClick = null
 	} = $props();
 
+	// In column-reverse layout the DOM order is inverted: newest message is first
+	// in the DOM (bottom of the visual list). We reverse here so the most-recent
+	// message stays anchored at the bottom without any imperative scrollTop math.
+	let reversedMessages = $derived([...messages].reverse());
+
+	// The logically-last message (newest) is messages[messages.length - 1].
+	// After reversing, it becomes reversedMessages[0] — but isLast still refers
+	// to the original last-message IRI so ChatMessageBubble keeps its semantics.
+	let lastMessageIri = $derived(messages.length > 0 ? messages[messages.length - 1].iri : null);
+
+	// Track the set of IRIs that were present on the previous render cycle so
+	// we can animate only genuinely new arrivals (not the bulk load on mount).
+	let knownIris = new Set();
+	function isNewMessage(iri) {
+		if (knownIris.has(iri)) return false;
+		knownIris.add(iri);
+		return true;
+	}
 </script>
 
 <div class="chat-messages" bind:this={chatContainer} onscroll={onScroll}>
-	<div bind:this={contentEl} class="chat-messages-inner">
+	{#if isLoadingMessages}
+		<div class="empty-state">
+			<span class="material-symbols-outlined spinning">progress_activity</span>
+			<p>Loading messages...</p>
+		</div>
+	{:else if messages.length === 0}
+		<div class="empty-state">
+			<span class="material-symbols-outlined">chat_bubble</span>
+			<p>Start a conversation with the AI assistant</p>
+		</div>
+	{:else}
 		{#if isLoadingMore}
 			<div class="loading-more">
 				<span class="material-symbols-outlined spinning">refresh</span>
 				<span>Loading more messages...</span>
 			</div>
 		{/if}
-		{#if isLoadingMessages}
-			<div class="empty-state">
-				<span class="material-symbols-outlined spinning">progress_activity</span>
-				<p>Loading messages...</p>
+		{#each reversedMessages as unit (unit.iri)}
+			<div class={isNewMessage(unit.iri) ? 'message-enter' : ''}>
+				<ChatMessageBubble
+					{unit}
+					isLast={unit.iri === lastMessageIri}
+					{conversationId}
+					isStreaming={unit.iri === '__streaming__'}
+					{onEdit}
+					{onRetry}
+					{onEntityClick}
+				/>
 			</div>
-		{:else if messages.length === 0}
-			<div class="empty-state">
-				<span class="material-symbols-outlined">chat_bubble</span>
-				<p>Start a conversation with the AI assistant</p>
-			</div>
-		{:else}
-			{#each messages as unit (unit.iri)}
-				<div class="message-enter">
-					<ChatMessageBubble
-						{unit}
-						isLast={unit.iri === messages[messages.length - 1].iri}
-						{conversationId}
-						isStreaming={unit.iri === '__streaming__'}
-						{onEdit}
-						{onRetry}
-						{onEntityClick}
-					/>
-				</div>
-			{/each}
-		{/if}
-	</div>
+		{/each}
+	{/if}
 </div>
 
 <style>
 	@keyframes message-enter {
-		from { opacity: 0; transform: translateY(-8px); }
+		from { opacity: 0; transform: translateY(8px); }
 		to   { opacity: 1; transform: translateY(0); }
 	}
 
@@ -64,14 +79,11 @@
 
 	.chat-messages {
 		flex: 1;
+		display: flex;
+		flex-direction: column-reverse;
 		overflow-y: auto;
 		overflow-x: hidden;
 		min-height: 0;
-	}
-
-	.chat-messages-inner {
-		display: flex;
-		flex-direction: column;
 		gap: 12px;
 		padding-bottom: 12px;
 	}
@@ -81,7 +93,7 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		height: 100%;
+		flex: 1;
 		color: var(--muted-foreground);
 		gap: 12px;
 	}
@@ -100,7 +112,7 @@
 		color: var(--muted-foreground);
 		font-size: 14px;
 		background: var(--muted);
-		margin-bottom: 12px;
+		margin-top: 12px;
 	}
 
 	.loading-more .material-symbols-outlined {
