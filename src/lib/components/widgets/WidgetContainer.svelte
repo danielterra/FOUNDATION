@@ -3,6 +3,8 @@
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
   import { Button } from '$lib/components/ui/button';
 
+  type CopyState = 'nominal' | 'copied' | 'error';
+
   let {
     icon = 'widgets',
     iconSrc = null,
@@ -13,6 +15,7 @@
     canExpand = true,
     entityId,
     canOpenInspector = true,
+    canCopyId = true,
     conversationIri = null,
     headerActions,
     headerExtra,
@@ -28,12 +31,16 @@
     canExpand?: boolean
     entityId?: string
     canOpenInspector?: boolean
+    canCopyId?: boolean
     conversationIri?: string | null
     headerActions?: Snippet
     headerExtra?: Snippet
     headerSubtitle?: Snippet
     children?: Snippet
   } = $props();
+
+  let copyState = $state<CopyState>('nominal');
+  let copyTimer: ReturnType<typeof setTimeout> | null = null;
 
   function openInspector() {
     if (!entityId) return;
@@ -44,6 +51,24 @@
       size: null,
       conversationId: conversationIri ?? null,
     }).catch(() => {});
+  }
+
+  async function copyEntityId() {
+    if (!entityId) return;
+    if (copyTimer !== null) {
+      clearTimeout(copyTimer);
+      copyTimer = null;
+    }
+    try {
+      await navigator.clipboard.writeText(entityId);
+      copyState = 'copied';
+    } catch {
+      copyState = 'error';
+    }
+    copyTimer = setTimeout(() => {
+      copyState = 'nominal';
+      copyTimer = null;
+    }, 1500);
   }
 
   function toggleMinimize() {
@@ -87,6 +112,15 @@
         </div>
       {/if}
       <div class="header-controls">
+        {#if entityId && canCopyId}
+          <Button variant="ghost" size="icon"
+            aria-label={copyState === 'copied' ? 'ID copiado!' : copyState === 'error' ? 'Não foi possível copiar o ID' : 'Copiar ID'}
+            title={copyState === 'copied' ? 'ID copiado!' : copyState === 'error' ? 'Não foi possível copiar o ID' : 'Copiar ID'}
+            class={copyState === 'copied' ? 'copy-id-btn copy-id-btn--success' : copyState === 'error' ? 'copy-id-btn copy-id-btn--error' : 'copy-id-btn'}
+            onclick={copyEntityId}
+          ><span class="material-symbols-outlined">{copyState === 'copied' ? 'done' : copyState === 'error' ? 'error' : 'content_copy'}</span></Button>
+          <span class="sr-only" aria-live="polite">{copyState === 'copied' ? 'ID copiado' : copyState === 'error' ? 'Não foi possível copiar o ID' : ''}</span>
+        {/if}
         {#if entityId && canOpenInspector}
           <Button variant="ghost" size="icon"
             aria-label="Abrir no inspetor"
@@ -167,6 +201,26 @@
     align-items: center;
     gap: 4px;
     flex-shrink: 0;
+  }
+
+  :global([data-slot="button"].copy-id-btn--success .material-symbols-outlined) {
+    color: var(--color-success);
+  }
+
+  :global([data-slot="button"].copy-id-btn--error .material-symbols-outlined) {
+    color: var(--color-error);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .header-icon-wrap {

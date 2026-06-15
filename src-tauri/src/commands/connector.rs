@@ -165,6 +165,16 @@ pub async fn connector__test_auth(
     connector_iri: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
+    test_connector_auth(&connector_iri, &executor).await
+}
+
+/// Shared implementation of connector auth testing, callable from other modules
+/// without going through the Tauri command boundary.
+pub async fn test_connector_auth(
+    connector_iri: &str,
+    executor: &DbExecutor,
+) -> Result<String, String> {
+    let connector_iri = connector_iri.to_string();
     let (base_url, auth_type, cred_iri) = executor.read(move |conn| {
         let base_url = crate::owl::get_literal_property(conn, &connector_iri, "foundation:baseUrl")
             .map_err(|e| e.to_string())?;

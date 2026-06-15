@@ -286,7 +286,7 @@ pub async fn execute_agent_task(
         persist_to: None,
     };
 
-    let output = run_tool_loop(&executor, &agent_config.provider, initial_messages, loop_config).await?;
+    let output = run_tool_loop(&executor, Some(app), &agent_config.provider, initial_messages, loop_config).await?;
 
     let deliverable_iri = output.completion.as_ref()
         .and_then(|c| {

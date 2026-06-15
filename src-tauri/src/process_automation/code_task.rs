@@ -2,7 +2,7 @@ use chrono::Utc;
 use tauri::{AppHandle, Manager};
 use tokio::runtime::Handle;
 
-use crate::ai::functions::{execute_tool, ToolCall};
+use crate::ai::functions::{execute_async_tool, execute_tool, is_async_tool, ToolCall};
 use crate::commands::log_backend;
 use crate::owl::{get_all_property_values, get_iri_property, get_literal_property, replace_all_property_iris, replace_all_property_literals, DbExecutor};
 
@@ -88,6 +88,36 @@ pub async fn execute_code_task(
     Ok(output)
 }
 
+fn dynamic_to_json_value(v: rhai::Dynamic) -> serde_json::Value {
+    if v.is_unit() {
+        return serde_json::Value::Null;
+    }
+    if let Some(b) = v.clone().try_cast::<bool>() {
+        return serde_json::Value::Bool(b);
+    }
+    if let Some(i) = v.clone().try_cast::<i64>() {
+        return serde_json::Value::Number(i.into());
+    }
+    if let Some(f) = v.clone().try_cast::<f64>() {
+        return serde_json::json!(f);
+    }
+    if let Some(s) = v.clone().try_cast::<String>() {
+        return serde_json::Value::String(s);
+    }
+    if let Some(arr) = v.clone().try_cast::<rhai::Array>() {
+        let items: Vec<serde_json::Value> = arr.into_iter().map(dynamic_to_json_value).collect();
+        return serde_json::Value::Array(items);
+    }
+    if let Some(map) = v.try_cast::<rhai::Map>() {
+        let obj: serde_json::Map<String, serde_json::Value> = map
+            .into_iter()
+            .map(|(k, val)| (k.to_string(), dynamic_to_json_value(val)))
+            .collect();
+        return serde_json::Value::Object(obj);
+    }
+    serde_json::Value::Null
+}
+
 fn json_value_to_dynamic(v: serde_json::Value) -> rhai::Dynamic {
     match v {
         serde_json::Value::Null => rhai::Dynamic::UNIT,
@@ -128,6 +158,10 @@ const DRY_RUN_WRITE_TOOLS: &[&str] = &[
     "define_class",
     "define_property",
     "run_automation",
+    "datasync_upsert_item",
+    "datasync_create_source",
+    "datasync_run",
+    "datasync_retry_transform",
 ];
 
 fn dry_run_mock(tool_name: &str) -> String {
@@ -141,12 +175,46 @@ fn dry_run_mock(tool_name: &str) -> String {
             "result": {"operationsCompleted": 1, "results": [{"iri": mock_iri}]},
             "error": null
         }).to_string()
+    } else if tool_name == "datasync_upsert_item" {
+        let mock_iri = format!("dryrun:mock_{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0));
+        serde_json::json!({
+            "success": true,
+            "result": {"entity_iri": mock_iri},
+            "error": null
+        }).to_string()
     } else {
         r#"{"success":true,"result":null,"error":null}"#.to_string()
     }
 }
 
-fn run_script(
+thread_local! {
+    /// Accumulates write-tool calls intercepted during a dry_run execution.
+    /// Cleared by `run_script_dry_run_collect` before each invocation.
+    static DRY_RUN_INTERCEPTED: std::cell::RefCell<Vec<serde_json::Value>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Run `script` with `dryRun=true` and return `(script_output, intercepted_write_calls)`.
+///
+/// The second element lists every write-tool call that was intercepted, each as
+/// `{"tool": "<name>", "params": <json>}`.  This lets callers surface what *would*
+/// have been persisted without actually persisting anything.
+pub(crate) fn run_script_dry_run_collect(
+    script: &str,
+    ctx: &ExecutionContext,
+    app: &AppHandle,
+    handle: &Handle,
+) -> Result<(String, Vec<serde_json::Value>)> {
+    DRY_RUN_INTERCEPTED.with(|cell| cell.borrow_mut().clear());
+    let output = run_script(script, ctx, app, handle)?;
+    let intercepted = DRY_RUN_INTERCEPTED.with(|cell| cell.borrow().clone());
+    Ok((output, intercepted))
+}
+
+pub(crate) fn run_script(
     script: &str,
     ctx: &ExecutionContext,
     app: &AppHandle,
@@ -165,6 +233,14 @@ fn run_script(
             let tool_name = tool_name.to_string();
             if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
                 log_backend("info", &format!("[code_task] dry_run: intercepted write tool '{}'", tool_name));
+                let params_val: serde_json::Value = serde_json::from_str(params_json.as_str())
+                    .unwrap_or(serde_json::Value::Null);
+                DRY_RUN_INTERCEPTED.with(|cell| {
+                    cell.borrow_mut().push(serde_json::json!({
+                        "tool": tool_name,
+                        "params": params_val,
+                    }));
+                });
                 return dry_run_mock(&tool_name);
             }
             let args: serde_json::Value = serde_json::from_str(&params_json)
@@ -172,19 +248,31 @@ fn run_script(
             let call = ToolCall { name: tool_name, arguments: args };
             let executor = app.state::<DbExecutor>();
             let app_inner = app.clone();
-            handle
-                .block_on(executor.write(move |conn| {
-                    let r = execute_tool(conn, &call, Some(&app_inner), None);
-                    serde_json::to_string(&serde_json::json!({
-                        "success": r.success,
-                        "result": r.result,
-                        "error": r.error,
-                    }))
-                    .map_err(|e| e.to_string())
+            if is_async_tool(&call.name) {
+                let r = handle.block_on(execute_async_tool(&call, Some(&app_inner)));
+                serde_json::to_string(&serde_json::json!({
+                    "success": r.success,
+                    "result": r.result,
+                    "error": r.error,
                 }))
                 .unwrap_or_else(|e| {
-                    serde_json::json!({"success": false, "result": null, "error": e}).to_string()
+                    serde_json::json!({"success": false, "result": null, "error": e.to_string()}).to_string()
                 })
+            } else {
+                handle
+                    .block_on(executor.write(move |conn| {
+                        let r = execute_tool(conn, &call, Some(&app_inner), None);
+                        serde_json::to_string(&serde_json::json!({
+                            "success": r.success,
+                            "result": r.result,
+                            "error": r.error,
+                        }))
+                        .map_err(|e| e.to_string())
+                    }))
+                    .unwrap_or_else(|e| {
+                        serde_json::json!({"success": false, "result": null, "error": e}).to_string()
+                    })
+            }
         }
     });
 
@@ -244,6 +332,12 @@ fn run_script(
             let tool_name = "replace_property_values".to_string();
             if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
                 log_backend("info", &format!("[code_task] dry_run: intercepted owl_set_property on {} {}", iri, prop_iri));
+                DRY_RUN_INTERCEPTED.with(|cell| {
+                    cell.borrow_mut().push(serde_json::json!({
+                        "tool": "owl_set_property",
+                        "params": {"iri": iri.as_str(), "property_iri": prop_iri.as_str(), "value": value.as_str()},
+                    }));
+                });
                 return dry_run_mock(&tool_name);
             }
             let args = serde_json::json!({
@@ -275,6 +369,12 @@ fn run_script(
             let tool_name = "assert_individual".to_string();
             if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
                 log_backend("info", &format!("[code_task] dry_run: intercepted owl_assert for class {}", class_iri));
+                DRY_RUN_INTERCEPTED.with(|cell| {
+                    cell.borrow_mut().push(serde_json::json!({
+                        "tool": "owl_assert",
+                        "params": {"class_iri": class_iri.as_str(), "label": label.as_str()},
+                    }));
+                });
                 return dry_run_mock(&tool_name);
             }
             let args = serde_json::json!({
@@ -303,6 +403,17 @@ fn run_script(
 
     engine.register_fn("owl_read_file", |path: rhai::ImmutableString| -> String {
         std::fs::read_to_string(path.as_str()).unwrap_or_default()
+    });
+
+    engine.register_fn("to_json", |value: rhai::Dynamic| -> String {
+        let json_val = dynamic_to_json_value(value);
+        serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string())
+    });
+
+    engine.register_fn("log", {
+        move |msg: rhai::ImmutableString| {
+            log_backend("info", &format!("[rhai] {}", msg.as_str()));
+        }
     });
 
     engine.register_fn("today", || -> String {
@@ -353,6 +464,11 @@ mod tests {
         engine.register_fn("ctx_get", move |key: rhai::ImmutableString| -> String {
             ctx.get(key.as_str()).cloned().unwrap_or_default()
         });
+        engine.register_fn("to_json", |value: rhai::Dynamic| -> String {
+            let json_val = dynamic_to_json_value(value);
+            serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string())
+        });
+        engine.register_fn("log", |_msg: rhai::ImmutableString| {});
         engine
     }
 
@@ -415,6 +531,11 @@ mod tests {
         engine.register_fn("ctx_get", move |key: rhai::ImmutableString| -> String {
             ctx.get(key.as_str()).cloned().unwrap_or_default()
         });
+        engine.register_fn("to_json", |value: rhai::Dynamic| -> String {
+            let json_val = dynamic_to_json_value(value);
+            serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string())
+        });
+        engine.register_fn("log", |_msg: rhai::ImmutableString| {});
         engine
     }
 
@@ -486,5 +607,38 @@ mod tests {
             .unwrap_err();
         let msg = extract_rhai_message(*err);
         assert!(!msg.is_empty(), "expected non-empty fallback message");
+    }
+
+    #[test]
+    fn to_json_serializes_map_to_json_string() {
+        let ctx = ExecutionContext::new();
+        let engine = test_engine(ctx);
+        let result: String = engine
+            .eval(r#"let m = #{"key": "value", "num": 42}; to_json(m)"#)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["key"].as_str().unwrap(), "value");
+        assert_eq!(parsed["num"].as_i64().unwrap(), 42);
+    }
+
+    #[test]
+    fn to_json_serializes_array() {
+        let ctx = ExecutionContext::new();
+        let engine = test_engine(ctx);
+        let result: String = engine
+            .eval(r#"to_json([1, "two", true])"#)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed[0].as_i64().unwrap(), 1);
+        assert_eq!(parsed[1].as_str().unwrap(), "two");
+        assert!(parsed[2].as_bool().unwrap());
+    }
+
+    #[test]
+    fn log_fn_does_not_panic() {
+        let ctx = ExecutionContext::new();
+        let engine = test_engine(ctx);
+        let result: rhai::Dynamic = engine.eval(r#"log("hello from test"); 42"#).unwrap();
+        assert_eq!(result.try_cast::<i64>().unwrap(), 42);
     }
 }

@@ -959,5 +959,241 @@ Example — find all active Tasks whose due date is before this Project's deadli
             ],
         },
 
+        // ----------------------------------------------------------------
+        // DATA SYNC TOOLS
+        // ----------------------------------------------------------------
+
+        ToolTemplate {
+            name: "datasync_create_source".to_string(),
+            array_mode: false,
+            description: "Create a new DataSource that pulls data from an external API via HTTP. Validates credentials before activating. Returns the DataSource IRI and its initial status (Active or Error).".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "connector_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the ExternalServiceConnector (must have baseUrl and hasCredential configured).".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "sync_namespace".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Namespace prefix for deterministic IRIs of synced entities (e.g. 'github', 'jira'). Must be a valid IRI prefix.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "sync_schedule".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Cron expression for the extract schedule (e.g. '0 */6 * * *' for every 6 hours).".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "label".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Human-readable label for this DataSource (e.g. 'GitHub Issues — acme/repo').".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "target_endpoint".to_string(),
+                    param_type: "string".to_string(),
+                    description: "URL path appended to the connector baseUrl for the extract request (e.g. '/repos/owner/repo/issues'). Can be a full URL.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "item_path".to_string(),
+                    param_type: "string".to_string(),
+                    description: "JSON pointer selecting the items array in the response (e.g. '/items'). Leave empty if the root is the array.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "transform_script".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Optional Rhai script for the transform automation's CodeTask. When provided, a transform Automation (StartEvent → CodeTask → EndEvent) is created and linked via foundation:transformAutomation on the DataSource. The script runs inside the Rhai engine with the mcp(), parse_json(), to_json(), log() and other helpers available.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "datasync_upsert_item".to_string(),
+            array_mode: false,
+            description: "Upsert a domain entity from a RawDataRecord. Without target_iri, builds a deterministic IRI (namespace:ClassName_externalId). With target_iri, adopts an existing individual in-place preserving its relationships. Also calls upsert_sync_record and marks the raw as Transformed. All writes go through DbExecutor::write so the notify path fires normally.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "data_source_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the DataSource this record belongs to.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "raw_record_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the RawDataRecord being transformed.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "class_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "OWL class IRI of the entity to create/update (e.g. 'foundation:AIModel').".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "external_id".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Stable external identifier (e.g. model slug 'openai/gpt-4o'). Used to compute the deterministic IRI and the SyncRecord key.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "properties".to_string(),
+                    param_type: "object".to_string(),
+                    description: "Key-value map of property IRIs → values to set on the entity. String values starting with a known vocabulary prefix (foundation:, anthropic:, owl:, rdf:, rdfs:, xsd:, qudt:) and containing no spaces are stored as IRI object references; all other strings are stored as xsd:string literals. Booleans and numbers are typed accordingly. The 'label' key is special: it sets rdfs:label.".to_string(),
+                    required: false,
+                    schema: Some(serde_json::json!({ "type": "object", "additionalProperties": true })),
+                },
+                Parameter {
+                    name: "target_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "When provided, adopt this existing individual instead of creating a new deterministic IRI. Useful for migrating legacy manually-created entities.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "datasync_run".to_string(),
+            array_mode: false,
+            description: "Trigger an immediate extract cycle for a DataSource (bypasses the cron schedule). Fetches the endpoint, stages RawDataRecords, and optionally triggers the transform automation.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "data_source_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the DataSource to run (e.g. 'foundation:DataSource_123').".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "run_transform".to_string(),
+                    param_type: "boolean".to_string(),
+                    description: "If true, also triggers the transform automation after staging. Default: false.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "datasync_retry_transform".to_string(),
+            array_mode: false,
+            description: "Retry transformation for RawDataRecords in Error status for a given DataSource. Resets them to Pending and triggers the transform automation.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "data_source_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the DataSource whose failed records should be retried.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "datasync_status".to_string(),
+            array_mode: false,
+            description: "Returns sync statistics for all DataSources or a specific one: count of RawDataRecords in Pending, Transformed, Error, Skipped states, plus DataSource connection status.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "data_source_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of a specific DataSource to inspect. Omit to get summary for all.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "datasync_list_raw".to_string(),
+            array_mode: false,
+            description: "Lists RawDataRecords for a DataSource, optionally filtered by transformStatus. Returns IRI, externalId, receivedAt, transformStatus, retryCount.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "data_source_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the DataSource to query.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "transform_status".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Filter by transformStatus IRI (e.g. 'foundation:Pending'). Omit for all records.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "limit".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Maximum number of records to return. Default: 50.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "datasync_inspect_raw".to_string(),
+            array_mode: false,
+            description: "Returns the full details of a single RawDataRecord including its rawPayload (or file path for large payloads), transformError, and linked domain entities.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "raw_record_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the RawDataRecord to inspect.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
+            name: "datasync_set_transform".to_string(),
+            array_mode: false,
+            description: "Set the Rhai transform script for a DataSource. Always validates the script first — invalid scripts are rejected and the existing script is preserved. With dry_run=true, executes the candidate script against real pending records with all writes mocked, returning what would have been created/updated without persisting anything. Without dry_run, persists foundation:script on the DataSource's transform CodeTask and triggers revalidation via the script_validator.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "data_source_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the DataSource whose transform script to set (e.g. 'foundation:DataSource_123').".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "script".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Rhai script to set. Must compile successfully before being accepted. The script has access to mcp(), parse_json(), to_json(), log(), ctx_get(), owl_get_property(), owl_get_one(), owl_set_property(), owl_assert(), today(), today_plus() helpers.".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "dry_run".to_string(),
+                    param_type: "boolean".to_string(),
+                    description: "When true, executes the candidate script against real pending records with writes mocked — returns script output and intercepted write calls. Nothing is persisted. Default: false.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
     ]
 }

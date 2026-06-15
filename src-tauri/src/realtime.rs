@@ -213,8 +213,21 @@ pub fn emit_entity_deleted(app: &AppHandle, entity_id: &str) {
 /// subscription registry filters — this fires for EVERY written subject so backend
 /// logic runs whether or not the UI is currently showing the entity. The frontend
 /// must never listen to this; it exists purely to drive server-side automation.
-pub fn emit_entity_changed_internal(app: &AppHandle, entity_id: &str) {
-    app.emit("entity-changed-internal", serde_json::json!({ "entityId": entity_id })).ok();
+///
+/// `written_predicates` carries the predicates written in the same transaction batch
+/// for this subject — already available in memory at the call site (no DB cost).
+/// Reactors MAY inspect `writtenPredicates` to skip an `executor.read()` when none
+/// of their relevant predicates were touched. Existing listeners that parse only
+/// `entityId` are unaffected: unknown JSON fields are ignored by `serde_json`.
+pub fn emit_entity_changed_internal(app: &AppHandle, entity_id: &str, written_predicates: &[String]) {
+    app.emit(
+        "entity-changed-internal",
+        serde_json::json!({
+            "entityId": entity_id,
+            "writtenPredicates": written_predicates,
+        }),
+    )
+    .ok();
 }
 
 /// Emit a pre-built event queued during a batch, honoring the registry for entity-*

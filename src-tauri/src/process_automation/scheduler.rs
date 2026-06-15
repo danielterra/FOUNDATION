@@ -236,38 +236,53 @@ pub async fn start(app: AppHandle) {
 pub fn listen_for_new_timers(app: AppHandle) {
     use tauri::Listener;
 
+    // Timer-relevant predicates: rdf:type (creation), foundation:timeCycle (cron edit),
+    // foundation:hasStatus (pause/unpause). foundation:lastRunAt is written by the
+    // scheduler itself and must NOT trigger a reload to avoid self-reinforcing cycles.
+    const TIMER_PREDICATES: &[&str] = &[
+        "rdf:type",
+        "foundation:timeCycle",
+        "foundation:hasStatus",
+    ];
+
     app.clone().listen("entity-changed-internal", move |event| {
-        if let Some(entity_id) = parse_entity_id(event.payload()) {
-            let app2 = app.clone();
-            tauri::async_runtime::spawn(async move {
-                if !is_timer_event_definition(&app2, &entity_id, true).await {
-                    return;
-                }
-
-                let state = match app2.try_state::<SchedulerState>() {
-                    Some(s) => s,
-                    None => return,
-                };
-
-                let mut pending = state.debounce_handle.lock().await;
-                if let Some(prev) = pending.take() {
-                    prev.abort();
-                }
-
-                let app3 = app2.clone();
-                *pending = Some(tokio::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(DEBOUNCE_MS)).await;
-                    reload(app3).await;
-                }));
-            });
+        let Some((entity_id, written_predicates)) = parse_payload(event.payload()) else { return };
+        if !written_predicates.iter().any(|p| TIMER_PREDICATES.contains(&p.as_str())) {
+            return;
         }
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if !is_timer_event_definition(&app2, &entity_id, true).await {
+                return;
+            }
+
+            let state = match app2.try_state::<SchedulerState>() {
+                Some(s) => s,
+                None => return,
+            };
+
+            let mut pending = state.debounce_handle.lock().await;
+            if let Some(prev) = pending.take() {
+                prev.abort();
+            }
+
+            let app3 = app2.clone();
+            *pending = Some(tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(DEBOUNCE_MS)).await;
+                reload(app3).await;
+            }));
+        });
     });
 }
 
-fn parse_entity_id(payload: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(payload)
-        .ok()
-        .and_then(|v| v["entityId"].as_str().map(|s| s.to_string()))
+fn parse_payload(payload: &str) -> Option<(String, Vec<String>)> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    let entity_id = v["entityId"].as_str().map(String::from)?;
+    let written_predicates = v["writtenPredicates"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    Some((entity_id, written_predicates))
 }
 
 async fn is_timer_event_definition(app: &AppHandle, entity_id: &str, include_retracted: bool) -> bool {

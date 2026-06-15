@@ -514,6 +514,7 @@
     {onWindowStateChange}
     onClose={closeWidget}
     canOpenInspector={false}
+    canCopyId={false}
   >
     {#snippet headerSubtitle()}
       {#if entityData?.types?.length > 0}

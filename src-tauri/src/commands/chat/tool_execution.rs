@@ -1,5 +1,5 @@
 use crate::owl::DbExecutor;
-use crate::ai::functions::ToolCall;
+use crate::ai::functions::{execute_async_tool, is_async_tool, ToolCall};
 use crate::commands::chat_storage::{AIConversationMessage, ContentBlock, create_message};
 use super::super::log_backend;
 use super::trace::{TraceStep, make_step};
@@ -155,12 +155,19 @@ async fn execute_tool(
 
     let app_clone = app.clone();
     let conv_id = conversation_id.to_string();
-    let result_json = match executor.write(move |conn| {
-        let result = crate::ai::functions::execute_tool(conn, &call, Some(&app_clone), Some(&conv_id));
-        serde_json::to_string(&result).map_err(|e| e.to_string())
-    }).await {
-        Ok(json) => json,
-        Err(e) => return (format!("{{\"success\":false,\"error\":\"{}\"}}", e), true),
+    let result_json = if is_async_tool(name) {
+        match serde_json::to_string(&execute_async_tool(&call, Some(&app_clone)).await) {
+            Ok(json) => json,
+            Err(e) => return (format!("{{\"success\":false,\"error\":\"{}\"}}", e), true),
+        }
+    } else {
+        match executor.write(move |conn| {
+            let result = crate::ai::functions::execute_tool(conn, &call, Some(&app_clone), Some(&conv_id));
+            serde_json::to_string(&result).map_err(|e| e.to_string())
+        }).await {
+            Ok(json) => json,
+            Err(e) => return (format!("{{\"success\":false,\"error\":\"{}\"}}", e), true),
+        }
     };
 
     let tool_result: crate::ai::functions::ToolResult = match serde_json::from_str(&result_json) {

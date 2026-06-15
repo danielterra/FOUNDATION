@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Listener, Manager};
 use tokio::sync::{mpsc::unbounded_channel, mpsc::UnboundedSender, oneshot};
@@ -12,9 +12,28 @@ use crate::eavto::{store, Triple, Object};
 /// genuinely stuck worker, so a wide window beats failing healthy executions.
 const DRAIN_TIMEOUT_SECS: u64 = 60;
 
+/// Predicates that always belong in the allowlist, independent of queryConfig contents.
+/// - `rdf:type`: collect_affected_jobs uses get_types for scenario A (entity is targetClass)
+///   and B (entity is owner). Without it, typing a target entity never triggers recompute.
+/// - `foundation:queryConfig`: a newly written queryConfig must force cache reload so the
+///   new query-property begins reacting immediately. Excluding it would silently skip the
+///   very first write that activates a query-property.
+/// - `rdfs:domain`: domain changes alter which owners are in scope; must also force reload.
+const ALWAYS_RELEVANT: &[&str] = &["rdf:type", "foundation:queryConfig", "rdfs:domain"];
+
 #[derive(Debug)]
 pub enum WorkerCommand {
-    Enqueue { entity_iri: String },
+    Enqueue {
+        entity_iri: String,
+        /// Predicates written in this batch for this entity. Empty when enqueued
+        /// via `await_drained` (those are synchronous callers that always process).
+        written_predicates: Vec<String>,
+        /// True when the listener detected `foundation:queryConfig` or `rdfs:domain`
+        /// in the written predicates, signalling that the cache must be reloaded
+        /// unconditionally before processing — without requiring a `has_query_config`
+        /// DB check inside the read.
+        force_reload: bool,
+    },
 }
 
 pub struct QueryWorker {
@@ -29,6 +48,25 @@ struct CachedQueryProperty {
     domains: Vec<String>,
 }
 
+/// Derives the set of predicates that matter for query-property recompute from
+/// a loaded cache snapshot, adding the always-relevant fixed predicates on top.
+///
+/// The allowlist is rebuilt atomically every time the cache reloads — the two
+/// are always in sync. Any predicate NOT in this set means the written entity
+/// cannot possibly affect any query result, so we skip the read entirely.
+fn build_relevant_predicates(entries: &[CachedQueryProperty]) -> HashSet<String> {
+    let mut set: HashSet<String> = ALWAYS_RELEVANT.iter().map(|s| s.to_string()).collect();
+    for entry in entries {
+        for f in &entry.config.filters {
+            set.insert(f.property_iri.clone());
+        }
+        for o in &entry.config.order_by {
+            set.insert(o.property_iri.clone());
+        }
+    }
+    set
+}
+
 impl QueryWorker {
     pub fn spawn(app: AppHandle, executor: DbExecutor) -> Self {
         let (tx, mut rx) = unbounded_channel::<WorkerCommand>();
@@ -39,21 +77,62 @@ impl QueryWorker {
         };
 
         tauri::async_runtime::spawn(async move {
-            let mut cache: Option<Arc<Vec<CachedQueryProperty>>> = None;
+            // Eager cache init: populate before the loop so the in-memory guard
+            // (relevant_predicates) is available from the very first event, at the cost
+            // of one read on boot — far cheaper than 307 reads per batch without a guard.
+            let (initial_cache, initial_predicates) = executor
+                .read_unmetered(|conn| Ok(load_cache_and_predicates(conn)))
+                .await
+                .unwrap_or_else(|_| (Arc::new(vec![]), Arc::new(HashSet::new())));
 
-            while let Some(WorkerCommand::Enqueue { entity_iri }) = rx.recv().await {
-                process_entity_update(&app, &executor, &entity_iri, &mut cache).await;
-                // Resolve waiters inline — no channel round-trip that could be
-                // silently dropped when the channel is saturated.
-                if let Some(w) = app.try_state::<QueryWorker>() {
-                    let senders: Vec<oneshot::Sender<()>> = w
-                        .waiters
-                        .lock()
-                        .map(|mut map| map.remove(&entity_iri).unwrap_or_default())
-                        .unwrap_or_default();
-                    for s in senders {
-                        let _ = s.send(());
+            let mut cache: Arc<Vec<CachedQueryProperty>> = initial_cache;
+            let mut relevant_predicates: Arc<HashSet<String>> = initial_predicates;
+
+            while let Some(cmd) = rx.recv().await {
+                // Batch-drain: consume all pending commands before processing, deduplicating
+                // by entity_iri. This cuts re-saturation during boot recovery — a burst of
+                // automation writes produces dozens of enqueues for the same entity; we
+                // collapse them into one evaluation per entity. force_reload is OR-merged
+                // so a single invalidating event in the batch still triggers the reload.
+                let mut batch: HashMap<String, (Vec<String>, bool)> = HashMap::new();
+                let first = cmd;
+                let WorkerCommand::Enqueue { entity_iri, written_predicates, force_reload } = first;
+                let entry = batch.entry(entity_iri).or_insert((vec![], false));
+                merge_into_batch_entry(entry, written_predicates, force_reload);
+
+                loop {
+                    match rx.try_recv() {
+                        Ok(WorkerCommand::Enqueue { entity_iri, written_predicates, force_reload }) => {
+                            let entry = batch.entry(entity_iri).or_insert((vec![], false));
+                            merge_into_batch_entry(entry, written_predicates, force_reload);
+                        }
+                        Err(_) => break,
                     }
+                }
+
+                for (entity_iri, (written_predicates, force_reload)) in batch {
+                    // Pre-read guard: if no written predicate intersects the allowlist and
+                    // this is not a cache-invalidating write, skip the read entirely.
+                    // await_drained callers send empty written_predicates — they always proceed.
+                    if !written_predicates.is_empty()
+                        && !force_reload
+                        && !written_predicates.iter().any(|p| relevant_predicates.contains(p))
+                    {
+                        resolve_waiters(&app, &entity_iri);
+                        continue;
+                    }
+
+                    process_entity_update(
+                        &app,
+                        &executor,
+                        &entity_iri,
+                        &mut cache,
+                        &mut relevant_predicates,
+                        force_reload,
+                    )
+                    .await;
+
+                    resolve_waiters(&app, &entity_iri);
                 }
             }
         });
@@ -72,6 +151,10 @@ impl QueryWorker {
         self.sender
             .send(WorkerCommand::Enqueue {
                 entity_iri: entity_iri.to_string(),
+                // Synchronous callers always need the full evaluation — empty written_predicates
+                // bypasses the guard (the worker treats empty as "unconditional").
+                written_predicates: vec![],
+                force_reload: false,
             })
             .map_err(|_| format!("query_worker channel closed for {}", entity_iri))?;
 
@@ -94,54 +177,117 @@ impl QueryWorker {
     }
 }
 
+/// Merges a single Enqueue payload into a batch-accumulation entry.
+fn merge_into_batch_entry(entry: &mut (Vec<String>, bool), predicates: Vec<String>, force: bool) {
+    entry.1 |= force;
+    for p in predicates {
+        if !entry.0.contains(&p) {
+            entry.0.push(p);
+        }
+    }
+}
+
+fn resolve_waiters(app: &AppHandle, entity_iri: &str) {
+    if let Some(w) = app.try_state::<QueryWorker>() {
+        let senders: Vec<oneshot::Sender<()>> = w
+            .waiters
+            .lock()
+            .map(|mut map| map.remove(entity_iri).unwrap_or_default())
+            .unwrap_or_default();
+        for s in senders {
+            let _ = s.send(());
+        }
+    }
+}
+
 pub fn register_listener(app: AppHandle) {
     let app_clone = app.clone();
     app.listen("entity-changed-internal", move |event| {
-        let Some(entity_iri) = parse_entity_id(event.payload()) else { return };
+        let Some((entity_iri, written_predicates)) = parse_payload(event.payload()) else { return };
+
+        // Cache-invalidating predicates: force reload regardless of the current allowlist.
+        // These writes change the structure of what queries exist and which owners are in scope.
+        let force_reload = written_predicates
+            .iter()
+            .any(|p| p == "foundation:queryConfig" || p == "rdfs:domain");
+
         let worker = match app_clone.try_state::<QueryWorker>() {
             Some(w) => w,
             None => return,
         };
-        let _ = worker.sender.send(WorkerCommand::Enqueue { entity_iri });
+        let _ = worker.sender.send(WorkerCommand::Enqueue {
+            entity_iri,
+            written_predicates,
+            force_reload,
+        });
     });
 }
 
-fn parse_entity_id(payload: &str) -> Option<String> {
+fn parse_payload(payload: &str) -> Option<(String, Vec<String>)> {
     let v: serde_json::Value = serde_json::from_str(payload).ok()?;
-    v["entityId"].as_str().map(String::from)
+    let entity_id = v["entityId"].as_str().map(String::from)?;
+    let written_predicates = v["writtenPredicates"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    Some((entity_id, written_predicates))
+}
+
+/// Loads the cache and derives the relevant-predicate allowlist in a single pass.
+fn load_cache_and_predicates(conn: &rusqlite::Connection) -> (Arc<Vec<CachedQueryProperty>>, Arc<HashSet<String>>) {
+    let entries = load_query_property_cache(conn);
+    let predicates = build_relevant_predicates(&entries);
+    (Arc::new(entries), Arc::new(predicates))
 }
 
 async fn process_entity_update(
     app: &AppHandle,
     executor: &DbExecutor,
     entity_iri: &str,
-    cache: &mut Option<Arc<Vec<CachedQueryProperty>>>,
+    cache: &mut Arc<Vec<CachedQueryProperty>>,
+    relevant_predicates: &mut Arc<HashSet<String>>,
+    force_reload: bool,
 ) {
     let entity = entity_iri.to_string();
-    let snapshot = cache.clone();
+    let cache_snapshot = cache.clone();
 
-    type ReadResult = (Vec<(String, String, query_property::QueryConfig)>, Option<Arc<Vec<CachedQueryProperty>>>);
+    type ReadResult = (Vec<(String, String, query_property::QueryConfig)>, Option<(Arc<Vec<CachedQueryProperty>>, Arc<HashSet<String>>)>);
 
-    let result: ReadResult = executor.read(move |conn| {
-        let needs_reload = snapshot.is_none()
-            || snapshot.as_ref().map_or(false, |s| s.iter().any(|e| e.property_iri == entity))
+    let result: ReadResult = executor.read_unmetered(move |conn| {
+        // needs_reload conditions (checked without a DB call when possible):
+        // 1. No cache yet (first run, though eager init handles this in practice).
+        // 2. The entity IS a query-property (its IRI is in the cache): editing the
+        //    property's own attributes (e.g. domain change) must re-derive the cache.
+        // 3. force_reload: the listener already saw queryConfig/rdfs:domain in the batch;
+        //    skip the has_query_config DB check — the flag carries the information.
+        // has_query_config is retained as fallback for entities that somehow arrive here
+        // without the flag set (e.g. future callers that bypass the listener).
+        let needs_reload = cache_snapshot.iter().any(|e| e.property_iri == entity)
+            || force_reload
             || has_query_config(conn, &entity);
 
         let entries: Arc<Vec<CachedQueryProperty>> = if needs_reload {
             Arc::new(load_query_property_cache(conn))
         } else {
-            snapshot.unwrap()
+            cache_snapshot
         };
 
-        let refreshed = if needs_reload { Some(entries.clone()) } else { None };
+        let refreshed = if needs_reload {
+            let predicates = build_relevant_predicates(&entries);
+            Some((entries.clone(), Arc::new(predicates)))
+        } else {
+            None
+        };
+
         let jobs = collect_affected_jobs(conn, &entity, &entries);
         Ok((jobs, refreshed))
     }).await.unwrap_or_default();
 
     let (jobs, refreshed) = result;
 
-    if let Some(r) = refreshed {
-        *cache = Some(r);
+    if let Some((new_cache, new_predicates)) = refreshed {
+        *cache = new_cache;
+        *relevant_predicates = new_predicates;
     }
 
     if jobs.is_empty() {
@@ -154,7 +300,7 @@ async fn process_entity_update(
         let owner = owner_iri.clone();
         let cfg = config.clone();
 
-        let new_results: Vec<String> = match executor.read(move |conn| {
+        let new_results: Vec<String> = match executor.read_unmetered(move |conn| {
             query_property::evaluate_query(conn, &owner, &cfg).map_err(|e| e.to_string())
         }).await {
             Ok(r) => r,
@@ -197,7 +343,8 @@ async fn process_entity_update(
 }
 
 /// Returns true if `entity_iri` is the subject of any current `foundation:queryConfig` triple.
-/// Used to decide cache invalidation without a full reload.
+/// Used as a fallback inside the read when force_reload is false but the entity might have
+/// acquired a queryConfig via a code path that doesn't set the flag.
 fn has_query_config(conn: &rusqlite::Connection, entity_iri: &str) -> bool {
     conn.query_row(
         "SELECT 1 FROM triples_current WHERE subject = ? AND predicate = 'foundation:queryConfig' LIMIT 1",
@@ -597,10 +744,8 @@ mod tests {
         insert_triple_literal(&conn, prop, "foundation:queryConfig", config_json, 1);
 
         let cache = Arc::new(load_query_property_cache(&conn));
-        let snapshot = Some(cache.clone());
 
-        let needs_reload = snapshot.is_none()
-            || snapshot.as_ref().map_or(false, |s| s.iter().any(|e| e.property_iri == prop))
+        let needs_reload = cache.iter().any(|e| e.property_iri == prop)
             || has_query_config(&conn, prop);
 
         assert!(needs_reload, "property IRI presente no cache deve forçar reload");
@@ -615,11 +760,9 @@ mod tests {
         insert_triple_literal(&conn, prop, "foundation:queryConfig", config_json, 1);
 
         let cache = Arc::new(load_query_property_cache(&conn));
-        let snapshot = Some(cache.clone());
         let unrelated = "foundation:someOtherEntity";
 
-        let needs_reload = snapshot.is_none()
-            || snapshot.as_ref().map_or(false, |s| s.iter().any(|e| e.property_iri == unrelated))
+        let needs_reload = cache.iter().any(|e| e.property_iri == unrelated)
             || has_query_config(&conn, unrelated);
 
         assert!(!needs_reload, "entity alheia não deve forçar reload");
@@ -637,12 +780,103 @@ mod tests {
         let cache = Arc::new(load_query_property_cache(&conn));
 
         insert_triple_literal(&conn, new_prop, "foundation:queryConfig", config_json, 2);
-        let snapshot = Some(cache.clone());
 
-        let needs_reload = snapshot.is_none()
-            || snapshot.as_ref().map_or(false, |s| s.iter().any(|e| e.property_iri == new_prop))
+        let needs_reload = cache.iter().any(|e| e.property_iri == new_prop)
             || has_query_config(&conn, new_prop);
 
         assert!(needs_reload, "nova queryConfig triple deve forçar reload");
+    }
+
+    // ── Novos testes para o guard pré-read ──────────────────────────────────────
+
+    /// (a) Guard descarta quando writtenPredicates não intersecta relevant_predicates.
+    #[test]
+    fn test_guard_discards_irrelevant_predicates() {
+        let conn = setup_db();
+        let prop = "foundation:myQueryProp";
+        // Config com filtro em foundation:dueDate
+        let config_json = r#"{"targetClass":"foundation:Task","filters":[{"propertyIri":"foundation:dueDate","operator":"exists"}]}"#;
+        insert_triple_literal(&conn, prop, "foundation:queryConfig", config_json, 1);
+
+        let entries = load_query_property_cache(&conn);
+        let relevant = build_relevant_predicates(&entries);
+
+        let written: Vec<String> = vec!["foundation:someUnrelatedProp".to_string()];
+        let force_reload = false;
+
+        let should_skip = !written.is_empty()
+            && !force_reload
+            && !written.iter().any(|p| relevant.contains(p));
+
+        assert!(should_skip, "escrita em predicate irrelevante deve ser descartada sem read");
+    }
+
+    /// (b) Guard NÃO descarta para `rdf:type` — necessário para cenário A (tipar entidade-alvo).
+    #[test]
+    fn test_guard_passes_rdf_type() {
+        let conn = setup_db();
+        let prop = "foundation:myQueryProp";
+        let config_json = r#"{"targetClass":"foundation:Task","filters":[]}"#;
+        insert_triple_literal(&conn, prop, "foundation:queryConfig", config_json, 1);
+
+        let entries = load_query_property_cache(&conn);
+        let relevant = build_relevant_predicates(&entries);
+
+        let written: Vec<String> = vec!["rdf:type".to_string()];
+        let force_reload = false;
+
+        let should_skip = !written.is_empty()
+            && !force_reload
+            && !written.iter().any(|p| relevant.contains(p));
+
+        assert!(!should_skip, "rdf:type deve sempre passar pelo guard");
+        assert!(relevant.contains("rdf:type"), "rdf:type deve estar no allowlist");
+    }
+
+    /// (c) Guard NÃO descarta e sinaliza reload para `foundation:queryConfig`.
+    #[test]
+    fn test_guard_passes_and_forces_reload_for_query_config() {
+        let conn = setup_db();
+        let entries = load_query_property_cache(&conn); // cache vazio
+        let relevant = build_relevant_predicates(&entries);
+
+        let written: Vec<String> = vec!["foundation:queryConfig".to_string()];
+        // O listener seta force_reload=true quando detecta foundation:queryConfig
+        let force_reload = written.iter().any(|p| p == "foundation:queryConfig" || p == "rdfs:domain");
+
+        let should_skip = !written.is_empty()
+            && !force_reload
+            && !written.iter().any(|p| relevant.contains(p));
+
+        assert!(!should_skip, "foundation:queryConfig não deve ser descartado");
+        assert!(force_reload, "foundation:queryConfig deve ativar force_reload");
+        assert!(
+            relevant.contains("foundation:queryConfig"),
+            "foundation:queryConfig deve estar no allowlist fixo"
+        );
+    }
+
+    /// (d) Derivação do HashSet: filters + order_by + predicados fixos todos presentes.
+    #[test]
+    fn test_build_relevant_predicates_includes_all_sources() {
+        let conn = setup_db();
+        let prop = "foundation:myQueryProp";
+        let config_json = r#"{
+            "targetClass": "foundation:Task",
+            "filters": [{"propertyIri": "foundation:dueDate", "operator": "exists"}],
+            "orderBy": [{"propertyIri": "foundation:priority", "direction": "asc"}]
+        }"#;
+        insert_triple_literal(&conn, prop, "foundation:queryConfig", config_json, 1);
+
+        let entries = load_query_property_cache(&conn);
+        let relevant = build_relevant_predicates(&entries);
+
+        // Predicados fixos
+        assert!(relevant.contains("rdf:type"), "rdf:type deve estar presente");
+        assert!(relevant.contains("foundation:queryConfig"), "foundation:queryConfig deve estar presente");
+        assert!(relevant.contains("rdfs:domain"), "rdfs:domain deve estar presente");
+        // Predicados do config
+        assert!(relevant.contains("foundation:dueDate"), "filter propertyIri deve estar presente");
+        assert!(relevant.contains("foundation:priority"), "orderBy propertyIri deve estar presente");
     }
 }

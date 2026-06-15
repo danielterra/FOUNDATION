@@ -13,6 +13,7 @@ mod mcp;
 pub mod search;
 pub mod process_automation;
 pub mod imap;
+pub mod data_sync;
 pub mod config;
 pub mod paths;
 pub mod files;
@@ -281,6 +282,11 @@ pub fn run() {
             commands::settings__get_history_retention_days,
             commands::settings__set_history_retention_days,
             commands::recover_database,
+            commands::datasync__list_sources,
+            commands::datasync__run,
+            commands::datasync__list_raw,
+            commands::datasync__inspect_raw,
+            commands::datasync__retry_raw,
             realtime::events__set_subscriptions,
             realtime::events__set_subscriptions_v2,
             realtime::events__replay_since

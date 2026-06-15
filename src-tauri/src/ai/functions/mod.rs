@@ -5,6 +5,7 @@ use rusqlite::Connection;
 mod batch;
 mod class;
 mod class_graph;
+pub mod data_sync;
 mod definitions;
 mod file;
 mod property;
@@ -169,6 +170,50 @@ pub fn find_related_processes_for_class(conn: &Connection, class_iri: &str) -> V
     results
 }
 
+/// Returns true for tools that are async-native and self-contained (they carry their
+/// own AppHandle and call executor.write/read internally). These tools MUST be
+/// dispatched outside any executor.write() closure — dispatching them inside would
+/// deadlock the write actor. Use `execute_async_tool` for these.
+pub fn is_async_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "datasync_create_source"
+            | "datasync_run"
+            | "datasync_retry_transform"
+            | "datasync_upsert_item"
+            | "datasync_set_transform"
+    )
+}
+
+/// Execute an async-tier tool. These tools are self-contained: they receive the
+/// AppHandle and manage their own executor.write/read calls internally. This
+/// function must be called from an async context (or via Handle::block_on from a
+/// non-async context), NEVER from inside an executor.write() closure.
+pub async fn execute_async_tool(call: &ToolCall, app: Option<&tauri::AppHandle>) -> ToolResult {
+    let is_array_mode = get_available_tools()
+        .iter()
+        .any(|t| t.name == call.name && t.array_mode);
+    let args = if is_array_mode {
+        &call.arguments["operations"]
+    } else {
+        &call.arguments
+    };
+
+    match call.name.as_str() {
+        "datasync_create_source" => data_sync::datasync_create_source_tool(args, app).await,
+        "datasync_run" => data_sync::datasync_run_tool(args, app).await,
+        "datasync_retry_transform" => data_sync::datasync_retry_transform_tool(args, app).await,
+        "datasync_upsert_item" => data_sync::datasync_upsert_item_tool(args, app).await,
+        "datasync_set_transform" => data_sync::datasync_set_transform_tool(args, app).await,
+        _ => ToolResult {
+            success: false,
+            result: None,
+            error: Some(format!("execute_async_tool called with unknown tool: {}", call.name)),
+            concept: None,
+        },
+    }
+}
+
 /// Returns true if the tool name is read-only (no writes, ok to dispatch via the
 /// read pool). MCP and other callers can route these to `executor.read()` so they
 /// don't queue behind long-running writes — SQLite WAL allows concurrent reads.
@@ -186,6 +231,9 @@ pub fn is_read_only_tool(name: &str) -> bool {
             | "read_text_lines"
             | "read_property_page"
             | "get_automation"
+            | "datasync_status"
+            | "datasync_list_raw"
+            | "datasync_inspect_raw"
     )
 }
 
@@ -221,6 +269,9 @@ pub fn execute_read_only_tool(
         "read_text_lines" => file::read_text_lines(conn, args),
         "read_property_page" => individual::read_property_page(conn, args),
         "get_automation" => get_automation_tool(conn, args),
+        "datasync_status" => data_sync::datasync_status(conn, args),
+        "datasync_list_raw" => data_sync::datasync_list_raw(conn, args),
+        "datasync_inspect_raw" => data_sync::datasync_inspect_raw(conn, args),
         _ => ToolResult {
             success: false,
             result: None,
@@ -278,6 +329,9 @@ pub fn execute_tool(
         "list_blackboard_widgets" => list_blackboard_widgets_tool(conn, args, conversation_id),
         "add_widget_to_blackboard" => add_widget_to_blackboard_tool(conn, args, app, conversation_id),
         "remove_widget_from_blackboard" => remove_widget_from_blackboard_tool(conn, args, app),
+        "datasync_status" => data_sync::datasync_status(conn, args),
+        "datasync_list_raw" => data_sync::datasync_list_raw(conn, args),
+        "datasync_inspect_raw" => data_sync::datasync_inspect_raw(conn, args),
         _ => ToolResult {
             success: false,
             result: None,

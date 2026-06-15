@@ -7,8 +7,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::ai::functions::{
-    ToolCall, ToolResult, execute_read_only_tool, execute_tool, get_available_tools,
-    is_read_only_tool,
+    execute_async_tool, is_async_tool, ToolCall, ToolResult, execute_read_only_tool,
+    execute_tool, get_available_tools, is_read_only_tool,
 };
 use crate::eavto::DbExecutor;
 
@@ -164,9 +164,16 @@ async fn handle_mcp(
             let app = (*state.app).clone();
             let call = ToolCall { name, arguments: req["params"]["arguments"].clone() };
 
-            // Route read-only tools through the read pool so they don't queue
-            // behind long-running writes. SQLite WAL allows concurrent reads.
-            let result_json = if is_read_only_tool(&call.name) {
+            // Async tools are self-contained and must not run inside executor.write().
+            // Read-only tools run via the read pool. All others use the write actor.
+            let result_json = if is_async_tool(&call.name) {
+                match serde_json::to_string(&execute_async_tool(&call, Some(&app)).await) {
+                    Ok(json) => json,
+                    Err(e) => return Json(
+                        error_response(id, JSONRPC_INTERNAL_ERROR, &e.to_string()),
+                    ).into_response(),
+                }
+            } else if is_read_only_tool(&call.name) {
                 match executor.read(move |conn| -> Result<String, String> {
                     let result = execute_read_only_tool(conn, &call);
                     serde_json::to_string(&result).map_err(|e| e.to_string())

@@ -188,19 +188,40 @@ pub(crate) fn maybe_execute_task_for_entity(app: AppHandle, entity_id: String) {
 pub fn listen_for_in_progress(app: AppHandle) {
     use tauri::Listener;
 
+    // is_task_ready checks: rdf:type, rdfs:comment, rdfs:label (instruction),
+    // foundation:assignee, foundation:startedAt, foundation:result,
+    // foundation:hasStatus, foundation:scheduledAt. A write that touches none of
+    // these cannot change a task's readiness, so skip the executor.read() entirely.
+    const READINESS_PREDICATES: &[&str] = &[
+        "rdf:type",
+        "rdfs:comment",
+        "rdfs:label",
+        "foundation:assignee",
+        "foundation:startedAt",
+        "foundation:result",
+        "foundation:hasStatus",
+        "foundation:scheduledAt",
+    ];
+
     // React to the non-gated internal signal so a task executes as soon as it is ready,
     // regardless of whether the frontend is currently displaying it.
     app.clone().listen("entity-changed-internal", move |event| {
-        if let Some(entity_id) = parse_entity_id(event.payload()) {
-            maybe_execute_task_for_entity(app.clone(), entity_id);
+        let Some((entity_id, written_predicates)) = parse_payload(event.payload()) else { return };
+        if !written_predicates.iter().any(|p| READINESS_PREDICATES.contains(&p.as_str())) {
+            return;
         }
+        maybe_execute_task_for_entity(app.clone(), entity_id);
     });
 }
 
-fn parse_entity_id(payload: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(payload)
-        .ok()
-        .and_then(|v| v["entityId"].as_str().map(|s| s.to_string()))
+fn parse_payload(payload: &str) -> Option<(String, Vec<String>)> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    let entity_id = v["entityId"].as_str().map(String::from)?;
+    let written_predicates = v["writtenPredicates"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    Some((entity_id, written_predicates))
 }
 
 fn set_started_at(conn: &mut rusqlite::Connection, task_iri: &str) -> Result<()> {
@@ -325,7 +346,7 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
     };
 
     let output = super::tool_loop::run_tool_loop(
-        &executor, &agent_config.provider, initial_messages, loop_config,
+        &executor, Some(app), &agent_config.provider, initial_messages, loop_config,
     ).await?;
 
     let task_iri_done = task_iri.to_string();
@@ -556,10 +577,13 @@ pub fn listen_for_recurrence(app: AppHandle) {
     use tauri::Listener;
 
     app.clone().listen("entity-changed-internal", move |event| {
-        let entity_id = match parse_entity_id(event.payload()) {
-            Some(id) => id,
-            None => return,
-        };
+        let Some((entity_id, written_predicates)) = parse_payload(event.payload()) else { return };
+        // Recurrence only triggers when a task finishes: foundation:result is the sole
+        // predicate that transitions a task from running to done. Skip the per-task lock
+        // AND the executor.read() for every write that cannot possibly complete a task.
+        if !written_predicates.iter().any(|p| p == "foundation:result") {
+            return;
+        }
         // Per-task lock: at most one in-flight recurrence check per IRI. Without this,
         // back-to-back internal signals can race past the nextTask guard before the
         // first recurrence transaction commits, producing duplicate next tasks.

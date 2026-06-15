@@ -8,12 +8,14 @@ const STATUS_INVALID: &str = "foundation:Status_1772993026091";
 
 pub fn register_validator(app: AppHandle) {
     let app_for_closure = app.clone();
-    app.listen("entity-updated", move |event| {
-        let Some((entity_id, changed_predicates)) = parse_event(event.payload()) else { return };
-        // Only validate when foundation:script itself changed.
-        // This breaks the infinite loop: our own writes to hasStatus/scriptError
-        // emit entity-updated with different predicates, so the guard skips them.
-        if !changed_predicates.iter().any(|p| p == "foundation:script") {
+    app.listen("entity-changed-internal", move |event| {
+        let Some((entity_id, written_predicates)) = parse_payload(event.payload()) else { return };
+        // Skip the executor.read() entirely when foundation:script was not part of this
+        // write batch. Every code path that requires (re)validation — CodeTask creation
+        // with a script or an in-place script edit — writes foundation:script in the same
+        // batch. Writes by the validator itself (hasStatus / scriptError) do not carry
+        // foundation:script, so they no longer re-enter the handler.
+        if !written_predicates.iter().any(|p| p == "foundation:script") {
             return;
         }
         let app2 = app_for_closure.clone();
@@ -23,14 +25,14 @@ pub fn register_validator(app: AppHandle) {
     });
 }
 
-fn parse_event(payload: &str) -> Option<(String, Vec<String>)> {
+fn parse_payload(payload: &str) -> Option<(String, Vec<String>)> {
     let v: serde_json::Value = serde_json::from_str(payload).ok()?;
-    let entity_id = v["entityId"].as_str()?.to_string();
-    let predicates = v["changedPredicates"]
+    let entity_id = v["entityId"].as_str().map(String::from)?;
+    let written_predicates = v["writtenPredicates"]
         .as_array()
-        .map(|arr| arr.iter().filter_map(|p| p.as_str().map(String::from)).collect())
+        .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
         .unwrap_or_default();
-    Some((entity_id, predicates))
+    Some((entity_id, written_predicates))
 }
 
 async fn validate_code_task(app: &AppHandle, entity_id: &str) {
@@ -42,7 +44,7 @@ async fn validate_code_task(app: &AppHandle, entity_id: &str) {
     let entity_id = entity_id.to_string();
     let result = executor
         .read(move |conn| {
-            // Fast type check before loading the full individual — entity-updated fires
+            // Fast type check before loading the full individual — entity-changed-internal fires
             // for every write and Individual::get is expensive for high-cardinality entities.
             if !crate::owl::is_instance_of(conn, &entity_id, "foundation:automation_CodeTask") {
                 return Ok(None);
@@ -125,7 +127,7 @@ async fn validate_code_task(app: &AppHandle, entity_id: &str) {
         .ok();
 }
 
-fn compile_script(script: &str) -> Result<(), String> {
+pub(crate) fn compile_script(script: &str) -> Result<(), String> {
     let mut engine = rhai::Engine::new();
     engine.register_fn("mcp", |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String { String::new() });
     engine.register_fn("ctx_get", |_: rhai::ImmutableString| -> String { String::new() });
@@ -136,6 +138,8 @@ fn compile_script(script: &str) -> Result<(), String> {
     engine.register_fn("owl_set_property", |_: rhai::ImmutableString, _: rhai::ImmutableString, _: rhai::ImmutableString| -> String { String::new() });
     engine.register_fn("owl_assert", |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String { String::new() });
     engine.register_fn("owl_read_file", |_: rhai::ImmutableString| -> String { String::new() });
+    engine.register_fn("to_json", |_: rhai::Dynamic| -> String { String::new() });
+    engine.register_fn("log", |_: rhai::ImmutableString| {});
     engine.register_fn("today", || -> String { String::new() });
     engine.register_fn("today_plus", |_: i64| -> String { String::new() });
     engine.compile(script).map(|_| ()).map_err(|e| e.to_string())

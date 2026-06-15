@@ -55,6 +55,13 @@ pub struct DbExecutor {
     read_semaphore: Arc<Semaphore>,
     /// Pre-warmed pool capacity (= semaphore permits = N).
     read_pool_cap: usize,
+    /// Dedicated read connection for background reactors (e.g. query_worker).
+    /// Held outside the shared pool and semaphore so reactor reads never compete
+    /// with foreground reads for permits, preventing pool starvation on bulk writes.
+    /// The Mutex is the single-at-a-time guard; the worker is sequential so there
+    /// is no real contention — the lock just upholds the "one reader per connection"
+    /// SQLite invariant.
+    unmetered_conn: Arc<Mutex<Connection>>,
 }
 
 /// A write task to be executed sequentially
@@ -109,6 +116,17 @@ impl DbExecutor {
                 "[DB] Read pool ready: cap={} warmed={}", pool_cap, opened
             ));
         }
+
+        // Open a dedicated read connection for background reactors (query_worker).
+        // Kept outside the shared pool and semaphore so reactor reads never starve
+        // foreground callers. PRAGMA query_only prevents accidental writes through
+        // this connection; busy_timeout is already set by open_pool_connection.
+        let unmetered_conn: Arc<Mutex<Connection>> = {
+            let conn = open_pool_connection(&db_path)
+                .expect("[DB] Failed to open dedicated unmetered read connection — cannot start");
+            let _ = conn.execute_batch("PRAGMA query_only = ON;");
+            Arc::new(Mutex::new(conn))
+        };
 
         let pool_for_checkpoint = read_pool.clone();
 
@@ -292,6 +310,7 @@ impl DbExecutor {
             read_pool,
             read_semaphore,
             read_pool_cap: pool_cap,
+            unmetered_conn,
         }
     }
 
@@ -370,6 +389,34 @@ impl DbExecutor {
         .map_err(|e| e.to_string())?
     }
 
+    /// Execute a read operation using the dedicated unmetered connection.
+    ///
+    /// Unlike `read()`, this method does NOT acquire a semaphore permit and does NOT
+    /// use the shared pool. It is intended for background reactors (e.g. query_worker)
+    /// that must not compete with foreground reads for pool permits. The Mutex ensures
+    /// only one unmetered read runs at a time, matching the sequential nature of the
+    /// query_worker loop.
+    ///
+    /// WAL read-mark release (BEGIN DEFERRED; COMMIT;) is performed after each operation
+    /// to prevent the persistent connection from pinning a WAL snapshot and blocking
+    /// TRUNCATE checkpoints.
+    pub async fn read_unmetered<F, R>(&self, operation: F) -> Result<R, String>
+    where
+        F: FnOnce(&Connection) -> Result<R, String> + Send + 'static,
+        R: Send + 'static,
+    {
+        let conn_arc = self.unmetered_conn.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let guard = conn_arc.lock().map_err(|e| e.to_string())?;
+            let result = operation(&*guard);
+            let _ = guard.execute_batch("BEGIN DEFERRED; COMMIT;");
+            result
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
     /// Execute a write operation (sequential, queued).
     pub async fn write<F>(&self, operation: F) -> Result<String, String>
     where
@@ -397,6 +444,7 @@ impl Clone for DbExecutor {
             read_pool: self.read_pool.clone(),
             read_semaphore: self.read_semaphore.clone(),
             read_pool_cap: self.read_pool_cap,
+            unmetered_conn: self.unmetered_conn.clone(),
         }
     }
 }

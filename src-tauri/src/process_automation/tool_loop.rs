@@ -1,6 +1,6 @@
 use crate::ai::{AiProvider, GenerateRequest, ChatMessage};
 use crate::ai::providers::{MessageContent, ContentBlock, ToolDefinition};
-use crate::ai::functions::{ToolCall as FunctionToolCall, execute_tool as execute_fn};
+use crate::ai::functions::{execute_async_tool, is_async_tool, ToolCall as FunctionToolCall, execute_tool as execute_fn};
 use crate::owl::DbExecutor;
 
 type Result<T> = std::result::Result<T, String>;
@@ -74,6 +74,7 @@ pub struct CompletionResult {
 /// The caller is responsible for persisting messages and emitting events.
 pub async fn run_tool_loop(
     executor: &DbExecutor,
+    app: Option<&tauri::AppHandle>,
     provider: &AiProvider,
     initial_messages: Vec<ChatMessage>,
     config: ToolLoopConfig,
@@ -243,13 +244,18 @@ pub async fn run_tool_loop(
                 arguments: tc.input.clone(),
             };
             let tc_id = tc.id.clone();
-            let result_json = executor
-                .write(move |conn| {
-                    let r = execute_fn(conn, &call, None, None);
-                    serde_json::to_string(&r).map_err(|e| e.to_string())
-                })
-                .await
-                .unwrap_or_else(|e| format!("\"{}\"", e));
+            let result_json = if is_async_tool(&call.name) {
+                let r = execute_async_tool(&call, app).await;
+                serde_json::to_string(&r).unwrap_or_else(|e| format!("\"{}\"", e))
+            } else {
+                executor
+                    .write(move |conn| {
+                        let r = execute_fn(conn, &call, None, None);
+                        serde_json::to_string(&r).map_err(|e| e.to_string())
+                    })
+                    .await
+                    .unwrap_or_else(|e| format!("\"{}\"", e))
+            };
 
             let tool_result: crate::ai::functions::ToolResult =
                 serde_json::from_str(&result_json).unwrap_or(crate::ai::functions::ToolResult {

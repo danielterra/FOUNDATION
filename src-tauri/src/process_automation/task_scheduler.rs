@@ -230,24 +230,43 @@ async fn schedule(app: AppHandle) {
 pub fn listen_for_scheduled_tasks(app: AppHandle) {
     use tauri::Listener;
 
+    // Predicates that can change whether a Task appears in collect_scheduled_tasks:
+    // rdf:type (creation), foundation:scheduledAt (new/updated schedule),
+    // foundation:hasStatus (Blocked/Rejected exclusion), foundation:startedAt (already
+    // running), foundation:result (already done). A write not touching any of these
+    // cannot flip a task in or out of the scheduled set.
+    const SCHEDULING_PREDICATES: &[&str] = &[
+        "rdf:type",
+        "foundation:scheduledAt",
+        "foundation:hasStatus",
+        "foundation:startedAt",
+        "foundation:result",
+    ];
+
     // React to the non-gated internal signal so scheduling reloads happen for every task
     // write, not only when the frontend is displaying the task.
     app.clone().listen("entity-changed-internal", move |event| {
-        if let Some(entity_id) = parse_entity_id(event.payload()) {
-            let app2 = app.clone();
-            tauri::async_runtime::spawn(async move {
-                if is_task_entity(&app2, &entity_id).await {
-                    reload(app2).await;
-                }
-            });
+        let Some((entity_id, written_predicates)) = parse_payload(event.payload()) else { return };
+        if !written_predicates.iter().any(|p| SCHEDULING_PREDICATES.contains(&p.as_str())) {
+            return;
         }
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if is_task_entity(&app2, &entity_id).await {
+                reload(app2).await;
+            }
+        });
     });
 }
 
-fn parse_entity_id(payload: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(payload)
-        .ok()
-        .and_then(|v| v["entityId"].as_str().map(|s| s.to_string()))
+fn parse_payload(payload: &str) -> Option<(String, Vec<String>)> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    let entity_id = v["entityId"].as_str().map(String::from)?;
+    let written_predicates = v["writtenPredicates"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    Some((entity_id, written_predicates))
 }
 
 async fn is_task_entity(app: &AppHandle, entity_id: &str) -> bool {

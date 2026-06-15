@@ -116,7 +116,7 @@ pub async fn initialize_app(
                 crate::realtime::emit_entity_updated_with_tx(&app_for_notify, iri, predicates, batch_tx);
                 // Non-gated backend signal: task execution / recurrence / scheduler must react
                 // to every write, independent of whether the frontend is displaying the entity.
-                crate::realtime::emit_entity_changed_internal(&app_for_notify, iri);
+                crate::realtime::emit_entity_changed_internal(&app_for_notify, iri, predicates);
                 seen_subjects.push(iri.clone());
             }
 
@@ -237,6 +237,7 @@ pub async fn initialize_app(
     tauri::async_runtime::spawn(crate::process_automation::scheduler::reload(app.clone()));
     tauri::async_runtime::spawn(crate::process_automation::task_scheduler::start(app.clone()));
     tauri::async_runtime::spawn(crate::imap::sync_worker::start_imap_sync(app.clone()));
+    crate::data_sync::request_worker::start_request_worker(app.clone());
     super::log_backend("debug", &format!("[STARTUP] total_before_emit={}ms", t0.elapsed().as_millis()));
 
     let _ = app.emit("import-complete", ());
