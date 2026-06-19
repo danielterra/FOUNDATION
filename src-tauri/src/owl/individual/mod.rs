@@ -10,6 +10,7 @@ mod properties;
 mod lock;
 mod timestamps;
 mod materialize;
+mod models;
 
 pub use timestamps::{touch, LAST_UPDATED_AT};
 pub use materialize::{materialize_individual_shallow, ShallowValue};
@@ -20,9 +21,11 @@ pub use properties::{
     get_literal_property, get_all_literal_properties, get_iri_property,
     has_property_iri, has_property_literal,
     is_instance_of, is_subclass_of, find_entities_with_property, find_entities_with_predicate,
+    find_entities_with_property_keyset, find_entities_with_property_bounded,
     get_all_current_triples,
 };
 pub use lock::{is_system_locked, set_system_locked, check_system_locked};
+pub use models::{list_ai_models_as_of, AiModelRow};
 
 /// Represents an OWL Individual (instance of a class)
 ///

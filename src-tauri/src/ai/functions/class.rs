@@ -218,7 +218,7 @@ fn describe_class_one(conn: &Connection, args: &Value) -> ToolResult {
                 "icon": t.icon,
             })).collect::<Vec<_>>(),
             "properties": properties_array,
-            "instanceCount": concept.backlinks.len(),
+            "instanceCount": concept.backlink_total,
             "allowedStatuses": allowed_statuses,
             "requiredFields": required_fields,
             "incomingProperties": incoming_properties,

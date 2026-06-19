@@ -3,19 +3,27 @@
 use tauri_plugin_opener::OpenerExt;
 
 mod namespaces;
-pub mod diagnostics;
-mod commands;
-mod eavto;
+
+// Re-export foundation-core leaf modules that have no app-crate additions.
+// `eavto`, `search`, `diagnostics`, and `paths` are thin re-exports so all
+// existing `crate::eavto`, `crate::search`, etc. references continue to resolve.
+pub use foundation_core::diagnostics;
+pub use foundation_core::eavto;
+pub use foundation_core::search;
+pub use foundation_core::paths;
+
+// `owl` is declared as a local module because the app crate adds two
+// tauri-dependent workers (formula_worker, query_worker) on top of the core.
 pub mod owl;
+
+mod commands;
 pub mod core_ontology;
 pub mod ai;
 mod mcp;
-pub mod search;
 pub mod process_automation;
 pub mod imap;
 pub mod data_sync;
 pub mod config;
-pub mod paths;
 pub mod files;
 pub mod realtime;
 

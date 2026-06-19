@@ -23,6 +23,7 @@
 				icon: "size-9",
 				"icon-sm": "size-8",
 				"icon-lg": "size-10",
+				"icon-xs": "size-7",
 			},
 		},
 		defaultVariants: {

@@ -461,12 +461,13 @@
 
 	async function loadConversations() {
 		try {
-			conversations = await invoke('chat__list_conversations');
-			// Use the active conversation's snapshot tx as the list cursor — it is the
-			// most recent max(tx) we have and conservatively covers any new message
-			// written after this load in any conversation.
-			if (snapshotTx > listSnapshotTx) {
-				listSnapshotTx = snapshotTx;
+			const result = await invoke('chat__list_conversations');
+			conversations = result.items;
+			// Pin the list cursor from the envelope's own snapshot_tx — the backend
+			// already computed MAX(tx) at list time, so this is always the tightest
+			// cursor without depending on the active-conversation snapshot.
+			if (result.snapshot_tx > listSnapshotTx) {
+				listSnapshotTx = result.snapshot_tx;
 				listSub.setSinceTx(listSnapshotTx);
 				listSub.replayMissed();
 			}

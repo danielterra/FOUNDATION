@@ -1,6 +1,6 @@
 use crate::eavto::Connection;
 use crate::eavto::{store, query, Triple, Object};
-use crate::owl::{Result, vocabulary};
+use crate::owl::{Result, OwlError, vocabulary};
 
 /// Returns all current values for a predicate on an entity as strings,
 /// preferring the IRI form and falling back to the literal form (COALESCE semantics).
@@ -169,6 +169,115 @@ pub fn find_entities_with_property(
 ) -> Result<Vec<String>> {
     let result = query::get_by_predicate_object(conn, predicate, object)?;
     Ok(result.triples.into_iter().map(|t| t.subject).collect())
+}
+
+/// Bound-only paginated variant: returns up to `limit` IRIs starting at `offset`.
+///
+/// Use when the set is bounded-by-nature (e.g. AI services, IMAP accounts) and
+/// keyset-tx does not apply (entities are not accumulated in append-on-top order).
+///
+/// `order_predicate`:
+/// - `None` — preserves the original `ORDER BY t.subject` behaviour (no change).
+/// - `Some(pred)` — orders DESC by the current value of `pred`
+///   (COALESCE(object, object_value)), with NULLs last, tie-broken by subject ASC.
+pub fn find_entities_with_property_bounded(
+    conn: &Connection,
+    predicate: &str,
+    object: &str,
+    limit: i64,
+    offset: i64,
+    order_predicate: Option<&str>,
+) -> Result<Vec<String>> {
+    use rusqlite::types::Value as SqlValue;
+    let (sql, params): (String, Vec<SqlValue>) = match order_predicate {
+        None => {
+            let sql = String::from(
+                "SELECT t.subject FROM triples_current t \
+                 WHERE t.predicate = ? AND t.object = ? \
+                 ORDER BY t.subject \
+                 LIMIT ? OFFSET ?",
+            );
+            let params = vec![
+                SqlValue::Text(predicate.to_string()),
+                SqlValue::Text(object.to_string()),
+                SqlValue::Integer(limit),
+                SqlValue::Integer(offset),
+            ];
+            (sql, params)
+        }
+        Some(ord_pred) => {
+            let sql = String::from(
+                "SELECT t.subject \
+                 FROM triples_current t \
+                 LEFT JOIN triples_current tord \
+                   ON tord.subject = t.subject \
+                  AND tord.predicate = ?3 \
+                 WHERE t.predicate = ?1 AND t.object = ?2 \
+                 ORDER BY COALESCE(tord.object, tord.object_value) DESC NULLS LAST, \
+                          t.subject ASC \
+                 LIMIT ?4 OFFSET ?5",
+            );
+            let params = vec![
+                SqlValue::Text(predicate.to_string()),
+                SqlValue::Text(object.to_string()),
+                SqlValue::Text(ord_pred.to_string()),
+                SqlValue::Integer(limit),
+                SqlValue::Integer(offset),
+            ];
+            (sql, params)
+        }
+    };
+    let mut stmt = conn.prepare(&sql).map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| row.get(0))
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+    Ok(rows)
+}
+
+/// Keyset-paginated variant: returns (iri, creation_tx) pairs for entities where
+/// `predicate` = `object`, ordered by creation_tx DESC, limited to `limit`.
+/// `after_tx` is exclusive — only entities whose creation tx is strictly less than
+/// this value are returned. Pass `None` to start from the most recent.
+///
+/// "creation_tx" is the tx of the predicate=object triple itself, which is written
+/// exactly once at creation time (e.g. rdf:type). This makes it a stable, monotonic
+/// cursor suitable for keyset pagination.
+pub fn find_entities_with_property_keyset(
+    conn: &Connection,
+    predicate: &str,
+    object: &str,
+    after_tx: Option<i64>,
+    limit: i64,
+) -> Result<Vec<(String, i64)>> {
+    use rusqlite::types::Value as SqlValue;
+    let mut sql = String::from(
+        "SELECT t.subject, t.tx \
+         FROM triples_current t \
+         WHERE t.predicate = ? \
+           AND t.object = ?",
+    );
+    let mut params: Vec<SqlValue> = vec![
+        SqlValue::Text(predicate.to_string()),
+        SqlValue::Text(object.to_string()),
+    ];
+    if let Some(cursor) = after_tx {
+        sql.push_str(" AND t.tx < ?");
+        params.push(SqlValue::Integer(cursor));
+    }
+    sql.push_str(" ORDER BY t.tx DESC LIMIT ?");
+    params.push(SqlValue::Integer(limit));
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+    Ok(rows)
 }
 
 pub fn find_entities_with_predicate(

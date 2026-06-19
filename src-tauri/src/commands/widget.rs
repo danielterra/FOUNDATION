@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use crate::owl::{Connection, DbExecutor, Object, Individual};
-use crate::owl::vocabulary::rdf;
 
 const WIDGET_CLASS: &str = "foundation:Widget";
 const WIDGET_ICON: &str = "widgets";
@@ -221,9 +220,22 @@ pub fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), S
     Ok(())
 }
 
-pub fn owl_get_all_widgets(conn: &Connection) -> Result<Vec<Widget>, String> {
-    let widget_iris = crate::owl::find_entities_with_property(conn, rdf::TYPE, WIDGET_CLASS)
-        .map_err(|e| e.to_string())?;
+/// Returns widgets on the given blackboard, filtering directly in SQL and
+/// applying a safe page bound.  Avoids loading all widgets from all boards.
+pub fn owl_get_widgets_for_blackboard(conn: &Connection, blackboard_iri: &str) -> Result<Vec<Widget>, String> {
+    owl_get_widgets_for_blackboard_bounded(conn, blackboard_iri, 500, 0)
+}
+
+pub fn owl_get_widgets_for_blackboard_bounded(
+    conn: &Connection,
+    blackboard_iri: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Widget>, String> {
+    let widget_iris = crate::owl::find_entities_with_property_bounded(
+        conn, PRED_BLACKBOARD, blackboard_iri, limit, offset, None,
+    ).map_err(|e| e.to_string())?;
+
     let mut widgets = Vec::new();
     for iri in widget_iris {
         if let Ok(Some(ind)) = Individual::get(conn, &iri) {
@@ -233,12 +245,6 @@ pub fn owl_get_all_widgets(conn: &Connection) -> Result<Vec<Widget>, String> {
         }
     }
     Ok(widgets)
-}
-
-pub fn owl_get_widgets_for_blackboard(conn: &Connection, blackboard_iri: &str) -> Result<Vec<Widget>, String> {
-    Ok(owl_get_all_widgets(conn)?.into_iter()
-        .filter(|w| w.blackboard_iri == blackboard_iri)
-        .collect())
 }
 
 pub fn owl_delete_widget(conn: &mut Connection, widget_id: &str) -> Result<(), String> {
@@ -477,10 +483,15 @@ pub async fn widget_blackboard__resolve_blackboard(
 #[allow(non_snake_case)]
 pub async fn widget_blackboard__get_widgets(
     blackboard_id: String,
+    limit: Option<i64>,
+    offset: Option<i64>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<Widget>, String> {
     executor.read(move |conn| {
-        owl_get_widgets_for_blackboard(conn, &blackboard_id)
+        // bounded-por-natureza; keyset-tx não agrega (não é append-no-topo)
+        let page_size = limit.unwrap_or(500).max(1).min(2000);
+        let page_offset = offset.unwrap_or(0).max(0);
+        owl_get_widgets_for_blackboard_bounded(conn, &blackboard_id, page_size, page_offset)
     }).await
 }
 

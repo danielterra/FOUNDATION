@@ -1,15 +1,116 @@
 use super::*;
 use crate::eavto::test_helpers::setup_test_db;
 use crate::eavto::{store, Triple, Object};
-use crate::core_ontology::search::{search_classes, search_individuals, search_instances, search};
-use crate::core_ontology::status::{validate_allowed_status, resolve_status_appearance, get_entity_status_info};
-use crate::owl::get_all_property_values;
+
+// ── batch_insert_triples (append semantics) ───────────────────────────────────
+
+#[test]
+fn test_batch_insert_triples_appends_without_replacing() {
+    let mut conn = setup_test_db();
+    store::assert_triples(&mut conn, &[
+        Triple::new("test:X", "test:tag", Object::Literal {
+            value: "first".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+        }),
+    ], "test").unwrap();
+
+    batch_insert_triples(&mut conn, &[
+        Triple::new("test:X", "test:tag", Object::Literal {
+            value: "second".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+        }),
+    ], "test").unwrap();
+
+    let vals = get_all_property_values(&conn, "test:X", "test:tag").unwrap();
+    assert!(vals.contains(&"first".to_string()), "first value must still be present after append");
+    assert!(vals.contains(&"second".to_string()), "second value must be appended");
+}
+
+#[test]
+fn test_batch_insert_triples_empty_slice_is_noop() {
+    let mut conn = setup_test_db();
+    let result = batch_insert_triples(&mut conn, &[], "test");
+    assert!(result.is_ok());
+}
+
+// ── assert_raw_triples (replace semantics) ────────────────────────────────────
+
+#[test]
+fn test_assert_raw_triples_replaces_existing_value() {
+    let mut conn = setup_test_db();
+    store::assert_triples(&mut conn, &[
+        Triple::new("test:Y", "test:name", Object::Literal {
+            value: "old".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+        }),
+    ], "test").unwrap();
+
+    assert_raw_triples(&mut conn, &[
+        Triple::new("test:Y", "test:name", Object::Literal {
+            value: "new".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+        }),
+    ], "test").unwrap();
+
+    let vals = get_all_property_values(&conn, "test:Y", "test:name").unwrap();
+    assert!(!vals.contains(&"old".to_string()), "old value must be replaced");
+    assert!(vals.contains(&"new".to_string()), "new value must be present");
+}
+
+#[test]
+fn test_assert_raw_triples_read_confirms_written_triple() {
+    let mut conn = setup_test_db();
+    let triples = vec![
+        Triple::new("test:Z", "rdf:type", Object::Iri("test:Thing".to_string())),
+    ];
+
+    assert_raw_triples(&mut conn, &triples, "test").unwrap();
+
+    let vals = get_all_property_values(&conn, "test:Z", "rdf:type").unwrap();
+    assert!(vals.contains(&"test:Thing".to_string()));
+}
+
+// ── try_iri_direct_lookup ─────────────────────────────────────────────────────
+
+#[test]
+fn test_try_iri_direct_lookup_existing_iri_returns_result() {
+    let mut conn = setup_test_db();
+    store::assert_triples(&mut conn, &[
+        Triple::new("test:MyEntity", "rdf:type", Object::Iri("test:SomeClass".to_string())),
+        Triple::new("test:MyEntity", "rdfs:label", Object::Literal {
+            value: "My Entity".to_string(), datatype: Some("xsd:string".to_string()), language: None,
+        }),
+    ], "test").unwrap();
+
+    let result = search::try_iri_direct_lookup(&conn, "test:MyEntity");
+    assert!(result.is_some(), "existing IRI must return Some");
+    let result = result.unwrap();
+    assert_eq!(result.id, "test:MyEntity");
+}
+
+#[test]
+fn test_try_iri_direct_lookup_nonexistent_iri_returns_none() {
+    let conn = setup_test_db();
+    let result = search::try_iri_direct_lookup(&conn, "test:Ghost");
+    assert!(result.is_none(), "non-existent IRI must return None");
+}
+
+#[test]
+fn test_try_iri_direct_lookup_query_with_space_returns_none() {
+    let conn = setup_test_db();
+    let result = search::try_iri_direct_lookup(&conn, "test:My Entity");
+    assert!(result.is_none(), "query with space must return None");
+}
+
+#[test]
+fn test_try_iri_direct_lookup_no_colon_returns_none() {
+    let conn = setup_test_db();
+    let result = search::try_iri_direct_lookup(&conn, "notAnIri");
+    assert!(result.is_none(), "query without colon must return None");
+}
+
+// ── replace_all_property_iris ─────────────────────────────────────────────────
 
 #[test]
 fn test_replace_all_property_iris_saves_all_values() {
     let mut conn = setup_test_db();
 
-    // Create a subject entity
     store::assert_triples(
         &mut conn,
         &[Triple::new(
@@ -20,7 +121,6 @@ fn test_replace_all_property_iris_saves_all_values() {
         "test",
     ).unwrap();
 
-    // Create target IRI entities so they exist
     for iri in &["foundation:StatusA", "foundation:StatusB", "foundation:StatusC"] {
         store::assert_triples(
             &mut conn,
@@ -29,7 +129,6 @@ fn test_replace_all_property_iris_saves_all_values() {
         ).unwrap();
     }
 
-    // Replace with three values at once
     replace_all_property_iris(
         &mut conn,
         "foundation:TestConcept",
@@ -38,7 +137,6 @@ fn test_replace_all_property_iris_saves_all_values() {
         "test",
     ).unwrap();
 
-    // All three must be active
     let active: i64 = conn.query_row(
         "SELECT COUNT(*) FROM triples \
          WHERE subject = 'foundation:TestConcept' \
@@ -47,9 +145,8 @@ fn test_replace_all_property_iris_saves_all_values() {
         [],
         |row| row.get(0),
     ).unwrap();
-    assert_eq!(active, 3, "All three allowedStatus values must be stored");
+    assert_eq!(active, 3, "all three allowedStatus values must be stored");
 
-    // Verify the specific IRIs are present
     for status in &["foundation:StatusA", "foundation:StatusB", "foundation:StatusC"] {
         let exists: bool = conn.query_row(
             "SELECT COUNT(*) > 0 FROM triples \
@@ -85,7 +182,6 @@ fn test_replace_all_property_iris_replaces_existing_values() {
         ).unwrap();
     }
 
-    // Set initial values
     replace_all_property_iris(
         &mut conn,
         "foundation:TestConcept",
@@ -94,7 +190,6 @@ fn test_replace_all_property_iris_replaces_existing_values() {
         "test",
     ).unwrap();
 
-    // Replace with a different set
     replace_all_property_iris(
         &mut conn,
         "foundation:TestConcept",
@@ -110,7 +205,7 @@ fn test_replace_all_property_iris_replaces_existing_values() {
         [],
         |row| row.get(0),
     ).unwrap();
-    assert_eq!(active, 2, "Only the new set of values must remain");
+    assert_eq!(active, 2, "only the new set of values must remain");
 
     let status_a_active: bool = conn.query_row(
         "SELECT COUNT(*) > 0 FROM triples_current \
@@ -123,7 +218,7 @@ fn test_replace_all_property_iris_replaces_existing_values() {
     assert!(!status_a_active, "StatusA must be retracted after replacement");
 }
 
-// ── search_classes ───────────────────────────────────────────────────────
+// ── helpers shared by search tests ───────────────────────────────────────────
 
 fn create_class(conn: &mut crate::eavto::Connection, iri: &str, label: &str) {
     store::assert_triples(conn, &[
@@ -147,10 +242,16 @@ fn create_individual(conn: &mut crate::eavto::Connection, iri: &str, class_iri: 
     ], "test").unwrap();
 }
 
+fn lit(value: &str) -> Object {
+    Object::Literal { value: value.to_string(), datatype: Some("xsd:string".to_string()), language: None }
+}
+
+// ── search_classes ────────────────────────────────────────────────────────────
+
 #[test]
 fn test_search_classes_empty_db() {
     let conn = setup_test_db();
-    let result = search_classes(&conn, "task", 10).unwrap();
+    let result = search::search_classes(&conn, "task", 10).unwrap();
     assert!(result.is_empty());
 }
 
@@ -160,7 +261,7 @@ fn test_search_classes_finds_matching_label() {
     create_class(&mut conn, "foundation:Task", "Task");
     create_class(&mut conn, "foundation:Project", "Project");
 
-    let result = search_classes(&conn, "task", 10).unwrap();
+    let result = search::search_classes(&conn, "task", 10).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].id, "foundation:Task");
     assert!(result[0].is_class);
@@ -171,7 +272,7 @@ fn test_search_classes_case_insensitive() {
     let mut conn = setup_test_db();
     create_class(&mut conn, "foundation:Task", "Task");
 
-    let result = search_classes(&conn, "TASK", 10).unwrap();
+    let result = search::search_classes(&conn, "TASK", 10).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].id, "foundation:Task");
 }
@@ -183,7 +284,7 @@ fn test_search_classes_respects_limit() {
     create_class(&mut conn, "foundation:TaskB", "Task Beta");
     create_class(&mut conn, "foundation:TaskC", "Task Gamma");
 
-    let result = search_classes(&conn, "task", 2).unwrap();
+    let result = search::search_classes(&conn, "task", 2).unwrap();
     assert_eq!(result.len(), 2);
 }
 
@@ -193,16 +294,31 @@ fn test_search_classes_ranks_exact_match_first() {
     create_class(&mut conn, "foundation:Task", "Task");
     create_class(&mut conn, "foundation:TaskType", "Task Type");
 
-    let result = search_classes(&conn, "task", 10).unwrap();
+    let result = search::search_classes(&conn, "task", 10).unwrap();
     assert_eq!(result[0].id, "foundation:Task");
 }
 
-// ── search_individuals ───────────────────────────────────────────────────
+#[test]
+fn test_search_classes_empty_query_returns_all_classes() {
+    let mut conn = setup_test_db();
+    create_class(&mut conn, "foundation:Task", "Task");
+    create_class(&mut conn, "foundation:Bug", "Bug");
+    create_class(&mut conn, "foundation:Project", "Project");
+
+    let result = search::search_classes(&conn, "", 100).unwrap();
+    assert_eq!(result.len(), 3, "empty query must return all classes");
+    let ids: Vec<&str> = result.iter().map(|r| r.id.as_str()).collect();
+    assert!(ids.contains(&"foundation:Task"));
+    assert!(ids.contains(&"foundation:Bug"));
+    assert!(ids.contains(&"foundation:Project"));
+}
+
+// ── search_individuals ────────────────────────────────────────────────────────
 
 #[test]
 fn test_search_individuals_empty_db() {
     let conn = setup_test_db();
-    let result = search_individuals(&conn, "alice", 10).unwrap();
+    let result = search::search_individuals(&conn, "alice", 10).unwrap();
     assert!(result.is_empty());
 }
 
@@ -212,7 +328,7 @@ fn test_search_individuals_finds_matching_label() {
     create_individual(&mut conn, "foundation:Alice", "foundation:Person", "Alice Smith");
     create_individual(&mut conn, "foundation:Bob", "foundation:Person", "Bob Jones");
 
-    let result = search_individuals(&conn, "alice", 10).unwrap();
+    let result = search::search_individuals(&conn, "alice", 10).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].id, "foundation:Alice");
     assert!(!result[0].is_class);
@@ -223,7 +339,7 @@ fn test_search_individuals_case_insensitive() {
     let mut conn = setup_test_db();
     create_individual(&mut conn, "foundation:Alice", "foundation:Person", "Alice Smith");
 
-    let result = search_individuals(&conn, "ALICE", 10).unwrap();
+    let result = search::search_individuals(&conn, "ALICE", 10).unwrap();
     assert_eq!(result.len(), 1);
 }
 
@@ -233,8 +349,7 @@ fn test_search_individuals_excludes_owl_classes() {
     create_class(&mut conn, "foundation:Task", "Task");
     create_individual(&mut conn, "foundation:MyTask", "foundation:Task", "Task Alpha");
 
-    let result = search_individuals(&conn, "task", 10).unwrap();
-    // Only "Task Alpha" (an individual) should match, not the class "Task"
+    let result = search::search_individuals(&conn, "task", 10).unwrap();
     assert!(result.iter().all(|r| !r.is_class));
     assert!(result.iter().any(|r| r.id == "foundation:MyTask"));
 }
@@ -246,11 +361,11 @@ fn test_search_individuals_respects_limit() {
     create_individual(&mut conn, "foundation:P2", "foundation:Person", "Alice B");
     create_individual(&mut conn, "foundation:P3", "foundation:Person", "Alice C");
 
-    let result = search_individuals(&conn, "alice", 2).unwrap();
+    let result = search::search_individuals(&conn, "alice", 2).unwrap();
     assert_eq!(result.len(), 2);
 }
 
-// ── search_instances ─────────────────────────────────────────────────
+// ── search_instances ──────────────────────────────────────────────────────────
 
 #[test]
 fn test_search_instances_empty_query_returns_all() {
@@ -258,7 +373,7 @@ fn test_search_instances_empty_query_returns_all() {
     create_individual(&mut conn, "foundation:Alice", "foundation:Person", "Alice");
     create_individual(&mut conn, "foundation:Bob", "foundation:Person", "Bob");
 
-    let result = search_instances(&conn, "", 100).unwrap();
+    let result = search::search_instances(&conn, "", 100).unwrap();
     assert!(result.len() >= 2);
 }
 
@@ -268,7 +383,7 @@ fn test_search_instances_matches_by_label() {
     create_individual(&mut conn, "foundation:Alice", "foundation:Person", "Alice Smith");
     create_individual(&mut conn, "foundation:Bob", "foundation:Person", "Bob Jones");
 
-    let result = search_instances(&conn, "alice", 10).unwrap();
+    let result = search::search_instances(&conn, "alice", 10).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].id, "foundation:Alice");
     assert_eq!(result[0].entity_type, "individual");
@@ -291,7 +406,7 @@ fn test_search_instances_matches_by_property_value() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances(&conn, "quarterly", 10).unwrap();
+    let result = search::search_instances(&conn, "quarterly", 10).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].id, "foundation:Doc1");
     assert!(!result[0].matched_properties.is_empty());
@@ -304,7 +419,7 @@ fn test_search_instances_respects_limit() {
     create_individual(&mut conn, "foundation:A2", "foundation:Item", "Apple B");
     create_individual(&mut conn, "foundation:A3", "foundation:Item", "Apple C");
 
-    let result = search_instances(&conn, "apple", 2).unwrap();
+    let result = search::search_instances(&conn, "apple", 2).unwrap();
     assert_eq!(result.len(), 2);
 }
 
@@ -320,7 +435,7 @@ fn test_search_instances_returns_classes() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances(&conn, "vehicle", 10).unwrap();
+    let result = search::search_instances(&conn, "vehicle", 10).unwrap();
     assert!(!result.is_empty());
     let found = result.iter().find(|r| r.id == "foundation:Vehicle").unwrap();
     assert_eq!(found.entity_type, "class");
@@ -332,7 +447,7 @@ fn test_search_instances_iri_match_scores_highest() {
     create_individual(&mut conn, "foundation:Alice", "foundation:Person", "Alice");
     create_individual(&mut conn, "foundation:Bob", "foundation:Person", "Bob Alice Fan");
 
-    let result = search_instances(&conn, "foundation:Alice", 10).unwrap();
+    let result = search::search_instances(&conn, "foundation:Alice", 10).unwrap();
     assert!(!result.is_empty());
     assert_eq!(result[0].id, "foundation:Alice");
 }
@@ -360,7 +475,7 @@ fn test_search_instances_label_scores_higher_than_property() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances(&conn, "deploy", 10).unwrap();
+    let result = search::search_instances(&conn, "deploy", 10).unwrap();
     assert!(result.len() >= 2);
     assert_eq!(result[0].id, "foundation:TaskA");
 }
@@ -389,7 +504,7 @@ fn test_search_instances_label_exact_beats_starts_with_beats_contains() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances(&conn, "rust", 10).unwrap();
+    let result = search::search_instances(&conn, "rust", 10).unwrap();
     assert_eq!(result.len(), 3);
     assert_eq!(result[0].id, "foundation:E1", "exact match must be first");
     assert_eq!(result[1].id, "foundation:E2", "starts_with must be second");
@@ -413,7 +528,7 @@ fn test_search_instances_comment_match_works() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances(&conn, "dashboard", 10).unwrap();
+    let result = search::search_instances(&conn, "dashboard", 10).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].id, "foundation:Widget");
     let comment_prop = result[0].matched_properties.iter()
@@ -449,7 +564,7 @@ fn test_search_instances_comment_beats_property() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances(&conn, "widget", 10).unwrap();
+    let result = search::search_instances(&conn, "widget", 10).unwrap();
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].id, "foundation:Alpha", "comment match (score 20) must beat property match (score 10)");
 }
@@ -460,7 +575,7 @@ fn test_search_instances_iri_local_part_match() {
     create_individual(&mut conn, "foundation:ProjectAlpha", "foundation:Project", "Some Project");
     create_individual(&mut conn, "foundation:ProjectBeta", "foundation:Project", "Other Project");
 
-    let result = search_instances(&conn, "ProjectAlpha", 10).unwrap();
+    let result = search::search_instances(&conn, "ProjectAlpha", 10).unwrap();
     assert!(!result.is_empty());
     assert_eq!(result[0].id, "foundation:ProjectAlpha");
 }
@@ -482,17 +597,46 @@ fn test_search_instances_matched_properties_content() {
         }),
     ], "test").unwrap();
 
-    let result = search_instances(&conn, "acme", 10).unwrap();
+    let result = search::search_instances(&conn, "acme", 10).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].matched_properties.len(), 1);
     assert_eq!(result[0].matched_properties[0]["detail_iri"], "foundation:reference");
 }
 
-// ── property helpers ─────────────────────────────────────────────────────
+// ── search (unified, with class_iri filter) ───────────────────────────────────
 
-fn lit(value: &str) -> Object {
-    Object::Literal { value: value.to_string(), datatype: Some("xsd:string".to_string()), language: None }
+#[test]
+fn test_search_with_class_iri_returns_only_instances_of_that_class() {
+    let mut conn = setup_test_db();
+    create_individual(&mut conn, "foundation:TaskA", "foundation:Task", "Task A");
+    create_individual(&mut conn, "foundation:TaskB", "foundation:Task", "Task B");
+    create_individual(&mut conn, "foundation:BugX", "foundation:Bug", "Bug X");
+
+    let tokens: Vec<String> = vec![];
+    let (results, _) = search::search(&conn, &tokens, None, Some("foundation:Task"), None, false, 100, 0).unwrap();
+
+    assert_eq!(results.len(), 2, "must return only instances of foundation:Task");
+    let ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
+    assert!(ids.contains(&"foundation:TaskA"));
+    assert!(ids.contains(&"foundation:TaskB"));
+    assert!(!ids.contains(&"foundation:BugX"), "instances of another class must not appear");
 }
+
+#[test]
+fn test_search_with_class_iri_and_text_tokens_filters_both() {
+    let mut conn = setup_test_db();
+    create_individual(&mut conn, "foundation:TaskFoo", "foundation:Task", "Task Foo");
+    create_individual(&mut conn, "foundation:TaskBar", "foundation:Task", "Task Bar");
+    create_individual(&mut conn, "foundation:BugFoo", "foundation:Bug", "Bug Foo");
+
+    let tokens = vec!["foo".to_string()];
+    let (results, _) = search::search(&conn, &tokens, None, Some("foundation:Task"), None, false, 100, 0).unwrap();
+
+    assert_eq!(results.len(), 1, "must filter by class AND by text");
+    assert_eq!(results[0].id, "foundation:TaskFoo");
+}
+
+// ── property helpers ──────────────────────────────────────────────────────────
 
 #[test]
 fn test_get_all_iri_properties_returns_all_iris() {
@@ -517,7 +661,7 @@ fn test_get_all_iri_properties_ignores_literals() {
     assert!(result.is_empty());
 }
 
-// ── get_all_property_values ───────────────────────────────────────────────
+// ── get_all_property_values ───────────────────────────────────────────────────
 
 #[test]
 fn test_get_all_property_values_three_mixed_in_order() {
@@ -677,10 +821,12 @@ fn test_find_entities_with_property_empty_when_no_match() {
     assert!(result.is_empty());
 }
 
+// ── validate_allowed_status ───────────────────────────────────────────────────
+
 #[test]
 fn test_validate_allowed_status_fails_when_no_statuses_configured() {
     let conn = setup_test_db();
-    let result = validate_allowed_status(&conn, "foundation:Task", "foundation:Active");
+    let result = crate::owl::individual::status::validate_allowed_status(&conn, "foundation:Task", "foundation:Active");
     assert!(result.is_err(), "concept with no allowedStatus must return an error");
 }
 
@@ -691,7 +837,7 @@ fn test_validate_allowed_status_passes_when_in_allowed_list() {
         Triple::new("foundation:Task", "foundation:allowedStatus", Object::Iri("foundation:Active".to_string())),
         Triple::new("foundation:Task", "foundation:allowedStatus", Object::Iri("foundation:Done".to_string())),
     ], "test").unwrap();
-    validate_allowed_status(&conn, "foundation:Task", "foundation:Active").unwrap();
+    crate::owl::individual::status::validate_allowed_status(&conn, "foundation:Task", "foundation:Active").unwrap();
 }
 
 #[test]
@@ -700,11 +846,11 @@ fn test_validate_allowed_status_fails_when_not_in_list() {
     store::assert_triples(&mut conn, &[
         Triple::new("foundation:Task", "foundation:allowedStatus", Object::Iri("foundation:Active".to_string())),
     ], "test").unwrap();
-    let result = validate_allowed_status(&conn, "foundation:Task", "foundation:Archived");
+    let result = crate::owl::individual::status::validate_allowed_status(&conn, "foundation:Task", "foundation:Archived");
     assert!(result.is_err());
 }
 
-// ── status helpers ────────────────────────────────────────────────────────
+// ── resolve_status_appearance ─────────────────────────────────────────────────
 
 fn create_status(conn: &mut crate::eavto::Connection, iri: &str, label: &str, color: &str, icon: &str) {
     store::assert_triples(conn, &[
@@ -720,7 +866,7 @@ fn test_resolve_status_appearance_direct_color_and_icon() {
     let mut conn = setup_test_db();
     create_status(&mut conn, "foundation:ActiveStatus", "Active", "#00FF00", "check");
 
-    let (icon, color) = resolve_status_appearance(&conn, "foundation:ActiveStatus");
+    let (icon, color) = crate::owl::individual::status::resolve_status_appearance(&conn, "foundation:ActiveStatus");
     assert_eq!(icon, Some("check".to_string()));
     assert_eq!(color, Some("#00FF00".to_string()));
 }
@@ -728,18 +874,16 @@ fn test_resolve_status_appearance_direct_color_and_icon() {
 #[test]
 fn test_resolve_status_appearance_falls_back_to_parent() {
     let mut conn = setup_test_db();
-    // Parent has color and icon
     store::assert_triples(&mut conn, &[
         Triple::new("foundation:ParentStatus", "foundation:color", lit("#0000FF")),
         Triple::new("foundation:ParentStatus", "foundation:hasIcon", Object::Iri(crate::owl::icon_name_to_iri("star"))),
     ], "test").unwrap();
-    // Child only has parentStatus, no color/icon of its own
     store::assert_triples(&mut conn, &[
         Triple::new("foundation:ChildStatus", "foundation:parentStatus",
             Object::Iri("foundation:ParentStatus".to_string())),
     ], "test").unwrap();
 
-    let (icon, color) = resolve_status_appearance(&conn, "foundation:ChildStatus");
+    let (icon, color) = crate::owl::individual::status::resolve_status_appearance(&conn, "foundation:ChildStatus");
     assert_eq!(icon, Some("star".to_string()));
     assert_eq!(color, Some("#0000FF".to_string()));
 }
@@ -747,10 +891,12 @@ fn test_resolve_status_appearance_falls_back_to_parent() {
 #[test]
 fn test_resolve_status_appearance_returns_none_when_absent() {
     let conn = setup_test_db();
-    let (icon, color) = resolve_status_appearance(&conn, "foundation:Unknown");
+    let (icon, color) = crate::owl::individual::status::resolve_status_appearance(&conn, "foundation:Unknown");
     assert!(icon.is_none());
     assert!(color.is_none());
 }
+
+// ── get_entity_status_info ────────────────────────────────────────────────────
 
 #[test]
 fn test_get_entity_status_info_finds_status() {
@@ -779,55 +925,7 @@ fn test_get_entity_status_info_returns_none_when_no_status() {
     assert!(result.is_none());
 }
 
-// ── search with class filter (@-syntax backend contract) ──────────────
-
-#[test]
-fn test_search_classes_empty_query_returns_all_classes() {
-    let mut conn = setup_test_db();
-    create_class(&mut conn, "foundation:Task", "Task");
-    create_class(&mut conn, "foundation:Bug", "Bug");
-    create_class(&mut conn, "foundation:Project", "Project");
-
-    let result = search_classes(&conn, "", 100).unwrap();
-    assert_eq!(result.len(), 3, "empty query must return all classes");
-    let ids: Vec<&str> = result.iter().map(|r| r.id.as_str()).collect();
-    assert!(ids.contains(&"foundation:Task"));
-    assert!(ids.contains(&"foundation:Bug"));
-    assert!(ids.contains(&"foundation:Project"));
-}
-
-#[test]
-fn test_search_with_class_iri_returns_only_instances_of_that_class() {
-    let mut conn = setup_test_db();
-    create_individual(&mut conn, "foundation:TaskA", "foundation:Task", "Task A");
-    create_individual(&mut conn, "foundation:TaskB", "foundation:Task", "Task B");
-    create_individual(&mut conn, "foundation:BugX", "foundation:Bug", "Bug X");
-
-    let tokens: Vec<String> = vec![];
-    let (results, _) = search(&conn, &tokens, None, Some("foundation:Task"), None, false, 100, 0).unwrap();
-
-    assert_eq!(results.len(), 2, "must return only instances of foundation:Task");
-    let ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
-    assert!(ids.contains(&"foundation:TaskA"));
-    assert!(ids.contains(&"foundation:TaskB"));
-    assert!(!ids.contains(&"foundation:BugX"), "instances of another class must not appear");
-}
-
-#[test]
-fn test_search_with_class_iri_and_text_tokens_filters_both() {
-    let mut conn = setup_test_db();
-    create_individual(&mut conn, "foundation:TaskFoo", "foundation:Task", "Task Foo");
-    create_individual(&mut conn, "foundation:TaskBar", "foundation:Task", "Task Bar");
-    create_individual(&mut conn, "foundation:BugFoo", "foundation:Bug", "Bug Foo");
-
-    let tokens = vec!["foo".to_string()];
-    let (results, _) = search(&conn, &tokens, None, Some("foundation:Task"), None, false, 100, 0).unwrap();
-
-    assert_eq!(results.len(), 1, "must filter by class AND by text");
-    assert_eq!(results[0].id, "foundation:TaskFoo");
-}
-
-// ── graph helpers ─────────────────────────────────────────────────────────
+// ── graph helpers ─────────────────────────────────────────────────────────────
 
 #[test]
 fn test_load_graph_node_groups_returns_defaults_when_no_data() {

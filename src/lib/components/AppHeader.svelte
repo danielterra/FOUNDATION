@@ -42,4 +42,14 @@
     min-width: 0;
     padding-right: 0.5rem;
   }
+
+  /* Page-action icons run smaller than their default so they breathe inside the
+     header bar instead of filling its full height. */
+  .page-actions :global([data-slot="button"]) {
+    height: 30px;
+  }
+
+  .page-actions :global(.material-symbols-outlined) {
+    font-size: 19px;
+  }
 </style>

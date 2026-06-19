@@ -382,7 +382,8 @@
 
 	async function loadModels(serviceIri) {
 		try {
-			models = await invoke('setup__list_ai_models', { serviceIri });
+			const result = await invoke('setup__list_ai_models', { serviceIri });
+			models = result.items;
 		} catch {
 			models = [];
 		}
@@ -628,7 +629,8 @@
 		}
 		imapHistoryAccountIri = accountIri;
 		try {
-			imapSyncHistory = await invoke('imap__get_sync_history', { accountIri, limit: 20 });
+			const syncResult = await invoke('imap__get_sync_history', { accountIri, limit: 20 });
+			imapSyncHistory = syncResult.items;
 		} catch {
 			imapSyncHistory = [];
 		}

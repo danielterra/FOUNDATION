@@ -1,6 +1,6 @@
 ﻿use std::collections::HashMap;
 use crate::owl::{self, Class, Individual, Property, Connection};
-use super::{EntityData, PropertyValue, GraphNode, GraphLink, StatusInfo, FileInfo,
+use super::{EntityData, PropertyValue, BacklinkCursor, GraphNode, GraphLink, StatusInfo, FileInfo,
             resolve_unit_label, resolve_entity_status};
 
 pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, u8), individual: Individual) -> Result<EntityData, String> {
@@ -270,6 +270,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             datatype,
             value_status,
             group_total: None,
+            backlink_next_cursor: None,
             is_calculated,
             is_query_property: is_query_prop,
             formula_error,
@@ -372,6 +373,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         },
                         value_status: None,
                         group_total: None,
+                        backlink_next_cursor: None,
                         is_calculated: prop.query_config.is_some(),
                         is_query_property: prop.query_config.is_some(),
                         formula_error: None,
@@ -612,6 +614,46 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         });
     }
 
+    // Must match PAGE_SIZE in `inspector__get_backlink_page` — both define the keyset
+    // boundary so page-1 (snapshot) and page-2+ (paginated) never duplicate or skip.
+    const BACKLINK_PAGE_SIZE: usize = 15;
+
+    // For each group (predicate × source_class) that overflows the snapshot page, compute the
+    // composite cursor (last_tx, subject) of the PAGE_SIZE-th item in `last_tx DESC, subject ASC`
+    // order — the boundary the frontend must echo to `inspector__get_backlink_page`.
+    //
+    // Backlinks arrive ordered last_tx DESC, subject ASC from get_backlinks_grouped_limited.
+    // We accumulate at most PAGE_SIZE items per group and record: the minimum last_tx seen among
+    // those items, and — among items that share that minimum last_tx — the maximum subject
+    // (the last one in ASC order included in the page). That pair (min_tx, max_subject_at_min_tx)
+    // is exactly what the composite cursor predicate `(last_tx < cursor_tx) OR
+    // (last_tx = cursor_tx AND subject > cursor_subject)` expects.
+    let mut group_cursor: HashMap<(String, Option<String>), Option<BacklinkCursor>> = {
+        // Per group: (items_seen, min_last_tx, max_subject_at_min_tx, group_total)
+        let mut counts: HashMap<(String, Option<String>), (usize, i64, String, usize)> = HashMap::new();
+        for b in &individual.backlinks {
+            let key = (b.predicate.clone(), b.source_class.clone());
+            let entry = counts.entry(key).or_insert((0, i64::MAX, String::new(), b.group_total));
+            if entry.0 < BACKLINK_PAGE_SIZE {
+                entry.0 += 1;
+                if b.last_tx < entry.1 {
+                    entry.1 = b.last_tx;
+                    entry.2 = b.subject.clone();
+                } else if b.last_tx == entry.1 && b.subject > entry.2 {
+                    entry.2 = b.subject.clone();
+                }
+            }
+        }
+        counts.into_iter().map(|(key, (_, min_tx, boundary_subject, total))| {
+            let cursor = if total > BACKLINK_PAGE_SIZE {
+                Some(BacklinkCursor { last_tx: min_tx, subject: boundary_subject })
+            } else {
+                None
+            };
+            (key, cursor)
+        }).collect()
+    };
+
     let backlinks: Vec<PropertyValue> = Vec::new();
     for b in &individual.backlinks {
         let (property_label, property_comment) = {
@@ -646,6 +688,10 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             .and_then(|status_iri| status_cache.get(status_iri))
             .cloned();
 
+        let backlink_next_cursor = group_cursor
+            .remove(&(b.predicate.clone(), b.source_class.clone()))
+            .flatten();
+
         properties.push(PropertyValue {
             property: b.predicate.clone(),
             property_label,
@@ -662,6 +708,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             datatype: None,
             value_status,
             group_total: Some(b.group_total),
+            backlink_next_cursor,
             is_calculated: false,
             is_query_property: false,
             formula_error: None,
@@ -737,6 +784,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         links,
         related_processes: vec![],
         applicable_automations: vec![],
+        snapshot_tx: 0,
     })
 }
 

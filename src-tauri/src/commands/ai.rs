@@ -123,16 +123,33 @@ pub async fn ai__ensure_openrouter_model(
 pub async fn ai__list_api_calls(
     from_ms: Option<i64>,
     to_ms: Option<i64>,
-    limit: Option<usize>,
+    after_tx: Option<i64>,
+    limit: Option<i64>,
+    snapshot_tx: Option<i64>,
     executor: State<'_, DbExecutor>,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<serde_json::Value, String> {
     executor.read(move |conn| {
-        let call_iris = owl::find_entities_with_property(conn, "rdf:type", "foundation:AIAPICall")
-            .unwrap_or_default();
+        let page_size = limit.unwrap_or(100).max(1).min(500);
 
-        let limit = limit.unwrap_or(500);
-        let mut calls: Vec<serde_json::Value> = call_iris.into_iter()
-            .filter_map(|iri| {
+        let pinned_tx: i64 = match snapshot_tx {
+            Some(tx) => tx,
+            None => conn.query_row(
+                "SELECT COALESCE(MAX(tx), 0) FROM triples",
+                [],
+                |row| row.get(0),
+            ).map_err(|e| e.to_string())?,
+        };
+
+        let rows = owl::find_entities_with_property_keyset(
+            conn, "rdf:type", "foundation:AIAPICall", after_tx, page_size + 1,
+        ).unwrap_or_default();
+
+        let has_more = rows.len() as i64 > page_size;
+        let rows: Vec<(String, i64)> = rows.into_iter().take(page_size as usize).collect();
+        let next_cursor: Option<i64> = if has_more { rows.last().map(|(_, tx)| *tx) } else { None };
+
+        let items: Vec<serde_json::Value> = rows.into_iter()
+            .filter_map(|(iri, _tx)| {
                 let ind = Individual::get(conn, &iri).ok().flatten()?;
 
                 let called_at = ind.properties.iter()
@@ -140,7 +157,6 @@ pub async fn ai__list_api_calls(
                     .and_then(|(_, v)| v.as_literal())
                     .unwrap_or_default();
 
-                // Apply date filter via millisecond comparison
                 if let (Some(from), Ok(ts)) = (from_ms, chrono::DateTime::parse_from_rfc3339(&called_at)) {
                     if ts.timestamp_millis() < from { return None; }
                 }
@@ -182,12 +198,12 @@ pub async fn ai__list_api_calls(
             })
             .collect();
 
-        // Sort descending by calledAt (newest first), then trim to limit
-        calls.sort_by(|a, b| {
-            b["calledAt"].as_str().cmp(&a["calledAt"].as_str())
-        });
-        calls.truncate(limit);
-        Ok(calls)
+        Ok(serde_json::json!({
+            "items": items,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+            "snapshot_tx": pinned_tx,
+        }))
     }).await
 }
 

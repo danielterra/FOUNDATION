@@ -406,6 +406,26 @@
 					</Card>
 				</div>
 			{/if}
+
+			{#if !isSearching && searchResults.length === 0 && !showClassAutocomplete && (searchQuery.trim().length >= 2 || activeClassFilter)}
+				<div class="search-results" role="status" aria-live="polite">
+					<Card class="p-0 gap-0">
+						<div class="empty-state">
+							<span class="material-symbols-outlined empty-state-icon">search_off</span>
+							<p class="empty-state-primary">
+								{#if activeClassFilter && searchQuery.trim().length === 0}
+									Nenhum resultado em {activeClassFilter.label}
+								{:else if activeClassFilter}
+									Nenhum resultado em {activeClassFilter.label} para "{searchQuery.trim().length > 40 ? searchQuery.trim().slice(0, 40) + '…' : searchQuery.trim()}"
+								{:else}
+									Nenhum resultado para "{searchQuery.trim().length > 40 ? searchQuery.trim().slice(0, 40) + '…' : searchQuery.trim()}"
+								{/if}
+							</p>
+							<p class="empty-state-secondary">Tente outras palavras ou verifique a grafia.</p>
+						</div>
+					</Card>
+				</div>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -617,5 +637,32 @@
 	.matched-prop-value {
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.empty-state {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 24px;
+		gap: 0.5rem;
+	}
+
+	.empty-state-icon {
+		color: var(--color-neutral);
+		font-size: 28px;
+	}
+
+	.empty-state-primary {
+		color: var(--color-neutral-active);
+		font-size: 0.875rem;
+		text-align: center;
+		margin: 0;
+	}
+
+	.empty-state-secondary {
+		color: var(--color-neutral);
+		font-size: 0.75rem;
+		text-align: center;
+		margin: 0;
 	}
 </style>

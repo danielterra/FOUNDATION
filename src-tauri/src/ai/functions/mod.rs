@@ -605,7 +605,10 @@ fn list_blackboard_widgets_tool(
         },
     };
 
-    let widgets = match crate::commands::widget::owl_get_widgets_for_blackboard(conn, &bb_iri) {
+    let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(500).max(1).min(2000);
+    let offset = args.get("offset").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+
+    let widgets = match crate::commands::widget::owl_get_widgets_for_blackboard_bounded(conn, &bb_iri, limit, offset) {
         Ok(w) => w,
         Err(e) => return ToolResult {
             success: false,

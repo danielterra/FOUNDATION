@@ -7,6 +7,25 @@ pub mod providers;
 
 use providers::{MessageContent, ContentBlock};
 
+/// Minimal async generate contract used by `call_with_empty_retry`.
+/// Keeps the retry logic testable with lightweight mocks instead of
+/// depending on the concrete `AiProvider` enum (which drags in reqwest,
+/// llama bindings and the full provider surface).
+///
+/// Used only within this crate; `Send` bound not required because the
+/// retry loop is driven by Tokio's single-thread executor in tests and
+/// the Tauri async runtime in production.
+#[allow(async_fn_in_trait)]
+pub trait GenerateOnce {
+    async fn generate_once(&self, req: GenerateRequest) -> Result<GenerateResponse, String>;
+}
+
+impl GenerateOnce for AiProvider {
+    async fn generate_once(&self, req: GenerateRequest) -> Result<GenerateResponse, String> {
+        self.generate(req).await
+    }
+}
+
 pub enum AiProvider {
     Claude(providers::ClaudeProvider),
     Local(local::LocalProvider),

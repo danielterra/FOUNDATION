@@ -38,28 +38,30 @@
   let editingCardinalityKey = $state(null);
   let extraValues = $state([]);
   let loadingMore = $state(false);
+  let nextCursor = $state(null);
+  let pageHasMore = $state(false);
 
   $effect(() => {
     void detailGroup.values;
     extraValues = [];
+    nextCursor = detailGroup.backlinkNextCursor ?? null;
+    pageHasMore = nextCursor != null;
   });
 
-  const hasMore = $derived(
-    detailGroup.groupTotal != null &&
-    (detailGroup.values.length + extraValues.length) < detailGroup.groupTotal
-  );
+  const hasMore = $derived(pageHasMore);
 
   async function loadMore() {
     if (!onLoadMoreBacklinks || loadingMore) return;
     loadingMore = true;
     try {
-      const offset = detailGroup.values.length + extraValues.length;
-      const items = await onLoadMoreBacklinks(
+      const result = await onLoadMoreBacklinks(
         detailGroup.property,
         detailGroup.sourceClassIri,
-        offset
+        nextCursor
       );
-      extraValues = [...extraValues, ...items];
+      extraValues = [...extraValues, ...result.items];
+      nextCursor = result.next_cursor;
+      pageHasMore = result.has_more;
     } finally {
       loadingMore = false;
     }
@@ -782,8 +784,11 @@
         {#if loadingMore}
           <span class="material-symbols-outlined spinning-small">progress_activity</span>
         {:else}
+          {@const remaining = detailGroup.groupTotal != null && extraValues.length === 0
+            ? detailGroup.groupTotal - detailGroup.values.length
+            : null}
           <span class="material-symbols-outlined">expand_more</span>
-          Carregar mais ({detailGroup.groupTotal - detailGroup.values.length - extraValues.length})
+          {remaining != null ? `Carregar mais (${remaining})` : 'Carregar mais'}
         {/if}
       </Button>
     {/if}

@@ -68,7 +68,8 @@
 			conversations = conversations.map(c => c.iri === iri ? { ...c, label } : c);
 		} catch (err) {
 			console.error('Failed to rename:', err);
-			conversations = await invoke('chat__list_conversations');
+			const result = await invoke('chat__list_conversations');
+			conversations = result.items;
 		}
 	}
 
@@ -87,7 +88,8 @@
 			onDelete?.(iri);
 		} catch (err) {
 			console.error('Failed to delete:', err);
-			conversations = await invoke('chat__list_conversations');
+			const result = await invoke('chat__list_conversations');
+			conversations = result.items;
 		}
 	}
 

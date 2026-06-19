@@ -84,7 +84,7 @@
         invoke('ai__list_api_calls', { fromMs, toMs, limit: 200 }),
         invoke('chat__get_conversation_snapshot_tx', { conversationId: 'foundation:AIAPICall' }).catch(() => 0),
       ]);
-      calls = fetched;
+      calls = fetched.items;
       seenCallIris = new Set(calls.map(c => c.iri).filter(Boolean));
       snapshotTx = /** @type {number} */ (snapTx);
       entitySub.setIris([...seenCallIris]);

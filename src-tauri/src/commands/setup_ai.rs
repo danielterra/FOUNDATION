@@ -5,11 +5,17 @@ use crate::owl::{self, DbExecutor, Individual, Object};
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn setup__list_ai_services(
+    limit: Option<i64>,
+    offset: Option<i64>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    executor.read(|conn| {
-        let service_iris = owl::find_entities_with_property(conn, "rdf:type", "foundation:AIAPIService")
-            .map_err(|e| format!("Failed to query services: {}", e))?;
+    executor.read(move |conn| {
+        // bounded-por-natureza; keyset-tx não agrega (não é append-no-topo)
+        let page_size = limit.unwrap_or(100).max(1).min(500);
+        let page_offset = offset.unwrap_or(0).max(0);
+        let service_iris = owl::find_entities_with_property_bounded(
+            conn, "rdf:type", "foundation:AIAPIService", page_size, page_offset, Some("rdfs:label"),
+        ).map_err(|e| format!("Failed to query services: {}", e))?;
 
         let mut result = Vec::new();
         for service_iri in service_iris {
@@ -42,67 +48,63 @@ pub async fn setup__list_ai_services(
 #[allow(non_snake_case)]
 pub async fn setup__list_ai_models(
     service_iri: Option<String>,
+    offset: Option<i64>,
+    limit: Option<i64>,
+    snapshot_tx: Option<i64>,
     executor: State<'_, DbExecutor>,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<serde_json::Value, String> {
     executor.read(move |conn| {
-        let model_iris = if let Some(ref service) = service_iri {
-            owl::find_entities_with_property(conn, "foundation:offeredBy", service)
-                .map_err(|e| format!("Failed to query models for service: {}", e))?
-        } else {
-            owl::find_entities_with_property(conn, "rdf:type", "foundation:AIModel")
-                .map_err(|e| format!("Failed to query models: {}", e))?
+        let page_size = limit.unwrap_or(100).max(1).min(500);
+        let page_offset = offset.unwrap_or(0).max(0);
+
+        let pinned_tx: i64 = match snapshot_tx {
+            Some(tx) => tx,
+            None => conn.query_row(
+                "SELECT COALESCE(MAX(tx), 0) FROM triples",
+                [],
+                |row| row.get(0),
+            ).map_err(|e| e.to_string())?,
         };
 
-        let mut result = Vec::new();
-        for model_iri in model_iris {
-            let model_iri = &model_iri;
+        let (rows, has_more) = owl::list_ai_models_as_of(
+            conn,
+            service_iri.as_deref(),
+            "foundation:offeredBy",
+            "rdf:type",
+            "foundation:AIModel",
+            "foundation:isDefaultModel",
+            "rdfs:label",
+            "foundation:modelIdentifier",
+            "foundation:modelVersion",
+            "rdfs:comment",
+            pinned_tx,
+            page_size,
+            page_offset,
+        ).map_err(|e| format!("Failed to query models: {}", e))?;
 
-            if let Ok(Some(model_ind)) = Individual::get(conn, model_iri) {
-                let label = model_ind.label;
-                let comment = model_ind.properties.iter()
-                    .find(|(k, _)| k == "rdfs:comment")
-                    .and_then(|(_, v)| v.as_literal())
-                    .unwrap_or_default();
+        let items: Vec<serde_json::Value> = rows.into_iter().map(|row| {
+            serde_json::json!({
+                "iri": row.subject,
+                "label": row.label,
+                "description": row.description,
+                "modelIdentifier": row.model_identifier,
+                "modelVersion": row.model_version,
+                "isDefault": row.is_default,
+            })
+        }).collect();
 
-                let model_identifier = model_ind.properties.iter()
-                    .find(|(k, _)| k == "foundation:modelIdentifier")
-                    .and_then(|(_, v)| v.as_literal())
-                    .unwrap_or_default();
+        let next_cursor = if has_more {
+            serde_json::Value::Number((page_offset + page_size).into())
+        } else {
+            serde_json::Value::Null
+        };
 
-                let is_default = model_ind.properties.iter()
-                    .find(|(k, _)| k == "foundation:isDefaultModel")
-                    .and_then(|(_, v)| v.as_literal())
-                    .map(|v| v == "true")
-                    .unwrap_or(false);
-
-                let model_version = model_ind.properties.iter()
-                    .find(|(k, _)| k == "foundation:modelVersion")
-                    .and_then(|(_, v)| v.as_literal())
-                    .unwrap_or_default();
-
-                result.push(serde_json::json!({
-                    "iri": model_iri,
-                    "label": label,
-                    "description": comment,
-                    "modelIdentifier": model_identifier,
-                    "modelVersion": model_version,
-                    "isDefault": is_default,
-                }));
-            }
-        }
-
-        result.sort_by(|a, b| {
-            let a_default = a["isDefault"].as_bool().unwrap_or(false);
-            let b_default = b["isDefault"].as_bool().unwrap_or(false);
-
-            match (b_default, a_default) {
-                (true, false) => std::cmp::Ordering::Greater,
-                (false, true) => std::cmp::Ordering::Less,
-                _ => a["label"].as_str().cmp(&b["label"].as_str()),
-            }
-        });
-
-        Ok(result)
+        Ok(serde_json::json!({
+            "items": items,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+            "snapshot_tx": pinned_tx,
+        }))
     }).await
 }
 

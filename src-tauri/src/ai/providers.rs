@@ -32,6 +32,38 @@ fn decode_utf8_incremental(carry: &mut Vec<u8>, new_bytes: &[u8]) -> String {
     }
 }
 
+/// Describes which inference branch was taken when normalising a missing finish_reason.
+/// `Passthrough` means the original value was already present and was returned unchanged.
+#[derive(Debug, PartialEq)]
+enum StopReasonInference {
+    Passthrough,
+    ToolCalls,
+    Stop,
+    Anomalous,
+}
+
+/// Normalises a provider `finish_reason` that may arrive as `null`.
+///
+/// When `stop_reason` is already `Some`, it is returned unchanged (`Passthrough`).
+/// Otherwise the presence of tool-call or text signals is used to infer the
+/// canonical value, mirroring the logic in the streaming path.
+fn infer_stop_reason(
+    stop_reason: Option<String>,
+    has_tool_calls: bool,
+    has_text: bool,
+) -> (Option<String>, StopReasonInference) {
+    if stop_reason.is_some() {
+        return (stop_reason, StopReasonInference::Passthrough);
+    }
+    if has_tool_calls {
+        (Some("tool_calls".to_string()), StopReasonInference::ToolCalls)
+    } else if has_text {
+        (Some("stop".to_string()), StopReasonInference::Stop)
+    } else {
+        (None, StopReasonInference::Anomalous)
+    }
+}
+
 pub struct ClaudeProvider {
     api_key: String,
     client: reqwest::Client,
@@ -1054,24 +1086,18 @@ impl OpenRouterProvider {
             })
             .collect();
 
-        // When the provider omits finish_reason (sends null throughout), infer the
-        // stop reason from what was actually received so the tool_loop can proceed.
-        if stop_reason.is_none() {
-            if !tool_calls.is_empty() {
-                stop_reason = Some("tool_calls".to_string());
-                crate::commands::log_backend("warn",
-                    "[OPENROUTER API] finish_reason missing — inferred 'tool_calls' from accumulated tool call data"
-                );
-            } else if !text_content.is_empty() {
-                stop_reason = Some("stop".to_string());
-                crate::commands::log_backend("warn",
-                    "[OPENROUTER API] finish_reason missing — inferred 'stop' from non-empty text content"
-                );
-            } else {
-                crate::commands::log_backend("warn",
-                    "[OPENROUTER API] finish_reason missing and no tool calls or text content — loop will treat as anomalous stop"
-                );
-            }
+        let (stop_reason, inferred) = infer_stop_reason(stop_reason, !tool_calls.is_empty(), !text_content.is_empty());
+        match inferred {
+            StopReasonInference::ToolCalls => crate::commands::log_backend("warn",
+                "[OPENROUTER API] finish_reason missing — inferred 'tool_calls' from accumulated tool call data"
+            ),
+            StopReasonInference::Stop => crate::commands::log_backend("warn",
+                "[OPENROUTER API] finish_reason missing — inferred 'stop' from non-empty text content"
+            ),
+            StopReasonInference::Anomalous => crate::commands::log_backend("warn",
+                "[OPENROUTER API] finish_reason missing and no tool calls or text content — loop will treat as anomalous stop"
+            ),
+            StopReasonInference::Passthrough => {}
         }
 
         crate::commands::log_backend("info", &format!(
@@ -1185,7 +1211,7 @@ impl OpenRouterProvider {
             .await
             .map_err(|e| format!("Failed to parse OpenRouter response: {}", e))?;
 
-        let stop_reason = resp["choices"][0]["finish_reason"].as_str().map(String::from);
+        let raw_stop_reason = resp["choices"][0]["finish_reason"].as_str().map(String::from);
         let content = resp["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
         let model_used = resp["model"].as_str().map(String::from);
 
@@ -1201,6 +1227,20 @@ impl OpenRouterProvider {
                 })
             }).collect())
             .unwrap_or_default();
+
+        let (stop_reason, inferred) = infer_stop_reason(raw_stop_reason, !tool_calls.is_empty(), !content.is_empty());
+        match inferred {
+            StopReasonInference::ToolCalls => crate::commands::log_backend("warn",
+                "[OPENROUTER API] finish_reason missing — inferred 'tool_calls' from tool_calls in response"
+            ),
+            StopReasonInference::Stop => crate::commands::log_backend("warn",
+                "[OPENROUTER API] finish_reason missing — inferred 'stop' from non-empty content"
+            ),
+            StopReasonInference::Anomalous => crate::commands::log_backend("warn",
+                "[OPENROUTER API] finish_reason missing and no tool calls or content — loop will treat as anomalous stop"
+            ),
+            StopReasonInference::Passthrough => {}
+        }
 
         let usage = resp.get("usage").and_then(|u| u.as_object()).map(|u| UsageInfo {
             input_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
@@ -1275,6 +1315,36 @@ mod tests {
         let out = decode_utf8_incremental(&mut carry, b"ola\xC3");
         assert_eq!(out, "ola");
         assert_eq!(carry, vec![0xC3]);
+    }
+
+    use super::{infer_stop_reason, StopReasonInference};
+
+    #[test]
+    fn infer_stop_reason_none_with_tool_calls_returns_tool_calls() {
+        let (reason, branch) = infer_stop_reason(None, true, false);
+        assert_eq!(reason, Some("tool_calls".to_string()));
+        assert_eq!(branch, StopReasonInference::ToolCalls);
+    }
+
+    #[test]
+    fn infer_stop_reason_none_without_tool_calls_with_text_returns_stop() {
+        let (reason, branch) = infer_stop_reason(None, false, true);
+        assert_eq!(reason, Some("stop".to_string()));
+        assert_eq!(branch, StopReasonInference::Stop);
+    }
+
+    #[test]
+    fn infer_stop_reason_none_without_tool_calls_or_text_returns_none() {
+        let (reason, branch) = infer_stop_reason(None, false, false);
+        assert_eq!(reason, None);
+        assert_eq!(branch, StopReasonInference::Anomalous);
+    }
+
+    #[test]
+    fn infer_stop_reason_already_present_passes_through_unchanged() {
+        let (reason, branch) = infer_stop_reason(Some("length".to_string()), true, true);
+        assert_eq!(reason, Some("length".to_string()));
+        assert_eq!(branch, StopReasonInference::Passthrough);
     }
 }
 

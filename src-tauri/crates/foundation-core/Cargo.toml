@@ -1,0 +1,26 @@
+[package]
+name = "foundation-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "foundation_core"
+crate-type = ["rlib"]
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+lazy_static = "1.4"
+sha2 = "0.10"
+rhai = { version = "^1", features = ["sync"] }
+tantivy = "0.22"
+dirs = "5.0"
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
+
+[features]
+test-helpers = []
+
+[dev-dependencies]
+tempfile = "3.8"

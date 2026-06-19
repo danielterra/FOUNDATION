@@ -12,8 +12,6 @@ use crate::owl::{
 type Result<T> = std::result::Result<T, String>;
 
 const MAX_TOOL_LOOPS: usize = 50;
-const DEFAULT_MAX_TOKENS: u32 = 4096;
-const DEFAULT_TEMPERATURE: f32 = 0.3;
 
 /// Statuses that permanently block execution — do not auto-start even if
 /// description and assignee are present.
@@ -334,15 +332,11 @@ pub async fn execute_task(app: &AppHandle, task_iri: &str) -> Result<String> {
         system: Some(agent_config.system_prompt),
         tools: task_mgr_tools,
         max_iterations: MAX_TOOL_LOOPS,
-        max_tokens: DEFAULT_MAX_TOKENS,
-        temperature: DEFAULT_TEMPERATURE,
-        completion_tool: None,
-        compaction_threshold: 0.80,
-        context_window: 180_000,
         persist_to: Some(super::tool_loop::PersistConfig {
             conv_iri: conv_iri.clone(),
             model_identifier: agent_config.model_identifier.clone(),
         }),
+        ..super::tool_loop::ToolLoopConfig::default()
     };
 
     let output = super::tool_loop::run_tool_loop(

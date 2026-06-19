@@ -110,11 +110,17 @@ pub async fn imap__save_account(
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn imap__get_accounts(
+    limit: Option<i64>,
+    offset: Option<i64>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<ImapAccountSummary>, String> {
     executor.read(move |conn| {
-        let iris = crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:IMAPAccount")
-            .map_err(|e| e.to_string())?;
+        // bounded-por-natureza; keyset-tx não agrega (não é append-no-topo)
+        let page_size = limit.unwrap_or(100).max(1).min(500);
+        let page_offset = offset.unwrap_or(0).max(0);
+        let iris = crate::owl::find_entities_with_property_bounded(
+            conn, "rdf:type", "foundation:IMAPAccount", page_size, page_offset, Some("rdfs:label"),
+        ).map_err(|e| e.to_string())?;
 
         iris.into_iter().map(|iri| {
             let label = crate::owl::get_literal_property(conn, &iri, "rdfs:label")
@@ -282,19 +288,47 @@ pub struct SyncLogEntry {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct SyncHistoryPage {
+    pub items: Vec<SyncLogEntry>,
+    pub next_cursor: Option<i64>,
+    pub has_more: bool,
+    /// Pinned on the first page (MAX(tx) at query time); echo on subsequent pages to keep
+    /// membership frozen. SyncLog entries are create-immutable, so creation_tx IS the domain
+    /// ordering key — same ADR exception as RawDataRecord (foundation:ArchitectureDecisionRecord_1781556688201).
+    pub snapshot_tx: i64,
+}
+
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn imap__get_sync_history(
     account_iri: String,
+    after_tx: Option<i64>,
     limit: Option<i64>,
+    snapshot_tx: Option<i64>,
     executor: State<'_, DbExecutor>,
-) -> Result<Vec<SyncLogEntry>, String> {
+) -> Result<SyncHistoryPage, String> {
     executor.read(move |conn| {
-        let max = limit.unwrap_or(DEFAULT_SYNC_HISTORY_LIMIT);
-        let iris = crate::owl::find_entities_with_property(conn, "foundation:syncForAccount", &account_iri)
-            .map_err(|e| e.to_string())?;
+        let page_size = limit.unwrap_or(DEFAULT_SYNC_HISTORY_LIMIT).max(1).min(500);
 
-        let mut entries: Vec<SyncLogEntry> = iris.into_iter().filter_map(|iri| {
+        let pinned_tx: i64 = match snapshot_tx {
+            Some(tx) => tx,
+            None => conn.query_row(
+                "SELECT COALESCE(MAX(tx), 0) FROM triples",
+                [],
+                |row| row.get(0),
+            ).map_err(|e| e.to_string())?,
+        };
+
+        let rows = crate::owl::find_entities_with_property_keyset(
+            conn, "foundation:syncForAccount", &account_iri, after_tx, page_size + 1,
+        ).map_err(|e| e.to_string())?;
+
+        let has_more = rows.len() as i64 > page_size;
+        let rows: Vec<(String, i64)> = rows.into_iter().take(page_size as usize).collect();
+        let next_cursor: Option<i64> = if has_more { rows.last().map(|(_, tx)| *tx) } else { None };
+
+        let items: Vec<SyncLogEntry> = rows.into_iter().filter_map(|(iri, _tx)| {
             let started_at = crate::owl::get_literal_property(conn, &iri, "foundation:syncStartedAt")
                 .unwrap_or_default().unwrap_or_default();
             let emails_imported = crate::owl::get_literal_property(conn, &iri, "foundation:syncEmailsImported")
@@ -306,9 +340,7 @@ pub async fn imap__get_sync_history(
             Some(SyncLogEntry { iri, started_at, emails_imported, error })
         }).collect();
 
-        entries.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-        entries.truncate(max as usize);
-        Ok(entries)
+        Ok(SyncHistoryPage { items, next_cursor, has_more, snapshot_tx: pinned_tx })
     }).await
 }
 

@@ -87,6 +87,7 @@
           minCount: prop.minCount ?? null,
           maxCount: prop.maxCount ?? null,
           groupTotal: null,
+          backlinkNextCursor: null,
           values: []
         };
       }
@@ -105,6 +106,7 @@
         if (prop.groupTotal != null && acc[key].groupTotal == null) {
           acc[key].groupTotal = prop.groupTotal;
           acc[key].sourceClassIri = prop.sourceClass ?? null;
+          acc[key].backlinkNextCursor = prop.backlinkNextCursor ?? null;
         }
       }
       return acc;

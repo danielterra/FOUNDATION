@@ -8,20 +8,7 @@ pub fn datasync_status(conn: &Connection, args: &Value) -> ToolResult {
     let filter_ds = args["data_source_iri"].as_str();
 
     if let Some(ds_iri) = filter_ds {
-        let raw_iris = crate::owl::find_entities_with_property(conn, "foundation:belongsToDataSource", ds_iri)
-            .unwrap_or_default();
-
-        let mut by_status: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-        for raw_iri in &raw_iris {
-            let rdf_type = crate::owl::get_iri_property(conn, raw_iri, "rdf:type")
-                .ok().flatten().unwrap_or_default();
-            if rdf_type != "foundation:RawDataRecord" {
-                continue;
-            }
-            let status = crate::owl::get_iri_property(conn, raw_iri, "foundation:hasStatus")
-                .ok().flatten().unwrap_or_default();
-            *by_status.entry(status).or_insert(0) += 1;
-        }
+        let by_status = count_raw_by_status(conn, ds_iri).unwrap_or_default();
 
         let is_connected = crate::owl::get_literal_property(conn, ds_iri, "foundation:isConnected")
             .ok().flatten().map(|v| v == "true").unwrap_or(false);
@@ -48,10 +35,15 @@ pub fn datasync_status(conn: &Connection, args: &Value) -> ToolResult {
             concept: None,
         }
     } else {
-        let ds_iris = crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:DataSource")
-            .unwrap_or_default();
+        let limit = args["limit"].as_i64().unwrap_or(50).max(1);
+        let after_tx = args["after_tx"].as_i64();
+        let page = crate::owl::find_entities_with_property_keyset(
+            conn, "rdf:type", "foundation:DataSource", after_tx, limit,
+        ).unwrap_or_default();
+        let has_more = page.len() as i64 == limit;
+        let next_cursor: Option<i64> = if has_more { page.last().map(|(_, tx)| *tx) } else { None };
         let mut summaries = Vec::new();
-        for ds_iri in ds_iris {
+        for (ds_iri, _create_tx) in page {
             let status_iri = crate::owl::get_iri_property(conn, &ds_iri, "foundation:hasStatus")
                 .ok().flatten().unwrap_or_default();
             let is_connected = crate::owl::get_literal_property(conn, &ds_iri, "foundation:isConnected")
@@ -64,7 +56,11 @@ pub fn datasync_status(conn: &Connection, args: &Value) -> ToolResult {
         }
         ToolResult {
             success: true,
-            result: Some(Value::Array(summaries)),
+            result: Some(serde_json::json!({
+                "items": summaries,
+                "next_cursor": next_cursor,
+                "has_more": has_more,
+            })),
             error: None,
             concept: None,
         }
@@ -86,73 +82,140 @@ pub struct ListRawResult {
     pub records: Vec<RawRecordSummary>,
     pub counts_by_status: std::collections::HashMap<String, i64>,
     pub snapshot_tx: i64,
+    /// tx of the last item in this page — pass as `after_tx` in the next request.
+    /// None when the page is smaller than the requested limit (no more items).
+    pub next_cursor: Option<i64>,
+    pub has_more: bool,
 }
 
-/// Canonical list implementation: filter → sort by received_at desc → limit.
+/// Count RawDataRecords of a DataSource grouped by transformStatus in a single
+/// aggregate pass. NEVER walk every record with per-property reads — on a large
+/// source that holds a pool connection for tens of seconds and starves the pool.
+pub fn count_raw_by_status(
+    conn: &Connection,
+    ds_iri: &str,
+) -> Result<std::collections::HashMap<String, i64>, String> {
+    let mut counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT status_link.object, COUNT(DISTINCT type_link.subject)
+         FROM triples_current type_link
+         JOIN triples_current ds_link
+           ON ds_link.subject = type_link.subject
+          AND ds_link.predicate = 'foundation:belongsToDataSource'
+          AND ds_link.object = ?1
+         JOIN triples_current status_link
+           ON status_link.subject = type_link.subject
+          AND status_link.predicate = 'foundation:hasStatus'
+         WHERE type_link.predicate = 'rdf:type'
+           AND type_link.object = 'foundation:RawDataRecord'
+         GROUP BY status_link.object",
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([ds_iri], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        let (status, cnt) = row.map_err(|e| e.to_string())?;
+        counts.insert(status, cnt);
+    }
+    Ok(counts)
+}
+
+/// Canonical list implementation. Counts come from one aggregate pass and the
+/// page from one indexed query (newest-first by creation tx, keyset-paginated) — never a
+/// per-record walk of every RawDataRecord, which on a large source holds a pool
+/// connection for tens of seconds and starves concurrent reads.
 ///
-/// Applying .take(limit) before the status filter would return an empty page when
-/// most records are Transformed and the caller asks for Error — this ordering is
-/// the correct semantic.
+/// `creation_tx` IS the domain key here because RawDataRecord is immutable: it is written
+/// once and never updated, so its creation tx equals its "recency" in insertion order.
+/// This is the exception described in the ADR (foundation:ArchitectureDecisionRecord_1781556688201):
+/// for create-immutable entities whose natural order IS creation-recency, `ORDER BY creation_tx
+/// DESC` is correct and keyset-by-creation_tx is stable. NEVER use tx as the ordering key for
+/// entities with mutable domain keys (conversations, AI models, etc.).
+///
+/// Keyset: `after_tx` is the `type_link.tx` (creation tx of the rdf:type triple) of the
+/// last item from the previous page. The caller advances by sending `next_cursor` as
+/// `after_tx` in the next request.
 pub fn list_raw_records(
     conn: &Connection,
     ds_iri: &str,
     status_filter: Option<&str>,
     limit: i64,
+    after_tx: Option<i64>,
 ) -> Result<ListRawResult, String> {
     let snapshot_tx: i64 = conn
         .query_row("SELECT COALESCE(MAX(tx), 0) FROM triples", [], |row| row.get(0))
         .map_err(|e| e.to_string())?;
 
-    let raw_iris = crate::owl::find_entities_with_property(conn, "foundation:belongsToDataSource", ds_iri)
-        .map_err(|e| e.to_string())?;
+    // Counts per status in a single aggregate pass.
+    let counts_by_status = count_raw_by_status(conn, ds_iri)?;
 
-    let mut counts_by_status: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    let mut filtered: Vec<(String, String, Option<String>, Option<String>, Option<i64>)> = Vec::new();
-
-    for raw_iri in &raw_iris {
-        let rdf_type = crate::owl::get_iri_property(conn, raw_iri, "rdf:type")
-            .ok().flatten().unwrap_or_default();
-        if rdf_type != "foundation:RawDataRecord" {
-            continue;
+    // Page of (iri, creation_tx) pairs: filtered, newest-first by creation tx, keyset-limited.
+    // type_link.tx is the creation tx because rdf:type is written exactly once at creation time.
+    let page_rows: Vec<(String, i64)> = {
+        let mut sql = String::from(
+            "SELECT type_link.subject, type_link.tx \
+             FROM triples_current type_link \
+             JOIN triples_current ds_link \
+               ON ds_link.subject = type_link.subject \
+              AND ds_link.predicate = 'foundation:belongsToDataSource' \
+              AND ds_link.object = ? ",
+        );
+        let mut params: Vec<rusqlite::types::Value> = vec![
+            rusqlite::types::Value::Text(ds_iri.to_string()),
+        ];
+        if let Some(f) = status_filter {
+            sql.push_str(
+                "JOIN triples_current status_link \
+                   ON status_link.subject = type_link.subject \
+                  AND status_link.predicate = 'foundation:hasStatus' \
+                  AND status_link.object = ? ",
+            );
+            params.push(rusqlite::types::Value::Text(f.to_string()));
         }
-
-        let status = crate::owl::get_iri_property(conn, raw_iri, "foundation:hasStatus")
-            .ok().flatten().unwrap_or_default();
-
-        *counts_by_status.entry(status.clone()).or_insert(0) += 1;
-
-        if let Some(filter) = status_filter {
-            if status != filter {
-                continue;
-            }
+        sql.push_str(
+            "WHERE type_link.predicate = 'rdf:type' \
+               AND type_link.object = 'foundation:RawDataRecord'",
+        );
+        if after_tx.is_some() {
+            sql.push_str(" AND type_link.tx < ?");
+            params.push(rusqlite::types::Value::Integer(after_tx.unwrap()));
         }
+        sql.push_str(" ORDER BY type_link.tx DESC LIMIT ?");
+        params.push(rusqlite::types::Value::Integer(limit));
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut v = Vec::new();
+        for r in rows {
+            v.push(r.map_err(|e| e.to_string())?);
+        }
+        v
+    };
 
-        let external_id = crate::owl::get_literal_property(conn, raw_iri, "foundation:externalId")
-            .ok().flatten();
-        let received_at = crate::owl::get_literal_property(conn, raw_iri, "foundation:receivedAt")
-            .ok().flatten();
-        let retry_count = crate::owl::get_literal_property(conn, raw_iri, "foundation:retryCount")
-            .ok().flatten()
-            .and_then(|s| s.parse::<i64>().ok());
+    let has_more = page_rows.len() as i64 == limit;
+    let next_cursor = if has_more { page_rows.last().map(|(_, tx)| *tx) } else { None };
 
-        filtered.push((raw_iri.clone(), status, external_id, received_at, retry_count));
-    }
-
-    filtered.sort_by(|a, b| b.3.cmp(&a.3));
-    filtered.truncate(limit as usize);
-
-    let records = filtered
+    // Hydrate summary fields only for the page (<= limit records).
+    let records = page_rows
         .into_iter()
-        .map(|(iri, transform_status, external_id, received_at, retry_count)| RawRecordSummary {
-            iri,
-            external_id,
-            received_at,
-            transform_status,
-            retry_count,
+        .map(|(iri, _creation_tx)| {
+            let transform_status = crate::owl::get_iri_property(conn, &iri, "foundation:hasStatus")
+                .ok().flatten().unwrap_or_default();
+            let external_id = crate::owl::get_literal_property(conn, &iri, "foundation:externalId")
+                .ok().flatten();
+            let received_at = crate::owl::get_literal_property(conn, &iri, "foundation:receivedAt")
+                .ok().flatten();
+            let retry_count = crate::owl::get_literal_property(conn, &iri, "foundation:retryCount")
+                .ok().flatten()
+                .and_then(|s| s.parse::<i64>().ok());
+            RawRecordSummary { iri, external_id, received_at, transform_status, retry_count }
         })
         .collect();
 
-    Ok(ListRawResult { records, counts_by_status, snapshot_tx })
+    Ok(ListRawResult { records, counts_by_status, snapshot_tx, next_cursor, has_more })
 }
 
 pub fn datasync_list_raw(conn: &Connection, args: &Value) -> ToolResult {
@@ -162,8 +225,9 @@ pub fn datasync_list_raw(conn: &Connection, args: &Value) -> ToolResult {
     };
     let status_filter = args["transform_status"].as_str();
     let limit = args["limit"].as_i64().unwrap_or(50);
+    let after_tx = args["after_tx"].as_i64();
 
-    match list_raw_records(conn, ds_iri, status_filter, limit) {
+    match list_raw_records(conn, ds_iri, status_filter, limit, after_tx) {
         Ok(result) => {
             let records_json: Vec<Value> = result.records.iter().map(|r| serde_json::json!({
                 "iri": r.iri,
@@ -174,7 +238,13 @@ pub fn datasync_list_raw(conn: &Connection, args: &Value) -> ToolResult {
             })).collect();
             ToolResult {
                 success: true,
-                result: Some(Value::Array(records_json)),
+                result: Some(serde_json::json!({
+                    "items": records_json,
+                    "next_cursor": result.next_cursor,
+                    "has_more": result.has_more,
+                    "counts_by_status": result.counts_by_status,
+                    "snapshot_tx": result.snapshot_tx,
+                })),
                 error: None,
                 concept: None,
             }
@@ -370,7 +440,7 @@ pub async fn datasync_run_tool(
                 success: true,
                 result: Some(serde_json::json!({
                     "staged_count": staged.len(),
-                    "staged_iris": staged,
+                    "staged_iris_sample": staged.iter().take(50).collect::<Vec<_>>(),
                     "transform_triggered": transform_result.is_some(),
                     "transform_result": transform_result,
                 })),

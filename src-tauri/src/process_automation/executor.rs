@@ -549,7 +549,7 @@ pub async fn run_process_with_context(
             move |conn| {
                 finish_execution_record(conn, &exec_iri, error.as_deref())?;
                 let terminal_status = if error.is_none() { STATUS_COMPLETED } else { STATUS_FAILED };
-                Individual::add_iri_value(conn, &control_instance_iri, "foundation:hasStatus", terminal_status, "process_automation")
+                crate::owl::replace_all_property_iris(conn, &control_instance_iri, "foundation:hasStatus", &[terminal_status], "process_automation")
                     .map_err(|e| e.to_string())?;
                 Ok(exec_iri)
             }
@@ -1357,7 +1357,7 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
                 finish_execution_record(conn, &exec_iri, error.as_deref())?;
                 let terminal_status = if error.is_none() { STATUS_COMPLETED } else { STATUS_FAILED };
                 if let Ok(Some(ci_iri)) = crate::owl::get_iri_property(conn, &exec_iri, "foundation:controlInstance") {
-                    Individual::add_iri_value(conn, &ci_iri, "foundation:hasStatus", terminal_status, "process_automation")
+                    crate::owl::replace_all_property_iris(conn, &ci_iri, "foundation:hasStatus", &[terminal_status], "process_automation")
                         .map_err(|e| e.to_string())?;
                 }
                 Ok(exec_iri)

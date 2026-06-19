@@ -93,11 +93,7 @@
 
     try {
       const t0 = performance.now();
-      // Fetch entity data and snapshot tx in parallel.
-      const [resultStr, snapTx] = await Promise.all([
-        invoke('inspector__get_entity', { entityId }),
-        invoke('chat__get_conversation_snapshot_tx', { conversationId: entityId }).catch(() => 0),
-      ]);
+      const resultStr = await invoke('inspector__get_entity', { entityId });
       const t1 = performance.now();
       entityData = JSON.parse(resultStr);
 
@@ -108,7 +104,7 @@
         .filter(Boolean);
       const backlinkIris = (entityData?.backlinks ?? []).flatMap(b => b.values?.map(v => v.value) ?? []);
       const flatSet = [entityId, ...objectIris, ...backlinkIris].filter(Boolean);
-      snapshotTx = /** @type {number} */ (snapTx);
+      snapshotTx = entityData.snapshotTx ?? 0;
       entitySub.setIris(flatSet);
       entitySub.setSinceTx(snapshotTx);
       entitySub.replayMissed();
@@ -370,12 +366,14 @@
     });
   }
 
-  async function loadMoreBacklinks(predicate, sourceClassIri, offset) {
+  async function loadMoreBacklinks(predicate, sourceClassIri, cursor) {
     const raw = await invoke('inspector__get_backlink_page', {
       entityIri: entityId,
       predicate,
       sourceClass: sourceClassIri,
-      offset,
+      afterTx: cursor?.lastTx ?? undefined,
+      afterSubject: cursor?.subject ?? undefined,
+      snapshotTx,
     });
     return JSON.parse(raw);
   }
@@ -528,26 +526,6 @@
     {/snippet}
 
     {#snippet headerActions()}
-      {#each widgetDefinitions as def}
-        <Button variant="ghost" size="icon"
-          title={def.description}
-          onclick={() => openWidgetForEntity(def.widget_type)}
-        ><span class="material-symbols-outlined">{def.icon || 'open_in_new'}</span></Button>
-      {/each}
-      {#if entityData}
-        <Button variant="ghost" size="icon"
-          title={isLocked ? 'Unlock entity' : 'Lock entity'}
-          disabled={togglingLock}
-          onclick={toggleSystemLock}
-        ><span class="material-symbols-outlined">{isLocked ? 'lock' : 'lock_open'}</span></Button>
-      {/if}
-      {#if entityData && !entityData.isClass && !isLocked}
-        <Button variant="destructive" size="icon"
-          title="Delete"
-          onclick={initiateDelete}
-        ><span class="material-symbols-outlined">delete_forever</span></Button>
-      {/if}
-      <Button variant="ghost" size="icon" title="Copy IRI" onclick={copyEntityIri}><span class="material-symbols-outlined">content_copy</span></Button>
       {#if entityData?.status || (entityData?.allowedStatuses?.length > 0 && !entityData?.isClass && !isLocked)}
         <Popover.Root
           bind:open={statusPickerOpen}
@@ -595,6 +573,30 @@
             </div>
           </Popover.Content>
         </Popover.Root>
+      {/if}
+      <div style="flex: 1"></div>
+      {#each widgetDefinitions as def}
+        <Button variant="ghost" size="icon-xs"
+          title={def.description}
+          aria-label={def.description}
+          onclick={() => openWidgetForEntity(def.widget_type)}
+        ><span class="material-symbols-outlined">{def.icon || 'open_in_new'}</span></Button>
+      {/each}
+      {#if entityData}
+        <Button variant="ghost" size="icon-xs"
+          title={isLocked ? 'Desbloquear entidade' : 'Bloquear entidade'}
+          aria-label={isLocked ? 'Desbloquear entidade' : 'Bloquear entidade'}
+          disabled={togglingLock}
+          onclick={toggleSystemLock}
+        ><span class="material-symbols-outlined">{isLocked ? 'lock' : 'lock_open'}</span></Button>
+      {/if}
+      <Button variant="ghost" size="icon-xs" title="Copiar IRI" aria-label="Copiar IRI" onclick={copyEntityIri}><span class="material-symbols-outlined">content_copy</span></Button>
+      {#if entityData && !entityData.isClass && !isLocked}
+        <Button variant="ghost" size="icon-xs" class="action-btn--danger"
+          title="Deletar entidade"
+          aria-label="Deletar entidade"
+          onclick={initiateDelete}
+        ><span class="material-symbols-outlined">delete_forever</span></Button>
       {/if}
     {/snippet}
 
@@ -760,6 +762,7 @@
     align-items: center;
     gap: 4px;
     padding: 3px 8px 3px 5px;
+    border-radius: 999px;
     background: color-mix(in srgb, var(--status-color) 18%, transparent);
     border: none;
     cursor: default;

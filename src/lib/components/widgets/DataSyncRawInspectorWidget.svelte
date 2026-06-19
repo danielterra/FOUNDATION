@@ -22,7 +22,9 @@
   }
 
   interface ListResponse {
-    records: RawRecord[];
+    items: RawRecord[];
+    next_cursor: number | null;
+    has_more: boolean;
     counts_by_status: Record<string, number>;
     snapshot_tx: number;
   }
@@ -83,11 +85,16 @@
 
   // ── Estado ────────────────────────────────────────────────────────────────
 
+  const PAGE_SIZE = 50;
+
   let records          = $state<RawRecord[]>([]);
   let countsByStatus   = $state<Record<string, number>>({});
   let loading          = $state(true);
   let loadError        = $state<string | null>(null);
   let activeFilter     = $state<StatusKey>('all');
+  let cursorStack      = $state<(number | null)[]>([null]);
+  let nextCursor       = $state<number | null>(null);
+  let hasMore          = $state(false);
 
   let selectedIri      = $state<string | null>(null);
   let detail           = $state<InspectResponse | null>(null);
@@ -139,16 +146,31 @@
 
   // ── Carregamento ──────────────────────────────────────────────────────────
 
+  // Coalesce concurrent triggers (filter clicks + realtime events) into at most
+  // one in-flight call plus one queued re-run, so the widget never piles up
+  // overlapping list queries against the read pool.
+  let loadInFlight = false;
+  let loadPending  = false;
+
   async function loadRecords() {
+    if (loadInFlight) {
+      loadPending = true;
+      return;
+    }
+    loadInFlight = true;
     try {
       const filterIri = FILTER_TABS.find(t => t.key === activeFilter)?.iri ?? undefined;
+      const afterTx = cursorStack[cursorStack.length - 1];
       const raw = await invoke<string>('datasync__list_raw', {
         dataSourceIri:   entityId,
         transformStatus: filterIri,
-        limit:           50,
+        limit:           PAGE_SIZE,
+        afterTx:         afterTx ?? undefined,
       });
       const data: ListResponse = JSON.parse(raw);
-      records        = data.records;
+      records        = data.items;
+      nextCursor     = data.next_cursor;
+      hasMore        = data.has_more;
       countsByStatus = data.counts_by_status;
       loadError      = null;
       loading        = false;
@@ -158,14 +180,38 @@
     } catch (err) {
       loadError = String(err);
       loading   = false;
+    } finally {
+      loadInFlight = false;
+      if (loadPending) {
+        loadPending = false;
+        loadRecords();
+      }
     }
   }
 
   $effect(() => {
     activeFilter;
+    cursorStack;
     loading = true;
     loadRecords();
   });
+
+  // Total matching the active filter (from the aggregate counts).
+  const filterTotal = $derived(tabCount[activeFilter] ?? 0);
+
+  function goToFilter(key: StatusKey) {
+    if (activeFilter === key) return;
+    activeFilter = key;
+    cursorStack = [null];
+  }
+
+  function prevPage() {
+    if (cursorStack.length > 1) cursorStack = cursorStack.slice(0, -1);
+  }
+
+  function gotoNextPage() {
+    if (hasMore && nextCursor !== null) cursorStack = [...cursorStack, nextCursor];
+  }
 
   // ── Inspeção de detalhe ───────────────────────────────────────────────────
 
@@ -236,8 +282,8 @@
           class:active={activeFilter === tab.key}
           role="tab"
           aria-selected={activeFilter === tab.key}
-          onclick={() => { activeFilter = tab.key; }}
-          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { activeFilter = tab.key; } }}
+          onclick={() => goToFilter(tab.key)}
+          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') goToFilter(tab.key); }}
         >
           {tab.label}
           <span class="chip-count">{tabCount[tab.key]}</span>
@@ -247,12 +293,12 @@
   {/snippet}
 
   <div class="raw-content">
-    {#if loading}
+    {#if loading && records.length === 0}
       <div class="state-center">
         <span class="material-symbols-outlined spinning">progress_activity</span>
         <span class="state-label">Carregando registros…</span>
       </div>
-    {:else if loadError}
+    {:else if loadError && records.length === 0}
       <div class="state-center state-error">
         <span class="material-symbols-outlined">error</span>
         <span class="state-label">{loadError}</span>
@@ -395,6 +441,20 @@
           </tbody>
         </table>
       </div>
+      <div class="pager">
+        <span class="pager-info">
+          {filterTotal} registro{filterTotal !== 1 ? 's' : ''}
+          {#if loading}<span class="material-symbols-outlined spinning pager-spin">progress_activity</span>{/if}
+        </span>
+        <div class="pager-controls">
+          <button class="pager-btn" disabled={cursorStack.length <= 1} onclick={prevPage} aria-label="Página anterior" title="Página anterior">
+            <span class="material-symbols-outlined">chevron_left</span>
+          </button>
+          <button class="pager-btn" disabled={!hasMore} onclick={gotoNextPage} aria-label="Próxima página" title="Próxima página">
+            <span class="material-symbols-outlined">chevron_right</span>
+          </button>
+        </div>
+      </div>
     {/if}
   </div>
 </WidgetContainer>
@@ -486,6 +546,67 @@
     flex: 1;
     overflow-y: auto;
     min-height: 0;
+  }
+
+  /* ── Paginação ── */
+
+  .pager {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 12px;
+    border-top: 1px solid var(--color-surface-3);
+    background: var(--color-surface-1);
+    font-size: 11px;
+    color: var(--color-neutral-secondary);
+  }
+
+  .pager-info {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .pager-spin {
+    font-size: 13px;
+    opacity: 0.7;
+  }
+
+  .pager-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .pager-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius);
+    border: none;
+    background: color-mix(in srgb, var(--color-neutral) 10%, transparent);
+    color: var(--color-neutral);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 100ms ease;
+  }
+
+  .pager-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-interactive) 18%, transparent);
+    color: var(--color-interactive);
+  }
+
+  .pager-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .pager-btn .material-symbols-outlined {
+    font-size: 16px;
   }
 
   .records-table {

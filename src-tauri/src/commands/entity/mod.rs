@@ -70,6 +70,11 @@ pub struct EntityData {
     pub related_processes: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub applicable_automations: Vec<serde_json::Value>,
+
+    /// MAX(tx) at the moment this entity was loaded. The frontend must pass this value
+    /// as `snapshot_tx` to every `inspector__get_backlink_page` call so the "load more"
+    /// pages see the same membership set as the initial snapshot.
+    pub snapshot_tx: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,6 +93,17 @@ pub struct StatusInfo {
     pub label: String,
     pub icon: Option<String>,
     pub color: Option<String>,
+}
+
+/// Composite keyset cursor emitted by backlink pagination.
+/// Shape on the wire: `{ "last_tx": <i64>, "subject": "<IRI>" }`.
+/// The frontend must echo both fields verbatim as `after_tx`/`after_subject` to
+/// `inspector__get_backlink_page` for the next page.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BacklinkCursor {
+    pub last_tx: i64,
+    pub subject: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -111,6 +127,12 @@ pub struct PropertyValue {
     pub value_status: Option<StatusInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_total: Option<usize>,
+    /// Composite keyset cursor for the first "load more" call on this backlink group.
+    /// Shape: `{ "last_tx": i64, "subject": String }` — the `last_tx` and `subject`
+    /// of the PAGE_SIZE-th item in the `last_tx DESC, subject ASC` order.
+    /// `None` when the group fits entirely in the snapshot page (no "load more").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backlink_next_cursor: Option<BacklinkCursor>,
     pub is_calculated: bool,
     pub is_query_property: bool,
     pub formula_error: Option<String>,
@@ -197,21 +219,42 @@ pub struct BacklinkPageItem {
     pub value_status: Option<StatusInfo>,
 }
 
-/// Returns a page of backlink subjects for a given entity + predicate + source_class group.
+/// Returns a keyset-paginated page of backlink subjects for a given entity + predicate +
+/// source_class group, as-of `snapshot_tx`. Ordered by `last_tx DESC, subject ASC` —
+/// consistent total order that avoids gaps when multiple backlinks share the same `last_tx`.
+/// Membership is frozen at `snapshot_tx`. Response: `{ items, next_cursor, has_more }`.
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn inspector__get_backlink_page(
     entity_iri: String,
     predicate: String,
     source_class: Option<String>,
-    offset: usize,
+    after_tx: Option<i64>,
+    after_subject: Option<String>,
+    snapshot_tx: i64,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     const PAGE_SIZE: usize = 15;
     executor.read(move |conn| {
-        let subjects = crate::eavto::query::get_backlinks_page(
-            conn, &entity_iri, &predicate, source_class.as_deref(), offset, PAGE_SIZE,
+        let after_cursor = match (after_tx, after_subject) {
+            (Some(tx), Some(subj)) => Some((tx, subj)),
+            _ => None,
+        };
+        let mut page = crate::eavto::query::get_backlinks_page(
+            conn, &entity_iri, &predicate, source_class.as_deref(),
+            after_cursor, PAGE_SIZE + 1, snapshot_tx,
         ).map_err(|e| e.to_string())?;
+
+        let has_more = page.len() > PAGE_SIZE;
+        page.truncate(PAGE_SIZE);
+
+        let next_cursor: Option<BacklinkCursor> = if has_more {
+            page.last().map(|(subj, tx)| BacklinkCursor { last_tx: *tx, subject: subj.clone() })
+        } else {
+            None
+        };
+
+        let subjects: Vec<String> = page.into_iter().map(|(iri, _)| iri).collect();
 
         let things = crate::owl::Thing::get_batch(conn, &subjects);
 
@@ -252,7 +295,12 @@ pub async fn inspector__get_backlink_page(
             }
         }).collect();
 
-        serde_json::to_string(&items).map_err(|e| e.to_string())
+        let response = serde_json::json!({
+            "items": items,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        });
+        serde_json::to_string(&response).map_err(|e| e.to_string())
     }).await
 }
 
@@ -268,6 +316,8 @@ pub async fn inspector__get_backlink_page(
 #[allow(non_snake_case)]
 pub async fn inspector__get_applicable_properties(
     node_iri: String,
+    limit: Option<usize>,
+    offset: Option<usize>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     executor.read(move |conn| {
@@ -295,10 +345,16 @@ pub async fn inspector__get_applicable_properties(
         let ancestor_iris = crate::owl::Class::get_ancestor_iris(conn, &control_class_iri)
             .map_err(|e| e.to_string())?;
 
-        let raw_props = crate::owl::Class::get_properties_for_domain_classes(
+        // bounded-por-natureza; keyset-tx não agrega (não é append-no-topo)
+        let page_size = limit.unwrap_or(500).max(1).min(1000);
+        let page_offset = offset.unwrap_or(0);
+
+        let raw_props = crate::owl::Class::get_properties_for_domain_classes_bounded(
             conn,
             &ancestor_iris,
             &[],
+            page_size,
+            page_offset,
         ).map_err(|e| e.to_string())?;
 
         let properties: Vec<serde_json::Value> = raw_props.into_iter().map(|(iri, label, icon, range, property_type)| {
@@ -343,16 +399,21 @@ pub async fn inspector__get_entity(
     let result = executor.read(move |conn| {
         let t_read = std::time::Instant::now();
 
+        let snapshot_tx: i64 = conn
+            .query_row("SELECT COALESCE(MAX(tx), 0) FROM triples", [], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+
         let groups = owl::load_graph_node_groups(conn);
         let t2 = std::time::Instant::now();
 
-        let data = if let Some(class) = Class::get(conn, &entity_id).map_err(|e| e.to_string())? {
+        let mut data = if let Some(class) = Class::get(conn, &entity_id).map_err(|e| e.to_string())? {
             get_class_data(conn, &entity_id, groups, class)?
         } else if let Some(individual) = Individual::get(conn, &entity_id).map_err(|e| e.to_string())? {
             individual::get_individual_data(conn, &entity_id, groups, individual)?
         } else {
             return Err(format!("Entity {} not found or unknown type", entity_id));
         };
+        data.snapshot_tx = snapshot_tx;
         let t3 = std::time::Instant::now();
 
         let json = serde_json::to_string(&data).map_err(|e| e.to_string());
@@ -876,13 +937,19 @@ pub async fn widget_inspector__set_property_query_config(
     Ok(())
 }
 
-pub(super) fn sort_backlinks_by_recency(conn: &Connection, backlinks: &mut Vec<PropertyValue>) {
-    let entity_iris: Vec<String> = backlinks.iter().map(|b| b.value.clone()).collect();
-    let max_tx_map = crate::eavto::query::get_entities_max_tx(conn, &entity_iris)
+/// Sort backlinks by `last_tx` of the predicate-specific backlink triple —
+/// the same key `get_backlinks_page` orders by. This ensures page-1↔page-2
+/// boundaries are consistent when the frontend uses `next_cursor` as `after_tx`.
+pub(super) fn sort_backlinks_by_recency(conn: &Connection, entity_iri: &str, backlinks: &mut Vec<PropertyValue>) {
+    let pairs: Vec<(String, String)> = backlinks
+        .iter()
+        .map(|b| (b.value.clone(), b.property.clone()))
+        .collect();
+    let last_tx_map = crate::eavto::query::get_backlink_last_tx_batch(conn, entity_iri, &pairs)
         .unwrap_or_default();
     backlinks.sort_by(|a, b| {
-        let tx_a = max_tx_map.get(&a.value).copied().unwrap_or(0);
-        let tx_b = max_tx_map.get(&b.value).copied().unwrap_or(0);
+        let tx_a = last_tx_map.get(&(a.value.clone(), a.property.clone())).copied().unwrap_or(0);
+        let tx_b = last_tx_map.get(&(b.value.clone(), b.property.clone())).copied().unwrap_or(0);
         tx_b.cmp(&tx_a)
     });
 }
@@ -1070,6 +1137,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             datatype: None,
             value_status: None,
             group_total: None,
+            backlink_next_cursor: None,
             is_calculated: false,
             formula_error: None,
             is_empty: false,
@@ -1103,6 +1171,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             datatype: None,
             value_status: None,
             group_total: None,
+            backlink_next_cursor: None,
             is_calculated: false,
             formula_error: None,
             is_empty: false,
@@ -1175,6 +1244,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             datatype: None,
             value_status: None,
             group_total: None,
+            backlink_next_cursor: None,
             is_calculated: false,
             formula_error: None,
             is_empty: false,
@@ -1227,6 +1297,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             datatype: value_obj.datatype().map(|s| s.to_string()),
             value_status: None,
             group_total: None,
+            backlink_next_cursor: None,
             is_calculated: false,
             formula_error: None,
             is_empty: false,
@@ -1304,6 +1375,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             datatype: None,
             value_status,
             group_total,
+            backlink_next_cursor: None,
             is_calculated: false,
             formula_error: None,
             is_empty: false,
@@ -1320,7 +1392,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
         });
     }
 
-    sort_backlinks_by_recency(conn, &mut backlinks);
+    sort_backlinks_by_recency(conn, class_id, &mut backlinks);
 
     let status = resolve_entity_status(conn, &properties);
 
@@ -1364,6 +1436,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
         links,
         related_processes,
         applicable_automations,
+        snapshot_tx: 0,
     })
 }
 

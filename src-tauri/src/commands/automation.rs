@@ -587,36 +587,59 @@ pub async fn automation__run(
 #[allow(non_snake_case)]
 pub async fn automation__find_for_types(
     type_iris: Vec<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     executor.read(move |conn| {
-        let mut results: Vec<AutomationRef> = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let page_size = limit.unwrap_or(200).max(1).min(500) as i64;
+        let page_offset = offset.unwrap_or(0) as i64;
 
-        for type_iri in &type_iris {
-            let mut stmt = conn.prepare(
-                "SELECT DISTINCT t.subject FROM triples t
-                 WHERE t.predicate = 'foundation:inputClass'
-                   AND t.object = ?1
-                   AND t.retracted = 0"
-            ).map_err(|e| e.to_string())?;
-            let rows: Vec<String> = stmt.query_map([type_iri], |row| row.get(0))
-                .map_err(|e| e.to_string())?
-                .filter_map(|r| r.ok())
-                .collect();
-
-            for iri in rows {
-                if seen.contains(&iri) { continue; }
-                let rdf_type = get_iri_property(conn, &iri, rdf::TYPE)
-                    .map_err(|e| e.to_string())?;
-                if rdf_type.as_deref() != Some("foundation:Automation") { continue; }
-                let label = get_literal_property(conn, &iri, rdfs::LABEL)
-                    .map_err(|e| e.to_string())?
-                    .unwrap_or_else(|| iri.clone());
-                seen.insert(iri.clone());
-                results.push(AutomationRef { iri, label });
-            }
+        if type_iris.is_empty() {
+            return serde_json::to_string(&Vec::<AutomationRef>::new()).map_err(|e| e.to_string());
         }
+
+        let placeholders: String = type_iris.iter().enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let sql = format!(
+            "SELECT DISTINCT a.subject, COALESCE(lbl.object_value, a.subject) AS label
+             FROM triples_current a
+             JOIN triples_current t
+               ON t.subject = a.subject
+              AND t.predicate = 'rdf:type'
+              AND t.object = 'foundation:Automation'
+             LEFT JOIN triples_current lbl
+               ON lbl.subject = a.subject
+              AND lbl.predicate = 'rdfs:label'
+             WHERE a.predicate = 'foundation:inputClass'
+               AND a.object IN ({})
+             ORDER BY COALESCE(lbl.object_value, a.subject) ASC
+             LIMIT ?{} OFFSET ?{}",
+            placeholders,
+            type_iris.len() + 1,
+            type_iris.len() + 2,
+        );
+
+        let mut params: Vec<rusqlite::types::Value> = type_iris.iter()
+            .map(|s| rusqlite::types::Value::Text(s.clone()))
+            .collect();
+        params.push(rusqlite::types::Value::Integer(page_size));
+        params.push(rusqlite::types::Value::Integer(page_offset));
+
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let results: Vec<AutomationRef> = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                Ok(AutomationRef {
+                    iri: row.get(0)?,
+                    label: row.get(1)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
 
         serde_json::to_string(&results).map_err(|e| e.to_string())
     }).await

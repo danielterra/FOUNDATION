@@ -912,6 +912,20 @@ Example — find all active Tasks whose due date is before this Project's deadli
                     required: false,
                     schema: None,
                 },
+                Parameter {
+                    name: "limit".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Maximum number of widgets to return (1–2000, default 500).".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "offset".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Number of widgets to skip before returning results (default 0).".to_string(),
+                    required: false,
+                    schema: None,
+                },
             ],
         },
 
@@ -1110,12 +1124,26 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "datasync_status".to_string(),
             array_mode: false,
-            description: "Returns sync statistics for all DataSources or a specific one: count of RawDataRecords in Pending, Transformed, Error, Skipped states, plus DataSource connection status.".to_string(),
+            description: "Returns sync statistics for all DataSources or a specific one: count of RawDataRecords in Pending, Transformed, Error, Skipped states, plus DataSource connection status. When listing all DataSources, uses keyset pagination: pass `after_tx` from the previous response `next_cursor` to advance.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "data_source_iri".to_string(),
                     param_type: "string".to_string(),
                     description: "IRI of a specific DataSource to inspect. Omit to get summary for all.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "limit".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Max DataSources to return when listing all (keyset pagination). Default: 50.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "after_tx".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Keyset cursor: return DataSources with creation tx strictly less than this value. Use the `next_cursor` from the previous response to advance pages.".to_string(),
                     required: false,
                     schema: None,
                 },
@@ -1125,7 +1153,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "datasync_list_raw".to_string(),
             array_mode: false,
-            description: "Lists RawDataRecords for a DataSource, optionally filtered by transformStatus. Returns IRI, externalId, receivedAt, transformStatus, retryCount.".to_string(),
+            description: "Lists RawDataRecords for a DataSource, optionally filtered by transformStatus. Returns items, next_cursor, has_more, counts_by_status, snapshot_tx. Uses keyset pagination: pass `after_tx` from the previous `next_cursor` to advance pages. When `has_more` is true, send the next request with `after_tx: next_cursor`.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "data_source_iri".to_string(),
@@ -1144,7 +1172,14 @@ Example — find all active Tasks whose due date is before this Project's deadli
                 Parameter {
                     name: "limit".to_string(),
                     param_type: "integer".to_string(),
-                    description: "Maximum number of records to return. Default: 50.".to_string(),
+                    description: "Maximum number of records to return per page. Default: 50.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "after_tx".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Keyset cursor: return records with creation tx strictly less than this value. Use the `next_cursor` from the previous response to advance pages.".to_string(),
                     required: false,
                     schema: None,
                 },

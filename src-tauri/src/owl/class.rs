@@ -412,14 +412,26 @@ impl Class {
         Ok(result)
     }
 
-    /// Get all properties whose rdfs:domain is in `domain_class_iris`.
+    /// Get properties whose rdfs:domain is in `domain_class_iris`, bounded by `limit`/`offset`.
     ///
     /// Returns `(property_iri, label, icon, first_range, property_type_str)` tuples.
     /// Fully parametric — no Foundation/Anthropic IRIs hardcoded.
+    /// `limit = 0` means no cap (caller is responsible for choosing a safe bound).
     pub fn get_properties_for_domain_classes(
         conn: &Connection,
         domain_class_iris: &[String],
         property_type_iris: &[&str],
+    ) -> Result<Vec<(String, Option<String>, Option<String>, Option<String>, String)>> {
+        Self::get_properties_for_domain_classes_bounded(conn, domain_class_iris, property_type_iris, 500, 0)
+    }
+
+    /// Paginated variant; `limit = 0` means no cap.
+    pub fn get_properties_for_domain_classes_bounded(
+        conn: &Connection,
+        domain_class_iris: &[String],
+        property_type_iris: &[&str],
+        limit: usize,
+        offset: usize,
     ) -> Result<Vec<(String, Option<String>, Option<String>, Option<String>, String)>> {
         if domain_class_iris.is_empty() {
             return Ok(vec![]);
@@ -489,7 +501,11 @@ impl Class {
         }
 
         results.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok(results)
+        if limit > 0 {
+            Ok(results.into_iter().skip(offset).take(limit).collect())
+        } else {
+            Ok(results.into_iter().skip(offset).collect())
+        }
     }
 
     /// Replace the label of an existing class

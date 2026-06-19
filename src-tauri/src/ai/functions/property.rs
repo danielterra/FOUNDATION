@@ -325,46 +325,19 @@ fn search_properties_one(conn: &Connection, args: &Value) -> ToolResult {
         .unwrap_or(0) as usize;
 
     match (|| {
-        let all_iris = Property::find_all_iris(conn)?;
         let query_lower = query_str.to_lowercase();
 
-        let mut results: Vec<Value> = Vec::new();
-        for iri in &all_iris {
-            let prop = match Property::get(conn, iri)? {
-                Some(p) => p,
-                None => continue,
-            };
+        // Filter and count are pushed to SQL; full Property objects are only
+        // materialised for the requested page slice.
+        let (light_items, total) =
+            Property::search_filtered(conn, &query_lower, limit, offset)?;
 
-            let mut matched_label: Option<String> = None;
+        // Materialise the full Property for each page item to get domains/ranges/etc.
+        let page_iris: Vec<&str> = light_items.iter().map(|(iri, _)| iri.as_str()).collect();
+        let prop_map = Property::get_batch(conn, &page_iris)?;
 
-            if !query_str.is_empty() {
-                let label_lower = prop.label.as_deref().unwrap_or("").to_lowercase();
-                let comment_lower = prop.comment.as_deref().unwrap_or("").to_lowercase();
-                let iri_lower = iri.to_lowercase();
-
-                let domain_match = prop.domain_labels.iter().find_map(|dl| {
-                    let fwd = dl.forward_label.to_lowercase();
-                    if fwd.contains(&query_lower) {
-                        return Some(format!("{} (forward label, domain: {})", dl.forward_label, dl.domain));
-                    }
-                    if let Some(inv) = &dl.inverse_label {
-                        let inv_lower = inv.to_lowercase();
-                        if inv_lower.contains(&query_lower) {
-                            return Some(format!("{} (inverse label, domain: {})", inv, dl.domain));
-                        }
-                    }
-                    None
-                });
-
-                if let Some(m) = domain_match {
-                    matched_label = Some(m);
-                } else if !label_lower.contains(&query_lower)
-                    && !comment_lower.contains(&query_lower)
-                    && !iri_lower.contains(&query_lower)
-                {
-                    continue;
-                }
-            }
+        let properties: Vec<Value> = light_items.into_iter().filter_map(|(iri, matched_label)| {
+            let prop = prop_map.get(&iri)?;
 
             let property_type = match prop.property_type {
                 PropertyType::ObjectProperty => "object",
@@ -384,15 +357,13 @@ fn search_properties_one(conn: &Connection, args: &Value) -> ToolResult {
             if let Some(m) = matched_label {
                 entry["matchedLabel"] = json!(m);
             }
-            results.push(entry);
-        }
+            Some(entry)
+        }).collect();
 
-        let total = results.len();
-        let paginated: Vec<_> = results.into_iter().skip(offset).take(limit).collect();
-
+        let count = properties.len();
         Ok::<_, crate::owl::OwlError>(json!({
-            "properties": paginated,
-            "count": paginated.len(),
+            "properties": properties,
+            "count": count,
             "total": total,
             "limit": limit,
             "offset": offset,

@@ -15,6 +15,7 @@ dependencies = [
  "cron",
  "dirs 5.0.1",
  "encoding_rs",
+ "foundation-core",
  "futures-util",
  "handlebars",
  "hostname",
@@ -1858,6 +1859,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "foundation-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs 5.0.1",
+ "lazy_static",
+ "rhai",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tantivy",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

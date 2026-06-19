@@ -35,6 +35,7 @@
   interface ListResponse {
     snapshot_tx: number;
     sources: DataSource[];
+    has_more: boolean;
   }
 
   // ── Tradução de status (sem jargão técnico) ────────────────────────────

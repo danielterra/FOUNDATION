@@ -11,9 +11,6 @@ use super::agent_runner::resolve_agent_config;
 
 type Result<T> = std::result::Result<T, String>;
 
-const DEFAULT_MAX_TOKENS: u32 = 4096;
-const DEFAULT_TEMPERATURE: f32 = 0.3;
-
 pub(super) fn to_storage_blocks(content: &MessageContent) -> Vec<crate::commands::chat_storage::ContentBlock> {
     use crate::commands::chat_storage::ContentBlock as S;
     use ContentBlock as A;
@@ -275,15 +272,11 @@ pub async fn execute_agent_task(
         system: Some(agent_config.system_prompt),
         tools,
         max_iterations: 50,
-        max_tokens: DEFAULT_MAX_TOKENS,
-        temperature: DEFAULT_TEMPERATURE,
         completion_tool: Some(CompletionToolConfig {
             tool_name: "task_complete".to_string(),
             output_class: output_class.clone(),
         }),
-        compaction_threshold: 0.80,
-        context_window: 180_000,
-        persist_to: None,
+        ..ToolLoopConfig::default()
     };
 
     let output = run_tool_loop(&executor, Some(app), &agent_config.provider, initial_messages, loop_config).await?;

@@ -364,12 +364,42 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
                 iri
             )))?;
 
+        // PAGE_SIZE must match `inspector__get_backlink_page` so the cursor emitted here
+        // is valid for the next paginated call.
+        const PAGE_SIZE: usize = 15;
+
+        // Composite cursor (last_tx, subject) of the PAGE_SIZE-th item in
+        // `last_tx DESC, subject ASC` order. Uses the same logic as individual.rs:
+        // track min last_tx among included items; among items at that last_tx, track
+        // the max subject (last in ASC order).
+        let group_next_cursor: std::collections::HashMap<String, Option<(i64, String)>> = {
+            let mut counts: std::collections::HashMap<String, (usize, i64, String, usize)> = std::collections::HashMap::new();
+            for b in &individual.backlinks {
+                let key = format!("{}:{}", b.predicate,
+                    b.source_class.as_deref().unwrap_or("owl:Thing"));
+                let entry = counts.entry(key).or_insert((0, i64::MAX, String::new(), b.group_total));
+                if entry.0 < PAGE_SIZE {
+                    entry.0 += 1;
+                    if b.last_tx < entry.1 {
+                        entry.1 = b.last_tx;
+                        entry.2 = b.subject.clone();
+                    } else if b.last_tx == entry.1 && b.subject > entry.2 {
+                        entry.2 = b.subject.clone();
+                    }
+                }
+            }
+            counts.into_iter().map(|(key, (_, min_tx, boundary_subject, total))| {
+                let cursor = if total > PAGE_SIZE { Some((min_tx, boundary_subject)) } else { None };
+                (key, cursor)
+            }).collect()
+        };
+
         let mut seen_groups = std::collections::HashSet::new();
         let mut backlinks: Vec<serde_json::Value> = Vec::new();
         for b in &individual.backlinks {
             let source_class = b.source_class.clone().unwrap_or_else(|| "owl:Thing".to_string());
             let group_key = format!("{}:{}", b.predicate, source_class);
-            if !seen_groups.insert(group_key) {
+            if !seen_groups.insert(group_key.clone()) {
                 continue;
             }
             let prop_label = crate::owl::Property::get(conn, &b.predicate)
@@ -388,11 +418,14 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
                 })
                 .unwrap_or_else(|| b.predicate.clone());
             let class_label = crate::owl::Thing::get(conn, &source_class).label;
+            let next_cursor = group_next_cursor.get(&group_key).and_then(|c| c.as_ref())
+                .map(|(tx, subj)| serde_json::json!({ "last_tx": tx, "subject": subj }));
             backlinks.push(serde_json::json!({
                 "class": source_class,
                 "conceptLabel": class_label,
                 "propertyLabel": prop_label,
                 "count": b.group_total,
+                "nextCursor": next_cursor,
             }));
         }
         backlinks.sort_by(|a, b| {

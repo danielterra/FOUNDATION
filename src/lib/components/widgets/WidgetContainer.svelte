@@ -266,16 +266,19 @@
   }
 
   .header-actions {
-    background-color: color-mix(in srgb, var(--primary) 9%, transparent);
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: 4px;
-    padding: 0px;
+    padding: 2px 4px;
+    margin: 0 16px 8px 16px;
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+    border-radius: var(--radius);
   }
 
-  .header-actions :global(.action-btn--danger) {
-    color: var(--destructive);
+  .header-actions :global(.material-symbols-outlined) {
+    font-size: 18px;
   }
 
   .header-actions :global(.action-btn--danger:hover) {

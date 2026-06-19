@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use crate::owl::{DbExecutor, Individual, Object, find_entities_with_property, get_iri_property, get_literal_property};
+use crate::owl::{DbExecutor, Individual, Object, get_iri_property, get_literal_property};
 
 const STATUS_PENDING: &str = "foundation:Pending";
 const STATUS_TRANSFORMED: &str = "foundation:Status_1781300928585";
@@ -31,33 +31,49 @@ pub struct DataSourceSummary {
 
 #[derive(Debug, Serialize)]
 pub struct DataSourceListResponse {
+    /// MAX(tx) at query time — used by the frontend as a realtime replay cursor.
+    /// Distinct from pagination; pin on the first page, echo on subsequent pages.
     pub snapshot_tx: i64,
     pub sources: Vec<DataSourceSummary>,
+    /// Convenience flag: true when the returned count equals the requested limit.
+    /// Clients may request the next offset page; no keyset cursor is needed because
+    /// DataSources are low-cardinality and ordered by label (stable, bounded list).
+    pub has_more: bool,
 }
 
-/// Aggregate listing of all DataSources for the Data Sync Manager panel.
+/// Aggregate listing of DataSources for the Data Sync Manager panel.
 ///
-/// Returns a single snapshot covering scalar properties and RawDataRecord
-/// counters per status, plus a `snapshot_tx` cursor for the frontend's
-/// lossless replay window.
+/// Bound-only by label (low-cardinality list, PO decision 2026-06-18): ordered
+/// by rdfs:label ASC via find_entities_with_property_bounded. No keyset cursor —
+/// offset is stable for a label-ordered bounded list. `snapshot_tx` is the realtime
+/// replay cursor for the frontend subscription window, NOT a pagination cursor.
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn datasync__list_sources(
+    limit: Option<i64>,
+    offset: Option<i64>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
+    let effective_limit = limit.unwrap_or(50).max(1);
+    let effective_offset = offset.unwrap_or(0).max(0);
     let response = executor
-        .read(|conn| {
+        .read(move |conn| {
             let snapshot_tx: i64 = conn
                 .query_row("SELECT COALESCE(MAX(tx), 0) FROM triples", [], |row| row.get(0))
                 .map_err(|e| e.to_string())?;
 
-            let ds_iris = find_entities_with_property(conn, "rdf:type", "foundation:DataSource")
-                .map_err(|e| e.to_string())?;
+            let ds_iris = crate::owl::find_entities_with_property_bounded(
+                conn, "rdf:type", "foundation:DataSource",
+                effective_limit, effective_offset, Some("rdfs:label"),
+            ).map_err(|e| e.to_string())?;
+
+            let has_more = ds_iris.len() as i64 == effective_limit;
 
             if ds_iris.is_empty() {
                 return Ok(DataSourceListResponse {
                     snapshot_tx,
                     sources: vec![],
+                    has_more: false,
                 });
             }
 
@@ -194,6 +210,7 @@ pub async fn datasync__list_sources(
             Ok(DataSourceListResponse {
                 snapshot_tx,
                 sources,
+                has_more,
             })
         })
         .await?;
@@ -204,13 +221,20 @@ pub async fn datasync__list_sources(
 /// List RawDataRecords for a DataSource with optional status filter.
 ///
 /// Delegates to the canonical `list_raw_records` implementation so both this command
-/// and the MCP tool share one code path — filter → sort by received_at desc → limit.
+/// and the MCP tool share one code path.
+///
+/// `creation_tx` IS the domain ordering key because RawDataRecord is create-immutable: written
+/// once, never updated. This is the ADR exception (foundation:ArchitectureDecisionRecord_1781556688201)
+/// for entities whose natural order is creation-recency — keyset-by-creation_tx is stable and correct.
+/// `snapshot_tx` in the response is the realtime replay cursor for the frontend subscription
+/// window, distinct from `next_cursor` which is the keyset pagination cursor.
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn datasync__list_raw(
     data_source_iri: String,
     transform_status: Option<String>,
     limit: Option<i64>,
+    after_tx: Option<i64>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     if data_source_iri.is_empty() {
@@ -227,6 +251,7 @@ pub async fn datasync__list_raw(
                 &data_source_iri,
                 status_filter.as_deref(),
                 effective_limit,
+                after_tx,
             )
         })
         .await?;
@@ -245,7 +270,9 @@ pub async fn datasync__list_raw(
         .collect();
 
     let response = serde_json::json!({
-        "records": records_json,
+        "items": records_json,
+        "next_cursor": result.next_cursor,
+        "has_more": result.has_more,
         "counts_by_status": counts_by_status,
         "snapshot_tx": result.snapshot_tx,
     });
@@ -364,7 +391,7 @@ pub async fn datasync__run(
 
     let result = serde_json::json!({
         "staged_count": staged.len(),
-        "staged_iris": staged,
+        "staged_iris_sample": staged.iter().take(50).collect::<Vec<_>>(),
         "transform_triggered": transform_triggered,
     });
 

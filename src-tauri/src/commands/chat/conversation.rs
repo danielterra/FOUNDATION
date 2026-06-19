@@ -52,60 +52,111 @@ pub async fn chat__create_conversation(
 }
 
 #[tauri::command]
+#[allow(non_snake_case)]
 pub async fn chat__list_conversations(
+    limit: Option<i64>,
+    after_cursor_tx: Option<i64>,
+    after_cursor_subject: Option<String>,
+    snapshot_tx: Option<i64>,
     executor: State<'_, DbExecutor>,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<serde_json::Value, String> {
     executor.read(move |conn| {
-        let iris: Vec<String> = conn.prepare(
-            "SELECT DISTINCT t.subject FROM triples t
-             JOIN triples t_p ON t_p.subject = t.subject
-               AND t_p.predicate = 'foundation:hasParticipant'
-               AND t_p.object = 'foundation:ThisUser'
-               AND t_p.retracted = 0
-             WHERE t.predicate = 'rdf:type'
-               AND t.object = 'foundation:AIConversation'
-               AND t.retracted = 0
-             ORDER BY t.subject DESC"
-        ).map_err(|e| e.to_string())?
-        .query_map([], |row| row.get(0))
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
+        let page_size = limit.unwrap_or(200).max(1).min(200);
 
-        if iris.is_empty() {
-            return Ok(vec![]);
+        let pinned_tx: i64 = match snapshot_tx {
+            Some(tx) => tx,
+            None => conn.query_row(
+                "SELECT COALESCE(MAX(tx), 0) FROM triples",
+                [],
+                |row| row.get(0),
+            ).map_err(|e| e.to_string())?,
+        };
+
+        // Build composite cursor from the two optional fields.
+        // Both must be Some to form a valid cursor; if only one is present the caller
+        // passed a malformed cursor and we treat it as no cursor (first page).
+        let after: Option<(Option<i64>, String)> = match (after_cursor_tx, after_cursor_subject.clone()) {
+            (Some(tx), Some(subj)) => Some((Some(tx), subj)),
+            (None, Some(subj)) => Some((None, subj)),
+            _ => None,
+        };
+
+        // Fetch limit+1 to detect has_more without a COUNT query.
+        let rows = crate::eavto::query::page_as_of(
+            conn,
+            "rdf:type",
+            "foundation:AIConversation",
+            pinned_tx,
+            "foundation:lastUpdatedAt",
+            page_size + 1,
+            after.as_ref().map(|(tx, subj)| (*tx, subj.as_str())),
+            Some(("foundation:hasParticipant", "foundation:ThisUser")),
+        ).map_err(|e| e.to_string())?;
+
+        let has_more = rows.len() as i64 > page_size;
+        let rows: Vec<_> = rows.into_iter().take(page_size as usize).collect();
+
+        if rows.is_empty() {
+            return Ok(serde_json::json!({
+                "items": [],
+                "next_cursor": serde_json::Value::Null,
+                "has_more": false,
+                "snapshot_tx": pinned_tx,
+            }));
         }
 
-        // Batch-fetch labels and createdAt in two queries — avoids Individual::get (backlinks CTE)
-        let placeholders = iris.iter().enumerate()
-            .map(|(i, _)| format!("?{}", i + 1))
-            .collect::<Vec<_>>()
-            .join(",");
-
-        let params: Vec<&dyn rusqlite::ToSql> = iris.iter()
-            .map(|s| s as &dyn rusqlite::ToSql)
+        let iris: Vec<String> = rows.iter().map(|r| r.subject.clone()).collect();
+        let placeholders = iris.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let ph_params: Vec<rusqlite::types::Value> = iris.iter()
+            .map(|s| rusqlite::types::Value::Text(s.clone()))
             .collect();
 
+        // Batch-fetch labels as-of snapshot_tx
         let label_sql = format!(
-            "SELECT subject, object_value FROM triples \
-             WHERE predicate = 'rdfs:label' AND retracted = 0 AND subject IN ({placeholders})"
+            "SELECT t.subject, t.object_value \
+             FROM triples t \
+             WHERE t.predicate = 'rdfs:label' \
+               AND t.retracted = 0 \
+               AND t.tx <= ?1 \
+               AND t.subject IN ({placeholders}) \
+               AND t.tx = (\
+                   SELECT MAX(t2.tx) FROM triples t2 \
+                   WHERE t2.subject = t.subject AND t2.predicate = 'rdfs:label' \
+                     AND t2.retracted = 0 AND t2.tx <= ?1\
+               )"
         );
+        let mut label_params: Vec<rusqlite::types::Value> =
+            vec![rusqlite::types::Value::Integer(pinned_tx)];
+        label_params.extend(ph_params.iter().cloned());
         let mut label_stmt = conn.prepare(&label_sql).map_err(|e| e.to_string())?;
         let label_map: std::collections::HashMap<String, String> = label_stmt
-            .query_map(params.as_slice(), |row| {
+            .query_map(rusqlite::params_from_iter(label_params.iter()), |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
             .collect();
 
+        // Batch-fetch createdAt as-of snapshot_tx for label fallback
         let created_sql = format!(
-            "SELECT subject, object_value FROM triples \
-             WHERE predicate = 'foundation:createdAt' AND retracted = 0 AND subject IN ({placeholders})"
+            "SELECT t.subject, t.object_value \
+             FROM triples t \
+             WHERE t.predicate = 'foundation:createdAt' \
+               AND t.retracted = 0 \
+               AND t.tx <= ?1 \
+               AND t.subject IN ({placeholders}) \
+               AND t.tx = (\
+                   SELECT MAX(t2.tx) FROM triples t2 \
+                   WHERE t2.subject = t.subject AND t2.predicate = 'foundation:createdAt' \
+                     AND t2.retracted = 0 AND t2.tx <= ?1\
+               )"
         );
+        let mut created_params: Vec<rusqlite::types::Value> =
+            vec![rusqlite::types::Value::Integer(pinned_tx)];
+        created_params.extend(ph_params.iter().cloned());
         let mut created_stmt = conn.prepare(&created_sql).map_err(|e| e.to_string())?;
         let created_map: std::collections::HashMap<String, i64> = created_stmt
-            .query_map(params.as_slice(), |row| {
+            .query_map(rusqlite::params_from_iter(created_params.iter()), |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(|e| e.to_string())?
@@ -118,39 +169,38 @@ pub async fn chat__list_conversations(
             })
             .collect();
 
-        // Last message timestamp per conversation (sentAt stored as xsd:dateTime string)
-        let mut last_msg_stmt = conn.prepare(
-            "SELECT tp.object, MAX(ts.object_value) \
-             FROM triples tp \
-             JOIN triples ts ON ts.subject = tp.subject \
-               AND ts.predicate = 'foundation:sentAt' \
-               AND ts.retracted = 0 \
-             WHERE tp.predicate = 'foundation:partOfConversation' \
-               AND tp.retracted = 0 \
-             GROUP BY tp.object"
-        ).map_err(|e| format!("Failed to prepare last-message query: {}", e))?;
-        let last_msg_map: std::collections::HashMap<String, i64> = last_msg_stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        // Batch-fetch creation tx (tx of the rdf:type triple) as-of snapshot_tx
+        let creation_tx_sql = format!(
+            "SELECT t.subject, MIN(t.tx) \
+             FROM triples t \
+             WHERE t.predicate = 'rdf:type' \
+               AND t.object = 'foundation:AIConversation' \
+               AND t.retracted = 0 \
+               AND t.tx <= ?1 \
+               AND t.subject IN ({placeholders}) \
+             GROUP BY t.subject"
+        );
+        let mut ct_params: Vec<rusqlite::types::Value> =
+            vec![rusqlite::types::Value::Integer(pinned_tx)];
+        ct_params.extend(ph_params.iter().cloned());
+        let mut ct_stmt = conn.prepare(&creation_tx_sql).map_err(|e| e.to_string())?;
+        let creation_tx_map: std::collections::HashMap<String, i64> = ct_stmt
+            .query_map(rusqlite::params_from_iter(ct_params.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
-            .map(|(iri, dt)| {
-                let ms = chrono::DateTime::parse_from_rfc3339(&dt)
-                    .map(|d| d.timestamp_millis())
-                    .unwrap_or(0);
-                (iri, ms)
-            })
             .collect();
 
-        let mut conversations: Vec<((bool, i64), serde_json::Value)> = iris.iter().map(|iri| {
-            let started_at = created_map.get(iri).copied().unwrap_or(0);
-
+        // page_as_of already delivers rows in DESC lastUpdatedAt order — no re-sort needed.
+        let items: Vec<serde_json::Value> = iris.iter().map(|iri| {
+            let created_at = created_map.get(iri).copied().unwrap_or(0);
+            let creation_tx = creation_tx_map.get(iri).copied().unwrap_or(0);
             let label = label_map.get(iri).cloned()
                 .filter(|l| !l.is_empty())
                 .unwrap_or_else(|| {
-                    if started_at > 0 {
-                        let secs = started_at / 1000;
+                    if created_at > 0 {
+                        let secs = created_at / 1000;
                         chrono::DateTime::from_timestamp(secs, 0)
                             .map(|dt| dt.format("Conversation %b %d, %Y %H:%M").to_string())
                             .unwrap_or_else(|| "New Conversation".to_string())
@@ -158,18 +208,29 @@ pub async fn chat__list_conversations(
                         "New Conversation".to_string()
                     }
                 });
-
-            let last_msg_ts = last_msg_map.get(iri).copied();
-            let sort_key = (last_msg_ts.is_some(), last_msg_ts.unwrap_or(started_at));
-            (sort_key, serde_json::json!({
+            serde_json::json!({
                 "iri": iri,
                 "label": label,
-                "startedAt": started_at,
-            }))
+                "startedAt": created_at,
+                "creationTx": creation_tx,
+            })
         }).collect();
 
-        conversations.sort_by(|a, b| b.0.cmp(&a.0));
-        Ok(conversations.into_iter().map(|(_, v)| v).collect())
+        let next_cursor = if has_more {
+            rows.last().map(|r| serde_json::json!({
+                "order_tx": r.order_tx,
+                "after_subject": r.subject,
+            })).unwrap_or(serde_json::Value::Null)
+        } else {
+            serde_json::Value::Null
+        };
+
+        Ok(serde_json::json!({
+            "items": items,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+            "snapshot_tx": pinned_tx,
+        }))
     }).await
 }
 
@@ -236,18 +297,17 @@ pub async fn chat__rename_conversation(
 
 #[tauri::command]
 pub async fn chat__list_agents(
+    limit: Option<i64>,
+    offset: Option<i64>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    executor.read(|conn| {
-        let iris: Vec<String> = conn.prepare(
-            "SELECT subject FROM triples \
-             WHERE predicate = 'rdf:type' AND object = 'foundation:SoftwareAgent' AND retracted = 0 \
-             ORDER BY subject"
-        ).map_err(|e| format!("Failed to list agents: {}", e))?
-        .query_map([], |row| row.get(0))
-        .map_err(|e| format!("Failed to list agents: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
+    executor.read(move |conn| {
+        // bounded-por-natureza; keyset-tx não agrega (não é append-no-topo)
+        let page_size = limit.unwrap_or(200).max(1).min(500);
+        let page_offset = offset.unwrap_or(0).max(0);
+        let iris = crate::owl::find_entities_with_property_bounded(
+            conn, "rdf:type", "foundation:SoftwareAgent", page_size, page_offset, Some("rdfs:label"),
+        ).map_err(|e| format!("Failed to list agents: {}", e))?;
 
         let default_service_available = crate::commands::chat::settings::get_ai_service_iri(conn)
             .ok()
@@ -314,7 +374,7 @@ pub async fn chat__set_conversation_agent(
 mod tests {
     use crate::eavto::test_helpers::setup_test_db;
     use crate::eavto::{store, Triple, Object};
-    use crate::owl::{Individual, Class, ClassType, Property, PropertyType};
+    use crate::owl::{Individual, Class, ClassType};
 
     const ICON: &str = "https://example.com/icon.svg";
 
