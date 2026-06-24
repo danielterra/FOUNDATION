@@ -1,6 +1,6 @@
 ﻿use std::collections::HashMap;
 use crate::owl::{self, Class, Individual, Property, Connection};
-use super::{EntityData, PropertyValue, BacklinkCursor, GraphNode, GraphLink, StatusInfo, FileInfo,
+use super::{EntityData, PropertyValue, BacklinkCursor, PropertyValueCursor, GraphNode, GraphLink, StatusInfo, FileInfo,
             resolve_unit_label, resolve_entity_status};
 
 pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, u8), individual: Individual) -> Result<EntityData, String> {
@@ -135,6 +135,16 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     let t_e = std::time::Instant::now();
     crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: fwd_status_info {}ms", t_e.duration_since(t_d).as_millis()));
 
+    // Build a one-shot cursor map for forward property groups that were truncated.
+    // `.remove()` inside the loop ensures the cursor is assigned only to the first
+    // PropertyValue entry for each predicate (consistent with backlink cursor placement).
+    let mut fwd_cursors: HashMap<String, Option<PropertyValueCursor>> = individual.forward_value_cutoffs
+        .iter()
+        .map(|(pred, (tx, key))| {
+            (pred.clone(), Some(PropertyValueCursor { value_tx: *tx, object_key: key.clone() }))
+        })
+        .collect();
+
     let mut properties = Vec::new();
     for (property_iri, value_obj) in &individual.properties {
         let prop_opt = prop_cache.get(property_iri.as_str());
@@ -254,6 +264,9 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             None
         };
 
+        let fwd_group_total = individual.forward_group_totals.get(property_iri.as_str()).copied();
+        let property_next_cursor = fwd_cursors.remove(property_iri.as_str()).flatten();
+
         properties.push(PropertyValue {
             property: property_iri.clone(),
             property_label,
@@ -269,8 +282,9 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             unit_label,
             datatype,
             value_status,
-            group_total: None,
+            group_total: fwd_group_total,
             backlink_next_cursor: None,
+            property_next_cursor,
             is_calculated,
             is_query_property: is_query_prop,
             formula_error,
@@ -374,6 +388,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         value_status: None,
                         group_total: None,
                         backlink_next_cursor: None,
+                        property_next_cursor: None,
                         is_calculated: prop.query_config.is_some(),
                         is_query_property: prop.query_config.is_some(),
                         formula_error: None,
@@ -616,7 +631,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
 
     // Must match PAGE_SIZE in `inspector__get_backlink_page` — both define the keyset
     // boundary so page-1 (snapshot) and page-2+ (paginated) never duplicate or skip.
-    const BACKLINK_PAGE_SIZE: usize = 15;
+    const BACKLINK_PAGE_SIZE: usize = 5;
 
     // For each group (predicate × source_class) that overflows the snapshot page, compute the
     // composite cursor (last_tx, subject) of the PAGE_SIZE-th item in `last_tx DESC, subject ASC`
@@ -709,6 +724,7 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             value_status,
             group_total: Some(b.group_total),
             backlink_next_cursor,
+            property_next_cursor: None,
             is_calculated: false,
             is_query_property: false,
             formula_error: None,

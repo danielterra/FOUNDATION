@@ -33,7 +33,7 @@ disable-model-invocation: false
 - Redundant wrapper functions when existing helpers cover the case.
 - Hardcoded IRIs not coming from `search(...)` MCP results.
 - Raw SQL `INSERT`/`UPDATE`/`DELETE`/`DROP`/`TRUNCATE` outside `eavto/` layer.
-- Edits to `core-ontology/ontology.sql` (auto-generated; mutate via MCP on live DB).
+- Edits to `src-tauri/crates/foundation-core/assets/ontology.sql` (auto-generated; mutate via MCP on live DB).
 - New `Cargo.toml` deps without justification or with conflicting features per platform.
 
 ## Quality checklist for new code

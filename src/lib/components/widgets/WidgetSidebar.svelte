@@ -75,7 +75,7 @@
     border-radius: var(--radius);
     overflow: hidden;
     flex-shrink: 0;
-    width: 180px;
+    width: 270px;
   }
 
   .sidebar-header {
@@ -126,6 +126,7 @@
     width: 100%;
     height: auto;
     justify-content: flex-start;
+    text-align: left;
     font-size: inherit;
     transition: background 0.15s, color 0.15s;
   }
@@ -175,5 +176,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
+    text-align: left;
   }
 </style>

@@ -94,7 +94,7 @@ npm run tauri:build:linux     # Linux x64
 
 - **User Database**: `~/Documents/Foundation/FOUNDATION.db` - Main SQLite database with all user data
 - **Application Logs**: `~/Library/Application Support/org.w3id.foundation/application.log` (macOS)
-- **Core Ontology**: `core-ontology/*.ttl` - Base ontology definitions loaded on initialization
+- **Core Ontology**: `src-tauri/crates/foundation-core/assets/ontology.sql` - Base ontology + `foundation:*` vocabulary, embedded in the `foundation-core` crate and seeded on initialization
 
 ## Architecture Layers
 
@@ -156,7 +156,7 @@ The ontology system provides:
 - **Relationships**: Rich connections between entities (not just foreign keys)
 - **Self-describing data**: The structure is stored in the same database as the data
 
-The core ontology is embedded as `core-ontology/ontology.sql` and loaded at startup via `include_str!`. It defines all base classes, properties, and individuals across every domain (Message, File, Person, etc.).
+The core ontology is embedded as `src-tauri/crates/foundation-core/assets/ontology.sql` and loaded at startup via `include_str!`. It defines all base classes, properties, and individuals across every domain (Message, File, Person, etc.).
 
 ## Debugging
 

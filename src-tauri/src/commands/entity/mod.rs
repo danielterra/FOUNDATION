@@ -106,6 +106,18 @@ pub struct BacklinkCursor {
     pub subject: String,
 }
 
+/// Composite keyset cursor emitted by forward property value pagination.
+/// Shape on the wire: `{ "valueTx": <i64>, "objectKey": "<string>" }`.
+/// The frontend must echo both fields verbatim as `after_value_tx`/`after_object_key` to
+/// `inspector__get_property_value_page` for the next page.
+/// `object_key` = `COALESCE(object, object_value)` of the last item returned.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PropertyValueCursor {
+    pub value_tx: i64,
+    pub object_key: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PropertyValue {
@@ -133,6 +145,13 @@ pub struct PropertyValue {
     /// `None` when the group fits entirely in the snapshot page (no "load more").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backlink_next_cursor: Option<BacklinkCursor>,
+    /// Composite keyset cursor for the first "load more" call on this forward property group.
+    /// Shape: `{ "valueTx": i64, "objectKey": String }` — the value_tx and
+    /// COALESCE(object, object_value) of the PAGE_SIZE-th item in the
+    /// `value_tx DESC, COALESCE(object, object_value) ASC` order.
+    /// `None` for backlinks or when the group fits in the snapshot page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub property_next_cursor: Option<PropertyValueCursor>,
     pub is_calculated: bool,
     pub is_query_property: bool,
     pub formula_error: Option<String>,
@@ -234,7 +253,7 @@ pub async fn inspector__get_backlink_page(
     snapshot_tx: i64,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    const PAGE_SIZE: usize = 15;
+    const PAGE_SIZE: usize = 5;
     executor.read(move |conn| {
         let after_cursor = match (after_tx, after_subject) {
             (Some(tx), Some(subj)) => Some((tx, subj)),
@@ -292,6 +311,153 @@ pub async fn inspector__get_backlink_page(
                 value_label: Some(thing.label),
                 value_icon: thing.icon,
                 value_status,
+            }
+        }).collect();
+
+        let response = serde_json::json!({
+            "items": items,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        });
+        serde_json::to_string(&response).map_err(|e| e.to_string())
+    }).await
+}
+
+/// Item returned by `inspector__get_property_value_page`, covering both IRI-valued and
+/// literal-valued properties with a single unified shape.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PropertyPageItem {
+    /// True for IRI/blank (object property), false for literals.
+    pub is_object_property: bool,
+    /// IRI string for object properties; lexical value string for literals.
+    pub value: String,
+    /// Resolved label for the target entity (object properties only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_label: Option<String>,
+    /// Icon for the target entity (object properties only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_icon: Option<String>,
+    /// `foundation:hasStatus` info for the target entity (object properties only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_status: Option<StatusInfo>,
+    /// XSD datatype IRI (literal properties only, e.g. `xsd:string`, `xsd:integer`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub datatype: Option<String>,
+    /// BCP-47 language tag (literal properties only, when present).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+}
+
+/// Returns a keyset-paginated page of forward property values for a given entity + predicate,
+/// as-of `snapshot_tx`. Ordered by `value_tx DESC, COALESCE(object, object_value) ASC`.
+/// Covers both IRI-valued (object) and literal-valued properties.
+/// Response: `{ items, next_cursor, has_more }` where `next_cursor = { valueTx, objectKey }`.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn inspector__get_property_value_page(
+    entity_iri: String,
+    predicate: String,
+    after_value_tx: Option<i64>,
+    after_object_key: Option<String>,
+    snapshot_tx: i64,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    const PAGE_SIZE: usize = 5;
+    executor.read(move |conn| {
+        let after_cursor = match (after_value_tx, after_object_key) {
+            (Some(tx), Some(key)) => Some((tx, key)),
+            _ => None,
+        };
+
+        let mut page = crate::eavto::query::get_property_values_page(
+            conn, &entity_iri, &predicate, after_cursor, PAGE_SIZE + 1, snapshot_tx,
+        ).map_err(|e| e.to_string())?;
+
+        let has_more = page.len() > PAGE_SIZE;
+        page.truncate(PAGE_SIZE);
+
+        let next_cursor: Option<PropertyValueCursor> = if has_more {
+            page.last().map(|row| {
+                let obj_key = row.object.clone()
+                    .or_else(|| row.object_value.clone())
+                    .unwrap_or_default();
+                PropertyValueCursor { value_tx: row.value_tx, object_key: obj_key }
+            })
+        } else {
+            None
+        };
+
+        let iri_rows: Vec<String> = page.iter()
+            .filter(|r| r.object_type == "iri" || r.object_type == "blank")
+            .filter_map(|r| r.object.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let things = if iri_rows.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            crate::owl::Thing::get_batch(conn, &iri_rows)
+        };
+
+        let status_iris = if iri_rows.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            crate::eavto::query::get_first_iri_property_batch(
+                conn, &iri_rows, "foundation:hasStatus",
+            ).unwrap_or_default()
+        };
+
+        let unique_status_iris: Vec<String> = status_iris.values()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let mut status_cache: std::collections::HashMap<String, StatusInfo> = std::collections::HashMap::new();
+        for status_iri in unique_status_iris {
+            if crate::owl::is_instance_of(conn, &status_iri, "foundation:Status") {
+                let thing = crate::owl::Thing::get(conn, &status_iri);
+                let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
+                status_cache.insert(status_iri.clone(), StatusInfo {
+                    iri: status_iri,
+                    label: thing.label,
+                    icon,
+                    color,
+                });
+            }
+        }
+
+        let items: Vec<PropertyPageItem> = page.iter().map(|row| {
+            let is_object = row.object_type == "iri" || row.object_type == "blank";
+            if is_object {
+                let iri = row.object.clone().unwrap_or_default();
+                let thing = things.get(&iri)
+                    .cloned()
+                    .unwrap_or_else(|| crate::owl::Thing::get(conn, &iri));
+                let value_status = status_iris.get(&iri)
+                    .and_then(|siri| status_cache.get(siri))
+                    .cloned();
+                PropertyPageItem {
+                    is_object_property: true,
+                    value: iri,
+                    value_label: Some(thing.label),
+                    value_icon: thing.icon,
+                    value_status,
+                    datatype: None,
+                    language: None,
+                }
+            } else {
+                PropertyPageItem {
+                    is_object_property: false,
+                    value: row.object_value.clone().unwrap_or_default(),
+                    value_label: None,
+                    value_icon: None,
+                    value_status: None,
+                    datatype: row.object_datatype.clone(),
+                    language: row.object_language.clone(),
+                }
             }
         }).collect();
 
@@ -1138,6 +1304,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             value_status: None,
             group_total: None,
             backlink_next_cursor: None,
+            property_next_cursor: None,
             is_calculated: false,
             formula_error: None,
             is_empty: false,
@@ -1172,6 +1339,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             value_status: None,
             group_total: None,
             backlink_next_cursor: None,
+            property_next_cursor: None,
             is_calculated: false,
             formula_error: None,
             is_empty: false,
@@ -1245,6 +1413,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             value_status: None,
             group_total: None,
             backlink_next_cursor: None,
+            property_next_cursor: None,
             is_calculated: false,
             formula_error: None,
             is_empty: false,
@@ -1298,6 +1467,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             value_status: None,
             group_total: None,
             backlink_next_cursor: None,
+            property_next_cursor: None,
             is_calculated: false,
             formula_error: None,
             is_empty: false,
@@ -1376,6 +1546,7 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             value_status,
             group_total,
             backlink_next_cursor: None,
+            property_next_cursor: None,
             is_calculated: false,
             formula_error: None,
             is_empty: false,

@@ -114,7 +114,7 @@ Vermelho de build é blocker — conserto e revalido antes de retornar.
 - IRIs hardcoded que não vieram de `search(...)` ou `describe_*`.
 - Sintaxe Svelte 4 em arquivo novo (`export let`, `$:` no lugar de `$derived`).
 - Decorations no `tauri.conf.json`.
-- Edição de `core-ontology/ontology.sql`.
+- Edição de `src-tauri/crates/foundation-core/assets/ontology.sql`.
 
 ### Checklist de código novo
 - Nomes auto-documentam — sem comentário repetindo o que o código diz.

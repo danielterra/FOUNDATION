@@ -1,8 +1,5 @@
 [workspace]
-members = [
-    ".",
-    "crates/foundation-core",
-]
+members = ["."]
 resolver = "2"
 
 [package]
@@ -34,7 +31,7 @@ path = "src/bin/purge_retracted.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-foundation-core = { path = "crates/foundation-core" }
+foundation-core = { git = "https://github.com/danielterra/foundation-core" }
 tauri = { version = "2", features = ["protocol-asset", "test", "devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-fs = "2"
@@ -80,7 +77,7 @@ llama-cpp-2 = { version = "0.1.143", features = ["sampler"] }
 
 [dev-dependencies]
 tempfile = "3.8"  # Temporary files for tests
-foundation-core = { path = "crates/foundation-core", features = ["test-helpers"] }
+foundation-core = { git = "https://github.com/danielterra/foundation-core", features = ["test-helpers"] }
 
 [profile.dev]
 incremental = true

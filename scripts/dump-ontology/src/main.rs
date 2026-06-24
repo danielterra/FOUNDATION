@@ -327,7 +327,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("scripts/dump-ontology has no parent")
         .parent()
         .expect("scripts has no parent");
-    let output = project_root.join("core-ontology").join("ontology.sql");
+    let output = project_root
+        .join("src-tauri").join("crates").join("foundation-core")
+        .join("assets").join("ontology.sql");
 
     let t_total = std::time::Instant::now();
     eprintln!("Using database: {}", db_path.display());

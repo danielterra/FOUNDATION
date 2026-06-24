@@ -273,8 +273,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("scripts/verify-ontology has no parent")
         .parent()
         .expect("scripts has no parent");
-    let schema_sql_path = project_root.join("db").join("schema.sql");
-    let ontology_sql_path = project_root.join("core-ontology").join("ontology.sql");
+    let schema_sql_path = project_root
+        .join("src-tauri").join("crates").join("foundation-core")
+        .join("assets").join("schema.sql");
+    let ontology_sql_path = project_root
+        .join("src-tauri").join("crates").join("foundation-core")
+        .join("assets").join("ontology.sql");
 
     if !db_path.exists() {
         eprintln!("ERROR: Database not found at {}", db_path.display());

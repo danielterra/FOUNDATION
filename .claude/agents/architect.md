@@ -88,7 +88,7 @@ Frontend → Commands → Core-Ontology → OWL → EAVTO → SQLite
 
 Restrições transversais:
 - Eventos de entidade só via helpers `crate::realtime::emit_entity_*`.
-- Ontologia vive no **live DB** via MCP — nunca em `core-ontology/ontology.sql` (dump auto-gerado).
+- Ontologia vive no **live DB** via MCP — nunca em `src-tauri/crates/foundation-core/assets/ontology.sql` (dump auto-gerado).
 - Imutabilidade: atualizar = nova tripla com `tx` maior; `retracted` é só para deletar de fato.
 
 ## Protocolo — antes de qualquer desenho

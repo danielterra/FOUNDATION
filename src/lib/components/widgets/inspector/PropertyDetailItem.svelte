@@ -26,6 +26,7 @@
     onSaveCardinality = null,
     onSaveQueryConfig = null,
     onLoadMoreBacklinks = null,
+    onLoadMoreProperty = null,
   } = $props();
 
   let editingKey = $state(null);
@@ -41,27 +42,57 @@
   let nextCursor = $state(null);
   let pageHasMore = $state(false);
 
+  let _lastGroupKey = $state.raw(null);
+  let _lastEntityId = $state.raw(null);
+
   $effect(() => {
-    void detailGroup.values;
-    extraValues = [];
-    nextCursor = detailGroup.backlinkNextCursor ?? null;
-    pageHasMore = nextCursor != null;
+    const groupKey = detailGroup._groupKey;
+    const currentEntityId = entityId;
+    if (groupKey !== _lastGroupKey || currentEntityId !== _lastEntityId) {
+      _lastGroupKey = groupKey;
+      _lastEntityId = currentEntityId;
+      extraValues = [];
+      const isBacklink = detailGroup.sourceClassIri != null && detailGroup.backlinkNextCursor != null;
+      nextCursor = isBacklink
+        ? (detailGroup.backlinkNextCursor ?? null)
+        : (detailGroup.propertyNextCursor ?? null);
+      pageHasMore = nextCursor != null;
+    }
   });
 
   const hasMore = $derived(pageHasMore);
 
   async function loadMore() {
-    if (!onLoadMoreBacklinks || loadingMore) return;
+    if (loadingMore) return;
     loadingMore = true;
     try {
-      const result = await onLoadMoreBacklinks(
-        detailGroup.property,
-        detailGroup.sourceClassIri,
-        nextCursor
-      );
-      extraValues = [...extraValues, ...result.items];
-      nextCursor = result.next_cursor;
-      pageHasMore = result.has_more;
+      const isBacklink = detailGroup.sourceClassIri != null;
+      if (isBacklink && onLoadMoreBacklinks) {
+        const result = await onLoadMoreBacklinks(
+          detailGroup.property,
+          detailGroup.sourceClassIri,
+          nextCursor
+        );
+        extraValues = [...extraValues, ...result.items];
+        nextCursor = result.next_cursor;
+        pageHasMore = result.has_more;
+      } else if (!isBacklink && onLoadMoreProperty) {
+        const result = await onLoadMoreProperty(detailGroup.property, nextCursor);
+        const mapped = result.items.map(item => ({
+          value: item.value,
+          valueLabel: item.valueLabel ?? null,
+          valueIcon: item.valueIcon ?? null,
+          valueStatus: item.valueStatus ?? null,
+          datatype: item.datatype ?? null,
+          language: item.language ?? null,
+          unitLabel: null,
+          formulaError: null,
+          fileInfo: null,
+        }));
+        extraValues = [...extraValues, ...mapped];
+        nextCursor = result.next_cursor;
+        pageHasMore = result.has_more;
+      }
     } finally {
       loadingMore = false;
     }
@@ -779,7 +810,7 @@
       onCancelEdit={cancelEdit}
       {openEntityInspector}
     />
-    {#if hasMore && onLoadMoreBacklinks}
+    {#if hasMore && (onLoadMoreBacklinks || onLoadMoreProperty)}
       <Button variant="ghost" size="sm" class="load-more-btn" onclick={loadMore} disabled={loadingMore}>
         {#if loadingMore}
           <span class="material-symbols-outlined spinning-small">progress_activity</span>
