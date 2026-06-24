@@ -327,8 +327,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("scripts/dump-ontology has no parent")
         .parent()
         .expect("scripts has no parent");
+    // ontology.sql now lives in the separate foundation-core repo (sibling clone at ../foundation-core)
     let output = project_root
-        .join("src-tauri").join("crates").join("foundation-core")
+        .parent()
+        .expect("app repo has no parent dir")
+        .join("foundation-core")
         .join("assets").join("ontology.sql");
 
     let t_total = std::time::Instant::now();
