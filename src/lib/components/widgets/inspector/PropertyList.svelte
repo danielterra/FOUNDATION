@@ -14,6 +14,7 @@
     onSaveCardinality = null,
     onSaveQueryConfig = null,
     onLoadMoreBacklinks = null,
+    onLoadMoreProperty = null,
   } = $props();
 
   let now = $state(Date.now());
@@ -61,8 +62,10 @@
     (properties ?? []).reduce((acc, prop) => {
       // Forward and backlink entries can share the same property IRI but mean different
       // things (X has Y as previousMonthBudget vs. Y has X as previousMonthBudget).
-      // Backlinks carry groupTotal, forwards do not — split them into separate groups.
-      const isBacklink = prop.groupTotal != null;
+      // Discriminator: backlink = sourceClass != null && backlinkNextCursor != null;
+      // direct multi-valued = sourceClass == null && propertyNextCursor != null.
+      // groupTotal alone no longer discriminates — both types now carry it.
+      const isBacklink = prop.sourceClass != null && prop.backlinkNextCursor != null;
       const key = isBacklink ? `${prop.property}__backlink` : prop.property;
       if (!acc[key]) {
         acc[key] = {
@@ -88,6 +91,7 @@
           maxCount: prop.maxCount ?? null,
           groupTotal: null,
           backlinkNextCursor: null,
+          propertyNextCursor: null,
           values: []
         };
       }
@@ -105,8 +109,12 @@
         });
         if (prop.groupTotal != null && acc[key].groupTotal == null) {
           acc[key].groupTotal = prop.groupTotal;
-          acc[key].sourceClassIri = prop.sourceClass ?? null;
-          acc[key].backlinkNextCursor = prop.backlinkNextCursor ?? null;
+          if (isBacklink) {
+            acc[key].sourceClassIri = prop.sourceClass ?? null;
+            acc[key].backlinkNextCursor = prop.backlinkNextCursor ?? null;
+          } else {
+            acc[key].propertyNextCursor = prop.propertyNextCursor ?? null;
+          }
         }
       }
       return acc;
@@ -176,6 +184,7 @@
         {onSaveCardinality}
         {onSaveQueryConfig}
         {onLoadMoreBacklinks}
+        {onLoadMoreProperty}
       />
     {/each}
   {/each}

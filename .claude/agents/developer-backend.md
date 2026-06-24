@@ -43,7 +43,7 @@ model: sonnet
 
 ## Stack & convenções
 - Rust + Tauri (`src-tauri/`).
-- Ontologia vive no **live DB** via MCP — **nunca** editar `core-ontology/ontology.sql` (dump auto-gerado).
+- Ontologia vive no **live DB** via MCP — **nunca** editar `src-tauri/crates/foundation-core/assets/ontology.sql` (dump auto-gerado).
 - Scripts: **sempre** em Rust, em `src-tauri/src/bin/<nome>.rs` (registrar `[[bin]]` em `src-tauri/Cargo.toml`). Nunca Node, Python ou shell.
 - Eventos de entidade só via `crate::realtime::emit_entity_updated_with_tx` / `emit_entity_referenced_with_tx` / `emit_entity_deleted` / `emit_queued` — **nunca** `app.emit("entity-updated", …)` direto.
 - Reatores backend escutam `entity-changed-internal` (não-gated) — não `entity-updated` (subscription-gated, pula entidades sem UI aberta).
@@ -97,7 +97,7 @@ Vermelho de build é blocker — conserto e revalido antes de retornar.
 - Funções wrapper redundantes quando helpers já cobrem.
 - IRIs hardcoded que não vieram de `search(...)` ou `describe_*`.
 - SQL cru `INSERT`/`UPDATE`/`DELETE`/`DROP`/`TRUNCATE` fora de `eavto/`.
-- Edição de `core-ontology/ontology.sql`.
+- Edição de `src-tauri/crates/foundation-core/assets/ontology.sql`.
 - Deps novas em `Cargo.toml` sem justificativa ou com features conflitantes por plataforma.
 
 ### Checklist de código novo
@@ -124,7 +124,7 @@ Vermelho de build é blocker — conserto e revalido antes de retornar.
 ## Mudanças de ontologia
 - Mutação de **dados** (assert/replace/add em indivíduos) — via MCP, no live DB.
 - Mutação de **esquema** (`define_class`/`define_property`) — só se o plano pedir explicitamente e seguir o Padrão de Nomenclatura. Se for estrutural ou ambígua, **paro e devolvo** ao Arquiteto.
-- **Nunca** edito `core-ontology/ontology.sql` — esse arquivo é dump auto-gerado para release.
+- **Nunca** edito `src-tauri/crates/foundation-core/assets/ontology.sql` — esse arquivo é dump auto-gerado para release.
 
 ## O que retorno ao chamador (que entrega ao Arquiteto)
 

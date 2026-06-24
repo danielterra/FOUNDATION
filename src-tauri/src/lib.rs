@@ -138,6 +138,7 @@ pub fn run() {
         .manage(realtime::SubscriptionRegistry::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
+            foundation_core::paths::configure("Foundation", "FOUNDATION.db", "org.w3id.foundation");
 
             let window_config = app.config().app.windows.first()
                 .expect("tauri.conf.json must declare at least one window");
@@ -193,6 +194,7 @@ pub fn run() {
             commands::agent__set_ai_config,
             commands::inspector__get_entity,
             commands::inspector__get_backlink_page,
+            commands::inspector__get_property_value_page,
             commands::inspector__get_applicable_properties,
             commands::owl__search_entities,
             commands::graph__get_node_type_config,

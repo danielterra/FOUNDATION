@@ -61,7 +61,7 @@ Only include sections that have content. Derive entries from the commit list.
 1. `cargo run --manifest-path scripts/verify-code-iris/Cargo.toml` — must pass with zero missing IRIs; if it fails, create missing entities via MCP before proceeding
 2. `cargo run --manifest-path scripts/dump-ontology/Cargo.toml`
 3. `cargo run --manifest-path scripts/verify-ontology/Cargo.toml` — must pass with zero differences
-4. Include `core-ontology/ontology.sql` in the `git add` on Step 8
+4. Include `src-tauri/crates/foundation-core/assets/ontology.sql` in the `git add` on Step 8
 
 ### Step 5 — Create SoftwareRelease individual via MCP
 
@@ -131,7 +131,7 @@ One entry per feature, single sentence, status tag at the end.
 
 Stage all changed files **by name** (never `git add -A`):
 ```
-git add src-tauri/Cargo.toml src-tauri/Cargo.lock package.json CHANGELOG.md core-ontology/ontology.sql README.md
+git add src-tauri/Cargo.toml src-tauri/Cargo.lock package.json CHANGELOG.md src-tauri/crates/foundation-core/assets/ontology.sql README.md
 ```
 
 Commit with:

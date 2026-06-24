@@ -1864,6 +1864,7 @@ dependencies = [
 [[package]]
 name = "foundation-core"
 version = "0.1.0"
+source = "git+https://github.com/danielterra/foundation-core#5db2a5f31ca589d923980c35e09af53ebb9068a3"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -1874,7 +1875,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "tantivy",
- "tempfile",
  "tokio",
 ]
 

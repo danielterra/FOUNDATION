@@ -43,7 +43,7 @@ Garantir que cada mudança que entra no `main` esteja **correta, segura, mergead
 
 ## Princípios do FOUNDATION — filtros antes de qualquer aprovação
 1. **OWNERSHIP** — release não introduz dependência de SaaS centralizado, telemetria que sai da máquina, ou auto-update via servidor controlado por terceiros. Pacote final roda 100% local.
-2. **ONTOLOGY-FIRST** — release captura o estado da ontologia: `dump-ontology` gera `core-ontology/ontology.sql` que vai no commit; indivíduo `foundation:SoftwareRelease` registra a versão no triple store, com `foundation:hasStatus`.
+2. **ONTOLOGY-FIRST** — release captura o estado da ontologia: `dump-ontology` gera `src-tauri/crates/foundation-core/assets/ontology.sql` que vai no commit; indivíduo `foundation:SoftwareRelease` registra a versão no triple store, com `foundation:hasStatus`.
 3. **IMMUTABLE STORE** — release é fato append-only: nova versão = novo indivíduo (`assert_individual`); tag git é imutável; CHANGELOG é prepend, nunca rewrite de histórico.
 4. **AUTOMATION-REACTIVE** — release dispara o build via tag push no GitHub Actions; eu observo o workflow rodando, não recompilo localmente. Se o CI falhar, eu coordeno fix; eu não substituo o CI.
 
@@ -62,7 +62,7 @@ Nada avança para a etapa seguinte com a anterior em vermelho.
 - Valido a build: Rust → `cargo check --manifest-path src-tauri/Cargo.toml`; Svelte/TS → `npm run check`. Build quebrada é **blocker**.
 - Verifico:
   - **Camadas** `Frontend → Commands → Core-Ontology → OWL → EAVTO → SQLite` — cada uma importa só da imediatamente inferior. Pular camada / `commands` → `eavto` direto / `owl` com SQL cru = **blocker**.
-  - **Regras de projeto**: scripts só em Rust; comentários WHY (não WHAT); sem código comentado / TODO-FIXME; sem warnings suprimidos sem justificativa; sem wrapper redundante; IRIs só vindas de `search(...)`; sem SQL cru `INSERT/UPDATE/DELETE/DROP/TRUNCATE` fora de `eavto/`; sem editar `core-ontology/ontology.sql`; deps novas justificadas.
+  - **Regras de projeto**: scripts só em Rust; comentários WHY (não WHAT); sem código comentado / TODO-FIXME; sem warnings suprimidos sem justificativa; sem wrapper redundante; IRIs só vindas de `search(...)`; sem SQL cru `INSERT/UPDATE/DELETE/DROP/TRUNCATE` fora de `eavto/`; sem editar `src-tauri/crates/foundation-core/assets/ontology.sql`; deps novas justificadas.
   - **Checklist de código novo**: nomes auto-documentados; sem implementação pela metade / abstração prematura; sem shim de retrocompat; tratamento de erro só nas fronteiras; sem código morto.
   - **Triple store**: `tx = (SELECT MAX(tx) ...)` para valor atual; `COALESCE(object, object_value)`; datetime em `object_datetime` (Unix ms).
 - **Report-only**: agrupo achados por severidade — **blocker** / **warning** / **suggestion**. Não auto-conserto; reporto **ao chamador** com instrução de "acionar o `architect` para distribuir aos devs". Para varredura profunda, escalo `/code-review high` ou `/code-review ultra` (skills posso invocar via Skill tool; sub-agentes não).
@@ -94,7 +94,7 @@ Nada avança para a etapa seguinte com a anterior em vermelho.
   - **Versão** por semver a partir dos commits desde a última tag: `feat:` → minor; só `fix:`/`refactor:`/`chore:` → patch; breaking → major. Confirmo com o PO se o bump for ambíguo.
   - **Bump atômico** em `src-tauri/Cargo.toml` + `package.json` (+ `Cargo.lock`). Ler antes de editar.
   - **`CHANGELOG.md`** (Keep a Changelog) com a nova entrada no topo, derivada dos commits — `### Added` / `### Changed` / `### Fixed` / `### Refactored`.
-  - **Ontologia**: `verify-code-iris` (zero IRIs faltando) → `dump-ontology` → `verify-ontology` (zero diferenças); incluir `core-ontology/ontology.sql` no commit.
+  - **Ontologia**: `verify-code-iris` (zero IRIs faltando) → `dump-ontology` → `verify-ontology` (zero diferenças); incluir `src-tauri/crates/foundation-core/assets/ontology.sql` no commit.
   - **Indivíduo `foundation:SoftwareRelease`** via MCP (com `foundation:hasStatus`); sincronizar registros `foundation:MCPTool` com `src-tauri/src/ai/functions/definitions.rs` (`foundation:functionName` ↔ `ToolTemplate.name`).
   - **README** (linha de versão, badges, seção `## Features` a partir do grafo).
   - **Commit por nome** (**nunca** `git add -A`): `chore: release vX.Y.Z`; tag `vX.Y.Z`.

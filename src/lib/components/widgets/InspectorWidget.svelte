@@ -378,6 +378,17 @@
     return JSON.parse(raw);
   }
 
+  async function loadMoreProperty(predicate, cursor) {
+    const raw = await invoke('inspector__get_property_value_page', {
+      entityIri: entityId,
+      predicate,
+      afterValueTx: cursor?.valueTx ?? null,
+      afterObjectKey: cursor?.objectKey ?? null,
+      snapshotTx,
+    });
+    return JSON.parse(raw);
+  }
+
   async function initiateRemoveProperty(propertyIri, propertyLabel) {
     checkingUsage = true;
     removeConfirmProp = null;
@@ -675,6 +686,7 @@
           onSaveCardinality={entityData.isClass && !isLocked ? saveCardinality : null}
           onSaveQueryConfig={entityData.isClass && !isLocked ? saveQueryConfig : null}
           onLoadMoreBacklinks={entityData.isClass ? null : loadMoreBacklinks}
+          onLoadMoreProperty={entityData.isClass ? null : loadMoreProperty}
         />
       </div>
 
