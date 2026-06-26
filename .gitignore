@@ -28,6 +28,9 @@ src-tauri/resources/foundation.mcpb
 # Backup files
 *.backup
 
+# Debug/temp dumps
+*_tmp.json
+
 # Coverage files
 lcov.info
 *.profraw

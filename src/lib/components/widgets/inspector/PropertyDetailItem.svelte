@@ -52,7 +52,7 @@
       _lastGroupKey = groupKey;
       _lastEntityId = currentEntityId;
       extraValues = [];
-      const isBacklink = detailGroup.sourceClassIri != null && detailGroup.backlinkNextCursor != null;
+      const isBacklink = detailGroup.sourceClassIri != null;
       nextCursor = isBacklink
         ? (detailGroup.backlinkNextCursor ?? null)
         : (detailGroup.propertyNextCursor ?? null);
