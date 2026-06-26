@@ -105,8 +105,9 @@
 ## foundation-core crate (separate repo)
 - The ontology engine (EAVTO + OWL + base ontology + `foundation:*` vocabulary) lives in the SEPARATE public repo `foundation-core` (github.com/danielterra/foundation-core, AGPL-3.0) — NOT in this app repo. It is domain-agnostic-of-infrastructure and installable in other projects.
 - The app consumes it as a git-dependency in `src-tauri/Cargo.toml` (`foundation-core = { git = "https://github.com/danielterra/foundation-core" }`).
-- ALWAYS keep the COMMITTED `src-tauri/Cargo.toml` WITHOUT a `[patch]` block — CI/fresh clones fetch the core from GitHub (pinned by rev in `Cargo.lock`). The local `[patch]` (uncommitted) overrides it to the sibling clone for fluid dev.
-- ALWAYS clone the core as a SIBLING at `../foundation-core` (so the `[patch]` path `../../foundation-core` and the ontology scripts resolve). Edit core code there; the app rebuilds against it via the patch.
+- ALWAYS keep the COMMITTED `src-tauri/Cargo.toml` AND `Cargo.lock` clean (git-dep + rev pin, NO `[patch]`) — CI/fresh clones fetch the core from GitHub. NEVER add a `[patch]` block to the committed Cargo.toml for local dev — once the file is tracked the local edit cannot be gitignored and clutters the working tree forever (`.gitignore` only affects untracked files).
+- ALWAYS do local fluid dev via a Cargo **paths override** placed OUTSIDE any repo, in `C:\GIT\.cargo\config.toml`: `paths = ["C:/GIT/foundation-core"]`. Cargo reads it walking up the tree from `src-tauri`; it is applied at build time and NOT recorded in `Cargo.lock`, so the working tree stays clean (verify with `cargo metadata --locked` → exit 0 and foundation-core `source = null`).
+- ALWAYS clone the core as a SIBLING at `../foundation-core` (= `C:\GIT\foundation-core`, what the paths override points at) so the override and the ontology scripts resolve. Edit core code there; the app rebuilds against it via the override.
 - `dump-ontology`/`verify-ontology` (in this app repo) read the live DB and write/verify `../foundation-core/assets/ontology.sql`. Regenerate → commit in the core repo → bump the git rev in the app's `Cargo.lock` to pick it up.
 - Storage identity is injected at app boot via `foundation_core::paths::configure("Foundation","FOUNDATION.db","org.w3id.foundation")` (defaults Foundation) — `src-tauri/src/lib.rs` `.setup()`.
 
