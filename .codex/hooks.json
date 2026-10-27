@@ -1,0 +1,31 @@
+{
+  "description": "FOUNDATION repository hooks for Codex.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "^startup$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo run --quiet --release --manifest-path \"$(git rev-parse --show-toplevel)/scripts/deps-check/Cargo.toml\" -- --hook",
+            "timeout": 120,
+            "statusMessage": "Verificando atualizações de dependências"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -c 'if (.tool_input.command | test(\"(^|[;&|]\\\\s*)git\\\\s+commit(\\\\s|$)\")) then {hookSpecificOutput:{hookEventName:\"PostToolUse\",additionalContext:\"Um commit foi criado. Não execute git push sem autorização explícita do usuário.\"}} else {} end'",
+            "timeout": 10,
+            "statusMessage": "Verificando política de publicação"
+          }
+        ]
+      }
+    ]
+  }
+}
