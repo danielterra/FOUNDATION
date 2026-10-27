@@ -3,11 +3,11 @@ use tauri::{AppHandle, Manager};
 
 use crate::eavto::query;
 use crate::owl::{
-    get_iri_property, get_literal_property, replace_all_property_literals,
-    DbExecutor, Individual, Object,
+    get_iri_property, get_literal_property, replace_all_property_literals, DbExecutor, Individual,
+    Object,
 };
 
-use super::executor::{ExecutionContext, interpolate_with_db};
+use super::executor::{interpolate_with_db, ExecutionContext};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -28,17 +28,33 @@ fn build_result_json(
 ) -> String {
     let mut map = serde_json::Map::new();
     match status {
-        Some(s) => { map.insert("status".to_string(), serde_json::Value::Number(s.into())); }
-        None    => { map.insert("status".to_string(), serde_json::Value::Null); }
+        Some(s) => {
+            map.insert("status".to_string(), serde_json::Value::Number(s.into()));
+        }
+        None => {
+            map.insert("status".to_string(), serde_json::Value::Null);
+        }
     }
     if let Some(hdrs) = headers {
-        map.insert("headers".to_string(), serde_json::Value::Object(hdrs.clone()));
+        map.insert(
+            "headers".to_string(),
+            serde_json::Value::Object(hdrs.clone()),
+        );
     } else {
-        map.insert("headers".to_string(), serde_json::Value::Object(serde_json::Map::new()));
+        map.insert(
+            "headers".to_string(),
+            serde_json::Value::Object(serde_json::Map::new()),
+        );
     }
-    map.insert("body".to_string(), serde_json::Value::String(body.to_string()));
+    map.insert(
+        "body".to_string(),
+        serde_json::Value::String(body.to_string()),
+    );
     if let Some(e) = error {
-        map.insert("error".to_string(), serde_json::Value::String(e.to_string()));
+        map.insert(
+            "error".to_string(),
+            serde_json::Value::String(e.to_string()),
+        );
     }
     serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default()
 }
@@ -63,8 +79,12 @@ async fn write_output_to_control_instance(
         .ok()
         .flatten();
 
-    let Some(output_prop_iri) = output_prop else { return };
-    let Some(control_iri) = ctx.get("self").cloned() else { return };
+    let Some(output_prop_iri) = output_prop else {
+        return;
+    };
+    let Some(control_iri) = ctx.get("self").cloned() else {
+        return;
+    };
 
     let result_json = result_json.to_string();
     executor
@@ -83,7 +103,10 @@ async fn write_output_to_control_instance(
         .unwrap_or_else(|e| {
             crate::commands::log_backend(
                 "error",
-                &format!("[request_task] failed to write result to outputProperty: {}", e),
+                &format!(
+                    "[request_task] failed to write result to outputProperty: {}",
+                    e
+                ),
             );
             String::new()
         });
@@ -103,8 +126,9 @@ pub async fn execute_request_task(
         .read({
             let node_iri = node_iri.to_string();
             move |conn| {
-                let result = query::get_by_entity_predicate(conn, &node_iri, "foundation:requestInputRefs")
-                    .map_err(|e| e.to_string())?;
+                let result =
+                    query::get_by_entity_predicate(conn, &node_iri, "foundation:requestInputRefs")
+                        .map_err(|e| e.to_string())?;
                 Ok(result
                     .triples
                     .first()
@@ -127,8 +151,9 @@ pub async fn execute_request_task(
                     .unwrap_or_else(|| "GET".to_string());
                 let body = get_literal_property(conn, &request_iri, "foundation:httpBody")
                     .map_err(|e| e.to_string())?;
-                let headers_json = get_literal_property(conn, &request_iri, "foundation:httpHeaders")
-                    .map_err(|e| e.to_string())?;
+                let headers_json =
+                    get_literal_property(conn, &request_iri, "foundation:httpHeaders")
+                        .map_err(|e| e.to_string())?;
                 let cred_iri = get_iri_property(conn, &request_iri, "foundation:usesCredential")
                     .map_err(|e| e.to_string())?;
                 Ok((url, method, body, headers_json, cred_iri))
@@ -154,7 +179,9 @@ pub async fn execute_request_task(
     // Parse headers JSON once, then interpolate each value individually to avoid
     // corrupting the JSON structure if a placeholder value contains special characters.
     if let Some(ref headers_str) = headers_json {
-        if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(headers_str) {
+        if let Ok(map) =
+            serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(headers_str)
+        {
             for (k, v) in map {
                 if let Some(v_str) = v.as_str() {
                     let resolved_value = interpolate_with_db(v_str, ctx, &executor).await;
@@ -198,7 +225,9 @@ pub async fn execute_request_task(
         .headers()
         .iter()
         .filter_map(|(k, v)| {
-            v.to_str().ok().map(|s| (k.to_string(), serde_json::Value::String(s.to_string())))
+            v.to_str()
+                .ok()
+                .map(|s| (k.to_string(), serde_json::Value::String(s.to_string())))
         })
         .collect();
 
@@ -207,12 +236,8 @@ pub async fn execute_request_task(
     let end_ms = Utc::now().timestamp_millis();
 
     // Write structured result to the control instance's outputProperty (canonical chaining path).
-    let result_json = build_result_json(
-        Some(status_code),
-        Some(&response_headers),
-        &resp_body,
-        None,
-    );
+    let result_json =
+        build_result_json(Some(status_code), Some(&response_headers), &resp_body, None);
     write_output_to_control_instance(&executor, node_iri, ctx, &result_json).await;
 
     // Persist the HTTPResponse as an auditable record (AC 442).
@@ -233,26 +258,56 @@ pub async fn execute_request_task(
                     }
                 };
                 let ind = Individual::new(&response_iri);
-                ind.assert(conn, "foundation:HTTPResponse", &response_iri, "http", "process_automation")
-                    .map_err(|e| e.to_string())?;
-                ind.add_property(conn, "foundation:httpStatusCode",
-                    vec![Object::Integer(status_code)], "process_automation")
-                    .map_err(|e| e.to_string())?;
-                ind.add_property(conn, "foundation:httpResponseBody",
-                    vec![str_lit(resp_body_clone)], "process_automation")
-                    .map_err(|e| e.to_string())?;
-                ind.add_property(conn, "foundation:respondsTo",
-                    vec![Object::Iri(request_iri.clone())], "process_automation")
-                    .map_err(|e| e.to_string())?;
-                ind.add_property(conn, "foundation:hasStartTime",
-                    vec![dt(start_ms)], "process_automation")
-                    .map_err(|e| e.to_string())?;
-                ind.add_property(conn, "foundation:hasEndTime",
-                    vec![dt(end_ms)], "process_automation")
-                    .map_err(|e| e.to_string())?;
+                ind.assert(
+                    conn,
+                    "foundation:HTTPResponse",
+                    &response_iri,
+                    "http",
+                    "process_automation",
+                )
+                .map_err(|e| e.to_string())?;
+                ind.add_property(
+                    conn,
+                    "foundation:httpStatusCode",
+                    vec![Object::Integer(status_code)],
+                    "process_automation",
+                )
+                .map_err(|e| e.to_string())?;
+                ind.add_property(
+                    conn,
+                    "foundation:httpResponseBody",
+                    vec![str_lit(resp_body_clone)],
+                    "process_automation",
+                )
+                .map_err(|e| e.to_string())?;
+                ind.add_property(
+                    conn,
+                    "foundation:respondsTo",
+                    vec![Object::Iri(request_iri.clone())],
+                    "process_automation",
+                )
+                .map_err(|e| e.to_string())?;
+                ind.add_property(
+                    conn,
+                    "foundation:hasStartTime",
+                    vec![dt(start_ms)],
+                    "process_automation",
+                )
+                .map_err(|e| e.to_string())?;
+                ind.add_property(
+                    conn,
+                    "foundation:hasEndTime",
+                    vec![dt(end_ms)],
+                    "process_automation",
+                )
+                .map_err(|e| e.to_string())?;
                 Individual::new(&request_iri)
-                    .add_property(conn, "foundation:hasResponse",
-                        vec![Object::Iri(response_iri.clone())], "process_automation")
+                    .add_property(
+                        conn,
+                        "foundation:hasResponse",
+                        vec![Object::Iri(response_iri.clone())],
+                        "process_automation",
+                    )
                     .map_err(|e| e.to_string())?;
                 Ok(response_iri)
             }
@@ -282,10 +337,12 @@ async fn apply_credential(
                     .map(|s| s.to_string())
                     .unwrap_or_default();
 
-                let cred_value = get_literal_property(conn, &cred_iri, "foundation:credentialValue")
-                    .map_err(|e| e.to_string())?;
-                let cred_username = get_literal_property(conn, &cred_iri, "foundation:credentialUsername")
-                    .map_err(|e| e.to_string())?;
+                let cred_value =
+                    get_literal_property(conn, &cred_iri, "foundation:credentialValue")
+                        .map_err(|e| e.to_string())?;
+                let cred_username =
+                    get_literal_property(conn, &cred_iri, "foundation:credentialUsername")
+                        .map_err(|e| e.to_string())?;
 
                 Ok((cred_type, cred_value, cred_username))
             }
@@ -326,9 +383,12 @@ async fn apply_oauth2_credential(
                 let client_id = get_literal_property(conn, &cred_iri, "foundation:clientId")
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("OAuth2Credential {} missing clientId", cred_iri))?;
-                let client_secret = get_literal_property(conn, &cred_iri, "foundation:clientSecret")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("OAuth2Credential {} missing clientSecret", cred_iri))?;
+                let client_secret =
+                    get_literal_property(conn, &cred_iri, "foundation:clientSecret")
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| {
+                            format!("OAuth2Credential {} missing clientSecret", cred_iri)
+                        })?;
                 let token_url = get_literal_property(conn, &cred_iri, "foundation:tokenUrl")
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("OAuth2Credential {} missing tokenUrl", cred_iri))?;
@@ -360,8 +420,13 @@ async fn apply_oauth2_credential(
 
     if !token_resp.status().is_success() {
         let status = token_resp.status().as_u16();
-        let body = token_resp.text().await.unwrap_or_default();
-        return Err(format!("OAuth2 token endpoint returned HTTP {}: {}", status, body));
+        // The provider's body routinely echoes the client_id (and sometimes the whole
+        // request) back in error_description, and this error is persisted on the step
+        // and emitted on the progress event. Report the status, never the body.
+        return Err(format!(
+            "OAuth2 token endpoint returned HTTP {} — check the credential's client id, secret, token URL and scopes.",
+            status
+        ));
     }
 
     let body: serde_json::Value = token_resp

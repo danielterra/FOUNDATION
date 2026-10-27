@@ -1,6 +1,6 @@
 use super::*;
-use crate::eavto::{store, Triple, Object};
 use crate::eavto::test_helpers::setup_test_db;
+use crate::eavto::{store, Object, Triple};
 
 // ── step output → inputIRIs (regression: Bug_1774382679925) ──────────────────
 
@@ -13,7 +13,10 @@ fn test_step_output_inserts_input_iris() {
         ctx.insert("inputIRIs".to_string(), value);
     }
 
-    assert_eq!(ctx.get("inputIRIs").map(|s| s.as_str()), Some("foundation:Task_123"));
+    assert_eq!(
+        ctx.get("inputIRIs").map(|s| s.as_str()),
+        Some("foundation:Task_123")
+    );
 }
 
 #[test]
@@ -34,7 +37,10 @@ fn test_step_output_empty_not_inserted() {
 fn test_interpolate_replaces_single_key() {
     let mut ctx = ExecutionContext::new();
     ctx.insert("city".to_string(), "London".to_string());
-    assert_eq!(interpolate("Weather in {{city}} today", &ctx), "Weather in London today");
+    assert_eq!(
+        interpolate("Weather in {{city}} today", &ctx),
+        "Weather in London today"
+    );
 }
 
 #[test]
@@ -78,14 +84,130 @@ fn test_interpolate_key_with_url_context() {
     let mut ctx = ExecutionContext::new();
     ctx.insert("token".to_string(), "abc123".to_string());
     ctx.insert("city".to_string(), "Paris".to_string());
-    let result = interpolate("https://api.example.com/weather?city={{city}}&token={{token}}", &ctx);
-    assert_eq!(result, "https://api.example.com/weather?city=Paris&token=abc123");
+    let result = interpolate(
+        "https://api.example.com/weather?city={{city}}&token={{token}}",
+        &ctx,
+    );
+    assert_eq!(
+        result,
+        "https://api.example.com/weather?city=Paris&token=abc123"
+    );
 }
 
 // ── load_flow_nodes ───────────────────────────────────────────────────────────
 
 fn insert_triples(conn: &mut rusqlite::Connection, triples: &[Triple]) {
     store::assert_triples(conn, triples, "test").expect("Failed to insert triples");
+}
+
+#[test]
+fn create_control_instance_writes_initial_state_with_started_at() {
+    let mut conn = setup_test_db();
+    let process_iri = "foundation:Process_control_instance_test";
+    let class_iri = "foundation:ControlClass_test";
+    let execution_iri = "foundation:Execution_control_instance_test";
+    insert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                process_iri,
+                "rdf:type",
+                Object::Iri("foundation:Automation".to_string()),
+            ),
+            Triple::new(process_iri, "rdfs:label", lit_str("Test Automation")),
+            Triple::new(
+                process_iri,
+                "foundation:controlClass",
+                Object::Iri(class_iri.to_string()),
+            ),
+            Triple::new(class_iri, "rdf:type", Object::Iri("owl:Class".to_string())),
+            Triple::new(
+                execution_iri,
+                "rdf:type",
+                Object::Iri("foundation:WorkflowExecution".to_string()),
+            ),
+            Triple::new(
+                "foundation:InProgress",
+                "rdf:type",
+                Object::Iri("foundation:Status".to_string()),
+            ),
+            Triple::new(
+                "foundation:icon-material-symbols-name-play_circle",
+                "foundation:iconKey",
+                lit_str("play_circle"),
+            ),
+            Triple::new(
+                "foundation:hasStatus",
+                "rdf:type",
+                Object::Iri("owl:ObjectProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:hasStatus",
+                "rdfs:domain",
+                Object::Iri(class_iri.to_string()),
+            ),
+            Triple::new(
+                "foundation:executesProcess",
+                "rdf:type",
+                Object::Iri("owl:ObjectProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:executesProcess",
+                "rdfs:domain",
+                Object::Iri(class_iri.to_string()),
+            ),
+            Triple::new(
+                "foundation:startedAt",
+                "rdf:type",
+                Object::Iri("owl:DatatypeProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:startedAt",
+                "rdfs:domain",
+                Object::Iri(class_iri.to_string()),
+            ),
+            Triple::new(
+                "foundation:startedAt",
+                "rdfs:range",
+                Object::Iri("xsd:dateTime".to_string()),
+            ),
+            Triple::new(
+                "foundation:controlInstance",
+                "rdf:type",
+                Object::Iri("owl:ObjectProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:controlInstance",
+                "rdfs:domain",
+                Object::Iri("foundation:WorkflowExecution".to_string()),
+            ),
+        ],
+    );
+
+    let instance_iri = create_control_instance(&mut conn, execution_iri, process_iri).unwrap();
+    let triples = crate::owl::get_all_current_triples(&conn, &instance_iri).unwrap();
+
+    assert!(triples
+        .iter()
+        .any(|triple| triple.predicate == "rdfs:label"));
+    assert!(triples.iter().any(|triple| {
+        triple.predicate == "foundation:hasStatus"
+            && triple.object.as_iri() == Some("foundation:InProgress")
+    }));
+    assert!(triples.iter().any(|triple| {
+        triple.predicate == "foundation:executesProcess"
+            && triple.object.as_iri() == Some(process_iri)
+    }));
+    assert!(triples.iter().any(|triple| {
+        if triple.predicate != "foundation:startedAt" {
+            return false;
+        }
+        match &triple.object {
+            Object::DateTime(_) => true,
+            Object::Literal { datatype, .. } => datatype.as_deref() == Some("xsd:dateTime"),
+            _ => false,
+        }
+    }));
 }
 
 #[test]
@@ -98,12 +220,31 @@ fn test_load_flow_nodes_empty_process_returns_empty() {
 #[test]
 fn test_load_flow_nodes_returns_nodes_with_types() {
     let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
-        Triple::new("foundation:Start1", "foundation:partOfProcess", Object::Iri("foundation:Proc1".to_string())),
-        Triple::new("foundation:End1", "foundation:partOfProcess", Object::Iri("foundation:Proc1".to_string())),
-        Triple::new("foundation:Start1", "rdf:type", Object::Iri("foundation:automation_StartEvent".to_string())),
-        Triple::new("foundation:End1",   "rdf:type", Object::Iri("foundation:automation_EndEvent".to_string())),
-    ]);
+    insert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                "foundation:Start1",
+                "foundation:partOfProcess",
+                Object::Iri("foundation:Proc1".to_string()),
+            ),
+            Triple::new(
+                "foundation:End1",
+                "foundation:partOfProcess",
+                Object::Iri("foundation:Proc1".to_string()),
+            ),
+            Triple::new(
+                "foundation:Start1",
+                "rdf:type",
+                Object::Iri("foundation:automation_StartEvent".to_string()),
+            ),
+            Triple::new(
+                "foundation:End1",
+                "rdf:type",
+                Object::Iri("foundation:automation_EndEvent".to_string()),
+            ),
+        ],
+    );
 
     let (nodes, _) = load_flow_nodes(&conn, "foundation:Proc1").unwrap();
     assert_eq!(nodes.len(), 2);
@@ -116,10 +257,21 @@ fn test_load_flow_nodes_returns_nodes_with_types() {
 #[test]
 fn test_load_flow_nodes_returns_node_iri_and_type() {
     let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
-        Triple::new("foundation:Task1", "foundation:partOfProcess", Object::Iri("foundation:Proc2".to_string())),
-        Triple::new("foundation:Task1", "rdf:type", Object::Iri("foundation:automation_AgentTask".to_string())),
-    ]);
+    insert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                "foundation:Task1",
+                "foundation:partOfProcess",
+                Object::Iri("foundation:Proc2".to_string()),
+            ),
+            Triple::new(
+                "foundation:Task1",
+                "rdf:type",
+                Object::Iri("foundation:automation_AgentTask".to_string()),
+            ),
+        ],
+    );
 
     let (nodes, _) = load_flow_nodes(&conn, "foundation:Proc2").unwrap();
     assert_eq!(nodes.len(), 1);
@@ -131,10 +283,17 @@ fn test_load_flow_nodes_returns_node_iri_and_type() {
 #[test]
 fn test_load_flow_nodes_missing_type_defaults_to_flow_node() {
     let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
-        Triple::new("foundation:Node4", "foundation:partOfProcess", Object::Iri("foundation:Proc4".to_string())),
-        // No rdf:type for Node4
-    ]);
+    insert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                "foundation:Node4",
+                "foundation:partOfProcess",
+                Object::Iri("foundation:Proc4".to_string()),
+            ),
+            // No rdf:type for Node4
+        ],
+    );
 
     let (nodes, _) = load_flow_nodes(&conn, "foundation:Proc4").unwrap();
     assert_eq!(nodes.len(), 1);
@@ -144,14 +303,41 @@ fn test_load_flow_nodes_missing_type_defaults_to_flow_node() {
 #[test]
 fn test_load_flow_nodes_multiple_nodes_all_returned() {
     let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
-        Triple::new("foundation:S5", "foundation:partOfProcess", Object::Iri("foundation:Proc5".to_string())),
-        Triple::new("foundation:T5", "foundation:partOfProcess", Object::Iri("foundation:Proc5".to_string())),
-        Triple::new("foundation:E5", "foundation:partOfProcess", Object::Iri("foundation:Proc5".to_string())),
-        Triple::new("foundation:S5", "rdf:type", Object::Iri("foundation:automation_StartEvent".to_string())),
-        Triple::new("foundation:T5", "rdf:type", Object::Iri("foundation:automation_AgentTask".to_string())),
-        Triple::new("foundation:E5", "rdf:type", Object::Iri("foundation:automation_EndEvent".to_string())),
-    ]);
+    insert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                "foundation:S5",
+                "foundation:partOfProcess",
+                Object::Iri("foundation:Proc5".to_string()),
+            ),
+            Triple::new(
+                "foundation:T5",
+                "foundation:partOfProcess",
+                Object::Iri("foundation:Proc5".to_string()),
+            ),
+            Triple::new(
+                "foundation:E5",
+                "foundation:partOfProcess",
+                Object::Iri("foundation:Proc5".to_string()),
+            ),
+            Triple::new(
+                "foundation:S5",
+                "rdf:type",
+                Object::Iri("foundation:automation_StartEvent".to_string()),
+            ),
+            Triple::new(
+                "foundation:T5",
+                "rdf:type",
+                Object::Iri("foundation:automation_AgentTask".to_string()),
+            ),
+            Triple::new(
+                "foundation:E5",
+                "rdf:type",
+                Object::Iri("foundation:automation_EndEvent".to_string()),
+            ),
+        ],
+    );
 
     let (nodes, _) = load_flow_nodes(&conn, "foundation:Proc5").unwrap();
     assert_eq!(nodes.len(), 3);
@@ -161,22 +347,34 @@ fn test_load_flow_nodes_multiple_nodes_all_returned() {
 
 #[test]
 fn strip_backtick_from_iri_token() {
-    assert_eq!(strip_token_punctuation("`foundation:Task_123`"), "foundation:Task_123");
+    assert_eq!(
+        strip_token_punctuation("`foundation:Task_123`"),
+        "foundation:Task_123"
+    );
 }
 
 #[test]
 fn strip_parens_and_comma() {
-    assert_eq!(strip_token_punctuation("(foundation:Task_123,"), "foundation:Task_123");
+    assert_eq!(
+        strip_token_punctuation("(foundation:Task_123,"),
+        "foundation:Task_123"
+    );
 }
 
 #[test]
 fn strip_nothing_from_clean_iri() {
-    assert_eq!(strip_token_punctuation("foundation:Task_123"), "foundation:Task_123");
+    assert_eq!(
+        strip_token_punctuation("foundation:Task_123"),
+        "foundation:Task_123"
+    );
 }
 
 #[test]
 fn strip_leading_and_trailing_colon() {
-    assert_eq!(strip_token_punctuation(":foundation:Task_123:"), "foundation:Task_123");
+    assert_eq!(
+        strip_token_punctuation(":foundation:Task_123:"),
+        "foundation:Task_123"
+    );
 }
 
 // ── finish_step_record: embedded IRI extraction is robust ────────────────────
@@ -186,16 +384,102 @@ fn backtick_iri_not_added_when_entity_absent() {
     let mut conn = setup_test_db();
 
     let step_iri = "foundation:Step_test_backtick";
-    insert_triples(&mut conn, &[
-        Triple::new(step_iri, "rdf:type", Object::Iri("foundation:StepExecution".to_string())),
-        Triple::new(step_iri, "foundation:hasStatus", Object::Iri("foundation:InProgress".to_string())),
-    ]);
+    insert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                "foundation:hasStatus",
+                "rdf:type",
+                Object::Iri("owl:ObjectProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:hasStatus",
+                "rdfs:domain",
+                Object::Iri("foundation:StepExecution".to_string()),
+            ),
+            Triple::new(
+                "foundation:Completed",
+                "rdf:type",
+                Object::Iri("foundation:Status".to_string()),
+            ),
+            Triple::new(
+                "foundation:stepFinishedAt",
+                "rdf:type",
+                Object::Iri("owl:DatatypeProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:stepFinishedAt",
+                "rdfs:domain",
+                Object::Iri("foundation:StepExecution".to_string()),
+            ),
+            Triple::new(
+                "foundation:stepFinishedAt",
+                "rdfs:range",
+                Object::Iri("xsd:dateTime".to_string()),
+            ),
+            Triple::new(
+                "foundation:hasEndTime",
+                "rdf:type",
+                Object::Iri("owl:DatatypeProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:hasEndTime",
+                "rdfs:domain",
+                Object::Iri("foundation:StepExecution".to_string()),
+            ),
+            Triple::new(
+                "foundation:hasEndTime",
+                "rdfs:range",
+                Object::Iri("xsd:dateTime".to_string()),
+            ),
+            Triple::new(
+                "foundation:executionSummary",
+                "rdf:type",
+                Object::Iri("owl:DatatypeProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:executionSummary",
+                "rdfs:domain",
+                Object::Iri("foundation:StepExecution".to_string()),
+            ),
+            Triple::new(
+                "foundation:executionSummary",
+                "rdfs:range",
+                Object::Iri("xsd:string".to_string()),
+            ),
+            Triple::new(
+                "foundation:executionOutput",
+                "rdf:type",
+                Object::Iri("owl:ObjectProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:executionOutput",
+                "rdfs:domain",
+                Object::Iri("foundation:StepExecution".to_string()),
+            ),
+            Triple::new(
+                step_iri,
+                "rdf:type",
+                Object::Iri("foundation:StepExecution".to_string()),
+            ),
+            Triple::new(
+                step_iri,
+                "foundation:hasStatus",
+                Object::Iri("foundation:InProgress".to_string()),
+            ),
+        ],
+    );
 
     let markdown = "- `foundation:Task_nonexistent` — some label\n";
     finish_step_record(&mut conn, step_iri, Some(markdown), None).unwrap();
 
-    let result = crate::eavto::query::get_by_entity_predicate(&conn, step_iri, "foundation:executionOutput").unwrap();
-    assert!(result.triples.is_empty(), "backtick IRI for non-existent entity must not appear in executionOutput");
+    let result =
+        crate::eavto::query::get_by_entity_predicate(&conn, step_iri, "foundation:executionOutput")
+            .unwrap();
+    assert!(
+        result.triples.is_empty(),
+        "backtick IRI for non-existent entity must not appear in executionOutput"
+    );
 }
 
 #[test]
@@ -204,18 +488,111 @@ fn backtick_iri_added_when_entity_exists() {
 
     let step_iri = "foundation:Step_test_backtick_exists";
     let task_iri = "foundation:Task_exists_for_test";
-    insert_triples(&mut conn, &[
-        Triple::new(step_iri, "rdf:type", Object::Iri("foundation:StepExecution".to_string())),
-        Triple::new(step_iri, "foundation:hasStatus", Object::Iri("foundation:InProgress".to_string())),
-        Triple::new(task_iri, "rdf:type", Object::Iri("foundation:Task".to_string())),
-    ]);
+    insert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                "foundation:hasStatus",
+                "rdf:type",
+                Object::Iri("owl:ObjectProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:hasStatus",
+                "rdfs:domain",
+                Object::Iri("foundation:StepExecution".to_string()),
+            ),
+            Triple::new(
+                "foundation:Completed",
+                "rdf:type",
+                Object::Iri("foundation:Status".to_string()),
+            ),
+            Triple::new(
+                "foundation:stepFinishedAt",
+                "rdf:type",
+                Object::Iri("owl:DatatypeProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:stepFinishedAt",
+                "rdfs:domain",
+                Object::Iri("foundation:StepExecution".to_string()),
+            ),
+            Triple::new(
+                "foundation:stepFinishedAt",
+                "rdfs:range",
+                Object::Iri("xsd:dateTime".to_string()),
+            ),
+            Triple::new(
+                "foundation:hasEndTime",
+                "rdf:type",
+                Object::Iri("owl:DatatypeProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:hasEndTime",
+                "rdfs:domain",
+                Object::Iri("foundation:StepExecution".to_string()),
+            ),
+            Triple::new(
+                "foundation:hasEndTime",
+                "rdfs:range",
+                Object::Iri("xsd:dateTime".to_string()),
+            ),
+            Triple::new(
+                "foundation:executionSummary",
+                "rdf:type",
+                Object::Iri("owl:DatatypeProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:executionSummary",
+                "rdfs:domain",
+                Object::Iri("foundation:StepExecution".to_string()),
+            ),
+            Triple::new(
+                "foundation:executionSummary",
+                "rdfs:range",
+                Object::Iri("xsd:string".to_string()),
+            ),
+            Triple::new(
+                "foundation:executionOutput",
+                "rdf:type",
+                Object::Iri("owl:ObjectProperty".to_string()),
+            ),
+            Triple::new(
+                "foundation:executionOutput",
+                "rdfs:domain",
+                Object::Iri("foundation:StepExecution".to_string()),
+            ),
+            Triple::new(
+                step_iri,
+                "rdf:type",
+                Object::Iri("foundation:StepExecution".to_string()),
+            ),
+            Triple::new(
+                step_iri,
+                "foundation:hasStatus",
+                Object::Iri("foundation:InProgress".to_string()),
+            ),
+            Triple::new(
+                task_iri,
+                "rdf:type",
+                Object::Iri("foundation:Task".to_string()),
+            ),
+        ],
+    );
 
     let markdown = format!("- `{}` — real task\n", task_iri);
     finish_step_record(&mut conn, step_iri, Some(&markdown), None).unwrap();
 
-    let result = crate::eavto::query::get_by_entity_predicate(&conn, step_iri, "foundation:executionOutput").unwrap();
-    let found = result.triples.iter().any(|t| t.object.as_iri() == Some(task_iri));
-    assert!(found, "existing IRI should appear in executionOutput after stripping backticks");
+    let result =
+        crate::eavto::query::get_by_entity_predicate(&conn, step_iri, "foundation:executionOutput")
+            .unwrap();
+    let found = result
+        .triples
+        .iter()
+        .any(|t| t.object.as_iri() == Some(task_iri));
+    assert!(
+        found,
+        "existing IRI should appear in executionOutput after stripping backticks"
+    );
 }
 
 // ── resolve_error_handler ─────────────────────────────────────────────────────
@@ -230,11 +607,26 @@ fn test_resolve_error_handler_returns_none_when_no_handler() {
 #[test]
 fn test_resolve_error_handler_returns_fallback_when_handler_attached() {
     let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
-        Triple::new("foundation:EH1", "rdf:type", Object::Iri("foundation:ErrorHandler".to_string())),
-        Triple::new("foundation:EH1", "foundation:appliesTo", Object::Iri("foundation:TaskWithHandler".to_string())),
-        Triple::new("foundation:EH1", "foundation:fallbackNode", Object::Iri("foundation:FallbackNode".to_string())),
-    ]);
+    insert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                "foundation:EH1",
+                "rdf:type",
+                Object::Iri("foundation:ErrorHandler".to_string()),
+            ),
+            Triple::new(
+                "foundation:EH1",
+                "foundation:appliesTo",
+                Object::Iri("foundation:TaskWithHandler".to_string()),
+            ),
+            Triple::new(
+                "foundation:EH1",
+                "foundation:fallbackNode",
+                Object::Iri("foundation:FallbackNode".to_string()),
+            ),
+        ],
+    );
 
     let result = resolve_error_handler(&conn, "foundation:TaskWithHandler").unwrap();
     assert_eq!(result.as_deref(), Some("foundation:FallbackNode"));
@@ -243,11 +635,26 @@ fn test_resolve_error_handler_returns_fallback_when_handler_attached() {
 #[test]
 fn test_resolve_error_handler_ignores_non_error_handler_applies_to() {
     let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
-        Triple::new("foundation:SomeOtherThing", "rdf:type", Object::Iri("foundation:SomeClass".to_string())),
-        Triple::new("foundation:SomeOtherThing", "foundation:appliesTo", Object::Iri("foundation:TaskY".to_string())),
-        Triple::new("foundation:SomeOtherThing", "foundation:fallbackNode", Object::Iri("foundation:FallbackY".to_string())),
-    ]);
+    insert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                "foundation:SomeOtherThing",
+                "rdf:type",
+                Object::Iri("foundation:SomeClass".to_string()),
+            ),
+            Triple::new(
+                "foundation:SomeOtherThing",
+                "foundation:appliesTo",
+                Object::Iri("foundation:TaskY".to_string()),
+            ),
+            Triple::new(
+                "foundation:SomeOtherThing",
+                "foundation:fallbackNode",
+                Object::Iri("foundation:FallbackY".to_string()),
+            ),
+        ],
+    );
 
     let result = resolve_error_handler(&conn, "foundation:TaskY").unwrap();
     assert!(result.is_none());
@@ -256,10 +663,21 @@ fn test_resolve_error_handler_ignores_non_error_handler_applies_to() {
 #[test]
 fn test_resolve_error_handler_returns_none_when_handler_has_no_fallback() {
     let mut conn = setup_test_db();
-    insert_triples(&mut conn, &[
-        Triple::new("foundation:EH2", "rdf:type", Object::Iri("foundation:ErrorHandler".to_string())),
-        Triple::new("foundation:EH2", "foundation:appliesTo", Object::Iri("foundation:TaskNoFallback".to_string())),
-    ]);
+    insert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                "foundation:EH2",
+                "rdf:type",
+                Object::Iri("foundation:ErrorHandler".to_string()),
+            ),
+            Triple::new(
+                "foundation:EH2",
+                "foundation:appliesTo",
+                Object::Iri("foundation:TaskNoFallback".to_string()),
+            ),
+        ],
+    );
 
     let result = resolve_error_handler(&conn, "foundation:TaskNoFallback").unwrap();
     assert!(result.is_none());
@@ -269,12 +687,21 @@ fn test_resolve_error_handler_returns_none_when_handler_has_no_fallback() {
 
 // Helpers reused from aggregation tests (reproduced here for isolation).
 fn insert_tx_loop(conn: &rusqlite::Connection) -> i64 {
-    conn.execute("INSERT INTO transactions (origin, created_at) VALUES ('test', 0)", [])
-        .unwrap();
+    conn.execute(
+        "INSERT INTO transactions (origin, created_at) VALUES ('test', 0)",
+        [],
+    )
+    .unwrap();
     conn.last_insert_rowid()
 }
 
-fn insert_iri_ref(conn: &rusqlite::Connection, tx: i64, subject: &str, predicate: &str, object: &str) {
+fn insert_iri_ref(
+    conn: &rusqlite::Connection,
+    tx: i64,
+    subject: &str,
+    predicate: &str,
+    object: &str,
+) {
     conn.execute(
         "INSERT INTO triples \
          (subject, predicate, object, object_type, object_datatype, origin_id, tx, created_at, retracted) \
@@ -283,7 +710,13 @@ fn insert_iri_ref(conn: &rusqlite::Connection, tx: i64, subject: &str, predicate
     ).unwrap();
 }
 
-fn insert_literal_decimal(conn: &rusqlite::Connection, tx: i64, subject: &str, predicate: &str, value: &str) {
+fn insert_literal_decimal(
+    conn: &rusqlite::Connection,
+    tx: i64,
+    subject: &str,
+    predicate: &str,
+    value: &str,
+) {
     conn.execute(
         "INSERT INTO triples \
          (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted) \
@@ -292,7 +725,12 @@ fn insert_literal_decimal(conn: &rusqlite::Connection, tx: i64, subject: &str, p
     ).unwrap();
 }
 
-fn insert_aggregation_formula(conn: &rusqlite::Connection, tx: i64, property_iri: &str, formula: &str) {
+fn insert_aggregation_formula(
+    conn: &rusqlite::Connection,
+    tx: i64,
+    property_iri: &str,
+    formula: &str,
+) {
     conn.execute(
         "INSERT INTO triples \
          (subject, predicate, object_value, object_type, object_datatype, origin_id, tx, created_at, retracted) \
@@ -336,8 +774,11 @@ fn test_loop_aggregate_count_empty_collection_returns_zero() {
 
     // No iteration children linked to inst:primary — empty inverse set.
     let result = crate::owl::aggregation::evaluate_aggregation_for_instance(
-        &conn, "inst:primary", "p:iterCount",
-    ).unwrap();
+        &conn,
+        "inst:primary",
+        "p:iterCount",
+    )
+    .unwrap();
 
     assert_eq!(result, "0", "empty collection must yield 0 for CONTAR");
 }
@@ -358,21 +799,37 @@ fn test_loop_aggregate_count_and_sum_via_inverse_iteration_of() {
     insert_rdf_type_loop(&conn, tx, "inst:primary", "p:PrimaryClass");
 
     // Three iteration children each with p:iterationOf → inst:primary and a p:score.
-    for (child, score) in [("inst:iter1", "10"), ("inst:iter2", "25"), ("inst:iter3", "15")] {
+    for (child, score) in [
+        ("inst:iter1", "10"),
+        ("inst:iter2", "25"),
+        ("inst:iter3", "15"),
+    ] {
         insert_rdf_type_loop(&conn, tx, child, "p:IterClass");
         insert_iri_ref(&conn, tx, child, "p:iterationOf", "inst:primary");
         insert_literal_decimal(&conn, tx, child, "p:score", score);
     }
 
     let count = crate::owl::aggregation::evaluate_aggregation_for_instance(
-        &conn, "inst:primary", "p:iterCount",
-    ).unwrap();
-    assert_eq!(count, "3", "CONTAR must return 3 for three linked iterations");
+        &conn,
+        "inst:primary",
+        "p:iterCount",
+    )
+    .unwrap();
+    assert_eq!(
+        count, "3",
+        "CONTAR must return 3 for three linked iterations"
+    );
 
     let sum = crate::owl::aggregation::evaluate_aggregation_for_instance(
-        &conn, "inst:primary", "p:scoreSum",
-    ).unwrap();
-    assert_eq!(sum, "50", "SOMA must return 50 (10+25+15) for three linked iterations");
+        &conn,
+        "inst:primary",
+        "p:scoreSum",
+    )
+    .unwrap();
+    assert_eq!(
+        sum, "50",
+        "SOMA must return 50 (10+25+15) for three linked iterations"
+    );
 }
 
 /// AC2 — failure iterations still count: a failed child (no score) is counted but excluded from SOMA.
@@ -389,7 +846,11 @@ fn test_loop_aggregate_failed_iteration_counted_but_score_missing_skipped() {
     insert_rdf_type_loop(&conn, tx, "inst:primary", "p:PrimaryClass");
 
     // Two successful iterations with score, one failed iteration without score.
-    for (child, score) in [("inst:ok1", Some("40")), ("inst:ok2", Some("60")), ("inst:fail1", None)] {
+    for (child, score) in [
+        ("inst:ok1", Some("40")),
+        ("inst:ok2", Some("60")),
+        ("inst:fail1", None),
+    ] {
         insert_rdf_type_loop(&conn, tx, child, "p:IterClass");
         insert_iri_ref(&conn, tx, child, "p:iterationOf", "inst:primary");
         if let Some(s) = score {
@@ -398,14 +859,26 @@ fn test_loop_aggregate_failed_iteration_counted_but_score_missing_skipped() {
     }
 
     let count = crate::owl::aggregation::evaluate_aggregation_for_instance(
-        &conn, "inst:primary", "p:iterCount",
-    ).unwrap();
-    assert_eq!(count, "3", "failed iteration must still be counted (barrier counts completion not success)");
+        &conn,
+        "inst:primary",
+        "p:iterCount",
+    )
+    .unwrap();
+    assert_eq!(
+        count, "3",
+        "failed iteration must still be counted (barrier counts completion not success)"
+    );
 
     let sum = crate::owl::aggregation::evaluate_aggregation_for_instance(
-        &conn, "inst:primary", "p:scoreSum",
-    ).unwrap();
-    assert_eq!(sum, "100", "SOMA must sum only iterations that have a score value");
+        &conn,
+        "inst:primary",
+        "p:scoreSum",
+    )
+    .unwrap();
+    assert_eq!(
+        sum, "100",
+        "SOMA must sum only iterations that have a score value"
+    );
 }
 
 // ── resilience: AC _1780960763801 / AC _1780960763913 ────────────────────────
@@ -438,10 +911,20 @@ fn test_sequential_loop_item_failure_does_not_abort_batch() {
         }
     }
 
-    assert_eq!(iteration_results.len(), 4, "all 4 iterations must be recorded");
-    let failure_count = iteration_results.iter().filter(|(_, e)| e.is_some()).count();
+    assert_eq!(
+        iteration_results.len(),
+        4,
+        "all 4 iterations must be recorded"
+    );
+    let failure_count = iteration_results
+        .iter()
+        .filter(|(_, e)| e.is_some())
+        .count();
     assert_eq!(failure_count, 1, "exactly 1 failure must be captured");
-    let success_count = iteration_results.iter().filter(|(_, e)| e.is_none()).count();
+    let success_count = iteration_results
+        .iter()
+        .filter(|(_, e)| e.is_none())
+        .count();
     assert_eq!(success_count, 3, "exactly 3 successes must remain");
 }
 
@@ -456,8 +939,8 @@ async fn test_parallel_loop_panic_isolated_does_not_abort_batch() {
     // Box-erase to a single concrete future type so Vec is homogeneous.
     type BoxedFut = futures_util::future::CatchUnwind<
         std::panic::AssertUnwindSafe<
-            std::pin::Pin<Box<dyn futures_util::Future<Output = Result<Option<String>>>>>
-        >
+            std::pin::Pin<Box<dyn futures_util::Future<Output = Result<Option<String>>>>>,
+        >,
     >;
 
     let make_ok = |id: u32| -> BoxedFut {
@@ -499,7 +982,11 @@ async fn test_parallel_loop_panic_isolated_does_not_abort_batch() {
         }
     }
 
-    assert_eq!(iteration_results.len(), 3, "all 3 slots must be recorded after a panic in slot 1");
+    assert_eq!(
+        iteration_results.len(),
+        3,
+        "all 3 slots must be recorded after a panic in slot 1"
+    );
     assert!(
         iteration_results[0].1.is_none(),
         "slot 0 (ok_future 1) must succeed"
@@ -511,7 +998,8 @@ async fn test_parallel_loop_panic_isolated_does_not_abort_batch() {
     let panic_msg = iteration_results[1].1.as_deref().unwrap_or("");
     assert!(
         panic_msg.contains("panicked") || panic_msg.contains("simulated"),
-        "failure message must reflect the panic: got {:?}", panic_msg
+        "failure message must reflect the panic: got {:?}",
+        panic_msg
     );
     assert!(
         iteration_results[2].1.is_none(),
@@ -551,19 +1039,39 @@ fn test_loop_iteration_terminal_status_distinguishable() {
     let fail_ctrl = "foundation:CtrlInst_fail_resilience";
 
     Individual::add_iri_value(
-        &mut conn, ok_ctrl, "foundation:hasStatus", STATUS_COMPLETED, "process_automation",
-    ).unwrap();
+        &mut conn,
+        ok_ctrl,
+        "foundation:hasStatus",
+        STATUS_COMPLETED,
+        "process_automation",
+    )
+    .unwrap();
     Individual::add_iri_value(
-        &mut conn, fail_ctrl, "foundation:hasStatus", STATUS_FAILED, "process_automation",
-    ).unwrap();
+        &mut conn,
+        fail_ctrl,
+        "foundation:hasStatus",
+        STATUS_FAILED,
+        "process_automation",
+    )
+    .unwrap();
 
     // Link both back to the primary control instance via iterationOf (mirrors l.1090-1098).
     Individual::add_iri_value(
-        &mut conn, ok_ctrl, "foundation:iterationOf", primary_ctrl, "process_automation",
-    ).unwrap();
+        &mut conn,
+        ok_ctrl,
+        "foundation:iterationOf",
+        primary_ctrl,
+        "process_automation",
+    )
+    .unwrap();
     Individual::add_iri_value(
-        &mut conn, fail_ctrl, "foundation:iterationOf", primary_ctrl, "process_automation",
-    ).unwrap();
+        &mut conn,
+        fail_ctrl,
+        "foundation:iterationOf",
+        primary_ctrl,
+        "process_automation",
+    )
+    .unwrap();
 
     // Verify that the statuses are distinguishable.
     let ok_status = crate::owl::get_iri_property(&conn, ok_ctrl, "foundation:hasStatus")
@@ -573,8 +1081,14 @@ fn test_loop_iteration_terminal_status_distinguishable() {
         .unwrap()
         .expect("fail_ctrl must have hasStatus");
 
-    assert_eq!(ok_status, STATUS_COMPLETED, "successful iteration must carry STATUS_COMPLETED");
-    assert_eq!(fail_status, STATUS_FAILED, "failed iteration must carry STATUS_FAILED");
+    assert_eq!(
+        ok_status, STATUS_COMPLETED,
+        "successful iteration must carry STATUS_COMPLETED"
+    );
+    assert_eq!(
+        fail_status, STATUS_FAILED,
+        "failed iteration must carry STATUS_FAILED"
+    );
     assert_ne!(ok_status, fail_status, "statuses must be distinguishable");
 
     // Verify iterationOf links.
@@ -585,8 +1099,14 @@ fn test_loop_iteration_terminal_status_distinguishable() {
         .unwrap()
         .expect("fail_ctrl must have iterationOf");
 
-    assert_eq!(ok_link, primary_ctrl, "ok iteration must be linked to primary via iterationOf");
-    assert_eq!(fail_link, primary_ctrl, "failed iteration must be linked to primary via iterationOf");
+    assert_eq!(
+        ok_link, primary_ctrl,
+        "ok iteration must be linked to primary via iterationOf"
+    );
+    assert_eq!(
+        fail_link, primary_ctrl,
+        "failed iteration must be linked to primary via iterationOf"
+    );
 }
 
 // ── Bug_1781004764856: iterationOf link must enqueue a recalc job for the primary ──
@@ -616,7 +1136,8 @@ fn setup_test_db_with_formula_jobs() -> rusqlite::Connection {
             created_at      INTEGER NOT NULL,
             PRIMARY KEY (instance_iri, property_iri)
         );",
-    ).unwrap();
+    )
+    .unwrap();
     // Seed origin row needed by assert_triples.
     let _ = conn.execute(
         "INSERT OR IGNORE INTO origins (name, description) VALUES ('test', 'test')",
@@ -634,10 +1155,10 @@ fn test_iteration_of_link_produces_recalc_job_for_primary() {
     let tx = insert_tx_loop(&conn);
 
     let primary_iri = "foundation:EmailBatchTriageRun_test_primary";
-    let child_iri   = "foundation:EmailTriageItemRun_test_child";
+    let child_iri = "foundation:EmailTriageItemRun_test_child";
     let child_class = "foundation:EmailTriageItemRun";
     let primary_class = "foundation:EmailBatchTriageRun";
-    let count_prop  = "foundation:triagedCount";
+    let count_prop = "foundation:triagedCount";
 
     // The aggregation property lives on the primary class.
     insert_aggregation_formula(&conn, tx, count_prop, "CONTAR({{foundation:iterationOf}})");
@@ -656,7 +1177,8 @@ fn test_iteration_of_link_produces_recalc_job_for_primary() {
         "foundation:iterationOf",
         primary_iri,
         "process_automation",
-    ).unwrap();
+    )
+    .unwrap();
 
     // Invoke the same function that the fixed run_sub_process now calls.
     let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(

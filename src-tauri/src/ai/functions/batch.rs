@@ -1,8 +1,8 @@
-use std::cell::RefCell;
-use serde_json::Value;
-use rusqlite::Connection;
-use crate::eavto::enter_batch_transaction;
 use super::ToolResult;
+use crate::eavto::enter_batch_transaction;
+use rusqlite::Connection;
+use serde_json::Value;
+use std::cell::RefCell;
 
 thread_local! {
     static PENDING_EVENTS: RefCell<Vec<(String, Value)>> = const { RefCell::new(Vec::new()) };
@@ -42,18 +42,22 @@ pub(super) fn run_multi_read(
 ) -> ToolResult {
     let ops = match args.as_array() {
         Some(ops) if !ops.is_empty() => ops.clone(),
-        Some(_) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Operations array must not be empty".to_string()),
-            concept: None,
-        },
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Arguments must be a non-empty array of operations".to_string()),
-            concept: None,
-        },
+        Some(_) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Operations array must not be empty".to_string()),
+                concept: None,
+            }
+        }
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Arguments must be a non-empty array of operations".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let mut results = Vec::new();
@@ -90,18 +94,22 @@ pub(super) fn run_atomic(
 ) -> ToolResult {
     let ops = match args.as_array() {
         Some(ops) if !ops.is_empty() => ops.clone(),
-        Some(_) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Operations array must not be empty".to_string()),
-            concept: None,
-        },
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Arguments must be a non-empty array of operations".to_string()),
-            concept: None,
-        },
+        Some(_) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Operations array must not be empty".to_string()),
+                concept: None,
+            }
+        }
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Arguments must be a non-empty array of operations".to_string()),
+                concept: None,
+            }
+        }
     };
 
     take_events();
@@ -194,7 +202,9 @@ fn dispatch_formula_recalcs(conn: &Connection, app: &tauri::AppHandle) {
 
     for (instance_iri, changed_property_iri) in take_instance_recalcs() {
         let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
-            conn, &instance_iri, &changed_property_iri,
+            conn,
+            &instance_iri,
+            &changed_property_iri,
         );
         for job_id in job_ids {
             let _ = worker.sender.try_send(WorkerCommand::Enqueue { job_id });

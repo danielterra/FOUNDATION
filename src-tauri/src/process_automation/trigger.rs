@@ -18,7 +18,10 @@ fn register_event(app: &AppHandle, event_key: &'static str) {
         let app2 = app_clone.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(e) = fire_processes_for_event(&app2, event_key).await {
-                log_backend("error", &format!("[trigger] Error handling '{}': {}", event_key, e));
+                log_backend(
+                    "error",
+                    &format!("[trigger] Error handling '{}': {}", event_key, e),
+                );
             }
         });
     });
@@ -29,14 +32,15 @@ async fn fire_processes_for_event(app: &AppHandle, event_key: &str) -> Result<()
     let event_key = event_key.to_string();
 
     let process_iris = executor
-        .read(move |conn| {
-            find_processes_for_event_key(conn, &event_key)
-        })
+        .read(move |conn| find_processes_for_event_key(conn, &event_key))
         .await?;
 
     for process_iri in process_iris {
         if let Err(e) = super::executor::run_process(app, &process_iri, None, false).await {
-            log_backend("error", &format!("[trigger] Error running process {}: {}", process_iri, e));
+            log_backend(
+                "error",
+                &format!("[trigger] Error running process {}: {}", process_iri, e),
+            );
         }
     }
 
@@ -51,8 +55,8 @@ fn find_processes_for_event_key(
 ) -> Result<Vec<String>, String> {
     // Find InternalEventType IRIs with matching eventKey
     let event_type_iris: Vec<String> = {
-        let result = query::get_by_predicate(conn, "foundation:eventKey")
-            .map_err(|e| e.to_string())?;
+        let result =
+            query::get_by_predicate(conn, "foundation:eventKey").map_err(|e| e.to_string())?;
         result
             .triples
             .iter()
@@ -72,8 +76,8 @@ fn find_processes_for_event_key(
 
     // Find MessageEventDefinitions whose eventType matches one of those IRIs
     let msg_event_def_iris: Vec<String> = {
-        let result = query::get_by_predicate(conn, "foundation:eventType")
-            .map_err(|e| e.to_string())?;
+        let result =
+            query::get_by_predicate(conn, "foundation:eventType").map_err(|e| e.to_string())?;
         result
             .triples
             .iter()

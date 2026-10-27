@@ -17,9 +17,7 @@ fn test_search_things_returns_subclass_instances() {
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["id"].as_str())
-        .collect();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
     assert!(
         iris.contains(&"foundation:Event_001"),
@@ -42,18 +40,22 @@ fn test_find_things_by_detail_returns_subclass_instances() {
 
     let status_iri = "foundation:PlannedStatus";
     let status_triple = crate::eavto::Triple::new(
-        status_iri, "rdf:type", crate::eavto::Object::Iri("foundation:Status".to_string()),
+        status_iri,
+        "rdf:type",
+        crate::eavto::Object::Iri("foundation:Status".to_string()),
     );
     crate::eavto::store::assert_triples(&mut conn, &[status_triple], "test").unwrap();
 
     for iri in ["foundation:Event_002", "foundation:Vacation_002"] {
         let individual = Individual::new(iri);
-        individual.add_property(
-            &mut conn,
-            "foundation:hasStatus",
-            vec![crate::owl::Object::Iri(status_iri.to_string())],
-            "test",
-        ).unwrap();
+        individual
+            .add_property(
+                &mut conn,
+                "foundation:hasStatus",
+                vec![crate::owl::Object::Iri(status_iri.to_string())],
+                "test",
+            )
+            .unwrap();
     }
 
     let args = serde_json::json!({
@@ -68,9 +70,7 @@ fn test_find_things_by_detail_returns_subclass_instances() {
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["id"].as_str())
-        .collect();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
     assert!(
         iris.contains(&"foundation:Event_002"),
@@ -89,13 +89,36 @@ fn test_search_things_returns_instances_across_three_level_hierarchy() {
     setup_animal_hierarchy(&mut conn);
 
     let animal = Individual::new("foundation:Animal_001");
-    animal.assert(&mut conn, "foundation:Animal", "Test Animal", "https://example.com/animal.svg", "test").unwrap();
+    animal
+        .assert(
+            &mut conn,
+            "foundation:Animal",
+            "Test Animal",
+            "https://example.com/animal.svg",
+            "test",
+        )
+        .unwrap();
 
     let mammal = Individual::new("foundation:Mammal_001");
-    mammal.assert(&mut conn, "foundation:Mammal", "Test Mammal", "https://example.com/mammal.svg", "test").unwrap();
+    mammal
+        .assert(
+            &mut conn,
+            "foundation:Mammal",
+            "Test Mammal",
+            "https://example.com/mammal.svg",
+            "test",
+        )
+        .unwrap();
 
     let dog = Individual::new("foundation:Dog_001");
-    dog.assert(&mut conn, "foundation:Dog", "Test Dog", "https://example.com/dog.svg", "test").unwrap();
+    dog.assert(
+        &mut conn,
+        "foundation:Dog",
+        "Test Dog",
+        "https://example.com/dog.svg",
+        "test",
+    )
+    .unwrap();
 
     let args = serde_json::json!({
         "class_iri": "foundation:Animal"
@@ -106,13 +129,20 @@ fn test_search_things_returns_instances_across_three_level_hierarchy() {
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["id"].as_str())
-        .collect();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
-    assert!(iris.contains(&"foundation:Animal_001"), "Results should include direct Animal instance");
-    assert!(iris.contains(&"foundation:Mammal_001"), "Results should include Mammal (subclass) instance");
-    assert!(iris.contains(&"foundation:Dog_001"), "Results should include Dog (sub-subclass) instance");
+    assert!(
+        iris.contains(&"foundation:Animal_001"),
+        "Results should include direct Animal instance"
+    );
+    assert!(
+        iris.contains(&"foundation:Mammal_001"),
+        "Results should include Mammal (subclass) instance"
+    );
+    assert!(
+        iris.contains(&"foundation:Dog_001"),
+        "Results should include Dog (sub-subclass) instance"
+    );
     assert_eq!(things.len(), 3, "Should return exactly all three instances");
 }
 
@@ -133,13 +163,21 @@ fn test_search_things_returns_subclass_instances_when_parent_has_no_direct_insta
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["id"].as_str())
-        .collect();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
-    assert!(iris.contains(&"foundation:Vacation_003"), "Results should include first Vacation instance");
-    assert!(iris.contains(&"foundation:Vacation_004"), "Results should include second Vacation instance");
-    assert_eq!(things.len(), 2, "Should return exactly both Vacation instances with no direct Event instances");
+    assert!(
+        iris.contains(&"foundation:Vacation_003"),
+        "Results should include first Vacation instance"
+    );
+    assert!(
+        iris.contains(&"foundation:Vacation_004"),
+        "Results should include second Vacation instance"
+    );
+    assert_eq!(
+        things.len(),
+        2,
+        "Should return exactly both Vacation instances with no direct Event instances"
+    );
 }
 
 #[test]
@@ -148,13 +186,37 @@ fn test_search_things_filters_by_label_with_class_iri() {
     setup_task_class_with_statuses(&mut conn);
 
     let individual1 = Individual::new("foundation:Task_S001");
-    individual1.assert(&mut conn, "foundation:Task", "Ingresse Contract", "https://example.com/task.svg", "test").unwrap();
+    individual1
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Ingresse Contract",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
 
     let individual2 = Individual::new("foundation:Task_S002");
-    individual2.assert(&mut conn, "foundation:Task", "Buy groceries", "https://example.com/task.svg", "test").unwrap();
+    individual2
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Buy groceries",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
 
     let individual3 = Individual::new("foundation:Task_S003");
-    individual3.assert(&mut conn, "foundation:Task", "Read book", "https://example.com/task.svg", "test").unwrap();
+    individual3
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Read book",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
 
     let args = serde_json::json!({
         "class_iri": "foundation:Task",
@@ -166,14 +228,25 @@ fn test_search_things_filters_by_label_with_class_iri() {
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["id"].as_str())
-        .collect();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
-    assert!(iris.contains(&"foundation:Task_S001"), "Should include matching instance");
-    assert!(!iris.contains(&"foundation:Task_S002"), "Should not include non-matching instance");
-    assert!(!iris.contains(&"foundation:Task_S003"), "Should not include non-matching instance");
-    assert_eq!(things.len(), 1, "Should return exactly one matching instance");
+    assert!(
+        iris.contains(&"foundation:Task_S001"),
+        "Should include matching instance"
+    );
+    assert!(
+        !iris.contains(&"foundation:Task_S002"),
+        "Should not include non-matching instance"
+    );
+    assert!(
+        !iris.contains(&"foundation:Task_S003"),
+        "Should not include non-matching instance"
+    );
+    assert_eq!(
+        things.len(),
+        1,
+        "Should return exactly one matching instance"
+    );
 }
 
 #[test]
@@ -182,13 +255,37 @@ fn test_search_things_filters_globally_without_class_iri() {
     setup_task_class_with_statuses(&mut conn);
 
     let event_class = Class::new("foundation:Event");
-    event_class.assert(&mut conn, ClassType::OwlClass, "Event", "https://example.com/event.svg", None, "test").unwrap();
+    event_class
+        .assert(
+            &mut conn,
+            ClassType::OwlClass,
+            "Event",
+            "https://example.com/event.svg",
+            None,
+            "test",
+        )
+        .unwrap();
 
     let task = Individual::new("foundation:Task_S010");
-    task.assert(&mut conn, "foundation:Task", "Ingresse contract", "https://example.com/task.svg", "test").unwrap();
+    task.assert(
+        &mut conn,
+        "foundation:Task",
+        "Ingresse contract",
+        "https://example.com/task.svg",
+        "test",
+    )
+    .unwrap();
 
     let event = Individual::new("foundation:Event_S010");
-    event.assert(&mut conn, "foundation:Event", "Birthday party", "https://example.com/event.svg", "test").unwrap();
+    event
+        .assert(
+            &mut conn,
+            "foundation:Event",
+            "Birthday party",
+            "https://example.com/event.svg",
+            "test",
+        )
+        .unwrap();
 
     let args = serde_json::json!({
         "query": "Ingresse"
@@ -199,12 +296,16 @@ fn test_search_things_filters_globally_without_class_iri() {
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["id"].as_str())
-        .collect();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
-    assert!(iris.contains(&"foundation:Task_S010"), "Should include the matching Task instance");
-    assert!(!iris.contains(&"foundation:Event_S010"), "Should not include the non-matching Event instance");
+    assert!(
+        iris.contains(&"foundation:Task_S010"),
+        "Should include the matching Task instance"
+    );
+    assert!(
+        !iris.contains(&"foundation:Event_S010"),
+        "Should not include the non-matching Event instance"
+    );
 }
 
 #[test]
@@ -213,7 +314,15 @@ fn test_search_things_label_match_is_case_insensitive() {
     setup_task_class_with_statuses(&mut conn);
 
     let individual = Individual::new("foundation:Task_S020");
-    individual.assert(&mut conn, "foundation:Task", "Ingresse Contract", "https://example.com/task.svg", "test").unwrap();
+    individual
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Ingresse Contract",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
 
     let args = serde_json::json!({
         "class_iri": "foundation:Task",
@@ -225,11 +334,12 @@ fn test_search_things_label_match_is_case_insensitive() {
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["id"].as_str())
-        .collect();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
-    assert!(iris.contains(&"foundation:Task_S020"), "Case-insensitive match should return the instance");
+    assert!(
+        iris.contains(&"foundation:Task_S020"),
+        "Case-insensitive match should return the instance"
+    );
 }
 
 #[test]
@@ -238,10 +348,26 @@ fn test_search_things_multi_token_query() {
     setup_task_class_with_statuses(&mut conn);
 
     let individual1 = Individual::new("foundation:Task_S030");
-    individual1.assert(&mut conn, "foundation:Task", "Ingresse Service Contract", "https://example.com/task.svg", "test").unwrap();
+    individual1
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Ingresse Service Contract",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
 
     let individual2 = Individual::new("foundation:Task_S031");
-    individual2.assert(&mut conn, "foundation:Task", "Ingresse Proposal", "https://example.com/task.svg", "test").unwrap();
+    individual2
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Ingresse Proposal",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
 
     let args = serde_json::json!({
         "class_iri": "foundation:Task",
@@ -253,12 +379,16 @@ fn test_search_things_multi_token_query() {
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["id"].as_str())
-        .collect();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
-    assert!(iris.contains(&"foundation:Task_S030"), "Instance matching all tokens should be returned");
-    assert!(!iris.contains(&"foundation:Task_S031"), "Instance not matching all tokens (AND) should be excluded");
+    assert!(
+        iris.contains(&"foundation:Task_S030"),
+        "Instance matching all tokens should be returned"
+    );
+    assert!(
+        !iris.contains(&"foundation:Task_S031"),
+        "Instance not matching all tokens (AND) should be excluded"
+    );
 }
 
 #[test]
@@ -267,15 +397,38 @@ fn test_search_things_matches_by_comment() {
     setup_task_class_with_statuses(&mut conn);
 
     let task_one = Individual::new("foundation:Task_comment_001");
-    task_one.assert(&mut conn, "foundation:Task", "Task One", "https://example.com/task.svg", "test").unwrap();
-    task_one.add_property(&mut conn, "rdfs:comment", vec![Object::Literal {
-        value: "Ingresse contract details".to_string(),
-        datatype: Some("xsd:string".to_string()),
-        language: None,
-    }], "test").unwrap();
+    task_one
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Task One",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
+    task_one
+        .add_property(
+            &mut conn,
+            "rdfs:comment",
+            vec![Object::Literal {
+                value: "Ingresse contract details".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }],
+            "test",
+        )
+        .unwrap();
 
     let task_two = Individual::new("foundation:Task_comment_002");
-    task_two.assert(&mut conn, "foundation:Task", "Task Two", "https://example.com/task.svg", "test").unwrap();
+    task_two
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Task Two",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
 
     let args = serde_json::json!({
         "class_iri": "foundation:Task",
@@ -289,8 +442,14 @@ fn test_search_things_matches_by_comment() {
     let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
-    assert!(iris.contains(&"foundation:Task_comment_001"), "Task One should be returned");
-    assert!(!iris.contains(&"foundation:Task_comment_002"), "Task Two should not be returned");
+    assert!(
+        iris.contains(&"foundation:Task_comment_001"),
+        "Task One should be returned"
+    );
+    assert!(
+        !iris.contains(&"foundation:Task_comment_002"),
+        "Task Two should not be returned"
+    );
 }
 
 #[test]
@@ -299,20 +458,50 @@ fn test_search_things_matches_by_property_value() {
     setup_task_class_with_statuses(&mut conn);
 
     let task_alpha = Individual::new("foundation:Task_prop_001");
-    task_alpha.assert(&mut conn, "foundation:Task", "Task Alpha", "https://example.com/task.svg", "test").unwrap();
-    task_alpha.add_property(&mut conn, "foundation:priority", vec![Object::Literal {
-        value: "Ingresse project".to_string(),
-        datatype: Some("xsd:string".to_string()),
-        language: None,
-    }], "test").unwrap();
+    task_alpha
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Task Alpha",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
+    task_alpha
+        .add_property(
+            &mut conn,
+            "foundation:priority",
+            vec![Object::Literal {
+                value: "Ingresse project".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }],
+            "test",
+        )
+        .unwrap();
 
     let task_beta = Individual::new("foundation:Task_prop_002");
-    task_beta.assert(&mut conn, "foundation:Task", "Task Beta", "https://example.com/task.svg", "test").unwrap();
-    task_beta.add_property(&mut conn, "foundation:priority", vec![Object::Literal {
-        value: "other".to_string(),
-        datatype: Some("xsd:string".to_string()),
-        language: None,
-    }], "test").unwrap();
+    task_beta
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Task Beta",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
+    task_beta
+        .add_property(
+            &mut conn,
+            "foundation:priority",
+            vec![Object::Literal {
+                value: "other".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }],
+            "test",
+        )
+        .unwrap();
 
     let args = serde_json::json!({
         "class_iri": "foundation:Task",
@@ -326,8 +515,14 @@ fn test_search_things_matches_by_property_value() {
     let things = response["entities"].as_array().unwrap();
     let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
-    assert!(iris.contains(&"foundation:Task_prop_001"), "Task Alpha should be returned");
-    assert!(!iris.contains(&"foundation:Task_prop_002"), "Task Beta should not be returned");
+    assert!(
+        iris.contains(&"foundation:Task_prop_001"),
+        "Task Alpha should be returned"
+    );
+    assert!(
+        !iris.contains(&"foundation:Task_prop_002"),
+        "Task Beta should not be returned"
+    );
 }
 
 #[test]
@@ -336,7 +531,15 @@ fn test_search_things_matched_properties_label_match() {
     setup_task_class_with_statuses(&mut conn);
 
     let individual = Individual::new("foundation:Task_label_match_001");
-    individual.assert(&mut conn, "foundation:Task", "Ingresse Contract", "https://example.com/task.svg", "test").unwrap();
+    individual
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Ingresse Contract",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
 
     let args = serde_json::json!({
         "class_iri": "foundation:Task",
@@ -348,13 +551,21 @@ fn test_search_things_matched_properties_label_match() {
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let thing = things.iter().find(|t| t["id"].as_str() == Some("foundation:Task_label_match_001"))
+    let thing = things
+        .iter()
+        .find(|t| t["id"].as_str() == Some("foundation:Task_label_match_001"))
         .expect("Task should be in results");
 
-    assert_eq!(thing["label"].as_str(), Some("Ingresse Contract"), "label should appear at root level");
+    assert_eq!(
+        thing["label"].as_str(),
+        Some("Ingresse Contract"),
+        "label should appear at root level"
+    );
     let matched = thing["matchedProperties"].as_array().unwrap();
     assert!(
-        matched.iter().all(|p| p["detail_iri"].as_str() != Some("rdfs:label")),
+        matched
+            .iter()
+            .all(|p| p["detail_iri"].as_str() != Some("rdfs:label")),
         "matchedProperties must not contain rdfs:label (label is already at root level)"
     );
 }
@@ -365,12 +576,27 @@ fn test_search_things_matched_properties_property_match() {
     setup_task_class_with_statuses(&mut conn);
 
     let individual = Individual::new("foundation:Task_prop_match_001");
-    individual.assert(&mut conn, "foundation:Task", "My Task", "https://example.com/task.svg", "test").unwrap();
-    individual.add_property(&mut conn, "foundation:priority", vec![Object::Literal {
-        value: "Ingresse project".to_string(),
-        datatype: Some("xsd:string".to_string()),
-        language: None,
-    }], "test").unwrap();
+    individual
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "My Task",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
+    individual
+        .add_property(
+            &mut conn,
+            "foundation:priority",
+            vec![Object::Literal {
+                value: "Ingresse project".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }],
+            "test",
+        )
+        .unwrap();
 
     let args = serde_json::json!({
         "class_iri": "foundation:Task",
@@ -382,12 +608,16 @@ fn test_search_things_matched_properties_property_match() {
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let thing = things.iter().find(|t| t["id"].as_str() == Some("foundation:Task_prop_match_001"))
+    let thing = things
+        .iter()
+        .find(|t| t["id"].as_str() == Some("foundation:Task_prop_match_001"))
         .expect("Task should be in results");
 
     let matched = thing["matchedProperties"].as_array().unwrap();
     assert!(
-        matched.iter().any(|p| p["detail_iri"].as_str() == Some("foundation:priority")),
+        matched
+            .iter()
+            .any(|p| p["detail_iri"].as_str() == Some("foundation:priority")),
         "matchedProperties should contain foundation:priority entry"
     );
 }
@@ -398,23 +628,61 @@ fn test_search_things_score_ordering() {
     setup_task_class_with_statuses(&mut conn);
 
     let label_match = Individual::new("foundation:Task_score_001");
-    label_match.assert(&mut conn, "foundation:Task", "Ingresse", "https://example.com/task.svg", "test").unwrap();
+    label_match
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Ingresse",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
 
     let comment_match = Individual::new("foundation:Task_score_002");
-    comment_match.assert(&mut conn, "foundation:Task", "Task B", "https://example.com/task.svg", "test").unwrap();
-    comment_match.add_property(&mut conn, "rdfs:comment", vec![Object::Literal {
-        value: "Ingresse related".to_string(),
-        datatype: Some("xsd:string".to_string()),
-        language: None,
-    }], "test").unwrap();
+    comment_match
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Task B",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
+    comment_match
+        .add_property(
+            &mut conn,
+            "rdfs:comment",
+            vec![Object::Literal {
+                value: "Ingresse related".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }],
+            "test",
+        )
+        .unwrap();
 
     let prop_match = Individual::new("foundation:Task_score_003");
-    prop_match.assert(&mut conn, "foundation:Task", "Task C", "https://example.com/task.svg", "test").unwrap();
-    prop_match.add_property(&mut conn, "foundation:priority", vec![Object::Literal {
-        value: "Ingresse work".to_string(),
-        datatype: Some("xsd:string".to_string()),
-        language: None,
-    }], "test").unwrap();
+    prop_match
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Task C",
+            "https://example.com/task.svg",
+            "test",
+        )
+        .unwrap();
+    prop_match
+        .add_property(
+            &mut conn,
+            "foundation:priority",
+            vec![Object::Literal {
+                value: "Ingresse work".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }],
+            "test",
+        )
+        .unwrap();
 
     let args = serde_json::json!({
         "class_iri": "foundation:Task",
@@ -430,12 +698,27 @@ fn test_search_things_score_ordering() {
 
     assert_eq!(iris.len(), 3, "All three tasks should be returned");
 
-    let label_pos = iris.iter().position(|&iri| iri == "foundation:Task_score_001").unwrap();
-    let comment_pos = iris.iter().position(|&iri| iri == "foundation:Task_score_002").unwrap();
-    let prop_pos = iris.iter().position(|&iri| iri == "foundation:Task_score_003").unwrap();
+    let label_pos = iris
+        .iter()
+        .position(|&iri| iri == "foundation:Task_score_001")
+        .unwrap();
+    let comment_pos = iris
+        .iter()
+        .position(|&iri| iri == "foundation:Task_score_002")
+        .unwrap();
+    let prop_pos = iris
+        .iter()
+        .position(|&iri| iri == "foundation:Task_score_003")
+        .unwrap();
 
-    assert!(label_pos < comment_pos, "Label match should rank before comment match");
-    assert!(comment_pos < prop_pos, "Comment match should rank before property match");
+    assert!(
+        label_pos < comment_pos,
+        "Label match should rank before comment match"
+    );
+    assert!(
+        comment_pos < prop_pos,
+        "Comment match should rank before property match"
+    );
 }
 
 #[test]
@@ -457,12 +740,16 @@ fn test_search_things_include_retracted_false_excludes_retracted() {
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["id"].as_str())
-        .collect();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
-    assert!(iris.contains(&"foundation:Task_101"), "Results should include the non-retracted instance");
-    assert!(!iris.contains(&"foundation:Task_102"), "Results should not include the retracted instance");
+    assert!(
+        iris.contains(&"foundation:Task_101"),
+        "Results should include the non-retracted instance"
+    );
+    assert!(
+        !iris.contains(&"foundation:Task_102"),
+        "Results should not include the retracted instance"
+    );
 }
 
 #[test]
@@ -484,12 +771,16 @@ fn test_search_things_include_retracted_true_includes_retracted() {
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["id"].as_str())
-        .collect();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
-    assert!(iris.contains(&"foundation:Task_103"), "Results should include the active instance");
-    assert!(iris.contains(&"foundation:Task_104"), "Results should include the retracted instance");
+    assert!(
+        iris.contains(&"foundation:Task_103"),
+        "Results should include the active instance"
+    );
+    assert!(
+        iris.contains(&"foundation:Task_104"),
+        "Results should include the retracted instance"
+    );
 }
 
 #[test]
@@ -510,12 +801,16 @@ fn test_search_things_default_excludes_retracted() {
 
     let response = result.result.unwrap();
     let things = response["entities"].as_array().unwrap();
-    let iris: Vec<&str> = things.iter()
-        .filter_map(|t| t["id"].as_str())
-        .collect();
+    let iris: Vec<&str> = things.iter().filter_map(|t| t["id"].as_str()).collect();
 
-    assert!(iris.contains(&"foundation:Task_105"), "Results should include the active instance");
-    assert!(!iris.contains(&"foundation:Task_106"), "Results should not include the retracted instance");
+    assert!(
+        iris.contains(&"foundation:Task_105"),
+        "Results should include the active instance"
+    );
+    assert!(
+        !iris.contains(&"foundation:Task_106"),
+        "Results should not include the retracted instance"
+    );
 }
 
 #[test]
@@ -527,7 +822,15 @@ fn test_search_things_limit_restricts_results() {
         let iri = format!("foundation:Task_pag_{}", i);
         let label = format!("Task {}", i);
         let individual = Individual::new(&iri);
-        individual.assert(&mut conn, "foundation:Task", &label, "https://example.com/icon.svg", "test").unwrap();
+        individual
+            .assert(
+                &mut conn,
+                "foundation:Task",
+                &label,
+                "https://example.com/icon.svg",
+                "test",
+            )
+            .unwrap();
     }
 
     let args = serde_json::json!({
@@ -553,7 +856,15 @@ fn test_search_things_offset_skips_results() {
         let iri = format!("foundation:Task_off_{}", i);
         let label = format!("Task {}", i);
         let individual = Individual::new(&iri);
-        individual.assert(&mut conn, "foundation:Task", &label, "https://example.com/icon.svg", "test").unwrap();
+        individual
+            .assert(
+                &mut conn,
+                "foundation:Task",
+                &label,
+                "https://example.com/icon.svg",
+                "test",
+            )
+            .unwrap();
     }
 
     let args = serde_json::json!({
@@ -580,7 +891,15 @@ fn test_search_things_default_limit_returns_all_when_under_limit() {
         let iri = format!("foundation:Task_def_{}", i);
         let label = format!("Task {}", i);
         let individual = Individual::new(&iri);
-        individual.assert(&mut conn, "foundation:Task", &label, "https://example.com/icon.svg", "test").unwrap();
+        individual
+            .assert(
+                &mut conn,
+                "foundation:Task",
+                &label,
+                "https://example.com/icon.svg",
+                "test",
+            )
+            .unwrap();
     }
 
     let args = serde_json::json!({
@@ -605,7 +924,15 @@ fn test_search_things_response_fields_are_correct() {
         let iri = format!("foundation:Task_fields_{}", i);
         let label = format!("Task {}", i);
         let individual = Individual::new(&iri);
-        individual.assert(&mut conn, "foundation:Task", &label, "https://example.com/icon.svg", "test").unwrap();
+        individual
+            .assert(
+                &mut conn,
+                "foundation:Task",
+                &label,
+                "https://example.com/icon.svg",
+                "test",
+            )
+            .unwrap();
     }
 
     let args = serde_json::json!({
@@ -618,30 +945,71 @@ fn test_search_things_response_fields_are_correct() {
     assert!(result.success, "search should succeed: {:?}", result.error);
 
     let response = result.result.unwrap();
-    assert_eq!(response["limit"].as_u64().unwrap(), 10, "limit field should be 10");
-    assert_eq!(response["offset"].as_u64().unwrap(), 0, "offset field should be 0");
-    assert_eq!(response["total"].as_u64().unwrap(), 2, "total field should be 2");
+    assert_eq!(
+        response["limit"].as_u64().unwrap(),
+        10,
+        "limit field should be 10"
+    );
+    assert_eq!(
+        response["offset"].as_u64().unwrap(),
+        0,
+        "offset field should be 0"
+    );
+    assert_eq!(
+        response["total"].as_u64().unwrap(),
+        2,
+        "total field should be 2"
+    );
 }
 
 fn setup_payment_class(conn: &mut Connection) {
     use crate::owl::{Class, ClassType, Property, PropertyType};
     Class::new("foundation:Payment")
-        .assert(conn, ClassType::OwlClass, "Payment", ICON_URL, None, "test").unwrap();
+        .assert(conn, ClassType::OwlClass, "Payment", ICON_URL, None, "test")
+        .unwrap();
     Property::new("foundation:transactionAmount")
-        .assert(conn, PropertyType::DatatypeProperty, "Amount", None,
-            &["foundation:Payment"], Some("xsd:decimal"), None, "test")
+        .assert(
+            conn,
+            PropertyType::DatatypeProperty,
+            "Amount",
+            None,
+            &["foundation:Payment"],
+            Some("xsd:decimal"),
+            Some("unit:UNITLESS"),
+            "test",
+        )
         .unwrap();
     Property::new("foundation:transactionDate")
-        .assert(conn, PropertyType::DatatypeProperty, "Date", None,
-            &["foundation:Payment"], Some("xsd:date"), None, "test")
+        .assert(
+            conn,
+            PropertyType::DatatypeProperty,
+            "Date",
+            None,
+            &["foundation:Payment"],
+            Some("xsd:date"),
+            None,
+            "test",
+        )
         .unwrap();
 }
 
 fn create_payment(conn: &mut Connection, iri: &str, amount: f64) {
     let ind = Individual::new(iri);
-    ind.assert(conn, "foundation:Payment", &format!("Payment {iri}"), ICON_URL, "test").unwrap();
-    ind.add_property(conn, "foundation:transactionAmount",
-        vec![Object::Number(amount)], "test").unwrap();
+    ind.assert(
+        conn,
+        "foundation:Payment",
+        &format!("Payment {iri}"),
+        ICON_URL,
+        "test",
+    )
+    .unwrap();
+    ind.add_property(
+        conn,
+        "foundation:transactionAmount",
+        vec![Object::Number(amount)],
+        "test",
+    )
+    .unwrap();
 }
 
 #[test]
@@ -650,13 +1018,38 @@ fn test_filter_exists_without_value_is_not_silently_dropped() {
     setup_task_class_with_statuses(&mut conn);
 
     let with_priority = Individual::new("foundation:Task_ex_001");
-    with_priority.assert(&mut conn, "foundation:Task", "With Priority", ICON_URL, "test").unwrap();
-    with_priority.add_property(&mut conn, "foundation:priority", vec![Object::Literal {
-        value: "high".to_string(), datatype: Some("xsd:string".to_string()), language: None,
-    }], "test").unwrap();
+    with_priority
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "With Priority",
+            ICON_URL,
+            "test",
+        )
+        .unwrap();
+    with_priority
+        .add_property(
+            &mut conn,
+            "foundation:priority",
+            vec![Object::Literal {
+                value: "high".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }],
+            "test",
+        )
+        .unwrap();
 
     let without_priority = Individual::new("foundation:Task_ex_002");
-    without_priority.assert(&mut conn, "foundation:Task", "Without Priority", ICON_URL, "test").unwrap();
+    without_priority
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Without Priority",
+            ICON_URL,
+            "test",
+        )
+        .unwrap();
 
     let args = serde_json::json!({
         "class_iri": "foundation:Task",
@@ -665,7 +1058,10 @@ fn test_filter_exists_without_value_is_not_silently_dropped() {
 
     let result = search(&conn, &args);
     assert!(result.success, "search should succeed: {:?}", result.error);
-    let entities = result.result.unwrap()["entities"].as_array().unwrap().clone();
+    let entities = result.result.unwrap()["entities"]
+        .as_array()
+        .unwrap()
+        .clone();
     let iris: Vec<&str> = entities.iter().filter_map(|e| e["id"].as_str()).collect();
 
     assert_eq!(iris.len(), 1, "only the task with priority should match");
@@ -679,13 +1075,38 @@ fn test_filter_not_exists_without_value_is_not_silently_dropped() {
     setup_task_class_with_statuses(&mut conn);
 
     let with_priority = Individual::new("foundation:Task_nex_001");
-    with_priority.assert(&mut conn, "foundation:Task", "With Priority", ICON_URL, "test").unwrap();
-    with_priority.add_property(&mut conn, "foundation:priority", vec![Object::Literal {
-        value: "high".to_string(), datatype: Some("xsd:string".to_string()), language: None,
-    }], "test").unwrap();
+    with_priority
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "With Priority",
+            ICON_URL,
+            "test",
+        )
+        .unwrap();
+    with_priority
+        .add_property(
+            &mut conn,
+            "foundation:priority",
+            vec![Object::Literal {
+                value: "high".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }],
+            "test",
+        )
+        .unwrap();
 
     let without_priority = Individual::new("foundation:Task_nex_002");
-    without_priority.assert(&mut conn, "foundation:Task", "Without Priority", ICON_URL, "test").unwrap();
+    without_priority
+        .assert(
+            &mut conn,
+            "foundation:Task",
+            "Without Priority",
+            ICON_URL,
+            "test",
+        )
+        .unwrap();
 
     let args = serde_json::json!({
         "class_iri": "foundation:Task",
@@ -694,7 +1115,10 @@ fn test_filter_not_exists_without_value_is_not_silently_dropped() {
 
     let result = search(&conn, &args);
     assert!(result.success, "search should succeed: {:?}", result.error);
-    let entities = result.result.unwrap()["entities"].as_array().unwrap().clone();
+    let entities = result.result.unwrap()["entities"]
+        .as_array()
+        .unwrap()
+        .clone();
     let iris: Vec<&str> = entities.iter().filter_map(|e| e["id"].as_str()).collect();
 
     assert_eq!(iris.len(), 1, "only the task without priority should match");
@@ -720,7 +1144,10 @@ fn test_filter_numeric_json_number_is_not_silently_dropped() {
 
     let result = search(&conn, &args);
     assert!(result.success, "search should succeed: {:?}", result.error);
-    let entities = result.result.unwrap()["entities"].as_array().unwrap().clone();
+    let entities = result.result.unwrap()["entities"]
+        .as_array()
+        .unwrap()
+        .clone();
     let iris: Vec<&str> = entities.iter().filter_map(|e| e["id"].as_str()).collect();
 
     assert_eq!(iris.len(), 2, "exactly 2 payments of 128.7 should match");
@@ -746,12 +1173,24 @@ fn test_filter_numeric_gte_uses_numeric_not_lexicographic_comparison() {
 
     let result = search(&conn, &args);
     assert!(result.success, "search should succeed: {:?}", result.error);
-    let entities = result.result.unwrap()["entities"].as_array().unwrap().clone();
+    let entities = result.result.unwrap()["entities"]
+        .as_array()
+        .unwrap()
+        .clone();
     let iris: Vec<&str> = entities.iter().filter_map(|e| e["id"].as_str()).collect();
 
-    assert!(!iris.contains(&"foundation:Payment_gte_001"), "9.0 < 100.0 must be excluded");
-    assert!(iris.contains(&"foundation:Payment_gte_002"), "100.0 >= 100.0 must be included");
-    assert!(iris.contains(&"foundation:Payment_gte_003"), "200.0 >= 100.0 must be included");
+    assert!(
+        !iris.contains(&"foundation:Payment_gte_001"),
+        "9.0 < 100.0 must be excluded"
+    );
+    assert!(
+        iris.contains(&"foundation:Payment_gte_002"),
+        "100.0 >= 100.0 must be included"
+    );
+    assert!(
+        iris.contains(&"foundation:Payment_gte_003"),
+        "200.0 >= 100.0 must be included"
+    );
 }
 
 // Performance tests — run with a copy of the real DB:
@@ -767,7 +1206,8 @@ fn perf_search_things_global_query() {
     let conn = Connection::open_with_flags(
         &db_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ).expect("Failed to open bench DB");
+    )
+    .expect("Failed to open bench DB");
 
     let args = serde_json::json!({"query": "contract"});
 
@@ -782,7 +1222,12 @@ fn perf_search_things_global_query() {
         total += elapsed;
         let response = result.result.unwrap();
         let n = response["total"].as_u64().unwrap_or(0);
-        println!("[global query run {}] {} results in {:?}", i + 1, n, elapsed);
+        println!(
+            "[global query run {}] {} results in {:?}",
+            i + 1,
+            n,
+            elapsed
+        );
     }
     println!("[global query] average: {:?}", total / runs);
 }
@@ -796,7 +1241,8 @@ fn perf_search_things_with_class_iri() {
     let conn = Connection::open_with_flags(
         &db_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ).expect("Failed to open bench DB");
+    )
+    .expect("Failed to open bench DB");
 
     let args = serde_json::json!({"class_iri": "foundation:Contract", "query": "Ingresse"});
 
@@ -811,7 +1257,12 @@ fn perf_search_things_with_class_iri() {
         total += elapsed;
         let response = result.result.unwrap();
         let n = response["total"].as_u64().unwrap_or(0);
-        println!("[concept query run {}] {} results in {:?}", i + 1, n, elapsed);
+        println!(
+            "[concept query run {}] {} results in {:?}",
+            i + 1,
+            n,
+            elapsed
+        );
     }
     println!("[concept query] average: {:?}", total / runs);
 }

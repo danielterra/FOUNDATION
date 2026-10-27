@@ -4,7 +4,8 @@ pub(super) fn score_entity_against_tokens(
     tokens: &[String],
     matched_properties: &mut Vec<serde_json::Value>,
 ) -> Option<i32> {
-    let label = triples.iter()
+    let label = triples
+        .iter()
         .find(|t| t.predicate == "rdfs:label")
         .and_then(|t| t.object.as_literal())
         .map(|s| s.to_lowercase())
@@ -28,8 +29,13 @@ pub(super) fn score_entity_against_tokens(
         } else if label.contains(&token_lower) {
             token_score = 30;
         } else {
-            let comment_match = triples.iter()
-                .find(|t| t.predicate == "rdfs:comment" && t.object.as_literal().map(|v| v.to_lowercase().contains(&token_lower)).unwrap_or(false));
+            let comment_match = triples.iter().find(|t| {
+                t.predicate == "rdfs:comment"
+                    && t.object
+                        .as_literal()
+                        .map(|v| v.to_lowercase().contains(&token_lower))
+                        .unwrap_or(false)
+            });
             if comment_match.is_some() {
                 token_score = 20;
                 matched_prop = Some(serde_json::json!({ "detail_iri": "rdfs:comment" }));
@@ -38,7 +44,10 @@ pub(super) fn score_entity_against_tokens(
                     t.predicate != "rdfs:label"
                         && t.predicate != "rdfs:comment"
                         && t.predicate != "foundation:hasIcon"
-                        && t.object.as_literal().map(|v| v.to_lowercase().contains(&token_lower)).unwrap_or(false)
+                        && t.object
+                            .as_literal()
+                            .map(|v| v.to_lowercase().contains(&token_lower))
+                            .unwrap_or(false)
                 });
                 if let Some(pm) = prop_match {
                     token_score = 10;
@@ -65,7 +74,8 @@ pub(super) fn matched_properties_for_tokens(
     tokens: &[String],
 ) -> Vec<serde_json::Value> {
     let local_part = iri.split(':').last().unwrap_or("").to_lowercase();
-    let label = triples.iter()
+    let label = triples
+        .iter()
         .find(|t| t.predicate == "rdfs:label")
         .and_then(|t| t.object.as_literal())
         .map(|s| s.to_lowercase())
@@ -83,7 +93,8 @@ pub(super) fn matched_properties_for_tokens(
         let prop_match = triples.iter().find(|t| {
             t.predicate != "rdfs:label"
                 && t.predicate != "foundation:hasIcon"
-                && t.object.as_literal()
+                && t.object
+                    .as_literal()
                     .map(|v| v.to_lowercase().contains(&tok))
                     .unwrap_or(false)
         });

@@ -50,7 +50,13 @@ pub fn parse_rrule(s: &str) -> Option<Rrule> {
         }
     }
 
-    Some(Rrule { freq: freq?, interval, byday, bymonthday, bymonth })
+    Some(Rrule {
+        freq: freq?,
+        interval,
+        byday,
+        bymonthday,
+        bymonth,
+    })
 }
 
 pub fn next_occurrence(rrule: &Rrule, from: NaiveDateTime) -> Option<NaiveDateTime> {
@@ -82,7 +88,11 @@ fn next_weekly(rrule: &Rrule, from: NaiveDateTime) -> NaiveDateTime {
             .iter()
             .map(|&wd| {
                 let d = days_until_weekday(from_wd, wd);
-                if d == 0 { 7u32 } else { d }
+                if d == 0 {
+                    7u32
+                } else {
+                    d
+                }
             })
             .min()
             .unwrap_or(7);
@@ -129,8 +139,7 @@ fn add_months_with_day(from: NaiveDateTime, months: u32, day: u32) -> Option<Nai
     let year = (total / 12) as i32;
     let month = total % 12 + 1;
     let max_day = days_in_month(year, month);
-    NaiveDate::from_ymd_opt(year, month, day.min(max_day))
-        .map(|d| d.and_time(from.time()))
+    NaiveDate::from_ymd_opt(year, month, day.min(max_day)).map(|d| d.and_time(from.time()))
 }
 
 fn next_nth_weekday_of_month(
@@ -163,13 +172,21 @@ fn nth_weekday_in_month(year: i32, month: u32, n: i32, wd: Weekday) -> Option<Na
 fn days_until_weekday(from: Weekday, target: Weekday) -> u32 {
     let f = from.num_days_from_monday();
     let t = target.num_days_from_monday();
-    if t >= f { t - f } else { 7 + t - f }
+    if t >= f {
+        t - f
+    } else {
+        7 + t - f
+    }
 }
 
 fn days_back_to_weekday(from: Weekday, target: Weekday) -> u32 {
     let f = from.num_days_from_monday();
     let t = target.num_days_from_monday();
-    if f >= t { f - t } else { 7 + f - t }
+    if f >= t {
+        f - t
+    } else {
+        7 + f - t
+    }
 }
 
 fn days_in_month(year: i32, month: u32) -> u32 {

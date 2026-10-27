@@ -98,9 +98,7 @@ pub(super) fn get_cpu_info() -> InternalProcessorInfo {
     {
         use std::process::Command;
 
-        let _model = if let Ok(output) = Command::new("wmic")
-            .args(&["cpu", "get", "name"])
-            .output()
+        let _model = if let Ok(output) = Command::new("wmic").args(&["cpu", "get", "name"]).output()
         {
             if let Ok(cpu) = String::from_utf8(output.stdout) {
                 let lines: Vec<&str> = cpu.lines().collect();
@@ -159,22 +157,20 @@ pub(super) fn get_memory_info() -> InternalMemoryInfo {
     {
         use std::process::Command;
 
-        let capacity_gb = if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.memsize"])
-            .output()
-        {
-            if let Ok(ram_str) = String::from_utf8(output.stdout) {
-                if let Ok(ram_bytes) = ram_str.trim().parse::<u64>() {
-                    (ram_bytes / 1_073_741_824) as i64
+        let capacity_gb =
+            if let Ok(output) = Command::new("sysctl").args(&["-n", "hw.memsize"]).output() {
+                if let Ok(ram_str) = String::from_utf8(output.stdout) {
+                    if let Ok(ram_bytes) = ram_str.trim().parse::<u64>() {
+                        (ram_bytes / 1_073_741_824) as i64
+                    } else {
+                        0
+                    }
                 } else {
                     0
                 }
             } else {
                 0
-            }
-        } else {
-            0
-        };
+            };
 
         let memory_type = "Unknown".to_string();
 
@@ -288,22 +284,17 @@ pub(super) fn get_os_info() -> InternalOperatingSystemInfo {
 
         let name = "macOS".to_string();
 
-        let version = if let Ok(output) = Command::new("sw_vers")
-            .args(&["-productVersion"])
-            .output()
-        {
-            String::from_utf8(output.stdout)
-                .unwrap_or_else(|_| "Unknown".to_string())
-                .trim()
-                .to_string()
-        } else {
-            "Unknown".to_string()
-        };
+        let version =
+            if let Ok(output) = Command::new("sw_vers").args(&["-productVersion"]).output() {
+                String::from_utf8(output.stdout)
+                    .unwrap_or_else(|_| "Unknown".to_string())
+                    .trim()
+                    .to_string()
+            } else {
+                "Unknown".to_string()
+            };
 
-        let kernel = if let Ok(output) = Command::new("uname")
-            .args(&["-r"])
-            .output()
-        {
+        let kernel = if let Ok(output) = Command::new("uname").args(&["-r"]).output() {
             let kernel_version = String::from_utf8(output.stdout)
                 .unwrap_or_else(|_| "Unknown".to_string())
                 .trim()
@@ -354,9 +345,7 @@ pub(super) fn get_os_info() -> InternalOperatingSystemInfo {
             "Unknown".to_string()
         };
 
-        let kernel = if let Ok(output) = std::process::Command::new("uname")
-            .args(&["-r"])
-            .output()
+        let kernel = if let Ok(output) = std::process::Command::new("uname").args(&["-r"]).output()
         {
             let kernel_version = String::from_utf8(output.stdout)
                 .unwrap_or_else(|_| "Unknown".to_string())
@@ -380,10 +369,7 @@ pub(super) fn get_os_info() -> InternalOperatingSystemInfo {
 
         let name = "Windows".to_string();
 
-        let version = if let Ok(output) = Command::new("cmd")
-            .args(&["/C", "ver"])
-            .output()
-        {
+        let version = if let Ok(output) = Command::new("cmd").args(&["/C", "ver"]).output() {
             String::from_utf8(output.stdout)
                 .unwrap_or_else(|_| "Unknown".to_string())
                 .trim()
@@ -440,7 +426,8 @@ pub(super) fn get_locale_info() -> InternalLocaleInfo {
             Some("ja") => "Japanese",
             Some("zh") => "Chinese",
             _ => "English",
-        }.to_string();
+        }
+        .to_string();
 
         let country = match parts.get(1).map(|s| *s) {
             Some("US") => "United States",
@@ -456,7 +443,8 @@ pub(super) fn get_locale_info() -> InternalLocaleInfo {
             Some("JP") => "Japan",
             Some("CN") => "China",
             _ => "United States",
-        }.to_string();
+        }
+        .to_string();
 
         return InternalLocaleInfo {
             language,
@@ -487,7 +475,8 @@ pub(super) fn get_locale_info() -> InternalLocaleInfo {
             Some("ja") => "Japanese",
             Some("zh") => "Chinese",
             _ => "English",
-        }.to_string();
+        }
+        .to_string();
 
         let country = match parts.get(1).map(|s| *s) {
             Some("US") => "United States",
@@ -503,7 +492,8 @@ pub(super) fn get_locale_info() -> InternalLocaleInfo {
             Some("JP") => "Japan",
             Some("CN") => "China",
             _ => "United States",
-        }.to_string();
+        }
+        .to_string();
 
         return InternalLocaleInfo {
             language,
@@ -539,7 +529,8 @@ pub(super) fn get_locale_info() -> InternalLocaleInfo {
             Some("ja") => "Japanese",
             Some("zh") => "Chinese",
             _ => "English",
-        }.to_string();
+        }
+        .to_string();
 
         let country = match parts.get(1).map(|s| *s) {
             Some("US") => "United States",
@@ -555,7 +546,8 @@ pub(super) fn get_locale_info() -> InternalLocaleInfo {
             Some("JP") => "Japan",
             Some("CN") => "China",
             _ => "United States",
-        }.to_string();
+        }
+        .to_string();
 
         return InternalLocaleInfo {
             language,

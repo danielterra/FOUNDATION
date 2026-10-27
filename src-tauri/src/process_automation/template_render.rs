@@ -1,12 +1,12 @@
 use handlebars::Handlebars;
-use serde_json::{Value};
+use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::owl::{
-    materialize_individual_shallow, get_iri_property, get_literal_property,
-    DbExecutor, ShallowValue,
-};
 use super::context::ExecutionContext;
+use crate::owl::{
+    get_iri_property, get_literal_property, materialize_individual_shallow, DbExecutor,
+    ShallowValue,
+};
 
 /// Builds a `serde_json::Value::Object` from a shallow materialization of `iri`.
 /// - Literal values → JSON string scalar (single) or array.
@@ -47,9 +47,7 @@ async fn shallow_map_to_json(
             for sv in values {
                 let v = match sv {
                     ShallowValue::Literal(s) => Value::String(s.clone()),
-                    ShallowValue::Iri(target_iri) => {
-                        expand_one_level(target_iri, executor).await
-                    }
+                    ShallowValue::Iri(target_iri) => expand_one_level(target_iri, executor).await,
                 };
                 items.push(v);
             }
@@ -117,11 +115,7 @@ async fn expand_one_level(iri: &str, executor: &DbExecutor) -> Value {
 ///
 /// HTML escaping is disabled via `no_escape`: templates produce URLs, JSON and
 /// chat text — the default `&`→`&amp;` escaping would corrupt those outputs.
-pub async fn render(
-    template: &str,
-    ctx: &ExecutionContext,
-    executor: &DbExecutor,
-) -> String {
+pub async fn render(template: &str, ctx: &ExecutionContext, executor: &DbExecutor) -> String {
     let self_iri = ctx.get("self").cloned().unwrap_or_default();
 
     let mut root_obj = serde_json::Map::new();
@@ -138,7 +132,9 @@ pub async fn render(
     root_obj.insert("self".to_string(), Value::String(self_iri.clone()));
 
     for (k, v) in ctx {
-        root_obj.entry(k.clone()).or_insert_with(|| Value::String(v.clone()));
+        root_obj
+            .entry(k.clone())
+            .or_insert_with(|| Value::String(v.clone()));
     }
 
     let root = Value::Object(root_obj);
@@ -155,7 +151,7 @@ pub async fn render(
             move |h: &handlebars::Helper,
                   _hb: &Handlebars,
                   ctx_hb: &handlebars::Context,
-                  _rc: &mut handlebars::RenderContext,
+                  rc: &mut handlebars::RenderContext,
                   out: &mut dyn handlebars::Output|
                   -> handlebars::HelperResult {
                 let params = h.params();
@@ -164,7 +160,35 @@ pub async fn render(
                 }
 
                 let (start_iri, seg_offset) = {
-                    let first = params[0].value().as_str().unwrap_or("").to_string();
+                    let first = params[0]
+                        .value()
+                        .as_str()
+                        .map(str::to_string)
+                        .or_else(|| {
+                            let is_current_iri = params[0]
+                                .relative_path()
+                                .map(|path| path == "this.[@iri]")
+                                .unwrap_or(false);
+                            if !is_current_iri {
+                                return None;
+                            }
+                            let base_path = rc.block().map(|block| block.base_path())?;
+                            base_path
+                                .iter()
+                                .take(base_path.len().saturating_sub(1))
+                                .try_fold(ctx_hb.data(), |value, segment| {
+                                    value.get(segment).or_else(|| {
+                                        segment
+                                            .parse::<usize>()
+                                            .ok()
+                                            .and_then(|index| value.get(index))
+                                    })
+                                })?
+                                .get("@iri")?
+                                .as_str()
+                                .map(str::to_string)
+                        })
+                        .unwrap_or_default();
                     if first.contains(':') && !first.contains(' ') {
                         (first, 1usize)
                     } else if first == "self" || first.is_empty() {
@@ -210,8 +234,7 @@ pub async fn render(
                             if let Ok(Some(v)) = get_iri_property(conn, &current, last) {
                                 return Ok(Some(v));
                             }
-                            get_literal_property(conn, &current, last)
-                                .map_err(|e| e.to_string())
+                            get_literal_property(conn, &current, last).map_err(|e| e.to_string())
                         })
                         .await
                         .ok()
@@ -249,7 +272,7 @@ pub async fn interpolate_with_db(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eavto::{store, Triple, Object};
+    use crate::eavto::{store, Object, Triple};
 
     /// Creates a `DbExecutor` backed by a temporary file so that both write and
     /// read connections share state.  We write triples via `assert_triples` on
@@ -412,12 +435,7 @@ mod tests {
         let mut ctx = ExecutionContext::new();
         ctx.insert("self".to_string(), "test:NoSuchEntity".to_string());
 
-        let result = render(
-            r#"X{{resolve self "test:missing"}}Y"#,
-            &ctx,
-            &executor,
-        )
-        .await;
+        let result = render(r#"X{{resolve self "test:missing"}}Y"#, &ctx, &executor).await;
         assert_eq!(result, "XY");
     }
 
@@ -468,6 +486,11 @@ mod tests {
                         Object::Iri("test:ItemA".to_string()),
                     ),
                     Triple::new(
+                        "test:Root",
+                        "test:items",
+                        Object::Iri("test:ItemB".to_string()),
+                    ),
+                    Triple::new(
                         "test:ItemA",
                         "test:child",
                         Object::Iri("test:LeafA".to_string()),
@@ -482,7 +505,8 @@ mod tests {
         let mut ctx = ExecutionContext::new();
         ctx.insert("self".to_string(), "test:Root".to_string());
 
-        let tmpl = r#"{{#each test:items}}{{resolve this.[@iri] "test:child" "rdfs:label"}}{{/each}}"#;
+        let tmpl =
+            r#"{{#each test:items}}{{resolve this.[@iri] "test:child" "rdfs:label"}}{{/each}}"#;
         let result = render(tmpl, &ctx, &executor).await;
         assert_eq!(result, "leaf label");
     }

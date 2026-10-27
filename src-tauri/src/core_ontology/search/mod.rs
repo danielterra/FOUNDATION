@@ -1,12 +1,8 @@
 mod engine;
 mod scoring;
 
-use crate::owl::{
-    Connection, Object, Result, Thing,
-    icon_iri_to_display,
-    vocabulary,
-};
-use engine::{enrich_from_triples, search_structured, search_global};
+use crate::owl::{icon_iri_to_display, vocabulary, Connection, Object, Result, Thing};
+use engine::{enrich_from_triples, search_global, search_structured};
 
 /// Rich search result for instances, including matched properties, concept type and status.
 #[derive(Debug, serde::Serialize)]
@@ -53,17 +49,10 @@ pub fn try_iri_direct_lookup(conn: &Connection, query: &str) -> Option<SearchRes
     Some(enrich_from_triples(conn, trimmed, triples, vec![]))
 }
 
-pub fn search_instances(
-    conn: &Connection,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<SearchResult>> {
+pub fn search_instances(conn: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
     let iri_hit = try_iri_direct_lookup(conn, query);
 
-    let tokens: Vec<String> = query
-        .split_whitespace()
-        .map(|s| s.to_lowercase())
-        .collect();
+    let tokens: Vec<String> = query.split_whitespace().map(|s| s.to_lowercase()).collect();
 
     let (mut results, _total) = search(conn, &tokens, None, None, None, false, limit, 0)?;
 
@@ -77,9 +66,13 @@ pub fn search_instances(
 }
 
 /// Search for classes by label (case-insensitive, ranked by relevance)
-pub fn search_classes(conn: &Connection, query: &str, limit: usize) -> Result<Vec<ClassSearchResult>> {
-    use vocabulary::{rdf, owl};
+pub fn search_classes(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<ClassSearchResult>> {
     use crate::eavto::query;
+    use vocabulary::{owl, rdf};
 
     let all_classes_result = query::get_by_predicate_object(conn, rdf::TYPE, owl::CLASS)?;
 
@@ -101,12 +94,15 @@ pub fn search_classes(conn: &Connection, query: &str, limit: usize) -> Result<Ve
                 2
             };
 
-            results.push((score, ClassSearchResult {
-                id: class_iri.clone(),
-                label: thing.label,
-                icon: thing.icon,
-                is_class: true,
-            }));
+            results.push((
+                score,
+                ClassSearchResult {
+                    id: class_iri.clone(),
+                    label: thing.label,
+                    icon: thing.icon,
+                    is_class: true,
+                },
+            ));
         }
     }
 
@@ -125,8 +121,8 @@ pub fn search_individuals(
     query: &str,
     limit: usize,
 ) -> Result<Vec<ClassSearchResult>> {
-    use vocabulary::{rdf, rdfs, owl};
     use crate::eavto::query;
+    use vocabulary::{owl, rdf, rdfs};
 
     let all_types_result = query::get_by_predicate(conn, rdf::TYPE)?;
 
@@ -155,14 +151,20 @@ pub fn search_individuals(
                 if label_lower.contains(&query_lower) {
                     let icon = {
                         let has_icon_result = query::get_by_entity_predicate(
-                            conn, individual_iri, "foundation:hasIcon",
+                            conn,
+                            individual_iri,
+                            "foundation:hasIcon",
                         )?;
-                        has_icon_result.triples.first().and_then(|t| match &t.object {
-                            Object::Iri(iri) => icon_iri_to_display(conn, iri),
-                            Object::Literal { value, .. } =>
-                                Some(crate::owl::icon_literal_to_display(value)),
-                            _ => None,
-                        })
+                        has_icon_result
+                            .triples
+                            .first()
+                            .and_then(|t| match &t.object {
+                                Object::Iri(iri) => icon_iri_to_display(conn, iri),
+                                Object::Literal { value, .. } => {
+                                    Some(crate::owl::icon_literal_to_display(value))
+                                }
+                                _ => None,
+                            })
                     };
 
                     let score = if label_lower == query_lower {
@@ -173,12 +175,15 @@ pub fn search_individuals(
                         2
                     };
 
-                    results.push((score, ClassSearchResult {
-                        id: individual_iri.clone(),
-                        label: label.clone(),
-                        icon,
-                        is_class: false,
-                    }));
+                    results.push((
+                        score,
+                        ClassSearchResult {
+                            id: individual_iri.clone(),
+                            label: label.clone(),
+                            icon,
+                            is_class: false,
+                        },
+                    ));
                 }
             }
         }
@@ -211,17 +216,35 @@ pub fn search(
     offset: usize,
 ) -> Result<(Vec<SearchResult>, usize)> {
     let t0 = std::time::Instant::now();
-    let path = if filters.is_some() || include_retracted || class_iri.is_some() { "structured" } else { "global" };
+    let path = if filters.is_some() || include_retracted || class_iri.is_some() {
+        "structured"
+    } else {
+        "global"
+    };
     let result = if filters.is_some() || include_retracted || class_iri.is_some() {
-        search_structured(conn, tokens, entity_type_filter, class_iri, filters, include_retracted, limit, offset)
+        search_structured(
+            conn,
+            tokens,
+            entity_type_filter,
+            class_iri,
+            filters,
+            include_retracted,
+            limit,
+            offset,
+        )
     } else {
         search_global(conn, tokens, entity_type_filter, class_iri, limit, offset)
     };
     let elapsed = t0.elapsed().as_millis();
-    crate::commands::log_backend("debug", &format!(
-        "[CORE] search({} tokens, path={}, class={}) → {}ms",
-        tokens.len(), path, class_iri.unwrap_or("-"),
-        elapsed
-    ));
+    crate::commands::log_backend(
+        "debug",
+        &format!(
+            "[CORE] search({} tokens, path={}, class={}) → {}ms",
+            tokens.len(),
+            path,
+            class_iri.unwrap_or("-"),
+            elapsed
+        ),
+    );
     result
 }

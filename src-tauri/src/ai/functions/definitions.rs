@@ -1,4 +1,4 @@
-use super::{ToolTemplate, Parameter};
+use super::{Parameter, ToolTemplate};
 
 pub fn get_tool_definitions() -> Vec<crate::ai::providers::ToolDefinition> {
     get_available_tools()
@@ -686,6 +686,35 @@ Example — find all active Tasks whose due date is before this Project's deadli
         },
 
         ToolTemplate {
+            name: "unzip_file".to_string(),
+            array_mode: false,
+            description: "Extract the contents of a ZIP foundation:File. Called without extract_path it lists the entries and reports whether the archive is password-protected; called with extract_path it returns that entry's text content, file name, MIME type and line count. Pass `password` for protected archives. Use it to reach CSV bank statements that arrive zipped (C6 Bank, for example) before importing them.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "file_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "IRI of the foundation:File individual holding the ZIP (e.g. 'foundation:EmailAttachment_1787310779670')".to_string(),
+                    required: true,
+                    schema: None,
+                },
+                Parameter {
+                    name: "extract_path".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Optional. Path of the entry to extract, as returned in `files` (e.g. 'extrato.csv'). A bare file name is accepted when it identifies exactly one entry. Omit it to list the archive contents.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "password".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Optional. Password of a protected archive. The listing call reports `encrypted: true` when one is needed; the password is normally stated in the email that carried the attachment (C6 Bank uses the first 6 digits of the account holder's CPF).".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
             name: "read_text_lines".to_string(),
             array_mode: false,
             description: "Read a specific line range from a text-based foundation:File individual. Returns lines with 1-based numbers, total line count, and character metadata. Lines exceeding the character window are truncated — use start_char/end_char to iterate over long lines.".to_string(),
@@ -1107,17 +1136,53 @@ Example — find all active Tasks whose due date is before this Project's deadli
         },
 
         ToolTemplate {
+            name: "datasync_list_runs".to_string(),
+            array_mode: false,
+            description: "List sync runs (one per extract cycle of a DataSource), newest first: when each started and finished, how many items it staged, how many failed, and how it ended. Filter by `status` to see only the runs with a given outcome. Use this to answer whether a sync actually ran and how it went — the raw records only carry per-item state, never the shape of the pass.".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "data_source_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Optional. Narrow to one DataSource. Omit for every source.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "status".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Optional outcome filter: 'foundation:InProgress' (still running), 'foundation:Completed' (finished), 'foundation:Status_1781300928559' (ended in error).".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "limit".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Maximum runs to return, newest first. Default 20, max 200.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+            ],
+        },
+
+        ToolTemplate {
             name: "datasync_retry_transform".to_string(),
             array_mode: false,
-            description: "Retry transformation for RawDataRecords in Error status for a given DataSource. Resets them to Pending and triggers the transform automation.".to_string(),
+            description: "Requeue failed RawDataRecords for transformation. Pass `raw_record_iris` to retry specific records, or `data_source_iri` alone to retry every record currently in Error for that source. Records that are not in Error are skipped and reported back, never silently ignored.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "data_source_iri".to_string(),
                     param_type: "string".to_string(),
                     description: "IRI of the DataSource whose failed records should be retried.".to_string(),
-                    required: true,
+                    required: false,
                     schema: None,
                 },
+                Parameter {
+                    name: "raw_record_iris".to_string(),
+                    param_type: "array".to_string(),
+                    description: "IRIs of specific RawDataRecords to retry. Omit to retry every Error record of data_source_iri. Records not in Error come back under `skipped` with the reason.".to_string(),
+                    required: false,
+                    schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
+},
             ],
         },
 
@@ -1153,7 +1218,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "datasync_list_raw".to_string(),
             array_mode: false,
-            description: "Lists RawDataRecords for a DataSource, optionally filtered by transformStatus. Returns items, next_cursor, has_more, counts_by_status, snapshot_tx. Uses keyset pagination: pass `after_tx` from the previous `next_cursor` to advance pages. When `has_more` is true, send the next request with `after_tx: next_cursor`.".to_string(),
+            description: "Lists RawDataRecords for a DataSource, optionally filtered by transformStatus. Returns items, next_cursor, has_more, counts_by_status, snapshot_tx. On later pages, echo the first response's snapshot_tx and pass next_cursor as after_tx to keep membership and status counts frozen.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "data_source_iri".to_string(),
@@ -1180,6 +1245,13 @@ Example — find all active Tasks whose due date is before this Project's deadli
                     name: "after_tx".to_string(),
                     param_type: "integer".to_string(),
                     description: "Keyset cursor: return records with creation tx strictly less than this value. Use the `next_cursor` from the previous response to advance pages.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "snapshot_tx".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Snapshot returned by the first page. Echo it on every later page so membership, filtering, and counts remain frozen.".to_string(),
                     required: false,
                     schema: None,
                 },

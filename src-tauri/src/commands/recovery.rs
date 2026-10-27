@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 use crate::owl::Connection;
 
@@ -26,13 +26,7 @@ fn emit_progress(app: &AppHandle, stage: &str, detail: &str) {
     super::log_backend("info", &format!("[recovery] {}: {}", stage, detail));
 }
 
-fn emit_metric(
-    app: &AppHandle,
-    stage: &str,
-    bytes: u64,
-    total_bytes: Option<u64>,
-    rate_bps: f64,
-) {
+fn emit_metric(app: &AppHandle, stage: &str, bytes: u64, total_bytes: Option<u64>, rate_bps: f64) {
     let _ = app.emit(
         "recovery-progress",
         serde_json::json!({
@@ -63,7 +57,11 @@ fn locate_sqlite3(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = app;
-        let candidates = ["/usr/bin/sqlite3", "/usr/local/bin/sqlite3", "/opt/homebrew/bin/sqlite3"];
+        let candidates = [
+            "/usr/bin/sqlite3",
+            "/usr/local/bin/sqlite3",
+            "/opt/homebrew/bin/sqlite3",
+        ];
         for c in candidates.iter() {
             if Path::new(c).is_file() {
                 return Ok(PathBuf::from(c));
@@ -74,8 +72,8 @@ fn locate_sqlite3(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn is_db_corrupt(db_path: &Path) -> bool {
-    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-        | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let flags =
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     match Connection::open_with_flags(db_path, flags) {
         Ok(conn) => {
             let res: rusqlite::Result<i64> =
@@ -136,7 +134,9 @@ fn run_sqlite3(sqlite3: &Path, args: &[&str]) -> Result<(), String> {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let output = cmd.output().map_err(|e| format!("failed to run sqlite3: {e}"))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to run sqlite3: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
@@ -180,8 +180,12 @@ pub async fn recover_database(app: AppHandle) -> Result<RecoveryResult, String> 
         .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
         .ok_or_else(|| "Could not locate the Downloads folder".to_string())?;
     let workspace = downloads.join(format!("Foundation-recovery-{ts}"));
-    std::fs::create_dir_all(&workspace)
-        .map_err(|e| format!("Failed to create workspace folder {}: {e}", workspace.display()))?;
+    std::fs::create_dir_all(&workspace).map_err(|e| {
+        format!(
+            "Failed to create workspace folder {}: {e}",
+            workspace.display()
+        )
+    })?;
 
     let backup_path = workspace.join(format!("FOUNDATION.db.corrupt-{ts}.bak"));
     let sql_dump_path = workspace.join(format!("FOUNDATION.recover-{ts}.sql"));
@@ -250,7 +254,10 @@ fn do_recovery_steps(
     emit_progress(
         app,
         "dumping",
-        &format!("Extracting data ({} MB of source)", original_size / (1024 * 1024)),
+        &format!(
+            "Extracting data ({} MB of source)",
+            original_size / (1024 * 1024)
+        ),
     );
 
     let stop_dump = Arc::new(AtomicBool::new(false));
@@ -278,7 +285,9 @@ fn do_recovery_steps(
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let output = cmd.output().map_err(|e| format!("failed to run sqlite3 .recover: {e}"))?;
+        let output = cmd
+            .output()
+            .map_err(|e| format!("failed to run sqlite3 .recover: {e}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(format!(
@@ -294,11 +303,16 @@ fn do_recovery_steps(
     let _ = dump_watcher.join();
     dump_result?;
 
-    let dump_size = std::fs::metadata(sql_dump_path).map(|m| m.len()).unwrap_or(0);
+    let dump_size = std::fs::metadata(sql_dump_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
     emit_progress(
         app,
         "importing",
-        &format!("Importing into new database ({} MB of SQL)", dump_size / (1024 * 1024)),
+        &format!(
+            "Importing into new database ({} MB of SQL)",
+            dump_size / (1024 * 1024)
+        ),
     );
 
     let stop_import = Arc::new(AtomicBool::new(false));
@@ -334,7 +348,9 @@ fn do_recovery_steps(
         .query_row("PRAGMA integrity_check;", [], |r| r.get(0))
         .map_err(|e| format!("integrity_check failed: {e}"))?;
     if integrity != "ok" {
-        return Err(format!("Recovered database still inconsistent: {integrity}"));
+        return Err(format!(
+            "Recovered database still inconsistent: {integrity}"
+        ));
     }
     let triples: i64 = conn
         .query_row("SELECT COUNT(*) FROM triples;", [], |r| r.get(0))

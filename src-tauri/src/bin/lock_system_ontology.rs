@@ -13,8 +13,7 @@
 ///   cargo run --bin lock_system_ontology             # dry-run (default)
 ///   cargo run --bin lock_system_ontology -- --apply  # write locks
 ///   cargo run --bin lock_system_ontology -- --revert # remove all locks written by this script
-
-use rusqlite::{Connection, Result, params};
+use rusqlite::{params, Connection, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -26,7 +25,9 @@ fn get_db_path() -> PathBuf {
 }
 
 fn get_or_create_origin(conn: &Connection, name: &str) -> Result<i64> {
-    match conn.query_row("SELECT id FROM origins WHERE name = ?", [name], |row| row.get(0)) {
+    match conn.query_row("SELECT id FROM origins WHERE name = ?", [name], |row| {
+        row.get(0)
+    }) {
         Ok(id) => Ok(id),
         Err(rusqlite::Error::QueryReturnedNoRows) => {
             conn.execute("INSERT INTO origins (name) VALUES (?)", [name])?;
@@ -82,7 +83,12 @@ fn extract_foundation_iris(text: &str) -> HashSet<String> {
                 .unwrap_or(bytes.len());
             if end > start {
                 if let Ok(local) = std::str::from_utf8(&bytes[start..end]) {
-                    if local.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false) {
+                    if local
+                        .chars()
+                        .next()
+                        .map(|c| c.is_alphabetic())
+                        .unwrap_or(false)
+                    {
                         found.insert(format!("foundation:{}", local));
                     }
                 }
@@ -111,11 +117,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
 
     if revert_mode {
-        let origin_id: Option<i64> = conn.query_row(
-            "SELECT id FROM origins WHERE name = ?",
-            [MIGRATION_ORIGIN],
-            |row| row.get(0),
-        ).ok();
+        let origin_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM origins WHERE name = ?",
+                [MIGRATION_ORIGIN],
+                |row| row.get(0),
+            )
+            .ok();
         if let Some(oid) = origin_id {
             let deleted = conn.execute(
                 "DELETE FROM triples WHERE predicate = 'foundation:isSystemLocked' AND origin_id = ?",
@@ -133,7 +141,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     // Locate the workspace root relative to this binary's manifest.
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent()
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
         .expect("expected src-tauri parent")
         .to_path_buf();
 
@@ -156,7 +165,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    println!("Scanned {} source files, found {} unique foundation: IRIs in code.", file_count, code_iris.len());
+    println!(
+        "Scanned {} source files, found {} unique foundation: IRIs in code.",
+        file_count,
+        code_iris.len()
+    );
 
     // Collect IRIs defined in the DB as ontology entities.
     let db_ontology_iris: HashSet<String> = {
@@ -172,26 +185,30 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             if !iri.starts_with("foundation:") {
                 continue;
             }
-            let is_ontology_entity: bool = conn.query_row(
-                "SELECT COUNT(*) FROM triples
+            let is_ontology_entity: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM triples
                  WHERE subject = ?1 AND predicate = 'rdf:type' AND retracted = 0
                    AND object IN ('owl:Class','rdfs:Class','owl:ObjectProperty',
                                   'owl:DatatypeProperty','owl:AnnotationProperty','rdf:Property')",
-                params![iri],
-                |row| row.get::<_, i64>(0),
-            ).map(|c| c > 0).unwrap_or(false);
+                    params![iri],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap_or(false);
             if is_ontology_entity {
                 defined.insert(iri);
             }
         }
         defined
     };
-    println!("DB ontology IRIs (classes + properties): {}", db_ontology_iris.len());
+    println!(
+        "DB ontology IRIs (classes + properties): {}",
+        db_ontology_iris.len()
+    );
 
     // Intersection: referenced in code AND defined as ontology entity.
-    let mut to_lock: Vec<String> = code_iris.intersection(&db_ontology_iris)
-        .cloned()
-        .collect();
+    let mut to_lock: Vec<String> = code_iris.intersection(&db_ontology_iris).cloned().collect();
     to_lock.sort();
 
     // Remove already-locked ones.
@@ -206,14 +223,17 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         rows.into_iter().collect::<Result<HashSet<_>>>()?
     };
 
-    let pending: Vec<String> = to_lock.iter()
+    let pending: Vec<String> = to_lock
+        .iter()
         .filter(|iri| !already_locked.contains(*iri))
         .cloned()
         .collect();
 
     println!(
         "To lock: {} (code ∩ ontology), {} already locked, {} pending",
-        to_lock.len(), already_locked.len(), pending.len()
+        to_lock.len(),
+        already_locked.len(),
+        pending.len()
     );
 
     if pending.is_empty() {

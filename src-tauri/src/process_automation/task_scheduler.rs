@@ -4,8 +4,8 @@ use tokio::task::JoinHandle;
 
 use crate::commands::log_backend;
 use crate::owl::{
-    DbExecutor, Individual, get_iri_property, get_literal_property, is_instance_of,
-    find_entities_with_predicate,
+    find_entities_with_predicate, get_iri_property, get_literal_property, is_instance_of,
+    DbExecutor, Individual,
 };
 
 pub struct TaskSchedulerState {
@@ -22,7 +22,11 @@ impl TaskSchedulerState {
     }
 }
 
-pub fn is_status_descendant_of(conn: &rusqlite::Connection, status_iri: &str, ancestor_iri: &str) -> bool {
+pub fn is_status_descendant_of(
+    conn: &rusqlite::Connection,
+    status_iri: &str,
+    ancestor_iri: &str,
+) -> bool {
     // Walk up the parentStatus chain to check if status_iri is a descendant of ancestor_iri.
     // A status that is its own parent is a root node (stop condition).
     conn.query_row(
@@ -39,12 +43,14 @@ pub fn is_status_descendant_of(conn: &rusqlite::Connection, status_iri: &str, an
          SELECT COUNT(*) FROM ancestors WHERE iri = ?2",
         rusqlite::params![status_iri, ancestor_iri],
         |row| row.get::<_, i64>(0),
-    ).unwrap_or(0) > 0
+    )
+    .unwrap_or(0)
+        > 0
 }
 
 fn collect_scheduled_tasks(conn: &rusqlite::Connection) -> Result<Vec<(String, String)>, String> {
-    let task_iris = find_entities_with_predicate(conn, "foundation:scheduledAt")
-        .map_err(|e| e.to_string())?;
+    let task_iris =
+        find_entities_with_predicate(conn, "foundation:scheduledAt").map_err(|e| e.to_string())?;
 
     let mut tasks = Vec::new();
     for task_iri in task_iris {
@@ -68,8 +74,8 @@ fn collect_scheduled_tasks(conn: &rusqlite::Connection) -> Result<Vec<(String, S
 
         // Skip tasks in a halted status (Blocked waiting for dependency,
         // or Rejected after a permanent failure).
-        let status = get_iri_property(conn, &task_iri, "foundation:hasStatus")
-            .map_err(|e| e.to_string())?;
+        let status =
+            get_iri_property(conn, &task_iri, "foundation:hasStatus").map_err(|e| e.to_string())?;
         if let Some(ref s) = status {
             if s == "foundation:Blocked" || s == "foundation:Rejected" {
                 continue;
@@ -101,17 +107,20 @@ fn collect_scheduled_tasks(conn: &rusqlite::Connection) -> Result<Vec<(String, S
 
 fn collect_interrupted_tasks(conn: &rusqlite::Connection) -> Result<Vec<String>, String> {
     // Tasks with startedAt but no result were running when the app closed.
-    let task_iris = find_entities_with_predicate(conn, "foundation:startedAt")
-        .map_err(|e| e.to_string())?;
+    let task_iris =
+        find_entities_with_predicate(conn, "foundation:startedAt").map_err(|e| e.to_string())?;
 
     let mut interrupted = Vec::new();
     for task_iri in task_iris {
         if !is_instance_of(conn, &task_iri, "foundation:Task") {
             continue;
         }
-        let assignee = get_iri_property(conn, &task_iri, "foundation:assignee")
-            .map_err(|e| e.to_string())?;
-        if !assignee.map(|a| is_instance_of(conn, &a, "foundation:SoftwareAgent")).unwrap_or(false) {
+        let assignee =
+            get_iri_property(conn, &task_iri, "foundation:assignee").map_err(|e| e.to_string())?;
+        if !assignee
+            .map(|a| is_instance_of(conn, &a, "foundation:SoftwareAgent"))
+            .unwrap_or(false)
+        {
             continue;
         }
         if get_literal_property(conn, &task_iri, "foundation:result")
@@ -151,37 +160,64 @@ pub async fn start(app: AppHandle) {
     let interrupted = match executor.read(collect_interrupted_tasks).await {
         Ok(v) => v,
         Err(e) => {
-            log_backend("error", &format!(
-                "[task_scheduler] Failed to collect interrupted tasks: {}", e
-            ));
+            log_backend(
+                "error",
+                &format!(
+                    "[task_scheduler] Failed to collect interrupted tasks: {}",
+                    e
+                ),
+            );
             vec![]
         }
     };
     if !interrupted.is_empty() {
-        let reset_result = executor.write(move |conn| {
-            for task_iri in &interrupted {
-                if let Err(e) = Individual::clear_property(conn, task_iri, "foundation:startedAt", "task_scheduler") {
-                    log_backend("error", &format!(
-                        "[task_scheduler] Failed to clear startedAt for {}: {}", task_iri, e
-                    ));
-                    continue;
+        let reset_result = executor
+            .write(move |conn| {
+                for task_iri in &interrupted {
+                    if let Err(e) = Individual::clear_property(
+                        conn,
+                        task_iri,
+                        "foundation:startedAt",
+                        "task_scheduler",
+                    ) {
+                        log_backend(
+                            "error",
+                            &format!(
+                                "[task_scheduler] Failed to clear startedAt for {}: {}",
+                                task_iri, e
+                            ),
+                        );
+                        continue;
+                    }
+                    if let Err(e) = crate::owl::replace_all_property_iris(
+                        conn,
+                        task_iri,
+                        "foundation:hasStatus",
+                        &["foundation:Pending"],
+                        "task_scheduler",
+                    ) {
+                        log_backend(
+                            "error",
+                            &format!(
+                                "[task_scheduler] Failed to reset status for {}: {}",
+                                task_iri, e
+                            ),
+                        );
+                    } else {
+                        log_backend(
+                            "warn",
+                            &format!("[task_scheduler] Recovered interrupted task: {}", task_iri),
+                        );
+                    }
                 }
-                if let Err(e) = crate::owl::replace_all_property_iris(conn, task_iri, "foundation:hasStatus", &["foundation:Pending"], "task_scheduler") {
-                    log_backend("error", &format!(
-                        "[task_scheduler] Failed to reset status for {}: {}", task_iri, e
-                    ));
-                } else {
-                    log_backend("warn", &format!(
-                        "[task_scheduler] Recovered interrupted task: {}", task_iri
-                    ));
-                }
-            }
-            Ok(String::new())
-        }).await;
+                Ok(String::new())
+            })
+            .await;
         if let Err(e) = reset_result {
-            log_backend("error", &format!(
-                "[task_scheduler] Failed to reset interrupted tasks: {}", e
-            ));
+            log_backend(
+                "error",
+                &format!("[task_scheduler] Failed to reset interrupted tasks: {}", e),
+            );
         }
     }
 
@@ -197,9 +233,10 @@ async fn schedule(app: AppHandle) {
     let tasks = match executor.read(collect_scheduled_tasks).await {
         Ok(v) => v,
         Err(e) => {
-            log_backend("error", &format!(
-                "[task_scheduler] Failed to load scheduled tasks: {}", e
-            ));
+            log_backend(
+                "error",
+                &format!("[task_scheduler] Failed to load scheduled tasks: {}", e),
+            );
             return;
         }
     };
@@ -246,8 +283,13 @@ pub fn listen_for_scheduled_tasks(app: AppHandle) {
     // React to the non-gated internal signal so scheduling reloads happen for every task
     // write, not only when the frontend is displaying the task.
     app.clone().listen("entity-changed-internal", move |event| {
-        let Some((entity_id, written_predicates)) = parse_payload(event.payload()) else { return };
-        if !written_predicates.iter().any(|p| SCHEDULING_PREDICATES.contains(&p.as_str())) {
+        let Some((entity_id, written_predicates)) = parse_payload(event.payload()) else {
+            return;
+        };
+        if !written_predicates
+            .iter()
+            .any(|p| SCHEDULING_PREDICATES.contains(&p.as_str()))
+        {
             return;
         }
         let app2 = app.clone();
@@ -264,7 +306,11 @@ fn parse_payload(payload: &str) -> Option<(String, Vec<String>)> {
     let entity_id = v["entityId"].as_str().map(String::from)?;
     let written_predicates = v["writtenPredicates"]
         .as_array()
-        .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| e.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     Some((entity_id, written_predicates))
 }
@@ -305,25 +351,45 @@ pub async fn reload(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eavto::{store, Triple, Object};
     use crate::eavto::test_helpers::setup_test_db;
+    use crate::eavto::{store, Object, Triple};
 
     fn insert(conn: &mut rusqlite::Connection, triples: &[Triple]) {
         store::assert_triples(conn, triples, "test").expect("Failed to insert triples");
     }
 
-    fn agent_task_triples(task_iri: &str, agent_iri: &str, scheduled_at: Option<&str>) -> Vec<Triple> {
+    fn agent_task_triples(
+        task_iri: &str,
+        agent_iri: &str,
+        scheduled_at: Option<&str>,
+    ) -> Vec<Triple> {
         let mut t = vec![
-            Triple::new(task_iri, "rdf:type", Object::Iri("foundation:Task".to_string())),
-            Triple::new(task_iri, "foundation:assignee", Object::Iri(agent_iri.to_string())),
-            Triple::new(agent_iri, "rdf:type", Object::Iri("foundation:SoftwareAgent".to_string())),
+            Triple::new(
+                task_iri,
+                "rdf:type",
+                Object::Iri("foundation:Task".to_string()),
+            ),
+            Triple::new(
+                task_iri,
+                "foundation:assignee",
+                Object::Iri(agent_iri.to_string()),
+            ),
+            Triple::new(
+                agent_iri,
+                "rdf:type",
+                Object::Iri("foundation:SoftwareAgent".to_string()),
+            ),
         ];
         if let Some(dt) = scheduled_at {
-            t.push(Triple::new(task_iri, "foundation:scheduledAt", Object::Literal {
-                value: dt.to_string(),
-                datatype: Some("xsd:dateTime".to_string()),
-                language: None,
-            }));
+            t.push(Triple::new(
+                task_iri,
+                "foundation:scheduledAt",
+                Object::Literal {
+                    value: dt.to_string(),
+                    datatype: Some("xsd:dateTime".to_string()),
+                    language: None,
+                },
+            ));
         }
         t
     }
@@ -331,10 +397,14 @@ mod tests {
     #[test]
     fn test_collect_scheduled_tasks_returns_agent_tasks() {
         let mut conn = setup_test_db();
-        insert(&mut conn, &agent_task_triples(
-            "foundation:Task_sched1", "foundation:Agent_sched1",
-            Some("2099-01-01T10:00:00Z"),
-        ));
+        insert(
+            &mut conn,
+            &agent_task_triples(
+                "foundation:Task_sched1",
+                "foundation:Agent_sched1",
+                Some("2099-01-01T10:00:00Z"),
+            ),
+        );
 
         let tasks = collect_scheduled_tasks(&conn).unwrap();
         assert_eq!(tasks.len(), 1);
@@ -345,10 +415,10 @@ mod tests {
     #[test]
     fn test_collect_scheduled_tasks_ignores_tasks_without_scheduled_at() {
         let mut conn = setup_test_db();
-        insert(&mut conn, &agent_task_triples(
-            "foundation:Task_sched2", "foundation:Agent_sched2",
-            None,
-        ));
+        insert(
+            &mut conn,
+            &agent_task_triples("foundation:Task_sched2", "foundation:Agent_sched2", None),
+        );
 
         let tasks = collect_scheduled_tasks(&conn).unwrap();
         assert!(tasks.is_empty());
@@ -357,19 +427,44 @@ mod tests {
     #[test]
     fn test_collect_scheduled_tasks_ignores_tasks_with_result() {
         let mut conn = setup_test_db();
-        insert(&mut conn, &[
-            Triple::new("foundation:Task_sched_done", "rdf:type", Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:Task_sched_done", "foundation:assignee", Object::Iri("foundation:Agent_sched_done".to_string())),
-            Triple::new("foundation:Task_sched_done", "foundation:result", Object::Literal {
-                value: "completed".to_string(), datatype: Some("xsd:string".to_string()), language: None,
-            }),
-            Triple::new("foundation:Task_sched_done", "foundation:scheduledAt", Object::Literal {
-                value: "2099-01-01T10:00:00Z".to_string(),
-                datatype: Some("xsd:dateTime".to_string()),
-                language: None,
-            }),
-            Triple::new("foundation:Agent_sched_done", "rdf:type", Object::Iri("foundation:SoftwareAgent".to_string())),
-        ]);
+        insert(
+            &mut conn,
+            &[
+                Triple::new(
+                    "foundation:Task_sched_done",
+                    "rdf:type",
+                    Object::Iri("foundation:Task".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_sched_done",
+                    "foundation:assignee",
+                    Object::Iri("foundation:Agent_sched_done".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_sched_done",
+                    "foundation:result",
+                    Object::Literal {
+                        value: "completed".to_string(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(
+                    "foundation:Task_sched_done",
+                    "foundation:scheduledAt",
+                    Object::Literal {
+                        value: "2099-01-01T10:00:00Z".to_string(),
+                        datatype: Some("xsd:dateTime".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(
+                    "foundation:Agent_sched_done",
+                    "rdf:type",
+                    Object::Iri("foundation:SoftwareAgent".to_string()),
+                ),
+            ],
+        );
 
         let tasks = collect_scheduled_tasks(&conn).unwrap();
         assert!(tasks.is_empty());
@@ -378,19 +473,44 @@ mod tests {
     #[test]
     fn test_collect_scheduled_tasks_ignores_tasks_with_started_at() {
         let mut conn = setup_test_db();
-        insert(&mut conn, &[
-            Triple::new("foundation:Task_sched_running", "rdf:type", Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:Task_sched_running", "foundation:assignee", Object::Iri("foundation:Agent_sched_run".to_string())),
-            Triple::new("foundation:Task_sched_running", "foundation:startedAt", Object::Literal {
-                value: "2025-01-01T10:00:00Z".to_string(), datatype: Some("xsd:dateTime".to_string()), language: None,
-            }),
-            Triple::new("foundation:Task_sched_running", "foundation:scheduledAt", Object::Literal {
-                value: "2099-01-01T10:00:00Z".to_string(),
-                datatype: Some("xsd:dateTime".to_string()),
-                language: None,
-            }),
-            Triple::new("foundation:Agent_sched_run", "rdf:type", Object::Iri("foundation:SoftwareAgent".to_string())),
-        ]);
+        insert(
+            &mut conn,
+            &[
+                Triple::new(
+                    "foundation:Task_sched_running",
+                    "rdf:type",
+                    Object::Iri("foundation:Task".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_sched_running",
+                    "foundation:assignee",
+                    Object::Iri("foundation:Agent_sched_run".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_sched_running",
+                    "foundation:startedAt",
+                    Object::Literal {
+                        value: "2025-01-01T10:00:00Z".to_string(),
+                        datatype: Some("xsd:dateTime".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(
+                    "foundation:Task_sched_running",
+                    "foundation:scheduledAt",
+                    Object::Literal {
+                        value: "2099-01-01T10:00:00Z".to_string(),
+                        datatype: Some("xsd:dateTime".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(
+                    "foundation:Agent_sched_run",
+                    "rdf:type",
+                    Object::Iri("foundation:SoftwareAgent".to_string()),
+                ),
+            ],
+        );
 
         let tasks = collect_scheduled_tasks(&conn).unwrap();
         assert!(tasks.is_empty());
@@ -399,17 +519,40 @@ mod tests {
     #[test]
     fn test_collect_scheduled_tasks_ignores_blocked_tasks() {
         let mut conn = setup_test_db();
-        insert(&mut conn, &[
-            Triple::new("foundation:Task_sched_blocked", "rdf:type", Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:Task_sched_blocked", "foundation:hasStatus", Object::Iri("foundation:Blocked".to_string())),
-            Triple::new("foundation:Task_sched_blocked", "foundation:assignee", Object::Iri("foundation:Agent_sched_bl".to_string())),
-            Triple::new("foundation:Task_sched_blocked", "foundation:scheduledAt", Object::Literal {
-                value: "2099-01-01T10:00:00Z".to_string(),
-                datatype: Some("xsd:dateTime".to_string()),
-                language: None,
-            }),
-            Triple::new("foundation:Agent_sched_bl", "rdf:type", Object::Iri("foundation:SoftwareAgent".to_string())),
-        ]);
+        insert(
+            &mut conn,
+            &[
+                Triple::new(
+                    "foundation:Task_sched_blocked",
+                    "rdf:type",
+                    Object::Iri("foundation:Task".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_sched_blocked",
+                    "foundation:hasStatus",
+                    Object::Iri("foundation:Blocked".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_sched_blocked",
+                    "foundation:assignee",
+                    Object::Iri("foundation:Agent_sched_bl".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_sched_blocked",
+                    "foundation:scheduledAt",
+                    Object::Literal {
+                        value: "2099-01-01T10:00:00Z".to_string(),
+                        datatype: Some("xsd:dateTime".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(
+                    "foundation:Agent_sched_bl",
+                    "rdf:type",
+                    Object::Iri("foundation:SoftwareAgent".to_string()),
+                ),
+            ],
+        );
 
         let tasks = collect_scheduled_tasks(&conn).unwrap();
         assert!(tasks.is_empty());
@@ -418,16 +561,35 @@ mod tests {
     #[test]
     fn test_collect_scheduled_tasks_ignores_human_assignees() {
         let mut conn = setup_test_db();
-        insert(&mut conn, &[
-            Triple::new("foundation:Task_sched3", "rdf:type", Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:Task_sched3", "foundation:assignee", Object::Iri("foundation:Person_sched3".to_string())),
-            Triple::new("foundation:Task_sched3", "foundation:scheduledAt", Object::Literal {
-                value: "2099-01-01T10:00:00Z".to_string(),
-                datatype: Some("xsd:dateTime".to_string()),
-                language: None,
-            }),
-            Triple::new("foundation:Person_sched3", "rdf:type", Object::Iri("foundation:Person".to_string())),
-        ]);
+        insert(
+            &mut conn,
+            &[
+                Triple::new(
+                    "foundation:Task_sched3",
+                    "rdf:type",
+                    Object::Iri("foundation:Task".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_sched3",
+                    "foundation:assignee",
+                    Object::Iri("foundation:Person_sched3".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_sched3",
+                    "foundation:scheduledAt",
+                    Object::Literal {
+                        value: "2099-01-01T10:00:00Z".to_string(),
+                        datatype: Some("xsd:dateTime".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(
+                    "foundation:Person_sched3",
+                    "rdf:type",
+                    Object::Iri("foundation:Person".to_string()),
+                ),
+            ],
+        );
 
         let tasks = collect_scheduled_tasks(&conn).unwrap();
         assert!(tasks.is_empty());
@@ -436,14 +598,25 @@ mod tests {
     #[test]
     fn test_collect_scheduled_tasks_ignores_non_tasks() {
         let mut conn = setup_test_db();
-        insert(&mut conn, &[
-            Triple::new("foundation:Other_sched4", "rdf:type", Object::Iri("foundation:SoftwareFeature".to_string())),
-            Triple::new("foundation:Other_sched4", "foundation:scheduledAt", Object::Literal {
-                value: "2099-01-01T10:00:00Z".to_string(),
-                datatype: Some("xsd:dateTime".to_string()),
-                language: None,
-            }),
-        ]);
+        insert(
+            &mut conn,
+            &[
+                Triple::new(
+                    "foundation:Other_sched4",
+                    "rdf:type",
+                    Object::Iri("foundation:SoftwareFeature".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Other_sched4",
+                    "foundation:scheduledAt",
+                    Object::Literal {
+                        value: "2099-01-01T10:00:00Z".to_string(),
+                        datatype: Some("xsd:dateTime".to_string()),
+                        language: None,
+                    },
+                ),
+            ],
+        );
 
         let tasks = collect_scheduled_tasks(&conn).unwrap();
         assert!(tasks.is_empty());
@@ -452,16 +625,35 @@ mod tests {
     #[test]
     fn test_collect_interrupted_tasks_returns_tasks_with_started_at_without_result() {
         let mut conn = setup_test_db();
-        insert(&mut conn, &[
-            Triple::new("foundation:Task_interrupted", "rdf:type", Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:Task_interrupted", "foundation:assignee", Object::Iri("foundation:Agent_interrupted".to_string())),
-            Triple::new("foundation:Task_interrupted", "foundation:startedAt", Object::Literal {
-                value: "2025-01-01T10:00:00Z".to_string(),
-                datatype: Some("xsd:dateTime".to_string()),
-                language: None,
-            }),
-            Triple::new("foundation:Agent_interrupted", "rdf:type", Object::Iri("foundation:SoftwareAgent".to_string())),
-        ]);
+        insert(
+            &mut conn,
+            &[
+                Triple::new(
+                    "foundation:Task_interrupted",
+                    "rdf:type",
+                    Object::Iri("foundation:Task".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_interrupted",
+                    "foundation:assignee",
+                    Object::Iri("foundation:Agent_interrupted".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_interrupted",
+                    "foundation:startedAt",
+                    Object::Literal {
+                        value: "2025-01-01T10:00:00Z".to_string(),
+                        datatype: Some("xsd:dateTime".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(
+                    "foundation:Agent_interrupted",
+                    "rdf:type",
+                    Object::Iri("foundation:SoftwareAgent".to_string()),
+                ),
+            ],
+        );
 
         let interrupted = collect_interrupted_tasks(&conn).unwrap();
         assert_eq!(interrupted.len(), 1);
@@ -471,10 +663,14 @@ mod tests {
     #[test]
     fn test_collect_interrupted_tasks_ignores_tasks_without_started_at() {
         let mut conn = setup_test_db();
-        insert(&mut conn, &agent_task_triples(
-            "foundation:Task_pending", "foundation:Agent_pending",
-            Some("2099-01-01T10:00:00Z"),
-        ));
+        insert(
+            &mut conn,
+            &agent_task_triples(
+                "foundation:Task_pending",
+                "foundation:Agent_pending",
+                Some("2099-01-01T10:00:00Z"),
+            ),
+        );
 
         let interrupted = collect_interrupted_tasks(&conn).unwrap();
         assert!(interrupted.is_empty());
@@ -483,19 +679,44 @@ mod tests {
     #[test]
     fn test_collect_interrupted_tasks_ignores_completed_tasks() {
         let mut conn = setup_test_db();
-        insert(&mut conn, &[
-            Triple::new("foundation:Task_done", "rdf:type", Object::Iri("foundation:Task".to_string())),
-            Triple::new("foundation:Task_done", "foundation:assignee", Object::Iri("foundation:Agent_done".to_string())),
-            Triple::new("foundation:Task_done", "foundation:startedAt", Object::Literal {
-                value: "2025-01-01T10:00:00Z".to_string(),
-                datatype: Some("xsd:dateTime".to_string()),
-                language: None,
-            }),
-            Triple::new("foundation:Task_done", "foundation:result", Object::Literal {
-                value: "result".to_string(), datatype: Some("xsd:string".to_string()), language: None,
-            }),
-            Triple::new("foundation:Agent_done", "rdf:type", Object::Iri("foundation:SoftwareAgent".to_string())),
-        ]);
+        insert(
+            &mut conn,
+            &[
+                Triple::new(
+                    "foundation:Task_done",
+                    "rdf:type",
+                    Object::Iri("foundation:Task".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_done",
+                    "foundation:assignee",
+                    Object::Iri("foundation:Agent_done".to_string()),
+                ),
+                Triple::new(
+                    "foundation:Task_done",
+                    "foundation:startedAt",
+                    Object::Literal {
+                        value: "2025-01-01T10:00:00Z".to_string(),
+                        datatype: Some("xsd:dateTime".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(
+                    "foundation:Task_done",
+                    "foundation:result",
+                    Object::Literal {
+                        value: "result".to_string(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(
+                    "foundation:Agent_done",
+                    "rdf:type",
+                    Object::Iri("foundation:SoftwareAgent".to_string()),
+                ),
+            ],
+        );
 
         let interrupted = collect_interrupted_tasks(&conn).unwrap();
         assert!(interrupted.is_empty());

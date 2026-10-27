@@ -12,7 +12,7 @@
 // Run: cargo run --release --bin migrate_file_paths
 //   FOUNDATION_DB=path/to/FOUNDATION.db cargo run ...   # to override DB path
 
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,10 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     println!("Using DB: {}", path.display());
 
-    let foundation_dir = path
-        .parent()
-        .expect("DB has no parent dir")
-        .to_path_buf();
+    let foundation_dir = path.parent().expect("DB has no parent dir").to_path_buf();
     println!("foundation_dir: {}", foundation_dir.display());
 
     let conn = Connection::open(&path)?;
@@ -162,21 +159,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut converted_iri = 0usize;
     let mut skipped_iri = 0usize;
     for (rowid, subject, icon_iri) in iri_icon_rows {
-        let key: Option<String> = conn.query_row(
-            "SELECT object_value FROM triples \
+        let key: Option<String> = conn
+            .query_row(
+                "SELECT object_value FROM triples \
              WHERE subject = ?1 AND predicate = 'foundation:iconKey' \
              AND retracted = 0 AND object_value IS NOT NULL LIMIT 1",
-            rusqlite::params![&icon_iri],
-            |r| r.get(0),
-        ).ok();
+                rusqlite::params![&icon_iri],
+                |r| r.get(0),
+            )
+            .ok();
 
         let Some(stored) = key else {
-            println!("  [iri-icon] no iconKey for {} on {}, skipping", icon_iri, subject);
+            println!(
+                "  [iri-icon] no iconKey for {} on {}, skipping",
+                icon_iri, subject
+            );
             skipped_iri += 1;
             continue;
         };
 
-        if stored.starts_with("http://") || stored.starts_with("https://") || stored.starts_with("data:") {
+        if stored.starts_with("http://")
+            || stored.starts_with("https://")
+            || stored.starts_with("data:")
+        {
             conn.execute(
                 "UPDATE triples SET object_type = 'literal', object_value = ?1, object = NULL WHERE rowid = ?2",
                 rusqlite::params![stored, rowid],
@@ -192,7 +197,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rel.to_string_lossy().replace('\\', "/")
         } else {
             let normalized = stripped.replace('\\', "/");
-            let anchors = ["/Foundation/attachments/", "/Documents/Foundation/attachments/"];
+            let anchors = [
+                "/Foundation/attachments/",
+                "/Documents/Foundation/attachments/",
+            ];
             let mut found_rel: Option<String> = None;
             for anchor in &anchors {
                 if let Some(idx) = normalized.rfind(anchor) {
@@ -204,7 +212,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match found_rel {
                 Some(rel) => rel,
                 None => {
-                    println!("  [iri-icon-external] {} on {}: {:?}", icon_iri, subject, stored);
+                    println!(
+                        "  [iri-icon-external] {} on {}: {:?}",
+                        icon_iri, subject, stored
+                    );
                     skipped_iri += 1;
                     continue;
                 }
@@ -247,7 +258,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rel.to_string_lossy().replace('\\', "/")
         } else {
             let normalized = stripped.replace('\\', "/");
-            let anchors = ["/Foundation/attachments/", "/Documents/Foundation/attachments/"];
+            let anchors = [
+                "/Foundation/attachments/",
+                "/Documents/Foundation/attachments/",
+            ];
             let mut found_rel: Option<String> = None;
             for anchor in &anchors {
                 if let Some(idx) = normalized.rfind(anchor) {
@@ -305,7 +319,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Subdir under attachments/ is unexpected; preserve it untouched and
         // log so the user can investigate. Filename-only is the new format.
         if rest.contains('/') {
-            println!("  [subdir] keeping {} on {} ({}): {}", predicate, subject, rowid, stored);
+            println!(
+                "  [subdir] keeping {} on {} ({}): {}",
+                predicate, subject, rowid, stored
+            );
             collapsed_skipped += 1;
             continue;
         }

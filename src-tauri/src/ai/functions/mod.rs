@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 mod batch;
 mod class;
@@ -8,8 +8,8 @@ mod class_graph;
 pub mod data_sync;
 mod definitions;
 mod file;
-mod property;
 pub(crate) mod individual;
+mod property;
 
 pub use definitions::{get_available_tools, get_tool_definitions};
 
@@ -80,7 +80,6 @@ impl ToolTemplate {
             input_schema,
         }
     }
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,14 +97,17 @@ pub struct ToolResult {
     pub concept: Option<Value>,
 }
 
-pub fn find_automations_for_types(conn: &Connection, type_iris: &[String]) -> Vec<serde_json::Value> {
+pub fn find_automations_for_types(
+    conn: &Connection,
+    type_iris: &[String],
+) -> Vec<serde_json::Value> {
     let mut results = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for type_iri in type_iris {
         let mut stmt = match conn.prepare(
             "SELECT DISTINCT t.subject FROM triples_current t
              WHERE t.predicate = 'foundation:inputClass'
-               AND t.object = ?1"
+               AND t.object = ?1",
         ) {
             Ok(s) => s,
             Err(_) => continue,
@@ -115,11 +117,15 @@ pub fn find_automations_for_types(conn: &Connection, type_iris: &[String]) -> Ve
             .map(|rows| rows.filter_map(|r| r.ok()).collect())
             .unwrap_or_default();
         for iri in iris {
-            if seen.contains(&iri) { continue; }
+            if seen.contains(&iri) {
+                continue;
+            }
             let rdf_type = crate::owl::get_iri_property(conn, &iri, "rdf:type")
                 .ok()
                 .flatten();
-            if rdf_type.as_deref() != Some("foundation:Automation") { continue; }
+            if rdf_type.as_deref() != Some("foundation:Automation") {
+                continue;
+            }
             let label = crate::owl::get_literal_property(conn, &iri, "rdfs:label")
                 .ok()
                 .flatten()
@@ -131,13 +137,16 @@ pub fn find_automations_for_types(conn: &Connection, type_iris: &[String]) -> Ve
     results
 }
 
-pub fn find_related_processes_for_class(conn: &Connection, class_iri: &str) -> Vec<serde_json::Value> {
+pub fn find_related_processes_for_class(
+    conn: &Connection,
+    class_iri: &str,
+) -> Vec<serde_json::Value> {
     let mut results = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut stmt = match conn.prepare(
         "SELECT DISTINCT t.subject FROM triples_current t
          WHERE t.predicate = 'foundation:hasRelatedClass'
-           AND t.object = ?1"
+           AND t.object = ?1",
     ) {
         Ok(s) => s,
         Err(_) => return results,
@@ -147,7 +156,9 @@ pub fn find_related_processes_for_class(conn: &Connection, class_iri: &str) -> V
         .map(|rows| rows.filter_map(|r| r.ok()).collect())
         .unwrap_or_default();
     for iri in iris {
-        if seen.contains(&iri) { continue; }
+        if seen.contains(&iri) {
+            continue;
+        }
         let rdf_type = crate::owl::get_iri_property(conn, &iri, "rdf:type")
             .ok()
             .flatten();
@@ -155,7 +166,9 @@ pub fn find_related_processes_for_class(conn: &Connection, class_iri: &str) -> V
             rdf_type.as_deref(),
             Some("foundation:Automation") | Some("foundation:Process")
         );
-        if !is_process_or_automation { continue; }
+        if !is_process_or_automation {
+            continue;
+        }
         let label = crate::owl::get_literal_property(conn, &iri, "rdfs:label")
             .ok()
             .flatten()
@@ -208,7 +221,10 @@ pub async fn execute_async_tool(call: &ToolCall, app: Option<&tauri::AppHandle>)
         _ => ToolResult {
             success: false,
             result: None,
-            error: Some(format!("execute_async_tool called with unknown tool: {}", call.name)),
+            error: Some(format!(
+                "execute_async_tool called with unknown tool: {}",
+                call.name
+            )),
             concept: None,
         },
     }
@@ -229,9 +245,11 @@ pub fn is_read_only_tool(name: &str) -> bool {
             | "read_pdf_page"
             | "head_text_file"
             | "read_text_lines"
+            | "unzip_file"
             | "read_property_page"
             | "get_automation"
             | "datasync_status"
+            | "datasync_list_runs"
             | "datasync_list_raw"
             | "datasync_inspect_raw"
     )
@@ -244,10 +262,7 @@ pub fn is_read_only_tool(name: &str) -> bool {
 /// Note: `describe_individual` may incidentally INSERT into `entity_access_count`
 /// via `track_access`, but that's a benign single-row write that doesn't acquire
 /// long locks under WAL — it's fine to issue from a read-pool connection.
-pub fn execute_read_only_tool(
-    conn: &Connection,
-    call: &ToolCall,
-) -> ToolResult {
+pub fn execute_read_only_tool(conn: &Connection, call: &ToolCall) -> ToolResult {
     let is_array_mode = get_available_tools()
         .iter()
         .any(|t| t.name == call.name && t.array_mode);
@@ -267,9 +282,11 @@ pub fn execute_read_only_tool(
         "read_pdf_page" => file::read_pdf_page(conn, args),
         "head_text_file" => file::head_text_file(conn, args),
         "read_text_lines" => file::read_text_lines(conn, args),
+        "unzip_file" => file::unzip_file(conn, args),
         "read_property_page" => individual::read_property_page(conn, args),
         "get_automation" => get_automation_tool(conn, args),
         "datasync_status" => data_sync::datasync_status(conn, args),
+        "datasync_list_runs" => data_sync::datasync_list_runs(conn, args),
         "datasync_list_raw" => data_sync::datasync_list_raw(conn, args),
         "datasync_inspect_raw" => data_sync::datasync_inspect_raw(conn, args),
         _ => ToolResult {
@@ -322,14 +339,18 @@ pub fn execute_tool(
         "read_pdf_page" => file::read_pdf_page(conn, args),
         "head_text_file" => file::head_text_file(conn, args),
         "read_text_lines" => file::read_text_lines(conn, args),
+        "unzip_file" => file::unzip_file(conn, args),
         "read_property_page" => individual::read_property_page(conn, args),
         "attach_file_to_individual" => file::attach_file_to_individual(conn, args),
         "get_automation" => get_automation_tool(conn, args),
         "run_automation" => run_automation_tool(conn, args, app),
         "list_blackboard_widgets" => list_blackboard_widgets_tool(conn, args, conversation_id),
-        "add_widget_to_blackboard" => add_widget_to_blackboard_tool(conn, args, app, conversation_id),
+        "add_widget_to_blackboard" => {
+            add_widget_to_blackboard_tool(conn, args, app, conversation_id)
+        }
         "remove_widget_from_blackboard" => remove_widget_from_blackboard_tool(conn, args, app),
         "datasync_status" => data_sync::datasync_status(conn, args),
+        "datasync_list_runs" => data_sync::datasync_list_runs(conn, args),
         "datasync_list_raw" => data_sync::datasync_list_raw(conn, args),
         "datasync_inspect_raw" => data_sync::datasync_inspect_raw(conn, args),
         _ => ToolResult {
@@ -344,22 +365,26 @@ pub fn execute_tool(
 fn get_automation_tool(conn: &rusqlite::Connection, args: &Value) -> ToolResult {
     let automation_iri = match args["automation_iri"].as_str() {
         Some(iri) if !iri.is_empty() => iri,
-        _ => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("automation_iri is required".to_string()),
-            concept: None,
-        },
+        _ => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("automation_iri is required".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let graph = match crate::commands::automation::build_automation_graph(conn, automation_iri) {
         Ok(g) => g,
-        Err(e) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(e),
-            concept: None,
-        },
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(e),
+                concept: None,
+            }
+        }
     };
 
     let mut lines = vec![
@@ -370,7 +395,10 @@ fn get_automation_tool(conn: &rusqlite::Connection, args: &Value) -> ToolResult 
     ];
 
     for node in &graph.nodes {
-        lines.push(format!("- [{}] {} ({})", node.node_type, node.label, node.id));
+        lines.push(format!(
+            "- [{}] {} ({})",
+            node.node_type, node.label, node.id
+        ));
         if let Some(ref agent) = node.assigned_agent {
             lines.push(format!("  assigned_agent: {}", agent));
         }
@@ -401,7 +429,9 @@ fn get_automation_tool(conn: &rusqlite::Connection, args: &Value) -> ToolResult 
     lines.push("## Sequence Flows".to_string());
 
     for edge in &graph.edges {
-        let condition = edge.condition_expression.as_deref()
+        let condition = edge
+            .condition_expression
+            .as_deref()
             .map(|c| format!(" [if: {}]", c))
             .unwrap_or_default();
         lines.push(format!("- {} → {}{}", edge.source, edge.target, condition));
@@ -415,30 +445,41 @@ fn get_automation_tool(conn: &rusqlite::Connection, args: &Value) -> ToolResult 
     }
 }
 
-fn run_automation_tool(conn: &Connection, args: &Value, app: Option<&tauri::AppHandle>) -> ToolResult {
-    use crate::owl::{find_entities_with_property, get_iri_property, get_literal_property, Individual};
+fn run_automation_tool(
+    conn: &Connection,
+    args: &Value,
+    app: Option<&tauri::AppHandle>,
+) -> ToolResult {
+    use crate::owl::{
+        find_entities_with_property, get_iri_property, get_literal_property, Individual,
+    };
 
     let app = match app {
         Some(a) => a.clone(),
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("run_automation requires a running Foundation app".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("run_automation requires a running Foundation app".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let automation_iri = match args["automation_iri"].as_str() {
         Some(iri) if !iri.is_empty() => iri.to_string(),
-        _ => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("automation_iri is required".to_string()),
-            concept: None,
-        },
+        _ => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("automation_iri is required".to_string()),
+                concept: None,
+            }
+        }
     };
 
-    let input_iri = args["input_iri"].as_str()
+    let input_iri = args["input_iri"]
+        .as_str()
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
@@ -446,10 +487,7 @@ fn run_automation_tool(conn: &Connection, args: &Value, app: Option<&tauri::AppH
 
     match Individual::get(conn, &automation_iri) {
         Ok(Some(ind)) => {
-            let types: Vec<String> = ind.properties.iter()
-                .filter(|(k, _)| k == "rdf:type")
-                .filter_map(|(_, v)| if let crate::owl::Object::Iri(iri) = v { Some(iri.clone()) } else { None })
-                .collect();
+            let types: Vec<String> = ind.types.iter().map(|t| t.iri.clone()).collect();
 
             if !types.iter().any(|t| t == "foundation:Automation") {
                 let type_list = if types.is_empty() {
@@ -468,28 +506,34 @@ fn run_automation_tool(conn: &Connection, args: &Value, app: Option<&tauri::AppH
                 };
             }
         }
-        Ok(None) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(format!("'{}' not found in the ontology.", automation_iri)),
-            concept: None,
-        },
-        Err(e) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(format!("Failed to look up '{}': {}", automation_iri, e)),
-            concept: None,
-        },
+        Ok(None) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!("'{}' not found in the ontology.", automation_iri)),
+                concept: None,
+            }
+        }
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!("Failed to look up '{}': {}", automation_iri, e)),
+                concept: None,
+            }
+        }
     }
 
     let input_class_iri: Option<String> = (|| -> Option<String> {
-        let node_iris = find_entities_with_property(conn, "foundation:partOfProcess", &automation_iri)
-            .ok()?;
+        let node_iris =
+            find_entities_with_property(conn, "foundation:partOfProcess", &automation_iri).ok()?;
 
         for node_iri in &node_iris {
             let node_type = get_iri_property(conn, node_iri, "rdf:type").ok()??;
             if node_type.ends_with("automation_StartEvent") {
-                if let Some(class_iri) = get_iri_property(conn, node_iri, "foundation:inputClass").ok()? {
+                if let Some(class_iri) =
+                    get_iri_property(conn, node_iri, "foundation:inputClass").ok()?
+                {
                     return Some(class_iri);
                 }
             }
@@ -504,48 +548,57 @@ fn run_automation_tool(conn: &Connection, args: &Value, app: Option<&tauri::AppH
 
         let provided_iri = match &input_iri {
             Some(iri) => iri.clone(),
-            None => return ToolResult {
-                success: false,
-                result: None,
-                error: Some(format!(
+            None => {
+                return ToolResult {
+                    success: false,
+                    result: None,
+                    error: Some(format!(
                     "This automation requires an input of type '{}' but no input_iri was provided.",
                     class_label
                 )),
-                concept: None,
-            },
+                    concept: None,
+                }
+            }
         };
 
         let individual = match Individual::get(conn, &provided_iri) {
             Ok(Some(ind)) => ind,
-            Ok(None) => return ToolResult {
-                success: false,
-                result: None,
-                error: Some(format!("Input individual '{}' not found in the ontology.", provided_iri)),
-                concept: None,
-            },
-            Err(e) => return ToolResult {
-                success: false,
-                result: None,
-                error: Some(format!("Failed to look up input individual '{}': {}", provided_iri, e)),
-                concept: None,
-            },
+            Ok(None) => {
+                return ToolResult {
+                    success: false,
+                    result: None,
+                    error: Some(format!(
+                        "Input individual '{}' not found in the ontology.",
+                        provided_iri
+                    )),
+                    concept: None,
+                }
+            }
+            Err(e) => {
+                return ToolResult {
+                    success: false,
+                    result: None,
+                    error: Some(format!(
+                        "Failed to look up input individual '{}': {}",
+                        provided_iri, e
+                    )),
+                    concept: None,
+                }
+            }
         };
 
-        let actual_type = individual.properties.iter()
-            .find(|(k, _)| k == "rdf:type")
-            .map(|(_, v)| match v {
-                crate::owl::Object::Iri(iri) => iri.clone(),
-                _ => String::new(),
-            })
-            .unwrap_or_default();
+        let matches_expected_type = individual.types.iter().any(|t| t.iri == *class_iri);
 
-        if actual_type != *class_iri {
-            let actual_label = if actual_type.is_empty() {
+        if !matches_expected_type {
+            let actual_label = if individual.types.is_empty() {
                 "unknown".to_string()
             } else {
-                get_literal_property(conn, &actual_type, "rdfs:label")
-                    .unwrap_or_default()
-                    .unwrap_or_else(|| actual_type.clone())
+                individual
+                    .types
+                    .iter()
+                    .map(|t| t.label.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             };
             return ToolResult {
                 success: false,
@@ -560,7 +613,14 @@ fn run_automation_tool(conn: &Connection, args: &Value, app: Option<&tauri::AppH
     }
 
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = crate::process_automation::executor::run_process(&app, &automation_iri, input_iri, dry_run).await {
+        if let Err(e) = crate::process_automation::executor::run_process(
+            &app,
+            &automation_iri,
+            input_iri,
+            dry_run,
+        )
+        .await
+        {
             crate::commands::log_backend(
                 "error",
                 &format!("[run_automation] Error running {}: {}", automation_iri, e),
@@ -584,7 +644,9 @@ fn resolve_blackboard_iri_for_tool(
     if let Some(b) = args["blackboard_iri"].as_str().filter(|s| !s.is_empty()) {
         return Ok(b.to_string());
     }
-    let conv = args["conversation_iri"].as_str().filter(|s| !s.is_empty())
+    let conv = args["conversation_iri"]
+        .as_str()
+        .filter(|s| !s.is_empty())
         .map(String::from)
         .or_else(|| conversation_id.map(String::from));
     crate::commands::widget::resolve_blackboard_iri(conn, conv.as_deref())
@@ -597,34 +659,52 @@ fn list_blackboard_widgets_tool(
 ) -> ToolResult {
     let bb_iri = match resolve_blackboard_iri_for_tool(conn, args, conversation_id) {
         Ok(b) => b,
-        Err(e) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(e),
-            concept: None,
-        },
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(e),
+                concept: None,
+            }
+        }
     };
 
-    let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(500).max(1).min(2000);
-    let offset = args.get("offset").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(500)
+        .max(1)
+        .min(2000);
+    let offset = args
+        .get("offset")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0)
+        .max(0);
 
-    let widgets = match crate::commands::widget::owl_get_widgets_for_blackboard_bounded(conn, &bb_iri, limit, offset) {
+    let widgets = match crate::commands::widget::owl_get_widgets_for_blackboard_bounded(
+        conn, &bb_iri, limit, offset,
+    ) {
         Ok(w) => w,
-        Err(e) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(e),
-            concept: None,
-        },
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(e),
+                concept: None,
+            }
+        }
     };
 
-    let list: Vec<Value> = widgets.iter().map(|w| {
-        serde_json::json!({
-            "widget_iri": w.id,
-            "widget_type": w.widget_type,
-            "entity_iri": w.entity_id,
+    let list: Vec<Value> = widgets
+        .iter()
+        .map(|w| {
+            serde_json::json!({
+                "widget_iri": w.id,
+                "widget_type": w.widget_type,
+                "entity_iri": w.entity_id,
+            })
         })
-    }).collect();
+        .collect();
 
     ToolResult {
         success: true,
@@ -640,27 +720,34 @@ fn add_widget_to_blackboard_tool(
     app: Option<&tauri::AppHandle>,
     conversation_id: Option<&str>,
 ) -> ToolResult {
-    use crate::commands::widget::{Widget, Position, WindowState, owl_insert_widget, owl_get_widgets_for_blackboard, resolve_widget_type, blackboard__list_widget_types};
+    use crate::commands::widget::{
+        blackboard__list_widget_types, owl_get_widgets_for_blackboard, owl_insert_widget,
+        resolve_widget_type, Position, Widget, WindowState,
+    };
     use tauri::Emitter;
 
     let entity_iri = match args["entity_iri"].as_str().filter(|s| !s.is_empty()) {
         Some(e) => e.to_string(),
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("entity_iri is required".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("entity_iri is required".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let bb_iri = match resolve_blackboard_iri_for_tool(conn, args, conversation_id) {
         Ok(b) => b,
-        Err(e) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(e),
-            concept: None,
-        },
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(e),
+                concept: None,
+            }
+        }
     };
 
     let requested_type = args["widget_type"].as_str().unwrap_or("").to_string();
@@ -671,18 +758,22 @@ fn add_widget_to_blackboard_tool(
             if let Some(w) = existing.into_iter().find(|w| w.entity_id == entity_iri) {
                 return ToolResult {
                     success: true,
-                    result: Some(serde_json::json!({ "widget_iri": w.id, "widget_type": w.widget_type, "entity_iri": w.entity_id, "reused": true })),
+                    result: Some(
+                        serde_json::json!({ "widget_iri": w.id, "widget_type": w.widget_type, "entity_iri": w.entity_id, "reused": true }),
+                    ),
                     error: None,
                     concept: None,
                 };
             }
         }
-        Err(e) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(e),
-            concept: None,
-        },
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(e),
+                concept: None,
+            }
+        }
     }
 
     let widget_type = resolve_widget_type(conn, &entity_iri, &requested_type);
@@ -690,12 +781,14 @@ fn add_widget_to_blackboard_tool(
     let valid_types = blackboard__list_widget_types(conn);
     let default_size = match valid_types.into_iter().find(|t| t.id == widget_type) {
         Some(t) => t.default_size,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(format!("Invalid widget type: {}", widget_type)),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!("Invalid widget type: {}", widget_type)),
+                concept: None,
+            }
+        }
     };
 
     let sanitized_entity = entity_iri.replace([':', '/', '#', ' '], "_");
@@ -725,7 +818,9 @@ fn add_widget_to_blackboard_tool(
 
     ToolResult {
         success: true,
-        result: Some(serde_json::json!({ "widget_iri": widget.id, "widget_type": widget.widget_type, "entity_iri": widget.entity_id, "reused": false })),
+        result: Some(
+            serde_json::json!({ "widget_iri": widget.id, "widget_type": widget.widget_type, "entity_iri": widget.entity_id, "reused": false }),
+        ),
         error: None,
         concept: None,
     }
@@ -741,12 +836,14 @@ fn remove_widget_from_blackboard_tool(
 
     let widget_iri = match args["widget_iri"].as_str().filter(|s| !s.is_empty()) {
         Some(w) => w.to_string(),
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("widget_iri is required".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("widget_iri is required".to_string()),
+                concept: None,
+            }
+        }
     };
 
     if let Err(e) = owl_delete_widget(conn, &widget_iri) {
@@ -806,13 +903,19 @@ mod tests {
             }),
         };
         let result = execute_tool(&mut conn, &call, None, None);
-        assert!(result.success, "define_class with connections should succeed: {:?}", result.error);
+        assert!(
+            result.success,
+            "define_class with connections should succeed: {:?}",
+            result.error
+        );
 
         let works_at = Property::get(&conn, "foundation:worksAt").unwrap().unwrap();
         assert_eq!(works_at.property_type, PropertyType::ObjectProperty);
         assert!(works_at.domains.iter().any(|d| d == "foundation:Employee"));
 
-        let reports_to = Property::get(&conn, "foundation:reportsTo").unwrap().unwrap();
+        let reports_to = Property::get(&conn, "foundation:reportsTo")
+            .unwrap()
+            .unwrap();
         assert_eq!(reports_to.property_type, PropertyType::ObjectProperty);
         assert!(reports_to.ranges.iter().any(|r| r == "foundation:Employee"));
     }
@@ -848,7 +951,11 @@ mod tests {
             }),
         };
         let result = execute_tool(&mut conn, &call, None, None);
-        assert!(result.success, "define_class with calculated fields should succeed: {:?}", result.error);
+        assert!(
+            result.success,
+            "define_class with calculated fields should succeed: {:?}",
+            result.error
+        );
 
         let width = Property::get(&conn, "foundation:width").unwrap().unwrap();
         assert_eq!(width.property_type, PropertyType::DatatypeProperty);
@@ -857,9 +964,15 @@ mod tests {
         assert_eq!(area.property_type, PropertyType::DatatypeProperty);
 
         let stored = crate::eavto::query::get_by_entity_predicate(
-            &conn, "foundation:area", "foundation:formula"
-        ).unwrap();
-        assert!(!stored.triples.is_empty(), "Formula triple should be stored");
+            &conn,
+            "foundation:area",
+            "foundation:formula",
+        )
+        .unwrap();
+        assert!(
+            !stored.triples.is_empty(),
+            "Formula triple should be stored"
+        );
         assert_eq!(
             stored.triples[0].object.as_literal().unwrap(),
             "{{foundation:width}} * {{foundation:height}}"
@@ -920,7 +1033,10 @@ mod tests {
         let result = execute_tool(&mut conn, &call, None, None);
         assert!(!result.success, "Circular formula should be rejected");
         let err = result.error.unwrap();
-        assert!(err.contains("Circular"), "Expected circular dependency error, got: {err}");
+        assert!(
+            err.contains("Circular"),
+            "Expected circular dependency error, got: {err}"
+        );
     }
 
     // ---- define_class upsert: adding properties to existing class ----
@@ -974,15 +1090,26 @@ mod tests {
             }),
         };
         let result = execute_tool(&mut conn, &update_call, None, None);
-        assert!(result.success, "updating concept with new property should succeed: {:?}", result.error);
+        assert!(
+            result.success,
+            "updating concept with new property should succeed: {:?}",
+            result.error
+        );
 
-        let prop = Property::get(&conn, "foundation:circumference").unwrap().unwrap();
+        let prop = Property::get(&conn, "foundation:circumference")
+            .unwrap()
+            .unwrap();
         assert_eq!(prop.property_type, PropertyType::DatatypeProperty);
 
         let stored = crate::eavto::query::get_by_entity_predicate(
-            &conn, "foundation:circumference", "foundation:formula"
-        ).unwrap();
-        assert!(!stored.triples.is_empty(), "Formula triple should be stored");
+            &conn,
+            "foundation:circumference",
+            "foundation:formula",
+        )
+        .unwrap();
+        assert!(
+            !stored.triples.is_empty(),
+            "Formula triple should be stored"
+        );
     }
-
 }

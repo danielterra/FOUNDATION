@@ -19,6 +19,26 @@ fn str_literal(value: impl Into<String>) -> Object {
     }
 }
 
+fn oauth2_client_secret_for_save(
+    conn: &crate::owl::Connection,
+    credential: &serde_json::Value,
+    existing_credential_iri: Option<&str>,
+) -> Result<String, String> {
+    if let Some(secret) = credential
+        .get("client_secret")
+        .and_then(|value| value.as_str())
+        .filter(|secret| !secret.is_empty())
+    {
+        return Ok(secret.to_string());
+    }
+
+    let existing_credential_iri = existing_credential_iri
+        .ok_or_else(|| "Missing 'client_secret' field for new OAuth2 credential".to_string())?;
+    crate::owl::get_literal_property(conn, existing_credential_iri, "foundation:clientSecret")
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Existing OAuth2 credential has no client secret".to_string())
+}
+
 /// Save or replace authentication credentials for an external service connector.
 #[tauri::command]
 #[allow(non_snake_case)]
@@ -31,107 +51,189 @@ pub async fn connector__save_credential(
     let _ = app;
     let timestamp = chrono::Utc::now().timestamp_millis();
 
-    executor.write(move |conn| {
-        // Retract previous credential link if one exists
-        if let Ok(Some(old_cred_iri)) = crate::owl::get_iri_property(conn, &connector_iri, "foundation:hasCredential") {
-            Individual::retract(conn, &old_cred_iri, "connector")
-                .map_err(|e| format!("Failed to retract old credential: {}", e))?;
-        }
+    executor
+        .write(move |conn| {
+            let auth_type = credential
+                .get("auth_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("api_key");
+            let old_cred_iri =
+                crate::owl::get_iri_property(conn, &connector_iri, "foundation:hasCredential")
+                    .map_err(|e| e.to_string())?;
+            let oauth2_client_secret = if auth_type == "oauth2" {
+                Some(oauth2_client_secret_for_save(
+                    conn,
+                    &credential,
+                    old_cred_iri.as_deref(),
+                )?)
+            } else {
+                None
+            };
 
-        let auth_type = credential.get("auth_type").and_then(|v| v.as_str()).unwrap_or("api_key");
+            if let Some(old_cred_iri) = old_cred_iri {
+                Individual::retract(conn, &old_cred_iri, "connector")
+                    .map_err(|e| format!("Failed to retract old credential: {}", e))?;
+            }
 
-        let (class_iri, cred_iri) = match auth_type {
-            "api_key" => {
-                let iri = format!("foundation:APIKey_{}", timestamp);
-                ("foundation:APIKey", iri)
-            }
-            "token" => {
-                let iri = format!("foundation:TokenCredential_{}", timestamp);
-                ("foundation:TokenCredential", iri)
-            }
-            "username_password" => {
-                let iri = format!("foundation:UsernamePasswordCredential_{}", timestamp);
-                ("foundation:UsernamePasswordCredential", iri)
-            }
-            "oauth2" => {
-                let iri = format!("foundation:OAuth2Credential_{}", timestamp);
-                ("foundation:OAuth2Credential", iri)
-            }
-            _ => return Err(format!("Unknown auth_type: {}", auth_type)),
-        };
+            let (class_iri, cred_iri) = match auth_type {
+                "api_key" => {
+                    let iri = format!("foundation:APIKey_{}", timestamp);
+                    ("foundation:APIKey", iri)
+                }
+                "token" => {
+                    let iri = format!("foundation:TokenCredential_{}", timestamp);
+                    ("foundation:TokenCredential", iri)
+                }
+                "username_password" => {
+                    let iri = format!("foundation:UsernamePasswordCredential_{}", timestamp);
+                    ("foundation:UsernamePasswordCredential", iri)
+                }
+                "oauth2" => {
+                    let iri = format!("foundation:OAuth2Credential_{}", timestamp);
+                    ("foundation:OAuth2Credential", iri)
+                }
+                _ => return Err(format!("Unknown auth_type: {}", auth_type)),
+            };
 
-        let ind = Individual::new(&cred_iri);
-        ind.assert(conn, class_iri, &cred_iri, "vpn_key", "connector")
-            .map_err(|e| format!("Failed to create credential: {}", e))?;
+            let ind = Individual::new(&cred_iri);
+            ind.assert(conn, class_iri, &cred_iri, "vpn_key", "connector")
+                .map_err(|e| format!("Failed to create credential: {}", e))?;
 
-        match auth_type {
-            "api_key" | "token" => {
-                let value = credential.get("value").and_then(|v| v.as_str())
-                    .ok_or("Missing 'value' field")?;
-                ind.add_property(conn, "foundation:credentialValue",
-                    vec![str_literal(value)], "connector")
+            match auth_type {
+                "api_key" | "token" => {
+                    let value = credential
+                        .get("value")
+                        .and_then(|v| v.as_str())
+                        .ok_or("Missing 'value' field")?;
+                    ind.add_property(
+                        conn,
+                        "foundation:credentialValue",
+                        vec![str_literal(value)],
+                        "connector",
+                    )
                     .map_err(|e| format!("Failed to set credentialValue: {}", e))?;
-            }
-            "username_password" => {
-                let username = credential.get("username").and_then(|v| v.as_str())
-                    .ok_or("Missing 'username' field")?;
-                let password = credential.get("password").and_then(|v| v.as_str())
-                    .ok_or("Missing 'password' field")?;
-                ind.add_property(conn, "foundation:credentialUsername",
-                    vec![str_literal(username)], "connector")
+                }
+                "username_password" => {
+                    let username = credential
+                        .get("username")
+                        .and_then(|v| v.as_str())
+                        .ok_or("Missing 'username' field")?;
+                    let password = credential
+                        .get("password")
+                        .and_then(|v| v.as_str())
+                        .ok_or("Missing 'password' field")?;
+                    ind.add_property(
+                        conn,
+                        "foundation:credentialUsername",
+                        vec![str_literal(username)],
+                        "connector",
+                    )
                     .map_err(|e| format!("Failed to set username: {}", e))?;
-                ind.add_property(conn, "foundation:credentialValue",
-                    vec![str_literal(password)], "connector")
+                    ind.add_property(
+                        conn,
+                        "foundation:credentialValue",
+                        vec![str_literal(password)],
+                        "connector",
+                    )
                     .map_err(|e| format!("Failed to set password: {}", e))?;
-            }
-            "oauth2" => {
-                let client_id = credential.get("client_id").and_then(|v| v.as_str())
-                    .ok_or("Missing 'client_id' field")?;
-                let client_secret = credential.get("client_secret").and_then(|v| v.as_str())
-                    .ok_or("Missing 'client_secret' field")?;
-                let token_url = credential.get("token_url").and_then(|v| v.as_str())
-                    .ok_or("Missing 'token_url' field")?;
-                let scopes = credential.get("scopes").and_then(|v| v.as_str()).unwrap_or("");
+                }
+                "oauth2" => {
+                    let client_id = credential
+                        .get("client_id")
+                        .and_then(|v| v.as_str())
+                        .ok_or("Missing 'client_id' field")?;
+                    let client_secret = oauth2_client_secret
+                        .as_deref()
+                        .ok_or("Missing 'client_secret' field")?;
+                    let token_url = credential
+                        .get("token_url")
+                        .and_then(|v| v.as_str())
+                        .ok_or("Missing 'token_url' field")?;
+                    let scopes = credential
+                        .get("scopes")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
 
-                ind.add_property(conn, "foundation:clientId",
-                    vec![str_literal(client_id)], "connector")
+                    ind.add_property(
+                        conn,
+                        "foundation:clientId",
+                        vec![str_literal(client_id)],
+                        "connector",
+                    )
                     .map_err(|e| format!("Failed to set clientId: {}", e))?;
-                ind.add_property(conn, "foundation:clientSecret",
-                    vec![str_literal(client_secret)], "connector")
+                    ind.add_property(
+                        conn,
+                        "foundation:clientSecret",
+                        vec![str_literal(client_secret)],
+                        "connector",
+                    )
                     .map_err(|e| format!("Failed to set clientSecret: {}", e))?;
-                ind.add_property(conn, "foundation:tokenUrl",
-                    vec![str_literal(token_url)], "connector")
+                    ind.add_property(
+                        conn,
+                        "foundation:tokenUrl",
+                        vec![str_literal(token_url)],
+                        "connector",
+                    )
                     .map_err(|e| format!("Failed to set tokenUrl: {}", e))?;
-                ind.add_property(conn, "foundation:oauthScopes",
-                    vec![str_literal(scopes)], "connector")
+                    ind.add_property(
+                        conn,
+                        "foundation:oauthScopes",
+                        vec![str_literal(scopes)],
+                        "connector",
+                    )
                     .map_err(|e| format!("Failed to set oauthScopes: {}", e))?;
-                ind.add_property(conn, "foundation:grantType",
-                    vec![str_literal("client_credentials")], "connector")
+                    ind.add_property(
+                        conn,
+                        "foundation:grantType",
+                        vec![str_literal("client_credentials")],
+                        "connector",
+                    )
                     .map_err(|e| format!("Failed to set grantType: {}", e))?;
 
-                ind.add_property(conn, "foundation:hasStatus",
-                    vec![Object::Iri("foundation:Status_1772940750706".to_string())], "connector")
+                    ind.add_property(
+                        conn,
+                        "foundation:hasStatus",
+                        vec![Object::Iri("foundation:Status_1772940750706".to_string())],
+                        "connector",
+                    )
                     .map_err(|e| format!("Failed to set status: {}", e))?;
+                }
+                _ => {}
             }
-            _ => {}
-        }
 
-        let dt_str = chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339();
-        ind.add_property(conn, "foundation:credentialCreatedAt",
-            vec![Object::DateTime(dt_str)], "connector")
+            let dt_str = chrono::DateTime::from_timestamp_millis(timestamp)
+                .unwrap_or_default()
+                .to_rfc3339();
+            ind.add_property(
+                conn,
+                "foundation:credentialCreatedAt",
+                vec![Object::DateTime(dt_str)],
+                "connector",
+            )
             .map_err(|e| format!("Failed to set timestamp: {}", e))?;
 
-        let connector = Individual::new(&connector_iri);
-        connector.add_property(conn, "foundation:hasCredential",
-            vec![Object::Iri(cred_iri.clone())], "connector")
-            .map_err(|e| format!("Failed to link credential: {}", e))?;
+            let connector = Individual::new(&connector_iri);
+            connector
+                .add_property(
+                    conn,
+                    "foundation:hasCredential",
+                    vec![Object::Iri(cred_iri.clone())],
+                    "connector",
+                )
+                .map_err(|e| format!("Failed to link credential: {}", e))?;
 
-        connector.add_property(conn, "foundation:authType",
-            vec![str_literal(auth_type)], "connector")
-            .map_err(|e| format!("Failed to set authType: {}", e))?;
+            connector
+                .add_property(
+                    conn,
+                    "foundation:authType",
+                    vec![str_literal(auth_type)],
+                    "connector",
+                )
+                .map_err(|e| format!("Failed to set authType: {}", e))?;
 
-        Ok(cred_iri)
-    }).await
+            Ok(cred_iri)
+        })
+        .await
 }
 
 /// Returns a summary of credential configuration for a connector (no secret values exposed).
@@ -141,20 +243,24 @@ pub async fn connector__get_credential_summary(
     connector_iri: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<CredentialSummary, String> {
-    executor.read(move |conn| {
-        let auth_type = crate::owl::get_literal_property(conn, &connector_iri, "foundation:authType")
-            .map_err(|e| e.to_string())?;
+    executor
+        .read(move |conn| {
+            let auth_type =
+                crate::owl::get_literal_property(conn, &connector_iri, "foundation:authType")
+                    .map_err(|e| e.to_string())?;
 
-        let credential_iri = crate::owl::get_iri_property(conn, &connector_iri, "foundation:hasCredential")
-            .map_err(|e| e.to_string())?;
+            let credential_iri =
+                crate::owl::get_iri_property(conn, &connector_iri, "foundation:hasCredential")
+                    .map_err(|e| e.to_string())?;
 
-        Ok(CredentialSummary {
-            connector_iri: connector_iri.clone(),
-            is_configured: credential_iri.is_some(),
-            auth_type,
-            credential_iri,
+            Ok(CredentialSummary {
+                connector_iri: connector_iri.clone(),
+                is_configured: credential_iri.is_some(),
+                auth_type,
+                credential_iri,
+            })
         })
-    }).await
+        .await
 }
 
 /// Tests authentication for a connector by doing a minimal connectivity check.
@@ -175,27 +281,36 @@ pub async fn test_connector_auth(
     executor: &DbExecutor,
 ) -> Result<String, String> {
     let connector_iri = connector_iri.to_string();
-    let (base_url, auth_type, cred_iri) = executor.read(move |conn| {
-        let base_url = crate::owl::get_literal_property(conn, &connector_iri, "foundation:baseUrl")
-            .map_err(|e| e.to_string())?;
-        let auth_type = crate::owl::get_literal_property(conn, &connector_iri, "foundation:authType")
-            .map_err(|e| e.to_string())?;
-        let cred_iri = crate::owl::get_iri_property(conn, &connector_iri, "foundation:hasCredential")
-            .map_err(|e| e.to_string())?;
-        Ok((base_url, auth_type, cred_iri))
-    }).await?;
+    let (base_url, auth_type, cred_iri) = executor
+        .read(move |conn| {
+            let base_url =
+                crate::owl::get_literal_property(conn, &connector_iri, "foundation:baseUrl")
+                    .map_err(|e| e.to_string())?;
+            let auth_type =
+                crate::owl::get_literal_property(conn, &connector_iri, "foundation:authType")
+                    .map_err(|e| e.to_string())?;
+            let cred_iri =
+                crate::owl::get_iri_property(conn, &connector_iri, "foundation:hasCredential")
+                    .map_err(|e| e.to_string())?;
+            Ok((base_url, auth_type, cred_iri))
+        })
+        .await?;
 
     let cred_iri = cred_iri.ok_or("No credential configured for this connector")?;
     let base_url = base_url.ok_or("No baseUrl configured for this connector")?;
     let auth_type = auth_type.unwrap_or_else(|| "api_key".to_string());
 
-    let (value, username) = executor.read(move |conn| {
-        let value = crate::owl::get_literal_property(conn, &cred_iri, "foundation:credentialValue")
-            .map_err(|e| e.to_string())?;
-        let username = crate::owl::get_literal_property(conn, &cred_iri, "foundation:credentialUsername")
-            .map_err(|e| e.to_string())?;
-        Ok((value, username))
-    }).await?;
+    let (value, username) = executor
+        .read(move |conn| {
+            let value =
+                crate::owl::get_literal_property(conn, &cred_iri, "foundation:credentialValue")
+                    .map_err(|e| e.to_string())?;
+            let username =
+                crate::owl::get_literal_property(conn, &cred_iri, "foundation:credentialUsername")
+                    .map_err(|e| e.to_string())?;
+            Ok((value, username))
+        })
+        .await?;
 
     let client = reqwest::Client::new();
     let mut req = client.get(&base_url);
@@ -231,11 +346,49 @@ pub async fn test_connector_auth(
 pub struct OAuth2CredentialSummary {
     pub credential_iri: String,
     pub client_id: Option<String>,
-    pub client_secret: Option<String>,
+    pub has_client_secret: bool,
     pub token_url: Option<String>,
     pub scopes: Option<String>,
     pub grant_type: Option<String>,
     pub is_configured: bool,
+}
+
+fn oauth2_summary(
+    conn: &crate::owl::Connection,
+    cred_iri: &str,
+) -> Result<OAuth2CredentialSummary, String> {
+    let client_id = crate::owl::get_literal_property(conn, cred_iri, "foundation:clientId")
+        .map_err(|e| e.to_string())?;
+    let has_client_secret =
+        crate::owl::get_literal_property(conn, cred_iri, "foundation:clientSecret")
+            .map_err(|e| e.to_string())?
+            .is_some();
+    let token_url = crate::owl::get_literal_property(conn, cred_iri, "foundation:tokenUrl")
+        .map_err(|e| e.to_string())?;
+    let scopes = crate::owl::get_literal_property(conn, cred_iri, "foundation:oauthScopes")
+        .map_err(|e| e.to_string())?;
+    let grant_type = crate::owl::get_literal_property(conn, cred_iri, "foundation:grantType")
+        .map_err(|e| e.to_string())?;
+    let is_configured = client_id.is_some() && token_url.is_some();
+
+    Ok(OAuth2CredentialSummary {
+        credential_iri: cred_iri.to_string(),
+        client_id,
+        has_client_secret,
+        token_url,
+        scopes,
+        grant_type,
+        is_configured,
+    })
+}
+
+fn reveal_oauth2_client_secret(
+    conn: &crate::owl::Connection,
+    cred_iri: &str,
+) -> Result<String, String> {
+    crate::owl::get_literal_property(conn, cred_iri, "foundation:clientSecret")
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "OAuth2 credential has no client secret".to_string())
 }
 
 /// Returns a summary of an OAuth2Credential (no secret values exposed).
@@ -245,29 +398,95 @@ pub async fn connector__get_oauth2_summary(
     cred_iri: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<OAuth2CredentialSummary, String> {
-    executor.read(move |conn| {
-        let client_id = crate::owl::get_literal_property(conn, &cred_iri, "foundation:clientId")
-            .map_err(|e| e.to_string())?;
-        let client_secret = crate::owl::get_literal_property(conn, &cred_iri, "foundation:clientSecret")
-            .map_err(|e| e.to_string())?;
-        let token_url = crate::owl::get_literal_property(conn, &cred_iri, "foundation:tokenUrl")
-            .map_err(|e| e.to_string())?;
-        let scopes = crate::owl::get_literal_property(conn, &cred_iri, "foundation:oauthScopes")
-            .map_err(|e| e.to_string())?;
-        let grant_type = crate::owl::get_literal_property(conn, &cred_iri, "foundation:grantType")
-            .map_err(|e| e.to_string())?;
+    executor
+        .read(move |conn| oauth2_summary(conn, &cred_iri))
+        .await
+}
 
-        let is_configured = client_id.is_some() && token_url.is_some();
-        Ok(OAuth2CredentialSummary {
-            credential_iri: cred_iri,
-            client_id,
-            client_secret,
-            token_url,
-            scopes,
-            grant_type,
-            is_configured,
-        })
-    }).await
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn connector__reveal_oauth2_client_secret(
+    cred_iri: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor
+        .read(move |conn| reveal_oauth2_client_secret(conn, &cred_iri))
+        .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eavto::{store, test_helpers::setup_test_db, Triple};
+
+    fn oauth2_fixture(with_secret: bool) -> crate::owl::Connection {
+        let mut conn = setup_test_db();
+        let mut triples = vec![
+            Triple::new(
+                "test:oauth",
+                "foundation:clientId",
+                str_literal("client-id"),
+            ),
+            Triple::new(
+                "test:oauth",
+                "foundation:tokenUrl",
+                str_literal("https://example.test/token"),
+            ),
+        ];
+        if with_secret {
+            triples.push(Triple::new(
+                "test:oauth",
+                "foundation:clientSecret",
+                str_literal("top-secret"),
+            ));
+        }
+        store::assert_triples(&mut conn, &triples, "test").unwrap();
+        conn
+    }
+
+    #[test]
+    fn oauth2_summary_never_serializes_client_secret() {
+        let conn = oauth2_fixture(true);
+        let json = serde_json::to_value(oauth2_summary(&conn, "test:oauth").unwrap()).unwrap();
+        assert!(json.get("client_secret").is_none());
+        assert_eq!(json["has_client_secret"], true);
+    }
+
+    #[test]
+    fn oauth2_summary_reports_missing_client_secret() {
+        let conn = oauth2_fixture(false);
+        let summary = oauth2_summary(&conn, "test:oauth").unwrap();
+        assert!(!summary.has_client_secret);
+    }
+
+    #[test]
+    fn oauth2_reveal_returns_secret_and_errors_when_absent() {
+        let with_secret = oauth2_fixture(true);
+        assert_eq!(
+            reveal_oauth2_client_secret(&with_secret, "test:oauth").unwrap(),
+            "top-secret"
+        );
+
+        let without_secret = oauth2_fixture(false);
+        assert!(reveal_oauth2_client_secret(&without_secret, "test:oauth").is_err());
+    }
+
+    #[test]
+    fn oauth2_creation_requires_client_secret() {
+        let conn = setup_test_db();
+        let credential = serde_json::json!({"auth_type": "oauth2"});
+        assert!(oauth2_client_secret_for_save(&conn, &credential, None).is_err());
+    }
+
+    #[test]
+    fn oauth2_edit_preserves_existing_client_secret() {
+        let conn = oauth2_fixture(true);
+        let credential = serde_json::json!({"auth_type": "oauth2"});
+        assert_eq!(
+            oauth2_client_secret_for_save(&conn, &credential, Some("test:oauth")).unwrap(),
+            "top-secret"
+        );
+    }
 }
 
 /// Tests an OAuth2 client_credentials grant and returns Ok on success.
@@ -278,20 +497,26 @@ pub async fn connector__test_oauth2_auth(
     cred_iri: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    let (client_id, client_secret, token_url, scopes) = executor.read(move |conn| {
-        let client_id = crate::owl::get_literal_property(conn, &cred_iri, "foundation:clientId")
-            .map_err(|e| e.to_string())?
-            .ok_or("Missing clientId on OAuth2Credential")?;
-        let client_secret = crate::owl::get_literal_property(conn, &cred_iri, "foundation:clientSecret")
-            .map_err(|e| e.to_string())?
-            .ok_or("Missing clientSecret on OAuth2Credential")?;
-        let token_url = crate::owl::get_literal_property(conn, &cred_iri, "foundation:tokenUrl")
-            .map_err(|e| e.to_string())?
-            .ok_or("Missing tokenUrl on OAuth2Credential")?;
-        let scopes = crate::owl::get_literal_property(conn, &cred_iri, "foundation:oauthScopes")
-            .map_err(|e| e.to_string())?;
-        Ok((client_id, client_secret, token_url, scopes))
-    }).await?;
+    let (client_id, client_secret, token_url, scopes) = executor
+        .read(move |conn| {
+            let client_id =
+                crate::owl::get_literal_property(conn, &cred_iri, "foundation:clientId")
+                    .map_err(|e| e.to_string())?
+                    .ok_or("Missing clientId on OAuth2Credential")?;
+            let client_secret =
+                crate::owl::get_literal_property(conn, &cred_iri, "foundation:clientSecret")
+                    .map_err(|e| e.to_string())?
+                    .ok_or("Missing clientSecret on OAuth2Credential")?;
+            let token_url =
+                crate::owl::get_literal_property(conn, &cred_iri, "foundation:tokenUrl")
+                    .map_err(|e| e.to_string())?
+                    .ok_or("Missing tokenUrl on OAuth2Credential")?;
+            let scopes =
+                crate::owl::get_literal_property(conn, &cred_iri, "foundation:oauthScopes")
+                    .map_err(|e| e.to_string())?;
+            Ok((client_id, client_secret, token_url, scopes))
+        })
+        .await?;
 
     let mut form = vec![
         ("grant_type", "client_credentials".to_string()),
@@ -319,12 +544,22 @@ pub async fn connector__test_oauth2_auth(
             .await
             .map_err(|e| format!("Failed to parse token response: {}", e))?;
         if body.get("access_token").is_some() {
-            Ok(format!("OAuth2 token obtained successfully (HTTP {})", status.as_u16()))
+            Ok(format!(
+                "OAuth2 token obtained successfully (HTTP {})",
+                status.as_u16()
+            ))
         } else {
-            Err(format!("Token endpoint returned success but no access_token (HTTP {})", status.as_u16()))
+            Err(format!(
+                "Token endpoint returned success but no access_token (HTTP {})",
+                status.as_u16()
+            ))
         }
     } else {
         let body_text = resp.text().await.unwrap_or_default();
-        Err(format!("Token endpoint returned HTTP {}: {}", status.as_u16(), body_text))
+        Err(format!(
+            "Token endpoint returned HTTP {}: {}",
+            status.as_u16(),
+            body_text
+        ))
     }
 }

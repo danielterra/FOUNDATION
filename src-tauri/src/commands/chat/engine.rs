@@ -1,23 +1,24 @@
-use crate::owl::DbExecutor;
-use crate::commands::chat_storage::{
-    ContentBlock, AIConversationMessage, create_assistant_message, load_conversation_history, log_api_call,
+use super::super::log_backend;
+use super::trace;
+use crate::ai::local::LocalProvider;
+use crate::ai::providers::{
+    ClaudeProvider, ContentBlock as ApiContentBlock, MessageContent, OpenRouterProvider,
 };
+use crate::ai::AiProvider;
+use crate::commands::chat::cancellation::AiCancellationState;
+use crate::commands::chat::loop_tools::{build_conversation_tools, build_system_prompt};
 use crate::commands::chat::message_utils::{
-    message_to_api_format, inject_datetime_context, inject_attachments_for_current_turn,
-    inject_file_binaries_into_placeholders, inject_subconscious_context, sanitize_tool_pairs,
-    response_content_to_blocks, extract_and_save_file_summaries,
-};
-use crate::commands::chat::loop_tools::{
-    build_conversation_tools, build_system_prompt,
+    extract_and_save_file_summaries, inject_attachments_for_current_turn, inject_datetime_context,
+    inject_file_binaries_into_placeholders, inject_subconscious_context, message_to_api_format,
+    response_content_to_blocks, sanitize_tool_pairs,
 };
 use crate::commands::chat::settings::AgentConfig;
 use crate::commands::chat::tool_execution::execute_tools_from_message;
-use crate::commands::chat::cancellation::AiCancellationState;
-use super::trace;
-use crate::ai::{AiProvider};
-use crate::ai::local::LocalProvider;
-use crate::ai::providers::{ClaudeProvider, OpenRouterProvider, MessageContent, ContentBlock as ApiContentBlock};
-use super::super::log_backend;
+use crate::commands::chat_storage::{
+    create_assistant_message, load_conversation_history, log_api_call, AIConversationMessage,
+    ContentBlock,
+};
+use crate::owl::DbExecutor;
 use tauri::Emitter;
 
 const MAX_TOOL_LOOPS: usize = 20;
@@ -74,7 +75,8 @@ pub async fn run_conversation_loop(
     let mut is_first_iteration = true;
     let mut none_stop_retries = 0usize;
     let mut empty_end_nudged = false;
-    let mut tool_fingerprints: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut tool_fingerprints: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
 
     let loop_start = std::time::Instant::now();
     let mut trace_steps: Vec<trace::TraceStep> = Vec::new();
@@ -85,28 +87,40 @@ pub async fn run_conversation_loop(
 
     // Foundation architecture and widget type context are static for the entire lifetime
     // of a conversation — loading them once here avoids one executor.read() per iteration.
-    let (foundation_context, widget_context) = executor.read(|conn| {
-        Ok((
-            super::foundation_context::foundation_architecture_context(conn),
-            crate::commands::widget::widget_system_context(conn),
-        ))
-    }).await.unwrap_or_default();
+    let (foundation_context, widget_context) = executor
+        .read(|conn| {
+            Ok((
+                super::foundation_context::foundation_architecture_context(conn),
+                crate::commands::widget::widget_system_context(conn),
+            ))
+        })
+        .await
+        .unwrap_or_default();
 
     // Load history once — cached in memory for all iterations.
     // Each iteration appends the new assistant + tool_result messages to the cache
     // instead of reloading the full history from DB every turn.
     if !silent {
-        app.emit("ai-status", serde_json::json!({
-            "status": "Loading history...", "phase": "prep", "conversationId": conversation_id
-        })).ok();
+        app.emit(
+            "ai-status",
+            serde_json::json!({
+                "status": "Loading history...", "phase": "prep", "conversationId": conversation_id
+            }),
+        )
+        .ok();
     }
     let history_start = std::time::Instant::now();
     let (mut cached_history, mut cached_tokens) =
         load_conversation_history(executor, conversation_id, agent_config.max_tokens).await?;
-    log_backend("debug", &format!(
-        "[ENGINE] Initial history loaded in {}ms (msgs={}, tokens={})",
-        history_start.elapsed().as_millis(), cached_history.len(), cached_tokens
-    ));
+    log_backend(
+        "debug",
+        &format!(
+            "[ENGINE] Initial history loaded in {}ms (msgs={}, tokens={})",
+            history_start.elapsed().as_millis(),
+            cached_history.len(),
+            cached_tokens
+        ),
+    );
 
     // Compaction: if over threshold, run it and reload so the model sees the summary.
     let compaction_threshold = (agent_config.max_tokens as f64 * 0.80) as usize;
@@ -117,12 +131,20 @@ pub async fn run_conversation_loop(
             conversation_id.to_string(),
             super::compaction::CompactionConfig::from_agent_config(agent_config),
             cached_tokens,
-        ).await;
+        )
+        .await;
         let (new_history, new_tokens) =
             load_conversation_history(executor, conversation_id, agent_config.max_tokens).await?;
         cached_history = new_history;
         cached_tokens = new_tokens;
-        log_backend("info", &format!("[ENGINE] Post-compaction history: msgs={} tokens={}", cached_history.len(), cached_tokens));
+        log_backend(
+            "info",
+            &format!(
+                "[ENGINE] Post-compaction history: msgs={} tokens={}",
+                cached_history.len(),
+                cached_tokens
+            ),
+        );
     }
 
     let mut iter_start = std::time::Instant::now();
@@ -130,13 +152,20 @@ pub async fn run_conversation_loop(
     'main: loop {
         loop_count += 1;
         let iter_elapsed_ms = loop_start.elapsed().as_millis();
-        log_backend("info", &format!(
-            "[ENGINE] Iteration {} started (elapsed={}ms, cached_msgs={}, cached_tokens={})",
-            loop_count, iter_elapsed_ms, cached_history.len(), cached_tokens
-        ));
+        log_backend(
+            "info",
+            &format!(
+                "[ENGINE] Iteration {} started (elapsed={}ms, cached_msgs={}, cached_tokens={})",
+                loop_count,
+                iter_elapsed_ms,
+                cached_history.len(),
+                cached_tokens
+            ),
+        );
 
         if loop_count > MAX_TOOL_LOOPS {
-            let msg = "Too many tool execution loops — stopping to prevent infinite loop".to_string();
+            let msg =
+                "Too many tool execution loops — stopping to prevent infinite loop".to_string();
             termination_reason = "max_loops";
             loop_error = Some(msg);
             break 'main;
@@ -155,17 +184,20 @@ pub async fn run_conversation_loop(
             for (i, msg) in history.iter().enumerate().rev() {
                 if msg.role == "assistant" {
                     let q_id = msg.content.iter().find_map(|b| match b {
-                        ContentBlock::ToolUse { id, name, .. } if name == "ask_question" => Some(id.clone()),
+                        ContentBlock::ToolUse { id, name, .. } if name == "ask_question" => {
+                            Some(id.clone())
+                        }
                         ContentBlock::QuestionOutput { id, .. } => Some(id.clone()),
                         _ => None,
                     });
                     if let Some(id) = q_id {
                         let already_answered = history.iter().skip(i + 1).any(|m| {
-                            m.role == "user" && m.content.iter().any(|b| {
-                                matches!(b,
+                            m.role == "user"
+                                && m.content.iter().any(|b| {
+                                    matches!(b,
                                     ContentBlock::ToolResult { tool_use_id, .. }
                                     if tool_use_id == &id)
-                            })
+                                })
                         });
                         if !already_answered {
                             pending_q = Some((id, i));
@@ -178,7 +210,9 @@ pub async fn run_conversation_loop(
             if let Some((_q_id, q_idx)) = pending_q {
                 let user_message_after = history.iter().skip(q_idx + 1).any(|m| {
                     m.role == "user"
-                        && m.content.iter().any(|b| !matches!(b, ContentBlock::ToolResult { .. }))
+                        && m.content
+                            .iter()
+                            .any(|b| !matches!(b, ContentBlock::ToolResult { .. }))
                 });
 
                 if user_message_after {
@@ -207,13 +241,15 @@ pub async fn run_conversation_loop(
                 && m.stop_reason.as_deref() == Some("end_turn")
         });
         if ended_cleanly {
-            log_backend("info", "[ENGINE] Conversation already ended cleanly — nothing to do");
+            log_backend(
+                "info",
+                "[ENGINE] Conversation already ended cleanly — nothing to do",
+            );
             break 'main;
         }
 
-        let mut api_messages: Vec<crate::ai::ChatMessage> = history.iter()
-            .map(message_to_api_format)
-            .collect();
+        let mut api_messages: Vec<crate::ai::ChatMessage> =
+            history.iter().map(message_to_api_format).collect();
 
         // File binaries: re-inject on every iteration. On iterations 2+ the history
         // is reloaded from DB (which only stores FileRef, not the binary), so
@@ -253,16 +289,23 @@ pub async fn run_conversation_loop(
         if strip_thinking {
             log_backend("warn", "[ENGINE] Stripping thinking blocks from history (previous 400 thinking-block error)");
             for msg in api_messages.iter_mut() {
-                if msg.role != "assistant" { continue; }
+                if msg.role != "assistant" {
+                    continue;
+                }
                 if let MessageContent::ContentBlocks(ref mut blocks) = msg.content {
-                    blocks.retain(|b| !matches!(
-                        b,
-                        ApiContentBlock::Thinking { .. } | ApiContentBlock::RedactedThinking { .. }
-                    ));
+                    blocks.retain(|b| {
+                        !matches!(
+                            b,
+                            ApiContentBlock::Thinking { .. }
+                                | ApiContentBlock::RedactedThinking { .. }
+                        )
+                    });
                 }
             }
             api_messages.retain(|m| {
-                if m.role != "assistant" { return true; }
+                if m.role != "assistant" {
+                    return true;
+                }
                 match &m.content {
                     MessageContent::ContentBlocks(b) => !b.is_empty(),
                     _ => true,
@@ -276,23 +319,51 @@ pub async fn run_conversation_loop(
             break 'main;
         }
 
+        let conversation_id_for_validation = conversation_id.to_string();
+        let is_active = executor
+            .read(move |conn| {
+                Ok(crate::core_ontology::conversation::is_active_conversation(
+                    conn,
+                    &conversation_id_for_validation,
+                ))
+            })
+            .await?;
+        if !is_active {
+            log_backend(
+                "info",
+                &format!(
+                    "[ENGINE] Conversation {} was retracted while loading history; stopping",
+                    conversation_id,
+                ),
+            );
+            termination_reason = "conversation_inactive";
+            break 'main;
+        }
+
         if api_messages.is_empty() {
-            loop_error = Some("Conversation history is empty — cannot send request to Claude".to_string());
+            loop_error =
+                Some("Conversation history is empty — cannot send request to Claude".to_string());
             termination_reason = "error";
             break 'main;
         }
 
-        let camera_count = first_turn_ctx.as_ref()
+        let camera_count = first_turn_ctx
+            .as_ref()
             .and_then(|ctx| ctx.camera_images.as_ref())
             .filter(|f| !f.is_empty())
             .map(|f| f.len());
 
         let system_prompt = build_system_prompt(
-            agent_config, &foundation_context, &widget_context, camera_count, conversation_id,
+            agent_config,
+            &foundation_context,
+            &widget_context,
+            camera_count,
+            conversation_id,
         );
 
         let blackboard_context = if is_first_iteration {
-            first_turn_ctx.as_ref()
+            first_turn_ctx
+                .as_ref()
                 .and_then(|ctx| ctx.blackboard_context.clone())
         } else {
             super::build_blackboard_context(executor, conversation_id).await
@@ -308,16 +379,45 @@ pub async fn run_conversation_loop(
             blackboard_context,
             tools: Some(tools),
             supports_web_tools: agent_config.supports_web_tools,
-            thinking: if thinking_enabled { Some(crate::ai::ThinkingConfig::Adaptive) } else { None },
+            thinking: if thinking_enabled {
+                Some(crate::ai::ThinkingConfig::Adaptive)
+            } else {
+                None
+            },
             tool_choice: None,
         };
 
+        let conversation_id_for_validation = conversation_id.to_string();
+        let is_active = executor
+            .read(move |conn| {
+                Ok(crate::core_ontology::conversation::is_active_conversation(
+                    conn,
+                    &conversation_id_for_validation,
+                ))
+            })
+            .await?;
+        if !is_active {
+            log_backend(
+                "info",
+                &format!(
+                    "[ENGINE] Conversation {} was retracted before provider request; stopping",
+                    conversation_id,
+                ),
+            );
+            termination_reason = "conversation_inactive";
+            break 'main;
+        }
+
         if !silent {
-            app.emit("ai-status", serde_json::json!({
-                "status": "Waiting for response...",
-                "phase": "llm",
-                "conversationId": conversation_id,
-            })).ok();
+            app.emit(
+                "ai-status",
+                serde_json::json!({
+                    "status": "Waiting for response...",
+                    "phase": "llm",
+                    "conversationId": conversation_id,
+                }),
+            )
+            .ok();
         }
         log_backend("info", "[ENGINE] Calling AI provider (streaming)...");
         let llm_start = std::time::Instant::now();
@@ -335,8 +435,18 @@ pub async fn run_conversation_loop(
 
         let api_response = match api_result {
             Ok(r) => r,
-            Err(e) if !strip_thinking && e.contains("thinking") && e.contains("cannot be modified") => {
-                log_backend("warn", &format!("[ENGINE] Thinking block error, retrying without thinking: {}", e));
+            Err(e)
+                if !strip_thinking
+                    && e.contains("thinking")
+                    && e.contains("cannot be modified") =>
+            {
+                log_backend(
+                    "warn",
+                    &format!(
+                        "[ENGINE] Thinking block error, retrying without thinking: {}",
+                        e
+                    ),
+                );
                 strip_thinking = true;
                 is_first_iteration = false;
                 continue;
@@ -358,26 +468,35 @@ pub async fn run_conversation_loop(
             None => {
                 none_stop_retries += 1;
                 if none_stop_retries >= 3 {
-                    loop_error = Some("API returned a truncated response (stop_reason=None) 3 consecutive times".to_string());
+                    loop_error = Some(
+                        "API returned a truncated response (stop_reason=None) 3 consecutive times"
+                            .to_string(),
+                    );
                     termination_reason = "error";
                     break 'main;
                 }
-                log_backend("warn", &format!(
-                    "[ENGINE] stop_reason=None — truncated response, retry {}/3",
-                    none_stop_retries
-                ));
+                log_backend(
+                    "warn",
+                    &format!(
+                        "[ENGINE] stop_reason=None — truncated response, retry {}/3",
+                        none_stop_retries
+                    ),
+                );
                 continue;
             }
         };
         let usage = api_response.usage.as_ref();
-        log_backend("info", &format!(
+        log_backend(
+            "info",
+            &format!(
             "[ENGINE] LLM responded in {}ms (stop_reason={}, in={}, out={}, iter_since_last={}ms)",
             llm_ms,
             stop_reason,
             usage.map(|u| u.input_tokens).unwrap_or(0),
             usage.map(|u| u.output_tokens).unwrap_or(0),
             iter_start.elapsed().as_millis(),
-        ));
+        ),
+        );
         iter_start = std::time::Instant::now();
         if let Some(u) = usage {
             total_input_tokens += u.input_tokens as usize;
@@ -398,26 +517,38 @@ pub async fn run_conversation_loop(
                 empty_end_nudged = true;
                 continue;
             }
-            log_backend("info", "[ENGINE] Empty end turn after nudge — conversation complete, not saving");
+            log_backend(
+                "info",
+                "[ENGINE] Empty end turn after nudge — conversation complete, not saving",
+            );
             if !silent {
-                app.emit("ai-status", serde_json::json!({
-                    "status": null, "conversationId": conversation_id
-                })).ok();
+                app.emit(
+                    "ai-status",
+                    serde_json::json!({
+                        "status": null, "conversationId": conversation_id
+                    }),
+                )
+                .ok();
             }
             break 'main;
         }
 
         // Loop detection must run before saving the assistant message to avoid orphaned ToolUseBlocks.
         for tc in &api_response.tool_calls {
-            if tc.name == "ask_question" { continue; }
+            if tc.name == "ask_question" {
+                continue;
+            }
             let fingerprint = format!("{}:{}", tc.name, tc.input);
             let count = tool_fingerprints.entry(fingerprint).or_insert(0);
             *count += 1;
             if *count >= 3 {
-                log_backend("warn", &format!(
-                    "[ENGINE] Loop detected — '{}' called {} times with the same arguments",
-                    tc.name, count
-                ));
+                log_backend(
+                    "warn",
+                    &format!(
+                        "[ENGINE] Loop detected — '{}' called {} times with the same arguments",
+                        tc.name, count
+                    ),
+                );
                 loop_error = Some(format!(
                     "Loop detected: the tool '{}' was called {} consecutive times with the same arguments",
                     tc.name, count
@@ -434,12 +565,21 @@ pub async fn run_conversation_loop(
             .map_err(|e| format!("Failed to serialize content: {}", e))?;
 
         let assistant_msg_iri = create_assistant_message(
-            executor, conversation_id, &content_json, model, &stop_reason,
+            executor,
+            conversation_id,
+            &content_json,
+            model,
+            &stop_reason,
             usage.map(|u| u.input_tokens as usize).unwrap_or(0),
             usage.map(|u| u.output_tokens as usize).unwrap_or(0),
-            usage.map(|u| u.cache_creation_input_tokens as usize).unwrap_or(0),
-            usage.map(|u| u.cache_read_input_tokens as usize).unwrap_or(0),
-        ).await?;
+            usage
+                .map(|u| u.cache_creation_input_tokens as usize)
+                .unwrap_or(0),
+            usage
+                .map(|u| u.cache_read_input_tokens as usize)
+                .unwrap_or(0),
+        )
+        .await?;
 
         // Fire-and-forget: log_api_call writes ~8 DB triples sequentially,
         // each emitting entity-updated → chat-message-added. Running it on the
@@ -448,12 +588,33 @@ pub async fn run_conversation_loop(
         // with the same IRI as the current last message.
         if let Some(u) = usage {
             let (executor_c, app_c) = (executor.clone(), app.clone());
-            let (model_c, conv_c, msg_c) = (model.to_string(), conversation_id.to_string(), assistant_msg_iri.clone());
-            let (inp, out, cc, cr) = (u.input_tokens, u.output_tokens, u.cache_creation_input_tokens, u.cache_read_input_tokens);
+            let (model_c, conv_c, msg_c) = (
+                model.to_string(),
+                conversation_id.to_string(),
+                assistant_msg_iri.clone(),
+            );
+            let (inp, out, cc, cr) = (
+                u.input_tokens,
+                u.output_tokens,
+                u.cache_creation_input_tokens,
+                u.cache_read_input_tokens,
+            );
             tokio::spawn(async move {
-                log_api_call(&executor_c, &app_c, &model_c, inp, out, cc, cr, Some(&conv_c), Some(&msg_c))
-                    .await
-                    .unwrap_or_else(|e| log_backend("warn", &format!("[ENGINE] Failed to log API call: {}", e)));
+                log_api_call(
+                    &executor_c,
+                    &app_c,
+                    &model_c,
+                    inp,
+                    out,
+                    cc,
+                    cr,
+                    Some(&conv_c),
+                    Some(&msg_c),
+                )
+                .await
+                .unwrap_or_else(|e| {
+                    log_backend("warn", &format!("[ENGINE] Failed to log API call: {}", e))
+                });
             });
         }
 
@@ -472,19 +633,36 @@ pub async fn run_conversation_loop(
         cached_tokens += assistant_msg.token_count.unwrap_or(0);
         cached_history.push(assistant_msg.clone());
 
-        log_backend("info", &format!("[ENGINE] Created assistant message: {}", assistant_msg_iri));
-        app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
+        log_backend(
+            "info",
+            &format!("[ENGINE] Created assistant message: {}", assistant_msg_iri),
+        );
+        app.emit(
+            "chat-message-added",
+            serde_json::json!({"conversationId": conversation_id}),
+        )
+        .ok();
 
         // ask_question pauses the loop — user must answer via the UI before we continue
-        if api_response.tool_calls.iter().any(|tc| tc.name == "ask_question") {
-            log_backend("info", "[ENGINE] ask_question — conversation paused awaiting user answer");
+        if api_response
+            .tool_calls
+            .iter()
+            .any(|tc| tc.name == "ask_question")
+        {
+            log_backend(
+                "info",
+                "[ENGINE] ask_question — conversation paused awaiting user answer",
+            );
             termination_reason = "question";
             break 'main;
         }
 
         let has_tool_use = !api_response.tool_calls.is_empty();
 
-        if stop_reason == "tool_use" || stop_reason == "tool_calls" || (stop_reason == "max_tokens" && has_tool_use) {
+        if stop_reason == "tool_use"
+            || stop_reason == "tool_calls"
+            || (stop_reason == "max_tokens" && has_tool_use)
+        {
             log_backend("info", "[ENGINE] Executing tools...");
             let (tool_result_msg_iri, tool_result_msg, mut new_steps) =
                 execute_tools_from_message(executor, app, conversation_id, &assistant_msg).await?;
@@ -498,7 +676,10 @@ pub async fn run_conversation_loop(
             }
             trace_steps.extend(new_steps);
 
-            log_backend("info", &format!("[ENGINE] Tool results saved: {}", tool_result_msg_iri));
+            log_backend(
+                "info",
+                &format!("[ENGINE] Tool results saved: {}", tool_result_msg_iri),
+            );
 
             if cancellation.is_cancelled(conversation_id) {
                 termination_reason = "cancelled";
@@ -523,7 +704,9 @@ pub async fn run_conversation_loop(
             total_input_tokens,
             total_output_tokens,
             duration_ms,
-        ).await.unwrap_or_else(|e| log_backend("warn", &format!("[ENGINE] Trace save failed: {}", e)));
+        )
+        .await
+        .unwrap_or_else(|e| log_backend("warn", &format!("[ENGINE] Trace save failed: {}", e)));
     }
 
     match loop_error {

@@ -14,8 +14,15 @@ fn test_update_thing_with_properties_updates_literal_property() {
     });
 
     let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "replace_property_values should succeed: {:?}", result.error);
-    assert_eq!(result.result.unwrap()["iri"].as_str(), Some("foundation:Task_001"));
+    assert!(
+        result.success,
+        "replace_property_values should succeed: {:?}",
+        result.error
+    );
+    assert_eq!(
+        result.result.unwrap()["iri"].as_str(),
+        Some("foundation:Task_001")
+    );
 }
 
 #[test]
@@ -31,7 +38,11 @@ fn test_update_thing_with_valid_status_succeeds() {
     });
 
     let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "replace_property_values with valid status should succeed: {:?}", result.error);
+    assert!(
+        result.success,
+        "replace_property_values with valid status should succeed: {:?}",
+        result.error
+    );
 }
 
 #[test]
@@ -47,15 +58,20 @@ fn test_update_thing_with_invalid_status_returns_descriptive_error() {
     });
 
     let result = replace_property_values_one(&mut conn, &args);
-    assert!(!result.success, "replace_property_values with invalid status should fail");
+    assert!(
+        !result.success,
+        "replace_property_values with invalid status should fail"
+    );
     let error = result.error.unwrap();
     assert!(
         error.contains("foundation:InvalidStatus"),
-        "Error should mention the invalid status: {}", error
+        "Error should mention the invalid status: {}",
+        error
     );
     assert!(
         error.contains("Allowed") || error.contains("allowed"),
-        "Error should list allowed statuses: {}", error
+        "Error should list allowed statuses: {}",
+        error
     );
 }
 
@@ -72,8 +88,15 @@ fn test_update_thing_partial_update_with_only_label() {
     });
 
     let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "Replacing rdfs:label should succeed: {:?}", result.error);
-    assert_eq!(result.result.unwrap()["iri"].as_str(), Some("foundation:Task_004"));
+    assert!(
+        result.success,
+        "Replacing rdfs:label should succeed: {:?}",
+        result.error
+    );
+    assert_eq!(
+        result.result.unwrap()["iri"].as_str(),
+        Some("foundation:Task_004")
+    );
 }
 
 #[test]
@@ -87,7 +110,11 @@ fn test_create_thing_without_icon_inherits_from_concept() {
     });
 
     let result = assert_individual_one(&mut conn, &args);
-    assert!(result.success, "assert_individual without icon should succeed: {:?}", result.error);
+    assert!(
+        result.success,
+        "assert_individual without icon should succeed: {:?}",
+        result.error
+    );
 
     let response = result.result.unwrap();
     let iri = response["iri"].as_str().expect("result should have iri");
@@ -111,33 +138,49 @@ fn test_create_thing_label_satisfies_rdfs_label_required_field() {
     setup_task_class_with_statuses(&mut conn);
 
     crate::owl::cardinality::set_class_required_fields(
-        &mut conn, "foundation:Task", &["foundation:priority"], "test",
-    ).unwrap();
+        &mut conn,
+        "foundation:Task",
+        &["foundation:priority"],
+        "test",
+    )
+    .unwrap();
 
     // Simulate how rdfs:label ends up as a required field (legacy data or direct store)
-    crate::eavto::store::append_triples(&mut conn, &[
-        {
+    crate::eavto::store::append_triples(
+        &mut conn,
+        &[{
             let blank_id = "_:restriction_rdfs_label_test".to_string();
             crate::eavto::Triple::new(
-                "foundation:Task", "rdfs:subClassOf",
+                "foundation:Task",
+                "rdfs:subClassOf",
                 crate::eavto::Object::Blank(blank_id.clone()),
             )
-        },
-    ], "test").unwrap();
-    crate::eavto::store::assert_triples(&mut conn, &[
-        crate::eavto::Triple::new(
-            "_:restriction_rdfs_label_test", "rdf:type",
-            crate::eavto::Object::Iri("owl:Restriction".to_string()),
-        ),
-        crate::eavto::Triple::new(
-            "_:restriction_rdfs_label_test", "owl:onProperty",
-            crate::eavto::Object::Iri("rdfs:label".to_string()),
-        ),
-        crate::eavto::Triple::new(
-            "_:restriction_rdfs_label_test", "owl:minCardinality",
-            crate::eavto::Object::Integer(1),
-        ),
-    ], "test").unwrap();
+        }],
+        "test",
+    )
+    .unwrap();
+    crate::eavto::store::assert_triples(
+        &mut conn,
+        &[
+            crate::eavto::Triple::new(
+                "_:restriction_rdfs_label_test",
+                "rdf:type",
+                crate::eavto::Object::Iri("owl:Restriction".to_string()),
+            ),
+            crate::eavto::Triple::new(
+                "_:restriction_rdfs_label_test",
+                "owl:onProperty",
+                crate::eavto::Object::Iri("rdfs:label".to_string()),
+            ),
+            crate::eavto::Triple::new(
+                "_:restriction_rdfs_label_test",
+                "owl:minCardinality",
+                crate::eavto::Object::Integer(1),
+            ),
+        ],
+        "test",
+    )
+    .unwrap();
 
     let args = serde_json::json!({
         "class_iri": "foundation:Task",
@@ -168,10 +211,15 @@ fn test_update_thing_icon_file_url_is_accepted() {
     });
 
     let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "replace_property_values with file:// icon should succeed: {:?}", result.error);
+    assert!(
+        result.success,
+        "replace_property_values with file:// icon should succeed: {:?}",
+        result.error
+    );
 
     let individual = Individual::get(&conn, "foundation:Task_icon_001")
-        .unwrap().unwrap();
+        .unwrap()
+        .unwrap();
     assert_eq!(
         individual.icon.as_deref(),
         Some("file:///Users/daniel/Documents/Foundation/attachments/icon.png"),
@@ -192,7 +240,11 @@ fn test_update_thing_icon_https_url_is_accepted() {
     });
 
     let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "replace_property_values with https:// icon should succeed: {:?}", result.error);
+    assert!(
+        result.success,
+        "replace_property_values with https:// icon should succeed: {:?}",
+        result.error
+    );
 }
 
 #[test]
@@ -204,11 +256,18 @@ fn test_remove_before_add_in_same_operation_preserves_new_value() {
     create_task(&mut conn, "foundation:Task_migrate_001");
 
     let individual = Individual::new("foundation:Task_migrate_001");
-    individual.add_property(&mut conn, "foundation:priority", vec![Object::Literal {
-        value: "Low".to_string(),
-        datatype: Some("xsd:string".to_string()),
-        language: None,
-    }], "test").unwrap();
+    individual
+        .add_property(
+            &mut conn,
+            "foundation:priority",
+            vec![Object::Literal {
+                value: "Low".to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }],
+            "test",
+        )
+        .unwrap();
 
     let remove_args = serde_json::json!({
         "iri": "foundation:Task_migrate_001",
@@ -216,7 +275,11 @@ fn test_remove_before_add_in_same_operation_preserves_new_value() {
         "values": ["Low"]
     });
     let remove_result = remove_property_values_one(&mut conn, &remove_args);
-    assert!(remove_result.success, "remove_property_values should succeed: {:?}", remove_result.error);
+    assert!(
+        remove_result.success,
+        "remove_property_values should succeed: {:?}",
+        remove_result.error
+    );
 
     let replace_args = serde_json::json!({
         "iri": "foundation:Task_migrate_001",
@@ -224,57 +287,143 @@ fn test_remove_before_add_in_same_operation_preserves_new_value() {
         "values": ["High"]
     });
     let replace_result = replace_property_values_one(&mut conn, &replace_args);
-    assert!(replace_result.success, "replace_property_values should succeed: {:?}", replace_result.error);
+    assert!(
+        replace_result.success,
+        "replace_property_values should succeed: {:?}",
+        replace_result.error
+    );
 
-    let priority = crate::owl::get_literal_property(&conn, "foundation:Task_migrate_001", "foundation:priority")
-        .expect("query should succeed")
-        .expect("priority should have a value after the operation");
+    let priority = crate::owl::get_literal_property(
+        &conn,
+        "foundation:Task_migrate_001",
+        "foundation:priority",
+    )
+    .expect("query should succeed")
+    .expect("priority should have a value after the operation");
 
-    assert_eq!(priority, "High", "New value must survive after remove+replace");
+    assert_eq!(
+        priority, "High",
+        "New value must survive after remove+replace"
+    );
 }
 
 #[test]
 fn test_retract_individual_response_includes_cascade_summary() {
     let mut conn = setup_test_db();
 
-    store::assert_triples(&mut conn, &[
-        Triple::new("test:Parent", "rdf:type", Object::Iri("test:ParentClass".to_string())),
-        Triple::new("test:Child1", "rdf:type", Object::Iri("test:ChildClass".to_string())),
-        Triple::new("test:Child2", "rdf:type", Object::Iri("test:ChildClass".to_string())),
-        Triple::new("test:Parent", "test:owns", Object::Iri("test:Child1".to_string())),
-        Triple::new("test:Parent", "test:owns", Object::Iri("test:Child2".to_string())),
-        Triple::new("test:ParentClass", "foundation:cascadeDeleteRange",
-            Object::Iri("test:owns".to_string())),
-    ], "test").unwrap();
+    store::assert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                "test:Parent",
+                "rdf:type",
+                Object::Iri("test:ParentClass".to_string()),
+            ),
+            Triple::new(
+                "test:Child1",
+                "rdf:type",
+                Object::Iri("test:ChildClass".to_string()),
+            ),
+            Triple::new(
+                "test:Child2",
+                "rdf:type",
+                Object::Iri("test:ChildClass".to_string()),
+            ),
+            Triple::new(
+                "test:Parent",
+                "test:owns",
+                Object::Iri("test:Child1".to_string()),
+            ),
+            Triple::new(
+                "test:Parent",
+                "test:owns",
+                Object::Iri("test:Child2".to_string()),
+            ),
+            Triple::new(
+                "test:ParentClass",
+                "foundation:cascadeDeleteRange",
+                Object::Iri("test:owns".to_string()),
+            ),
+        ],
+        "test",
+    )
+    .unwrap();
 
     let result = retract_individual_one(&mut conn, &serde_json::json!({"iri": "test:Parent"}));
-    assert!(result.success, "retract_individual must succeed: {:?}", result.error);
+    assert!(
+        result.success,
+        "retract_individual must succeed: {:?}",
+        result.error
+    );
 
-    let message = result.result.unwrap()["message"].as_str().unwrap().to_string();
-    assert!(message.contains("Cascade"), "Response must include cascade summary; got: {}", message);
-    assert!(message.contains("2"), "Cascade count must be 2; got: {}", message);
-    assert!(message.contains("test:owns"), "Cascade must name the property; got: {}", message);
-    assert!(message.contains("range"), "Cascade must name the direction; got: {}", message);
+    let message = result.result.unwrap()["message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        message.contains("Cascade"),
+        "Response must include cascade summary; got: {}",
+        message
+    );
+    assert!(
+        message.contains("2"),
+        "Cascade count must be 2; got: {}",
+        message
+    );
+    assert!(
+        message.contains("test:owns"),
+        "Cascade must name the property; got: {}",
+        message
+    );
+    assert!(
+        message.contains("range"),
+        "Cascade must name the direction; got: {}",
+        message
+    );
 }
 
 #[test]
 fn test_retract_individual_response_no_cascade_no_summary() {
     let mut conn = setup_test_db();
 
-    store::assert_triples(&mut conn, &[
-        Triple::new("test:Standalone", "rdf:type", Object::Iri("test:SomeClass".to_string())),
-        Triple::new("test:Standalone", "rdfs:label", Object::Literal {
-            value: "standalone".to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        }),
-    ], "test").unwrap();
+    store::assert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                "test:Standalone",
+                "rdf:type",
+                Object::Iri("test:SomeClass".to_string()),
+            ),
+            Triple::new(
+                "test:Standalone",
+                "rdfs:label",
+                Object::Literal {
+                    value: "standalone".to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            ),
+        ],
+        "test",
+    )
+    .unwrap();
 
     let result = retract_individual_one(&mut conn, &serde_json::json!({"iri": "test:Standalone"}));
-    assert!(result.success, "retract_individual must succeed: {:?}", result.error);
+    assert!(
+        result.success,
+        "retract_individual must succeed: {:?}",
+        result.error
+    );
 
-    let message = result.result.unwrap()["message"].as_str().unwrap().to_string();
-    assert!(!message.contains("Cascade"), "No cascade must mean no summary; got: {}", message);
+    let message = result.result.unwrap()["message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        !message.contains("Cascade"),
+        "No cascade must mean no summary; got: {}",
+        message
+    );
 }
 
 #[test]
@@ -283,11 +432,26 @@ fn test_remove_domain_retracts_property_values_from_instances() {
 
     // Test class and property
     Class::new("foundation:Widget")
-        .assert(&mut conn, ClassType::OwlClass, "Widget", "https://example.com/widget.svg", None, "test")
+        .assert(
+            &mut conn,
+            ClassType::OwlClass,
+            "Widget",
+            "https://example.com/widget.svg",
+            None,
+            "test",
+        )
         .unwrap();
     Property::new("foundation:widgetColor")
-        .assert(&mut conn, PropertyType::DatatypeProperty, "Widget Color", None,
-            &["foundation:Widget"], Some("xsd:string"), None, "test")
+        .assert(
+            &mut conn,
+            PropertyType::DatatypeProperty,
+            "Widget Color",
+            None,
+            &["foundation:Widget"],
+            Some("xsd:string"),
+            None,
+            "test",
+        )
         .unwrap();
 
     // 3 instances with a widgetColor value
@@ -297,22 +461,40 @@ fn test_remove_domain_retracts_property_values_from_instances() {
         ("foundation:Widget_C", "blue"),
     ] {
         Individual::new(iri)
-            .assert(&mut conn, "foundation:Widget", iri, "https://example.com/widget.svg", "test")
+            .assert(
+                &mut conn,
+                "foundation:Widget",
+                iri,
+                "https://example.com/widget.svg",
+                "test",
+            )
             .unwrap();
         Individual::new(iri)
             .add_property(
                 &mut conn,
                 "foundation:widgetColor",
-                vec![Object::Literal { value: color.to_string(), datatype: Some("xsd:string".to_string()), language: None }],
+                vec![Object::Literal {
+                    value: color.to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                }],
                 "test",
             )
             .unwrap();
     }
 
     // Confirm the values exist before the cascade
-    for iri in ["foundation:Widget_A", "foundation:Widget_B", "foundation:Widget_C"] {
+    for iri in [
+        "foundation:Widget_A",
+        "foundation:Widget_B",
+        "foundation:Widget_C",
+    ] {
         let count = Individual::get_property_count(&conn, iri, "foundation:widgetColor").unwrap();
-        assert_eq!(count, 1, "{} should have 1 widgetColor value before the cascade", iri);
+        assert_eq!(
+            count, 1,
+            "{} should have 1 widgetColor value before the cascade",
+            iri
+        );
     }
 
     // Remove foundation:Widget from the domain → should cascade and retract the values
@@ -322,27 +504,63 @@ fn test_remove_domain_retracts_property_values_from_instances() {
         "values": ["foundation:Widget"]
     });
     let result = remove_property_values_one(&mut conn, &args);
-    assert!(result.success, "remove_property_values should succeed: {:?}", result.error);
+    assert!(
+        result.success,
+        "remove_property_values should succeed: {:?}",
+        result.error
+    );
 
     // Verify the values were retracted on all instances
-    for iri in ["foundation:Widget_A", "foundation:Widget_B", "foundation:Widget_C"] {
+    for iri in [
+        "foundation:Widget_A",
+        "foundation:Widget_B",
+        "foundation:Widget_C",
+    ] {
         let count = Individual::get_property_count(&conn, iri, "foundation:widgetColor").unwrap();
-        assert_eq!(count, 0, "{} should have no widgetColor values after the cascade", iri);
+        assert_eq!(
+            count, 0,
+            "{} should have no widgetColor values after the cascade",
+            iri
+        );
     }
 }
 
 fn setup_numeric_props(conn: &mut Connection) {
     Property::new("foundation:dueDayOfMonth")
-        .assert(conn, PropertyType::DatatypeProperty, "Due Day", None,
-            &["foundation:Task"], Some("xsd:integer"), Some("unit:Count"), "test")
+        .assert(
+            conn,
+            PropertyType::DatatypeProperty,
+            "Due Day",
+            None,
+            &["foundation:Task"],
+            Some("xsd:integer"),
+            Some("unit:Count"),
+            "test",
+        )
         .unwrap();
     Property::new("foundation:contractValue")
-        .assert(conn, PropertyType::DatatypeProperty, "Contract Value", None,
-            &["foundation:Task"], Some("xsd:decimal"), Some("currency:USD"), "test")
+        .assert(
+            conn,
+            PropertyType::DatatypeProperty,
+            "Contract Value",
+            None,
+            &["foundation:Task"],
+            Some("xsd:decimal"),
+            Some("currency:USD"),
+            "test",
+        )
         .unwrap();
     Property::new("foundation:isActive")
-        .assert(conn, PropertyType::DatatypeProperty, "Is Active", None,
-            &["foundation:Task"], Some("xsd:boolean"), None, "test")
+        .assert(
+            conn,
+            PropertyType::DatatypeProperty,
+            "Is Active",
+            None,
+            &["foundation:Task"],
+            Some("xsd:boolean"),
+            None,
+            "test",
+        )
         .unwrap();
 }
 
@@ -362,12 +580,23 @@ fn test_add_property_values_accepts_json_integer() {
     });
 
     let result = add_property_values_one(&mut conn, &args);
-    assert!(result.success, "JSON integer must succeed: {:?}", result.error);
+    assert!(
+        result.success,
+        "JSON integer must succeed: {:?}",
+        result.error
+    );
 
     let stored = crate::owl::get_literal_property(
-        &conn, "foundation:Task_num_001", "foundation:dueDayOfMonth",
-    ).unwrap().unwrap();
-    assert_eq!(stored, "5", "Integer value must be stored as its lexical form");
+        &conn,
+        "foundation:Task_num_001",
+        "foundation:dueDayOfMonth",
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        stored, "5",
+        "Integer value must be stored as its lexical form"
+    );
 }
 
 #[test]
@@ -384,12 +613,23 @@ fn test_replace_property_values_accepts_json_decimal() {
     });
 
     let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "JSON decimal must succeed: {:?}", result.error);
+    assert!(
+        result.success,
+        "JSON decimal must succeed: {:?}",
+        result.error
+    );
 
     let stored = crate::owl::get_literal_property(
-        &conn, "foundation:Task_num_002", "foundation:contractValue",
-    ).unwrap().unwrap();
-    assert_eq!(stored, "1234.56", "Decimal value must be stored as its lexical form");
+        &conn,
+        "foundation:Task_num_002",
+        "foundation:contractValue",
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        stored, "1234.56",
+        "Decimal value must be stored as its lexical form"
+    );
 }
 
 #[test]
@@ -409,19 +649,29 @@ fn test_assert_individual_accepts_numeric_and_boolean_properties() {
     });
 
     let result = assert_individual_one(&mut conn, &args);
-    assert!(result.success, "mixed numeric/boolean values must succeed: {:?}", result.error);
+    assert!(
+        result.success,
+        "mixed numeric/boolean values must succeed: {:?}",
+        result.error
+    );
 
     let iri = result.result.unwrap()["iri"].as_str().unwrap().to_string();
     assert_eq!(
-        crate::owl::get_literal_property(&conn, &iri, "foundation:dueDayOfMonth").unwrap().unwrap(),
+        crate::owl::get_literal_property(&conn, &iri, "foundation:dueDayOfMonth")
+            .unwrap()
+            .unwrap(),
         "15"
     );
     assert_eq!(
-        crate::owl::get_literal_property(&conn, &iri, "foundation:contractValue").unwrap().unwrap(),
+        crate::owl::get_literal_property(&conn, &iri, "foundation:contractValue")
+            .unwrap()
+            .unwrap(),
         "99.9"
     );
     assert_eq!(
-        crate::owl::get_literal_property(&conn, &iri, "foundation:isActive").unwrap().unwrap(),
+        crate::owl::get_literal_property(&conn, &iri, "foundation:isActive")
+            .unwrap()
+            .unwrap(),
         "true"
     );
 }
@@ -442,7 +692,11 @@ fn test_add_property_values_rejects_object_value_with_descriptive_error() {
     let result = add_property_values_one(&mut conn, &args);
     assert!(!result.success, "Object values must be rejected");
     let err = result.error.unwrap();
-    assert!(err.contains("unsupported value type"), "Error must be descriptive: {}", err);
+    assert!(
+        err.contains("unsupported value type"),
+        "Error must be descriptive: {}",
+        err
+    );
 }
 
 #[test]
@@ -459,15 +713,20 @@ fn test_assert_individual_rejects_nonexistent_class() {
     });
 
     let result = assert_individual_one(&mut conn, &args);
-    assert!(!result.success, "assert_individual with unknown class must fail");
+    assert!(
+        !result.success,
+        "assert_individual with unknown class must fail"
+    );
     let err = result.error.unwrap();
     assert!(
         err.contains("foundation:ClassThatDoesNotExist") && err.contains("does not exist"),
-        "Error must name the missing class: {}", err,
+        "Error must name the missing class: {}",
+        err,
     );
     assert!(
         err.contains("define_class"),
-        "Error must suggest creating the class: {}", err,
+        "Error must suggest creating the class: {}",
+        err,
     );
 }
 
@@ -484,7 +743,11 @@ fn test_assert_individual_accepts_builtin_owl_thing() {
     });
 
     let result = assert_individual_one(&mut conn, &args);
-    assert!(result.success, "owl:Thing must be accepted: {:?}", result.error);
+    assert!(
+        result.success,
+        "owl:Thing must be accepted: {:?}",
+        result.error
+    );
 }
 
 // Regression: Bug_1780924603717 — agents commonly pass "foundation:comment" instead of
@@ -504,11 +767,15 @@ fn test_replace_property_values_foundation_comment_alias_stores_rdfs_comment() {
     });
 
     let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "foundation:comment alias must succeed: {:?}", result.error);
+    assert!(
+        result.success,
+        "foundation:comment alias must succeed: {:?}",
+        result.error
+    );
 
-    let stored = crate::owl::get_literal_property(
-        &conn, "foundation:Task_comment_001", "rdfs:comment",
-    ).unwrap();
+    let stored =
+        crate::owl::get_literal_property(&conn, "foundation:Task_comment_001", "rdfs:comment")
+            .unwrap();
     assert_eq!(
         stored.as_deref(),
         Some("This is a description via alias"),
@@ -529,11 +796,15 @@ fn test_add_property_values_bare_comment_alias_stores_rdfs_comment() {
     });
 
     let result = add_property_values_one(&mut conn, &args);
-    assert!(result.success, "bare 'comment' alias must succeed: {:?}", result.error);
+    assert!(
+        result.success,
+        "bare 'comment' alias must succeed: {:?}",
+        result.error
+    );
 
-    let stored = crate::owl::get_literal_property(
-        &conn, "foundation:Task_comment_002", "rdfs:comment",
-    ).unwrap();
+    let stored =
+        crate::owl::get_literal_property(&conn, "foundation:Task_comment_002", "rdfs:comment")
+            .unwrap();
     assert_eq!(
         stored.as_deref(),
         Some("Bare comment alias"),
@@ -554,11 +825,15 @@ fn test_replace_property_values_rdfs_comment_direct_still_works() {
     });
 
     let result = replace_property_values_one(&mut conn, &args);
-    assert!(result.success, "rdfs:comment direct must continue to work: {:?}", result.error);
+    assert!(
+        result.success,
+        "rdfs:comment direct must continue to work: {:?}",
+        result.error
+    );
 
-    let stored = crate::owl::get_literal_property(
-        &conn, "foundation:Task_comment_003", "rdfs:comment",
-    ).unwrap();
+    let stored =
+        crate::owl::get_literal_property(&conn, "foundation:Task_comment_003", "rdfs:comment")
+            .unwrap();
     assert_eq!(
         stored.as_deref(),
         Some("Direct rdfs:comment"),

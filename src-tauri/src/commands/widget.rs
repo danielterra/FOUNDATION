@@ -1,6 +1,6 @@
+use crate::owl::{Connection, DbExecutor, Individual, Object};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
-use crate::owl::{Connection, DbExecutor, Object, Individual};
 
 const WIDGET_CLASS: &str = "foundation:Widget";
 const WIDGET_ICON: &str = "widgets";
@@ -85,13 +85,15 @@ fn str_obj(value: impl Into<String>) -> Object {
 }
 
 fn prop_str(ind: &Individual, pred: &str) -> Option<String> {
-    ind.properties.iter()
+    ind.properties
+        .iter()
         .find(|(p, _)| p == pred)
         .and_then(|(_, v)| v.as_literal())
 }
 
 fn prop_f64(ind: &Individual, pred: &str) -> Option<f64> {
-    ind.properties.iter()
+    ind.properties
+        .iter()
         .find(|(p, _)| p == pred)
         .and_then(|(_, v)| match v {
             Object::Number(n) => Some(*n),
@@ -101,7 +103,8 @@ fn prop_f64(ind: &Individual, pred: &str) -> Option<f64> {
 }
 
 fn prop_iri(ind: &Individual, pred: &str) -> Option<String> {
-    ind.properties.iter()
+    ind.properties
+        .iter()
         .find(|(p, _)| p == pred)
         .and_then(|(_, v)| v.as_iri().map(String::from))
 }
@@ -114,9 +117,10 @@ pub fn resolve_widget_type(conn: &Connection, entity_id: &str, requested_type: &
         .ok()
         .flatten();
     if let Some(class_iri) = class_iri {
-        let default = crate::owl::get_literal_property(conn, &class_iri, "foundation:defaultWidgetType")
-            .ok()
-            .flatten();
+        let default =
+            crate::owl::get_literal_property(conn, &class_iri, "foundation:defaultWidgetType")
+                .ok()
+                .flatten();
         if let Some(t) = default {
             if !t.is_empty() {
                 return t;
@@ -181,11 +185,22 @@ pub fn resolve_blackboard_iri(
 
     if !exists {
         let bb = Individual::new(&bb_iri);
-        bb.assert(conn, BLACKBOARD_CLASS, &label, BLACKBOARD_ICON, WIDGET_ORIGIN)
-            .map_err(|e| e.to_string())?;
+        bb.assert(
+            conn,
+            BLACKBOARD_CLASS,
+            &label,
+            BLACKBOARD_ICON,
+            WIDGET_ORIGIN,
+        )
+        .map_err(|e| e.to_string())?;
         if let Some(c) = conversation_iri {
-            bb.add_property(conn, PRED_FOR_CONVERSATION, vec![Object::Iri(c.to_string())], WIDGET_ORIGIN)
-                .map_err(|e| e.to_string())?;
+            bb.add_property(
+                conn,
+                PRED_FOR_CONVERSATION,
+                vec![Object::Iri(c.to_string())],
+                WIDGET_ORIGIN,
+            )
+            .map_err(|e| e.to_string())?;
         }
     }
 
@@ -194,35 +209,84 @@ pub fn resolve_blackboard_iri(
 
 pub fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), String> {
     let ind = Individual::new(&widget.id);
-    ind.assert(conn, WIDGET_CLASS, &widget.widget_type, WIDGET_ICON, WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_WIDGET_TYPE, vec![str_obj(&widget.widget_type)], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_ENTITY_ID, vec![str_obj(&widget.entity_id)], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_POSITION_X, vec![Object::Number(widget.position.x)], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_POSITION_Y, vec![Object::Number(widget.position.y)], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_SIZE_WIDTH, vec![Object::Number(widget.size.width)], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_SIZE_HEIGHT, vec![Object::Number(widget.size.height)], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())?;
+    ind.assert(
+        conn,
+        WIDGET_CLASS,
+        &widget.widget_type,
+        WIDGET_ICON,
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        PRED_WIDGET_TYPE,
+        vec![str_obj(&widget.widget_type)],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        PRED_ENTITY_ID,
+        vec![str_obj(&widget.entity_id)],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        PRED_POSITION_X,
+        vec![Object::Number(widget.position.x)],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        PRED_POSITION_Y,
+        vec![Object::Number(widget.position.y)],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        PRED_SIZE_WIDTH,
+        vec![Object::Number(widget.size.width)],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        PRED_SIZE_HEIGHT,
+        vec![Object::Number(widget.size.height)],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())?;
     let state_str = match widget.window_state {
         WindowState::Normal => "normal",
         WindowState::Minimized => "minimized",
         WindowState::Maximized => "maximized",
     };
-    ind.add_property(conn, PRED_WINDOW_STATE, vec![str_obj(state_str)], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_BLACKBOARD, vec![Object::Iri(widget.blackboard_iri.clone())], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        PRED_WINDOW_STATE,
+        vec![str_obj(state_str)],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        PRED_BLACKBOARD,
+        vec![Object::Iri(widget.blackboard_iri.clone())],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// Returns widgets on the given blackboard, filtering directly in SQL and
 /// applying a safe page bound.  Avoids loading all widgets from all boards.
-pub fn owl_get_widgets_for_blackboard(conn: &Connection, blackboard_iri: &str) -> Result<Vec<Widget>, String> {
+pub fn owl_get_widgets_for_blackboard(
+    conn: &Connection,
+    blackboard_iri: &str,
+) -> Result<Vec<Widget>, String> {
     owl_get_widgets_for_blackboard_bounded(conn, blackboard_iri, 500, 0)
 }
 
@@ -233,8 +297,14 @@ pub fn owl_get_widgets_for_blackboard_bounded(
     offset: i64,
 ) -> Result<Vec<Widget>, String> {
     let widget_iris = crate::owl::find_entities_with_property_bounded(
-        conn, PRED_BLACKBOARD, blackboard_iri, limit, offset, None,
-    ).map_err(|e| e.to_string())?;
+        conn,
+        PRED_BLACKBOARD,
+        blackboard_iri,
+        limit,
+        offset,
+        None,
+    )
+    .map_err(|e| e.to_string())?;
 
     let mut widgets = Vec::new();
     for iri in widget_iris {
@@ -254,8 +324,7 @@ pub fn owl_delete_widget(conn: &mut Connection, widget_id: &str) -> Result<(), S
     if !exists {
         return Err(format!("Widget not found: {}", widget_id));
     }
-    Individual::retract(conn, widget_id, WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())
+    Individual::retract(conn, widget_id, WIDGET_ORIGIN).map_err(|e| e.to_string())
 }
 
 fn owl_update_widget_position(
@@ -264,10 +333,20 @@ fn owl_update_widget_position(
     position: &Position,
 ) -> Result<(), String> {
     let ind = Individual::new(widget_id);
-    ind.add_property(conn, PRED_POSITION_X, vec![Object::Number(position.x)], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_POSITION_Y, vec![Object::Number(position.y)], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())
+    ind.add_property(
+        conn,
+        PRED_POSITION_X,
+        vec![Object::Number(position.x)],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        PRED_POSITION_Y,
+        vec![Object::Number(position.y)],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())
 }
 
 fn owl_update_widget_size(
@@ -276,10 +355,20 @@ fn owl_update_widget_size(
     size: &Size,
 ) -> Result<(), String> {
     let ind = Individual::new(widget_id);
-    ind.add_property(conn, PRED_SIZE_WIDTH, vec![Object::Number(size.width)], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, PRED_SIZE_HEIGHT, vec![Object::Number(size.height)], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())
+    ind.add_property(
+        conn,
+        PRED_SIZE_WIDTH,
+        vec![Object::Number(size.width)],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        PRED_SIZE_HEIGHT,
+        vec![Object::Number(size.height)],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())
 }
 
 fn owl_update_widget_window_state(
@@ -293,8 +382,13 @@ fn owl_update_widget_window_state(
         WindowState::Maximized => "maximized",
     };
     let ind = Individual::new(widget_id);
-    ind.add_property(conn, PRED_WINDOW_STATE, vec![str_obj(state_str)], WIDGET_ORIGIN)
-        .map_err(|e| e.to_string())
+    ind.add_property(
+        conn,
+        PRED_WINDOW_STATE,
+        vec![str_obj(state_str)],
+        WIDGET_ORIGIN,
+    )
+    .map_err(|e| e.to_string())
 }
 
 fn owl_update_widget_content(
@@ -311,7 +405,12 @@ fn owl_update_widget_content(
         None => return Ok(()),
     };
     Individual::new(&entity_id)
-        .add_property(conn, "foundation:diagramSource", vec![str_obj(content)], WIDGET_ORIGIN)
+        .add_property(
+            conn,
+            "foundation:diagramSource",
+            vec![str_obj(content)],
+            WIDGET_ORIGIN,
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -321,7 +420,8 @@ fn owl_update_widget_content(
 pub fn widget_system_context(conn: &Connection) -> String {
     let all_types = blackboard__list_widget_types(conn);
 
-    let ai_creatable: Vec<&WidgetType> = all_types.iter()
+    let ai_creatable: Vec<&WidgetType> = all_types
+        .iter()
         .filter(|t| t.usage_note.is_some())
         .collect();
 
@@ -329,8 +429,15 @@ pub fn widget_system_context(conn: &Connection) -> String {
         return String::new();
     }
 
-    let list = ai_creatable.iter()
-        .map(|t| format!("- **{}** — {}", t.id, t.usage_note.as_deref().unwrap_or_default()))
+    let list = ai_creatable
+        .iter()
+        .map(|t| {
+            format!(
+                "- **{}** — {}",
+                t.id,
+                t.usage_note.as_deref().unwrap_or_default()
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -343,7 +450,13 @@ pub fn widget_system_context(conn: &Connection) -> String {
 
 #[allow(non_snake_case)]
 pub fn blackboard__list_widget_types(conn: &Connection) -> Vec<WidgetType> {
-    let iris = match Individual::find_by_class_with_date_range(conn, "foundation:WidgetType", None, None, false) {
+    let iris = match Individual::find_by_class_with_date_range(
+        conn,
+        "foundation:WidgetType",
+        None,
+        None,
+        false,
+    ) {
         Ok(iris) => iris,
         Err(_) => return vec![],
     };
@@ -396,41 +509,56 @@ pub async fn widget_blackboard__get_graph_data(
     entity_iris: Vec<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    let result = executor.read(move |conn| {
-        if entity_iris.is_empty() {
-            return serde_json::to_string(&MultiGraphData { nodes: vec![], links: vec![] })
+    let result = executor
+        .read(move |conn| {
+            if entity_iris.is_empty() {
+                return serde_json::to_string(&MultiGraphData {
+                    nodes: vec![],
+                    links: vec![],
+                })
                 .map_err(|e| e.to_string());
-        }
-
-        let groups = crate::owl::load_graph_node_groups(conn);
-        let (group_class, group_individual, _) = groups;
-
-        // Build nodes from the provided IRIs only
-        let things = crate::owl::Thing::get_batch(conn, &entity_iris);
-        let mut nodes: Vec<crate::commands::entity::GraphNode> = entity_iris.iter().map(|iri| {
-            let t = things.get(iri);
-            let is_class = crate::owl::Class::get(conn, iri).map(|c| c.is_some()).unwrap_or(false);
-            crate::commands::entity::GraphNode {
-                id: iri.clone(),
-                label: t.map(|t| t.label.clone()).unwrap_or_else(|| iri.clone()),
-                icon: t.and_then(|t| t.icon.clone()),
-                group: if is_class { group_class } else { group_individual },
-                is_broken_ref: None,
-                is_literal: None,
             }
-        }).collect();
 
-        // Deduplicate nodes (entity_iris may contain duplicates)
-        nodes.dedup_by(|a, b| a.id == b.id);
+            let groups = crate::owl::load_graph_node_groups(conn);
+            let (group_class, group_individual, _) = groups;
 
-        // Query relations where BOTH source and target are in the provided set
-        let placeholders: String = entity_iris.iter().enumerate()
-            .map(|(i, _)| format!("?{}", i + 1))
-            .collect::<Vec<_>>()
-            .join(", ");
+            // Build nodes from the provided IRIs only
+            let things = crate::owl::Thing::get_batch(conn, &entity_iris);
+            let mut nodes: Vec<crate::commands::entity::GraphNode> = entity_iris
+                .iter()
+                .map(|iri| {
+                    let t = things.get(iri);
+                    let is_class = crate::owl::Class::get(conn, iri)
+                        .map(|c| c.is_some())
+                        .unwrap_or(false);
+                    crate::commands::entity::GraphNode {
+                        id: iri.clone(),
+                        label: t.map(|t| t.label.clone()).unwrap_or_else(|| iri.clone()),
+                        icon: t.and_then(|t| t.icon.clone()),
+                        group: if is_class {
+                            group_class
+                        } else {
+                            group_individual
+                        },
+                        is_broken_ref: None,
+                        is_literal: None,
+                    }
+                })
+                .collect();
 
-        let sql = format!(
-            "SELECT t.subject, t.object, COALESCE(p.label, t.predicate) as link_label
+            // Deduplicate nodes (entity_iris may contain duplicates)
+            nodes.dedup_by(|a, b| a.id == b.id);
+
+            // Query relations where BOTH source and target are in the provided set
+            let placeholders: String = entity_iris
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 1))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let sql = format!(
+                "SELECT t.subject, t.object, COALESCE(p.label, t.predicate) as link_label
              FROM triples t
              LEFT JOIN (
                  SELECT subject, object_value as label
@@ -442,27 +570,31 @@ pub async fn widget_blackboard__get_graph_data(
                AND t.object_type = 'iri'
                AND t.predicate NOT IN ('rdf:type', 'foundation:icon', 'rdfs:subClassOf')
                AND t.retracted = 0"
-        );
+            );
 
-        let params: Vec<&dyn rusqlite::ToSql> = entity_iris.iter()
-            .map(|s| s as &dyn rusqlite::ToSql)
-            .collect();
+            let params: Vec<&dyn rusqlite::ToSql> = entity_iris
+                .iter()
+                .map(|s| s as &dyn rusqlite::ToSql)
+                .collect();
 
-        let links = conn.prepare_cached(&sql)
-            .and_then(|mut stmt| {
-                stmt.query_map(params.as_slice(), |row| {
-                    Ok(crate::commands::entity::GraphLink {
-                        source: row.get(0)?,
-                        target: row.get(1)?,
-                        label: row.get::<_, String>(2).unwrap_or_default(),
+            let links = conn
+                .prepare_cached(&sql)
+                .and_then(|mut stmt| {
+                    stmt.query_map(params.as_slice(), |row| {
+                        Ok(crate::commands::entity::GraphLink {
+                            source: row.get(0)?,
+                            target: row.get(1)?,
+                            label: row.get::<_, String>(2).unwrap_or_default(),
+                        })
                     })
-                }).and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
-            })
-            .map_err(|e| e.to_string())?;
+                    .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+                })
+                .map_err(|e| e.to_string())?;
 
-        let out = MultiGraphData { nodes, links };
-        serde_json::to_string(&out).map_err(|e| e.to_string())
-    }).await?;
+            let out = MultiGraphData { nodes, links };
+            serde_json::to_string(&out).map_err(|e| e.to_string())
+        })
+        .await?;
 
     Ok(result)
 }
@@ -473,10 +605,12 @@ pub async fn widget_blackboard__resolve_blackboard(
     conversation_id: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    executor.write(move |conn| {
-        let iri = resolve_blackboard_iri(conn, conversation_id.as_deref())?;
-        Ok(iri)
-    }).await
+    executor
+        .write(move |conn| {
+            let iri = resolve_blackboard_iri(conn, conversation_id.as_deref())?;
+            Ok(iri)
+        })
+        .await
 }
 
 #[tauri::command]
@@ -487,12 +621,14 @@ pub async fn widget_blackboard__get_widgets(
     offset: Option<i64>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<Widget>, String> {
-    executor.read(move |conn| {
-        // bounded-por-natureza; keyset-tx não agrega (não é append-no-topo)
-        let page_size = limit.unwrap_or(500).max(1).min(2000);
-        let page_offset = offset.unwrap_or(0).max(0);
-        owl_get_widgets_for_blackboard_bounded(conn, &blackboard_id, page_size, page_offset)
-    }).await
+    executor
+        .read(move |conn| {
+            // bounded-por-natureza; keyset-tx não agrega (não é append-no-topo)
+            let page_size = limit.unwrap_or(500).max(1).min(2000);
+            let page_offset = offset.unwrap_or(0).max(0);
+            owl_get_widgets_for_blackboard_bounded(conn, &blackboard_id, page_size, page_offset)
+        })
+        .await
 }
 
 #[tauri::command]
@@ -505,27 +641,30 @@ pub async fn widget_blackboard__add_widget(
     size: Option<Size>,
     blackboard_id: Option<String>,
     conversation_id: Option<String>,
-    executor: State<'_, DbExecutor>
+    executor: State<'_, DbExecutor>,
 ) -> Result<Widget, String> {
     let widget_type_check = widget_type.clone();
     let entity_id_check = entity_id.clone();
-    let (resolved_type, default_size) = executor.read(move |conn| {
-        let resolved = resolve_widget_type(conn, &entity_id_check, &widget_type_check);
-        let valid_types = blackboard__list_widget_types(conn);
-        let size = valid_types.into_iter()
-            .find(|t| t.id == resolved)
-            .map(|t| t.default_size)
-            .ok_or_else(|| format!("Invalid widget type: {}", resolved.clone()))?;
-        Ok((resolved, size))
-    }).await?;
+    let (resolved_type, default_size) = executor
+        .read(move |conn| {
+            let resolved = resolve_widget_type(conn, &entity_id_check, &widget_type_check);
+            let valid_types = blackboard__list_widget_types(conn);
+            let size = valid_types
+                .into_iter()
+                .find(|t| t.id == resolved)
+                .map(|t| t.default_size)
+                .ok_or_else(|| format!("Invalid widget type: {}", resolved.clone()))?;
+            Ok((resolved, size))
+        })
+        .await?;
 
     let bb_iri = match blackboard_id {
         Some(b) => b,
         None => {
             let conv = conversation_id.clone();
-            executor.write(move |conn| {
-                resolve_blackboard_iri(conn, conv.as_deref())
-            }).await?
+            executor
+                .write(move |conn| resolve_blackboard_iri(conn, conv.as_deref()))
+                .await?
         }
     };
 
@@ -536,7 +675,10 @@ pub async fn widget_blackboard__add_widget(
         id: format!("foundation:Widget_{resolved_type}_{sanitized_entity}_{sanitized_bb}"),
         widget_type: resolved_type,
         entity_id,
-        position: position.unwrap_or(Position { x: DEFAULT_POS_X, y: DEFAULT_POS_Y }),
+        position: position.unwrap_or(Position {
+            x: DEFAULT_POS_X,
+            y: DEFAULT_POS_Y,
+        }),
         size: size.unwrap_or(default_size),
         window_state: WindowState::Normal,
         blackboard_iri: bb_iri,
@@ -547,10 +689,13 @@ pub async fn widget_blackboard__add_widget(
     let widget_clone = widget.clone();
     let executor_clone = executor.inner().clone();
     tokio::spawn(async move {
-        executor_clone.write(move |conn| {
-            owl_insert_widget(conn, &widget_clone)?;
-            Ok(widget_clone.id.clone())
-        }).await.ok();
+        executor_clone
+            .write(move |conn| {
+                owl_insert_widget(conn, &widget_clone)?;
+                Ok(widget_clone.id.clone())
+            })
+            .await
+            .ok();
     });
 
     Ok(widget)
@@ -561,16 +706,19 @@ pub async fn widget_blackboard__add_widget(
 pub async fn widget_blackboard__remove_widget(
     app: AppHandle,
     widget_id: String,
-    executor: State<'_, DbExecutor>
+    executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     app.emit("widget-removed", widget_id.clone()).ok();
 
     let executor_clone = executor.inner().clone();
     tokio::spawn(async move {
-        executor_clone.write(move |conn| {
-            owl_delete_widget(conn, &widget_id)?;
-            Ok("deleted".to_string())
-        }).await.ok();
+        executor_clone
+            .write(move |conn| {
+                owl_delete_widget(conn, &widget_id)?;
+                Ok("deleted".to_string())
+            })
+            .await
+            .ok();
     });
 
     Ok(())
@@ -581,12 +729,14 @@ pub async fn widget_blackboard__remove_widget(
 pub async fn widget_blackboard__update_widget_position(
     widget_id: String,
     position: Position,
-    executor: State<'_, DbExecutor>
+    executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
-    executor.write(move |conn| {
-        owl_update_widget_position(conn, &widget_id, &position)?;
-        Ok("updated".to_string())
-    }).await?;
+    executor
+        .write(move |conn| {
+            owl_update_widget_position(conn, &widget_id, &position)?;
+            Ok("updated".to_string())
+        })
+        .await?;
     Ok(())
 }
 
@@ -595,12 +745,14 @@ pub async fn widget_blackboard__update_widget_position(
 pub async fn widget_blackboard__update_widget_size(
     widget_id: String,
     size: Size,
-    executor: State<'_, DbExecutor>
+    executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
-    executor.write(move |conn| {
-        owl_update_widget_size(conn, &widget_id, &size)?;
-        Ok("updated".to_string())
-    }).await?;
+    executor
+        .write(move |conn| {
+            owl_update_widget_size(conn, &widget_id, &size)?;
+            Ok("updated".to_string())
+        })
+        .await?;
     Ok(())
 }
 
@@ -609,12 +761,14 @@ pub async fn widget_blackboard__update_widget_size(
 pub async fn widget_blackboard__update_widget_window_state(
     widget_id: String,
     window_state: WindowState,
-    executor: State<'_, DbExecutor>
+    executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
-    executor.write(move |conn| {
-        owl_update_widget_window_state(conn, &widget_id, &window_state)?;
-        Ok("updated".to_string())
-    }).await?;
+    executor
+        .write(move |conn| {
+            owl_update_widget_window_state(conn, &widget_id, &window_state)?;
+            Ok("updated".to_string())
+        })
+        .await?;
     Ok(())
 }
 
@@ -624,13 +778,15 @@ pub async fn widget_blackboard__update_widget_content(
     app: AppHandle,
     widget_id: String,
     content: String,
-    executor: State<'_, DbExecutor>
+    executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let widget_id_clone = widget_id.clone();
-    executor.write(move |conn| {
-        owl_update_widget_content(conn, &widget_id_clone, &content)?;
-        Ok("updated".to_string())
-    }).await?;
+    executor
+        .write(move |conn| {
+            owl_update_widget_content(conn, &widget_id_clone, &content)?;
+            Ok("updated".to_string())
+        })
+        .await?;
     app.emit("widget-content-updated", widget_id).ok();
     Ok(())
 }
@@ -641,28 +797,30 @@ pub async fn widget_blackboard__list_widget_definitions(
     class_iri: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Vec<WidgetDefinitionInfo>, String> {
-    executor.read(move |conn| {
-        let all_types = blackboard__list_widget_types(conn);
+    executor
+        .read(move |conn| {
+            let all_types = blackboard__list_widget_types(conn);
 
-        let results = all_types.into_iter()
-            .filter(|t| {
-                if let Some(ref filter_iri) = class_iri {
-                    t.supported_class == "owl:Thing"
-                        || &t.supported_class == filter_iri
-                        || crate::owl::is_subclass_of(conn, filter_iri, &t.supported_class)
-                } else {
-                    true
-                }
-            })
-            .map(|t| WidgetDefinitionInfo {
-                widget_type: t.id,
-                description: t.description,
-                icon: t.icon,
-                default_size: t.default_size,
-            })
-            .collect();
+            let results = all_types
+                .into_iter()
+                .filter(|t| {
+                    if let Some(ref filter_iri) = class_iri {
+                        t.supported_class == "owl:Thing"
+                            || &t.supported_class == filter_iri
+                            || crate::owl::is_subclass_of(conn, filter_iri, &t.supported_class)
+                    } else {
+                        true
+                    }
+                })
+                .map(|t| WidgetDefinitionInfo {
+                    widget_type: t.id,
+                    description: t.description,
+                    icon: t.icon,
+                    default_size: t.default_size,
+                })
+                .collect();
 
-        Ok(results)
-    }).await
+            Ok(results)
+        })
+        .await
 }
-

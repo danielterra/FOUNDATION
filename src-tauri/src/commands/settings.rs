@@ -13,7 +13,11 @@ pub async fn settings__is_folder_configured(app: AppHandle) -> bool {
     };
     if let Ok(contents) = std::fs::read_to_string(&config_path) {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&contents) {
-            return val.get("foundation_dir").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
+            return val
+                .get("foundation_dir")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
         }
     }
     false
@@ -80,17 +84,22 @@ pub async fn settings__connect_claude_desktop(app: AppHandle) -> Result<String, 
 pub async fn settings__get_history_retention_days(
     executor: State<'_, DbExecutor>,
 ) -> Result<u32, String> {
-    executor.read(|conn| {
-        let days = Individual::get(conn, HISTORY_RETENTION_DAYS_SETTING_IRI)
-            .ok()
-            .flatten()
-            .and_then(|s| s.properties.iter()
-                .find(|(k, _)| k == "foundation:settingValue")
-                .and_then(|(_, v)| v.as_literal())
-                .and_then(|v| v.parse::<u32>().ok()))
-            .unwrap_or(7);
-        Ok(days)
-    }).await
+    executor
+        .read(|conn| {
+            let days = Individual::get(conn, HISTORY_RETENTION_DAYS_SETTING_IRI)
+                .ok()
+                .flatten()
+                .and_then(|s| {
+                    s.properties
+                        .iter()
+                        .find(|(k, _)| k == "foundation:settingValue")
+                        .and_then(|(_, v)| v.as_literal())
+                        .and_then(|v| v.parse::<u32>().ok())
+                })
+                .unwrap_or(7);
+            Ok(days)
+        })
+        .await
 }
 
 /// Persists the history retention period in days (0 = never purge).
@@ -100,18 +109,27 @@ pub async fn settings__set_history_retention_days(
     days: u32,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
-    executor.write(move |conn| {
-        let setting = Individual::get(conn, HISTORY_RETENTION_DAYS_SETTING_IRI)
-            .map_err(|e| format!("Failed to get HistoryRetentionDaysSetting: {}", e))?
-            .ok_or_else(|| "HistoryRetentionDaysSetting not found".to_string())?;
+    executor
+        .write(move |conn| {
+            let setting = Individual::get(conn, HISTORY_RETENTION_DAYS_SETTING_IRI)
+                .map_err(|e| format!("Failed to get HistoryRetentionDaysSetting: {}", e))?
+                .ok_or_else(|| "HistoryRetentionDaysSetting not found".to_string())?;
 
-        setting.add_property(conn, "foundation:settingValue", vec![Object::Literal {
-            value: days.to_string(),
-            datatype: Some("xsd:string".to_string()),
-            language: None,
-        }], "settings").map_err(|e| format!("Failed to update settingValue: {}", e))?;
+            setting
+                .add_property(
+                    conn,
+                    "foundation:settingValue",
+                    vec![Object::Literal {
+                        value: days.to_string(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "settings",
+                )
+                .map_err(|e| format!("Failed to update settingValue: {}", e))?;
 
-        Ok(String::new())
-    }).await?;
+            Ok(String::new())
+        })
+        .await?;
     Ok(())
 }

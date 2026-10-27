@@ -1,6 +1,6 @@
 use super::*;
-use crate::process_automation::executor::interpolate;
 use crate::eavto::Object;
+use crate::process_automation::executor::interpolate;
 
 // ── str_lit ───────────────────────────────────────────────────────────────────
 
@@ -8,7 +8,11 @@ use crate::eavto::Object;
 fn test_str_lit_produces_string_literal() {
     let obj = str_lit("hello");
     match obj {
-        Object::Literal { value, datatype, language } => {
+        Object::Literal {
+            value,
+            datatype,
+            language,
+        } => {
             assert_eq!(value, "hello");
             assert_eq!(datatype.as_deref(), Some("xsd:string"));
             assert!(language.is_none());

@@ -1,7 +1,7 @@
-use serde_json::Value;
+use super::ToolResult;
 use crate::eavto::Connection;
 use crate::owl::{Individual, Object, Property, PropertyType};
-use super::ToolResult;
+use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 fn load_class_context(conn: &Connection, class_iri: &str) -> Option<Value> {
@@ -57,9 +57,10 @@ fn next_iri_id() -> u64 {
     loop {
         let current = IRI_COUNTER.load(Ordering::Relaxed);
         let next = if now > current { now } else { current + 1 };
-        if IRI_COUNTER.compare_exchange(
-            current, next, Ordering::Relaxed, Ordering::Relaxed,
-        ).is_ok() {
+        if IRI_COUNTER
+            .compare_exchange(current, next, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
             return next;
         }
     }
@@ -84,14 +85,17 @@ fn build_objects(
 ) -> Result<Vec<Object>, crate::owl::OwlError> {
     let property_iri = normalize_comment_alias(property_iri);
     let prop = Property::get(conn, property_iri)?;
-    let is_iri = prop.as_ref()
+    let is_iri = prop
+        .as_ref()
         .map(|p| p.property_type == PropertyType::ObjectProperty)
         .unwrap_or(false);
-    let datatype = prop.as_ref()
+    let datatype = prop
+        .as_ref()
         .and_then(|p| p.ranges.first().cloned())
         .unwrap_or_else(|| "xsd:string".to_string());
 
-    raw_values.iter()
+    raw_values
+        .iter()
         .filter(|v| !v.is_null())
         .map(|v| coerce_value(v, is_iri, &datatype, property_iri))
         .collect()
@@ -107,10 +111,13 @@ fn coerce_value(
         Value::String(s) => s.clone(),
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
-        _ => return Err(crate::owl::OwlError::ValidationError(format!(
-            "Property '{}': unsupported value type {}; expected string, number or boolean",
-            property_iri, type_name(v),
-        ))),
+        _ => {
+            return Err(crate::owl::OwlError::ValidationError(format!(
+                "Property '{}': unsupported value type {}; expected string, number or boolean",
+                property_iri,
+                type_name(v),
+            )))
+        }
     };
 
     if is_iri {
@@ -139,7 +146,8 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
     let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let entity_type_filter = args.get("type").and_then(|v| v.as_str());
     let class_iri = args.get("class_iri").and_then(|v| v.as_str());
-    let include_retracted = args.get("include_retracted")
+    let include_retracted = args
+        .get("include_retracted")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
@@ -147,24 +155,27 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
 
     let filters_owned: Option<Vec<(String, String, String)>> =
         args.get("filters").and_then(|v| v.as_array()).map(|arr| {
-            arr.iter().filter_map(|item| {
-                let detail = item.get("detail").and_then(|v| v.as_str())?.to_string();
-                let operator = item.get("operator")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("=")
-                    .to_string();
-                let value = if operator == "exists" || operator == "not_exists" {
-                    String::new()
-                } else {
-                    match item.get("value")? {
-                        serde_json::Value::String(s) => s.clone(),
-                        serde_json::Value::Number(n) => n.to_string(),
-                        serde_json::Value::Bool(b) => b.to_string(),
-                        _ => return None,
-                    }
-                };
-                Some((detail, value, operator))
-            }).collect()
+            arr.iter()
+                .filter_map(|item| {
+                    let detail = item.get("detail").and_then(|v| v.as_str())?.to_string();
+                    let operator = item
+                        .get("operator")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("=")
+                        .to_string();
+                    let value = if operator == "exists" || operator == "not_exists" {
+                        String::new()
+                    } else {
+                        match item.get("value")? {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            _ => return None,
+                        }
+                    };
+                    Some((detail, value, operator))
+                })
+                .collect()
         });
 
     let iri_hit = if !query_str.is_empty() && filters_owned.is_none() {
@@ -176,7 +187,10 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
     let tokens: Vec<String> = if query_str.is_empty() {
         Vec::new()
     } else {
-        query_str.split_whitespace().map(|s| s.to_lowercase()).collect()
+        query_str
+            .split_whitespace()
+            .map(|s| s.to_lowercase())
+            .collect()
     };
 
     let filters_ref: Option<&[(String, String, String)]> = filters_owned.as_deref();
@@ -202,16 +216,19 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
                     results.insert(0, hit);
                 }
             }
-            let entities: Vec<serde_json::Value> = results.into_iter()
-                .map(|r| serde_json::json!({
-                    "id": r.id,
-                    "label": r.label,
-                    "icon": r.icon,
-                    "type": r.entity_type,
-                    "matchedProperties": r.matched_properties,
-                    "classType": r.class_type,
-                    "status": r.status,
-                }))
+            let entities: Vec<serde_json::Value> = results
+                .into_iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "id": r.id,
+                        "label": r.label,
+                        "icon": r.icon,
+                        "type": r.entity_type,
+                        "matchedProperties": r.matched_properties,
+                        "classType": r.class_type,
+                        "status": r.status,
+                    })
+                })
                 .collect();
             ToolResult {
                 success: true,
@@ -229,7 +246,7 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
             success: false,
             result: None,
             error: Some(e.to_string()),
-            concept: class_iri.and_then(|iri| load_class_context(conn,iri)),
+            concept: class_iri.and_then(|iri| load_class_context(conn, iri)),
         },
     }
 }
@@ -237,23 +254,64 @@ pub fn search(conn: &Connection, args: &Value) -> ToolResult {
 pub fn read_property_page(conn: &Connection, args: &Value) -> ToolResult {
     let individual_iri = match args.get("individual_iri").and_then(|v| v.as_str()) {
         Some(s) => s,
-        None => return ToolResult { success: false, result: None, error: Some("Missing required parameter: individual_iri".to_string()), concept: None },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: individual_iri".to_string()),
+                concept: None,
+            }
+        }
     };
     let property_iri = match args.get("property_iri").and_then(|v| v.as_str()) {
         Some(s) => s,
-        None => return ToolResult { success: false, result: None, error: Some("Missing required parameter: property_iri".to_string()), concept: None },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: property_iri".to_string()),
+                concept: None,
+            }
+        }
     };
-    let page = args.get("page").and_then(|v| v.as_u64()).unwrap_or(1).max(1) as usize;
-    let page_size = args.get("page_size").and_then(|v| v.as_u64()).unwrap_or(2000).max(1) as usize;
-    let value_index = args.get("value_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let page = args
+        .get("page")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1)
+        .max(1) as usize;
+    let page_size = args
+        .get("page_size")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(2000)
+        .max(1) as usize;
+    let value_index = args
+        .get("value_index")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
 
     let individual = match Individual::get(conn, individual_iri) {
         Ok(Some(ind)) => ind,
-        Ok(None) => return ToolResult { success: false, result: None, error: Some(format!("Individual '{}' not found.", individual_iri)), concept: None },
-        Err(e) => return ToolResult { success: false, result: None, error: Some(e.to_string()), concept: None },
+        Ok(None) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!("Individual '{}' not found.", individual_iri)),
+                concept: None,
+            }
+        }
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(e.to_string()),
+                concept: None,
+            }
+        }
     };
 
-    let values: Vec<String> = individual.properties.iter()
+    let values: Vec<String> = individual
+        .properties
+        .iter()
         .filter(|(pred, _)| pred == property_iri)
         .enumerate()
         .filter(|(i, _)| *i == value_index)
@@ -269,11 +327,17 @@ pub fn read_property_page(conn: &Connection, args: &Value) -> ToolResult {
 
     let text = match values.into_iter().next() {
         Some(v) => v,
-        None => return ToolResult {
-            success: false, result: None,
-            error: Some(format!("Property '{}' not found on '{}' at value_index {}.", property_iri, individual_iri, value_index)),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!(
+                    "Property '{}' not found on '{}' at value_index {}.",
+                    property_iri, individual_iri, value_index
+                )),
+                concept: None,
+            }
+        }
     };
 
     let chars: Vec<char> = text.chars().collect();
@@ -283,8 +347,12 @@ pub fn read_property_page(conn: &Connection, args: &Value) -> ToolResult {
 
     if page > total_pages {
         return ToolResult {
-            success: false, result: None,
-            error: Some(format!("Page {} out of range — total_pages is {}.", page, total_pages)),
+            success: false,
+            result: None,
+            error: Some(format!(
+                "Page {} out of range — total_pages is {}.",
+                page, total_pages
+            )),
             concept: None,
         };
     }
@@ -310,12 +378,14 @@ pub fn read_property_page(conn: &Connection, args: &Value) -> ToolResult {
 pub fn describe_individual(conn: &Connection, args: &Value) -> ToolResult {
     let iris = match args.get("iris").and_then(|v| v.as_array()) {
         Some(arr) => arr,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: iris".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: iris".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let mut results = Vec::new();
@@ -337,23 +407,34 @@ pub fn describe_individual(conn: &Connection, args: &Value) -> ToolResult {
     ToolResult {
         success: errors.is_empty(),
         result: Some(serde_json::json!({ "individuals": results })),
-        error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
+        error: if errors.is_empty() {
+            None
+        } else {
+            Some(errors.join("; "))
+        },
         concept: None,
     }
 }
 
 fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
-    let iri = match args.get("iri").or_else(|| args.get("IRI")).and_then(|v| v.as_str()) {
+    let iri = match args
+        .get("iri")
+        .or_else(|| args.get("IRI"))
+        .and_then(|v| v.as_str())
+    {
         Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: iri".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
-    let include_retracted = args.get("include_retracted")
+    let include_retracted = args
+        .get("include_retracted")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
@@ -373,11 +454,18 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
         // track min last_tx among included items; among items at that last_tx, track
         // the max subject (last in ASC order).
         let group_next_cursor: std::collections::HashMap<String, Option<(i64, String)>> = {
-            let mut counts: std::collections::HashMap<String, (usize, i64, String, usize)> = std::collections::HashMap::new();
+            let mut counts: std::collections::HashMap<String, (usize, i64, String, usize)> =
+                std::collections::HashMap::new();
             for b in &individual.backlinks {
-                let key = format!("{}:{}", b.predicate,
-                    b.source_class.as_deref().unwrap_or("owl:Thing"));
-                let entry = counts.entry(key).or_insert((0, i64::MAX, String::new(), b.group_total));
+                let key = format!(
+                    "{}:{}",
+                    b.predicate,
+                    b.source_class.as_deref().unwrap_or("owl:Thing")
+                );
+                let entry =
+                    counts
+                        .entry(key)
+                        .or_insert((0, i64::MAX, String::new(), b.group_total));
                 if entry.0 < PAGE_SIZE {
                     entry.0 += 1;
                     if b.last_tx < entry.1 {
@@ -388,16 +476,26 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
                     }
                 }
             }
-            counts.into_iter().map(|(key, (_, min_tx, boundary_subject, total))| {
-                let cursor = if total > PAGE_SIZE { Some((min_tx, boundary_subject)) } else { None };
-                (key, cursor)
-            }).collect()
+            counts
+                .into_iter()
+                .map(|(key, (_, min_tx, boundary_subject, total))| {
+                    let cursor = if total > PAGE_SIZE {
+                        Some((min_tx, boundary_subject))
+                    } else {
+                        None
+                    };
+                    (key, cursor)
+                })
+                .collect()
         };
 
         let mut seen_groups = std::collections::HashSet::new();
         let mut backlinks: Vec<serde_json::Value> = Vec::new();
         for b in &individual.backlinks {
-            let source_class = b.source_class.clone().unwrap_or_else(|| "owl:Thing".to_string());
+            let source_class = b
+                .source_class
+                .clone()
+                .unwrap_or_else(|| "owl:Thing".to_string());
             let group_key = format!("{}:{}", b.predicate, source_class);
             if !seen_groups.insert(group_key.clone()) {
                 continue;
@@ -406,10 +504,12 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
                 .ok()
                 .flatten()
                 .map(|prop| {
-                    b.source_class.as_deref()
+                    b.source_class
+                        .as_deref()
                         .and_then(|cls| prop.domain_labels.iter().find(|dl| dl.domain == cls))
                         .map(|dl| {
-                            dl.inverse_label.as_deref()
+                            dl.inverse_label
+                                .as_deref()
                                 .unwrap_or(&dl.forward_label)
                                 .to_string()
                         })
@@ -418,7 +518,9 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
                 })
                 .unwrap_or_else(|| b.predicate.clone());
             let class_label = crate::owl::Thing::get(conn, &source_class).label;
-            let next_cursor = group_next_cursor.get(&group_key).and_then(|c| c.as_ref())
+            let next_cursor = group_next_cursor
+                .get(&group_key)
+                .and_then(|c| c.as_ref())
                 .map(|(tx, subj)| serde_json::json!({ "last_tx": tx, "subject": subj }));
             backlinks.push(serde_json::json!({
                 "class": source_class,
@@ -462,19 +564,50 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
             }
         }
 
+        // Secrets are replaced before anything else looks at the value: an agent
+        // reading an entity must never receive a credential, and the value would
+        // otherwise land in its transcript.
+        let secret_props =
+            crate::core_ontology::property_configuration::secret_property_iris(conn)?;
+        if !secret_props.is_empty() {
+            for prop in &mut properties {
+                let is_secret = prop
+                    .get("property")
+                    .and_then(|v| v.as_str())
+                    .map(|p| secret_props.contains(p))
+                    .unwrap_or(false);
+                if is_secret {
+                    prop["value"] = serde_json::json!(
+                        crate::core_ontology::property_configuration::SECRET_MASK
+                    );
+                    prop["isSecret"] = serde_json::json!(true);
+                }
+            }
+        }
+
         const LITERAL_MAX: usize = 2000;
         for prop in &mut properties {
+            if prop.get("isSecret").is_some() {
+                continue;
+            }
             if let Some(value) = prop.get("value").and_then(|v| v.as_str()) {
                 let char_count = value.chars().count();
                 if char_count > LITERAL_MAX {
-                    let cut = value.char_indices().nth(LITERAL_MAX).map(|(i, _)| i).unwrap_or(value.len());
-                    let truncated = format!("{}…[truncated: {} chars total]", &value[..cut], char_count);
+                    let cut = value
+                        .char_indices()
+                        .nth(LITERAL_MAX)
+                        .map(|(i, _)| i)
+                        .unwrap_or(value.len());
+                    let truncated =
+                        format!("{}…[truncated: {} chars total]", &value[..cut], char_count);
                     prop["value"] = serde_json::json!(truncated);
                 }
             }
         }
 
-        let class_iris: Vec<String> = individual.types.iter()
+        let class_iris: Vec<String> = individual
+            .types
+            .iter()
             .map(|t| t.iri.clone())
             .filter(|iri| iri.starts_with("foundation:"))
             .collect();
@@ -487,9 +620,8 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
         let mut class_ai_behavior_rules: Vec<String> = Vec::new();
 
         for class_iri in &class_iris {
-            let status_iris = crate::owl::get_all_iri_properties(
-                conn, class_iri, "foundation:allowedStatus",
-            )?;
+            let status_iris =
+                crate::owl::get_all_iri_properties(conn, class_iri, "foundation:allowedStatus")?;
             for status_iri in status_iris {
                 let thing = crate::owl::Thing::get(conn, &status_iri);
                 let comment = crate::owl::get_literal_property(conn, &status_iri, "rdfs:comment")
@@ -578,22 +710,26 @@ pub fn assert_individual(
 pub(crate) fn assert_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
     let class_iri = match args.get("class_iri").and_then(|v| v.as_str()) {
         Some(class_iri) => class_iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: class_iri".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: class_iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let label = match args.get("label").and_then(|v| v.as_str()) {
         Some(label) => label,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: label".to_string()),
-            concept: load_class_context(conn,class_iri),
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: label".to_string()),
+                concept: load_class_context(conn, class_iri),
+            }
+        }
     };
 
     if !crate::owl::Class::exists(conn, class_iri) {
@@ -616,15 +752,17 @@ pub(crate) fn assert_individual_one(conn: &mut Connection, args: &Value) -> Tool
         let concept_thing = crate::owl::Thing::get(conn, class_iri);
         match concept_thing.icon {
             Some(icon) => icon,
-            None => return ToolResult {
-                success: false,
-                result: None,
-                error: Some(format!(
-                    "No icon provided and class '{}' has no icon to inherit",
-                    class_iri
-                )),
-                concept: load_class_context(conn,class_iri),
-            },
+            None => {
+                return ToolResult {
+                    success: false,
+                    result: None,
+                    error: Some(format!(
+                        "No icon provided and class '{}' has no icon to inherit",
+                        class_iri
+                    )),
+                    concept: load_class_context(conn, class_iri),
+                }
+            }
         }
     };
 
@@ -638,48 +776,61 @@ pub(crate) fn assert_individual_one(conn: &mut Connection, args: &Value) -> Tool
         individual.assert(conn, class_iri, label, &icon, "ai")?;
 
         if let Some(comment_text) = comment {
-            individual.add_property(conn, "rdfs:comment", vec![Object::Literal {
-                value: comment_text.to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }], "ai")?;
+            individual.add_property(
+                conn,
+                "rdfs:comment",
+                vec![Object::Literal {
+                    value: comment_text.to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                }],
+                "ai",
+            )?;
         }
 
         if let Some(properties) = args.get("properties").and_then(|v| v.as_array()) {
             for prop_entry in properties {
-                let property_iri = prop_entry.get("property_iri")
+                let property_iri = prop_entry
+                    .get("property_iri")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| crate::owl::OwlError::ValidationError(
-                        "Each property entry must have 'property_iri'".to_string()
-                    ))?;
+                    .ok_or_else(|| {
+                        crate::owl::OwlError::ValidationError(
+                            "Each property entry must have 'property_iri'".to_string(),
+                        )
+                    })?;
 
-                let raw_values = prop_entry.get("values")
+                let raw_values = prop_entry
+                    .get("values")
                     .and_then(|v| v.as_array())
-                    .ok_or_else(|| crate::owl::OwlError::ValidationError(
-                        format!("Property '{}' must have 'values' array", property_iri)
-                    ))?;
+                    .ok_or_else(|| {
+                        crate::owl::OwlError::ValidationError(format!(
+                            "Property '{}' must have 'values' array",
+                            property_iri
+                        ))
+                    })?;
 
                 if raw_values.is_empty() {
-                    return Err(crate::owl::OwlError::ValidationError(
-                        format!("Property '{}' values array must not be empty", property_iri)
-                    ));
+                    return Err(crate::owl::OwlError::ValidationError(format!(
+                        "Property '{}' values array must not be empty",
+                        property_iri
+                    )));
                 }
 
                 if property_iri == "foundation:hasStatus" {
                     if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
-                        crate::core_ontology::status::validate_allowed_status(conn, class_iri, status_iri)?;
+                        crate::core_ontology::status::validate_allowed_status(
+                            conn, class_iri, status_iri,
+                        )?;
                     }
                 }
 
                 let objects = build_objects(conn, property_iri, raw_values)?;
 
                 if objects.is_empty() {
-                    return Err(crate::owl::OwlError::ValidationError(
-                        format!(
-                            "Property '{}' values array contains only null entries",
-                            property_iri,
-                        )
-                    ));
+                    return Err(crate::owl::OwlError::ValidationError(format!(
+                        "Property '{}' values array contains only null entries",
+                        property_iri,
+                    )));
                 }
 
                 individual.add_property(conn, property_iri, objects, "ai")?;
@@ -688,17 +839,21 @@ pub(crate) fn assert_individual_one(conn: &mut Connection, args: &Value) -> Tool
 
         let restrictions =
             crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_iri)?;
-        let required: Vec<&str> = restrictions.iter()
+        let required: Vec<&str> = restrictions
+            .iter()
             .filter(|r| r.is_required())
             .map(|r| r.property_iri.as_str())
             .collect();
         if !required.is_empty() {
-            let mut provided: std::collections::HashSet<String> = args.get("properties")
+            let mut provided: std::collections::HashSet<String> = args
+                .get("properties")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter()
-                    .filter_map(|p| p.get("property_iri").and_then(|v| v.as_str()))
-                    .map(|s| s.to_string())
-                    .collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|p| p.get("property_iri").and_then(|v| v.as_str()))
+                        .map(|s| s.to_string())
+                        .collect()
+                })
                 .unwrap_or_default();
             provided.insert("rdfs:label".to_string());
             if comment.is_some() {
@@ -733,7 +888,7 @@ pub(crate) fn assert_individual_one(conn: &mut Connection, args: &Value) -> Tool
             success: false,
             result: load_range_contexts(conn, args),
             error: Some(e.to_string()),
-            concept: load_class_context(conn,class_iri),
+            concept: load_class_context(conn, class_iri),
         },
     }
 }
@@ -749,59 +904,71 @@ pub fn add_property_values(
 fn add_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: iri".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let property_iri_raw = match args.get("property_iri").and_then(|v| v.as_str()) {
         Some(p) => p,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: property_iri".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: property_iri".to_string()),
+                concept: None,
+            }
+        }
     };
     let property_iri = normalize_comment_alias(property_iri_raw);
 
     let raw_values = match args.get("values").and_then(|v| v.as_array()) {
         Some(v) if !v.is_empty() => v,
-        Some(_) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("values array must not be empty".to_string()),
-            concept: None,
-        },
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: values".to_string()),
-            concept: None,
-        },
+        Some(_) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("values array must not be empty".to_string()),
+                concept: None,
+            }
+        }
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: values".to_string()),
+                concept: None,
+            }
+        }
     };
 
     match (|| {
         if property_iri == "foundation:hasStatus" {
             if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
                 let class_iri = crate::owl::get_iri_property(conn, iri, "rdf:type")
-                    .ok().flatten()
+                    .ok()
+                    .flatten()
                     .ok_or_else(|| {
                         let msg = format!("Individual '{}' has no rdf:type", iri);
                         crate::owl::OwlError::NotFound(msg)
                     })?;
-                crate::core_ontology::status::validate_allowed_status(conn, &class_iri, status_iri)?;
+                crate::core_ontology::status::validate_allowed_status(
+                    conn, &class_iri, status_iri,
+                )?;
             }
         }
 
         let objects = build_objects(conn, property_iri, raw_values)?;
         if objects.is_empty() {
-            return Err(crate::owl::OwlError::ValidationError(
-                format!("Property '{}' values array contains only null entries", property_iri)
-            ));
+            return Err(crate::owl::OwlError::ValidationError(format!(
+                "Property '{}' values array contains only null entries",
+                property_iri
+            )));
         }
 
         let individual = Individual::new(iri);
@@ -813,10 +980,16 @@ fn add_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult {
         Ok::<_, crate::owl::OwlError>(serde_json::json!({"iri": iri}))
     })() {
         Ok(result) => ToolResult {
-            success: true, result: Some(result), error: None, concept: None,
+            success: true,
+            result: Some(result),
+            error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
-            success: false, result: None, error: Some(e.to_string()), concept: None,
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -832,33 +1005,39 @@ pub fn replace_property_values(
 fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: iri".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let property_iri_raw = match args.get("property_iri").and_then(|v| v.as_str()) {
         Some(p) => p,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: property_iri".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: property_iri".to_string()),
+                concept: None,
+            }
+        }
     };
     let property_iri = normalize_comment_alias(property_iri_raw);
 
     let raw_values = match args.get("values").and_then(|v| v.as_array()) {
         Some(v) => v,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: values".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: values".to_string()),
+                concept: None,
+            }
+        }
     };
 
     match (|| {
@@ -872,20 +1051,24 @@ fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResul
         if property_iri == "foundation:hasStatus" {
             if let Some(status_iri) = raw_values.first().and_then(|v| v.as_str()) {
                 let class_iri = crate::owl::get_iri_property(conn, iri, "rdf:type")
-                    .ok().flatten()
+                    .ok()
+                    .flatten()
                     .ok_or_else(|| {
                         let msg = format!("Individual '{}' has no rdf:type", iri);
                         crate::owl::OwlError::NotFound(msg)
                     })?;
-                crate::core_ontology::status::validate_allowed_status(conn, &class_iri, status_iri)?;
+                crate::core_ontology::status::validate_allowed_status(
+                    conn, &class_iri, status_iri,
+                )?;
             }
         }
 
         let objects = build_objects(conn, property_iri, raw_values)?;
         if objects.is_empty() {
-            return Err(crate::owl::OwlError::ValidationError(
-                format!("Property '{}' values array contains only null entries", property_iri)
-            ));
+            return Err(crate::owl::OwlError::ValidationError(format!(
+                "Property '{}' values array contains only null entries",
+                property_iri
+            )));
         }
 
         Individual::clear_property(conn, iri, property_iri, "ai")?;
@@ -899,10 +1082,16 @@ fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResul
         Ok::<_, crate::owl::OwlError>(serde_json::json!({"iri": iri}))
     })() {
         Ok(result) => ToolResult {
-            success: true, result: Some(result), error: None, concept: None,
+            success: true,
+            result: Some(result),
+            error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
-            success: false, result: None, error: Some(e.to_string()), concept: None,
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -918,50 +1107,62 @@ pub fn remove_property_values(
 fn remove_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: iri".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let property_iri = match args.get("property_iri").and_then(|v| v.as_str()) {
         Some(p) => p,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: property_iri".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: property_iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let values_to_remove = match args.get("values").and_then(|v| v.as_array()) {
         Some(v) if !v.is_empty() => v,
-        Some(_) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("values array must not be empty".to_string()),
-            concept: None,
-        },
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: values".to_string()),
-            concept: None,
-        },
+        Some(_) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("values array must not be empty".to_string()),
+                concept: None,
+            }
+        }
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: values".to_string()),
+                concept: None,
+            }
+        }
     };
 
     match (|| {
         let current_count = Individual::get_property_count(conn, iri, property_iri)?;
         let remove_count = values_to_remove.len();
         crate::owl::cardinality::validate_property_cardinality(
-            conn, iri, property_iri, current_count.saturating_sub(remove_count),
+            conn,
+            iri,
+            property_iri,
+            current_count.saturating_sub(remove_count),
         )?;
 
         // Collect class IRIs being removed from the domain before mutating.
         let domain_classes_removed: Vec<String> = if property_iri == "rdfs:domain" {
-            values_to_remove.iter()
+            values_to_remove
+                .iter()
                 .filter_map(|v| v.as_str().map(String::from))
                 .collect()
         } else {
@@ -988,10 +1189,16 @@ fn remove_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult
         Ok::<_, crate::owl::OwlError>(serde_json::json!({"iri": iri}))
     })() {
         Ok(result) => ToolResult {
-            success: true, result: Some(result), error: None, concept: None,
+            success: true,
+            result: Some(result),
+            error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
-            success: false, result: None, error: Some(e.to_string()), concept: None,
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -1007,22 +1214,26 @@ pub fn clear_property(
 fn clear_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: iri".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let property_iri = match args.get("property_iri").and_then(|v| v.as_str()) {
         Some(p) => p,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: property_iri".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: property_iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
     match (|| {
@@ -1032,10 +1243,16 @@ fn clear_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
         Ok::<_, crate::owl::OwlError>(serde_json::json!({"iri": iri}))
     })() {
         Ok(result) => ToolResult {
-            success: true, result: Some(result), error: None, concept: None,
+            success: true,
+            result: Some(result),
+            error: None,
+            concept: None,
         },
         Err(e) => ToolResult {
-            success: false, result: None, error: Some(e.to_string()), concept: None,
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -1051,27 +1268,37 @@ pub fn retract_individual(
 fn retract_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: iri".to_string()),
-            concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
     match Individual::retract_collecting_with_summary(conn, iri, "ai") {
         Ok((all_retracted, cascade_summary)) => {
             crate::search::remove_from_index(&all_retracted);
             for retracted_iri in &all_retracted {
-                super::batch::queue_event("entity-deleted", serde_json::json!({"entityId": retracted_iri}));
+                super::batch::queue_event(
+                    "entity-deleted",
+                    serde_json::json!({"entityId": retracted_iri}),
+                );
             }
             let message = if cascade_summary.is_empty() {
                 format!("Individual '{}' retracted.", iri)
             } else {
-                let parts: Vec<String> = cascade_summary.iter()
+                let parts: Vec<String> = cascade_summary
+                    .iter()
                     .map(|(prop, dir, count)| format!("{} via {} ({})", count, prop, dir))
                     .collect();
-                format!("Individual '{}' retracted. Cascade: {}.", iri, parts.join("; "))
+                format!(
+                    "Individual '{}' retracted. Cascade: {}.",
+                    iri,
+                    parts.join("; ")
+                )
             };
             ToolResult {
                 success: true,
@@ -1081,7 +1308,10 @@ fn retract_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
             }
         }
         Err(e) => ToolResult {
-            success: false, result: None, error: Some(e.to_string()), concept: None,
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -1097,10 +1327,14 @@ pub fn restore_individual(
 fn restore_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
-        None => return ToolResult {
-            success: false, result: None,
-            error: Some("Missing required parameter: iri".to_string()), concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: iri".to_string()),
+                concept: None,
+            }
+        }
     };
     match Individual::restore(conn, iri, "ai") {
         Ok(()) => {
@@ -1116,7 +1350,10 @@ fn restore_individual_one(conn: &mut Connection, args: &Value) -> ToolResult {
             }
         }
         Err(e) => ToolResult {
-            success: false, result: None, error: Some(e.to_string()), concept: None,
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -1132,10 +1369,14 @@ pub fn restore_class(
 fn restore_class_one(conn: &mut Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
-        None => return ToolResult {
-            success: false, result: None,
-            error: Some("Missing required parameter: iri".to_string()), concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: iri".to_string()),
+                concept: None,
+            }
+        }
     };
     match crate::owl::Class::restore(conn, iri, "ai") {
         Ok(count) => {
@@ -1151,7 +1392,10 @@ fn restore_class_one(conn: &mut Connection, args: &Value) -> ToolResult {
             }
         }
         Err(e) => ToolResult {
-            success: false, result: None, error: Some(e.to_string()), concept: None,
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+            concept: None,
         },
     }
 }
@@ -1167,10 +1411,14 @@ pub fn restore_property(
 fn restore_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
     let iri = match args.get("iri").and_then(|v| v.as_str()) {
         Some(iri) => iri,
-        None => return ToolResult {
-            success: false, result: None,
-            error: Some("Missing required parameter: iri".to_string()), concept: None,
-        },
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: iri".to_string()),
+                concept: None,
+            }
+        }
     };
     match crate::owl::Property::restore(conn, iri, "ai") {
         Ok(count) => {
@@ -1186,7 +1434,10 @@ fn restore_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
             }
         }
         Err(e) => ToolResult {
-            success: false, result: None, error: Some(e.to_string()), concept: None,
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+            concept: None,
         },
     }
 }

@@ -1,9 +1,9 @@
+use crate::eavto::{store, Object, Triple};
+use crate::owl::{query_property, DbExecutor};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Listener, Manager};
 use tokio::sync::{mpsc::unbounded_channel, mpsc::UnboundedSender, oneshot};
-use crate::owl::{DbExecutor, query_property};
-use crate::eavto::{store, Triple, Object};
 
 /// Timeout for a single `await_drained` call. With admission control in the
 /// executor, materialization always completes — it may just be queued behind
@@ -96,13 +96,21 @@ impl QueryWorker {
                 // so a single invalidating event in the batch still triggers the reload.
                 let mut batch: HashMap<String, (Vec<String>, bool)> = HashMap::new();
                 let first = cmd;
-                let WorkerCommand::Enqueue { entity_iri, written_predicates, force_reload } = first;
+                let WorkerCommand::Enqueue {
+                    entity_iri,
+                    written_predicates,
+                    force_reload,
+                } = first;
                 let entry = batch.entry(entity_iri).or_insert((vec![], false));
                 merge_into_batch_entry(entry, written_predicates, force_reload);
 
                 loop {
                     match rx.try_recv() {
-                        Ok(WorkerCommand::Enqueue { entity_iri, written_predicates, force_reload }) => {
+                        Ok(WorkerCommand::Enqueue {
+                            entity_iri,
+                            written_predicates,
+                            force_reload,
+                        }) => {
                             let entry = batch.entry(entity_iri).or_insert((vec![], false));
                             merge_into_batch_entry(entry, written_predicates, force_reload);
                         }
@@ -116,7 +124,9 @@ impl QueryWorker {
                     // await_drained callers send empty written_predicates — they always proceed.
                     if !written_predicates.is_empty()
                         && !force_reload
-                        && !written_predicates.iter().any(|p| relevant_predicates.contains(p))
+                        && !written_predicates
+                            .iter()
+                            .any(|p| relevant_predicates.contains(p))
                     {
                         resolve_waiters(&app, &entity_iri);
                         continue;
@@ -158,12 +168,7 @@ impl QueryWorker {
             })
             .map_err(|_| format!("query_worker channel closed for {}", entity_iri))?;
 
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(DRAIN_TIMEOUT_SECS),
-            rx,
-        )
-        .await
-        {
+        match tokio::time::timeout(std::time::Duration::from_secs(DRAIN_TIMEOUT_SECS), rx).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(_)) => Err(format!(
                 "drain channel closed unexpectedly for {}",
@@ -203,7 +208,9 @@ fn resolve_waiters(app: &AppHandle, entity_iri: &str) {
 pub fn register_listener(app: AppHandle) {
     let app_clone = app.clone();
     app.listen("entity-changed-internal", move |event| {
-        let Some((entity_iri, written_predicates)) = parse_payload(event.payload()) else { return };
+        let Some((entity_iri, written_predicates)) = parse_payload(event.payload()) else {
+            return;
+        };
 
         // Cache-invalidating predicates: force reload regardless of the current allowlist.
         // These writes change the structure of what queries exist and which owners are in scope.
@@ -228,13 +235,19 @@ fn parse_payload(payload: &str) -> Option<(String, Vec<String>)> {
     let entity_id = v["entityId"].as_str().map(String::from)?;
     let written_predicates = v["writtenPredicates"]
         .as_array()
-        .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| e.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     Some((entity_id, written_predicates))
 }
 
 /// Loads the cache and derives the relevant-predicate allowlist in a single pass.
-fn load_cache_and_predicates(conn: &rusqlite::Connection) -> (Arc<Vec<CachedQueryProperty>>, Arc<HashSet<String>>) {
+fn load_cache_and_predicates(
+    conn: &rusqlite::Connection,
+) -> (Arc<Vec<CachedQueryProperty>>, Arc<HashSet<String>>) {
     let entries = load_query_property_cache(conn);
     let predicates = build_relevant_predicates(&entries);
     (Arc::new(entries), Arc::new(predicates))
@@ -251,37 +264,43 @@ async fn process_entity_update(
     let entity = entity_iri.to_string();
     let cache_snapshot = cache.clone();
 
-    type ReadResult = (Vec<(String, String, query_property::QueryConfig)>, Option<(Arc<Vec<CachedQueryProperty>>, Arc<HashSet<String>>)>);
+    type ReadResult = (
+        Vec<(String, String, query_property::QueryConfig)>,
+        Option<(Arc<Vec<CachedQueryProperty>>, Arc<HashSet<String>>)>,
+    );
 
-    let result: ReadResult = executor.read_unmetered(move |conn| {
-        // needs_reload conditions (checked without a DB call when possible):
-        // 1. No cache yet (first run, though eager init handles this in practice).
-        // 2. The entity IS a query-property (its IRI is in the cache): editing the
-        //    property's own attributes (e.g. domain change) must re-derive the cache.
-        // 3. force_reload: the listener already saw queryConfig/rdfs:domain in the batch;
-        //    skip the has_query_config DB check — the flag carries the information.
-        // has_query_config is retained as fallback for entities that somehow arrive here
-        // without the flag set (e.g. future callers that bypass the listener).
-        let needs_reload = cache_snapshot.iter().any(|e| e.property_iri == entity)
-            || force_reload
-            || has_query_config(conn, &entity);
+    let result: ReadResult = executor
+        .read_unmetered(move |conn| {
+            // needs_reload conditions (checked without a DB call when possible):
+            // 1. No cache yet (first run, though eager init handles this in practice).
+            // 2. The entity IS a query-property (its IRI is in the cache): editing the
+            //    property's own attributes (e.g. domain change) must re-derive the cache.
+            // 3. force_reload: the listener already saw queryConfig/rdfs:domain in the batch;
+            //    skip the has_query_config DB check — the flag carries the information.
+            // has_query_config is retained as fallback for entities that somehow arrive here
+            // without the flag set (e.g. future callers that bypass the listener).
+            let needs_reload = cache_snapshot.iter().any(|e| e.property_iri == entity)
+                || force_reload
+                || has_query_config(conn, &entity);
 
-        let entries: Arc<Vec<CachedQueryProperty>> = if needs_reload {
-            Arc::new(load_query_property_cache(conn))
-        } else {
-            cache_snapshot
-        };
+            let entries: Arc<Vec<CachedQueryProperty>> = if needs_reload {
+                Arc::new(load_query_property_cache(conn))
+            } else {
+                cache_snapshot
+            };
 
-        let refreshed = if needs_reload {
-            let predicates = build_relevant_predicates(&entries);
-            Some((entries.clone(), Arc::new(predicates)))
-        } else {
-            None
-        };
+            let refreshed = if needs_reload {
+                let predicates = build_relevant_predicates(&entries);
+                Some((entries.clone(), Arc::new(predicates)))
+            } else {
+                None
+            };
 
-        let jobs = collect_affected_jobs(conn, &entity, &entries);
-        Ok((jobs, refreshed))
-    }).await.unwrap_or_default();
+            let jobs = collect_affected_jobs(conn, &entity, &entries);
+            Ok((jobs, refreshed))
+        })
+        .await
+        .unwrap_or_default();
 
     let (jobs, refreshed) = result;
 
@@ -300,9 +319,12 @@ async fn process_entity_update(
         let owner = owner_iri.clone();
         let cfg = config.clone();
 
-        let new_results: Vec<String> = match executor.read_unmetered(move |conn| {
-            query_property::evaluate_query(conn, &owner, &cfg).map_err(|e| e.to_string())
-        }).await {
+        let new_results: Vec<String> = match executor
+            .read_unmetered(move |conn| {
+                query_property::evaluate_query(conn, &owner, &cfg).map_err(|e| e.to_string())
+            })
+            .await
+        {
             Ok(r) => r,
             Err(_) => continue,
         };
@@ -311,29 +333,35 @@ async fn process_entity_update(
         let prop_c = property_iri.clone();
         let results_c = new_results.clone();
 
-        let changed: bool = executor.write(move |conn| {
-            update_query_property_triples(conn, &owner_c, &prop_c, &results_c)
-                .map(|b| b.to_string())
-                .map_err(|e| e.to_string())
-        }).await.map(|s| s == "true").unwrap_or(false);
+        let changed: bool = executor
+            .write(move |conn| {
+                update_query_property_triples(conn, &owner_c, &prop_c, &results_c)
+                    .map(|b| b.to_string())
+                    .map_err(|e| e.to_string())
+            })
+            .await
+            .map(|s| s == "true")
+            .unwrap_or(false);
 
         if changed {
             if let Some(ref worker) = formula_worker {
                 let owner_c = owner_iri.clone();
                 let prop_c = property_iri.clone();
-                let job_ids: Vec<String> = executor.write(move |conn| {
-                    let jobs = crate::owl::formula_worker::create_instance_recalc_jobs(
-                        conn, &owner_c, &prop_c,
-                    );
-                    Ok(serde_json::to_string(&jobs).unwrap_or_default())
-                }).await
+                let job_ids: Vec<String> = executor
+                    .write(move |conn| {
+                        let jobs = crate::owl::formula_worker::create_instance_recalc_jobs(
+                            conn, &owner_c, &prop_c,
+                        );
+                        Ok(serde_json::to_string(&jobs).unwrap_or_default())
+                    })
+                    .await
                     .map(|s| serde_json::from_str::<Vec<String>>(&s).unwrap_or_default())
                     .unwrap_or_default();
 
                 for job_id in job_ids {
-                    let _ = worker.sender.try_send(
-                        crate::owl::formula_worker::WorkerCommand::Enqueue { job_id }
-                    );
+                    let _ = worker
+                        .sender
+                        .try_send(crate::owl::formula_worker::WorkerCommand::Enqueue { job_id });
                 }
             }
 
@@ -363,17 +391,25 @@ fn load_query_property_cache(conn: &rusqlite::Connection) -> Vec<CachedQueryProp
         Err(_) => return vec![],
     };
 
-    let pairs: Vec<(String, String)> = stmt.query_map(rusqlite::params![], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })
-    .map(|rows| rows.filter_map(|r| r.ok()).collect())
-    .unwrap_or_default();
+    let pairs: Vec<(String, String)> = stmt
+        .query_map(rusqlite::params![], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
 
-    pairs.into_iter().filter_map(|(iri, json)| {
-        let config = query_property::parse_query_config(&json).ok()?;
-        let domains = get_property_domains(conn, &iri);
-        Some(CachedQueryProperty { property_iri: iri, config, domains })
-    }).collect()
+    pairs
+        .into_iter()
+        .filter_map(|(iri, json)| {
+            let config = query_property::parse_query_config(&json).ok()?;
+            let domains = get_property_domains(conn, &iri);
+            Some(CachedQueryProperty {
+                property_iri: iri,
+                config,
+                domains,
+            })
+        })
+        .collect()
 }
 
 fn collect_affected_jobs(
@@ -391,7 +427,10 @@ fn collect_affected_jobs(
             // Scenario A: entity is of targetClass → re-eval all owner instances
             let owners = find_owners_for_domains(conn, &entry.domains);
             for owner_iri in owners {
-                if !jobs.iter().any(|(o, p, _)| o == &owner_iri && p == &entry.property_iri) {
+                if !jobs
+                    .iter()
+                    .any(|(o, p, _)| o == &owner_iri && p == &entry.property_iri)
+                {
                     jobs.push((owner_iri, entry.property_iri.clone(), entry.config.clone()));
                 }
             }
@@ -399,9 +438,15 @@ fn collect_affected_jobs(
 
         // Scenario B: entity itself is an owner of this property
         if entity_types.iter().any(|t| entry.domains.contains(t))
-            && !jobs.iter().any(|(o, p, _)| o == entity_iri && p == &entry.property_iri)
+            && !jobs
+                .iter()
+                .any(|(o, p, _)| o == entity_iri && p == &entry.property_iri)
         {
-            jobs.push((entity_iri.to_string(), entry.property_iri.clone(), entry.config.clone()));
+            jobs.push((
+                entity_iri.to_string(),
+                entry.property_iri.clone(),
+                entry.config.clone(),
+            ));
         }
     }
 
@@ -410,7 +455,7 @@ fn collect_affected_jobs(
 
 fn get_types(conn: &rusqlite::Connection, iri: &str) -> Vec<String> {
     let mut stmt = match conn.prepare(
-        "SELECT DISTINCT object FROM triples_current WHERE subject = ? AND predicate = 'rdf:type'"
+        "SELECT DISTINCT object FROM triples_current WHERE subject = ? AND predicate = 'rdf:type'",
     ) {
         Ok(s) => s,
         Err(_) => return vec![],
@@ -422,14 +467,16 @@ fn get_types(conn: &rusqlite::Connection, iri: &str) -> Vec<String> {
 
 fn get_property_domains(conn: &rusqlite::Connection, property_iri: &str) -> Vec<String> {
     let mut stmt = match conn.prepare(
-        "SELECT object FROM triples_current WHERE subject = ? AND predicate = 'rdfs:domain'"
+        "SELECT object FROM triples_current WHERE subject = ? AND predicate = 'rdfs:domain'",
     ) {
         Ok(s) => s,
         Err(_) => return vec![],
     };
-    stmt.query_map(rusqlite::params![property_iri], |row| row.get::<_, String>(0))
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
-        .unwrap_or_default()
+    stmt.query_map(rusqlite::params![property_iri], |row| {
+        row.get::<_, String>(0)
+    })
+    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .unwrap_or_default()
 }
 
 fn find_owners_for_domains(conn: &rusqlite::Connection, domains: &[String]) -> Vec<String> {
@@ -437,7 +484,7 @@ fn find_owners_for_domains(conn: &rusqlite::Connection, domains: &[String]) -> V
     for class_iri in domains {
         let mut stmt = match conn.prepare(
             "SELECT DISTINCT subject FROM triples_current \
-             WHERE predicate = 'rdf:type' AND object = ?"
+             WHERE predicate = 'rdf:type' AND object = ?",
         ) {
             Ok(s) => s,
             Err(_) => continue,
@@ -462,24 +509,26 @@ fn update_query_property_triples(
     // MAX(tx) subquery needed. The invariant is maintained eagerly by assert_triples
     // and retract_triples on every write.
     let current: Vec<String> = {
-        let mut stmt = conn.prepare(
-            "SELECT t.object FROM triples t \
+        let mut stmt = conn
+            .prepare(
+                "SELECT t.object FROM triples t \
              WHERE t.subject = ? AND t.predicate = ? \
                AND t.retracted = 0 AND t.object IS NOT NULL \
-               AND t.is_current = 1"
-        ).map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
+               AND t.is_current = 1",
+            )
+            .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?;
         let rows: Vec<String> = stmt
-            .query_map(rusqlite::params![owner_iri, property_iri], |row| row.get::<_, String>(0))
+            .query_map(rusqlite::params![owner_iri, property_iri], |row| {
+                row.get::<_, String>(0)
+            })
             .map_err(|e| crate::owl::OwlError::DatabaseError(e.to_string()))?
             .filter_map(|r| r.ok())
             .collect();
         rows
     };
 
-    let current_set: std::collections::HashSet<&str> =
-        current.iter().map(|s| s.as_str()).collect();
-    let new_set: std::collections::HashSet<&str> =
-        new_results.iter().map(|s| s.as_str()).collect();
+    let current_set: std::collections::HashSet<&str> = current.iter().map(|s| s.as_str()).collect();
+    let new_set: std::collections::HashSet<&str> = new_results.iter().map(|s| s.as_str()).collect();
 
     if current_set == new_set {
         return Ok(false);
@@ -488,7 +537,8 @@ fn update_query_property_triples(
     if new_results.is_empty() {
         // Clearing the property: retract is the documented "fact no longer true"
         // operation. Without a non-empty new TX, MAX(tx) would still point to old data.
-        let old_triples: Vec<Triple> = current.iter()
+        let old_triples: Vec<Triple> = current
+            .iter()
             .map(|obj| Triple::new(owner_iri, property_iri, Object::Iri(obj.clone())))
             .collect();
         if !old_triples.is_empty() {
@@ -497,7 +547,8 @@ fn update_query_property_triples(
     } else {
         // Just assert a new TX with the new values. The latest TX defines the truth —
         // retracting old values is unnecessary and contradicts the immutability model.
-        let new_triples: Vec<Triple> = new_results.iter()
+        let new_triples: Vec<Triple> = new_results
+            .iter()
             .map(|obj| Triple::new(owner_iri, property_iri, Object::Iri(obj.clone())))
             .collect();
         store::assert_triples(conn, &new_triples, "query_worker")?;
@@ -556,7 +607,8 @@ mod tests {
         conn.execute(
             "UPDATE triples SET is_current = 0 WHERE subject = ?1 AND predicate = ?2",
             rusqlite::params![subject, predicate],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO triples (subject, predicate, object, object_type, tx, origin_id, created_at, retracted, is_current)
              VALUES (?1, ?2, ?3, 'iri', ?4, 1, 0, 0, 1)",
@@ -564,11 +616,18 @@ mod tests {
         ).unwrap();
     }
 
-    fn insert_triple_literal(conn: &Connection, subject: &str, predicate: &str, value: &str, tx: i64) {
+    fn insert_triple_literal(
+        conn: &Connection,
+        subject: &str,
+        predicate: &str,
+        value: &str,
+        tx: i64,
+    ) {
         conn.execute(
             "UPDATE triples SET is_current = 0 WHERE subject = ?1 AND predicate = ?2",
             rusqlite::params![subject, predicate],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO triples (subject, predicate, object_value, object_type, tx, origin_id, created_at, retracted, is_current)
              VALUES (?1, ?2, ?3, 'literal', ?4, 1, 0, 0, 1)",
@@ -578,7 +637,7 @@ mod tests {
 
     fn count_triples(conn: &Connection, subject: &str, predicate: &str) -> i64 {
         conn.query_row(
-            "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = ? AND retracted = 0",
+            "SELECT COUNT(*) FROM triples_current WHERE subject = ? AND predicate = ?",
             rusqlite::params![subject, predicate],
             |row| row.get(0),
         )
@@ -607,8 +666,12 @@ mod tests {
         assert!(changed_first, "first write must report changed=true");
 
         let tx_after_first = max_tx(&conn, owner, prop);
-        let changed_second = update_query_property_triples(&mut conn, owner, prop, &values).unwrap();
-        assert!(!changed_second, "second write with identical set must not write (changed=false)");
+        let changed_second =
+            update_query_property_triples(&mut conn, owner, prop, &values).unwrap();
+        assert!(
+            !changed_second,
+            "second write with identical set must not write (changed=false)"
+        );
 
         let tx_after_second = max_tx(&conn, owner, prop);
         assert_eq!(
@@ -673,7 +736,10 @@ mod tests {
         let c1 = update_query_property_triples(&mut conn, owner, prop, &values).unwrap();
         assert!(c1);
         let c2 = update_query_property_triples(&mut conn, owner, prop, &values).unwrap();
-        assert!(!c2, "second cycle with same result must not trigger further writes");
+        assert!(
+            !c2,
+            "second cycle with same result must not trigger further writes"
+        );
     }
 
     /// `load_query_property_cache` retorna config + domains a partir de triples inseridas.
@@ -745,10 +811,13 @@ mod tests {
 
         let cache = Arc::new(load_query_property_cache(&conn));
 
-        let needs_reload = cache.iter().any(|e| e.property_iri == prop)
-            || has_query_config(&conn, prop);
+        let needs_reload =
+            cache.iter().any(|e| e.property_iri == prop) || has_query_config(&conn, prop);
 
-        assert!(needs_reload, "property IRI presente no cache deve forçar reload");
+        assert!(
+            needs_reload,
+            "property IRI presente no cache deve forçar reload"
+        );
     }
 
     /// Invalidação: entity alheia ao cache sem queryConfig → sem reload.
@@ -762,8 +831,8 @@ mod tests {
         let cache = Arc::new(load_query_property_cache(&conn));
         let unrelated = "foundation:someOtherEntity";
 
-        let needs_reload = cache.iter().any(|e| e.property_iri == unrelated)
-            || has_query_config(&conn, unrelated);
+        let needs_reload =
+            cache.iter().any(|e| e.property_iri == unrelated) || has_query_config(&conn, unrelated);
 
         assert!(!needs_reload, "entity alheia não deve forçar reload");
     }
@@ -781,8 +850,8 @@ mod tests {
 
         insert_triple_literal(&conn, new_prop, "foundation:queryConfig", config_json, 2);
 
-        let needs_reload = cache.iter().any(|e| e.property_iri == new_prop)
-            || has_query_config(&conn, new_prop);
+        let needs_reload =
+            cache.iter().any(|e| e.property_iri == new_prop) || has_query_config(&conn, new_prop);
 
         assert!(needs_reload, "nova queryConfig triple deve forçar reload");
     }
@@ -804,11 +873,13 @@ mod tests {
         let written: Vec<String> = vec!["foundation:someUnrelatedProp".to_string()];
         let force_reload = false;
 
-        let should_skip = !written.is_empty()
-            && !force_reload
-            && !written.iter().any(|p| relevant.contains(p));
+        let should_skip =
+            !written.is_empty() && !force_reload && !written.iter().any(|p| relevant.contains(p));
 
-        assert!(should_skip, "escrita em predicate irrelevante deve ser descartada sem read");
+        assert!(
+            should_skip,
+            "escrita em predicate irrelevante deve ser descartada sem read"
+        );
     }
 
     /// (b) Guard NÃO descarta para `rdf:type` — necessário para cenário A (tipar entidade-alvo).
@@ -825,12 +896,14 @@ mod tests {
         let written: Vec<String> = vec!["rdf:type".to_string()];
         let force_reload = false;
 
-        let should_skip = !written.is_empty()
-            && !force_reload
-            && !written.iter().any(|p| relevant.contains(p));
+        let should_skip =
+            !written.is_empty() && !force_reload && !written.iter().any(|p| relevant.contains(p));
 
         assert!(!should_skip, "rdf:type deve sempre passar pelo guard");
-        assert!(relevant.contains("rdf:type"), "rdf:type deve estar no allowlist");
+        assert!(
+            relevant.contains("rdf:type"),
+            "rdf:type deve estar no allowlist"
+        );
     }
 
     /// (c) Guard NÃO descarta e sinaliza reload para `foundation:queryConfig`.
@@ -842,14 +915,21 @@ mod tests {
 
         let written: Vec<String> = vec!["foundation:queryConfig".to_string()];
         // O listener seta force_reload=true quando detecta foundation:queryConfig
-        let force_reload = written.iter().any(|p| p == "foundation:queryConfig" || p == "rdfs:domain");
+        let force_reload = written
+            .iter()
+            .any(|p| p == "foundation:queryConfig" || p == "rdfs:domain");
 
-        let should_skip = !written.is_empty()
-            && !force_reload
-            && !written.iter().any(|p| relevant.contains(p));
+        let should_skip =
+            !written.is_empty() && !force_reload && !written.iter().any(|p| relevant.contains(p));
 
-        assert!(!should_skip, "foundation:queryConfig não deve ser descartado");
-        assert!(force_reload, "foundation:queryConfig deve ativar force_reload");
+        assert!(
+            !should_skip,
+            "foundation:queryConfig não deve ser descartado"
+        );
+        assert!(
+            force_reload,
+            "foundation:queryConfig deve ativar force_reload"
+        );
         assert!(
             relevant.contains("foundation:queryConfig"),
             "foundation:queryConfig deve estar no allowlist fixo"
@@ -872,11 +952,26 @@ mod tests {
         let relevant = build_relevant_predicates(&entries);
 
         // Predicados fixos
-        assert!(relevant.contains("rdf:type"), "rdf:type deve estar presente");
-        assert!(relevant.contains("foundation:queryConfig"), "foundation:queryConfig deve estar presente");
-        assert!(relevant.contains("rdfs:domain"), "rdfs:domain deve estar presente");
+        assert!(
+            relevant.contains("rdf:type"),
+            "rdf:type deve estar presente"
+        );
+        assert!(
+            relevant.contains("foundation:queryConfig"),
+            "foundation:queryConfig deve estar presente"
+        );
+        assert!(
+            relevant.contains("rdfs:domain"),
+            "rdfs:domain deve estar presente"
+        );
         // Predicados do config
-        assert!(relevant.contains("foundation:dueDate"), "filter propertyIri deve estar presente");
-        assert!(relevant.contains("foundation:priority"), "orderBy propertyIri deve estar presente");
+        assert!(
+            relevant.contains("foundation:dueDate"),
+            "filter propertyIri deve estar presente"
+        );
+        assert!(
+            relevant.contains("foundation:priority"),
+            "orderBy propertyIri deve estar presente"
+        );
     }
 }

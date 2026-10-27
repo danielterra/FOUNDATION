@@ -1,8 +1,10 @@
-use crate::ai::providers::ToolDefinition;
 use super::settings::AgentConfig;
+use crate::ai::providers::ToolDefinition;
 
 pub fn inject_reason_into_schema(schema: &mut serde_json::Value) {
-    let Some(obj) = schema.as_object_mut() else { return; };
+    let Some(obj) = schema.as_object_mut() else {
+        return;
+    };
 
     let properties = obj
         .entry("properties")
@@ -37,7 +39,11 @@ fn make_object_strict(obj: &mut serde_json::Map<String, serde_json::Value>) {
     let originally_required: std::collections::HashSet<String> = obj
         .get("required")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let required = obj
@@ -54,7 +60,9 @@ fn make_object_strict(obj: &mut serde_json::Map<String, serde_json::Value>) {
 
     let props_mut = obj.get_mut("properties").unwrap().as_object_mut().unwrap();
     for (key, prop_val) in props_mut.iter_mut() {
-        let Some(prop_obj) = prop_val.as_object_mut() else { continue; };
+        let Some(prop_obj) = prop_val.as_object_mut() else {
+            continue;
+        };
 
         if !originally_required.contains(key) {
             if let Some(type_val) = prop_obj.get("type").cloned() {
@@ -75,18 +83,20 @@ fn make_object_strict(obj: &mut serde_json::Map<String, serde_json::Value>) {
         }
 
         if prop_obj.get("type").and_then(|t| t.as_str()) == Some("object")
-            || (prop_obj.get("type").and_then(|t| t.as_array()).map_or(false, |a| {
-                a.iter().any(|v| v.as_str() == Some("object"))
-            }))
+            || (prop_obj
+                .get("type")
+                .and_then(|t| t.as_array())
+                .map_or(false, |a| a.iter().any(|v| v.as_str() == Some("object"))))
         {
             prop_obj.insert("additionalProperties".to_string(), serde_json::json!(false));
             make_object_strict(prop_obj);
         }
 
         if prop_obj.get("type").and_then(|t| t.as_str()) == Some("array")
-            || (prop_obj.get("type").and_then(|t| t.as_array()).map_or(false, |a| {
-                a.iter().any(|v| v.as_str() == Some("array"))
-            }))
+            || (prop_obj
+                .get("type")
+                .and_then(|t| t.as_array())
+                .map_or(false, |a| a.iter().any(|v| v.as_str() == Some("array"))))
         {
             if let Some(items) = prop_obj.get_mut("items").and_then(|v| v.as_object_mut()) {
                 if items.get("type").and_then(|t| t.as_str()) == Some("object") {
@@ -181,4 +191,3 @@ pub fn build_system_prompt(
         None => base,
     }
 }
-

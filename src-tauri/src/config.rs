@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use tauri::Manager;
 
 #[derive(Serialize, Deserialize, Default)]

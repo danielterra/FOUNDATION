@@ -4,8 +4,7 @@ pub mod functions;
 pub mod local;
 pub mod providers;
 
-
-use providers::{MessageContent, ContentBlock};
+use providers::{ContentBlock, MessageContent};
 
 /// Minimal async generate contract used by `call_with_empty_retry`.
 /// Keeps the retry logic testable with lightweight mocks instead of
@@ -49,7 +48,9 @@ impl AiProvider {
     pub async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, String> {
         match self {
             AiProvider::Claude(p) => p.generate(request).await,
-            AiProvider::Local(_) => Err("Local provider does not support non-streaming generate".to_string()),
+            AiProvider::Local(_) => {
+                Err("Local provider does not support non-streaming generate".to_string())
+            }
             AiProvider::OpenRouter(p) => p.generate(request).await,
         }
     }
@@ -107,13 +108,8 @@ pub enum ThinkingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ThinkingBlock {
-    Thinking {
-        thinking: String,
-        signature: String,
-    },
-    RedactedThinking {
-        data: String,
-    },
+    Thinking { thinking: String, signature: String },
+    RedactedThinking { data: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,16 +1,10 @@
 use crate::owl::{
-    Connection, Result, OwlError, Thing,
-    get_literal_property, get_iri_property, get_all_iri_properties, is_instance_of,
-    icon_iri_to_display, icon_literal_to_display,
-    Individual,
+    get_all_iri_properties, get_iri_property, get_literal_property, icon_iri_to_display,
+    icon_literal_to_display, is_instance_of, Connection, Individual, OwlError, Result, Thing,
 };
 
 /// Validates that `status_iri` is in the `foundation:allowedStatus` list of `class_iri`.
-pub fn validate_allowed_status(
-    conn: &Connection,
-    class_iri: &str,
-    status_iri: &str,
-) -> Result<()> {
+pub fn validate_allowed_status(conn: &Connection, class_iri: &str, status_iri: &str) -> Result<()> {
     let allowed_iris = get_all_iri_properties(conn, class_iri, "foundation:allowedStatus")?;
     if allowed_iris.is_empty() {
         let class_label = get_literal_property(conn, class_iri, "rdfs:label")?
@@ -21,7 +15,8 @@ pub fn validate_allowed_status(
         )));
     }
     if !allowed_iris.iter().any(|s| s == status_iri) {
-        let allowed_labels: Vec<String> = allowed_iris.iter()
+        let allowed_labels: Vec<String> = allowed_iris
+            .iter()
             .map(|iri| {
                 get_literal_property(conn, iri, "rdfs:label")
                     .ok()
@@ -34,7 +29,9 @@ pub fn validate_allowed_status(
             .unwrap_or_else(|| class_iri.to_string());
         return Err(OwlError::ValidationError(format!(
             "Status '{}' is not allowed for concept '{}'. Accepted statuses: {}",
-            status_iri, class_label, allowed_labels.join(", ")
+            status_iri,
+            class_label,
+            allowed_labels.join(", ")
         )));
     }
     Ok(())
@@ -66,12 +63,17 @@ pub fn resolve_status_appearance(
                 });
         }
         if color.is_none() {
-            color = get_literal_property(conn, &current, "foundation:color").ok().flatten();
+            color = get_literal_property(conn, &current, "foundation:color")
+                .ok()
+                .flatten();
         }
         if icon.is_some() && color.is_some() {
             break;
         }
-        match get_iri_property(conn, &current, "foundation:parentStatus").ok().flatten() {
+        match get_iri_property(conn, &current, "foundation:parentStatus")
+            .ok()
+            .flatten()
+        {
             Some(parent) if parent != current => current = parent,
             _ => break,
         }
@@ -79,10 +81,13 @@ pub fn resolve_status_appearance(
 
     let elapsed = t0.elapsed().as_millis();
     if elapsed > 5 || hops > 1 {
-        crate::commands::log_backend("debug", &format!(
-            "[CORE] status::resolve({}) {} hops {}ms",
-            status_iri, hops, elapsed
-        ));
+        crate::commands::log_backend(
+            "debug",
+            &format!(
+                "[CORE] status::resolve({}) {} hops {}ms",
+                status_iri, hops, elapsed
+            ),
+        );
     }
     (icon, color)
 }

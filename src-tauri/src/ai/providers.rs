@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
-use futures_util::StreamExt;
 use crate::ai::{GenerateRequest, GenerateResponse, ToolCall};
+use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
 
 const WEB_TOOL_MAX_USES: u32 = 5;
 const WEB_FETCH_MAX_CONTENT_TOKENS: u32 = 100_000;
@@ -56,7 +56,10 @@ fn infer_stop_reason(
         return (stop_reason, StopReasonInference::Passthrough);
     }
     if has_tool_calls {
-        (Some("tool_calls".to_string()), StopReasonInference::ToolCalls)
+        (
+            Some("tool_calls".to_string()),
+            StopReasonInference::ToolCalls,
+        )
     } else if has_text {
         (Some("stop".to_string()), StopReasonInference::Stop)
     } else {
@@ -107,13 +110,9 @@ pub enum ContentBlock {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "image")]
-    Image {
-        source: ImageSource,
-    },
+    Image { source: ImageSource },
     #[serde(rename = "document")]
-    Document {
-        source: DocumentSource,
-    },
+    Document { source: DocumentSource },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
@@ -130,14 +129,9 @@ pub enum ContentBlock {
         is_error: Option<bool>,
     },
     #[serde(rename = "thinking")]
-    Thinking {
-        thinking: String,
-        signature: String,
-    },
+    Thinking { thinking: String, signature: String },
     #[serde(rename = "redacted_thinking")]
-    RedactedThinking {
-        data: String,
-    },
+    RedactedThinking { data: String },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -222,7 +216,6 @@ fn add_cache_breakpoint(message: &mut ClaudeMessage) {
     }
 }
 
-
 impl ClaudeProvider {
     /// Stream a request via SSE, emitting Tauri events for each delta.
     pub async fn generate_stream(
@@ -243,7 +236,10 @@ impl ClaudeProvider {
                         serde_json::to_value(&blocks).unwrap_or(serde_json::Value::Null)
                     }
                 };
-                ClaudeMessage { role: msg.role, content }
+                ClaudeMessage {
+                    role: msg.role,
+                    content,
+                }
             })
             .collect();
 
@@ -261,11 +257,13 @@ impl ClaudeProvider {
             add_cache_breakpoint(&mut messages[19]);
         }
 
-        let model = self.model_identifier.clone()
-            .ok_or_else(|| "No AI model configured. Please configure a model in Settings.".to_string())?;
+        let model = self.model_identifier.clone().ok_or_else(|| {
+            "No AI model configured. Please configure a model in Settings.".to_string()
+        })?;
 
         let tools = if let Some(custom_tools) = request.tools {
-            let mut tools: Vec<serde_json::Value> = custom_tools.into_iter()
+            let mut tools: Vec<serde_json::Value> = custom_tools
+                .into_iter()
                 .map(|t| serde_json::to_value(t).map_err(|e| e.to_string()))
                 .collect::<Result<Vec<_>, _>>()?;
 
@@ -286,7 +284,10 @@ impl ClaudeProvider {
 
             if let Some(last_tool) = tools.last_mut() {
                 if let Some(obj) = last_tool.as_object_mut() {
-                    obj.insert("cache_control".to_string(), serde_json::json!({ "type": "ephemeral" }));
+                    obj.insert(
+                        "cache_control".to_string(),
+                        serde_json::json!({ "type": "ephemeral" }),
+                    );
                 }
             }
             Some(tools)
@@ -294,9 +295,10 @@ impl ClaudeProvider {
             None
         };
 
-        let thinking = request.thinking.as_ref().map(|t|
-            serde_json::to_value(t).unwrap_or(serde_json::Value::Null)
-        );
+        let thinking = request
+            .thinking
+            .as_ref()
+            .map(|t| serde_json::to_value(t).unwrap_or(serde_json::Value::Null));
 
         let mut claude_request = serde_json::to_value(ClaudeRequest {
             model,
@@ -315,12 +317,17 @@ impl ClaudeProvider {
                 if let Some(ctx) = request.blackboard_context {
                     blocks.push(serde_json::json!({ "type": "text", "text": ctx }));
                 }
-                if blocks.is_empty() { None } else { Some(serde_json::Value::Array(blocks)) }
+                if blocks.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::Value::Array(blocks))
+                }
             },
             temperature: request.temperature,
             tools,
             tool_choice: request.tool_choice,
-        }).map_err(|e| format!("Failed to serialize request: {}", e))?;
+        })
+        .map_err(|e| format!("Failed to serialize request: {}", e))?;
 
         claude_request["stream"] = serde_json::Value::Bool(true);
 
@@ -332,7 +339,8 @@ impl ClaudeProvider {
             "prompt-caching-2024-07-31"
         };
 
-        let http_response = self.client
+        let http_response = self
+            .client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -346,13 +354,16 @@ impl ClaudeProvider {
         let status = http_response.status();
         if !status.is_success() {
             let error_text = http_response.text().await.unwrap_or_default();
-            return Err(format!("API request failed with status {}: {}", status, error_text));
+            return Err(format!(
+                "API request failed with status {}: {}",
+                status, error_text
+            ));
         }
 
         // SSE parser state
         #[derive(Default)]
         struct BlockState {
-            block_type: String,   // "text" | "thinking" | "tool_use"
+            block_type: String, // "text" | "thinking" | "tool_use"
             text: String,
             tool_id: String,
             tool_name: String,
@@ -423,23 +434,33 @@ impl ClaudeProvider {
                                         "text_delta" => {
                                             let chunk_text = delta["text"].as_str().unwrap_or("");
                                             block.text.push_str(chunk_text);
-                                            app.emit("chat-ai-delta", serde_json::json!({
-                                                "conversationId": conv_id,
-                                                "type": "text",
-                                                "text": chunk_text,
-                                            })).ok();
+                                            app.emit(
+                                                "chat-ai-delta",
+                                                serde_json::json!({
+                                                    "conversationId": conv_id,
+                                                    "type": "text",
+                                                    "text": chunk_text,
+                                                }),
+                                            )
+                                            .ok();
                                         }
                                         "thinking_delta" => {
-                                            let chunk_text = delta["thinking"].as_str().unwrap_or("");
+                                            let chunk_text =
+                                                delta["thinking"].as_str().unwrap_or("");
                                             block.text.push_str(chunk_text);
-                                            app.emit("chat-ai-delta", serde_json::json!({
-                                                "conversationId": conv_id,
-                                                "type": "thinking",
-                                                "text": chunk_text,
-                                            })).ok();
+                                            app.emit(
+                                                "chat-ai-delta",
+                                                serde_json::json!({
+                                                    "conversationId": conv_id,
+                                                    "type": "thinking",
+                                                    "text": chunk_text,
+                                                }),
+                                            )
+                                            .ok();
                                         }
                                         "input_json_delta" => {
-                                            let partial = delta["partial_json"].as_str().unwrap_or("");
+                                            let partial =
+                                                delta["partial_json"].as_str().unwrap_or("");
                                             block.tool_input_json.push_str(partial);
                                         }
                                         "signature_delta" => {
@@ -452,17 +473,18 @@ impl ClaudeProvider {
                             }
 
                             "message_delta" => {
-                                stop_reason = event["delta"]["stop_reason"]
-                                    .as_str()
-                                    .map(String::from);
-                                if let Ok(u) = serde_json::from_value::<UsageInfo>(event["usage"].clone()) {
+                                stop_reason =
+                                    event["delta"]["stop_reason"].as_str().map(String::from);
+                                if let Ok(u) =
+                                    serde_json::from_value::<UsageInfo>(event["usage"].clone())
+                                {
                                     usage = Some(u);
                                 }
                             }
 
                             "message_start" => {
                                 if let Ok(u) = serde_json::from_value::<UsageInfo>(
-                                    event["message"]["usage"].clone()
+                                    event["message"]["usage"].clone(),
                                 ) {
                                     usage = Some(u);
                                 }
@@ -476,28 +498,43 @@ impl ClaudeProvider {
         }
 
         if !utf8_carry.is_empty() {
-            crate::commands::log_backend("warn", &format!(
-                "[CLAUDE API] Stream ended with {} undecodable trailing byte(s): {:?}",
-                utf8_carry.len(), utf8_carry
-            ));
+            crate::commands::log_backend(
+                "warn",
+                &format!(
+                    "[CLAUDE API] Stream ended with {} undecodable trailing byte(s): {:?}",
+                    utf8_carry.len(),
+                    utf8_carry
+                ),
+            );
         }
 
-        crate::commands::log_backend("info", &format!(
-            "[CLAUDE API] Stream complete. stop_reason={:?}", stop_reason
-        ));
+        crate::commands::log_backend(
+            "info",
+            &format!(
+                "[CLAUDE API] Stream complete. stop_reason={:?}",
+                stop_reason
+            ),
+        );
 
         if let Some(ref u) = usage {
             let cache_savings = if u.cache_read_input_tokens > 0 {
-                format!(" | cache hit: {} tokens (~${:.4} saved)",
+                format!(
+                    " | cache hit: {} tokens (~${:.4} saved)",
                     u.cache_read_input_tokens,
-                    (u.cache_read_input_tokens as f64 / 1_000_000.0) * CLAUDE_CACHE_READ_PRICE_PER_MILLION_TOKENS,
+                    (u.cache_read_input_tokens as f64 / 1_000_000.0)
+                        * CLAUDE_CACHE_READ_PRICE_PER_MILLION_TOKENS,
                 )
-            } else { String::new() };
-            crate::commands::log_backend("info", &format!(
+            } else {
+                String::new()
+            };
+            crate::commands::log_backend(
+                "info",
+                &format!(
                 "[CLAUDE API] Tokens — input: {}, output: {}, cache_write: {}, cache_read: {}{}",
                 u.input_tokens, u.output_tokens,
                 u.cache_creation_input_tokens, u.cache_read_input_tokens, cache_savings,
-            ));
+            ),
+            );
         }
 
         // Assemble GenerateResponse from block states
@@ -554,11 +591,16 @@ impl ClaudeProvider {
                         serde_json::to_value(&blocks).unwrap_or(serde_json::Value::Null)
                     }
                 };
-                ClaudeMessage { role: msg.role, content }
+                ClaudeMessage {
+                    role: msg.role,
+                    content,
+                }
             })
             .collect();
 
-        let model = self.model_identifier.clone()
+        let model = self
+            .model_identifier
+            .clone()
             .ok_or_else(|| "No AI model configured".to_string())?;
 
         let claude_request = serde_json::to_value(ClaudeRequest {
@@ -566,20 +608,29 @@ impl ClaudeProvider {
             max_tokens: request.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             messages,
             thinking: None,
-            system: request.system.map(|s| serde_json::json!([{
-                "type": "text",
-                "text": s,
-                "cache_control": { "type": "ephemeral" }
-            }])),
+            system: request.system.map(|s| {
+                serde_json::json!([{
+                    "type": "text",
+                    "text": s,
+                    "cache_control": { "type": "ephemeral" }
+                }])
+            }),
             temperature: request.temperature,
             tools: request.tools.as_ref().map(|tools| {
-                tools.iter().map(|t| serde_json::to_value(t).unwrap_or_default()).collect()
+                tools
+                    .iter()
+                    .map(|t| serde_json::to_value(t).unwrap_or_default())
+                    .collect()
             }),
-            tool_choice: request.tool_choice.as_ref()
+            tool_choice: request
+                .tool_choice
+                .as_ref()
                 .map(|tc| serde_json::to_value(tc).unwrap_or_default()),
-        }).map_err(|e| format!("Failed to serialize request: {}", e))?;
+        })
+        .map_err(|e| format!("Failed to serialize request: {}", e))?;
 
-        let http_response = self.client
+        let http_response = self
+            .client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -593,22 +644,31 @@ impl ClaudeProvider {
         let status = http_response.status();
         if !status.is_success() {
             let error_text = http_response.text().await.unwrap_or_default();
-            return Err(format!("API request failed with status {}: {}", status, error_text));
+            return Err(format!(
+                "API request failed with status {}: {}",
+                status, error_text
+            ));
         }
 
-        let body: serde_json::Value = http_response.json()
+        let body: serde_json::Value = http_response
+            .json()
             .await
             .map_err(|e| format!("Failed to parse response: {}", e))?;
 
         let stop_reason = body["stop_reason"].as_str().map(String::from);
 
-        let blocks = body["content"].as_array().map(|v| v.as_slice()).unwrap_or(&[]);
-        let content = blocks.iter()
+        let blocks = body["content"]
+            .as_array()
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let content = blocks
+            .iter()
             .find(|b| b["type"] == "text")
             .and_then(|b| b["text"].as_str())
             .unwrap_or("")
             .to_string();
-        let tool_calls: Vec<ToolCall> = blocks.iter()
+        let tool_calls: Vec<ToolCall> = blocks
+            .iter()
             .filter(|b| b["type"] == "tool_use")
             .filter_map(|b| {
                 Some(ToolCall {
@@ -622,7 +682,8 @@ impl ClaudeProvider {
         let usage = body["usage"].as_object().map(|u| UsageInfo {
             input_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
             output_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_creation_input_tokens: u["cache_creation_input_tokens"].as_u64().unwrap_or(0) as u32,
+            cache_creation_input_tokens: u["cache_creation_input_tokens"].as_u64().unwrap_or(0)
+                as u32,
             cache_read_input_tokens: u["cache_read_input_tokens"].as_u64().unwrap_or(0) as u32,
         });
 
@@ -735,8 +796,12 @@ fn build_openai_messages(
     let mut result: Vec<serde_json::Value> = Vec::new();
 
     let mut sys_parts: Vec<String> = Vec::new();
-    if let Some(s) = system { sys_parts.push(s); }
-    if let Some(ctx) = blackboard_context { sys_parts.push(ctx); }
+    if let Some(s) = system {
+        sys_parts.push(s);
+    }
+    if let Some(ctx) = blackboard_context {
+        sys_parts.push(ctx);
+    }
     if !sys_parts.is_empty() {
         result.push(serde_json::json!({"role": "system", "content": sys_parts.join("\n\n")}));
     }
@@ -750,7 +815,11 @@ fn build_openai_messages(
                 let mut text_parts: Vec<serde_json::Value> = Vec::new();
                 for block in blocks {
                     match block {
-                        ContentBlock::ToolResult { tool_use_id, content, .. } => {
+                        ContentBlock::ToolResult {
+                            tool_use_id,
+                            content,
+                            ..
+                        } => {
                             let text = match &content {
                                 serde_json::Value::String(s) => s.clone(),
                                 other => other.to_string(),
@@ -821,15 +890,20 @@ fn build_openai_messages(
 }
 
 fn build_openai_tools(tools: &[ToolDefinition]) -> Vec<serde_json::Value> {
-    tools.iter().map(|t| serde_json::json!({
-        "type": "function",
-        "function": {
-            "name": t.name,
-            "description": t.description,
-            "parameters": t.input_schema,
-            "strict": true
-        }
-    })).collect()
+    tools
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.input_schema,
+                    "strict": true
+                }
+            })
+        })
+        .collect()
 }
 
 // OpenRouter server tools (web_search/web_fetch) are executed by OpenRouter itself
@@ -854,14 +928,16 @@ impl OpenRouterProvider {
     ) -> Result<crate::ai::GenerateResponse, String> {
         use tauri::Emitter;
 
-        let model = self.model_identifier.clone()
-            .ok_or_else(|| "No AI model configured. Please configure a model in Settings.".to_string())?;
+        let model = self.model_identifier.clone().ok_or_else(|| {
+            "No AI model configured. Please configure a model in Settings.".to_string()
+        })?;
 
         let max_tokens = request.max_tokens;
         let temperature = request.temperature;
         let tool_choice = request.tool_choice;
         let tools = request.tools;
-        let mut messages = build_openai_messages(request.system, request.blackboard_context, request.messages);
+        let mut messages =
+            build_openai_messages(request.system, request.blackboard_context, request.messages);
 
         // For Anthropic models via OpenRouter, add cache_control to the first user message
         // (the compaction summary prefix when present) to enable prompt caching.
@@ -898,11 +974,13 @@ impl OpenRouterProvider {
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         crate::commands::log_backend("info", "[OPENROUTER API] Sending streaming request...");
-        crate::commands::log_backend("debug", &format!(
-            "[OPENROUTER API] Request body (streaming): {}", body
-        ));
+        crate::commands::log_backend(
+            "debug",
+            &format!("[OPENROUTER API] Request body (streaming): {}", body),
+        );
 
-        let http_response = self.client
+        let http_response = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("HTTP-Referer", "https://foundation.w3id.org")
@@ -916,36 +994,52 @@ impl OpenRouterProvider {
         let status = http_response.status();
         if !status.is_success() {
             let error_body = http_response.text().await.unwrap_or_default();
-            crate::commands::log_backend("error", &format!(
-                "[OPENROUTER API] HTTP {} (streaming) — raw body: {}", status, error_body
-            ));
+            crate::commands::log_backend(
+                "error",
+                &format!(
+                    "[OPENROUTER API] HTTP {} (streaming) — raw body: {}",
+                    status, error_body
+                ),
+            );
 
             // Parse OpenRouter error for better user messages
-            let friendly_error = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&error_body) {
-                if let Some(raw) = json["error"]["metadata"]["raw"].as_str() {
-                    // Extract the actual provider error message
-                    raw.to_string()
-                } else if let Some(msg) = json["error"]["message"].as_str() {
-                    msg.to_string()
+            let friendly_error =
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&error_body) {
+                    if let Some(raw) = json["error"]["metadata"]["raw"].as_str() {
+                        // Extract the actual provider error message
+                        raw.to_string()
+                    } else if let Some(msg) = json["error"]["message"].as_str() {
+                        msg.to_string()
+                    } else {
+                        error_body.clone()
+                    }
                 } else {
                     error_body.clone()
-                }
-            } else {
-                error_body.clone()
-            };
+                };
 
             // Provide helpful context for common errors
             let user_message = match status.as_u16() {
                 429 => {
-                    if friendly_error.contains("rate-limited") || friendly_error.contains("rate limit") {
+                    if friendly_error.contains("rate-limited")
+                        || friendly_error.contains("rate limit")
+                    {
                         format!("Rate limit reached: {}\n\nTry again in a few seconds, or configure your own API key in settings.", friendly_error)
                     } else {
                         format!("Too many requests (429): {}", friendly_error)
                     }
-                },
-                401 => format!("Invalid or expired API key. Check your settings.\n\nDetails: {}", friendly_error),
-                403 => format!("Access denied. Check your permissions or API key.\n\nDetails: {}", friendly_error),
-                500 | 502 | 503 | 504 => format!("Provider server error ({}). Try again in a few minutes.\n\nDetails: {}", status, friendly_error),
+                }
+                401 => format!(
+                    "Invalid or expired API key. Check your settings.\n\nDetails: {}",
+                    friendly_error
+                ),
+                403 => format!(
+                    "Access denied. Check your permissions or API key.\n\nDetails: {}",
+                    friendly_error
+                ),
+                500 | 502 | 503 | 504 => format!(
+                    "Provider server error ({}). Try again in a few minutes.\n\nDetails: {}",
+                    status, friendly_error
+                ),
                 _ => format!("OpenRouter error {}: {}", status, friendly_error),
             };
 
@@ -980,9 +1074,13 @@ impl OpenRouterProvider {
                         let line = buf[..pos].trim_end_matches('\r').to_string();
                         buf = buf[pos + 1..].to_string();
 
-                        if !line.starts_with("data: ") { continue; }
+                        if !line.starts_with("data: ") {
+                            continue;
+                        }
                         let data = &line["data: ".len()..];
-                        if data == "[DONE]" { break; }
+                        if data == "[DONE]" {
+                            break;
+                        }
 
                         let event: serde_json::Value = match serde_json::from_str(data) {
                             Ok(v) => v,
@@ -1040,11 +1138,15 @@ impl OpenRouterProvider {
                                 }
                                 if !clean.is_empty() {
                                     text_content.push_str(clean);
-                                    app.emit("chat-ai-delta", serde_json::json!({
-                                        "conversationId": conv_id,
-                                        "type": "text",
-                                        "text": clean,
-                                    })).ok();
+                                    app.emit(
+                                        "chat-ai-delta",
+                                        serde_json::json!({
+                                            "conversationId": conv_id,
+                                            "type": "text",
+                                            "text": clean,
+                                        }),
+                                    )
+                                    .ok();
                                 }
                             }
                         }
@@ -1060,9 +1162,15 @@ impl OpenRouterProvider {
                                     });
                                 }
                                 let state = &mut tool_states[idx];
-                                if let Some(id) = tc["id"].as_str() { state.id = id.to_string(); }
-                                if let Some(name) = tc["function"]["name"].as_str() { state.name = name.to_string(); }
-                                if let Some(args) = tc["function"]["arguments"].as_str() { state.arguments.push_str(args); }
+                                if let Some(id) = tc["id"].as_str() {
+                                    state.id = id.to_string();
+                                }
+                                if let Some(name) = tc["function"]["name"].as_str() {
+                                    state.name = name.to_string();
+                                }
+                                if let Some(args) = tc["function"]["arguments"].as_str() {
+                                    state.arguments.push_str(args);
+                                }
                             }
                         }
                     }
@@ -1071,22 +1179,35 @@ impl OpenRouterProvider {
         }
 
         if !utf8_carry.is_empty() {
-            crate::commands::log_backend("warn", &format!(
-                "[OPENROUTER API] Stream ended with {} undecodable trailing byte(s): {:?}",
-                utf8_carry.len(), utf8_carry
-            ));
+            crate::commands::log_backend(
+                "warn",
+                &format!(
+                    "[OPENROUTER API] Stream ended with {} undecodable trailing byte(s): {:?}",
+                    utf8_carry.len(),
+                    utf8_carry
+                ),
+            );
         }
 
-        let tool_calls: Vec<crate::ai::ToolCall> = tool_states.into_iter()
+        let tool_calls: Vec<crate::ai::ToolCall> = tool_states
+            .into_iter()
             .filter(|s| !s.name.is_empty())
             .map(|s| {
                 let input = serde_json::from_str(&s.arguments)
                     .unwrap_or(serde_json::Value::Object(Default::default()));
-                crate::ai::ToolCall { id: s.id, name: s.name, input }
+                crate::ai::ToolCall {
+                    id: s.id,
+                    name: s.name,
+                    input,
+                }
             })
             .collect();
 
-        let (stop_reason, inferred) = infer_stop_reason(stop_reason, !tool_calls.is_empty(), !text_content.is_empty());
+        let (stop_reason, inferred) = infer_stop_reason(
+            stop_reason,
+            !tool_calls.is_empty(),
+            !text_content.is_empty(),
+        );
         match inferred {
             StopReasonInference::ToolCalls => crate::commands::log_backend("warn",
                 "[OPENROUTER API] finish_reason missing — inferred 'tool_calls' from accumulated tool call data"
@@ -1100,14 +1221,22 @@ impl OpenRouterProvider {
             StopReasonInference::Passthrough => {}
         }
 
-        crate::commands::log_backend("info", &format!(
-            "[OPENROUTER API] Stream complete. model={}, stop_reason={:?}",
-            actual_model.as_deref().unwrap_or("unknown"), stop_reason
-        ));
+        crate::commands::log_backend(
+            "info",
+            &format!(
+                "[OPENROUTER API] Stream complete. model={}, stop_reason={:?}",
+                actual_model.as_deref().unwrap_or("unknown"),
+                stop_reason
+            ),
+        );
         if let Some(ref u) = usage {
-            crate::commands::log_backend("info", &format!(
-                "[OPENROUTER API] Tokens — input: {}, output: {}", u.input_tokens, u.output_tokens
-            ));
+            crate::commands::log_backend(
+                "info",
+                &format!(
+                    "[OPENROUTER API] Tokens — input: {}, output: {}",
+                    u.input_tokens, u.output_tokens
+                ),
+            );
         }
 
         Ok(crate::ai::GenerateResponse {
@@ -1120,15 +1249,21 @@ impl OpenRouterProvider {
         })
     }
 
-    pub async fn generate(&self, request: crate::ai::GenerateRequest) -> Result<crate::ai::GenerateResponse, String> {
-        let model = self.model_identifier.clone()
+    pub async fn generate(
+        &self,
+        request: crate::ai::GenerateRequest,
+    ) -> Result<crate::ai::GenerateResponse, String> {
+        let model = self
+            .model_identifier
+            .clone()
             .ok_or_else(|| "No AI model configured".to_string())?;
 
         let max_tokens = request.max_tokens;
         let temperature = request.temperature;
         let tool_choice = request.tool_choice;
         let tools = request.tools;
-        let messages = build_openai_messages(request.system, request.blackboard_context, request.messages);
+        let messages =
+            build_openai_messages(request.system, request.blackboard_context, request.messages);
 
         let mut body = serde_json::json!({
             "messages": messages,
@@ -1154,12 +1289,17 @@ impl OpenRouterProvider {
         inject_openrouter_web_tools(&mut body, &self.base_url);
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        crate::commands::log_backend("info", &format!("[OPENROUTER API] Sending request... model={}", model));
-        crate::commands::log_backend("debug", &format!(
-            "[OPENROUTER API] Request body (non-stream): {}", body
-        ));
+        crate::commands::log_backend(
+            "info",
+            &format!("[OPENROUTER API] Sending request... model={}", model),
+        );
+        crate::commands::log_backend(
+            "debug",
+            &format!("[OPENROUTER API] Request body (non-stream): {}", body),
+        );
 
-        let http_response = self.client
+        let http_response = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("HTTP-Referer", "https://foundation.w3id.org")
@@ -1173,62 +1313,90 @@ impl OpenRouterProvider {
         let status = http_response.status();
         if !status.is_success() {
             let error_body = http_response.text().await.unwrap_or_default();
-            crate::commands::log_backend("error", &format!(
-                "[OPENROUTER API] HTTP {} (non-stream) — raw body: {}", status, error_body
-            ));
+            crate::commands::log_backend(
+                "error",
+                &format!(
+                    "[OPENROUTER API] HTTP {} (non-stream) — raw body: {}",
+                    status, error_body
+                ),
+            );
 
             // Parse OpenRouter error for better user messages
-            let friendly_error = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&error_body) {
-                if let Some(raw) = json["error"]["metadata"]["raw"].as_str() {
-                    raw.to_string()
-                } else if let Some(msg) = json["error"]["message"].as_str() {
-                    msg.to_string()
+            let friendly_error =
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&error_body) {
+                    if let Some(raw) = json["error"]["metadata"]["raw"].as_str() {
+                        raw.to_string()
+                    } else if let Some(msg) = json["error"]["message"].as_str() {
+                        msg.to_string()
+                    } else {
+                        error_body.clone()
+                    }
                 } else {
                     error_body.clone()
-                }
-            } else {
-                error_body.clone()
-            };
+                };
 
             let user_message = match status.as_u16() {
                 429 => {
-                    if friendly_error.contains("rate-limited") || friendly_error.contains("rate limit") {
+                    if friendly_error.contains("rate-limited")
+                        || friendly_error.contains("rate limit")
+                    {
                         format!("Rate limit reached: {}\n\nTry again in a few seconds, or configure your own API key in settings.", friendly_error)
                     } else {
                         format!("Too many requests (429): {}", friendly_error)
                     }
-                },
-                401 => format!("Invalid or expired API key. Check your settings.\n\nDetails: {}", friendly_error),
-                403 => format!("Access denied. Check your permissions or API key.\n\nDetails: {}", friendly_error),
-                500 | 502 | 503 | 504 => format!("Provider server error ({}). Try again in a few minutes.\n\nDetails: {}", status, friendly_error),
+                }
+                401 => format!(
+                    "Invalid or expired API key. Check your settings.\n\nDetails: {}",
+                    friendly_error
+                ),
+                403 => format!(
+                    "Access denied. Check your permissions or API key.\n\nDetails: {}",
+                    friendly_error
+                ),
+                500 | 502 | 503 | 504 => format!(
+                    "Provider server error ({}). Try again in a few minutes.\n\nDetails: {}",
+                    status, friendly_error
+                ),
                 _ => format!("OpenRouter error {}: {}", status, friendly_error),
             };
 
             return Err(user_message);
         }
 
-        let resp: serde_json::Value = http_response.json()
+        let resp: serde_json::Value = http_response
+            .json()
             .await
             .map_err(|e| format!("Failed to parse OpenRouter response: {}", e))?;
 
-        let raw_stop_reason = resp["choices"][0]["finish_reason"].as_str().map(String::from);
-        let content = resp["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
+        let raw_stop_reason = resp["choices"][0]["finish_reason"]
+            .as_str()
+            .map(String::from);
+        let content = resp["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         let model_used = resp["model"].as_str().map(String::from);
 
         let tool_calls: Vec<crate::ai::ToolCall> = resp["choices"][0]["message"]["tool_calls"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|tc| {
-                Some(crate::ai::ToolCall {
-                    id: tc["id"].as_str()?.to_string(),
-                    name: tc["function"]["name"].as_str()?.to_string(),
-                    input: serde_json::from_str(
-                        tc["function"]["arguments"].as_str().unwrap_or("{}")
-                    ).unwrap_or(serde_json::Value::Object(Default::default())),
-                })
-            }).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|tc| {
+                        Some(crate::ai::ToolCall {
+                            id: tc["id"].as_str()?.to_string(),
+                            name: tc["function"]["name"].as_str()?.to_string(),
+                            input: serde_json::from_str(
+                                tc["function"]["arguments"].as_str().unwrap_or("{}"),
+                            )
+                            .unwrap_or(serde_json::Value::Object(Default::default())),
+                        })
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
 
-        let (stop_reason, inferred) = infer_stop_reason(raw_stop_reason, !tool_calls.is_empty(), !content.is_empty());
+        let (stop_reason, inferred) =
+            infer_stop_reason(raw_stop_reason, !tool_calls.is_empty(), !content.is_empty());
         match inferred {
             StopReasonInference::ToolCalls => crate::commands::log_backend("warn",
                 "[OPENROUTER API] finish_reason missing — inferred 'tool_calls' from tool_calls in response"
@@ -1242,12 +1410,15 @@ impl OpenRouterProvider {
             StopReasonInference::Passthrough => {}
         }
 
-        let usage = resp.get("usage").and_then(|u| u.as_object()).map(|u| UsageInfo {
-            input_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-            output_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-        });
+        let usage = resp
+            .get("usage")
+            .and_then(|u| u.as_object())
+            .map(|u| UsageInfo {
+                input_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+                output_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            });
 
         Ok(crate::ai::GenerateResponse {
             content,
@@ -1272,13 +1443,22 @@ mod tests {
 
         // First chunk: only the leading byte — must not produce output or panic.
         let first = decode_utf8_incremental(&mut carry, &[0xC3]);
-        assert!(first.is_empty(), "no output expected when codepoint is incomplete");
+        assert!(
+            first.is_empty(),
+            "no output expected when codepoint is incomplete"
+        );
         assert_eq!(carry, vec![0xC3], "leading byte must be held in carry");
 
         // Second chunk: the trailing byte — now the full codepoint can be decoded.
         let second = decode_utf8_incremental(&mut carry, &[0xA3]);
-        assert_eq!(second, "ã", "complete codepoint must be decoded after second chunk");
-        assert!(carry.is_empty(), "carry must be empty after codepoint is complete");
+        assert_eq!(
+            second, "ã",
+            "complete codepoint must be decoded after second chunk"
+        );
+        assert!(
+            carry.is_empty(),
+            "carry must be empty after codepoint is complete"
+        );
     }
 
     #[test]
@@ -1347,4 +1527,3 @@ mod tests {
         assert_eq!(branch, StopReasonInference::Passthrough);
     }
 }
-

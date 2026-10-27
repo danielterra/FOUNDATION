@@ -80,7 +80,10 @@ impl SubscriptionRegistry {
         match self.inner.lock() {
             Ok(guard) => {
                 guard.iris.contains(entity_id)
-                    || guard.patterns.iter().any(|p| entity_id.contains(p.as_str()))
+                    || guard
+                        .patterns
+                        .iter()
+                        .any(|p| entity_id.contains(p.as_str()))
             }
             Err(_) => false,
         }
@@ -88,7 +91,8 @@ impl SubscriptionRegistry {
 
     /// Returns all creation-queries currently registered.
     pub fn creation_queries(&self) -> Vec<CreationQuery> {
-        self.inner.lock()
+        self.inner
+            .lock()
             .map(|g| g.creation_queries.clone())
             .unwrap_or_default()
     }
@@ -109,9 +113,12 @@ impl SubscriptionRegistry {
     /// would permanently drop that event from replay.
     /// Callers fall back to the triples table when the ring does not cover the cursor.
     pub fn replay_since(&self, since_tx: i64) -> Vec<ReplayEvent> {
-        self.inner.lock()
+        self.inner
+            .lock()
             .map(|guard| {
-                guard.ring.iter()
+                guard
+                    .ring
+                    .iter()
                     .filter(|e| e.tx >= since_tx)
                     .cloned()
                     .collect()
@@ -122,7 +129,8 @@ impl SubscriptionRegistry {
     /// Returns the minimum tx stored in the ring, or i64::MAX when empty.
     /// Used by callers to decide whether the ring covers the requested since_tx.
     pub fn ring_min_tx(&self) -> i64 {
-        self.inner.lock()
+        self.inner
+            .lock()
             .map(|guard| guard.ring.front().map(|e| e.tx).unwrap_or(i64::MAX))
             .unwrap_or(i64::MAX)
     }
@@ -158,7 +166,12 @@ pub fn emit_entity_updated_with(app: &AppHandle, entity_id: &str, changed_predic
     emit_entity_updated_with_tx(app, entity_id, changed_predicates, 0);
 }
 
-pub fn emit_entity_updated_with_tx(app: &AppHandle, entity_id: &str, changed_predicates: &[String], tx: i64) {
+pub fn emit_entity_updated_with_tx(
+    app: &AppHandle,
+    entity_id: &str,
+    changed_predicates: &[String],
+    tx: i64,
+) {
     if subscribed(app, entity_id) {
         let payload = serde_json::json!({
             "entityId": entity_id,
@@ -204,7 +217,11 @@ pub fn emit_entity_referenced_with_tx(app: &AppHandle, entity_id: &str, tx: i64)
 
 pub fn emit_entity_deleted(app: &AppHandle, entity_id: &str) {
     if subscribed(app, entity_id) {
-        app.emit("entity-deleted", serde_json::json!({ "entityId": entity_id })).ok();
+        app.emit(
+            "entity-deleted",
+            serde_json::json!({ "entityId": entity_id }),
+        )
+        .ok();
     }
 }
 
@@ -219,7 +236,11 @@ pub fn emit_entity_deleted(app: &AppHandle, entity_id: &str) {
 /// Reactors MAY inspect `writtenPredicates` to skip an `executor.read()` when none
 /// of their relevant predicates were touched. Existing listeners that parse only
 /// `entityId` are unaffected: unknown JSON fields are ignored by `serde_json`.
-pub fn emit_entity_changed_internal(app: &AppHandle, entity_id: &str, written_predicates: &[String]) {
+pub fn emit_entity_changed_internal(
+    app: &AppHandle,
+    entity_id: &str,
+    written_predicates: &[String],
+) {
     app.emit(
         "entity-changed-internal",
         serde_json::json!({
@@ -233,7 +254,10 @@ pub fn emit_entity_changed_internal(app: &AppHandle, entity_id: &str, written_pr
 /// Emit a pre-built event queued during a batch, honoring the registry for entity-*
 /// events while passing every other event through untouched.
 pub fn emit_queued(app: &AppHandle, name: &str, payload: serde_json::Value) {
-    let gated = matches!(name, "entity-updated" | "entity-referenced" | "entity-deleted");
+    let gated = matches!(
+        name,
+        "entity-updated" | "entity-referenced" | "entity-deleted"
+    );
     if gated {
         if let Some(entity_id) = payload.get("entityId").and_then(|v| v.as_str()) {
             if !subscribed(app, entity_id) {
@@ -265,13 +289,17 @@ pub fn emit_entity_joined_set(
             object_value: Some(object_value.to_owned()),
         });
     }
-    app.emit("entity-joined-set", serde_json::json!({
-        "entityId": entity_id,
-        "classIri": class_iri,
-        "predicate": predicate,
-        "objectValue": object_value,
-        "tx": tx,
-    })).ok();
+    app.emit(
+        "entity-joined-set",
+        serde_json::json!({
+            "entityId": entity_id,
+            "classIri": class_iri,
+            "predicate": predicate,
+            "objectValue": object_value,
+            "tx": tx,
+        }),
+    )
+    .ok();
 }
 
 /// Frontend declares the full set of entity IRIs (and IRI substring patterns) it is
@@ -286,7 +314,11 @@ pub async fn events__set_subscriptions(
 ) -> Result<(), String> {
     crate::diagnostics::log_backend(
         "debug",
-        &format!("[REALTIME] subscriptions set: {} iris, {} patterns", iris.len(), patterns.len()),
+        &format!(
+            "[REALTIME] subscriptions set: {} iris, {} patterns",
+            iris.len(),
+            patterns.len()
+        ),
     );
     registry.replace(iris, patterns, vec![]);
     Ok(())
@@ -307,14 +339,20 @@ pub async fn events__set_subscriptions_v2(
             let class_iri = v.get("classIri")?.as_str()?.to_owned();
             let predicate = v.get("predicate")?.as_str()?.to_owned();
             let object_value = v.get("objectValue")?.as_str()?.to_owned();
-            Some(CreationQuery { class_iri, predicate, object_value })
+            Some(CreationQuery {
+                class_iri,
+                predicate,
+                object_value,
+            })
         })
         .collect();
     crate::diagnostics::log_backend(
         "debug",
         &format!(
             "[REALTIME] subscriptions_v2 set: {} iris, {} patterns, {} creation_queries",
-            iris.len(), patterns.len(), queries.len()
+            iris.len(),
+            patterns.len(),
+            queries.len()
         ),
     );
     registry.replace(iris, patterns, queries);
@@ -343,15 +381,17 @@ pub async fn events__replay_since(
         let deduplicated: Vec<serde_json::Value> = events
             .into_iter()
             .filter(|e| seen.insert((e.entity_id.clone(), e.event_name.clone())))
-            .map(|e| serde_json::json!({
-                "tx": e.tx,
-                "event": e.event_name,
-                "entityId": e.entity_id,
-                "changedPredicates": e.changed_predicates,
-                "classIri": e.class_iri,
-                "predicate": e.predicate,
-                "objectValue": e.object_value,
-            }))
+            .map(|e| {
+                serde_json::json!({
+                    "tx": e.tx,
+                    "event": e.event_name,
+                    "entityId": e.entity_id,
+                    "changedPredicates": e.changed_predicates,
+                    "classIri": e.class_iri,
+                    "predicate": e.predicate,
+                    "objectValue": e.object_value,
+                })
+            })
             .collect();
 
         return Ok(deduplicated);
@@ -360,38 +400,43 @@ pub async fn events__replay_since(
     // Ring does not cover the cursor — fall back to triples table.
     // Uses >= since_tx (inclusive) so that a triple whose TX equals the frontend
     // snapshot is never silently dropped from replay (same rationale as the ring path).
-    executor.read(move |conn| {
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT t.subject, t.predicate, t.tx
+    executor
+        .read(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT DISTINCT t.subject, t.predicate, t.tx
              FROM triples t
              WHERE t.tx >= ?1 AND t.retracted = 0
              ORDER BY t.tx ASC
-             LIMIT 500"
-        ).map_err(|e| e.to_string())?;
+             LIMIT 500",
+                )
+                .map_err(|e| e.to_string())?;
 
-        let rows: Vec<(String, String, i64)> = stmt.query_map(
-            rusqlite::params![since_tx],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-        // Dedup by entityId on the DB path as well — the same subject can appear in
-        // multiple triples within the window; one entity-updated per entity is enough.
-        let mut seen: HashSet<String> = HashSet::new();
-        let events: Vec<serde_json::Value> = rows
-            .into_iter()
-            .filter(|(subject, _, _)| seen.insert(subject.clone()))
-            .map(|(subject, predicate, tx)| {
-                serde_json::json!({
-                    "tx": tx,
-                    "event": "entity-updated",
-                    "entityId": subject,
-                    "changedPredicates": [predicate],
+            let rows: Vec<(String, String, i64)> = stmt
+                .query_map(rusqlite::params![since_tx], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
                 })
-            })
-            .collect();
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(events)
-    }).await
+            // Dedup by entityId on the DB path as well — the same subject can appear in
+            // multiple triples within the window; one entity-updated per entity is enough.
+            let mut seen: HashSet<String> = HashSet::new();
+            let events: Vec<serde_json::Value> = rows
+                .into_iter()
+                .filter(|(subject, _, _)| seen.insert(subject.clone()))
+                .map(|(subject, predicate, tx)| {
+                    serde_json::json!({
+                        "tx": tx,
+                        "event": "entity-updated",
+                        "entityId": subject,
+                        "changedPredicates": [predicate],
+                    })
+                })
+                .collect();
+
+            Ok(events)
+        })
+        .await
 }

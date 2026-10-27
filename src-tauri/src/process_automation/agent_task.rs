@@ -1,17 +1,22 @@
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::ai::{ChatMessage};
-use crate::ai::providers::{MessageContent, ContentBlock, ToolDefinition};
 use crate::ai::functions::get_tool_definitions;
-use crate::owl::{DbExecutor, get_literal_property, get_iri_property, get_all_iri_properties, replace_all_property_iris, replace_all_property_literals, Individual, Object};
+use crate::ai::providers::{ContentBlock, MessageContent, ToolDefinition};
+use crate::ai::ChatMessage;
+use crate::owl::{
+    get_all_iri_properties, get_iri_property, get_literal_property, replace_all_property_iris,
+    replace_all_property_literals, DbExecutor, Individual, Object,
+};
 
-use super::executor::{ExecutionContext, interpolate_with_db};
-use super::tool_loop::{ToolLoopConfig, CompletionToolConfig, run_tool_loop};
 use super::agent_runner::resolve_agent_config;
+use super::executor::{interpolate_with_db, ExecutionContext};
+use super::tool_loop::{run_tool_loop, CompletionToolConfig, ToolLoopConfig};
 
 type Result<T> = std::result::Result<T, String>;
 
-pub(super) fn to_storage_blocks(content: &MessageContent) -> Vec<crate::commands::chat_storage::ContentBlock> {
+pub(super) fn to_storage_blocks(
+    content: &MessageContent,
+) -> Vec<crate::commands::chat_storage::ContentBlock> {
     use crate::commands::chat_storage::ContentBlock as S;
     use ContentBlock as A;
 
@@ -20,26 +25,41 @@ pub(super) fn to_storage_blocks(content: &MessageContent) -> Vec<crate::commands
         MessageContent::Text(t) => return vec![S::Text { text: t.clone() }],
     };
 
-    blocks.iter().filter_map(|b| match b {
-        A::Text { text } => Some(S::Text { text: text.clone() }),
-        A::ToolUse { id, name, input } => Some(S::ToolUse {
-            id: id.clone(), name: name.clone(), input: input.clone(), reason: None,
-        }),
-        A::ToolResult { tool_use_id, content, is_error, .. } => Some(S::ToolResult {
-            tool_use_id: tool_use_id.clone(),
-            content: match content {
-                serde_json::Value::String(s) => s.clone(),
-                other => other.to_string(),
-            },
-            is_error: *is_error,
-            duration_ms: None,
-        }),
-        A::Thinking { thinking, signature } => Some(S::Thinking {
-            thinking: thinking.clone(), signature: signature.clone(),
-        }),
-        A::RedactedThinking { data } => Some(S::RedactedThinking { data: data.clone() }),
-        A::Image { .. } | A::Document { .. } => None,
-    }).collect()
+    blocks
+        .iter()
+        .filter_map(|b| match b {
+            A::Text { text } => Some(S::Text { text: text.clone() }),
+            A::ToolUse { id, name, input } => Some(S::ToolUse {
+                id: id.clone(),
+                name: name.clone(),
+                input: input.clone(),
+                reason: None,
+            }),
+            A::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+                ..
+            } => Some(S::ToolResult {
+                tool_use_id: tool_use_id.clone(),
+                content: match content {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                },
+                is_error: *is_error,
+                duration_ms: None,
+            }),
+            A::Thinking {
+                thinking,
+                signature,
+            } => Some(S::Thinking {
+                thinking: thinking.clone(),
+                signature: signature.clone(),
+            }),
+            A::RedactedThinking { data } => Some(S::RedactedThinking { data: data.clone() }),
+            A::Image { .. } | A::Document { .. } => None,
+        })
+        .collect()
 }
 
 fn task_complete_tool(output_class: Option<&str>) -> ToolDefinition {
@@ -94,26 +114,40 @@ pub async fn create_conversation(
     task_label: &str,
     agent_iri: Option<&str>,
 ) -> String {
-    let conv_iri = format!("foundation:AIConversation_{}", chrono::Utc::now().timestamp_millis());
+    let conv_iri = format!(
+        "foundation:AIConversation_{}",
+        chrono::Utc::now().timestamp_millis()
+    );
     let conv_label = format!("{} — Execution", task_label);
     let origin = origin_iri.to_string();
     let prop = origin_property.to_string();
     let conv = conv_iri.clone();
     let agent = agent_iri.map(|s| s.to_string());
-    executor.write(move |conn| {
-        let ind = Individual::new(&conv);
-        ind.assert(conn, "foundation:AIConversation", &conv_label, "smart_toy", "process_automation")
+    executor
+        .write(move |conn| {
+            let ind = Individual::new(&conv);
+            ind.assert(
+                conn,
+                "foundation:AIConversation",
+                &conv_label,
+                "smart_toy",
+                "process_automation",
+            )
             .map_err(|e| e.to_string())?;
-        let mut triples = vec![
-            crate::eavto::Triple::new(&conv, &prop, Object::Iri(origin)),
-        ];
-        if let Some(a) = agent {
-            triples.push(crate::eavto::Triple::new(&conv, "foundation:handledBy", Object::Iri(a)));
-        }
-        crate::eavto::store::assert_triples(conn, &triples, "process_automation")
-            .map_err(|e| e.to_string())?;
-        Ok(conv)
-    }).await.unwrap_or_default()
+            let mut triples = vec![crate::eavto::Triple::new(&conv, &prop, Object::Iri(origin))];
+            if let Some(a) = agent {
+                triples.push(crate::eavto::Triple::new(
+                    &conv,
+                    "foundation:handledBy",
+                    Object::Iri(a),
+                ));
+            }
+            crate::eavto::store::assert_triples(conn, &triples, "process_automation")
+                .map_err(|e| e.to_string())?;
+            Ok(conv)
+        })
+        .await
+        .unwrap_or_default()
 }
 
 pub async fn persist_messages(
@@ -124,13 +158,26 @@ pub async fn persist_messages(
 ) {
     for msg in messages {
         let role = msg.role.as_str();
-        let model = if role == "assistant" { Some(model_identifier) } else { None };
+        let model = if role == "assistant" {
+            Some(model_identifier)
+        } else {
+            None
+        };
         if let Err(e) = crate::commands::chat_storage::create_message(
-            executor, conv_iri, role,
+            executor,
+            conv_iri,
+            role,
             to_storage_blocks(&msg.content),
-            model, None, None,
-        ).await {
-            crate::commands::log_backend("error", &format!("[agent_task] persist_messages failed: {}", e));
+            model,
+            None,
+            None,
+        )
+        .await
+        {
+            crate::commands::log_backend(
+                "error",
+                &format!("[agent_task] persist_messages failed: {}", e),
+            );
         }
     }
 }
@@ -144,38 +191,54 @@ pub async fn execute_agent_task(
 ) -> Result<String> {
     let executor = app.state::<DbExecutor>();
 
-    let (label, instructions, agent_iri, allowed_tool_names, output_class, output_property_iri) = executor
-        .read({
-            let node_iri = node_iri.to_string();
-            move |conn| {
-                let label = get_literal_property(conn, &node_iri, "rdfs:label")
-                    .map_err(|e| e.to_string())?
-                    .unwrap_or_else(|| node_iri.clone());
+    let (label, instructions, agent_iri, allowed_tool_names, output_class, output_property_iri) =
+        executor
+            .read({
+                let node_iri = node_iri.to_string();
+                move |conn| {
+                    let label = get_literal_property(conn, &node_iri, "rdfs:label")
+                        .map_err(|e| e.to_string())?
+                        .unwrap_or_else(|| node_iri.clone());
 
-                let instructions = get_literal_property(conn, &node_iri, "foundation:instructions")
-                    .map_err(|e| e.to_string())?
-                    .unwrap_or_default();
+                    let instructions =
+                        get_literal_property(conn, &node_iri, "foundation:instructions")
+                            .map_err(|e| e.to_string())?
+                            .unwrap_or_default();
 
-                let agent_iri = get_iri_property(conn, &node_iri, "foundation:assignedAgent")
-                    .map_err(|e| e.to_string())?
-                    .unwrap_or_else(|| "foundation:LocalAIAssistant".to_string());
+                    let agent_iri = get_iri_property(conn, &node_iri, "foundation:assignedAgent")
+                        .map_err(|e| e.to_string())?
+                        .unwrap_or_else(|| "foundation:LocalAIAssistant".to_string());
 
-                let tool_iris = get_all_iri_properties(conn, &node_iri, "foundation:allowedTools")
-                    .unwrap_or_default();
-                let allowed_tool_names: Vec<String> = tool_iris.iter()
-                    .filter_map(|iri| get_literal_property(conn, iri, "foundation:functionName").ok().flatten())
-                    .collect();
+                    let tool_iris =
+                        get_all_iri_properties(conn, &node_iri, "foundation:allowedTools")
+                            .unwrap_or_default();
+                    let allowed_tool_names: Vec<String> = tool_iris
+                        .iter()
+                        .filter_map(|iri| {
+                            get_literal_property(conn, iri, "foundation:functionName")
+                                .ok()
+                                .flatten()
+                        })
+                        .collect();
 
-                let output_class = get_iri_property(conn, &node_iri, "foundation:outputClass")
-                    .map_err(|e| e.to_string())?;
+                    let output_class = get_iri_property(conn, &node_iri, "foundation:outputClass")
+                        .map_err(|e| e.to_string())?;
 
-                let output_property_iri = get_iri_property(conn, &node_iri, "foundation:outputProperty")
-                    .map_err(|e| e.to_string())?;
+                    let output_property_iri =
+                        get_iri_property(conn, &node_iri, "foundation:outputProperty")
+                            .map_err(|e| e.to_string())?;
 
-                Ok((label, instructions, agent_iri, allowed_tool_names, output_class, output_property_iri))
-            }
-        })
-        .await?;
+                    Ok((
+                        label,
+                        instructions,
+                        agent_iri,
+                        allowed_tool_names,
+                        output_class,
+                        output_property_iri,
+                    ))
+                }
+            })
+            .await?;
 
     let agent_config = resolve_agent_config(&executor, &agent_iri).await?;
 
@@ -184,59 +247,73 @@ pub async fn execute_agent_task(
     let ctx_section = if ctx.is_empty() {
         String::new()
     } else {
-        let ctx_snapshot: Vec<(String, String)> = ctx.iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let ctx_snapshot: Vec<(String, String)> =
+            ctx.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
 
-        let entity_blocks = executor.read(move |conn| {
-            let mut blocks = Vec::new();
-            for (key, value) in &ctx_snapshot {
-                if !value.contains(':') || value.contains(' ') {
-                    continue;
+        let entity_blocks = executor
+            .read(move |conn| {
+                let mut blocks = Vec::new();
+                for (key, value) in &ctx_snapshot {
+                    if !value.contains(':') || value.contains(' ') {
+                        continue;
+                    }
+                    if let Ok(Some(individual)) = Individual::get(conn, value) {
+                        let type_labels: Vec<&str> =
+                            individual.types.iter().map(|t| t.label.as_str()).collect();
+                        let props: Vec<String> = individual
+                            .properties
+                            .iter()
+                            .filter(|(k, _)| k != "foundation:hasStatus")
+                            .map(|(k, v)| {
+                                let val = match v {
+                                    Object::Iri(s) => s.clone(),
+                                    Object::Literal { value, .. } => value.clone(),
+                                    Object::Integer(i) => i.to_string(),
+                                    Object::Number(n) => n.to_string(),
+                                    Object::Boolean(b) => b.to_string(),
+                                    Object::DateTime(s) => s.clone(),
+                                    Object::Blank(s) => s.clone(),
+                                };
+                                format!("  {}: {}", k, val)
+                            })
+                            .collect();
+                        let status_iri = individual
+                            .properties
+                            .iter()
+                            .find(|(k, _)| k == "foundation:hasStatus")
+                            .and_then(|(_, v)| {
+                                if let Object::Iri(s) = v {
+                                    Some(s.as_str())
+                                } else {
+                                    None
+                                }
+                            });
+                        let status_line = status_iri
+                            .map(|s| format!("\n  status: {}", s))
+                            .unwrap_or_default();
+                        let comment_line = individual
+                            .comment
+                            .as_deref()
+                            .map(|c| format!("\n  description: {}", c))
+                            .unwrap_or_default();
+                        blocks.push(format!(
+                            "**{}** = `{}` ({})\n  label: {}{}{}\n{}",
+                            key,
+                            individual.iri,
+                            type_labels.join(", "),
+                            individual.label.as_deref().unwrap_or(&individual.iri),
+                            status_line,
+                            comment_line,
+                            props.join("\n")
+                        ));
+                    } else {
+                        blocks.push(format!("**{}** = `{}`", key, value));
+                    }
                 }
-                if let Ok(Some(individual)) = Individual::get(conn, value) {
-                    let type_labels: Vec<&str> = individual.types.iter()
-                        .map(|t| t.label.as_str())
-                        .collect();
-                    let props: Vec<String> = individual.properties.iter()
-                        .filter(|(k, _)| k != "rdf:type" && k != "foundation:hasStatus")
-                        .map(|(k, v)| {
-                            let val = match v {
-                                Object::Iri(s) => s.clone(),
-                                Object::Literal { value, .. } => value.clone(),
-                                Object::Integer(i) => i.to_string(),
-                                Object::Number(n) => n.to_string(),
-                                Object::Boolean(b) => b.to_string(),
-                                Object::DateTime(s) => s.clone(),
-                                Object::Blank(s) => s.clone(),
-                            };
-                            format!("  {}: {}", k, val)
-                        })
-                        .collect();
-                    let status_iri = individual.properties.iter()
-                        .find(|(k, _)| k == "foundation:hasStatus")
-                        .and_then(|(_, v)| if let Object::Iri(s) = v { Some(s.as_str()) } else { None });
-                    let status_line = status_iri
-                        .map(|s| format!("\n  status: {}", s))
-                        .unwrap_or_default();
-                    let comment_line = individual.comment.as_deref()
-                        .map(|c| format!("\n  description: {}", c))
-                        .unwrap_or_default();
-                    blocks.push(format!(
-                        "**{}** = `{}` ({})\n  label: {}{}{}\n{}",
-                        key, individual.iri,
-                        type_labels.join(", "),
-                        individual.label.as_deref().unwrap_or(&individual.iri),
-                        status_line,
-                        comment_line,
-                        props.join("\n")
-                    ));
-                } else {
-                    blocks.push(format!("**{}** = `{}`", key, value));
-                }
-            }
-            Ok::<_, String>(blocks)
-        }).await.unwrap_or_default();
+                Ok::<_, String>(blocks)
+            })
+            .await
+            .unwrap_or_default();
 
         format!("\n\n## Input Data\n{}", entity_blocks.join("\n\n"))
     };
@@ -263,9 +340,7 @@ pub async fn execute_agent_task(
 
     let initial_messages = vec![ChatMessage {
         role: "user".to_string(),
-        content: MessageContent::ContentBlocks(vec![
-            ContentBlock::Text { text: task_prompt },
-        ]),
+        content: MessageContent::ContentBlocks(vec![ContentBlock::Text { text: task_prompt }]),
     }];
 
     let loop_config = ToolLoopConfig {
@@ -279,18 +354,31 @@ pub async fn execute_agent_task(
         ..ToolLoopConfig::default()
     };
 
-    let output = run_tool_loop(&executor, Some(app), &agent_config.provider, initial_messages, loop_config).await?;
+    let output = run_tool_loop(
+        &executor,
+        Some(app),
+        &agent_config.provider,
+        initial_messages,
+        loop_config,
+    )
+    .await?;
 
-    let deliverable_iri = output.completion.as_ref()
-        .and_then(|c| {
-            let s = c.output_iri.as_str();
-            if !s.is_empty() && s.contains(':') && !s.contains(' ') { Some(s.to_string()) } else { None }
-        });
+    let deliverable_iri = output.completion.as_ref().and_then(|c| {
+        let s = c.output_iri.as_str();
+        if !s.is_empty() && s.contains(':') && !s.contains(' ') {
+            Some(s.to_string())
+        } else {
+            None
+        }
+    });
 
-    let deliverable_text = output.completion.as_ref()
-        .and_then(|c| {
-            if !c.output_value.is_empty() { Some(c.output_value.clone()) } else { None }
-        });
+    let deliverable_text = output.completion.as_ref().and_then(|c| {
+        if !c.output_value.is_empty() {
+            Some(c.output_value.clone())
+        } else {
+            None
+        }
+    });
 
     if let (Some(prop), Some(control)) = (output_property_iri, ctx.get("self").cloned()) {
         let prop_log = prop.clone();
@@ -298,16 +386,29 @@ pub async fn execute_agent_task(
         if let Some(deliverable) = deliverable_iri {
             let prop_clone = prop.clone();
             let control_clone = control.clone();
-            executor.write(move |conn| {
-                replace_all_property_iris(conn, &control_clone, &prop_clone, &[deliverable.as_str()], "process_automation")
+            executor
+                .write(move |conn| {
+                    replace_all_property_iris(
+                        conn,
+                        &control_clone,
+                        &prop_clone,
+                        &[deliverable.as_str()],
+                        "process_automation",
+                    )
                     .map_err(|e| e.to_string())?;
-                Ok(String::new())
-            }).await.unwrap_or_else(|e| {
-                crate::commands::log_backend("error", &format!(
-                    "[agent_task] failed to write deliverable IRI to outputProperty {}: {}", prop_log, e
-                ));
-                String::new()
-            });
+                    Ok(String::new())
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    crate::commands::log_backend(
+                        "error",
+                        &format!(
+                            "[agent_task] failed to write deliverable IRI to outputProperty {}: {}",
+                            prop_log, e
+                        ),
+                    );
+                    String::new()
+                });
         } else if let Some(text) = deliverable_text {
             let prop_clone = prop.clone();
             let control_clone = control.clone();
@@ -329,17 +430,40 @@ pub async fn execute_agent_task(
         }
     }
 
-    let conv_iri = create_conversation(&executor, step_iri, "foundation:generatedByStep", &label, Some(&agent_iri)).await;
-    persist_messages(&executor, &conv_iri, &output.messages, &agent_config.model_identifier).await;
+    let conv_iri = create_conversation(
+        &executor,
+        step_iri,
+        "foundation:generatedByStep",
+        &label,
+        Some(&agent_iri),
+    )
+    .await;
+    persist_messages(
+        &executor,
+        &conv_iri,
+        &output.messages,
+        &agent_config.model_identifier,
+    )
+    .await;
 
-    app.emit("automation-step-message", serde_json::json!({
-        "executionIri": exec_iri,
-        "stepIri": step_iri,
-        "lastText": output.last_text,
-    })).ok();
+    app.emit(
+        "automation-step-message",
+        serde_json::json!({
+            "executionIri": exec_iri,
+            "stepIri": step_iri,
+            "lastText": output.last_text,
+        }),
+    )
+    .ok();
 
     match output.completion {
-        Some(c) => Ok(if !c.output_iri.is_empty() { c.output_iri } else if !c.output_value.is_empty() { c.output_value } else { c.message }),
+        Some(c) => Ok(if !c.output_iri.is_empty() {
+            c.output_iri
+        } else if !c.output_value.is_empty() {
+            c.output_value
+        } else {
+            c.message
+        }),
         None => Ok(output.last_text),
     }
 }

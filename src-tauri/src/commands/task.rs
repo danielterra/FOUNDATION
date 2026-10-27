@@ -1,6 +1,6 @@
 use tauri::{AppHandle, State};
 
-use crate::owl::{DbExecutor, get_iri_property};
+use crate::owl::{get_iri_property, DbExecutor};
 use crate::process_automation::task_manager;
 
 #[tauri::command]
@@ -25,9 +25,10 @@ pub async fn task__delegate(
     let iri = task_iri.clone();
     tokio::spawn(async move {
         if let Err(e) = task_manager::execute_task(&app_clone, &iri).await {
-            crate::commands::log_backend("error", &format!(
-                "[task_manager] execute_task failed for {}: {}", iri, e
-            ));
+            crate::commands::log_backend(
+                "error",
+                &format!("[task_manager] execute_task failed for {}: {}", iri, e),
+            );
         }
     });
 

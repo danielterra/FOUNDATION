@@ -17,9 +17,16 @@ pub(super) fn evaluate_condition_ctx(expr: &str, ctx: &ExecutionContext) -> bool
     for op in &["===", "!==", "==", "!="] {
         if let Some(op_pos) = expr.find(op) {
             let key = expr[..op_pos].trim();
-            let val = expr[op_pos + op.len()..].trim().trim_matches('\'').trim_matches('"');
+            let val = expr[op_pos + op.len()..]
+                .trim()
+                .trim_matches('\'')
+                .trim_matches('"');
             let ctx_val = ctx.get(key).map(|s| s.as_str()).unwrap_or("");
-            return if op.starts_with('!') { ctx_val != val } else { ctx_val == val };
+            return if op.starts_with('!') {
+                ctx_val != val
+            } else {
+                ctx_val == val
+            };
         }
     }
 
@@ -41,13 +48,17 @@ async fn resolve_entity_property(
         return None;
     }
     let prop_iri = format!("foundation:{}", prop_name);
-    executor.read(move |conn| {
-        if let Ok(Some(v)) = crate::owl::get_iri_property(conn, &entity_iri, &prop_iri) {
-            return Ok(Some(v));
-        }
-        crate::owl::get_literal_property(conn, &entity_iri, &prop_iri)
-            .map_err(|e| e.to_string())
-    }).await.ok().flatten()
+    executor
+        .read(move |conn| {
+            if let Ok(Some(v)) = crate::owl::get_iri_property(conn, &entity_iri, &prop_iri) {
+                return Ok(Some(v));
+            }
+            crate::owl::get_literal_property(conn, &entity_iri, &prop_iri)
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .ok()
+        .flatten()
 }
 
 pub(super) async fn evaluate_condition(
@@ -65,9 +76,18 @@ pub(super) async fn evaluate_condition(
             for op in &["===", "!==", "==", "!="] {
                 if let Some(op_pos) = rest.find(op) {
                     let prop_name = rest[..op_pos].trim();
-                    let value = rest[op_pos + op.len()..].trim().trim_matches('\'').trim_matches('"');
-                    if let Some(entity_val) = resolve_entity_property(potential_key, prop_name, ctx, executor).await {
-                        return if op.starts_with('!') { entity_val != value } else { entity_val == value };
+                    let value = rest[op_pos + op.len()..]
+                        .trim()
+                        .trim_matches('\'')
+                        .trim_matches('"');
+                    if let Some(entity_val) =
+                        resolve_entity_property(potential_key, prop_name, ctx, executor).await
+                    {
+                        return if op.starts_with('!') {
+                            entity_val != value
+                        } else {
+                            entity_val == value
+                        };
                     }
                 }
             }
@@ -100,4 +120,3 @@ pub fn interpolate(template: &str, ctx: &ExecutionContext) -> String {
     }
     result
 }
-

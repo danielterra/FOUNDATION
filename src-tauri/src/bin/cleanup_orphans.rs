@@ -6,8 +6,7 @@
 /// Usage:
 ///   cargo run --bin cleanup_orphans             # dry-run (default)
 ///   cargo run --bin cleanup_orphans -- --delete  # retract orphan triples
-
-use rusqlite::{Connection, Result, params};
+use rusqlite::{params, Connection, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -40,7 +39,9 @@ const BUILTIN_TYPES: &[&str] = &[
 ];
 
 fn get_or_create_origin(conn: &Connection, name: &str) -> Result<i64> {
-    match conn.query_row("SELECT id FROM origins WHERE name = ?", [name], |row| row.get(0)) {
+    match conn.query_row("SELECT id FROM origins WHERE name = ?", [name], |row| {
+        row.get(0)
+    }) {
         Ok(id) => Ok(id),
         Err(rusqlite::Error::QueryReturnedNoRows) => {
             conn.execute("INSERT INTO origins (name) VALUES (?)", [name])?;
@@ -86,22 +87,27 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                AND object IS NOT NULL
                AND retracted = 0",
         )?;
-        let rows: Vec<Result<(String, String)>> =
-            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect();
+        let rows: Vec<Result<(String, String)>> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect();
         rows.into_iter().collect::<Result<Vec<_>>>()?
     };
 
     // Group types by subject.
     let mut subject_types: HashMap<String, Vec<String>> = HashMap::new();
     for (subject, type_iri) in &instance_types {
-        subject_types.entry(subject.clone()).or_default().push(type_iri.clone());
+        subject_types
+            .entry(subject.clone())
+            .or_default()
+            .push(type_iri.clone());
     }
 
     // An instance is orphan when it has NO valid rdf:type — neither a builtin
     // vocabulary type nor a class that currently exists in the ontology.
     let mut orphans: Vec<(String, Vec<String>)> = Vec::new();
     for (subject, types) in &subject_types {
-        let has_valid_type = types.iter()
+        let has_valid_type = types
+            .iter()
             .any(|t| builtin_set.contains(t.as_str()) || live_classes.contains(t));
 
         if has_valid_type {

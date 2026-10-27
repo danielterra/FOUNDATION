@@ -1,8 +1,12 @@
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use tauri::{AppHandle, Emitter, Manager, State};
 use futures_util::StreamExt;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use tauri::{AppHandle, Emitter, Manager, State};
 
-const MODEL_DOWNLOAD_URL: &str = "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf";
+const MODEL_DOWNLOAD_URL: &str =
+    "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf";
 const MODEL_IDENTIFIER: &str = "gemma-4-E4B-it-Q4_K_M.gguf";
 const MODEL_EXPECTED_SIZE: u64 = 5_267_070_912;
 
@@ -21,11 +25,15 @@ impl Default for LocalModelDownloadState {
 }
 
 fn user_model_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path().app_data_dir().ok().map(|p| p.join("models").join(MODEL_IDENTIFIER))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|p| p.join("models").join(MODEL_IDENTIFIER))
 }
 
 fn resource_model_path(app: &AppHandle) -> std::path::PathBuf {
-    app.path().resource_dir()
+    app.path()
+        .resource_dir()
         .ok()
         .filter(|p| p.as_os_str() != "")
         .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources"))
@@ -35,7 +43,9 @@ fn resource_model_path(app: &AppHandle) -> std::path::PathBuf {
 
 pub fn resolve_model_path(app: &AppHandle) -> std::path::PathBuf {
     if let Some(p) = user_model_path(app) {
-        if p.exists() { return p; }
+        if p.exists() {
+            return p;
+        }
     }
     resource_model_path(app)
 }
@@ -49,30 +59,33 @@ pub async fn setup__get_local_model_status(
     let user_path = user_model_path(&app);
     let resource_path = resource_model_path(&app);
 
-    let (exists, path, size_bytes) =
-        if let Some(ref p) = user_path {
-            if p.exists() {
-                let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-                (true, p.to_string_lossy().into_owned(), size)
-            } else if resource_path.exists() {
-                let size = std::fs::metadata(&resource_path).map(|m| m.len()).unwrap_or(0);
-                (true, resource_path.to_string_lossy().into_owned(), size)
-            } else {
-                // Check for partial download
-                let partial = p.with_extension("gguf.part");
-                let partial_size = if partial.exists() {
-                    std::fs::metadata(&partial).map(|m| m.len()).unwrap_or(0)
-                } else {
-                    0
-                };
-                (false, String::new(), partial_size)
-            }
+    let (exists, path, size_bytes) = if let Some(ref p) = user_path {
+        if p.exists() {
+            let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+            (true, p.to_string_lossy().into_owned(), size)
         } else if resource_path.exists() {
-            let size = std::fs::metadata(&resource_path).map(|m| m.len()).unwrap_or(0);
+            let size = std::fs::metadata(&resource_path)
+                .map(|m| m.len())
+                .unwrap_or(0);
             (true, resource_path.to_string_lossy().into_owned(), size)
         } else {
-            (false, String::new(), 0)
-        };
+            // Check for partial download
+            let partial = p.with_extension("gguf.part");
+            let partial_size = if partial.exists() {
+                std::fs::metadata(&partial).map(|m| m.len()).unwrap_or(0)
+            } else {
+                0
+            };
+            (false, String::new(), partial_size)
+        }
+    } else if resource_path.exists() {
+        let size = std::fs::metadata(&resource_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        (true, resource_path.to_string_lossy().into_owned(), size)
+    } else {
+        (false, String::new(), 0)
+    };
 
     let size_human = if exists && size_bytes > 0 {
         format!("{:.1} GB", size_bytes as f64 / 1_073_741_824.0)
@@ -117,20 +130,29 @@ pub async fn setup__download_local_model(
 
         match result {
             Ok(_) => {
-                let _ = app_clone.emit("local-model-download-complete", serde_json::json!({
-                    "path": download_path.to_string_lossy()
-                }));
+                let _ = app_clone.emit(
+                    "local-model-download-complete",
+                    serde_json::json!({
+                        "path": download_path.to_string_lossy()
+                    }),
+                );
             }
             Err(ref e) if e == "cancelled" => {
-                let _ = app_clone.emit("local-model-download-error", serde_json::json!({
-                    "error": "Download cancelled",
-                    "cancelled": true
-                }));
+                let _ = app_clone.emit(
+                    "local-model-download-error",
+                    serde_json::json!({
+                        "error": "Download cancelled",
+                        "cancelled": true
+                    }),
+                );
             }
             Err(e) => {
-                let _ = app_clone.emit("local-model-download-error", serde_json::json!({
-                    "error": e
-                }));
+                let _ = app_clone.emit(
+                    "local-model-download-error",
+                    serde_json::json!({
+                        "error": e
+                    }),
+                );
             }
         }
     });
@@ -144,15 +166,16 @@ async fn do_download(
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Error creating directory: {}", e))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("Error creating directory: {}", e))?;
     }
 
     // Keep partial file alongside final path to support resume
     let partial_path = dest.with_extension("gguf.part");
 
     let existing_size = if partial_path.exists() {
-        std::fs::metadata(&partial_path).map(|m| m.len()).unwrap_or(0)
+        std::fs::metadata(&partial_path)
+            .map(|m| m.len())
+            .unwrap_or(0)
     } else {
         0
     };
@@ -166,7 +189,9 @@ async fn do_download(
         req = req.header("Range", format!("bytes={}-", existing_size));
     }
 
-    let response = req.send().await
+    let response = req
+        .send()
+        .await
         .map_err(|e| format!("Connection error: {}", e))?;
 
     let status = response.status();
@@ -190,8 +215,7 @@ async fn do_download(
             .open(&partial_path)
             .map_err(|e| format!("Error opening partial file: {}", e))?
     } else {
-        std::fs::File::create(&partial_path)
-            .map_err(|e| format!("Error creating file: {}", e))?
+        std::fs::File::create(&partial_path).map_err(|e| format!("Error creating file: {}", e))?
     };
 
     let mut downloaded = if is_resume { existing_size } else { 0 };
@@ -205,7 +229,8 @@ async fn do_download(
         }
 
         let chunk = chunk.map_err(|e| format!("Error receiving data: {}", e))?;
-        file.write_all(&chunk).map_err(|e| format!("Error writing file: {}", e))?;
+        file.write_all(&chunk)
+            .map_err(|e| format!("Error writing file: {}", e))?;
         downloaded += chunk.len() as u64;
 
         if last_emit.elapsed().as_millis() >= 250 {
@@ -214,16 +239,20 @@ async fn do_download(
             } else {
                 0.0
             };
-            let _ = app.emit("local-model-download-progress", serde_json::json!({
-                "downloadedBytes": downloaded,
-                "totalBytes": total_bytes,
-                "percentage": percentage,
-            }));
+            let _ = app.emit(
+                "local-model-download-progress",
+                serde_json::json!({
+                    "downloadedBytes": downloaded,
+                    "totalBytes": total_bytes,
+                    "percentage": percentage,
+                }),
+            );
             last_emit = std::time::Instant::now();
         }
     }
 
-    file.flush().map_err(|e| format!("Error finalizing write: {}", e))?;
+    file.flush()
+        .map_err(|e| format!("Error finalizing write: {}", e))?;
     drop(file);
 
     std::fs::rename(&partial_path, dest)

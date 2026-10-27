@@ -1,29 +1,38 @@
-use std::io::{BufRead, BufReader};
-use serde_json::Value;
-use rusqlite::Connection;
 use super::ToolResult;
+use rusqlite::Connection;
+use serde_json::Value;
+use std::io::{BufRead, BufReader};
 
 const DEFAULT_MAX_LINE_CHARS: usize = 4096;
 
 fn resolve_file_path(conn: &Connection, file_iri: &str) -> Result<String, ToolResult> {
     let stored = match crate::owl::get_literal_property(conn, file_iri, "foundation:filePath") {
         Ok(Some(p)) => p,
-        Ok(None) => return Err(ToolResult {
-            success: false,
-            result: None,
-            error: Some(format!("No foundation:filePath found for '{}'", file_iri)),
-            concept: None,
-        }),
-        Err(e) => return Err(ToolResult {
-            success: false,
-            result: None,
-            error: Some(format!("Failed to look up filePath for '{}': {}", file_iri, e)),
-            concept: None,
-        }),
+        Ok(None) => {
+            return Err(ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!("No foundation:filePath found for '{}'", file_iri)),
+                concept: None,
+            })
+        }
+        Err(e) => {
+            return Err(ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!(
+                    "Failed to look up filePath for '{}': {}",
+                    file_iri, e
+                )),
+                concept: None,
+            })
+        }
     };
     // Accept both portable (relative to foundation_dir), legacy `file://` URIs,
     // and bare absolute paths. See `paths::resolve_path` for the rules.
-    Ok(crate::paths::resolve_path(&stored).to_string_lossy().into_owned())
+    Ok(crate::paths::resolve_path(&stored)
+        .to_string_lossy()
+        .into_owned())
 }
 
 fn open_text_file(path: &str) -> Result<std::fs::File, ToolResult> {
@@ -41,7 +50,11 @@ fn slice_line(line: &str, start_char: usize, end_char: usize) -> (String, usize,
     let total_chars = line.chars().count();
     let start = (start_char.saturating_sub(1)).min(total_chars);
     let end = end_char.min(total_chars);
-    let content: String = line.chars().skip(start).take(end.saturating_sub(start)).collect();
+    let content: String = line
+        .chars()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect();
     let truncated = end < total_chars;
     (content, total_chars, truncated)
 }
@@ -68,12 +81,14 @@ fn detect_mime_type(bytes: &[u8]) -> &'static str {
 pub fn read_binary_file(conn: &Connection, args: &Value) -> ToolResult {
     let file_iri = match args.get("file_iri").and_then(|v| v.as_str()) {
         Some(iri) if !iri.is_empty() => iri,
-        _ => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: file_iri".to_string()),
-            concept: None,
-        },
+        _ => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: file_iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let file_path = match resolve_file_path(conn, file_iri) {
@@ -83,12 +98,14 @@ pub fn read_binary_file(conn: &Connection, args: &Value) -> ToolResult {
 
     let raw = match std::fs::read(&file_path) {
         Ok(bytes) => bytes,
-        Err(e) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(format!("Failed to read file '{}': {}", file_path, e)),
-            concept: None,
-        },
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!("Failed to read file '{}': {}", file_path, e)),
+                concept: None,
+            }
+        }
     };
 
     let media_type = detect_mime_type(&raw);
@@ -105,7 +122,8 @@ pub fn read_binary_file(conn: &Connection, args: &Value) -> ToolResult {
 }
 
 fn pdf_fingerprint(conn: &Connection, file_iri: &str, file_path: &str) -> String {
-    if let Ok(Some(hash)) = crate::owl::get_literal_property(conn, file_iri, "foundation:fileHash") {
+    if let Ok(Some(hash)) = crate::owl::get_literal_property(conn, file_iri, "foundation:fileHash")
+    {
         let hex = hash.split(':').next_back().unwrap_or(&hash);
         let trimmed: String = hex.chars().take(16).collect();
         if !trimmed.is_empty() {
@@ -125,12 +143,14 @@ fn pdf_fingerprint(conn: &Connection, file_iri: &str, file_path: &str) -> String
 pub fn read_pdf_page(conn: &Connection, args: &Value) -> ToolResult {
     let file_iri = match args.get("file_iri").and_then(|v| v.as_str()) {
         Some(iri) if !iri.is_empty() => iri,
-        _ => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: file_iri".to_string()),
-            concept: None,
-        },
+        _ => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: file_iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let page = match args.get("page").and_then(|v| v.as_u64()) {
@@ -138,7 +158,10 @@ pub fn read_pdf_page(conn: &Connection, args: &Value) -> ToolResult {
         _ => return ToolResult {
             success: false,
             result: None,
-            error: Some("Missing or invalid required parameter: page (must be a positive integer, 1-based)".to_string()),
+            error: Some(
+                "Missing or invalid required parameter: page (must be a positive integer, 1-based)"
+                    .to_string(),
+            ),
             concept: None,
         },
     };
@@ -150,12 +173,14 @@ pub fn read_pdf_page(conn: &Connection, args: &Value) -> ToolResult {
 
     let mut doc = match lopdf::Document::load(&file_path) {
         Ok(d) => d,
-        Err(e) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(format!("Failed to load PDF '{}': {}", file_path, e)),
-            concept: None,
-        },
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!("Failed to load PDF '{}': {}", file_path, e)),
+                concept: None,
+            }
+        }
     };
 
     let pages = doc.get_pages();
@@ -165,7 +190,10 @@ pub fn read_pdf_page(conn: &Connection, args: &Value) -> ToolResult {
         return ToolResult {
             success: false,
             result: None,
-            error: Some(format!("Page {} out of range (PDF has {} pages)", page, total_pages)),
+            error: Some(format!(
+                "Page {} out of range (PDF has {} pages)",
+                page, total_pages
+            )),
             concept: None,
         };
     }
@@ -181,7 +209,11 @@ pub fn read_pdf_page(conn: &Connection, args: &Value) -> ToolResult {
         return ToolResult {
             success: false,
             result: None,
-            error: Some(format!("Failed to create temp dir '{}': {}", temp_root.display(), e)),
+            error: Some(format!(
+                "Failed to create temp dir '{}': {}",
+                temp_root.display(),
+                e
+            )),
             concept: None,
         };
     }
@@ -190,7 +222,8 @@ pub fn read_pdf_page(conn: &Connection, args: &Value) -> ToolResult {
     // the same string don't collide, and so a re-imported PDF (same IRI, new bytes)
     // produces a fresh cache entry instead of serving stale data.
     let fingerprint = pdf_fingerprint(conn, file_iri, &file_path);
-    let safe_iri: String = file_iri.chars()
+    let safe_iri: String = file_iri
+        .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
     let out_path = temp_root.join(format!("{safe_iri}_{fingerprint}_p{page}.pdf"));
@@ -199,7 +232,11 @@ pub fn read_pdf_page(conn: &Connection, args: &Value) -> ToolResult {
         return ToolResult {
             success: false,
             result: None,
-            error: Some(format!("Failed to write single-page PDF '{}': {}", out_path.display(), e)),
+            error: Some(format!(
+                "Failed to write single-page PDF '{}': {}",
+                out_path.display(),
+                e
+            )),
             concept: None,
         };
     }
@@ -220,17 +257,21 @@ pub fn read_pdf_page(conn: &Connection, args: &Value) -> ToolResult {
 pub fn head_text_file(conn: &Connection, args: &Value) -> ToolResult {
     let file_iri = match args.get("file_iri").and_then(|v| v.as_str()) {
         Some(iri) if !iri.is_empty() => iri,
-        _ => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: file_iri".to_string()),
-            concept: None,
-        },
+        _ => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: file_iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let n = args.get("n").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
     let start_char = args.get("start_char").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
-    let end_char = args.get("end_char").and_then(|v| v.as_u64())
+    let end_char = args
+        .get("end_char")
+        .and_then(|v| v.as_u64())
         .map(|v| v as usize)
         .unwrap_or(start_char + DEFAULT_MAX_LINE_CHARS - 1);
 
@@ -250,12 +291,14 @@ pub fn head_text_file(conn: &Connection, args: &Value) -> ToolResult {
     for line_result in reader.lines() {
         let line = match line_result {
             Ok(l) => l,
-            Err(e) => return ToolResult {
-                success: false,
-                result: None,
-                error: Some(format!("Failed to read file '{}': {}", file_path, e)),
-                concept: None,
-            },
+            Err(e) => {
+                return ToolResult {
+                    success: false,
+                    result: None,
+                    error: Some(format!("Failed to read file '{}': {}", file_path, e)),
+                    concept: None,
+                }
+            }
         };
         total_lines += 1;
         if head_lines.len() < n {
@@ -286,48 +329,60 @@ pub fn head_text_file(conn: &Connection, args: &Value) -> ToolResult {
 pub fn read_text_lines(conn: &Connection, args: &Value) -> ToolResult {
     let file_iri = match args.get("file_iri").and_then(|v| v.as_str()) {
         Some(iri) if !iri.is_empty() => iri,
-        _ => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: file_iri".to_string()),
-            concept: None,
-        },
+        _ => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: file_iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let start_line = match args.get("start_line").and_then(|v| v.as_u64()) {
         Some(v) if v >= 1 => v as usize,
-        Some(_) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("start_line must be >= 1".to_string()),
-            concept: None,
-        },
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: start_line".to_string()),
-            concept: None,
-        },
+        Some(_) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("start_line must be >= 1".to_string()),
+                concept: None,
+            }
+        }
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: start_line".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let end_line = match args.get("end_line").and_then(|v| v.as_u64()) {
         Some(v) if v as usize >= start_line => v as usize,
-        Some(_) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("end_line must be >= start_line".to_string()),
-            concept: None,
-        },
-        None => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: end_line".to_string()),
-            concept: None,
-        },
+        Some(_) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("end_line must be >= start_line".to_string()),
+                concept: None,
+            }
+        }
+        None => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: end_line".to_string()),
+                concept: None,
+            }
+        }
     };
 
     let start_char = args.get("start_char").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
-    let end_char = args.get("end_char").and_then(|v| v.as_u64())
+    let end_char = args
+        .get("end_char")
+        .and_then(|v| v.as_u64())
         .map(|v| v as usize)
         .unwrap_or(start_char + DEFAULT_MAX_LINE_CHARS - 1);
 
@@ -347,12 +402,14 @@ pub fn read_text_lines(conn: &Connection, args: &Value) -> ToolResult {
     for line_result in reader.lines() {
         let line = match line_result {
             Ok(l) => l,
-            Err(e) => return ToolResult {
-                success: false,
-                result: None,
-                error: Some(format!("Failed to read file '{}': {}", file_path, e)),
-                concept: None,
-            },
+            Err(e) => {
+                return ToolResult {
+                    success: false,
+                    result: None,
+                    error: Some(format!("Failed to read file '{}': {}", file_path, e)),
+                    concept: None,
+                }
+            }
         };
         total_lines += 1;
         if total_lines >= start_line && total_lines <= end_line {
@@ -380,8 +437,218 @@ pub fn read_text_lines(conn: &Connection, args: &Value) -> ToolResult {
     }
 }
 
+/// Cap on how much uncompressed text `unzip_file` will pull out of a single
+/// entry. A bank statement CSV is a few hundred KB; anything past this is
+/// almost certainly the wrong entry, and inlining it would blow the context.
+const MAX_UNZIP_TEXT_BYTES: u64 = 5 * 1024 * 1024;
+
+fn mime_from_extension(name: &str) -> Option<&'static str> {
+    let ext = name.rsplit('.').next()?.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "csv" => "text/csv",
+        "tsv" => "text/tab-separated-values",
+        "txt" => "text/plain",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "html" | "htm" => "text/html",
+        "md" => "text/markdown",
+        "ofx" | "qfx" => "application/x-ofx",
+        _ => return None,
+    })
+}
+
+/// Decode as UTF-8, falling back to Windows-1252 when the bytes aren't valid
+/// UTF-8. Brazilian bank exports are routinely Latin-1, and a lossy UTF-8 read
+/// would silently mangle accented descriptions instead of failing loudly.
+fn decode_text(bytes: &[u8]) -> (String, &'static str) {
+    let (text, _, had_errors) = encoding_rs::UTF_8.decode(bytes);
+    if !had_errors {
+        return (text.into_owned(), "utf-8");
+    }
+    let (text, _, _) = encoding_rs::WINDOWS_1252.decode(bytes);
+    (text.into_owned(), "windows-1252")
+}
+
+pub fn unzip_file(conn: &Connection, args: &Value) -> ToolResult {
+    let file_iri = match args.get("file_iri").and_then(|v| v.as_str()) {
+        Some(iri) if !iri.is_empty() => iri,
+        _ => return err("Missing required parameter: file_iri".to_string()),
+    };
+    let extract_path = args
+        .get("extract_path")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    let password = args
+        .get("password")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+
+    let file_path = match resolve_file_path(conn, file_iri) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let file = match open_text_file(&file_path) {
+        Ok(f) => f,
+        Err(e) => return e,
+    };
+
+    let mut archive = match zip::ZipArchive::new(file) {
+        Ok(a) => a,
+        Err(e) => {
+            return err(format!(
+                "'{}' ({}) is not a readable ZIP archive: {}",
+                file_iri, file_path, e
+            ))
+        }
+    };
+
+    // Directory entries carry no content, so they're not listable targets.
+    // `file_names()` iterates a hash map, so sort for a stable listing.
+    let mut entry_names: Vec<String> = archive
+        .file_names()
+        .filter(|n| !n.ends_with('/'))
+        .map(|n| n.to_string())
+        .collect();
+    entry_names.sort();
+
+    // Bank archives are routinely password-protected (C6 uses the first 6 CPF
+    // digits), and the agent can only know to ask for the password if the
+    // listing says so.
+    let encrypted = (0..archive.len()).any(|i| {
+        archive
+            .by_index_raw(i)
+            .map(|e| e.encrypted())
+            .unwrap_or(false)
+    });
+
+    let target = match extract_path {
+        None => {
+            return ToolResult {
+                success: true,
+                result: Some(serde_json::json!({
+                    "files": entry_names,
+                    "encrypted": encrypted,
+                })),
+                error: None,
+                concept: None,
+            }
+        }
+        Some(t) => t,
+    };
+
+    // Exact internal path wins; a bare file name is accepted when it identifies
+    // exactly one entry, so the agent doesn't have to guess folder prefixes.
+    let resolved =
+        if entry_names.iter().any(|n| n == target) {
+            target.to_string()
+        } else {
+            let matches: Vec<&String> = entry_names
+                .iter()
+                .filter(|n| n.rsplit('/').next() == Some(target))
+                .collect();
+            match matches.len() {
+                1 => matches[0].clone(),
+                0 => {
+                    return err(format!(
+                        "No entry '{}' inside the ZIP. Files available: {}",
+                        target,
+                        entry_names.join(", ")
+                    ))
+                }
+                _ => {
+                    return err(format!(
+                    "'{}' matches more than one entry; pass the full internal path. Candidates: {}",
+                    target,
+                    matches.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                ))
+                }
+            }
+        };
+
+    let opened = match password {
+        Some(pw) => archive.by_name_decrypt(&resolved, pw.as_bytes()),
+        None => archive.by_name(&resolved),
+    };
+    let mut entry = match opened {
+        Ok(e) => e,
+        Err(zip::result::ZipError::InvalidPassword) => {
+            return err(format!(
+                "Wrong password for '{}' inside the ZIP.",
+                resolved
+            ))
+        }
+        Err(zip::result::ZipError::UnsupportedArchive(msg))
+            if msg == zip::result::ZipError::PASSWORD_REQUIRED =>
+        {
+            return err(format!(
+                "'{}' is password-protected — call unzip_file again with the `password` parameter.                  The password is usually stated in the email that carried the attachment                  (C6 Bank, for example, uses the first 6 digits of the account holder's CPF).",
+                resolved
+            ))
+        }
+        Err(e) => return err(format!("Failed to open '{}' inside the ZIP: {}", resolved, e)),
+    };
+
+    if entry.size() > MAX_UNZIP_TEXT_BYTES {
+        return err(format!(
+            "'{}' is {} bytes uncompressed, above the {} byte limit of unzip_file.",
+            resolved,
+            entry.size(),
+            MAX_UNZIP_TEXT_BYTES
+        ));
+    }
+
+    let mut bytes: Vec<u8> = Vec::with_capacity(entry.size() as usize);
+    if let Err(e) = std::io::Read::read_to_end(&mut entry, &mut bytes) {
+        return err(format!(
+            "Failed to extract '{}' from the ZIP: {}",
+            resolved, e
+        ));
+    }
+
+    if bytes.contains(&0u8) {
+        return err(format!(
+            "'{}' is binary ({}), not text — unzip_file only returns textual content.",
+            resolved,
+            detect_mime_type(&bytes)
+        ));
+    }
+
+    let (content, encoding) = decode_text(&bytes);
+    let total_lines = if content.is_empty() {
+        0
+    } else {
+        content.lines().count()
+    };
+    let file_name = resolved
+        .rsplit('/')
+        .next()
+        .unwrap_or(resolved.as_str())
+        .to_string();
+    let mime_type = mime_from_extension(&file_name).unwrap_or("text/plain");
+
+    ToolResult {
+        success: true,
+        result: Some(serde_json::json!({
+            "files": entry_names,
+            "content": content,
+            "file_name": file_name,
+            "mime_type": mime_type,
+            "total_lines": total_lines,
+            "encoding": encoding,
+        })),
+        error: None,
+        concept: None,
+    }
+}
+
 fn err(message: String) -> ToolResult {
-    ToolResult { success: false, result: None, error: Some(message), concept: None }
+    ToolResult {
+        success: false,
+        result: None,
+        error: Some(message),
+        concept: None,
+    }
 }
 
 fn target_individual_exists(conn: &Connection, target_iri: &str) -> Result<bool, String> {
@@ -403,16 +670,29 @@ pub fn attach_file_to_individual(conn: &mut Connection, args: &Value) -> ToolRes
         _ => return err("Missing required parameter: target_iri".to_string()),
     };
 
-    let link_property = args.get("link_property")
+    let link_property = args
+        .get("link_property")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .unwrap_or("foundation:hasFile")
         .to_string();
 
-    let file_path_arg = args.get("file_path").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-    let file_data_b64 = args.get("file_data_base64").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-    let file_name_arg = args.get("file_name").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-    let mime_override = args.get("mime_type").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    let file_path_arg = args
+        .get("file_path")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let file_data_b64 = args
+        .get("file_data_base64")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let file_name_arg = args
+        .get("file_name")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let mime_override = args
+        .get("mime_type")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
 
     let (source_path_opt, raw, file_name) = match (file_path_arg, file_data_b64) {
         (Some(path), _) => {
@@ -441,9 +721,11 @@ pub fn attach_file_to_individual(conn: &mut Connection, args: &Value) -> ToolRes
             };
             (None, bytes, name)
         }
-        (None, None) => return err(
-            "Either file_path or (file_data_base64 + file_name) is required".to_string()
-        ),
+        (None, None) => {
+            return err(
+                "Either file_path or (file_data_base64 + file_name) is required".to_string(),
+            )
+        }
     };
 
     match target_individual_exists(conn, &target_iri) {
@@ -472,23 +754,30 @@ pub fn attach_file_to_individual(conn: &mut Connection, args: &Value) -> ToolRes
     if let Err(e) = std::fs::write(&permanent_path, &raw) {
         return err(format!("Failed to write file to attachments dir: {}", e));
     }
-    log_step("store", &file_name, &format!("dest={}", permanent_path.display()));
+    log_step(
+        "store",
+        &file_name,
+        &format!("dest={}", permanent_path.display()),
+    );
 
     let stored_path = crate::paths::to_portable_path(&permanent_path);
     let file_iri = format!("foundation:File_{}", timestamp);
 
-    if let Err(e) = crate::files::assert_file_individual(conn, &crate::files::FileMetadata {
-        iri: &file_iri,
-        class_iri: "foundation:File",
-        icon: "attach_file",
-        file_name: &file_name,
-        stored_path: &stored_path,
-        size,
-        hash: &hash,
-        mime_type: &mime_type,
-        timestamp_ms: timestamp,
-        origin: "mcp",
-    }) {
+    if let Err(e) = crate::files::assert_file_individual(
+        conn,
+        &crate::files::FileMetadata {
+            iri: &file_iri,
+            class_iri: "foundation:File",
+            icon: "attach_file",
+            file_name: &file_name,
+            stored_path: &stored_path,
+            size,
+            hash: &hash,
+            mime_type: &mime_type,
+            timestamp_ms: timestamp,
+            origin: "mcp",
+        },
+    ) {
         let _ = std::fs::remove_file(&permanent_path);
         return err(e);
     }
@@ -508,11 +797,19 @@ pub fn attach_file_to_individual(conn: &mut Connection, args: &Value) -> ToolRes
             link_property, e
         ));
     }
-    log_step("link", &file_name, &format!("{} <{}> {}", target_iri, link_property, file_iri));
+    log_step(
+        "link",
+        &file_name,
+        &format!("{} <{}> {}", target_iri, link_property, file_iri),
+    );
 
     if let Some(src) = &source_path_opt {
         if let Err(e) = std::fs::remove_file(src) {
-            log_step("cleanup", &file_name, &format!("failed to remove source {}: {}", src.display(), e));
+            log_step(
+                "cleanup",
+                &file_name,
+                &format!("failed to remove source {}: {}", src.display(), e),
+            );
         }
     }
 
@@ -576,13 +873,25 @@ mod tests {
 
     fn register_file(conn: &mut rusqlite::Connection, file_iri: &str, path: &str) {
         let ind = Individual::new(file_iri);
-        ind.assert(conn, "foundation:File", "test file", "https://example.com/icon.png", "test")
-            .expect("assert individual");
-        ind.add_property(conn, "foundation:filePath", vec![Object::Literal {
-            value: format!("file://{}", path),
-            datatype: Some("xsd:anyURI".to_string()),
-            language: None,
-        }], "test").expect("add filePath");
+        ind.assert(
+            conn,
+            "foundation:File",
+            "test file",
+            "https://example.com/icon.png",
+            "test",
+        )
+        .expect("assert individual");
+        ind.add_property(
+            conn,
+            "foundation:filePath",
+            vec![Object::Literal {
+                value: format!("file://{}", path),
+                datatype: Some("xsd:anyURI".to_string()),
+                language: None,
+            }],
+            "test",
+        )
+        .expect("add filePath");
     }
 
     // ── detect_mime_type ─────────────────────────────────────────────────────
@@ -619,7 +928,10 @@ mod tests {
 
     #[test]
     fn detect_mime_type_returns_octet_stream_for_unknown_bytes() {
-        assert_eq!(detect_mime_type(&[0x00, 0x01, 0x02, 0x03]), "application/octet-stream");
+        assert_eq!(
+            detect_mime_type(&[0x00, 0x01, 0x02, 0x03]),
+            "application/octet-stream"
+        );
     }
 
     // ── read_binary_file ─────────────────────────────────────────────────────
@@ -631,11 +943,22 @@ mod tests {
         let pdf_bytes = b"%PDF-1.4 minimal test content";
         let mut tmp = NamedTempFile::new().expect("create temp file");
         tmp.write_all(pdf_bytes).expect("write pdf");
-        register_file(&mut conn, "foundation:File_bin_pdf", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_bin_pdf",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_pdf" }));
+        let result = read_binary_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_bin_pdf" }),
+        );
 
-        assert!(result.success, "Expected success but got error: {:?}", result.error);
+        assert!(
+            result.success,
+            "Expected success but got error: {:?}",
+            result.error
+        );
         let data = result.result.unwrap();
         assert_eq!(data["media_type"].as_str().unwrap(), "application/pdf");
         assert!(data["data"].as_str().is_some());
@@ -648,12 +971,22 @@ mod tests {
         let jpeg: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
         let mut tmp = NamedTempFile::new().expect("create temp file");
         tmp.write_all(jpeg).expect("write jpeg");
-        register_file(&mut conn, "foundation:File_bin_jpeg", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_bin_jpeg",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_jpeg" }));
+        let result = read_binary_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_bin_jpeg" }),
+        );
 
         assert!(result.success);
-        assert_eq!(result.result.unwrap()["media_type"].as_str().unwrap(), "image/jpeg");
+        assert_eq!(
+            result.result.unwrap()["media_type"].as_str().unwrap(),
+            "image/jpeg"
+        );
     }
 
     #[test]
@@ -663,14 +996,23 @@ mod tests {
         let original = b"%PDF-1.4 round-trip test";
         let mut tmp = NamedTempFile::new().expect("create temp file");
         tmp.write_all(original).expect("write bytes");
-        register_file(&mut conn, "foundation:File_bin_rt", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_bin_rt",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_rt" }));
+        let result = read_binary_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_bin_rt" }),
+        );
 
         assert!(result.success);
         let encoded = result.result.unwrap()["data"].as_str().unwrap().to_string();
         use base64::Engine;
-        let decoded = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
         assert_eq!(decoded, original);
     }
 
@@ -681,12 +1023,22 @@ mod tests {
         let unknown: &[u8] = &[0x00, 0x01, 0x02, 0x03, 0x04];
         let mut tmp = NamedTempFile::new().expect("create temp file");
         tmp.write_all(unknown).expect("write bytes");
-        register_file(&mut conn, "foundation:File_bin_unk", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_bin_unk",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_unk" }));
+        let result = read_binary_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_bin_unk" }),
+        );
 
         assert!(result.success);
-        assert_eq!(result.result.unwrap()["media_type"].as_str().unwrap(), "application/octet-stream");
+        assert_eq!(
+            result.result.unwrap()["media_type"].as_str().unwrap(),
+            "application/octet-stream"
+        );
     }
 
     #[test]
@@ -694,9 +1046,19 @@ mod tests {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let ind = Individual::new("foundation:File_bin_no_path");
-        ind.assert(&mut conn, "foundation:File", "no path", "https://example.com/icon.png", "test").unwrap();
+        ind.assert(
+            &mut conn,
+            "foundation:File",
+            "no path",
+            "https://example.com/icon.png",
+            "test",
+        )
+        .unwrap();
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_no_path" }));
+        let result = read_binary_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_bin_no_path" }),
+        );
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("foundation:filePath"));
@@ -707,14 +1069,30 @@ mod tests {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let ind = Individual::new("foundation:File_bin_missing");
-        ind.assert(&mut conn, "foundation:File", "missing", "https://example.com/icon.png", "test").unwrap();
-        ind.add_property(&mut conn, "foundation:filePath", vec![Object::Literal {
-            value: "file:///nonexistent/path/to/file.bin".to_string(),
-            datatype: Some("xsd:anyURI".to_string()),
-            language: None,
-        }], "test").unwrap();
+        ind.assert(
+            &mut conn,
+            "foundation:File",
+            "missing",
+            "https://example.com/icon.png",
+            "test",
+        )
+        .unwrap();
+        ind.add_property(
+            &mut conn,
+            "foundation:filePath",
+            vec![Object::Literal {
+                value: "file:///nonexistent/path/to/file.bin".to_string(),
+                datatype: Some("xsd:anyURI".to_string()),
+                language: None,
+            }],
+            "test",
+        )
+        .unwrap();
 
-        let result = read_binary_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_bin_missing" }));
+        let result = read_binary_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_bin_missing" }),
+        );
 
         assert!(!result.success);
     }
@@ -726,9 +1104,16 @@ mod tests {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["alpha", "beta", "gamma", "delta", "epsilon"]);
-        register_file(&mut conn, "foundation:File_h1", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_h1",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = head_text_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_h1", "n": 3 }));
+        let result = head_text_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_h1", "n": 3 }),
+        );
 
         assert!(result.success);
         let data = result.result.unwrap();
@@ -745,9 +1130,16 @@ mod tests {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["one", "two", "three", "four"]);
-        register_file(&mut conn, "foundation:File_h2", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_h2",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = head_text_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_h2", "n": 20 }));
+        let result = head_text_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_h2", "n": 20 }),
+        );
 
         assert!(result.success);
         let data = result.result.unwrap();
@@ -762,9 +1154,16 @@ mod tests {
         let content: Vec<String> = (1..=15).map(|i| format!("line{}", i)).collect();
         let refs: Vec<&str> = content.iter().map(|s| s.as_str()).collect();
         let tmp = write_temp_file(&refs);
-        register_file(&mut conn, "foundation:File_h3", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_h3",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = head_text_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_h3" }));
+        let result = head_text_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_h3" }),
+        );
 
         assert!(result.success);
         let data = result.result.unwrap();
@@ -777,9 +1176,19 @@ mod tests {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let ind = Individual::new("foundation:File_no_path");
-        ind.assert(&mut conn, "foundation:File", "no path", "https://example.com/icon.png", "test").unwrap();
+        ind.assert(
+            &mut conn,
+            "foundation:File",
+            "no path",
+            "https://example.com/icon.png",
+            "test",
+        )
+        .unwrap();
 
-        let result = head_text_file(&conn, &serde_json::json!({ "file_iri": "foundation:File_no_path" }));
+        let result = head_text_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_no_path" }),
+        );
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("foundation:filePath"));
@@ -792,11 +1201,18 @@ mod tests {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["a", "b", "c", "d", "e", "f"]);
-        register_file(&mut conn, "foundation:File_r1", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_r1",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = read_text_lines(&conn, &serde_json::json!({
-            "file_iri": "foundation:File_r1", "start_line": 2, "end_line": 4
-        }));
+        let result = read_text_lines(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_r1", "start_line": 2, "end_line": 4
+            }),
+        );
 
         assert!(result.success);
         let data = result.result.unwrap();
@@ -813,11 +1229,18 @@ mod tests {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["a", "b", "c", "d", "e"]);
-        register_file(&mut conn, "foundation:File_r2", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_r2",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = read_text_lines(&conn, &serde_json::json!({
-            "file_iri": "foundation:File_r2", "start_line": 3, "end_line": 100
-        }));
+        let result = read_text_lines(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_r2", "start_line": 3, "end_line": 100
+            }),
+        );
 
         assert!(result.success);
         let data = result.result.unwrap();
@@ -833,11 +1256,18 @@ mod tests {
         let content: Vec<String> = (1..=10).map(|i| format!("row{}", i)).collect();
         let refs: Vec<&str> = content.iter().map(|s| s.as_str()).collect();
         let tmp = write_temp_file(&refs);
-        register_file(&mut conn, "foundation:File_r3", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_r3",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = read_text_lines(&conn, &serde_json::json!({
-            "file_iri": "foundation:File_r3", "start_line": 1, "end_line": 2
-        }));
+        let result = read_text_lines(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_r3", "start_line": 1, "end_line": 2
+            }),
+        );
 
         assert!(result.success);
         let data = result.result.unwrap();
@@ -850,11 +1280,18 @@ mod tests {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["a", "b", "c", "d", "e"]);
-        register_file(&mut conn, "foundation:File_r4", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_r4",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = read_text_lines(&conn, &serde_json::json!({
-            "file_iri": "foundation:File_r4", "start_line": 50, "end_line": 60
-        }));
+        let result = read_text_lines(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_r4", "start_line": 50, "end_line": 60
+            }),
+        );
 
         assert!(result.success);
         let data = result.result.unwrap();
@@ -867,11 +1304,18 @@ mod tests {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["a", "b", "c"]);
-        register_file(&mut conn, "foundation:File_r5", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_r5",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = read_text_lines(&conn, &serde_json::json!({
-            "file_iri": "foundation:File_r5", "start_line": 5, "end_line": 2
-        }));
+        let result = read_text_lines(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_r5", "start_line": 5, "end_line": 2
+            }),
+        );
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("end_line"));
@@ -883,18 +1327,28 @@ mod tests {
         setup_file_ontology(&mut conn);
         let long_line = "x".repeat(8000);
         let tmp = write_temp_file(&[&long_line]);
-        register_file(&mut conn, "foundation:File_r6", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_r6",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = read_text_lines(&conn, &serde_json::json!({
-            "file_iri": "foundation:File_r6", "start_line": 1, "end_line": 1
-        }));
+        let result = read_text_lines(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_r6", "start_line": 1, "end_line": 1
+            }),
+        );
 
         assert!(result.success);
         let data = result.result.unwrap();
         let lines = data["lines"].as_array().unwrap();
         let line = &lines[0];
         assert_eq!(line["total_chars"].as_u64().unwrap(), 8000);
-        assert_eq!(line["content"].as_str().unwrap().len(), DEFAULT_MAX_LINE_CHARS);
+        assert_eq!(
+            line["content"].as_str().unwrap().len(),
+            DEFAULT_MAX_LINE_CHARS
+        );
         assert_eq!(line["truncated"].as_bool().unwrap(), true);
     }
 
@@ -903,12 +1357,19 @@ mod tests {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
         let tmp = write_temp_file(&["abcdefghij"]);
-        register_file(&mut conn, "foundation:File_r7", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_r7",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = read_text_lines(&conn, &serde_json::json!({
-            "file_iri": "foundation:File_r7", "start_line": 1, "end_line": 1,
-            "start_char": 5, "end_char": 10
-        }));
+        let result = read_text_lines(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_r7", "start_line": 1, "end_line": 1,
+                "start_char": 5, "end_char": 10
+            }),
+        );
 
         assert!(result.success);
         let data = result.result.unwrap();
@@ -921,19 +1382,361 @@ mod tests {
     fn read_text_lines_supports_iterative_reading_of_long_line_via_start_char() {
         let mut conn = setup_test_db();
         setup_file_ontology(&mut conn);
-        let long_line = (0..10000u32).map(|i| char::from_digit(i % 10, 10).unwrap()).collect::<String>();
+        let long_line = (0..10000u32)
+            .map(|i| char::from_digit(i % 10, 10).unwrap())
+            .collect::<String>();
         let tmp = write_temp_file(&[&long_line]);
-        register_file(&mut conn, "foundation:File_r8", tmp.path().to_str().unwrap());
+        register_file(
+            &mut conn,
+            "foundation:File_r8",
+            tmp.path().to_str().unwrap(),
+        );
 
-        let result = read_text_lines(&conn, &serde_json::json!({
-            "file_iri": "foundation:File_r8", "start_line": 1, "end_line": 1,
-            "start_char": 4097, "end_char": 8192
-        }));
+        let result = read_text_lines(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_r8", "start_line": 1, "end_line": 1,
+                "start_char": 4097, "end_char": 8192
+            }),
+        );
 
         assert!(result.success);
         let data = result.result.unwrap();
         let line = &data["lines"].as_array().unwrap()[0];
         assert_eq!(line["total_chars"].as_u64().unwrap(), 10000);
         assert_eq!(line["content"].as_str().unwrap().len(), 4096); // 8192 - 4097 + 1
+    }
+
+    // ── unzip_file ───────────────────────────────────────────────────────────
+
+    fn write_temp_zip(entries: &[(&str, &[u8])]) -> NamedTempFile {
+        write_temp_zip_inner(entries, None)
+    }
+
+    fn write_temp_encrypted_zip(entries: &[(&str, &[u8])], password: &str) -> NamedTempFile {
+        write_temp_zip_inner(entries, Some(password))
+    }
+
+    fn write_temp_zip_inner(entries: &[(&str, &[u8])], password: Option<&str>) -> NamedTempFile {
+        use zip::unstable::write::FileOptionsExt;
+        let mut f = NamedTempFile::new().expect("create temp zip");
+        {
+            let mut w = zip::ZipWriter::new(f.as_file_mut());
+            let mut opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            if let Some(pw) = password {
+                opts = opts.with_deprecated_encryption(pw.as_bytes());
+            }
+            for (name, data) in entries {
+                w.start_file(*name, opts).expect("start entry");
+                w.write_all(data).expect("write entry");
+            }
+            w.finish().expect("finish zip");
+        }
+        f
+    }
+
+    #[test]
+    fn unzip_file_lists_entries_when_extract_path_is_omitted() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let tmp = write_temp_zip(&[
+            ("extrato.csv", b"Data,Valor\n" as &[u8]),
+            ("leia-me.txt", b"ola" as &[u8]),
+        ]);
+        register_file(
+            &mut conn,
+            "foundation:File_z1",
+            tmp.path().to_str().unwrap(),
+        );
+
+        let result = unzip_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_z1" }),
+        );
+
+        assert!(result.success, "{:?}", result.error);
+        let data = result.result.unwrap();
+        let files: Vec<&str> = data["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(files, vec!["extrato.csv", "leia-me.txt"]);
+        assert!(
+            data.get("content").is_none(),
+            "listing must not extract content"
+        );
+    }
+
+    #[test]
+    fn unzip_file_returns_csv_content_with_line_count_and_mime() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let csv = "Data,Valor,Identificador,Descricao\n2026-08-01,-10.50,abc,Padaria\n";
+        let tmp = write_temp_zip(&[("extrato.csv", csv.as_bytes())]);
+        register_file(
+            &mut conn,
+            "foundation:File_z2",
+            tmp.path().to_str().unwrap(),
+        );
+
+        let result = unzip_file(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_z2", "extract_path": "extrato.csv"
+            }),
+        );
+
+        assert!(result.success, "{:?}", result.error);
+        let data = result.result.unwrap();
+        assert_eq!(data["content"].as_str().unwrap(), csv);
+        assert_eq!(data["file_name"].as_str().unwrap(), "extrato.csv");
+        assert_eq!(data["mime_type"].as_str().unwrap(), "text/csv");
+        assert_eq!(data["total_lines"].as_u64().unwrap(), 2);
+        assert_eq!(data["encoding"].as_str().unwrap(), "utf-8");
+    }
+
+    #[test]
+    fn unzip_file_resolves_a_bare_file_name_inside_a_folder() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let tmp = write_temp_zip(&[("extrato/2026-08/extrato.csv", b"a,b\n1,2\n" as &[u8])]);
+        register_file(
+            &mut conn,
+            "foundation:File_z3",
+            tmp.path().to_str().unwrap(),
+        );
+
+        let result = unzip_file(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_z3", "extract_path": "extrato.csv"
+            }),
+        );
+
+        assert!(result.success, "{:?}", result.error);
+        let data = result.result.unwrap();
+        assert_eq!(data["file_name"].as_str().unwrap(), "extrato.csv");
+        assert_eq!(data["total_lines"].as_u64().unwrap(), 2);
+    }
+
+    #[test]
+    fn unzip_file_errors_and_lists_available_entries_when_path_is_unknown() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let tmp = write_temp_zip(&[("extrato.csv", b"a\n" as &[u8])]);
+        register_file(
+            &mut conn,
+            "foundation:File_z4",
+            tmp.path().to_str().unwrap(),
+        );
+
+        let result = unzip_file(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_z4", "extract_path": "nao-existe.csv"
+            }),
+        );
+
+        assert!(!result.success);
+        let msg = result.error.unwrap();
+        assert!(msg.contains("nao-existe.csv"), "{}", msg);
+        assert!(
+            msg.contains("extrato.csv"),
+            "error must list what IS inside: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn unzip_file_falls_back_to_windows_1252_for_latin1_statements() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        // "Descrição" encoded as Latin-1: 0xE7 = ç, 0xE3 = ã
+        let latin1: Vec<u8> = b"Descri\xE7\xE3o\nPadaria\n".to_vec();
+        let tmp = write_temp_zip(&[("extrato.csv", latin1.as_slice())]);
+        register_file(
+            &mut conn,
+            "foundation:File_z5",
+            tmp.path().to_str().unwrap(),
+        );
+
+        let result = unzip_file(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_z5", "extract_path": "extrato.csv"
+            }),
+        );
+
+        assert!(result.success, "{:?}", result.error);
+        let data = result.result.unwrap();
+        assert!(data["content"].as_str().unwrap().starts_with("Descrição"));
+        assert_eq!(data["encoding"].as_str().unwrap(), "windows-1252");
+    }
+
+    #[test]
+    fn unzip_file_rejects_a_file_that_is_not_a_zip() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let tmp = write_temp_file(&["not,a,zip"]);
+        register_file(
+            &mut conn,
+            "foundation:File_z6",
+            tmp.path().to_str().unwrap(),
+        );
+
+        let result = unzip_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_z6" }),
+        );
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not a readable ZIP archive"));
+    }
+
+    #[test]
+    fn unzip_file_refuses_binary_entries() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let png: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01];
+        let tmp = write_temp_zip(&[("scan.png", png)]);
+        register_file(
+            &mut conn,
+            "foundation:File_z7",
+            tmp.path().to_str().unwrap(),
+        );
+
+        let result = unzip_file(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_z7", "extract_path": "scan.png"
+            }),
+        );
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("binary"));
+    }
+
+    #[test]
+    fn unzip_file_requires_file_iri() {
+        let conn = setup_test_db();
+        let result = unzip_file(&conn, &serde_json::json!({}));
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("file_iri"));
+    }
+
+    #[test]
+    fn unzip_file_listing_flags_a_password_protected_archive() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let tmp = write_temp_encrypted_zip(&[("extrato.csv", b"a,b\n" as &[u8])], "segredo123");
+        register_file(
+            &mut conn,
+            "foundation:File_z8",
+            tmp.path().to_str().unwrap(),
+        );
+
+        let result = unzip_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_z8" }),
+        );
+
+        assert!(result.success, "{:?}", result.error);
+        let data = result.result.unwrap();
+        assert_eq!(data["encrypted"].as_bool().unwrap(), true);
+        assert_eq!(data["files"][0].as_str().unwrap(), "extrato.csv");
+    }
+
+    #[test]
+    fn unzip_file_listing_flags_a_plain_archive_as_not_encrypted() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let tmp = write_temp_zip(&[("extrato.csv", b"a,b\n" as &[u8])]);
+        register_file(
+            &mut conn,
+            "foundation:File_z9",
+            tmp.path().to_str().unwrap(),
+        );
+
+        let result = unzip_file(
+            &conn,
+            &serde_json::json!({ "file_iri": "foundation:File_z9" }),
+        );
+
+        assert_eq!(
+            result.result.unwrap()["encrypted"].as_bool().unwrap(),
+            false
+        );
+    }
+
+    #[test]
+    fn unzip_file_extracts_a_protected_entry_with_the_right_password() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let csv = "Data,Valor\n2026-08-01,-10.50\n";
+        let tmp = write_temp_encrypted_zip(&[("extrato.csv", csv.as_bytes())], "123456");
+        register_file(
+            &mut conn,
+            "foundation:File_z10",
+            tmp.path().to_str().unwrap(),
+        );
+
+        let result = unzip_file(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_z10", "extract_path": "extrato.csv", "password": "123456"
+            }),
+        );
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.result.unwrap()["content"].as_str().unwrap(), csv);
+    }
+
+    #[test]
+    fn unzip_file_says_a_password_is_needed_instead_of_failing_opaquely() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let tmp = write_temp_encrypted_zip(&[("extrato.csv", b"a,b\n" as &[u8])], "123456");
+        register_file(
+            &mut conn,
+            "foundation:File_z11",
+            tmp.path().to_str().unwrap(),
+        );
+
+        let result = unzip_file(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_z11", "extract_path": "extrato.csv"
+            }),
+        );
+
+        assert!(!result.success);
+        let msg = result.error.unwrap();
+        assert!(msg.contains("password-protected"), "{}", msg);
+        assert!(msg.contains("password"), "{}", msg);
+    }
+
+    #[test]
+    fn unzip_file_reports_a_wrong_password() {
+        let mut conn = setup_test_db();
+        setup_file_ontology(&mut conn);
+        let tmp = write_temp_encrypted_zip(&[("extrato.csv", b"a,b\n" as &[u8])], "123456");
+        register_file(
+            &mut conn,
+            "foundation:File_z12",
+            tmp.path().to_str().unwrap(),
+        );
+
+        let result = unzip_file(
+            &conn,
+            &serde_json::json!({
+                "file_iri": "foundation:File_z12", "extract_path": "extrato.csv", "password": "999999"
+            }),
+        );
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Wrong password"));
     }
 }

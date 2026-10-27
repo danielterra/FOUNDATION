@@ -1,35 +1,39 @@
-use crate::commands::chat_storage::{AIConversationMessage, ContentBlock};
-use crate::ai::ChatMessage;
-use crate::ai::providers::{ContentBlock as ApiContentBlock, MessageContent, ImageSource as ApiImageSource, DocumentSource as ApiDocumentSource};
-use crate::owl::{DbExecutor, Individual, Object};
 use super::super::log_backend;
+use crate::ai::providers::{
+    ContentBlock as ApiContentBlock, DocumentSource as ApiDocumentSource,
+    ImageSource as ApiImageSource, MessageContent,
+};
+use crate::ai::ChatMessage;
+use crate::commands::chat_storage::{AIConversationMessage, ContentBlock};
+use crate::owl::{DbExecutor, Individual, Object};
 
 pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
-    let api_blocks: Vec<ApiContentBlock> = msg.content.iter().filter_map(|block| {
-        match block {
-            ContentBlock::Text { text } => Some(
-                ApiContentBlock::Text { text: text.clone() }
-            ),
-            ContentBlock::Image { source } => Some(
-                ApiContentBlock::Image {
+    let api_blocks: Vec<ApiContentBlock> = msg
+        .content
+        .iter()
+        .filter_map(|block| {
+            match block {
+                ContentBlock::Text { text } => Some(ApiContentBlock::Text { text: text.clone() }),
+                ContentBlock::Image { source } => Some(ApiContentBlock::Image {
                     source: ApiImageSource {
                         source_type: source.source_type.clone(),
                         media_type: source.media_type.clone(),
                         data: source.data.clone(),
-                    }
-                }
-            ),
-            ContentBlock::Document { source } => Some(
-                ApiContentBlock::Document {
+                    },
+                }),
+                ContentBlock::Document { source } => Some(ApiContentBlock::Document {
                     source: ApiDocumentSource {
                         source_type: source.source_type.clone(),
                         media_type: source.media_type.clone(),
                         data: source.data.clone(),
-                    }
-                }
-            ),
-            ContentBlock::FileRef { file_iri, file_name, ai_summary, .. } => Some(
-                if let Some(summary) = ai_summary {
+                    },
+                }),
+                ContentBlock::FileRef {
+                    file_iri,
+                    file_name,
+                    ai_summary,
+                    ..
+                } => Some(if let Some(summary) = ai_summary {
                     ApiContentBlock::Text {
                         text: format!("[File: {} | IRI: {}]\n{}", file_name, file_iri, summary),
                     }
@@ -40,48 +44,58 @@ pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
                             file_name, file_iri
                         ),
                     }
-                }
-            ),
-            ContentBlock::CameraRef { .. } => None,
-            ContentBlock::ToolUse { id, name, input, reason } => {
-                // Re-inject the `reason` field into `input` when sending history back
-                // to the model. The backend strips `reason` from `input` before
-                // executing the tool (it's display-only). But if we omit it here,
-                // the model sees its own past tool calls without `reason` and
-                // learns by imitation that `reason` is optional — even though the
-                // schema marks it required. This is the model's strongest cue.
-                let mut api_input = input.clone();
-                if let Some(r) = reason {
-                    if let Some(obj) = api_input.as_object_mut() {
-                        obj.insert("reason".to_string(), serde_json::Value::String(r.clone()));
+                }),
+                ContentBlock::CameraRef { .. } => None,
+                ContentBlock::ToolUse {
+                    id,
+                    name,
+                    input,
+                    reason,
+                } => {
+                    // Re-inject the `reason` field into `input` when sending history back
+                    // to the model. The backend strips `reason` from `input` before
+                    // executing the tool (it's display-only). But if we omit it here,
+                    // the model sees its own past tool calls without `reason` and
+                    // learns by imitation that `reason` is optional — even though the
+                    // schema marks it required. This is the model's strongest cue.
+                    let mut api_input = input.clone();
+                    if let Some(r) = reason {
+                        if let Some(obj) = api_input.as_object_mut() {
+                            obj.insert("reason".to_string(), serde_json::Value::String(r.clone()));
+                        }
                     }
+                    Some(ApiContentBlock::ToolUse {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: api_input,
+                    })
                 }
-                Some(ApiContentBlock::ToolUse {
-                    id: id.clone(),
-                    name: name.clone(),
-                    input: api_input,
-                })
-            },
-            ContentBlock::ToolResult { tool_use_id, content, is_error, .. } => Some(
-                ApiContentBlock::ToolResult {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                    ..
+                } => Some(ApiContentBlock::ToolResult {
                     tool_use_id: tool_use_id.clone(),
                     content: tool_result_content_to_value(content),
                     is_error: *is_error,
-                }
-            ),
-            ContentBlock::Thinking { thinking, signature } => Some(
-                ApiContentBlock::Thinking {
+                }),
+                ContentBlock::Thinking {
+                    thinking,
+                    signature,
+                } => Some(ApiContentBlock::Thinking {
                     thinking: thinking.clone(),
                     signature: signature.clone(),
+                }),
+                ContentBlock::RedactedThinking { data } => {
+                    Some(ApiContentBlock::RedactedThinking { data: data.clone() })
                 }
-            ),
-            ContentBlock::RedactedThinking { data } => Some(
-                ApiContentBlock::RedactedThinking {
-                    data: data.clone(),
-                }
-            ),
-            ContentBlock::QuestionOutput { id, question, question_type, options } => Some(
-                ApiContentBlock::ToolUse {
+                ContentBlock::QuestionOutput {
+                    id,
+                    question,
+                    question_type,
+                    options,
+                } => Some(ApiContentBlock::ToolUse {
                     id: id.clone(),
                     name: "ask_question".to_string(),
                     input: serde_json::json!({
@@ -89,12 +103,12 @@ pub fn message_to_api_format(msg: &AIConversationMessage) -> ChatMessage {
                         "type": question_type,
                         "options": options,
                     }),
-                }
-            ),
-            // Compaction summaries are visual-only UI elements — never sent to the model.
-            ContentBlock::CompactionSummary { .. } => None,
-        }
-    }).collect();
+                }),
+                // Compaction summaries are visual-only UI elements — never sent to the model.
+                ContentBlock::CompactionSummary { .. } => None,
+            }
+        })
+        .collect();
 
     ChatMessage {
         role: msg.role.clone(),
@@ -113,44 +127,56 @@ pub fn inject_file_binaries_into_placeholders(
     messages: &mut Vec<ChatMessage>,
     attachment_binaries: &[(String, String)],
 ) {
-    if attachment_binaries.is_empty() { return; }
+    if attachment_binaries.is_empty() {
+        return;
+    }
 
-    let inject: Vec<ApiContentBlock> = attachment_binaries.iter().filter_map(|(mime_type, data)| {
-        if mime_type.starts_with("image/") {
-            Some(ApiContentBlock::Image {
-                source: ApiImageSource {
-                    source_type: "base64".to_string(),
-                    media_type: mime_type.clone(),
-                    data: data.clone(),
-                },
-            })
-        } else if mime_type == "application/pdf" {
-            Some(ApiContentBlock::Document {
-                source: ApiDocumentSource {
-                    source_type: "base64".to_string(),
-                    media_type: mime_type.clone(),
-                    data: data.clone(),
-                },
-            })
-        } else if mime_type.starts_with("text/") {
-            use base64::Engine as _;
-            let decoded = base64::engine::general_purpose::STANDARD
-                .decode(data)
-                .ok()
-                .and_then(|b| String::from_utf8(b).ok())
-                .unwrap_or_default();
-            Some(ApiContentBlock::Text {
-                text: format!("<file_content mime_type=\"{}\">\n{}\n</file_content>", mime_type, decoded),
-            })
-        } else {
-            None
-        }
-    }).collect();
+    let inject: Vec<ApiContentBlock> = attachment_binaries
+        .iter()
+        .filter_map(|(mime_type, data)| {
+            if mime_type.starts_with("image/") {
+                Some(ApiContentBlock::Image {
+                    source: ApiImageSource {
+                        source_type: "base64".to_string(),
+                        media_type: mime_type.clone(),
+                        data: data.clone(),
+                    },
+                })
+            } else if mime_type == "application/pdf" {
+                Some(ApiContentBlock::Document {
+                    source: ApiDocumentSource {
+                        source_type: "base64".to_string(),
+                        media_type: mime_type.clone(),
+                        data: data.clone(),
+                    },
+                })
+            } else if mime_type.starts_with("text/") {
+                use base64::Engine as _;
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .ok()
+                    .and_then(|b| String::from_utf8(b).ok())
+                    .unwrap_or_default();
+                Some(ApiContentBlock::Text {
+                    text: format!(
+                        "<file_content mime_type=\"{}\">\n{}\n</file_content>",
+                        mime_type, decoded
+                    ),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    if inject.is_empty() { return; }
+    if inject.is_empty() {
+        return;
+    }
 
     let target_idx = messages.iter().rposition(|msg| {
-        if msg.role != "user" { return false; }
+        if msg.role != "user" {
+            return false;
+        }
         match &msg.content {
             MessageContent::ContentBlocks(blocks) => blocks.iter().any(|b| {
                 if let ApiContentBlock::Text { text } = b {
@@ -166,8 +192,11 @@ pub fn inject_file_binaries_into_placeholders(
     let Some(idx) = target_idx else { return };
 
     if let MessageContent::ContentBlocks(ref mut blocks) = messages[idx].content {
-        blocks.retain(|b| !matches!(b, ApiContentBlock::Text { text } if text.starts_with("[Attached file:")));
-        let insert_pos = blocks.iter()
+        blocks.retain(
+            |b| !matches!(b, ApiContentBlock::Text { text } if text.starts_with("[Attached file:")),
+        );
+        let insert_pos = blocks
+            .iter()
             .position(|b| !matches!(b, ApiContentBlock::ToolResult { .. }))
             .unwrap_or(blocks.len());
         for (i, block) in inject.into_iter().enumerate() {
@@ -208,10 +237,12 @@ pub fn inject_attachments_for_current_turn(
     }
 
     if !files_needing_summary.is_empty() {
-        let camera_frames: Vec<&(String, String)> = files_needing_summary.iter()
+        let camera_frames: Vec<&(String, String)> = files_needing_summary
+            .iter()
             .filter(|(_, name)| name.starts_with("camera_frame_"))
             .collect();
-        let other_files: Vec<&(String, String)> = files_needing_summary.iter()
+        let other_files: Vec<&(String, String)> = files_needing_summary
+            .iter()
             .filter(|(_, name)| !name.starts_with("camera_frame_"))
             .collect();
 
@@ -231,7 +262,8 @@ pub fn inject_attachments_for_current_turn(
         }
 
         if !other_files.is_empty() {
-            let file_lines = other_files.iter()
+            let file_lines = other_files
+                .iter()
                 .map(|(iri, name)| format!("- {} (IRI: {})", name, iri))
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -246,13 +278,16 @@ pub fn inject_attachments_for_current_turn(
         });
     }
 
-    if inject.is_empty() { return; }
+    if inject.is_empty() {
+        return;
+    }
 
     match &mut msg.content {
         MessageContent::ContentBlocks(ref mut blocks) => {
             // Insert after any leading tool_result blocks so the API requirement
             // (tool_results must precede other content in a user message) is preserved.
-            let insert_pos = blocks.iter()
+            let insert_pos = blocks
+                .iter()
                 .position(|b| !matches!(b, ApiContentBlock::ToolResult { .. }))
                 .unwrap_or(blocks.len());
             for (i, block) in inject.into_iter().enumerate() {
@@ -276,7 +311,9 @@ pub fn inject_subconscious_context(messages: &mut Vec<ChatMessage>, context: &st
 
     let Some(msg) = target else { return };
 
-    let block = ApiContentBlock::Text { text: context.to_string() };
+    let block = ApiContentBlock::Text {
+        text: context.to_string(),
+    };
     match &mut msg.content {
         MessageContent::ContentBlocks(ref mut blocks) => blocks.push(block),
         MessageContent::Text(text) => {
@@ -294,7 +331,9 @@ pub fn inject_subconscious_context(messages: &mut Vec<ChatMessage>, context: &st
 /// user message contains only ToolResult blocks (tool-loop iterations — the model
 /// already has the datetime from the first turn's injection).
 pub fn inject_datetime_context(messages: &mut Vec<ChatMessage>) {
-    let date_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string();
+    let date_time = chrono::Local::now()
+        .format("%Y-%m-%d %H:%M:%S %Z")
+        .to_string();
     let datetime_block = ApiContentBlock::Text {
         text: format!("Current date/time: {}", date_time),
     };
@@ -304,7 +343,8 @@ pub fn inject_datetime_context(messages: &mut Vec<ChatMessage>) {
     if let Some(msg) = target {
         match &mut msg.content {
             MessageContent::ContentBlocks(ref mut blocks) => {
-                let insert_pos = blocks.iter()
+                let insert_pos = blocks
+                    .iter()
                     .position(|b| !matches!(b, ApiContentBlock::ToolResult { .. }))
                     .unwrap_or(blocks.len());
                 if insert_pos == blocks.len() {
@@ -323,7 +363,6 @@ pub fn inject_datetime_context(messages: &mut Vec<ChatMessage>) {
     }
 }
 
-
 /// Sanitize tool pairs: ensure every ToolUse in an assistant message has a matching
 /// ToolResult in the next user message. Injects synthetic error results for any orphaned
 /// tool_use ids (e.g. when the conversation was interrupted before all results were saved).
@@ -337,12 +376,19 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
 
         let tool_use_ids: Vec<String> =
             if let MessageContent::ContentBlocks(ref blocks) = messages[i].content {
-            blocks.iter().filter_map(|b| {
-                if let ApiContentBlock::ToolUse { id, .. } = b { Some(id.clone()) } else { None }
-            }).collect()
-        } else {
-            continue;
-        };
+                blocks
+                    .iter()
+                    .filter_map(|b| {
+                        if let ApiContentBlock::ToolUse { id, .. } = b {
+                            Some(id.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                continue;
+            };
 
         if tool_use_ids.is_empty() {
             continue;
@@ -355,18 +401,22 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
 
         let existing_results: HashSet<String> =
             if let MessageContent::ContentBlocks(ref blocks) = messages[next].content {
-            blocks.iter().filter_map(|b| {
-                if let ApiContentBlock::ToolResult { tool_use_id, .. } = b {
-                    Some(tool_use_id.clone())
-                } else {
-                    None
-                }
-            }).collect()
-        } else {
-            HashSet::new()
-        };
+                blocks
+                    .iter()
+                    .filter_map(|b| {
+                        if let ApiContentBlock::ToolResult { tool_use_id, .. } = b {
+                            Some(tool_use_id.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                HashSet::new()
+            };
 
-        let missing: Vec<String> = tool_use_ids.into_iter()
+        let missing: Vec<String> = tool_use_ids
+            .into_iter()
             .filter(|id| !existing_results.contains(id))
             .collect();
 
@@ -378,7 +428,8 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
             "warn",
             &format!(
                 "[RECOVERY] Injecting {} synthetic tool_result(s) for orphaned tool_use ids: {:?}",
-                missing.len(), missing
+                missing.len(),
+                missing
             ),
         );
 
@@ -387,11 +438,16 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
             // requires tool_result blocks to appear before other content in user messages.
             let mut pos = 0;
             for id in missing {
-                blocks.insert(pos, ApiContentBlock::ToolResult {
-                    tool_use_id: id,
-                    content: serde_json::Value::String("Tool result unavailable (conversation was interrupted)".to_string()),
-                    is_error: Some(true),
-                });
+                blocks.insert(
+                    pos,
+                    ApiContentBlock::ToolResult {
+                        tool_use_id: id,
+                        content: serde_json::Value::String(
+                            "Tool result unavailable (conversation was interrupted)".to_string(),
+                        ),
+                        is_error: Some(true),
+                    },
+                );
                 pos += 1;
             }
         }
@@ -403,24 +459,31 @@ pub fn sanitize_tool_pairs(messages: &mut Vec<ChatMessage>) {
     if let Some(last) = messages.last_mut() {
         if last.role == "assistant" {
             if let MessageContent::ContentBlocks(ref mut blocks) = last.content {
-                let had_tool_use =
-                    blocks.iter().any(|b| matches!(b, ApiContentBlock::ToolUse { .. }));
+                let had_tool_use = blocks
+                    .iter()
+                    .any(|b| matches!(b, ApiContentBlock::ToolUse { .. }));
                 if had_tool_use {
                     log_backend(
-                        "warn", "[CHAT] Stripping trailing tool_use and thinking blocks (end of history)",
+                        "warn",
+                        "[CHAT] Stripping trailing tool_use and thinking blocks (end of history)",
                     );
-                    blocks.retain(|b| !matches!(
-                        b,
-                        ApiContentBlock::ToolUse { .. } | ApiContentBlock::Thinking { .. } | ApiContentBlock::RedactedThinking { .. }
-                    ));
+                    blocks.retain(|b| {
+                        !matches!(
+                            b,
+                            ApiContentBlock::ToolUse { .. }
+                                | ApiContentBlock::Thinking { .. }
+                                | ApiContentBlock::RedactedThinking { .. }
+                        )
+                    });
                 }
             }
         }
     }
     // Remove last message if it became empty
-    if messages.last().map_or(false, |m| {
-        matches!(&m.content, MessageContent::ContentBlocks(b) if b.is_empty())
-    }) {
+    if messages.last().map_or(
+        false,
+        |m| matches!(&m.content, MessageContent::ContentBlocks(b) if b.is_empty()),
+    ) {
         log_backend("warn", "[CHAT] Removed last message that became empty");
         messages.pop();
     }
@@ -459,30 +522,36 @@ pub fn response_content_to_blocks(
 
     for tb in thinking_blocks {
         match tb {
-            crate::ai::ThinkingBlock::Thinking { thinking, signature } => {
+            crate::ai::ThinkingBlock::Thinking {
+                thinking,
+                signature,
+            } => {
                 blocks.push(ContentBlock::Thinking {
                     thinking: thinking.clone(),
                     signature: signature.clone(),
                 });
             }
             crate::ai::ThinkingBlock::RedactedThinking { data } => {
-                blocks.push(ContentBlock::RedactedThinking {
-                    data: data.clone(),
-                });
+                blocks.push(ContentBlock::RedactedThinking { data: data.clone() });
             }
         }
     }
 
     if !content.is_empty() {
-        blocks.push(ContentBlock::Text { text: content.to_string() });
+        blocks.push(ContentBlock::Text {
+            text: content.to_string(),
+        });
     }
 
     for tool_call in tool_calls {
         let mut input = tool_call.input.clone();
-        let raw = input.as_object_mut()
+        let raw = input
+            .as_object_mut()
             .and_then(|obj| obj.remove("reason"))
             .and_then(|v| v.as_str().map(|s| s.to_string()));
-        let reason = raw.map(|s| truncate_to_words(&s, 6)).filter(|s| !s.is_empty());
+        let reason = raw
+            .map(|s| truncate_to_words(&s, 6))
+            .filter(|s| !s.is_empty());
         blocks.push(ContentBlock::ToolUse {
             id: tool_call.id.clone(),
             name: tool_call.name.clone(),
@@ -501,7 +570,9 @@ pub async fn extract_and_save_file_summaries(
     executor: &DbExecutor,
 ) -> Vec<ContentBlock> {
     for block in &mut blocks {
-        let ContentBlock::Text { ref mut text } = block else { continue };
+        let ContentBlock::Text { ref mut text } = block else {
+            continue;
+        };
 
         let mut result = String::with_capacity(text.len());
         let mut remaining = text.as_str();
@@ -510,7 +581,9 @@ pub async fn extract_and_save_file_summaries(
             result.push_str(&remaining[..start]);
             remaining = &remaining[start..];
 
-            let Some(tag_end) = remaining.find('>') else { break };
+            let Some(tag_end) = remaining.find('>') else {
+                break;
+            };
             let tag = &remaining[..tag_end + 1];
 
             let file_iri = tag
@@ -522,7 +595,9 @@ pub async fn extract_and_save_file_summaries(
 
             remaining = &remaining[tag_end + 1..];
 
-            let Some(close) = remaining.find("</filesummary>") else { break };
+            let Some(close) = remaining.find("</filesummary>") else {
+                break;
+            };
             let summary = remaining[..close].trim().to_string();
             remaining = &remaining[close + "</filesummary>".len()..];
 
@@ -530,18 +605,31 @@ pub async fn extract_and_save_file_summaries(
                 if !summary.is_empty() {
                     let iri_clone = iri.clone();
                     let summary_clone = summary.clone();
-                    let saved = executor.write(move |conn| {
-                        let ind = Individual::new(&iri_clone);
-                        ind.add_property(conn, "foundation:aiSummary", vec![Object::Literal {
-                            value: summary_clone,
-                            datatype: Some("xsd:string".to_string()),
-                            language: None,
-                        }], "ai").map_err(|e| e.to_string())?;
-                        Ok(String::new())
-                    }).await;
+                    let saved = executor
+                        .write(move |conn| {
+                            let ind = Individual::new(&iri_clone);
+                            ind.add_property(
+                                conn,
+                                "foundation:aiSummary",
+                                vec![Object::Literal {
+                                    value: summary_clone,
+                                    datatype: Some("xsd:string".to_string()),
+                                    language: None,
+                                }],
+                                "ai",
+                            )
+                            .map_err(|e| e.to_string())?;
+                            Ok(String::new())
+                        })
+                        .await;
                     match saved {
-                        Ok(_) => log_backend("info", &format!("[CHAT] Saved aiSummary for {}", iri)),
-                        Err(e) => log_backend("warn", &format!("[CHAT] Failed to save aiSummary for {}: {}", iri, e)),
+                        Ok(_) => {
+                            log_backend("info", &format!("[CHAT] Saved aiSummary for {}", iri))
+                        }
+                        Err(e) => log_backend(
+                            "warn",
+                            &format!("[CHAT] Failed to save aiSummary for {}: {}", iri, e),
+                        ),
                     }
                 }
             }

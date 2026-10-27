@@ -1,7 +1,7 @@
+use crate::owl::{self, Class, Connection, DbExecutor, Individual, Object, Property};
 use serde::Serialize;
-use tauri::{State, Manager};
 use std::collections::HashMap;
-use crate::owl::{self, Class, Individual, Property, Connection, DbExecutor, Object};
+use tauri::{Manager, State};
 
 mod individual;
 
@@ -12,9 +12,9 @@ fn enqueue_formula_jobs(app: &tauri::AppHandle, job_ids_json: &str) {
     }
     let worker = app.state::<crate::owl::formula_worker::FormulaWorker>();
     for job_id in job_ids {
-        let _ = worker.sender.try_send(
-            crate::owl::formula_worker::WorkerCommand::Enqueue { job_id }
-        );
+        let _ = worker
+            .sender
+            .try_send(crate::owl::formula_worker::WorkerCommand::Enqueue { job_id });
     }
 }
 
@@ -174,6 +174,15 @@ pub struct PropertyValue {
     pub query_config: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_property_picker: Option<bool>,
+    /// True when the value shown is a mask, not the stored value
+    /// (`foundation:isSecret`). The real value comes only from a dedicated reveal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_secret: Option<bool>,
+    /// IRI of the parent property this one depends on (`foundation:dependsOnProperty`).
+    /// The inspector hides this field until the parent has a value, then renders it
+    /// directly below the parent. `None` for an independent property.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depends_on_property: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -194,39 +203,46 @@ pub async fn owl__search_entities(
     type_iri: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    executor.read(move |conn| {
-        let limit = limit.unwrap_or(100);
-        let results = if type_iri.as_deref() == Some("owl:Class") {
-            crate::core_ontology::search::search_classes(conn, &query, limit)
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .map(|r| crate::core_ontology::search::SearchResult {
-                    id: r.id,
-                    label: r.label,
-                    icon: r.icon,
-                    entity_type: "class".to_string(),
-                    matched_properties: vec![],
-                    class_type: None,
-                    status: None,
-                })
-                .collect()
-        } else if let Some(ref class_iri) = type_iri {
-            let tokens: Vec<String> = query
-                .split_whitespace()
-                .map(|s| s.to_lowercase())
-                .collect();
-            let (results, _) = crate::core_ontology::search::search(
-                conn, &tokens, None, Some(class_iri.as_str()), None, false, limit, 0,
-            ).map_err(|e| e.to_string())?;
-            results
-        } else {
-            crate::core_ontology::search::search_instances(conn, &query, limit)
-                .map_err(|e| e.to_string())?
-        };
-        serde_json::to_string(&results).map_err(|e| e.to_string())
-    }).await
+    executor
+        .read(move |conn| {
+            let limit = limit.unwrap_or(100);
+            let results = if type_iri.as_deref() == Some("owl:Class") {
+                crate::core_ontology::search::search_classes(conn, &query, limit)
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .map(|r| crate::core_ontology::search::SearchResult {
+                        id: r.id,
+                        label: r.label,
+                        icon: r.icon,
+                        entity_type: "class".to_string(),
+                        matched_properties: vec![],
+                        class_type: None,
+                        status: None,
+                    })
+                    .collect()
+            } else if let Some(ref class_iri) = type_iri {
+                let tokens: Vec<String> =
+                    query.split_whitespace().map(|s| s.to_lowercase()).collect();
+                let (results, _) = crate::core_ontology::search::search(
+                    conn,
+                    &tokens,
+                    None,
+                    Some(class_iri.as_str()),
+                    None,
+                    false,
+                    limit,
+                    0,
+                )
+                .map_err(|e| e.to_string())?;
+                results
+            } else {
+                crate::core_ontology::search::search_instances(conn, &query, limit)
+                    .map_err(|e| e.to_string())?
+            };
+            serde_json::to_string(&results).map_err(|e| e.to_string())
+        })
+        .await
 }
-
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -254,73 +270,97 @@ pub async fn inspector__get_backlink_page(
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     const PAGE_SIZE: usize = 5;
-    executor.read(move |conn| {
-        let after_cursor = match (after_tx, after_subject) {
-            (Some(tx), Some(subj)) => Some((tx, subj)),
-            _ => None,
-        };
-        let mut page = crate::eavto::query::get_backlinks_page(
-            conn, &entity_iri, &predicate, source_class.as_deref(),
-            after_cursor, PAGE_SIZE + 1, snapshot_tx,
-        ).map_err(|e| e.to_string())?;
+    executor
+        .read(move |conn| {
+            let after_cursor = match (after_tx, after_subject) {
+                (Some(tx), Some(subj)) => Some((tx, subj)),
+                _ => None,
+            };
+            let mut page = crate::eavto::query::get_backlinks_page(
+                conn,
+                &entity_iri,
+                &predicate,
+                source_class.as_deref(),
+                after_cursor,
+                PAGE_SIZE + 1,
+                snapshot_tx,
+            )
+            .map_err(|e| e.to_string())?;
 
-        let has_more = page.len() > PAGE_SIZE;
-        page.truncate(PAGE_SIZE);
+            let has_more = page.len() > PAGE_SIZE;
+            page.truncate(PAGE_SIZE);
 
-        let next_cursor: Option<BacklinkCursor> = if has_more {
-            page.last().map(|(subj, tx)| BacklinkCursor { last_tx: *tx, subject: subj.clone() })
-        } else {
-            None
-        };
+            let next_cursor: Option<BacklinkCursor> = if has_more {
+                page.last().map(|(subj, tx)| BacklinkCursor {
+                    last_tx: *tx,
+                    subject: subj.clone(),
+                })
+            } else {
+                None
+            };
 
-        let subjects: Vec<String> = page.into_iter().map(|(iri, _)| iri).collect();
+            let subjects: Vec<String> = page.into_iter().map(|(iri, _)| iri).collect();
 
-        let things = crate::owl::Thing::get_batch(conn, &subjects);
+            let things = crate::owl::Thing::get_batch(conn, &subjects);
 
-        let status_iris = crate::eavto::query::get_first_iri_property_batch(
-            conn, &subjects, "foundation:hasStatus",
-        ).unwrap_or_default();
+            let status_iris =
+                crate::owl::get_first_iri_property_batch(conn, &subjects, "foundation:hasStatus")
+                    .unwrap_or_default();
 
-        let unique_status_iris: Vec<String> = status_iris.values()
-            .cloned()
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
+            let unique_status_iris: Vec<String> = status_iris
+                .values()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
 
-        let mut status_cache: std::collections::HashMap<String, StatusInfo> = std::collections::HashMap::new();
-        for status_iri in unique_status_iris {
-            if crate::owl::is_instance_of(conn, &status_iri, "foundation:Status") {
-                let thing = crate::owl::Thing::get(conn, &status_iri);
-                let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
-                status_cache.insert(status_iri.clone(), StatusInfo {
-                    iri: status_iri,
-                    label: thing.label,
-                    icon,
-                    color,
-                });
+            let mut status_cache: std::collections::HashMap<String, StatusInfo> =
+                std::collections::HashMap::new();
+            for status_iri in unique_status_iris {
+                if crate::owl::is_instance_of(conn, &status_iri, "foundation:Status") {
+                    let thing = crate::owl::Thing::get(conn, &status_iri);
+                    let (icon, color) =
+                        crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
+                    status_cache.insert(
+                        status_iri.clone(),
+                        StatusInfo {
+                            iri: status_iri,
+                            label: thing.label,
+                            icon,
+                            color,
+                        },
+                    );
+                }
             }
-        }
 
-        let items: Vec<BacklinkPageItem> = subjects.iter().map(|iri| {
-            let thing = things.get(iri).cloned().unwrap_or_else(|| crate::owl::Thing::get(conn, iri));
-            let value_status = status_iris.get(iri)
-                .and_then(|siri| status_cache.get(siri))
-                .cloned();
-            BacklinkPageItem {
-                value: iri.clone(),
-                value_label: Some(thing.label),
-                value_icon: thing.icon,
-                value_status,
-            }
-        }).collect();
+            let items: Vec<BacklinkPageItem> = subjects
+                .iter()
+                .map(|iri| {
+                    let thing = things
+                        .get(iri)
+                        .cloned()
+                        .unwrap_or_else(|| crate::owl::Thing::get(conn, iri));
+                    let value_status = status_iris
+                        .get(iri)
+                        .and_then(|siri| status_cache.get(siri))
+                        .cloned();
+                    BacklinkPageItem {
+                        value: iri.clone(),
+                        value_label: Some(thing.label),
+                        value_icon: thing.icon,
+                        value_status,
+                    }
+                })
+                .collect();
 
-        let response = serde_json::json!({
-            "items": items,
-            "next_cursor": next_cursor,
-            "has_more": has_more,
-        });
-        serde_json::to_string(&response).map_err(|e| e.to_string())
-    }).await
+            let response = serde_json::json!({
+                "items": items,
+                "next_cursor": next_cursor,
+                "has_more": has_more,
+            });
+            serde_json::to_string(&response).map_err(|e| e.to_string())
+        })
+        .await
 }
 
 /// Item returned by `inspector__get_property_value_page`, covering both IRI-valued and
@@ -364,110 +404,134 @@ pub async fn inspector__get_property_value_page(
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     const PAGE_SIZE: usize = 5;
-    executor.read(move |conn| {
-        let after_cursor = match (after_value_tx, after_object_key) {
-            (Some(tx), Some(key)) => Some((tx, key)),
-            _ => None,
-        };
+    executor
+        .read(move |conn| {
+            let after_cursor = match (after_value_tx, after_object_key) {
+                (Some(tx), Some(key)) => Some((tx, key)),
+                _ => None,
+            };
 
-        let mut page = crate::eavto::query::get_property_values_page(
-            conn, &entity_iri, &predicate, after_cursor, PAGE_SIZE + 1, snapshot_tx,
-        ).map_err(|e| e.to_string())?;
+            let mut page = crate::eavto::query::get_property_values_page(
+                conn,
+                &entity_iri,
+                &predicate,
+                after_cursor,
+                PAGE_SIZE + 1,
+                snapshot_tx,
+            )
+            .map_err(|e| e.to_string())?;
 
-        let has_more = page.len() > PAGE_SIZE;
-        page.truncate(PAGE_SIZE);
+            let has_more = page.len() > PAGE_SIZE;
+            page.truncate(PAGE_SIZE);
 
-        let next_cursor: Option<PropertyValueCursor> = if has_more {
-            page.last().map(|row| {
-                let obj_key = row.object.clone()
-                    .or_else(|| row.object_value.clone())
-                    .unwrap_or_default();
-                PropertyValueCursor { value_tx: row.value_tx, object_key: obj_key }
-            })
-        } else {
-            None
-        };
-
-        let iri_rows: Vec<String> = page.iter()
-            .filter(|r| r.object_type == "iri" || r.object_type == "blank")
-            .filter_map(|r| r.object.clone())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-
-        let things = if iri_rows.is_empty() {
-            std::collections::HashMap::new()
-        } else {
-            crate::owl::Thing::get_batch(conn, &iri_rows)
-        };
-
-        let status_iris = if iri_rows.is_empty() {
-            std::collections::HashMap::new()
-        } else {
-            crate::eavto::query::get_first_iri_property_batch(
-                conn, &iri_rows, "foundation:hasStatus",
-            ).unwrap_or_default()
-        };
-
-        let unique_status_iris: Vec<String> = status_iris.values()
-            .cloned()
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-
-        let mut status_cache: std::collections::HashMap<String, StatusInfo> = std::collections::HashMap::new();
-        for status_iri in unique_status_iris {
-            if crate::owl::is_instance_of(conn, &status_iri, "foundation:Status") {
-                let thing = crate::owl::Thing::get(conn, &status_iri);
-                let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
-                status_cache.insert(status_iri.clone(), StatusInfo {
-                    iri: status_iri,
-                    label: thing.label,
-                    icon,
-                    color,
-                });
-            }
-        }
-
-        let items: Vec<PropertyPageItem> = page.iter().map(|row| {
-            let is_object = row.object_type == "iri" || row.object_type == "blank";
-            if is_object {
-                let iri = row.object.clone().unwrap_or_default();
-                let thing = things.get(&iri)
-                    .cloned()
-                    .unwrap_or_else(|| crate::owl::Thing::get(conn, &iri));
-                let value_status = status_iris.get(&iri)
-                    .and_then(|siri| status_cache.get(siri))
-                    .cloned();
-                PropertyPageItem {
-                    is_object_property: true,
-                    value: iri,
-                    value_label: Some(thing.label),
-                    value_icon: thing.icon,
-                    value_status,
-                    datatype: None,
-                    language: None,
-                }
+            let next_cursor: Option<PropertyValueCursor> = if has_more {
+                page.last().map(|row| {
+                    let obj_key = row
+                        .object
+                        .clone()
+                        .or_else(|| row.object_value.clone())
+                        .unwrap_or_default();
+                    PropertyValueCursor {
+                        value_tx: row.value_tx,
+                        object_key: obj_key,
+                    }
+                })
             } else {
-                PropertyPageItem {
-                    is_object_property: false,
-                    value: row.object_value.clone().unwrap_or_default(),
-                    value_label: None,
-                    value_icon: None,
-                    value_status: None,
-                    datatype: row.object_datatype.clone(),
-                    language: row.object_language.clone(),
+                None
+            };
+
+            let iri_rows: Vec<String> = page
+                .iter()
+                .filter(|r| r.object_type == "iri" || r.object_type == "blank")
+                .filter_map(|r| r.object.clone())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+
+            let things = if iri_rows.is_empty() {
+                std::collections::HashMap::new()
+            } else {
+                crate::owl::Thing::get_batch(conn, &iri_rows)
+            };
+
+            let status_iris = if iri_rows.is_empty() {
+                std::collections::HashMap::new()
+            } else {
+                crate::owl::get_first_iri_property_batch(conn, &iri_rows, "foundation:hasStatus")
+                    .unwrap_or_default()
+            };
+
+            let unique_status_iris: Vec<String> = status_iris
+                .values()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+
+            let mut status_cache: std::collections::HashMap<String, StatusInfo> =
+                std::collections::HashMap::new();
+            for status_iri in unique_status_iris {
+                if crate::owl::is_instance_of(conn, &status_iri, "foundation:Status") {
+                    let thing = crate::owl::Thing::get(conn, &status_iri);
+                    let (icon, color) =
+                        crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
+                    status_cache.insert(
+                        status_iri.clone(),
+                        StatusInfo {
+                            iri: status_iri,
+                            label: thing.label,
+                            icon,
+                            color,
+                        },
+                    );
                 }
             }
-        }).collect();
 
-        let response = serde_json::json!({
-            "items": items,
-            "next_cursor": next_cursor,
-            "has_more": has_more,
-        });
-        serde_json::to_string(&response).map_err(|e| e.to_string())
-    }).await
+            let items: Vec<PropertyPageItem> = page
+                .iter()
+                .map(|row| {
+                    let is_object = row.object_type == "iri" || row.object_type == "blank";
+                    if is_object {
+                        let iri = row.object.clone().unwrap_or_default();
+                        let thing = things
+                            .get(&iri)
+                            .cloned()
+                            .unwrap_or_else(|| crate::owl::Thing::get(conn, &iri));
+                        let value_status = status_iris
+                            .get(&iri)
+                            .and_then(|siri| status_cache.get(siri))
+                            .cloned();
+                        PropertyPageItem {
+                            is_object_property: true,
+                            value: iri,
+                            value_label: Some(thing.label),
+                            value_icon: thing.icon,
+                            value_status,
+                            datatype: None,
+                            language: None,
+                        }
+                    } else {
+                        PropertyPageItem {
+                            is_object_property: false,
+                            value: row.object_value.clone().unwrap_or_default(),
+                            value_label: None,
+                            value_icon: None,
+                            value_status: None,
+                            datatype: row.object_datatype.clone(),
+                            language: row.object_language.clone(),
+                        }
+                    }
+                })
+                .collect();
+
+            let response = serde_json::json!({
+                "items": items,
+                "next_cursor": next_cursor,
+                "has_more": has_more,
+            });
+            serde_json::to_string(&response).map_err(|e| e.to_string())
+        })
+        .await
 }
 
 /// Returns the properties applicable to the outputProperty picker of a FlowNode.
@@ -486,61 +550,67 @@ pub async fn inspector__get_applicable_properties(
     offset: Option<usize>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    executor.read(move |conn| {
-        let automation_iri = crate::owl::get_iri_property(conn, &node_iri, "foundation:partOfProcess")
-            .map_err(|e| e.to_string())?;
+    executor
+        .read(move |conn| {
+            let automation_iri =
+                crate::owl::get_iri_property(conn, &node_iri, "foundation:partOfProcess")
+                    .map_err(|e| e.to_string())?;
 
-        let control_class_iri = automation_iri.as_deref()
-            .and_then(|auto_iri| {
+            let control_class_iri = automation_iri.as_deref().and_then(|auto_iri| {
                 crate::owl::get_iri_property(conn, auto_iri, "foundation:controlClass")
                     .ok()
                     .flatten()
             });
 
-        if control_class_iri.is_none() {
-            let result = serde_json::json!({
-                "controlClass": null,
-                "controlClassResolved": false,
-                "properties": []
-            });
-            return serde_json::to_string(&result).map_err(|e| e.to_string());
-        }
+            if control_class_iri.is_none() {
+                let result = serde_json::json!({
+                    "controlClass": null,
+                    "controlClassResolved": false,
+                    "properties": []
+                });
+                return serde_json::to_string(&result).map_err(|e| e.to_string());
+            }
 
-        let control_class_iri = control_class_iri.unwrap();
+            let control_class_iri = control_class_iri.unwrap();
 
-        let ancestor_iris = crate::owl::Class::get_ancestor_iris(conn, &control_class_iri)
+            let ancestor_iris = crate::owl::Class::get_ancestor_iris(conn, &control_class_iri)
+                .map_err(|e| e.to_string())?;
+
+            // bounded-por-natureza; keyset-tx não agrega (não é append-no-topo)
+            let page_size = limit.unwrap_or(500).max(1).min(1000);
+            let page_offset = offset.unwrap_or(0);
+
+            let raw_props = crate::owl::Class::get_properties_for_domain_classes_bounded(
+                conn,
+                &ancestor_iris,
+                &[],
+                page_size,
+                page_offset,
+            )
             .map_err(|e| e.to_string())?;
 
-        // bounded-por-natureza; keyset-tx não agrega (não é append-no-topo)
-        let page_size = limit.unwrap_or(500).max(1).min(1000);
-        let page_offset = offset.unwrap_or(0);
+            let properties: Vec<serde_json::Value> = raw_props
+                .into_iter()
+                .map(|(iri, label, icon, range, property_type)| {
+                    serde_json::json!({
+                        "iri": iri,
+                        "label": label,
+                        "icon": icon,
+                        "range": range,
+                        "propertyType": property_type
+                    })
+                })
+                .collect();
 
-        let raw_props = crate::owl::Class::get_properties_for_domain_classes_bounded(
-            conn,
-            &ancestor_iris,
-            &[],
-            page_size,
-            page_offset,
-        ).map_err(|e| e.to_string())?;
+            let result = serde_json::json!({
+                "controlClass": control_class_iri,
+                "controlClassResolved": true,
+                "properties": properties
+            });
 
-        let properties: Vec<serde_json::Value> = raw_props.into_iter().map(|(iri, label, icon, range, property_type)| {
-            serde_json::json!({
-                "iri": iri,
-                "label": label,
-                "icon": icon,
-                "range": range,
-                "propertyType": property_type
-            })
-        }).collect();
-
-        let result = serde_json::json!({
-            "controlClass": control_class_iri,
-            "controlClassResolved": true,
-            "properties": properties
-        });
-
-        serde_json::to_string(&result).map_err(|e| e.to_string())
-    }).await
+            serde_json::to_string(&result).map_err(|e| e.to_string())
+        })
+        .await
 }
 
 /// Get entity data with its complete neighborhood for visualization
@@ -551,53 +621,75 @@ pub async fn inspector__get_entity(
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     let t0 = std::time::Instant::now();
-    crate::commands::logging::log_backend("debug", &format!("[CMD] inspector__get_entity({entity_id})"));
+    crate::commands::logging::log_backend(
+        "debug",
+        &format!("[CMD] inspector__get_entity({entity_id})"),
+    );
     let entity_id_log = entity_id.clone();
     let track_id = entity_id.clone();
     let executor_clone = executor.inner().clone();
     tokio::spawn(async move {
-        let _ = executor_clone.write(move |conn| {
-            crate::search::track_access(conn, &track_id);
-            Ok(String::new())
-        }).await;
+        let _ = executor_clone
+            .write(move |conn| {
+                crate::search::track_access(conn, &track_id);
+                Ok(String::new())
+            })
+            .await;
     });
 
-    let result = executor.read(move |conn| {
-        let t_read = std::time::Instant::now();
+    let result = executor
+        .read(move |conn| {
+            let t_read = std::time::Instant::now();
 
-        let snapshot_tx: i64 = conn
-            .query_row("SELECT COALESCE(MAX(tx), 0) FROM triples", [], |row| row.get(0))
-            .map_err(|e| e.to_string())?;
+            let snapshot_tx: i64 = conn
+                .query_row("SELECT COALESCE(MAX(tx), 0) FROM triples", [], |row| {
+                    row.get(0)
+                })
+                .map_err(|e| e.to_string())?;
 
-        let groups = owl::load_graph_node_groups(conn);
-        let t2 = std::time::Instant::now();
+            let groups = owl::load_graph_node_groups(conn);
+            let t2 = std::time::Instant::now();
 
-        let mut data = if let Some(class) = Class::get(conn, &entity_id).map_err(|e| e.to_string())? {
-            get_class_data(conn, &entity_id, groups, class)?
-        } else if let Some(individual) = Individual::get(conn, &entity_id).map_err(|e| e.to_string())? {
-            individual::get_individual_data(conn, &entity_id, groups, individual)?
-        } else {
-            return Err(format!("Entity {} not found or unknown type", entity_id));
-        };
-        data.snapshot_tx = snapshot_tx;
-        let t3 = std::time::Instant::now();
+            let mut data =
+                if let Some(class) = Class::get(conn, &entity_id).map_err(|e| e.to_string())? {
+                    get_class_data(conn, &entity_id, groups, class)?
+                } else if let Some(individual) =
+                    Individual::get(conn, &entity_id).map_err(|e| e.to_string())?
+                {
+                    individual::get_individual_data(conn, &entity_id, groups, individual)?
+                } else {
+                    return Err(format!("Entity {} not found or unknown type", entity_id));
+                };
+            data.snapshot_tx = snapshot_tx;
+            let t3 = std::time::Instant::now();
 
-        let json = serde_json::to_string(&data).map_err(|e| e.to_string());
-        let t4 = std::time::Instant::now();
+            let json = serde_json::to_string(&data).map_err(|e| e.to_string());
+            let t4 = std::time::Instant::now();
 
-        crate::commands::logging::log_backend("DEBUG", &format!(
-            "[INSPECTOR] get_entity({entity_id}) \
+            crate::commands::logging::log_backend(
+                "DEBUG",
+                &format!(
+                    "[INSPECTOR] get_entity({entity_id}) \
             read_wait={}ms groups={}ms data={}ms serialize={}ms total={}ms",
-            t_read.duration_since(t0).as_millis(),
-            t2.duration_since(t_read).as_millis(),
-            t3.duration_since(t2).as_millis(),
-            t4.duration_since(t3).as_millis(),
-            t4.duration_since(t0).as_millis(),
-        ));
+                    t_read.duration_since(t0).as_millis(),
+                    t2.duration_since(t_read).as_millis(),
+                    t3.duration_since(t2).as_millis(),
+                    t4.duration_since(t3).as_millis(),
+                    t4.duration_since(t0).as_millis(),
+                ),
+            );
 
-        json
-    }).await;
-    crate::commands::logging::log_backend("DEBUG", &format!("[INSPECTOR] get_entity({}) total_async={}ms", entity_id_log, t0.elapsed().as_millis()));
+            json
+        })
+        .await;
+    crate::commands::logging::log_backend(
+        "DEBUG",
+        &format!(
+            "[INSPECTOR] get_entity({}) total_async={}ms",
+            entity_id_log,
+            t0.elapsed().as_millis()
+        ),
+    );
     result
 }
 
@@ -608,10 +700,12 @@ pub async fn inspector__get_entity(
 pub async fn graph__get_node_type_config(
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    executor.read(move |conn| {
-        let configs = owl::get_graph_node_type_config(conn);
-        serde_json::to_string(&configs).map_err(|e| e.to_string())
-    }).await
+    executor
+        .read(move |conn| {
+            let configs = owl::get_graph_node_type_config(conn);
+            serde_json::to_string(&configs).map_err(|e| e.to_string())
+        })
+        .await
 }
 
 #[tauri::command]
@@ -624,14 +718,18 @@ pub async fn widget_inspector__clear_property(
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
     let property_iri_clone = property_iri.clone();
-    let job_ids_json = executor.write(move |conn| {
-        Individual::clear_property(conn, &entity_id_clone, &property_iri_clone, "user")
-            .map_err(|e| e.to_string())?;
-        let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
-            conn, &entity_id_clone, &property_iri_clone,
-        );
-        serde_json::to_string(&job_ids).map_err(|e| e.to_string())
-    }).await?;
+    let job_ids_json = executor
+        .write(move |conn| {
+            Individual::clear_property(conn, &entity_id_clone, &property_iri_clone, "user")
+                .map_err(|e| e.to_string())?;
+            let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
+                conn,
+                &entity_id_clone,
+                &property_iri_clone,
+            );
+            serde_json::to_string(&job_ids).map_err(|e| e.to_string())
+        })
+        .await?;
     enqueue_formula_jobs(&app, &job_ids_json);
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
@@ -649,35 +747,46 @@ pub async fn widget_inspector__update_property(
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
     let property_iri_clone = property_iri.clone();
-    let job_ids_json = executor.write(move |conn| {
-        if !value.is_empty() {
-            let effective_datatype = datatype.unwrap_or_else(|| {
-                Property::get(conn, &property_iri_clone)
-                    .ok()
-                    .flatten()
-                    .and_then(|p| p.ranges.into_iter().find(|r| r.starts_with("xsd:")))
-                    .unwrap_or_else(|| "xsd:string".to_string())
-            });
-            let individual = Individual::new(&entity_id_clone);
-            individual.add_property(conn, &property_iri_clone, vec![Object::Literal {
-                value,
-                datatype: Some(effective_datatype),
-                language: None,
-            }], "user").map_err(|e| e.to_string())?;
-        }
-        let job_ids = if property_iri_clone == "foundation:formula"
-            || property_iri_clone == "foundation:aggregation"
-        {
-            crate::owl::formula_worker::cancel_and_create_property_job(conn, &entity_id_clone)
-                .map(|id| vec![id])
-                .unwrap_or_default()
-        } else {
-            crate::owl::formula_worker::create_instance_recalc_jobs(
-                conn, &entity_id_clone, &property_iri_clone,
-            )
-        };
-        serde_json::to_string(&job_ids).map_err(|e| e.to_string())
-    }).await?;
+    let job_ids_json = executor
+        .write(move |conn| {
+            if !value.is_empty() {
+                let effective_datatype = datatype.unwrap_or_else(|| {
+                    Property::get(conn, &property_iri_clone)
+                        .ok()
+                        .flatten()
+                        .and_then(|p| p.ranges.into_iter().find(|r| r.starts_with("xsd:")))
+                        .unwrap_or_else(|| "xsd:string".to_string())
+                });
+                let individual = Individual::new(&entity_id_clone);
+                individual
+                    .add_property(
+                        conn,
+                        &property_iri_clone,
+                        vec![Object::Literal {
+                            value,
+                            datatype: Some(effective_datatype),
+                            language: None,
+                        }],
+                        "user",
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+            let job_ids = if property_iri_clone == "foundation:formula"
+                || property_iri_clone == "foundation:aggregation"
+            {
+                crate::owl::formula_worker::cancel_and_create_property_job(conn, &entity_id_clone)
+                    .map(|id| vec![id])
+                    .unwrap_or_default()
+            } else {
+                crate::owl::formula_worker::create_instance_recalc_jobs(
+                    conn,
+                    &entity_id_clone,
+                    &property_iri_clone,
+                )
+            };
+            serde_json::to_string(&job_ids).map_err(|e| e.to_string())
+        })
+        .await?;
     enqueue_formula_jobs(&app, &job_ids_json);
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
@@ -694,20 +803,25 @@ pub async fn widget_inspector__set_references(
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
     let property_iri_clone = property_iri.clone();
-    let job_ids_json = executor.write(move |conn| {
-        Individual::clear_property(conn, &entity_id_clone, &property_iri_clone, "user")
-            .map_err(|e| e.to_string())?;
-        if !iris.is_empty() {
-            let individual = Individual::new(&entity_id_clone);
-            let values: Vec<owl::Object> = iris.into_iter().map(owl::Object::Iri).collect();
-            individual.add_property(conn, &property_iri_clone, values, "user")
+    let job_ids_json = executor
+        .write(move |conn| {
+            Individual::clear_property(conn, &entity_id_clone, &property_iri_clone, "user")
                 .map_err(|e| e.to_string())?;
-        }
-        let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
-            conn, &entity_id_clone, &property_iri_clone,
-        );
-        serde_json::to_string(&job_ids).map_err(|e| e.to_string())
-    }).await?;
+            if !iris.is_empty() {
+                let individual = Individual::new(&entity_id_clone);
+                let values: Vec<owl::Object> = iris.into_iter().map(owl::Object::Iri).collect();
+                individual
+                    .add_property(conn, &property_iri_clone, values, "user")
+                    .map_err(|e| e.to_string())?;
+            }
+            let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
+                conn,
+                &entity_id_clone,
+                &property_iri_clone,
+            );
+            serde_json::to_string(&job_ids).map_err(|e| e.to_string())
+        })
+        .await?;
     enqueue_formula_jobs(&app, &job_ids_json);
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
@@ -723,11 +837,13 @@ pub async fn widget_inspector__add_property_value(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
-    executor.write(move |conn| {
-        Individual::add_iri_value(conn, &entity_id_clone, &property_iri, &value_iri, "user")
-            .map_err(|e| e.to_string())?;
-        Ok("added".to_string())
-    }).await?;
+    executor
+        .write(move |conn| {
+            Individual::add_iri_value(conn, &entity_id_clone, &property_iri, &value_iri, "user")
+                .map_err(|e| e.to_string())?;
+            Ok("added".to_string())
+        })
+        .await?;
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
@@ -742,11 +858,13 @@ pub async fn widget_inspector__remove_property_value(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
-    executor.write(move |conn| {
-        Individual::remove_iri_value(conn, &entity_id_clone, &property_iri, &value_iri, "user")
-            .map_err(|e| e.to_string())?;
-        Ok("removed".to_string())
-    }).await?;
+    executor
+        .write(move |conn| {
+            Individual::remove_iri_value(conn, &entity_id_clone, &property_iri, &value_iri, "user")
+                .map_err(|e| e.to_string())?;
+            Ok("removed".to_string())
+        })
+        .await?;
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
@@ -760,12 +878,20 @@ pub async fn widget_inspector__update_status(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
-    executor.write(move |conn| {
-        let individual = Individual::new(&entity_id_clone);
-        individual.add_property(conn, "foundation:hasStatus", vec![Object::Iri(status_iri)], "user")
-            .map_err(|e| e.to_string())?;
-        Ok("updated".to_string())
-    }).await?;
+    executor
+        .write(move |conn| {
+            let individual = Individual::new(&entity_id_clone);
+            individual
+                .add_property(
+                    conn,
+                    "foundation:hasStatus",
+                    vec![Object::Iri(status_iri)],
+                    "user",
+                )
+                .map_err(|e| e.to_string())?;
+            Ok("updated".to_string())
+        })
+        .await?;
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
@@ -776,22 +902,27 @@ pub async fn widget_inspector__get_delete_impact(
     entity_id: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    executor.read(move |conn| {
-        let (cascade_items, backlink_count) =
-            Individual::compute_delete_impact(conn, &entity_id)
-                .map_err(|e| e.to_string())?;
-        let items_json: Vec<serde_json::Value> = cascade_items.into_iter()
-            .map(|(iri, label, type_label)| serde_json::json!({
-                "iri": iri,
-                "label": label,
-                "type_label": type_label,
+    executor
+        .read(move |conn| {
+            let (cascade_items, backlink_count) =
+                Individual::compute_delete_impact(conn, &entity_id).map_err(|e| e.to_string())?;
+            let items_json: Vec<serde_json::Value> = cascade_items
+                .into_iter()
+                .map(|(iri, label, type_label)| {
+                    serde_json::json!({
+                        "iri": iri,
+                        "label": label,
+                        "type_label": type_label,
+                    })
+                })
+                .collect();
+            serde_json::to_string(&serde_json::json!({
+                "cascade_items": items_json,
+                "backlink_count": backlink_count,
             }))
-            .collect();
-        serde_json::to_string(&serde_json::json!({
-            "cascade_items": items_json,
-            "backlink_count": backlink_count,
-        })).map_err(|e| e.to_string())
-    }).await
+            .map_err(|e| e.to_string())
+        })
+        .await
 }
 
 #[tauri::command]
@@ -802,11 +933,13 @@ pub async fn widget_inspector__delete_individual(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
-    let retracted_json = executor.write(move |conn| {
-        let iris = Individual::retract_collecting(conn, &entity_id_clone, "user")
-            .map_err(|e| e.to_string())?;
-        serde_json::to_string(&iris).map_err(|e| e.to_string())
-    }).await?;
+    let retracted_json = executor
+        .write(move |conn| {
+            let iris = Individual::retract_collecting(conn, &entity_id_clone, "user")
+                .map_err(|e| e.to_string())?;
+            serde_json::to_string(&iris).map_err(|e| e.to_string())
+        })
+        .await?;
     let all_retracted: Vec<String> = serde_json::from_str(&retracted_json).unwrap_or_default();
     crate::search::remove_from_index(&all_retracted);
     for iri in &all_retracted {
@@ -839,39 +972,41 @@ pub async fn widget_inspector__define_class_property(
     });
     let final_iri_clone = final_iri.clone();
 
-    executor.write(move |conn| {
-        let prop_type = match property_type.as_str() {
-            "object" => crate::owl::PropertyType::ObjectProperty,
-            _ => crate::owl::PropertyType::DatatypeProperty,
-        };
+    executor
+        .write(move |conn| {
+            let prop_type = match property_type.as_str() {
+                "object" => crate::owl::PropertyType::ObjectProperty,
+                _ => crate::owl::PropertyType::DatatypeProperty,
+            };
 
-        let existing = Property::get(conn, &final_iri_clone).map_err(|e| e.to_string())?;
-        let domains: Vec<String> = if let Some(ref existing_prop) = existing {
-            let mut domains = existing_prop.domains.clone();
-            if !domains.contains(&class_iri_clone) {
-                domains.push(class_iri_clone.clone());
-            }
-            domains
-        } else {
-            vec![class_iri_clone.clone()]
-        };
-        let domain_refs: Vec<&str> = domains.iter().map(|s| s.as_str()).collect();
+            let existing = Property::get(conn, &final_iri_clone).map_err(|e| e.to_string())?;
+            let domains: Vec<String> = if let Some(ref existing_prop) = existing {
+                let mut domains = existing_prop.domains.clone();
+                if !domains.contains(&class_iri_clone) {
+                    domains.push(class_iri_clone.clone());
+                }
+                domains
+            } else {
+                vec![class_iri_clone.clone()]
+            };
+            let domain_refs: Vec<&str> = domains.iter().map(|s| s.as_str()).collect();
 
-        Property::new(&final_iri_clone)
-            .assert(
-                conn,
-                prop_type,
-                &label,
-                comment.as_deref(),
-                &domain_refs,
-                Some(range.as_str()),
-                unit.as_deref(),
-                "user",
-            )
-            .map_err(|e| e.to_string())?;
+            Property::new(&final_iri_clone)
+                .assert(
+                    conn,
+                    prop_type,
+                    &label,
+                    comment.as_deref(),
+                    &domain_refs,
+                    Some(range.as_str()),
+                    unit.as_deref(),
+                    "user",
+                )
+                .map_err(|e| e.to_string())?;
 
-        Ok(final_iri_clone.clone())
-    }).await?;
+            Ok(final_iri_clone.clone())
+        })
+        .await?;
 
     crate::realtime::emit_entity_updated(&app, &final_iri);
     crate::realtime::emit_entity_updated(&app, &class_iri);
@@ -885,20 +1020,21 @@ pub async fn widget_inspector__check_property_usage(
     class_iri: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    executor.read(move |conn| {
-        let all_class_iris = owl::Class::get_descendant_iris(conn, &class_iri)
-            .unwrap_or_else(|_| vec![class_iri.clone()]);
+    executor
+        .read(move |conn| {
+            let all_class_iris = owl::Class::get_descendant_iris(conn, &class_iri)
+                .unwrap_or_else(|_| vec![class_iri.clone()]);
 
-        let in_placeholders: Vec<String> = (0..all_class_iris.len())
-            .map(|i| format!("?{}", i + 2))
-            .collect();
-        let in_clause = in_placeholders.join(", ");
+            let in_placeholders: Vec<String> = (0..all_class_iris.len())
+                .map(|i| format!("?{}", i + 2))
+                .collect();
+            let in_clause = in_placeholders.join(", ");
 
-        let mut params: Vec<String> = vec![property_iri.clone()];
-        params.extend(all_class_iris.iter().cloned());
+            let mut params: Vec<String> = vec![property_iri.clone()];
+            params.extend(all_class_iris.iter().cloned());
 
-        let count_sql = format!(
-            "SELECT COUNT(DISTINCT t_val.subject)
+            let count_sql = format!(
+                "SELECT COUNT(DISTINCT t_val.subject)
              FROM triples t_val
              JOIN triples t_type ON t_type.subject = t_val.subject
                 AND t_type.predicate = 'rdf:type'
@@ -906,15 +1042,18 @@ pub async fn widget_inspector__check_property_usage(
                 AND t_type.retracted = 0
              WHERE t_val.predicate = ?1
                AND t_val.retracted = 0",
-        );
-        let count: usize = conn
-            .prepare(&count_sql).map_err(|e| e.to_string())?
-            .query_row(rusqlite::params_from_iter(params.iter()), |row| row.get::<_, i64>(0))
-            .map_err(|e| e.to_string())
-            .map(|n| n as usize)?;
+            );
+            let count: usize = conn
+                .prepare(&count_sql)
+                .map_err(|e| e.to_string())?
+                .query_row(rusqlite::params_from_iter(params.iter()), |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(|e| e.to_string())
+                .map(|n| n as usize)?;
 
-        let examples_sql = format!(
-            "SELECT DISTINCT t_val.subject, t_label.object_value
+            let examples_sql = format!(
+                "SELECT DISTINCT t_val.subject, t_label.object_value
              FROM triples t_val
              JOIN triples t_type ON t_type.subject = t_val.subject
                 AND t_type.predicate = 'rdf:type'
@@ -926,20 +1065,21 @@ pub async fn widget_inspector__check_property_usage(
              WHERE t_val.predicate = ?1
                AND t_val.retracted = 0
              LIMIT 5",
-        );
-        let mut stmt = conn.prepare(&examples_sql).map_err(|e| e.to_string())?;
-        let examples: Vec<String> = stmt
-            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-            })
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .map(|(iri, label)| label.unwrap_or(iri))
-            .collect();
+            );
+            let mut stmt = conn.prepare(&examples_sql).map_err(|e| e.to_string())?;
+            let examples: Vec<String> = stmt
+                .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                })
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .map(|(iri, label)| label.unwrap_or(iri))
+                .collect();
 
-        serde_json::to_string(&serde_json::json!({ "count": count, "examples": examples }))
-            .map_err(|e| e.to_string())
-    }).await
+            serde_json::to_string(&serde_json::json!({ "count": count, "examples": examples }))
+                .map_err(|e| e.to_string())
+        })
+        .await
 }
 
 #[tauri::command]
@@ -953,28 +1093,41 @@ pub async fn widget_inspector__remove_class_property(
     let class_iri_clone = class_iri.clone();
     let property_iri_clone = property_iri.clone();
 
-    executor.write(move |conn| {
-        let prop = Property::get(conn, &property_iri_clone)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("Property {} not found", property_iri_clone))?;
+    executor
+        .write(move |conn| {
+            let prop = Property::get(conn, &property_iri_clone)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Property {} not found", property_iri_clone))?;
 
-        let new_domains: Vec<String> = prop.domains.into_iter()
-            .filter(|d| d != &class_iri_clone)
-            .collect();
-        let domain_refs: Vec<&str> = new_domains.iter().map(|s| s.as_str()).collect();
+            let new_domains: Vec<String> = prop
+                .domains
+                .into_iter()
+                .filter(|d| d != &class_iri_clone)
+                .collect();
+            let domain_refs: Vec<&str> = new_domains.iter().map(|s| s.as_str()).collect();
 
-        let label = prop.label.as_deref().unwrap_or("");
-        let prop_type = prop.property_type;
-        let range = prop.ranges.first().map(|s| s.as_str());
-        let unit = prop.unit.as_deref();
-        let comment = prop.comment.as_deref();
+            let label = prop.label.as_deref().unwrap_or("");
+            let prop_type = prop.property_type;
+            let range = prop.ranges.first().map(|s| s.as_str());
+            let unit = prop.unit.as_deref();
+            let comment = prop.comment.as_deref();
 
-        Property::new(&property_iri_clone)
-            .assert(conn, prop_type, label, comment, &domain_refs, range, unit, "user")
-            .map_err(|e| e.to_string())?;
+            Property::new(&property_iri_clone)
+                .assert(
+                    conn,
+                    prop_type,
+                    label,
+                    comment,
+                    &domain_refs,
+                    range,
+                    unit,
+                    "user",
+                )
+                .map_err(|e| e.to_string())?;
 
-        Ok("removed".to_string())
-    }).await?;
+            Ok("removed".to_string())
+        })
+        .await?;
 
     crate::realtime::emit_entity_updated(&app, &class_iri);
     Ok(())
@@ -989,11 +1142,12 @@ pub async fn widget_inspector__set_system_locked(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
-    executor.write(move |conn| {
-        owl::set_system_locked(conn, &entity_id_clone, locked)
-            .map_err(|e| e.to_string())?;
-        Ok(String::new())
-    }).await?;
+    executor
+        .write(move |conn| {
+            owl::set_system_locked(conn, &entity_id_clone, locked).map_err(|e| e.to_string())?;
+            Ok(String::new())
+        })
+        .await?;
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
@@ -1009,35 +1163,44 @@ pub async fn widget_inspector__set_property_cardinality(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let class_id_clone = class_id.clone();
-    executor.write(move |conn| {
-        let mut restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, &class_id_clone)
+    executor
+        .write(move |conn| {
+            let mut restrictions =
+                crate::owl::cardinality::get_class_cardinality_restrictions(conn, &class_id_clone)
+                    .map_err(|e| e.to_string())?;
+
+            restrictions.retain(|r| r.property_iri != property_iri);
+
+            let has_constraint = min_count.map(|m| m > 0).unwrap_or(false) || max_count.is_some();
+            if has_constraint {
+                restrictions.push(crate::owl::cardinality::CardinalityRestriction {
+                    property_iri: property_iri.clone(),
+                    min: min_count,
+                    max: max_count,
+                    exact: None,
+                });
+            }
+
+            let prop_refs: Vec<crate::owl::cardinality::PropertyRestriction<'_>> = restrictions
+                .iter()
+                .map(|r| crate::owl::cardinality::PropertyRestriction {
+                    property_iri: &r.property_iri,
+                    min: r.min,
+                    max: r.max,
+                })
+                .collect();
+
+            crate::owl::cardinality::set_class_cardinality_restrictions(
+                conn,
+                &class_id_clone,
+                &prop_refs,
+                "user",
+            )
             .map_err(|e| e.to_string())?;
 
-        restrictions.retain(|r| r.property_iri != property_iri);
-
-        let has_constraint = min_count.map(|m| m > 0).unwrap_or(false) || max_count.is_some();
-        if has_constraint {
-            restrictions.push(crate::owl::cardinality::CardinalityRestriction {
-                property_iri: property_iri.clone(),
-                min: min_count,
-                max: max_count,
-                exact: None,
-            });
-        }
-
-        let prop_refs: Vec<crate::owl::cardinality::PropertyRestriction<'_>> = restrictions.iter()
-            .map(|r| crate::owl::cardinality::PropertyRestriction {
-                property_iri: &r.property_iri,
-                min: r.min,
-                max: r.max,
-            })
-            .collect();
-
-        crate::owl::cardinality::set_class_cardinality_restrictions(conn, &class_id_clone, &prop_refs, "user")
-            .map_err(|e| e.to_string())?;
-
-        Ok(String::new())
-    }).await?;
+            Ok(String::new())
+        })
+        .await?;
     crate::realtime::emit_entity_updated(&app, &class_id);
     Ok(())
 }
@@ -1106,7 +1269,11 @@ pub async fn widget_inspector__set_property_query_config(
 /// Sort backlinks by `last_tx` of the predicate-specific backlink triple —
 /// the same key `get_backlinks_page` orders by. This ensures page-1↔page-2
 /// boundaries are consistent when the frontend uses `next_cursor` as `after_tx`.
-pub(super) fn sort_backlinks_by_recency(conn: &Connection, entity_iri: &str, backlinks: &mut Vec<PropertyValue>) {
+pub(super) fn sort_backlinks_by_recency(
+    conn: &Connection,
+    entity_iri: &str,
+    backlinks: &mut Vec<PropertyValue>,
+) {
     let pairs: Vec<(String, String)> = backlinks
         .iter()
         .map(|b| (b.value.clone(), b.property.clone()))
@@ -1114,8 +1281,14 @@ pub(super) fn sort_backlinks_by_recency(conn: &Connection, entity_iri: &str, bac
     let last_tx_map = crate::eavto::query::get_backlink_last_tx_batch(conn, entity_iri, &pairs)
         .unwrap_or_default();
     backlinks.sort_by(|a, b| {
-        let tx_a = last_tx_map.get(&(a.value.clone(), a.property.clone())).copied().unwrap_or(0);
-        let tx_b = last_tx_map.get(&(b.value.clone(), b.property.clone())).copied().unwrap_or(0);
+        let tx_a = last_tx_map
+            .get(&(a.value.clone(), a.property.clone()))
+            .copied()
+            .unwrap_or(0);
+        let tx_b = last_tx_map
+            .get(&(b.value.clone(), b.property.clone()))
+            .copied()
+            .unwrap_or(0);
         tx_b.cmp(&tx_a)
     });
 }
@@ -1127,7 +1300,8 @@ pub(super) fn resolve_unit_label(conn: &Connection, unit_iri: &str) -> Option<St
         .or_else(|| {
             let label = crate::owl::Thing::get(conn, unit_iri).label;
             if label == unit_iri {
-                unit_iri.rsplit_once(':')
+                unit_iri
+                    .rsplit_once(':')
                     .map(|(_, local)| local.to_string())
                     .or(Some(label))
             } else {
@@ -1136,16 +1310,23 @@ pub(super) fn resolve_unit_label(conn: &Connection, unit_iri: &str) -> Option<St
         })
 }
 
-pub(super) fn resolve_entity_status(conn: &Connection, properties: &[PropertyValue]) -> Option<StatusInfo> {
+pub(super) fn resolve_entity_status(
+    conn: &Connection,
+    properties: &[PropertyValue],
+) -> Option<StatusInfo> {
     for prop in properties {
         if !prop.is_object_property || prop.value.is_empty() {
             continue;
         }
         if owl::is_instance_of(conn, &prop.value, "foundation:Status") {
-            let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &prop.value);
+            let (icon, color) =
+                crate::core_ontology::status::resolve_status_appearance(conn, &prop.value);
             return Some(StatusInfo {
                 iri: prop.value.clone(),
-                label: prop.value_label.clone().unwrap_or_else(|| prop.value.clone()),
+                label: prop
+                    .value_label
+                    .clone()
+                    .unwrap_or_else(|| prop.value.clone()),
                 icon,
                 color,
             });
@@ -1154,13 +1335,17 @@ pub(super) fn resolve_entity_status(conn: &Connection, properties: &[PropertyVal
     None
 }
 
-fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class: Class) -> Result<EntityData, String> {
+fn get_class_data(
+    conn: &Connection,
+    class_id: &str,
+    groups: (u8, u8, u8),
+    class: Class,
+) -> Result<EntityData, String> {
     let (group_class, _group_individual, group_literal) = groups;
 
     let label = class.label.unwrap_or_else(|| class_id.to_string());
     let icon = class.icon;
     let comment = class.comment;
-
 
     let mut nodes = Vec::new();
     let mut links = Vec::new();
@@ -1271,12 +1456,13 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
         }
     }
 
-
-    let cardinality_restrictions = crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_id)
-        .unwrap_or_default();
+    let cardinality_restrictions =
+        crate::owl::cardinality::get_class_cardinality_restrictions(conn, class_id)
+            .unwrap_or_default();
 
     let cardinality_map: std::collections::HashMap<String, (Option<u32>, Option<u32>)> =
-        cardinality_restrictions.iter()
+        cardinality_restrictions
+            .iter()
             .map(|r| {
                 let min = r.min.or(r.exact);
                 let max = r.max.or(r.exact);
@@ -1318,6 +1504,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             is_query_property: false,
             query_config: None,
             is_property_picker: None,
+            depends_on_property: None,
+            is_secret: None,
         });
     }
 
@@ -1353,6 +1541,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             is_query_property: false,
             query_config: None,
             is_property_picker: None,
+            depends_on_property: None,
+            is_secret: None,
         });
     }
 
@@ -1365,16 +1555,23 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
         let property_comment = prop.comment;
 
         let is_object_property = prop.property_type == crate::owl::PropertyType::ObjectProperty;
-        let (value, value_label, value_icon) = prop.ranges.first()
+        let (value, value_label, value_icon) = prop
+            .ranges
+            .first()
             .map(|range_iri| {
                 let range_thing = crate::owl::Thing::get(conn, range_iri);
                 (range_iri.clone(), range_thing.label, range_thing.icon)
             })
             .unwrap_or_else(|| ("owl:Thing".to_string(), "Any".to_string(), None));
 
-        let (source_class, source_class_label, source_class_icon) = if source_class_iri != class_id {
+        let (source_class, source_class_label, source_class_icon) = if source_class_iri != class_id
+        {
             let source_thing = crate::owl::Thing::get(conn, source_class_iri);
-            (Some(source_class_iri.clone()), Some(source_thing.label), source_thing.icon)
+            (
+                Some(source_class_iri.clone()),
+                Some(source_thing.label),
+                source_thing.icon,
+            )
         } else {
             (None, None, None)
         };
@@ -1393,7 +1590,10 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             (None, None)
         };
 
-        let (min_count, max_count) = cardinality_map.get(property_iri.as_str()).copied().unwrap_or((None, None));
+        let (min_count, max_count) = cardinality_map
+            .get(property_iri.as_str())
+            .copied()
+            .unwrap_or((None, None));
         let ai_behavior_rules = prop.ai_behavior_rules.clone();
 
         properties.push(PropertyValue {
@@ -1427,15 +1627,21 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             is_query_property: prop.query_config.is_some(),
             query_config: prop.query_config.clone(),
             is_property_picker: None,
+            depends_on_property: None,
+            is_secret: None,
         });
     }
 
     for (predicate, value_obj) in &class.concept_properties {
-        let (property_label, property_comment) = if let Ok(Some(prop)) = Property::get(conn, predicate) {
-            (prop.label.unwrap_or_else(|| predicate.clone()), prop.comment)
-        } else {
-            (predicate.clone(), None)
-        };
+        let (property_label, property_comment) =
+            if let Ok(Some(prop)) = Property::get(conn, predicate) {
+                (
+                    prop.label.unwrap_or_else(|| predicate.clone()),
+                    prop.comment,
+                )
+            } else {
+                (predicate.clone(), None)
+            };
 
         let is_object_property = value_obj.is_iri();
         let value = if is_object_property {
@@ -1481,20 +1687,21 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             is_query_property: false,
             query_config: None,
             is_property_picker: None,
+            depends_on_property: None,
+            is_secret: None,
         });
     }
 
-    let instance_iris: Vec<String> = class.backlinks.iter()
-        .map(|(s, _, _)| s.clone())
-        .collect();
+    let instance_iris: Vec<String> = class.backlinks.iter().map(|(s, _, _)| s.clone()).collect();
 
     let source_things = crate::owl::Thing::get_batch(conn, &instance_iris);
 
-    let source_status_iris = crate::eavto::query::get_first_iri_property_batch(
-        conn, &instance_iris, "foundation:hasStatus",
-    ).unwrap_or_default();
+    let source_status_iris =
+        crate::owl::get_first_iri_property_batch(conn, &instance_iris, "foundation:hasStatus")
+            .unwrap_or_default();
 
-    let unique_status_iris: Vec<String> = source_status_iris.values()
+    let unique_status_iris: Vec<String> = source_status_iris
+        .values()
         .cloned()
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
@@ -1503,13 +1710,17 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
     for status_iri in unique_status_iris {
         if owl::is_instance_of(conn, &status_iri, "foundation:Status") {
             let status_thing = crate::owl::Thing::get(conn, &status_iri);
-            let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
-            status_cache.insert(status_iri.clone(), StatusInfo {
-                iri: status_iri,
-                label: status_thing.label,
-                icon,
-                color,
-            });
+            let (icon, color) =
+                crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
+            status_cache.insert(
+                status_iri.clone(),
+                StatusInfo {
+                    iri: status_iri,
+                    label: status_thing.label,
+                    icon,
+                    color,
+                },
+            );
         }
     }
 
@@ -1521,11 +1732,13 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
 
     let mut backlinks = Vec::new();
     for (source_entity, property_iri, _) in &class.backlinks {
-        let source_thing = source_things.get(source_entity)
+        let source_thing = source_things
+            .get(source_entity)
             .cloned()
             .unwrap_or_else(|| crate::owl::Thing::get(conn, source_entity));
 
-        let value_status = source_status_iris.get(source_entity)
+        let value_status = source_status_iris
+            .get(source_entity)
             .and_then(|s| status_cache.get(s))
             .cloned();
 
@@ -1560,6 +1773,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
             is_query_property: false,
             query_config: None,
             is_property_picker: None,
+            depends_on_property: None,
+            is_secret: None,
         });
     }
 
@@ -1567,24 +1782,33 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
 
     let status = resolve_entity_status(conn, &properties);
 
-    let required_fields = cardinality_restrictions.iter()
+    let required_fields = cardinality_restrictions
+        .iter()
         .filter(|r| r.is_required())
         .map(|r| r.property_iri.clone())
         .collect();
 
-    let allowed_statuses = crate::owl::get_all_iri_properties(conn, class_id, "foundation:allowedStatus")
-        .unwrap_or_default()
-        .into_iter()
-        .map(|status_iri| {
-            let thing = crate::owl::Thing::get(conn, &status_iri);
-            let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
-            StatusInfo { iri: status_iri, label: thing.label, icon, color }
-        })
-        .collect();
+    let allowed_statuses =
+        crate::owl::get_all_iri_properties(conn, class_id, "foundation:allowedStatus")
+            .unwrap_or_default()
+            .into_iter()
+            .map(|status_iri| {
+                let thing = crate::owl::Thing::get(conn, &status_iri);
+                let (icon, color) =
+                    crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
+                StatusInfo {
+                    iri: status_iri,
+                    label: thing.label,
+                    icon,
+                    color,
+                }
+            })
+            .collect();
 
     let disjoint_groups = build_disjoint_groups(conn, class_id).unwrap_or_default();
     let related_processes = crate::ai::functions::find_related_processes_for_class(conn, class_id);
-    let applicable_automations = crate::ai::functions::find_automations_for_types(conn, &[class_id.to_string()]);
+    let applicable_automations =
+        crate::ai::functions::find_automations_for_types(conn, &[class_id.to_string()]);
 
     Ok(EntityData {
         id: class_id.to_string(),
@@ -1614,8 +1838,8 @@ fn get_class_data(conn: &Connection, class_id: &str, groups: (u8, u8, u8), class
 fn build_disjoint_groups(conn: &Connection, class_iri: &str) -> Result<Vec<DisjointGroup>, String> {
     let mut groups: Vec<DisjointGroup> = Vec::new();
 
-    let pair_iris = Class::get_direct_disjoint_pair_iris(conn, class_iri)
-        .map_err(|e| e.to_string())?;
+    let pair_iris =
+        Class::get_direct_disjoint_pair_iris(conn, class_iri).map_err(|e| e.to_string())?;
     for other in pair_iris {
         let thing = crate::owl::Thing::get(conn, &other);
         groups.push(DisjointGroup {
@@ -1625,12 +1849,12 @@ fn build_disjoint_groups(conn: &Connection, class_iri: &str) -> Result<Vec<Disjo
         });
     }
 
-    let adcs = Class::find_all_disjoint_class_sets(conn, class_iri)
-        .map_err(|e| e.to_string())?;
+    let adcs = Class::find_all_disjoint_class_sets(conn, class_iri).map_err(|e| e.to_string())?;
     for adc_iri in adcs {
-        let members = Class::get_all_disjoint_classes_members(conn, &adc_iri)
-            .map_err(|e| e.to_string())?;
-        let things: Vec<crate::owl::Thing> = members.iter()
+        let members =
+            Class::get_all_disjoint_classes_members(conn, &adc_iri).map_err(|e| e.to_string())?;
+        let things: Vec<crate::owl::Thing> = members
+            .iter()
             .filter(|m| m.as_str() != class_iri)
             .map(|m| crate::owl::Thing::get(conn, m))
             .collect();
@@ -1657,11 +1881,13 @@ pub async fn widget_inspector__add_class_disjoint(
 ) -> Result<(), String> {
     let class_iri_clone = class_iri.clone();
     let disjoint_iri_clone = disjoint_iri.clone();
-    executor.write(move |conn| {
-        Class::add_disjoint_with(conn, &class_iri_clone, &disjoint_iri_clone, "user")
-            .map_err(|e| e.to_string())?;
-        Ok(String::new())
-    }).await?;
+    executor
+        .write(move |conn| {
+            Class::add_disjoint_with(conn, &class_iri_clone, &disjoint_iri_clone, "user")
+                .map_err(|e| e.to_string())?;
+            Ok(String::new())
+        })
+        .await?;
     crate::realtime::emit_entity_updated(&app, &class_iri);
     crate::realtime::emit_entity_updated(&app, &disjoint_iri);
     Ok(())
@@ -1677,11 +1903,13 @@ pub async fn widget_inspector__remove_disjoint_pair(
 ) -> Result<(), String> {
     let class_iri_clone = class_iri.clone();
     let disjoint_iri_clone = disjoint_iri.clone();
-    executor.write(move |conn| {
-        Class::remove_disjoint_with(conn, &class_iri_clone, &disjoint_iri_clone, "user")
-            .map_err(|e| e.to_string())?;
-        Ok(String::new())
-    }).await?;
+    executor
+        .write(move |conn| {
+            Class::remove_disjoint_with(conn, &class_iri_clone, &disjoint_iri_clone, "user")
+                .map_err(|e| e.to_string())?;
+            Ok(String::new())
+        })
+        .await?;
     crate::realtime::emit_entity_updated(&app, &class_iri);
     crate::realtime::emit_entity_updated(&app, &disjoint_iri);
     Ok(())
@@ -1695,13 +1923,15 @@ pub async fn widget_inspector__retract_disjoint_set(
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
     let group_id_clone = group_id.clone();
-    let members_json = executor.write(move |conn| {
-        let members = Class::get_all_disjoint_classes_members(conn, &group_id_clone)
-            .map_err(|e| e.to_string())?;
-        Class::retract_all_disjoint_classes(conn, &group_id_clone, "user")
-            .map_err(|e| e.to_string())?;
-        serde_json::to_string(&members).map_err(|e| e.to_string())
-    }).await?;
+    let members_json = executor
+        .write(move |conn| {
+            let members = Class::get_all_disjoint_classes_members(conn, &group_id_clone)
+                .map_err(|e| e.to_string())?;
+            Class::retract_all_disjoint_classes(conn, &group_id_clone, "user")
+                .map_err(|e| e.to_string())?;
+            serde_json::to_string(&members).map_err(|e| e.to_string())
+        })
+        .await?;
     let members: Vec<String> = serde_json::from_str(&members_json).unwrap_or_default();
     for iri in members {
         crate::realtime::emit_entity_updated(&app, &iri);
@@ -1716,8 +1946,10 @@ pub struct IriResolution {
     pub icon: Option<String>,
 }
 
-pub fn resolve_iris_batch(conn: &owl::Connection, iris: Vec<String>) -> HashMap<String, IriResolution> {
-    use crate::eavto::query;
+pub fn resolve_iris_batch(
+    conn: &owl::Connection,
+    iris: Vec<String>,
+) -> HashMap<String, IriResolution> {
     use crate::owl::vocabulary::rdfs;
 
     if iris.is_empty() {
@@ -1725,27 +1957,35 @@ pub fn resolve_iris_batch(conn: &owl::Connection, iris: Vec<String>) -> HashMap<
     }
 
     let predicates = &[rdfs::LABEL, "foundation:hasIcon", "rdf:type"];
-    let rows = match query::get_predicates_for_subjects(conn, &iris, predicates) {
+    let rows = match owl::get_predicates_for_subjects(conn, &iris, predicates) {
         Ok(r) => r,
         Err(_) => return HashMap::new(),
     };
 
-    struct Raw { label: Option<String>, icon: Option<String> }
+    struct Raw {
+        label: Option<String>,
+        icon: Option<String>,
+    }
     let mut raw: HashMap<String, Raw> = HashMap::new();
 
     for (subject, predicate, object) in rows {
-        let entry = raw.entry(subject).or_insert(Raw { label: None, icon: None });
+        let entry = raw.entry(subject).or_insert(Raw {
+            label: None,
+            icon: None,
+        });
         match predicate.as_str() {
             p if p == rdfs::LABEL => {
-                if entry.label.is_none() { entry.label = object.as_literal(); }
+                if entry.label.is_none() {
+                    entry.label = object.as_literal();
+                }
             }
             "foundation:hasIcon" => {
                 if entry.icon.is_none() {
                     entry.icon = match &object {
-                        crate::eavto::Object::Iri(icon_iri) =>
-                            crate::owl::icon_iri_to_display(conn, icon_iri),
-                        crate::eavto::Object::Literal { value, .. } =>
-                            Some(crate::owl::icon_literal_to_display(value)),
+                        Object::Iri(icon_iri) => crate::owl::icon_iri_to_display(conn, icon_iri),
+                        Object::Literal { value, .. } => {
+                            Some(crate::owl::icon_literal_to_display(value))
+                        }
                         _ => None,
                     };
                 }
@@ -1754,10 +1994,18 @@ pub fn resolve_iris_batch(conn: &owl::Connection, iris: Vec<String>) -> HashMap<
         }
     }
 
-    raw.into_iter().map(|(iri, r)| {
-        let label = r.label.unwrap_or_else(|| iri.clone());
-        (iri, IriResolution { label, icon: r.icon })
-    }).collect()
+    raw.into_iter()
+        .map(|(iri, r)| {
+            let label = r.label.unwrap_or_else(|| iri.clone());
+            (
+                iri,
+                IriResolution {
+                    label,
+                    icon: r.icon,
+                },
+            )
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -1766,16 +2014,18 @@ pub async fn entity__resolve_iris(
     iris: Vec<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    executor.read(move |conn| {
-        let result = resolve_iris_batch(conn, iris);
-        serde_json::to_string(&result).map_err(|e| e.to_string())
-    }).await
+    executor
+        .read(move |conn| {
+            let result = resolve_iris_batch(conn, iris);
+            serde_json::to_string(&result).map_err(|e| e.to_string())
+        })
+        .await
 }
 
 #[cfg(test)]
 mod resolve_iris_tests {
     use super::*;
-    use crate::eavto::{store, test_helpers::setup_test_db, Triple, Object};
+    use crate::eavto::{store, test_helpers::setup_test_db, Object, Triple};
     use crate::owl::vocabulary::rdfs;
 
     #[test]
@@ -1795,18 +2045,27 @@ mod resolve_iris_tests {
     #[test]
     fn test_resolve_iris_returns_label_and_icon() {
         let mut conn = setup_test_db();
-        store::assert_triples(&mut conn, &[
-            Triple::new("foundation:Known_123", rdfs::LABEL, Object::Literal {
-                value: "Known Entity".to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }),
-            Triple::new("foundation:Known_123", "foundation:hasIcon", Object::Literal {
-                value: "star".to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }),
-        ], "test").unwrap();
+        store::assert_triples(
+            &mut conn,
+            &[
+                Triple::new(
+                    "foundation:Known_123",
+                    rdfs::LABEL,
+                    Object::Literal {
+                        value: "Known Entity".to_string(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(
+                    "foundation:Known_123",
+                    "foundation:hasIcon",
+                    Object::Iri("foundation:icon-material-symbols-name-star".to_string()),
+                ),
+            ],
+            "test",
+        )
+        .unwrap();
 
         let result = resolve_iris_batch(&conn, vec!["foundation:Known_123".to_string()]);
         let entry = result.get("foundation:Known_123").unwrap();

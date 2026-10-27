@@ -1,9 +1,16 @@
-﻿use std::collections::HashMap;
-use crate::owl::{self, Class, Individual, Property, Connection};
-use super::{EntityData, PropertyValue, BacklinkCursor, PropertyValueCursor, GraphNode, GraphLink, StatusInfo, FileInfo,
-            resolve_unit_label, resolve_entity_status};
+use super::{
+    resolve_entity_status, resolve_unit_label, BacklinkCursor, EntityData, FileInfo, GraphLink,
+    GraphNode, PropertyValue, PropertyValueCursor, StatusInfo,
+};
+use crate::owl::{self, Class, Connection, Individual, Property};
+use std::collections::HashMap;
 
-pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups: (u8, u8, u8), individual: Individual) -> Result<EntityData, String> {
+pub(super) fn get_individual_data(
+    conn: &Connection,
+    individual_id: &str,
+    groups: (u8, u8, u8),
+    individual: Individual,
+) -> Result<EntityData, String> {
     let t0 = std::time::Instant::now();
     let (group_class, group_individual, group_literal) = groups;
     let n_props = individual.properties.len();
@@ -11,7 +18,9 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     let n_types = individual.types.len();
     crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: Individual (props={n_props} backlinks={n_backlinks} types={n_types})"));
 
-    let label = individual.label.unwrap_or_else(|| individual_id.to_string());
+    let label = individual
+        .label
+        .unwrap_or_else(|| individual_id.to_string());
     let icon = individual.icon;
     let comment = individual.comment;
 
@@ -19,15 +28,16 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         std::collections::HashMap::new();
     for (idx, (property_iri, _)) in individual.properties.iter().enumerate() {
         let tx = individual.property_tx.get(idx).copied().unwrap_or(0);
-        let entry = max_tx_per_predicate.entry(property_iri.clone()).or_insert(0);
+        let entry = max_tx_per_predicate
+            .entry(property_iri.clone())
+            .or_insert(0);
         if tx > *entry {
             *entry = tx;
         }
     }
 
-    let entity_class_iris: std::collections::HashSet<String> = individual.types.iter()
-        .map(|t| t.iri.clone())
-        .collect();
+    let entity_class_iris: std::collections::HashSet<String> =
+        individual.types.iter().map(|t| t.iri.clone()).collect();
 
     // Pre-fetch all class objects to avoid redundant Class::get calls.
     let t_a = std::time::Instant::now();
@@ -37,14 +47,28 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             class_cache.insert(type_thing.iri.clone(), class);
         }
     }
+    let prop_deps = crate::core_ontology::property_configuration::property_dependencies(conn)
+        .map_err(|e| e.to_string())?;
+    let secret_props = crate::core_ontology::property_configuration::secret_property_iris(conn)
+        .map_err(|e| e.to_string())?;
     let t_b = std::time::Instant::now();
-    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: class_cache {}ms", t_b.duration_since(t_a).as_millis()));
+    crate::commands::logging::log_backend(
+        "debug",
+        &format!(
+            "[INSPECTOR] {individual_id}: class_cache {}ms",
+            t_b.duration_since(t_a).as_millis()
+        ),
+    );
 
     // Collect all property IRIs needed (filled + class-defined empty) for a single batch fetch.
-    let filled_iris_set: std::collections::HashSet<&str> = individual.properties.iter()
+    let filled_iris_set: std::collections::HashSet<&str> = individual
+        .properties
+        .iter()
         .map(|(iri, _)| iri.as_str())
         .collect();
-    let mut all_prop_iris: Vec<String> = individual.properties.iter()
+    let mut all_prop_iris: Vec<String> = individual
+        .properties
+        .iter()
         .map(|(iri, _)| iri.clone())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
@@ -54,7 +78,8 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         for type_thing in &individual.types {
             if let Some(class) = class_cache.get(&type_thing.iri) {
                 for (prop_iri, _) in &class.properties {
-                    if !filled_iris_set.contains(prop_iri.as_str()) && seen.insert(prop_iri.clone()) {
+                    if !filled_iris_set.contains(prop_iri.as_str()) && seen.insert(prop_iri.clone())
+                    {
                         all_prop_iris.push(prop_iri.clone());
                     }
                 }
@@ -64,7 +89,14 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     let all_prop_iris_refs: Vec<&str> = all_prop_iris.iter().map(|s| s.as_str()).collect();
     let prop_cache = Property::get_batch(conn, &all_prop_iris_refs).unwrap_or_default();
     let t_c = std::time::Instant::now();
-    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: prop_cache ({} props) {}ms", all_prop_iris_refs.len(), t_c.duration_since(t_b).as_millis()));
+    crate::commands::logging::log_backend(
+        "debug",
+        &format!(
+            "[INSPECTOR] {individual_id}: prop_cache ({} props) {}ms",
+            all_prop_iris_refs.len(),
+            t_c.duration_since(t_b).as_millis()
+        ),
+    );
 
     // Pre-fetch Thing metadata for all range/source class IRIs in one batch.
     let mut thing_iris: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -95,19 +127,28 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     // Pre-fetch hasStatus for all forward IRI-valued properties in one batch,
     // replacing per-property resolve_status_for_entity calls that each load the
     // entire target entity just to find one IRI value.
-    let object_value_iris: Vec<String> = individual.properties.iter()
+    let object_value_iris: Vec<String> = individual
+        .properties
+        .iter()
         .filter_map(|(_, v)| v.as_iri())
         .map(|s| s.to_string())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
-    let fwd_status_iris = crate::eavto::query::get_first_iri_property_batch(
-        conn, &object_value_iris, "foundation:hasStatus",
-    ).unwrap_or_default();
+    let fwd_status_iris =
+        crate::owl::get_first_iri_property_batch(conn, &object_value_iris, "foundation:hasStatus")
+            .unwrap_or_default();
     let t_d = std::time::Instant::now();
-    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: thing_cache+fwd_status_batch {}ms", t_d.duration_since(t_c).as_millis()));
+    crate::commands::logging::log_backend(
+        "debug",
+        &format!(
+            "[INSPECTOR] {individual_id}: thing_cache+fwd_status_batch {}ms",
+            t_d.duration_since(t_c).as_millis()
+        ),
+    );
 
-    let unique_fwd_status: Vec<String> = fwd_status_iris.values()
+    let unique_fwd_status: Vec<String> = fwd_status_iris
+        .values()
         .cloned()
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
@@ -115,43 +156,73 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     let mut fwd_status_info: HashMap<String, StatusInfo> = HashMap::new();
     for status_iri in unique_fwd_status {
         if crate::owl::is_instance_of(conn, &status_iri, "foundation:Status") {
-            let status_thing = thing_cache.get(&status_iri)
+            let status_thing = thing_cache
+                .get(&status_iri)
                 .cloned()
                 .unwrap_or_else(|| crate::owl::Thing::get(conn, &status_iri));
-            let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
-            fwd_status_info.insert(status_iri.clone(), StatusInfo {
-                iri: status_iri,
-                label: status_thing.label,
-                icon,
-                color,
-            });
+            let (icon, color) =
+                crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
+            fwd_status_info.insert(
+                status_iri.clone(),
+                StatusInfo {
+                    iri: status_iri,
+                    label: status_thing.label,
+                    icon,
+                    color,
+                },
+            );
         }
     }
-    let fwd_value_to_status: HashMap<String, StatusInfo> = fwd_status_iris.into_iter()
+    let fwd_value_to_status: HashMap<String, StatusInfo> = fwd_status_iris
+        .into_iter()
         .filter_map(|(entity_iri, status_iri)| {
-            fwd_status_info.get(&status_iri).cloned().map(|info| (entity_iri, info))
+            fwd_status_info
+                .get(&status_iri)
+                .cloned()
+                .map(|info| (entity_iri, info))
         })
         .collect();
     let t_e = std::time::Instant::now();
-    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: fwd_status_info {}ms", t_e.duration_since(t_d).as_millis()));
+    crate::commands::logging::log_backend(
+        "debug",
+        &format!(
+            "[INSPECTOR] {individual_id}: fwd_status_info {}ms",
+            t_e.duration_since(t_d).as_millis()
+        ),
+    );
 
     // Build a one-shot cursor map for forward property groups that were truncated.
     // `.remove()` inside the loop ensures the cursor is assigned only to the first
     // PropertyValue entry for each predicate (consistent with backlink cursor placement).
-    let mut fwd_cursors: HashMap<String, Option<PropertyValueCursor>> = individual.forward_value_cutoffs
+    let mut fwd_cursors: HashMap<String, Option<PropertyValueCursor>> = individual
+        .forward_value_cutoffs
         .iter()
         .map(|(pred, (tx, key))| {
-            (pred.clone(), Some(PropertyValueCursor { value_tx: *tx, object_key: key.clone() }))
+            (
+                pred.clone(),
+                Some(PropertyValueCursor {
+                    value_tx: *tx,
+                    object_key: key.clone(),
+                }),
+            )
         })
         .collect();
 
     let mut properties = Vec::new();
     for (property_iri, value_obj) in &individual.properties {
         let prop_opt = prop_cache.get(property_iri.as_str());
-        let (property_label, property_comment, unit, unit_label, is_object_property, prop_ranges,
-            ai_behavior_rules) =
-            if let Some(prop) = prop_opt {
-            let label = prop.domain_labels.iter()
+        let (
+            property_label,
+            property_comment,
+            unit,
+            unit_label,
+            is_object_property,
+            prop_ranges,
+            ai_behavior_rules,
+        ) = if let Some(prop) = prop_opt {
+            let label = prop
+                .domain_labels
+                .iter()
                 .find(|dl| entity_class_iris.contains(&dl.domain))
                 .map(|dl| dl.forward_label.clone())
                 .unwrap_or_else(|| prop.label.clone().unwrap_or_else(|| property_iri.clone()));
@@ -166,10 +237,28 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
 
             let is_obj_prop = prop.property_type == crate::owl::PropertyType::ObjectProperty
                 || value_obj.is_iri();
-            (label, comment, unit, unit_label, is_obj_prop, prop.ranges.clone(), prop.ai_behavior_rules.clone())
+            (
+                label,
+                comment,
+                unit,
+                unit_label,
+                is_obj_prop,
+                prop.ranges.clone(),
+                prop.ai_behavior_rules.clone(),
+            )
         } else {
-            (property_iri.clone(), None, None, None, value_obj.is_iri(), vec![], None)
+            (
+                property_iri.clone(),
+                None,
+                None,
+                None,
+                value_obj.is_iri(),
+                vec![],
+                None,
+            )
         };
+
+        let is_secret_prop = secret_props.contains(property_iri.as_str());
 
         let value = if is_object_property {
             value_obj.as_iri().unwrap_or("").to_string()
@@ -181,24 +270,40 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             if stored.is_empty() {
                 stored
             } else {
-                crate::paths::resolve_path(&stored).to_string_lossy().into_owned()
+                crate::paths::resolve_path(&stored)
+                    .to_string_lossy()
+                    .into_owned()
             }
         } else {
             value_obj.as_literal().unwrap_or_default()
         };
 
+        // A secret never reaches the renderer. The inspector shows the mask and,
+        // when a reveal path exists, asks for the real value on an explicit gesture.
+        let value = if is_secret_prop && !is_object_property && !value.is_empty() {
+            crate::core_ontology::property_configuration::SECRET_MASK.to_string()
+        } else {
+            value
+        };
+
         let (value_label, value_icon, datatype, value_status) = if is_object_property {
-            let target_thing = thing_cache.get(&value)
+            let target_thing = thing_cache
+                .get(&value)
                 .cloned()
                 .unwrap_or_else(|| crate::owl::Thing::get(conn, &value));
             let status = fwd_value_to_status.get(&value).cloned();
             (Some(target_thing.label), target_thing.icon, None, status)
         } else {
             let stored_dt = value_obj.datatype().map(|s| s.to_string());
-            let declared_dt = prop_ranges.first()
+            let declared_dt = prop_ranges
+                .first()
                 .filter(|r| r.as_str() != "xsd:string")
                 .cloned();
-            let effective_dt = if stored_dt.as_deref().map(|dt| dt != "xsd:string").unwrap_or(false) {
+            let effective_dt = if stored_dt
+                .as_deref()
+                .map(|dt| dt != "xsd:string")
+                .unwrap_or(false)
+            {
                 stored_dt
             } else {
                 declared_dt.or(stored_dt)
@@ -215,44 +320,81 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             false
         };
 
-        let (range_class_iri, range_class_label, range_class_icon) = if is_object_property && !is_property_picker {
-            prop_ranges.first().map(|range_iri| {
-                let range_thing = thing_cache.get(range_iri)
-                    .cloned()
-                    .unwrap_or_else(|| crate::owl::Thing::get(conn, range_iri));
-                (Some(range_iri.clone()), Some(range_thing.label), range_thing.icon)
-            }).unwrap_or((None, None, None))
-        } else {
-            (None, None, None)
-        };
+        let (range_class_iri, range_class_label, range_class_icon) =
+            if is_object_property && !is_property_picker {
+                prop_ranges
+                    .first()
+                    .map(|range_iri| {
+                        let range_thing = thing_cache
+                            .get(range_iri)
+                            .cloned()
+                            .unwrap_or_else(|| crate::owl::Thing::get(conn, range_iri));
+                        (
+                            Some(range_iri.clone()),
+                            Some(range_thing.label),
+                            range_thing.icon,
+                        )
+                    })
+                    .unwrap_or((None, None, None))
+            } else {
+                (None, None, None)
+            };
 
-        let file_info = if range_class_iri.as_deref() == Some("foundation:File") && !value.is_empty() {
-            // Resolve portable/legacy storage formats to an absolute path the
-            // frontend can open directly.
-            let file_path = owl::get_literal_property(conn, &value, "foundation:filePath")
-                .ok()
-                .flatten()
-                .map(|stored| crate::paths::resolve_path(&stored).to_string_lossy().into_owned());
-            let file_name = owl::get_literal_property(conn, &value, "foundation:fileName").ok().flatten();
-            let file_size = owl::get_literal_property(conn, &value, "foundation:fileSize").ok().flatten()
-                .and_then(|s| s.parse::<i64>().ok());
-            let file_type_iri = owl::get_iri_property(conn, &value, "foundation:hasFileType").ok().flatten();
-            Some(FileInfo { file_path, file_name, file_size, file_type_iri })
-        } else {
-            None
-        };
+        let file_info =
+            if range_class_iri.as_deref() == Some("foundation:File") && !value.is_empty() {
+                // Resolve portable/legacy storage formats to an absolute path the
+                // frontend can open directly.
+                let file_path = owl::get_literal_property(conn, &value, "foundation:filePath")
+                    .ok()
+                    .flatten()
+                    .map(|stored| {
+                        crate::paths::resolve_path(&stored)
+                            .to_string_lossy()
+                            .into_owned()
+                    });
+                let file_name = owl::get_literal_property(conn, &value, "foundation:fileName")
+                    .ok()
+                    .flatten();
+                let file_size = owl::get_literal_property(conn, &value, "foundation:fileSize")
+                    .ok()
+                    .flatten()
+                    .and_then(|s| s.parse::<i64>().ok());
+                let file_type_iri = owl::get_iri_property(conn, &value, "foundation:hasFileType")
+                    .ok()
+                    .flatten();
+                Some(FileInfo {
+                    file_path,
+                    file_name,
+                    file_size,
+                    file_type_iri,
+                })
+            } else {
+                None
+            };
 
-        let is_query_prop = crate::eavto::query::get_by_entity_predicate(conn, property_iri, "foundation:queryConfig")
-            .map(|r| !r.triples.is_empty())
-            .unwrap_or(false);
+        let is_query_prop = crate::eavto::query::get_by_entity_predicate(
+            conn,
+            property_iri,
+            "foundation:queryConfig",
+        )
+        .map(|r| !r.triples.is_empty())
+        .unwrap_or(false);
 
         let is_calculated = is_query_prop
-            || crate::eavto::query::get_by_entity_predicate(conn, property_iri, "foundation:formula")
-                .map(|r| !r.triples.is_empty())
-                .unwrap_or(false)
-            || crate::eavto::query::get_by_entity_predicate(conn, property_iri, "foundation:aggregation")
-                .map(|r| !r.triples.is_empty())
-                .unwrap_or(false);
+            || crate::eavto::query::get_by_entity_predicate(
+                conn,
+                property_iri,
+                "foundation:formula",
+            )
+            .map(|r| !r.triples.is_empty())
+            .unwrap_or(false)
+            || crate::eavto::query::get_by_entity_predicate(
+                conn,
+                property_iri,
+                "foundation:aggregation",
+            )
+            .map(|r| !r.triples.is_empty())
+            .unwrap_or(false);
 
         let formula_error: Option<String> = if is_calculated && !is_query_prop {
             conn.query_row(
@@ -264,7 +406,10 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             None
         };
 
-        let fwd_group_total = individual.forward_group_totals.get(property_iri.as_str()).copied();
+        let fwd_group_total = individual
+            .forward_group_totals
+            .get(property_iri.as_str())
+            .copied();
         let property_next_cursor = fwd_cursors.remove(property_iri.as_str()).flatten();
 
         properties.push(PropertyValue {
@@ -298,11 +443,19 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             ai_behavior_rules,
             query_config: None,
             is_property_picker: if is_property_picker { Some(true) } else { None },
+            depends_on_property: prop_deps.get(property_iri.as_str()).cloned(),
+            is_secret: if is_secret_prop { Some(true) } else { None },
         });
     }
 
     let t_props = std::time::Instant::now();
-    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: property loop {}ms", t_props.duration_since(t0).as_millis()));
+    crate::commands::logging::log_backend(
+        "debug",
+        &format!(
+            "[INSPECTOR] {individual_id}: property loop {}ms",
+            t_props.duration_since(t0).as_millis()
+        ),
+    );
 
     properties.sort_by(|a, b| {
         let tx_a = max_tx_per_predicate.get(&a.property).copied().unwrap_or(0);
@@ -311,31 +464,43 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     });
 
     {
-        let filled_iris: std::collections::HashSet<String> = properties.iter()
-            .map(|p| p.property.clone())
-            .collect();
+        let filled_iris: std::collections::HashSet<String> =
+            properties.iter().map(|p| p.property.clone()).collect();
         let mut seen = std::collections::HashSet::new();
 
         for type_thing in &individual.types {
             if let Some(class) = class_cache.get(&type_thing.iri) {
                 for (prop_iri, source_class_iri) in &class.properties {
-                    if filled_iris.contains(prop_iri) { continue; }
-                    if !seen.insert(prop_iri.clone()) { continue; }
+                    if filled_iris.contains(prop_iri) {
+                        continue;
+                    }
+                    if !seen.insert(prop_iri.clone()) {
+                        continue;
+                    }
 
-                    let Some(prop) = prop_cache.get(prop_iri.as_str()) else { continue };
+                    let Some(prop) = prop_cache.get(prop_iri.as_str()) else {
+                        continue;
+                    };
 
                     let property_label = prop.label.clone().unwrap_or_else(|| prop_iri.clone());
                     let property_comment = prop.comment.clone();
-                    let is_object_property = prop.property_type == crate::owl::PropertyType::ObjectProperty;
+                    let is_object_property =
+                        prop.property_type == crate::owl::PropertyType::ObjectProperty;
 
-                    let (source_class, source_class_label, source_class_icon) = if source_class_iri != &type_thing.iri {
-                        let source_thing = thing_cache.get(source_class_iri)
-                            .cloned()
-                            .unwrap_or_else(|| crate::owl::Thing::get(conn, source_class_iri));
-                        (Some(source_class_iri.clone()), Some(source_thing.label), source_thing.icon)
-                    } else {
-                        (None, None, None)
-                    };
+                    let (source_class, source_class_label, source_class_icon) =
+                        if source_class_iri != &type_thing.iri {
+                            let source_thing = thing_cache
+                                .get(source_class_iri)
+                                .cloned()
+                                .unwrap_or_else(|| crate::owl::Thing::get(conn, source_class_iri));
+                            (
+                                Some(source_class_iri.clone()),
+                                Some(source_thing.label),
+                                source_thing.icon,
+                            )
+                        } else {
+                            (None, None, None)
+                        };
 
                     let (unit, unit_label) = if let Some(unit_iri) = &prop.unit {
                         (Some(unit_iri.clone()), resolve_unit_label(conn, unit_iri))
@@ -346,22 +511,33 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                     let is_property_picker = if is_object_property {
                         matches!(
                             prop.ranges.first().map(|s| s.as_str()),
-                            Some("rdf:Property") | Some("owl:ObjectProperty") | Some("owl:DatatypeProperty")
+                            Some("rdf:Property")
+                                | Some("owl:ObjectProperty")
+                                | Some("owl:DatatypeProperty")
                         )
                     } else {
                         false
                     };
 
-                    let (range_class_iri, range_class_label, range_class_icon) = if is_object_property && !is_property_picker {
-                        prop.ranges.first().map(|range_iri| {
-                            let range_thing = thing_cache.get(range_iri)
-                                .cloned()
-                                .unwrap_or_else(|| crate::owl::Thing::get(conn, range_iri));
-                            (Some(range_iri.clone()), Some(range_thing.label), range_thing.icon)
-                        }).unwrap_or((None, None, None))
-                    } else {
-                        (None, None, None)
-                    };
+                    let (range_class_iri, range_class_label, range_class_icon) =
+                        if is_object_property && !is_property_picker {
+                            prop.ranges
+                                .first()
+                                .map(|range_iri| {
+                                    let range_thing = thing_cache
+                                        .get(range_iri)
+                                        .cloned()
+                                        .unwrap_or_else(|| crate::owl::Thing::get(conn, range_iri));
+                                    (
+                                        Some(range_iri.clone()),
+                                        Some(range_thing.label),
+                                        range_thing.icon,
+                                    )
+                                })
+                                .unwrap_or((None, None, None))
+                        } else {
+                            (None, None, None)
+                        };
 
                     let ai_behavior_rules = prop.ai_behavior_rules.clone();
 
@@ -379,7 +555,8 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         unit,
                         unit_label,
                         datatype: if !is_object_property {
-                            prop.ranges.first()
+                            prop.ranges
+                                .first()
                                 .filter(|r| r.starts_with("xsd:"))
                                 .cloned()
                         } else {
@@ -402,6 +579,8 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                         ai_behavior_rules,
                         query_config: None,
                         is_property_picker: if is_property_picker { Some(true) } else { None },
+                        depends_on_property: prop_deps.get(prop_iri.as_str()).cloned(),
+                        is_secret: None,
                     });
                 }
             }
@@ -409,14 +588,20 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     }
 
     let t_empty_props = std::time::Instant::now();
-    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: empty-props loop {}ms", t_empty_props.duration_since(t_props).as_millis()));
+    crate::commands::logging::log_backend(
+        "debug",
+        &format!(
+            "[INSPECTOR] {individual_id}: empty-props loop {}ms",
+            t_empty_props.duration_since(t_props).as_millis()
+        ),
+    );
 
     {
         let mut card_map: HashMap<String, (Option<u32>, Option<u32>)> = HashMap::new();
         for type_thing in &individual.types {
-            if let Ok(restrictions) = crate::owl::cardinality::get_class_cardinality_restrictions(
-                conn, &type_thing.iri,
-            ) {
+            if let Ok(restrictions) =
+                crate::owl::cardinality::get_class_cardinality_restrictions(conn, &type_thing.iri)
+            {
                 for r in restrictions {
                     let entry = card_map.entry(r.property_iri).or_insert((None, None));
                     let min = r.exact.or(r.min);
@@ -439,7 +624,13 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     }
 
     let t_cardinality = std::time::Instant::now();
-    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: cardinality {}ms", t_cardinality.duration_since(t_empty_props).as_millis()));
+    crate::commands::logging::log_backend(
+        "debug",
+        &format!(
+            "[INSPECTOR] {individual_id}: cardinality {}ms",
+            t_cardinality.duration_since(t_empty_props).as_millis()
+        ),
+    );
 
     let mut nodes = Vec::new();
     let mut links = Vec::new();
@@ -479,11 +670,13 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         if prop.is_object_property {
             if !added_node_ids.contains(&prop.value) {
                 let related_thing = crate::owl::Thing::get(conn, &prop.value);
-                let entity_exists_flag = conn.query_row(
-                    "SELECT 1 FROM triples WHERE subject = ?1 AND retracted = 0 LIMIT 1",
-                    rusqlite::params![prop.value],
-                    |_| Ok(()),
-                ).is_ok();
+                let entity_exists_flag = conn
+                    .query_row(
+                        "SELECT 1 FROM triples WHERE subject = ?1 AND retracted = 0 LIMIT 1",
+                        rusqlite::params![prop.value],
+                        |_| Ok(()),
+                    )
+                    .is_ok();
 
                 nodes.push(GraphNode {
                     id: prop.value.clone(),
@@ -535,11 +728,19 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     }
 
     let t_graph_nodes = std::time::Instant::now();
-    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: graph nodes {}ms", t_graph_nodes.duration_since(t_cardinality).as_millis()));
+    crate::commands::logging::log_backend(
+        "debug",
+        &format!(
+            "[INSPECTOR] {individual_id}: graph nodes {}ms",
+            t_graph_nodes.duration_since(t_cardinality).as_millis()
+        ),
+    );
 
     let backlink_source_iris: Vec<String> = {
         let mut seen = std::collections::HashSet::new();
-        individual.backlinks.iter()
+        individual
+            .backlinks
+            .iter()
             .map(|b| b.subject.clone())
             .filter(|s| seen.insert(s.clone()))
             .collect()
@@ -547,38 +748,47 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
 
     let source_things = crate::owl::Thing::get_batch(conn, &backlink_source_iris);
 
-    let unique_class_iris: Vec<String> = individual.backlinks.iter()
+    let unique_class_iris: Vec<String> = individual
+        .backlinks
+        .iter()
         .filter_map(|b| b.source_class.clone())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
     let class_things = crate::owl::Thing::get_batch(conn, &unique_class_iris);
 
-    let mut prop_cache: HashMap<
-        String,
-        (String, Option<String>, Vec<crate::owl::DomainLabel>),
-    > = HashMap::new();
+    let mut prop_cache: HashMap<String, (String, Option<String>, Vec<crate::owl::DomainLabel>)> =
+        HashMap::new();
     {
-        let unique_prop_iris: std::collections::HashSet<String> = individual.backlinks.iter()
+        let unique_prop_iris: std::collections::HashSet<String> = individual
+            .backlinks
+            .iter()
             .map(|b| b.predicate.clone())
             .collect();
         for prop_iri in unique_prop_iris {
-            let (label, comment, domain_labels) = if let Ok(Some(prop)) =
-                Property::get(conn, &prop_iri)
-            {
-                (prop.label.unwrap_or_else(|| prop_iri.clone()), prop.comment, prop.domain_labels)
-            } else {
-                (prop_iri.clone(), None, vec![])
-            };
+            let (label, comment, domain_labels) =
+                if let Ok(Some(prop)) = Property::get(conn, &prop_iri) {
+                    (
+                        prop.label.unwrap_or_else(|| prop_iri.clone()),
+                        prop.comment,
+                        prop.domain_labels,
+                    )
+                } else {
+                    (prop_iri.clone(), None, vec![])
+                };
             prop_cache.insert(prop_iri, (label, comment, domain_labels));
         }
     }
 
-    let source_status_iris = crate::eavto::query::get_first_iri_property_batch(
-        conn, &backlink_source_iris, "foundation:hasStatus",
-    ).unwrap_or_default();
+    let source_status_iris = crate::owl::get_first_iri_property_batch(
+        conn,
+        &backlink_source_iris,
+        "foundation:hasStatus",
+    )
+    .unwrap_or_default();
 
-    let unique_status_iris: Vec<String> = source_status_iris.values()
+    let unique_status_iris: Vec<String> = source_status_iris
+        .values()
         .cloned()
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
@@ -587,19 +797,24 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     for status_iri in unique_status_iris {
         if owl::is_instance_of(conn, &status_iri, "foundation:Status") {
             let status_thing = crate::owl::Thing::get(conn, &status_iri);
-            let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
-            status_cache.insert(status_iri.clone(), StatusInfo {
-                iri: status_iri,
-                label: status_thing.label,
-                icon,
-                color,
-            });
+            let (icon, color) =
+                crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
+            status_cache.insert(
+                status_iri.clone(),
+                StatusInfo {
+                    iri: status_iri,
+                    label: status_thing.label,
+                    icon,
+                    color,
+                },
+            );
         }
     }
 
     for b in &individual.backlinks {
         if !added_node_ids.contains(&b.subject) {
-            let thing = source_things.get(&b.subject)
+            let thing = source_things
+                .get(&b.subject)
                 .cloned()
                 .unwrap_or_else(|| crate::owl::Thing::get(conn, &b.subject));
             nodes.push(GraphNode {
@@ -613,11 +828,18 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             added_node_ids.insert(b.subject.clone());
         }
 
-        let prop_label = prop_cache.get(&b.predicate)
+        let prop_label = prop_cache
+            .get(&b.predicate)
             .map(|(l, _, dls)| {
-                b.source_class.as_deref()
+                b.source_class
+                    .as_deref()
                     .and_then(|cls| dls.iter().find(|dl| dl.domain == cls))
-                    .map(|dl| dl.inverse_label.as_deref().unwrap_or(&dl.forward_label).to_string())
+                    .map(|dl| {
+                        dl.inverse_label
+                            .as_deref()
+                            .unwrap_or(&dl.forward_label)
+                            .to_string()
+                    })
                     .unwrap_or_else(|| l.clone())
             })
             .unwrap_or_else(|| b.predicate.clone());
@@ -645,10 +867,13 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     // (last_tx = cursor_tx AND subject > cursor_subject)` expects.
     let mut group_cursor: HashMap<(String, Option<String>), Option<BacklinkCursor>> = {
         // Per group: (items_seen, min_last_tx, max_subject_at_min_tx, group_total)
-        let mut counts: HashMap<(String, Option<String>), (usize, i64, String, usize)> = HashMap::new();
+        let mut counts: HashMap<(String, Option<String>), (usize, i64, String, usize)> =
+            HashMap::new();
         for b in &individual.backlinks {
             let key = (b.predicate.clone(), b.source_class.clone());
-            let entry = counts.entry(key).or_insert((0, i64::MAX, String::new(), b.group_total));
+            let entry = counts
+                .entry(key)
+                .or_insert((0, i64::MAX, String::new(), b.group_total));
             if entry.0 < BACKLINK_PAGE_SIZE {
                 entry.0 += 1;
                 if b.last_tx < entry.1 {
@@ -659,39 +884,57 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
                 }
             }
         }
-        counts.into_iter().map(|(key, (_, min_tx, boundary_subject, total))| {
-            let cursor = if total > BACKLINK_PAGE_SIZE {
-                Some(BacklinkCursor { last_tx: min_tx, subject: boundary_subject })
-            } else {
-                None
-            };
-            (key, cursor)
-        }).collect()
+        counts
+            .into_iter()
+            .map(|(key, (_, min_tx, boundary_subject, total))| {
+                let cursor = if total > BACKLINK_PAGE_SIZE {
+                    Some(BacklinkCursor {
+                        last_tx: min_tx,
+                        subject: boundary_subject,
+                    })
+                } else {
+                    None
+                };
+                (key, cursor)
+            })
+            .collect()
     };
 
     let backlinks: Vec<PropertyValue> = Vec::new();
     for b in &individual.backlinks {
         let (property_label, property_comment) = {
             let cached = prop_cache.get(&b.predicate);
-            let resolved_label = b.source_class.as_deref()
-                .and_then(|cls| cached.and_then(|(_, _, dls)| {
-                    dls.iter().find(|dl| dl.domain == cls)
-                        .or_else(|| dls.iter().find(|dl| dl.domain == "owl:Thing"))
-                }))
-                .map(|dl| dl.inverse_label.as_deref().unwrap_or(&dl.forward_label).to_string())
+            let resolved_label = b
+                .source_class
+                .as_deref()
+                .and_then(|cls| {
+                    cached.and_then(|(_, _, dls)| {
+                        dls.iter()
+                            .find(|dl| dl.domain == cls)
+                            .or_else(|| dls.iter().find(|dl| dl.domain == "owl:Thing"))
+                    })
+                })
+                .map(|dl| {
+                    dl.inverse_label
+                        .as_deref()
+                        .unwrap_or(&dl.forward_label)
+                        .to_string()
+                })
                 .or_else(|| cached.map(|(l, _, _)| l.clone()))
                 .unwrap_or_else(|| b.predicate.clone());
             let comment = cached.and_then(|(_, c, _)| c.clone());
             (resolved_label, comment)
         };
 
-        let source_thing = source_things.get(&b.subject)
+        let source_thing = source_things
+            .get(&b.subject)
             .cloned()
             .unwrap_or_else(|| crate::owl::Thing::get(conn, &b.subject));
 
         let (source_class_iri, source_class_label) = match &b.source_class {
             Some(class_iri) => {
-                let label = class_things.get(class_iri)
+                let label = class_things
+                    .get(class_iri)
                     .map(|t| t.label.clone())
                     .unwrap_or_else(|| class_iri.clone());
                 (Some(class_iri.clone()), Some(label))
@@ -699,7 +942,8 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             None => (None, None),
         };
 
-        let value_status = source_status_iris.get(&b.subject)
+        let value_status = source_status_iris
+            .get(&b.subject)
             .and_then(|status_iri| status_cache.get(status_iri))
             .cloned();
 
@@ -738,18 +982,28 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
             ai_behavior_rules: None,
             query_config: None,
             is_property_picker: None,
+            depends_on_property: None,
+            is_secret: None,
         });
     }
 
     let t_backlinks = std::time::Instant::now();
-    crate::commands::logging::log_backend("debug", &format!("[INSPECTOR] {individual_id}: backlinks section {}ms", t_backlinks.duration_since(t_graph_nodes).as_millis()));
+    crate::commands::logging::log_backend(
+        "debug",
+        &format!(
+            "[INSPECTOR] {individual_id}: backlinks section {}ms",
+            t_backlinks.duration_since(t_graph_nodes).as_millis()
+        ),
+    );
 
     let status = resolve_entity_status(conn, &properties);
 
     let mut required_fields: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for type_thing in &individual.types {
-        if let Ok(restrictions) = crate::owl::cardinality::get_class_cardinality_restrictions(conn, &type_thing.iri) {
+        if let Ok(restrictions) =
+            crate::owl::cardinality::get_class_cardinality_restrictions(conn, &type_thing.iri)
+        {
             for r in restrictions {
                 if r.is_required() && seen.insert(r.property_iri.clone()) {
                     required_fields.push(r.property_iri);
@@ -761,23 +1015,33 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
     let mut allowed_statuses: Vec<StatusInfo> = Vec::new();
     let mut seen_status_iris = std::collections::HashSet::new();
     for type_thing in &individual.types {
-        let status_iris = crate::owl::get_all_iri_properties(conn, &type_thing.iri, "foundation:allowedStatus")
-            .unwrap_or_default();
+        let status_iris =
+            crate::owl::get_all_iri_properties(conn, &type_thing.iri, "foundation:allowedStatus")
+                .unwrap_or_default();
         for status_iri in status_iris {
             if seen_status_iris.insert(status_iri.clone()) {
                 let thing = crate::owl::Thing::get(conn, &status_iri);
-                let (icon, color) = crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
-                allowed_statuses.push(StatusInfo { iri: status_iri, label: thing.label, icon, color });
+                let (icon, color) =
+                    crate::core_ontology::status::resolve_status_appearance(conn, &status_iri);
+                allowed_statuses.push(StatusInfo {
+                    iri: status_iri,
+                    label: thing.label,
+                    icon,
+                    color,
+                });
             }
         }
     }
 
     let t_tail = std::time::Instant::now();
-    crate::commands::logging::log_backend("debug", &format!(
-        "[INSPECTOR] {individual_id}: tail (status+required+allowed) {}ms | TOTAL {}ms",
-        t_tail.duration_since(t_backlinks).as_millis(),
-        t_tail.duration_since(t0).as_millis(),
-    ));
+    crate::commands::logging::log_backend(
+        "debug",
+        &format!(
+            "[INSPECTOR] {individual_id}: tail (status+required+allowed) {}ms | TOTAL {}ms",
+            t_tail.duration_since(t_backlinks).as_millis(),
+            t_tail.duration_since(t0).as_millis(),
+        ),
+    );
 
     Ok(EntityData {
         id: individual_id.to_string(),
@@ -803,4 +1067,3 @@ pub(super) fn get_individual_data(conn: &Connection, individual_id: &str, groups
         snapshot_tx: 0,
     })
 }
-

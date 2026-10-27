@@ -4,7 +4,10 @@ use tokio::runtime::Handle;
 
 use crate::ai::functions::{execute_async_tool, execute_tool, is_async_tool, ToolCall};
 use crate::commands::log_backend;
-use crate::owl::{get_all_property_values, get_iri_property, get_literal_property, replace_all_property_iris, replace_all_property_literals, DbExecutor};
+use crate::owl::{
+    get_all_property_values, get_iri_property, get_literal_property, replace_all_property_iris,
+    replace_all_property_literals, DbExecutor,
+};
 
 use super::executor::{interpolate, split_iri_lines, ExecutionContext};
 
@@ -43,11 +46,10 @@ pub async fn execute_code_task(
     let app_clone = app.clone();
     let handle = Handle::current();
 
-    let output = tokio::task::spawn_blocking(move || {
-        run_script(&script, &ctx_clone, &app_clone, &handle)
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+    let output =
+        tokio::task::spawn_blocking(move || run_script(&script, &ctx_clone, &app_clone, &handle))
+            .await
+            .map_err(|e| e.to_string())??;
 
     if let (Some(prop), Some(control)) = (output_property_iri, ctx.get("self").cloned()) {
         if !output.is_empty() {
@@ -59,22 +61,37 @@ pub async fn execute_code_task(
                     match split_iri_lines(&out_clone) {
                         Some(iris) => {
                             let refs: Vec<&str> = iris.iter().map(|s| s.as_str()).collect();
-                            replace_all_property_iris(conn, &control, &prop, &refs, "process_automation")
-                                .map_err(|e| e.to_string())?;
+                            replace_all_property_iris(
+                                conn,
+                                &control,
+                                &prop,
+                                &refs,
+                                "process_automation",
+                            )
+                            .map_err(|e| e.to_string())?;
                         }
                         None => {
-                            replace_all_property_literals(conn, &control, &prop, &[out_clone.as_str()], "process_automation")
-                                .map_err(|e| e.to_string())?;
+                            replace_all_property_literals(
+                                conn,
+                                &control,
+                                &prop,
+                                &[out_clone.as_str()],
+                                "process_automation",
+                            )
+                            .map_err(|e| e.to_string())?;
                         }
                     }
                     Ok(String::new())
                 })
                 .await
                 .unwrap_or_else(|e| {
-                    log_backend("error", &format!(
-                        "[code_task] failed to write output to outputProperty {} on {}: {}",
-                        prop_log, control_log, e
-                    ));
+                    log_backend(
+                        "error",
+                        &format!(
+                            "[code_task] failed to write output to outputProperty {} on {}: {}",
+                            prop_log, control_log, e
+                        ),
+                    );
                     String::new()
                 });
         } else {
@@ -166,25 +183,33 @@ const DRY_RUN_WRITE_TOOLS: &[&str] = &[
 
 fn dry_run_mock(tool_name: &str) -> String {
     if tool_name == "assert_individual" {
-        let mock_iri = format!("dryrun:mock_{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0));
+        let mock_iri = format!(
+            "dryrun:mock_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
         serde_json::json!({
             "success": true,
             "result": {"operationsCompleted": 1, "results": [{"iri": mock_iri}]},
             "error": null
-        }).to_string()
+        })
+        .to_string()
     } else if tool_name == "datasync_upsert_item" {
-        let mock_iri = format!("dryrun:mock_{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0));
+        let mock_iri = format!(
+            "dryrun:mock_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
         serde_json::json!({
             "success": true,
             "result": {"entity_iri": mock_iri},
             "error": null
-        }).to_string()
+        })
+        .to_string()
     } else {
         r#"{"success":true,"result":null,"error":null}"#.to_string()
     }
@@ -232,9 +257,15 @@ pub(crate) fn run_script(
         move |tool_name: rhai::ImmutableString, params_json: rhai::ImmutableString| -> String {
             let tool_name = tool_name.to_string();
             if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
-                log_backend("info", &format!("[code_task] dry_run: intercepted write tool '{}'", tool_name));
-                let params_val: serde_json::Value = serde_json::from_str(params_json.as_str())
-                    .unwrap_or(serde_json::Value::Null);
+                log_backend(
+                    "info",
+                    &format!(
+                        "[code_task] dry_run: intercepted write tool '{}'",
+                        tool_name
+                    ),
+                );
+                let params_val: serde_json::Value =
+                    serde_json::from_str(params_json.as_str()).unwrap_or(serde_json::Value::Null);
                 DRY_RUN_INTERCEPTED.with(|cell| {
                     cell.borrow_mut().push(serde_json::json!({
                         "tool": tool_name,
@@ -243,9 +274,12 @@ pub(crate) fn run_script(
                 });
                 return dry_run_mock(&tool_name);
             }
-            let args: serde_json::Value = serde_json::from_str(&params_json)
-                .unwrap_or(serde_json::Value::Null);
-            let call = ToolCall { name: tool_name, arguments: args };
+            let args: serde_json::Value =
+                serde_json::from_str(&params_json).unwrap_or(serde_json::Value::Null);
+            let call = ToolCall {
+                name: tool_name,
+                arguments: args,
+            };
             let executor = app.state::<DbExecutor>();
             let app_inner = app.clone();
             if is_async_tool(&call.name) {
@@ -256,7 +290,8 @@ pub(crate) fn run_script(
                     "error": r.error,
                 }))
                 .unwrap_or_else(|e| {
-                    serde_json::json!({"success": false, "result": null, "error": e.to_string()}).to_string()
+                    serde_json::json!({"success": false, "result": null, "error": e.to_string()})
+                        .to_string()
                 })
             } else {
                 handle
@@ -270,7 +305,8 @@ pub(crate) fn run_script(
                         .map_err(|e| e.to_string())
                     }))
                     .unwrap_or_else(|e| {
-                        serde_json::json!({"success": false, "result": null, "error": e}).to_string()
+                        serde_json::json!({"success": false, "result": null, "error": e})
+                            .to_string()
                     })
             }
         }
@@ -278,20 +314,29 @@ pub(crate) fn run_script(
 
     engine.register_fn("ctx_get", {
         let ctx = ctx.clone();
-        move |key: rhai::ImmutableString| -> String { ctx.get(key.as_str()).cloned().unwrap_or_default() }
+        move |key: rhai::ImmutableString| -> String {
+            ctx.get(key.as_str()).cloned().unwrap_or_default()
+        }
     });
 
-    engine.register_fn("parse_json", |json_str: rhai::ImmutableString| -> rhai::Dynamic {
-        let v: serde_json::Value = serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
-        json_value_to_dynamic(v)
-    });
+    engine.register_fn(
+        "parse_json",
+        |json_str: rhai::ImmutableString| -> rhai::Dynamic {
+            let v: serde_json::Value =
+                serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
+            json_value_to_dynamic(v)
+        },
+    );
 
-    engine.register_fn("join", |arr: rhai::Array, sep: rhai::ImmutableString| -> String {
-        arr.iter()
-            .map(|d| d.clone().try_cast::<String>().unwrap_or_default())
-            .collect::<Vec<_>>()
-            .join(sep.as_str())
-    });
+    engine.register_fn(
+        "join",
+        |arr: rhai::Array, sep: rhai::ImmutableString| -> String {
+            arr.iter()
+                .map(|d| d.clone().try_cast::<String>().unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join(sep.as_str())
+        },
+    );
 
     engine.register_fn("owl_get_property", {
         let app = app.clone();
@@ -368,7 +413,13 @@ pub(crate) fn run_script(
         move |class_iri: rhai::ImmutableString, label: rhai::ImmutableString| -> String {
             let tool_name = "assert_individual".to_string();
             if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
-                log_backend("info", &format!("[code_task] dry_run: intercepted owl_assert for class {}", class_iri));
+                log_backend(
+                    "info",
+                    &format!(
+                        "[code_task] dry_run: intercepted owl_assert for class {}",
+                        class_iri
+                    ),
+                );
                 DRY_RUN_INTERCEPTED.with(|cell| {
                     cell.borrow_mut().push(serde_json::json!({
                         "tool": "owl_assert",
@@ -380,7 +431,10 @@ pub(crate) fn run_script(
             let args = serde_json::json!({
                 "operations": [{"class_iri": class_iri.as_str(), "label": label.as_str()}]
             });
-            let call = ToolCall { name: tool_name, arguments: args };
+            let call = ToolCall {
+                name: tool_name,
+                arguments: args,
+            };
             let executor = app.state::<DbExecutor>();
             let app_inner = app.clone();
             let result_json = handle
@@ -396,8 +450,12 @@ pub(crate) fn run_script(
                 .unwrap_or_else(|e| {
                     serde_json::json!({"success": false, "result": null, "error": e}).to_string()
                 });
-            let v: serde_json::Value = serde_json::from_str(&result_json).unwrap_or(serde_json::Value::Null);
-            v["result"]["results"][0]["iri"].as_str().unwrap_or("").to_string()
+            let v: serde_json::Value =
+                serde_json::from_str(&result_json).unwrap_or(serde_json::Value::Null);
+            v["result"]["results"][0]["iri"]
+                .as_str()
+                .unwrap_or("")
+                .to_string()
         }
     });
 
@@ -440,7 +498,10 @@ pub(crate) fn run_script(
 fn extract_rhai_message(err: rhai::EvalAltResult) -> String {
     match err {
         rhai::EvalAltResult::ErrorRuntime(val, _) => {
-            let s = val.clone().try_cast::<String>().unwrap_or_else(|| val.to_string());
+            let s = val
+                .clone()
+                .try_cast::<String>()
+                .unwrap_or_else(|| val.to_string());
             if s.is_empty() {
                 "Script runtime error".to_string()
             } else {
@@ -458,9 +519,12 @@ mod tests {
     fn test_engine(ctx: ExecutionContext) -> rhai::Engine {
         let mut engine = rhai::Engine::new();
         engine.set_max_operations(1_000_000);
-        engine.register_fn("mcp", |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String {
-            r#"{"success":true,"result":null,"error":null}"#.to_string()
-        });
+        engine.register_fn(
+            "mcp",
+            |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String {
+                r#"{"success":true,"result":null,"error":null}"#.to_string()
+            },
+        );
         engine.register_fn("ctx_get", move |key: rhai::ImmutableString| -> String {
             ctx.get(key.as_str()).cloned().unwrap_or_default()
         });
@@ -511,8 +575,13 @@ mod tests {
     fn script_sandbox_enforces_operation_limit() {
         let mut engine = rhai::Engine::new();
         engine.set_max_operations(100);
-        engine.register_fn("ctx_get", |_: rhai::ImmutableString| -> String { String::new() });
-        engine.register_fn("mcp", |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String { String::new() });
+        engine.register_fn("ctx_get", |_: rhai::ImmutableString| -> String {
+            String::new()
+        });
+        engine.register_fn(
+            "mcp",
+            |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String { String::new() },
+        );
         let result = engine.eval::<rhai::Dynamic>("loop {}");
         assert!(result.is_err());
     }
@@ -521,13 +590,16 @@ mod tests {
         let mut engine = rhai::Engine::new();
         engine.set_max_operations(1_000_000);
         let dry_run = ctx.get("dryRun").map(|v| v == "true").unwrap_or(false);
-        engine.register_fn("mcp", move |tool_name: rhai::ImmutableString, _params: rhai::ImmutableString| -> String {
-            if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
-                dry_run_mock(tool_name.as_str())
-            } else {
-                r#"{"success":true,"result":{"live":true},"error":null}"#.to_string()
-            }
-        });
+        engine.register_fn(
+            "mcp",
+            move |tool_name: rhai::ImmutableString, _params: rhai::ImmutableString| -> String {
+                if dry_run && DRY_RUN_WRITE_TOOLS.contains(&tool_name.as_str()) {
+                    dry_run_mock(tool_name.as_str())
+                } else {
+                    r#"{"success":true,"result":{"live":true},"error":null}"#.to_string()
+                }
+            },
+        );
         engine.register_fn("ctx_get", move |key: rhai::ImmutableString| -> String {
             ctx.get(key.as_str()).cloned().unwrap_or_default()
         });
@@ -550,7 +622,11 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(v["success"].as_bool().unwrap());
         let iri = v["result"]["results"][0]["iri"].as_str().unwrap();
-        assert!(iri.starts_with("dryrun:mock_"), "expected dryrun IRI, got: {}", iri);
+        assert!(
+            iri.starts_with("dryrun:mock_"),
+            "expected dryrun IRI, got: {}",
+            iri
+        );
     }
 
     #[test]
@@ -571,9 +647,7 @@ mod tests {
         let mut ctx = ExecutionContext::new();
         ctx.insert("dryRun".to_string(), "true".to_string());
         let engine = test_engine_dry_run(ctx);
-        let result: String = engine
-            .eval(r#"mcp("search", "{}")"#)
-            .unwrap();
+        let result: String = engine.eval(r#"mcp("search", "{}")"#).unwrap();
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(v["result"]["live"].as_bool().unwrap());
     }
@@ -582,9 +656,7 @@ mod tests {
     fn without_dry_run_write_tools_pass_through() {
         let ctx = ExecutionContext::new();
         let engine = test_engine_dry_run(ctx);
-        let result: String = engine
-            .eval(r#"mcp("assert_individual", "{}")"#)
-            .unwrap();
+        let result: String = engine.eval(r#"mcp("assert_individual", "{}")"#).unwrap();
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(v["result"]["live"].as_bool().unwrap());
     }
@@ -593,18 +665,22 @@ mod tests {
     fn extract_rhai_message_returns_thrown_string_without_position_noise() {
         let mut engine = rhai::Engine::new();
         engine.set_max_operations(1_000_000);
-        let err = engine.eval::<rhai::Dynamic>(r#"throw "validation failed""#)
+        let err = engine
+            .eval::<rhai::Dynamic>(r#"throw "validation failed""#)
             .unwrap_err();
         let msg = extract_rhai_message(*err);
-        assert_eq!(msg, "validation failed", "expected clean message, got: {}", msg);
+        assert_eq!(
+            msg, "validation failed",
+            "expected clean message, got: {}",
+            msg
+        );
     }
 
     #[test]
     fn extract_rhai_message_non_runtime_falls_back_to_display() {
         let mut engine = rhai::Engine::new();
         engine.set_max_operations(1_000_000);
-        let err = engine.eval::<rhai::Dynamic>("let x = ;")
-            .unwrap_err();
+        let err = engine.eval::<rhai::Dynamic>("let x = ;").unwrap_err();
         let msg = extract_rhai_message(*err);
         assert!(!msg.is_empty(), "expected non-empty fallback message");
     }
@@ -625,9 +701,7 @@ mod tests {
     fn to_json_serializes_array() {
         let ctx = ExecutionContext::new();
         let engine = test_engine(ctx);
-        let result: String = engine
-            .eval(r#"to_json([1, "two", true])"#)
-            .unwrap();
+        let result: String = engine.eval(r#"to_json([1, "two", true])"#).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed[0].as_i64().unwrap(), 1);
         assert_eq!(parsed[1].as_str().unwrap(), "two");

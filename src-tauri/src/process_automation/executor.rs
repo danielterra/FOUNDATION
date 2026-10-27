@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex};
 use chrono::Utc;
 use futures_util::FutureExt;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::log_backend;
@@ -16,11 +16,15 @@ impl ActiveExecutions {
     }
 
     fn insert(&self, iri: &str) {
-        if let Ok(mut set) = self.0.lock() { set.insert(iri.to_string()); }
+        if let Ok(mut set) = self.0.lock() {
+            set.insert(iri.to_string());
+        }
     }
 
     fn remove(&self, iri: &str) {
-        if let Ok(mut set) = self.0.lock() { set.remove(iri); }
+        if let Ok(mut set) = self.0.lock() {
+            set.remove(iri);
+        }
     }
 
     fn contains(&self, iri: &str) -> bool {
@@ -29,7 +33,7 @@ impl ActiveExecutions {
 }
 
 use super::context::{evaluate_condition, reachable_from};
-pub use super::context::{ExecutionContext, FlowMap, interpolate};
+pub use super::context::{interpolate, ExecutionContext, FlowMap};
 pub use super::template_render::interpolate_with_db;
 
 type Result<T> = std::result::Result<T, String>;
@@ -71,13 +75,23 @@ fn load_flow_nodes(
     for sf_iri in &seq_flow_iris {
         let source = query::get_by_entity_predicate(conn, sf_iri, "foundation:sourceRef")
             .map_err(|e| e.to_string())?
-            .triples.first().and_then(|t| t.object.as_iri()).map(|s| s.to_string());
+            .triples
+            .first()
+            .and_then(|t| t.object.as_iri())
+            .map(|s| s.to_string());
         let target = query::get_by_entity_predicate(conn, sf_iri, "foundation:targetRef")
             .map_err(|e| e.to_string())?
-            .triples.first().and_then(|t| t.object.as_iri()).map(|s| s.to_string());
-        let condition = query::get_by_entity_predicate(conn, sf_iri, "foundation:conditionExpression")
-            .map_err(|e| e.to_string())?
-            .triples.first().and_then(|t| t.object.as_literal()).map(|s| s.to_string());
+            .triples
+            .first()
+            .and_then(|t| t.object.as_iri())
+            .map(|s| s.to_string());
+        let condition =
+            query::get_by_entity_predicate(conn, sf_iri, "foundation:conditionExpression")
+                .map_err(|e| e.to_string())?
+                .triples
+                .first()
+                .and_then(|t| t.object.as_literal())
+                .map(|s| s.to_string());
         if let (Some(src), Some(tgt)) = (source, target) {
             adjacency.entry(src).or_default().push((tgt, condition));
         }
@@ -112,13 +126,13 @@ fn load_flow_nodes(
         }
     }
 
-    let nodes = ordered.into_iter()
+    let nodes = ordered
+        .into_iter()
         .filter_map(|iri| node_meta.remove(&iri).map(|t| (iri, t)))
         .collect();
 
     Ok((nodes, adjacency))
 }
-
 
 /// Returns the `segwayToNode` IRI for the Segway whose `segwayFromEndEvent` matches `end_event_iri`,
 /// or None if no matching Segway exists on the SubProcess node.
@@ -127,23 +141,32 @@ fn resolve_segway(
     subprocess_iri: &str,
     end_event_iri: &str,
 ) -> Result<Option<String>> {
-    let segway_result = query::get_by_entity_predicate(conn, subprocess_iri, "foundation:hasSegway")
-        .map_err(|e| e.to_string())?;
+    let segway_result =
+        query::get_by_entity_predicate(conn, subprocess_iri, "foundation:hasSegway")
+            .map_err(|e| e.to_string())?;
 
     for triple in &segway_result.triples {
-        let Some(segway_iri) = triple.object.as_iri() else { continue };
+        let Some(segway_iri) = triple.object.as_iri() else {
+            continue;
+        };
 
-        let from_event = query::get_by_entity_predicate(conn, segway_iri, "foundation:segwayFromEndEvent")
-            .map_err(|e| e.to_string())?;
-        let matches = from_event.triples.first()
+        let from_event =
+            query::get_by_entity_predicate(conn, segway_iri, "foundation:segwayFromEndEvent")
+                .map_err(|e| e.to_string())?;
+        let matches = from_event
+            .triples
+            .first()
             .and_then(|t| t.object.as_iri())
             .map(|iri| iri == end_event_iri)
             .unwrap_or(false);
 
         if matches {
-            let to_node = query::get_by_entity_predicate(conn, segway_iri, "foundation:segwayToNode")
-                .map_err(|e| e.to_string())?;
-            return Ok(to_node.triples.first()
+            let to_node =
+                query::get_by_entity_predicate(conn, segway_iri, "foundation:segwayToNode")
+                    .map_err(|e| e.to_string())?;
+            return Ok(to_node
+                .triples
+                .first()
                 .and_then(|t| t.object.as_iri())
                 .map(|s| s.to_string()));
         }
@@ -151,10 +174,12 @@ fn resolve_segway(
     Ok(None)
 }
 
-
 /// Normalises a full type IRI to the bare task kind, stripping the `automation_` prefix.
 fn normalize_node_type(full_type: &str) -> &str {
-    let local = full_type.rsplit_once(':').map(|(_, l)| l).unwrap_or(full_type);
+    let local = full_type
+        .rsplit_once(':')
+        .map(|(_, l)| l)
+        .unwrap_or(full_type);
     local.strip_prefix("automation_").unwrap_or(local)
 }
 
@@ -162,10 +187,7 @@ const STATUS_IN_PROGRESS: &str = "foundation:InProgress";
 const STATUS_COMPLETED: &str = "foundation:Completed";
 const STATUS_FAILED: &str = "foundation:Status_1772993026091";
 
-fn create_execution_record(
-    conn: &mut rusqlite::Connection,
-    process_iri: &str,
-) -> Result<String> {
+fn create_execution_record(conn: &mut rusqlite::Connection, process_iri: &str) -> Result<String> {
     let now_ms = Utc::now().timestamp_millis();
     let exec_iri = format!("foundation:WorkflowExecution_{}", now_ms);
     let process_label = crate::owl::get_literal_property(conn, process_iri, "rdfs:label")
@@ -174,17 +196,35 @@ fn create_execution_record(
         .unwrap_or_else(|| process_iri.to_string());
     let exec_label = format!("Execution: {}", process_label);
     let ind = Individual::new(&exec_iri);
-    ind.assert(conn, "foundation:WorkflowExecution", &exec_label, "play_circle", "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:executesProcess",
-        vec![Object::Iri(process_iri.to_string())], "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:hasStatus",
-        vec![Object::Iri(STATUS_IN_PROGRESS.to_string())], "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:hasStartTime",
-        vec![lit_datetime(now_ms)], "process_automation")
-        .map_err(|e| e.to_string())?;
+    ind.assert(
+        conn,
+        "foundation:WorkflowExecution",
+        &exec_label,
+        "play_circle",
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:executesProcess",
+        vec![Object::Iri(process_iri.to_string())],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:hasStatus",
+        vec![Object::Iri(STATUS_IN_PROGRESS.to_string())],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:hasStartTime",
+        vec![lit_datetime(now_ms)],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
     Ok(exec_iri)
 }
 
@@ -208,7 +248,10 @@ fn create_control_instance(
         ))?;
 
     let now_ms = Utc::now().timestamp_millis();
-    let class_local = class_iri.rsplit_once(':').map(|(_, l)| l).unwrap_or(&class_iri);
+    let class_local = class_iri
+        .rsplit_once(':')
+        .map(|(_, l)| l)
+        .unwrap_or(&class_iri);
     let instance_iri = format!("foundation:{}__{}", class_local, now_ms);
 
     let process_label = crate::owl::get_literal_property(conn, process_iri, "rdfs:label")
@@ -217,29 +260,65 @@ fn create_control_instance(
         .unwrap_or_else(|| process_iri.to_string());
 
     let ind = Individual::new(&instance_iri);
-    ind.assert(conn, &class_iri, &process_label, "play_circle", "process_automation")
-        .map_err(|e| e.to_string())?;
-    Individual::add_iri_value(conn, &instance_iri, "foundation:hasStatus", STATUS_IN_PROGRESS, "process_automation")
-        .map_err(|e| e.to_string())?;
-    Individual::add_iri_value(conn, &instance_iri, "foundation:executesProcess", process_iri, "process_automation")
-        .map_err(|e| e.to_string())?;
+    ind.assert(
+        conn,
+        &class_iri,
+        &process_label,
+        "play_circle",
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    Individual::add_iri_value(
+        conn,
+        &instance_iri,
+        "foundation:hasStatus",
+        STATUS_IN_PROGRESS,
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:startedAt",
+        vec![lit_datetime(now_ms)],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    Individual::add_iri_value(
+        conn,
+        &instance_iri,
+        "foundation:executesProcess",
+        process_iri,
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
 
     Individual::new(exec_iri)
-        .add_property(conn, "foundation:controlInstance",
-            vec![Object::Iri(instance_iri.clone())], "process_automation")
+        .add_property(
+            conn,
+            "foundation:controlInstance",
+            vec![Object::Iri(instance_iri.clone())],
+            "process_automation",
+        )
         .map_err(|e| e.to_string())?;
 
     Ok(instance_iri)
 }
 
 fn lit_datetime(ms: i64) -> Object {
-    let dt = chrono::DateTime::from_timestamp_millis(ms)
-        .unwrap_or_else(chrono::Utc::now);
-    Object::Literal { value: dt.to_rfc3339(), datatype: Some("xsd:dateTime".to_string()), language: None }
+    let dt = chrono::DateTime::from_timestamp_millis(ms).unwrap_or_else(chrono::Utc::now);
+    Object::Literal {
+        value: dt.to_rfc3339(),
+        datatype: Some("xsd:dateTime".to_string()),
+        language: None,
+    }
 }
 
 fn lit_str(v: &str) -> Object {
-    Object::Literal { value: v.to_string(), datatype: Some("xsd:string".to_string()), language: None }
+    Object::Literal {
+        value: v.to_string(),
+        datatype: Some("xsd:string".to_string()),
+        language: None,
+    }
 }
 
 pub(super) fn looks_like_iri(s: &str) -> bool {
@@ -253,7 +332,12 @@ pub(super) fn looks_like_iri(s: &str) -> bool {
 /// edges, so `foundation:Task_123` is left intact while `` `foundation:Task_123` ``
 /// becomes `foundation:Task_123`.
 pub(super) fn strip_token_punctuation(s: &str) -> &str {
-    s.trim_matches(|c: char| matches!(c, '`' | '\'' | '"' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | '.' | ';' | ':'))
+    s.trim_matches(|c: char| {
+        matches!(
+            c,
+            '`' | '\'' | '"' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | '.' | ';' | ':'
+        )
+    })
 }
 
 /// Parses `controlInstanceDefaults` JSON from `start_event_iri` and writes each key→value
@@ -267,24 +351,29 @@ fn seed_control_instance_defaults(
     instance_iri: &str,
     start_event_iri: &str,
 ) -> Result<()> {
-    let defaults_json = match crate::owl::get_literal_property(conn, start_event_iri, "foundation:controlInstanceDefaults")
-        .map_err(|e| e.to_string())?
+    let defaults_json = match crate::owl::get_literal_property(
+        conn,
+        start_event_iri,
+        "foundation:controlInstanceDefaults",
+    )
+    .map_err(|e| e.to_string())?
     {
         Some(v) if !v.trim().is_empty() => v,
         _ => return Ok(()),
     };
 
-    let map: std::collections::HashMap<String, serde_json::Value> =
-        match serde_json::from_str(&defaults_json) {
-            Ok(m) => m,
-            Err(e) => {
-                log_backend("warn", &format!(
+    let map: std::collections::HashMap<String, serde_json::Value> = match serde_json::from_str(
+        &defaults_json,
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            log_backend("warn", &format!(
                     "[executor] invalid controlInstanceDefaults JSON in {}: {} — instance created without defaults",
                     start_event_iri, e
                 ));
-                return Ok(());
-            }
-        };
+            return Ok(());
+        }
+    };
 
     for (prop_iri, val) in &map {
         let value_str = match val {
@@ -295,11 +384,23 @@ fn seed_control_instance_defaults(
             continue;
         }
         if looks_like_iri(&value_str) {
-            crate::owl::replace_all_property_iris(conn, instance_iri, prop_iri, &[value_str.as_str()], "process_automation")
-                .map_err(|e| e.to_string())?;
+            crate::owl::replace_all_property_iris(
+                conn,
+                instance_iri,
+                prop_iri,
+                &[value_str.as_str()],
+                "process_automation",
+            )
+            .map_err(|e| e.to_string())?;
         } else {
-            crate::owl::replace_all_property_literals(conn, instance_iri, prop_iri, &[value_str.as_str()], "process_automation")
-                .map_err(|e| e.to_string())?;
+            crate::owl::replace_all_property_literals(
+                conn,
+                instance_iri,
+                prop_iri,
+                &[value_str.as_str()],
+                "process_automation",
+            )
+            .map_err(|e| e.to_string())?;
         }
     }
 
@@ -332,32 +433,66 @@ fn create_step_record(
     let now_ms = Utc::now().timestamp_millis();
     let step_iri = format!("foundation:StepExecution_{}", now_ms);
     let ind = Individual::new(&step_iri);
-    ind.assert(conn, "foundation:StepExecution", node_label, "check_circle", "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:executesStep",
-        vec![Object::Iri(node_iri.to_string())], "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:belongsToExecution",
-        vec![Object::Iri(exec_iri.to_string())], "process_automation")
-        .map_err(|e| e.to_string())?;
+    ind.assert(
+        conn,
+        "foundation:StepExecution",
+        node_label,
+        "check_circle",
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:executesStep",
+        vec![Object::Iri(node_iri.to_string())],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:belongsToExecution",
+        vec![Object::Iri(exec_iri.to_string())],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
     if let Some(ci) = control_instance_iri {
-        ind.add_property(conn, "foundation:controlInstance",
-            vec![Object::Iri(ci.to_string())], "process_automation")
-            .map_err(|e| e.to_string())?;
+        ind.add_property(
+            conn,
+            "foundation:controlInstance",
+            vec![Object::Iri(ci.to_string())],
+            "process_automation",
+        )
+        .map_err(|e| e.to_string())?;
     }
-    ind.add_property(conn, "foundation:hasStatus",
-        vec![Object::Iri(STATUS_IN_PROGRESS.to_string())], "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:stepStartedAt",
-        vec![lit_datetime(now_ms)], "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:hasStartTime",
-        vec![lit_datetime(now_ms)], "process_automation")
-        .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:hasStatus",
+        vec![Object::Iri(STATUS_IN_PROGRESS.to_string())],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:stepStartedAt",
+        vec![lit_datetime(now_ms)],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:hasStartTime",
+        vec![lit_datetime(now_ms)],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
 
     Individual::new(exec_iri)
-        .append_property(conn, "foundation:hasStepExecutions",
-            vec![Object::Iri(step_iri.clone())], "process_automation")
+        .append_property(
+            conn,
+            "foundation:hasStepExecutions",
+            vec![Object::Iri(step_iri.clone())],
+            "process_automation",
+        )
         .map_err(|e| e.to_string())?;
 
     Ok(step_iri)
@@ -371,30 +506,52 @@ fn finish_step_record(
 ) -> Result<String> {
     let ind = Individual::new(step_iri);
     let now_ms = Utc::now().timestamp_millis();
-    let status = if error.is_some() { STATUS_FAILED } else { STATUS_COMPLETED };
-    ind.add_property(conn, "foundation:hasStatus",
-        vec![Object::Iri(status.to_string())], "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:stepFinishedAt",
-        vec![lit_datetime(now_ms)], "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:hasEndTime",
-        vec![lit_datetime(now_ms)], "process_automation")
-        .map_err(|e| e.to_string())?;
+    let status = if error.is_some() {
+        STATUS_FAILED
+    } else {
+        STATUS_COMPLETED
+    };
+    ind.add_property(
+        conn,
+        "foundation:hasStatus",
+        vec![Object::Iri(status.to_string())],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:stepFinishedAt",
+        vec![lit_datetime(now_ms)],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:hasEndTime",
+        vec![lit_datetime(now_ms)],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
     if let Some(val) = output.filter(|v| !v.is_empty()) {
         match split_iri_lines(val) {
             Some(iris) => {
-                let iri_objects: Vec<Object> = iris.into_iter()
-                    .map(Object::Iri)
-                    .collect();
-                ind.add_property(conn, "foundation:executionOutput",
-                    iri_objects, "process_automation")
-                    .map_err(|e| e.to_string())?;
+                let iri_objects: Vec<Object> = iris.into_iter().map(Object::Iri).collect();
+                ind.add_property(
+                    conn,
+                    "foundation:executionOutput",
+                    iri_objects,
+                    "process_automation",
+                )
+                .map_err(|e| e.to_string())?;
             }
             None => {
-                ind.add_property(conn, "foundation:executionSummary",
-                    vec![lit_str(val)], "process_automation")
-                    .map_err(|e| e.to_string())?;
+                ind.add_property(
+                    conn,
+                    "foundation:executionSummary",
+                    vec![lit_str(val)],
+                    "process_automation",
+                )
+                .map_err(|e| e.to_string())?;
                 let embedded_iris: Vec<Object> = val
                     .split_whitespace()
                     .filter_map(|token| {
@@ -405,21 +562,33 @@ fn finish_step_record(
                         let exists = crate::owl::get_iri_property(conn, clean, "rdf:type")
                             .map(|opt| opt.is_some())
                             .unwrap_or(false);
-                        if exists { Some(Object::Iri(clean.to_string())) } else { None }
+                        if exists {
+                            Some(Object::Iri(clean.to_string()))
+                        } else {
+                            None
+                        }
                     })
                     .collect();
                 if !embedded_iris.is_empty() {
-                    ind.add_property(conn, "foundation:executionOutput",
-                        embedded_iris, "process_automation")
-                        .map_err(|e| e.to_string())?;
+                    ind.add_property(
+                        conn,
+                        "foundation:executionOutput",
+                        embedded_iris,
+                        "process_automation",
+                    )
+                    .map_err(|e| e.to_string())?;
                 }
             }
         }
     }
     if let Some(msg) = error {
-        ind.add_property(conn, "foundation:stepError",
-            vec![lit_str(msg)], "process_automation")
-            .map_err(|e| e.to_string())?;
+        ind.add_property(
+            conn,
+            "foundation:stepError",
+            vec![lit_str(msg)],
+            "process_automation",
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(step_iri.to_string())
 }
@@ -430,25 +599,49 @@ fn finish_execution_record(
     error: Option<&str>,
 ) -> Result<String> {
     let ind = Individual::new(exec_iri);
-    let status = if error.is_some() { STATUS_FAILED } else { STATUS_COMPLETED };
-    ind.add_property(conn, "foundation:hasStatus",
-        vec![Object::Iri(status.to_string())], "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:hasEndTime",
-        vec![lit_datetime(Utc::now().timestamp_millis())], "process_automation")
-        .map_err(|e| e.to_string())?;
+    let status = if error.is_some() {
+        STATUS_FAILED
+    } else {
+        STATUS_COMPLETED
+    };
+    ind.add_property(
+        conn,
+        "foundation:hasStatus",
+        vec![Object::Iri(status.to_string())],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:hasEndTime",
+        vec![lit_datetime(Utc::now().timestamp_millis())],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
     if let Some(msg) = error {
-        ind.add_property(conn, "foundation:errorMessage",
-            vec![Object::Literal { value: msg.to_string(), datatype: Some("xsd:string".to_string()), language: None }],
-            "process_automation")
-            .map_err(|e| e.to_string())?;
+        ind.add_property(
+            conn,
+            "foundation:errorMessage",
+            vec![Object::Literal {
+                value: msg.to_string(),
+                datatype: Some("xsd:string".to_string()),
+                language: None,
+            }],
+            "process_automation",
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(exec_iri.to_string())
 }
 
 /// Runs a BPMN process from the start, threading outputs through an ExecutionContext.
 /// Set `dry_run = true` to execute read operations normally but skip all writes in CodeTask scripts.
-pub async fn run_process(app: &AppHandle, process_iri: &str, input_iri: Option<String>, dry_run: bool) -> Result<()> {
+pub async fn run_process(
+    app: &AppHandle,
+    process_iri: &str,
+    input_iri: Option<String>,
+    dry_run: bool,
+) -> Result<()> {
     let mut ctx = ExecutionContext::new();
     if let Some(iri) = input_iri {
         ctx.insert("inputIRIs".to_string(), iri);
@@ -456,16 +649,24 @@ pub async fn run_process(app: &AppHandle, process_iri: &str, input_iri: Option<S
     if dry_run {
         ctx.insert("dryRun".to_string(), "true".to_string());
     }
-    run_process_with_context(app, process_iri, &mut ctx).await.map(|_| ())
+    run_process_with_context(app, process_iri, &mut ctx)
+        .await
+        .map(|_| ())
 }
 
 /// Runs a BPMN process triggered by a TimerStartEvent, seeding controlInstanceDefaults
 /// onto the newly-created control instance before the first node executes.
 /// Only timer-triggered dispatches go through this path; external/manual runs use run_process.
-pub async fn run_process_from_timer(app: &AppHandle, process_iri: &str, start_event_iri: &str) -> Result<()> {
+pub async fn run_process_from_timer(
+    app: &AppHandle,
+    process_iri: &str,
+    start_event_iri: &str,
+) -> Result<()> {
     let mut ctx = ExecutionContext::new();
     ctx.insert("__timerStartEvent".to_string(), start_event_iri.to_string());
-    run_process_with_context(app, process_iri, &mut ctx).await.map(|_| ())
+    run_process_with_context(app, process_iri, &mut ctx)
+        .await
+        .map(|_| ())
 }
 
 /// Runs a BPMN process, propagating and updating the provided execution context.
@@ -486,19 +687,23 @@ pub async fn run_process_with_context(
                 let exec_iri = create_execution_record(conn, &process_iri)?;
                 if let Some(iri) = triggered_by {
                     Individual::new(&exec_iri)
-                        .add_property(conn, "foundation:triggeredBy",
-                            vec![Object::Iri(iri)], "process_automation")
+                        .add_property(
+                            conn,
+                            "foundation:triggeredBy",
+                            vec![Object::Iri(iri)],
+                            "process_automation",
+                        )
                         .map_err(|e| e.to_string())?;
                 }
-                let control_instance_iri = match create_control_instance(conn, &exec_iri, &process_iri) {
-                    Ok(iri) => iri,
-                    Err(e) => {
-                        let _ = finish_execution_record(conn, &exec_iri, Some(&e));
-                        return Err(e);
-                    }
-                };
-                serde_json::to_string(&(exec_iri, control_instance_iri))
-                    .map_err(|e| e.to_string())
+                let control_instance_iri =
+                    match create_control_instance(conn, &exec_iri, &process_iri) {
+                        Ok(iri) => iri,
+                        Err(e) => {
+                            let _ = finish_execution_record(conn, &exec_iri, Some(&e));
+                            return Err(e);
+                        }
+                    };
+                serde_json::to_string(&(exec_iri, control_instance_iri)).map_err(|e| e.to_string())
             }
         })
         .await?;
@@ -517,11 +722,20 @@ pub async fn run_process_with_context(
             .await?;
     }
 
-    if let Err(e) = app.emit("automation-execution-started", serde_json::json!({
-        "processIri": process_iri,
-        "executionIri": exec_iri,
-    })) {
-        log_backend("warn", &format!("[executor] Failed to emit automation-execution-started for {}: {}", process_iri, e));
+    if let Err(e) = app.emit(
+        "automation-execution-started",
+        serde_json::json!({
+            "processIri": process_iri,
+            "executionIri": exec_iri,
+        }),
+    ) {
+        log_backend(
+            "warn",
+            &format!(
+                "[executor] Failed to emit automation-execution-started for {}: {}",
+                process_iri, e
+            ),
+        );
     }
 
     if let Some(active) = app.try_state::<ActiveExecutions>() {
@@ -535,7 +749,17 @@ pub async fn run_process_with_context(
         })
         .await?;
 
-    let run_result = execute_nodes(app, &process_iri, &exec_iri, nodes, adjacency, ctx, HashSet::new(), None).await;
+    let run_result = execute_nodes(
+        app,
+        &process_iri,
+        &exec_iri,
+        nodes,
+        adjacency,
+        ctx,
+        HashSet::new(),
+        None,
+    )
+    .await;
 
     if let Some(active) = app.try_state::<ActiveExecutions>() {
         active.remove(&exec_iri);
@@ -548,9 +772,19 @@ pub async fn run_process_with_context(
             let error = run_result.as_ref().err().cloned();
             move |conn| {
                 finish_execution_record(conn, &exec_iri, error.as_deref())?;
-                let terminal_status = if error.is_none() { STATUS_COMPLETED } else { STATUS_FAILED };
-                crate::owl::replace_all_property_iris(conn, &control_instance_iri, "foundation:hasStatus", &[terminal_status], "process_automation")
-                    .map_err(|e| e.to_string())?;
+                let terminal_status = if error.is_none() {
+                    STATUS_COMPLETED
+                } else {
+                    STATUS_FAILED
+                };
+                crate::owl::replace_all_property_iris(
+                    conn,
+                    &control_instance_iri,
+                    "foundation:hasStatus",
+                    &[terminal_status],
+                    "process_automation",
+                )
+                .map_err(|e| e.to_string())?;
                 Ok(exec_iri)
             }
         })
@@ -562,24 +796,38 @@ pub async fn run_process_with_context(
         let process_iri_notif = process_iri.clone();
         executor
             .write(move |conn| {
-                let label = crate::owl::get_literal_property(conn, &process_iri_notif, "rdfs:label")
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| process_iri_notif.clone());
+                let label =
+                    crate::owl::get_literal_property(conn, &process_iri_notif, "rdfs:label")
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| process_iri_notif.clone());
                 create_failure_notification(conn, &exec_iri_notif, &label, &error_msg)
             })
             .await
             .ok();
     }
 
-    let finished_status = if run_result.is_ok() { "completed" } else { "failed" };
-    if let Err(e) = app.emit("automation-execution-finished", serde_json::json!({
-        "processIri": process_iri,
-        "executionIri": exec_iri,
-        "status": finished_status,
-        "error": run_result.as_ref().err().map(|e| e.as_str()),
-    })) {
-        log_backend("warn", &format!("[executor] Failed to emit automation-execution-finished for {}: {}", process_iri, e));
+    let finished_status = if run_result.is_ok() {
+        "completed"
+    } else {
+        "failed"
+    };
+    if let Err(e) = app.emit(
+        "automation-execution-finished",
+        serde_json::json!({
+            "processIri": process_iri,
+            "executionIri": exec_iri,
+            "status": finished_status,
+            "error": run_result.as_ref().err().map(|e| e.as_str()),
+        }),
+    ) {
+        log_backend(
+            "warn",
+            &format!(
+                "[executor] Failed to emit automation-execution-finished for {}: {}",
+                process_iri, e
+            ),
+        );
     }
 
     run_result
@@ -591,32 +839,54 @@ fn create_failure_notification(
     process_label: &str,
     error: &str,
 ) -> Result<String> {
-    let notif_iri = format!("foundation:AINotification_{}", chrono::Utc::now().timestamp_millis());
+    let notif_iri = format!(
+        "foundation:AINotification_{}",
+        chrono::Utc::now().timestamp_millis()
+    );
     let title = format!("Automation failed: {}", process_label);
     let ind = Individual::new(&notif_iri);
-    ind.assert(conn, "foundation:AINotification", &title, "notifications_active", "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:notificationType",
-        vec![lit_str("error")], "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "rdfs:comment",
-        vec![lit_str(error)], "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:notificationSource",
-        vec![Object::Iri(exec_iri.to_string())], "process_automation")
-        .map_err(|e| e.to_string())?;
-    ind.add_property(conn, "foundation:hasStatus",
-        vec![Object::Iri("foundation:Pending".to_string())], "process_automation")
-        .map_err(|e| e.to_string())?;
+    ind.assert(
+        conn,
+        "foundation:AINotification",
+        &title,
+        "notifications_active",
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:notificationType",
+        vec![lit_str("error")],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "rdfs:comment",
+        vec![lit_str(error)],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:notificationSource",
+        vec![Object::Iri(exec_iri.to_string())],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:hasStatus",
+        vec![Object::Iri("foundation:Pending".to_string())],
+        "process_automation",
+    )
+    .map_err(|e| e.to_string())?;
     Ok(notif_iri)
 }
 
 /// Looks up an ErrorHandler individual whose `foundation:appliesTo` points to `node_iri`.
 /// Returns the `foundation:fallbackNode` IRI from that handler, if one exists.
-fn resolve_error_handler(
-    conn: &rusqlite::Connection,
-    node_iri: &str,
-) -> Result<Option<String>> {
+fn resolve_error_handler(conn: &rusqlite::Connection, node_iri: &str) -> Result<Option<String>> {
     let handlers = query::get_by_predicate_object(conn, "foundation:appliesTo", node_iri)
         .map_err(|e| e.to_string())?;
 
@@ -624,7 +894,9 @@ fn resolve_error_handler(
         let handler_iri = &triple.subject;
         let type_result = query::get_by_entity_predicate(conn, handler_iri, "rdf:type")
             .map_err(|e| e.to_string())?;
-        let is_error_handler = type_result.triples.first()
+        let is_error_handler = type_result
+            .triples
+            .first()
             .and_then(|t| t.object.as_iri())
             .map(|iri| iri == "foundation:ErrorHandler")
             .unwrap_or(false);
@@ -688,7 +960,13 @@ async fn execute_nodes(
         }
 
         if kind == "EndEvent" {
-            log_backend("info", &format!("[executor] Process {} reached EndEvent {}", process_iri, node_iri));
+            log_backend(
+                "info",
+                &format!(
+                    "[executor] Process {} reached EndEvent {}",
+                    process_iri, node_iri
+                ),
+            );
             return Ok(Some(node_iri));
         }
 
@@ -696,11 +974,13 @@ async fn execute_nodes(
             .read({
                 let node_iri = node_iri.clone();
                 move |conn| {
-                    Ok(query::get_by_entity_predicate(conn, &node_iri, "rdfs:label")
-                        .ok()
-                        .and_then(|r| r.triples.into_iter().next())
-                        .and_then(|t| t.object.as_literal().map(|s| s.to_string()))
-                        .unwrap_or_else(|| node_iri.clone()))
+                    Ok(
+                        query::get_by_entity_predicate(conn, &node_iri, "rdfs:label")
+                            .ok()
+                            .and_then(|r| r.triples.into_iter().next())
+                            .and_then(|t| t.object.as_literal().map(|s| s.to_string()))
+                            .unwrap_or_else(|| node_iri.clone()),
+                    )
                 }
             })
             .await
@@ -708,16 +988,24 @@ async fn execute_nodes(
 
         let control_instance_iri = ctx.get("self").cloned();
         let iteration_of = ctx.get("__iterationOf").cloned();
-        let iteration_index: Option<usize> = ctx.get("__iterationIndex")
-            .and_then(|v| v.parse().ok());
-        let iteration_total: Option<usize> = ctx.get("__iterationTotal")
-            .and_then(|v| v.parse().ok());
+        let iteration_index: Option<usize> =
+            ctx.get("__iterationIndex").and_then(|v| v.parse().ok());
+        let iteration_total: Option<usize> =
+            ctx.get("__iterationTotal").and_then(|v| v.parse().ok());
         let step_iri = executor
             .write({
                 let exec_iri = exec_iri.to_string();
                 let node_iri = node_iri.clone();
                 let node_label = node_label.clone();
-                move |conn| create_step_record(conn, &exec_iri, &node_iri, &node_label, control_instance_iri.as_deref())
+                move |conn| {
+                    create_step_record(
+                        conn,
+                        &exec_iri,
+                        &node_iri,
+                        &node_label,
+                        control_instance_iri.as_deref(),
+                    )
+                }
             })
             .await?;
 
@@ -744,52 +1032,59 @@ async fn execute_nodes(
         {
             let step = step_iri.clone();
             let ctx_json = serde_json::to_string(ctx).unwrap_or_default();
-            let skip_json = serde_json::to_string(&skip_set.iter().collect::<Vec<_>>()).unwrap_or_default();
-            executor.write(move |conn| {
-                let triples = vec![
-                    crate::eavto::Triple::new(
-                        &step,
-                        "foundation:inputContext",
-                        Object::Literal { value: ctx_json, datatype: Some("xsd:string".to_string()), language: None },
-                    ),
-                    crate::eavto::Triple::new(
-                        &step,
-                        "foundation:inputSkipSet",
-                        Object::Literal { value: skip_json, datatype: Some("xsd:string".to_string()), language: None },
-                    ),
-                ];
-                crate::eavto::store::assert_triples(conn, &triples, "process_automation")
-                    .map(|_| String::new())
-                    .map_err(|e| e.to_string())
-            }).await.ok();
+            let skip_json =
+                serde_json::to_string(&skip_set.iter().collect::<Vec<_>>()).unwrap_or_default();
+            executor
+                .write(move |conn| {
+                    let triples = vec![
+                        crate::eavto::Triple::new(
+                            &step,
+                            "foundation:inputContext",
+                            Object::Literal {
+                                value: ctx_json,
+                                datatype: Some("xsd:string".to_string()),
+                                language: None,
+                            },
+                        ),
+                        crate::eavto::Triple::new(
+                            &step,
+                            "foundation:inputSkipSet",
+                            Object::Literal {
+                                value: skip_json,
+                                datatype: Some("xsd:string".to_string()),
+                                language: None,
+                            },
+                        ),
+                    ];
+                    crate::eavto::store::assert_triples(conn, &triples, "process_automation")
+                        .map(|_| String::new())
+                        .map_err(|e| e.to_string())
+                })
+                .await
+                .ok();
         }
 
         let step_result = match kind {
-            "RequestTask" => {
-                super::request_task::execute_request_task(app, &node_iri, ctx).await
-            }
-            "CodeTask" => {
-                super::code_task::execute_code_task(app, &node_iri, ctx).await
-            }
+            "RequestTask" => super::request_task::execute_request_task(app, &node_iri, ctx).await,
+            "CodeTask" => super::code_task::execute_code_task(app, &node_iri, ctx).await,
             "ServiceTask" | "ScriptTask" => {
                 dispatch_ai_task(app, process_iri, &node_iri, &node_type, ctx).await
             }
             "AgentTask" => {
-                super::agent_task::execute_agent_task(app, &node_iri, ctx, &step_iri, exec_iri).await
+                super::agent_task::execute_agent_task(app, &node_iri, ctx, &step_iri, exec_iri)
+                    .await
             }
             "NOVAMessageTask" => {
                 super::nova_message_task::execute_nova_message_task(app, &node_iri, ctx)
                     .await
                     .map(|_| String::new())
             }
-            "TemplateTask" => {
-                super::template_task::execute_template_task(app, &node_iri, ctx)
-                    .await
-                    .map(|_| String::new())
-            }
-            "SubProcess" => {
-                run_sub_process(app, process_iri, &node_iri, ctx).await.map(|_| String::new())
-            }
+            "TemplateTask" => super::template_task::execute_template_task(app, &node_iri, ctx)
+                .await
+                .map(|_| String::new()),
+            "SubProcess" => run_sub_process(app, process_iri, &node_iri, ctx)
+                .await
+                .map(|_| String::new()),
             "Gateway" => {
                 let outgoing = adjacency.get(&node_iri).cloned().unwrap_or_default();
 
@@ -805,33 +1100,52 @@ async fn execute_nodes(
                     }
                 }
                 if taken.is_none() {
-                    taken = outgoing.iter().find(|(_, cond)| cond.is_none()).map(|(t, _)| t.clone());
+                    taken = outgoing
+                        .iter()
+                        .find(|(_, cond)| cond.is_none())
+                        .map(|(t, _)| t.clone());
                 }
 
                 if let Some(ref taken_target) = taken {
                     let taken_reachable = reachable_from(taken_target, &adjacency);
                     for (other_target, _) in &outgoing {
-                        if other_target == taken_target { continue; }
+                        if other_target == taken_target {
+                            continue;
+                        }
                         for node in reachable_from(other_target, &adjacency) {
                             if !taken_reachable.contains(&node) {
                                 skip_set.insert(node);
                             }
                         }
                     }
-                    log_backend("info", &format!(
-                        "[executor] Gateway {} → {} (skipping {} nodes)",
-                        node_iri, taken_target, skip_set.len()
-                    ));
+                    log_backend(
+                        "info",
+                        &format!(
+                            "[executor] Gateway {} → {} (skipping {} nodes)",
+                            node_iri,
+                            taken_target,
+                            skip_set.len()
+                        ),
+                    );
                 } else {
-                    log_backend("warn", &format!(
-                        "[executor] Gateway {} — no condition matched, executing all branches",
-                        node_iri
-                    ));
+                    log_backend(
+                        "warn",
+                        &format!(
+                            "[executor] Gateway {} — no condition matched, executing all branches",
+                            node_iri
+                        ),
+                    );
                 }
                 Ok(String::new())
             }
             _ => {
-                log_backend("warn", &format!("[executor] Skipping unhandled node type {} ({})", node_type, node_iri));
+                log_backend(
+                    "warn",
+                    &format!(
+                        "[executor] Skipping unhandled node type {} ({})",
+                        node_type, node_iri
+                    ),
+                );
                 Ok(String::new())
             }
         };
@@ -860,6 +1174,19 @@ async fn execute_nodes(
                 if let Err(timeout_msg) = worker.await_drained(ci_iri).await {
                     return Err(timeout_msg);
                 }
+            }
+            // Then the same for formula/aggregation properties. Query properties go
+            // first because a resolved query set is what several aggregates count
+            // over — draining formulas first would total an empty set.
+            //
+            // Without this second barrier, a node that writes a value and a next node
+            // that reads a total derived from it disagree: the total is one step
+            // behind, and nothing in the read says so.
+            if let Err(timeout_msg) =
+                crate::owl::formula_worker::FormulaWorker::await_drained(app, &executor, ci_iri)
+                    .await
+            {
+                return Err(timeout_msg);
             }
         }
 
@@ -893,10 +1220,13 @@ async fn execute_nodes(
                 .await?;
 
             if let Some(fallback_iri) = fallback {
-                log_backend("info", &format!(
-                    "[executor] Node {} failed — ErrorHandler routing to {}",
-                    node_iri, fallback_iri
-                ));
+                log_backend(
+                    "info",
+                    &format!(
+                        "[executor] Node {} failed — ErrorHandler routing to {}",
+                        node_iri, fallback_iri
+                    ),
+                );
                 ctx.insert(SEGWAY_NEXT_KEY.to_string(), fallback_iri);
                 continue;
             }
@@ -933,13 +1263,18 @@ async fn execute_nodes(
         // downstream gateways can evaluate conditions against it.
         // Tries IRI first (ObjectProperty), then literal (DatatypeProperty).
         let node_iri_read = node_iri.clone();
-        if let Ok(Some(val)) = executor.read(move |conn| {
-            if let Ok(Some(v)) = crate::owl::get_iri_property(conn, &node_iri_read, "foundation:outputIRIs") {
-                return Ok(Some(v));
-            }
-            crate::owl::get_literal_property(conn, &node_iri_read, "foundation:outputIRIs")
-                .map_err(|e| e.to_string())
-        }).await {
+        if let Ok(Some(val)) = executor
+            .read(move |conn| {
+                if let Ok(Some(v)) =
+                    crate::owl::get_iri_property(conn, &node_iri_read, "foundation:outputIRIs")
+                {
+                    return Ok(Some(v));
+                }
+                crate::owl::get_literal_property(conn, &node_iri_read, "foundation:outputIRIs")
+                    .map_err(|e| e.to_string())
+            })
+            .await
+        {
             ctx.insert("outputIRIs".to_string(), val);
         }
     }
@@ -959,34 +1294,44 @@ async fn run_sub_process(
         .read({
             let node_iri = node_iri.to_string();
             move |conn| {
-                let called = crate::owl::get_iri_property(conn, &node_iri, "foundation:calledElement")
-                    .map_err(|e| e.to_string())?;
-                let loop_collection = crate::owl::get_literal_property(conn, &node_iri, "foundation:loopCollection")
-                    .map_err(|e| e.to_string())?;
-                let is_sequential = crate::owl::get_literal_property(conn, &node_iri, "foundation:isSequential")
-                    .map_err(|e| e.to_string())?
-                    .map(|v| v != "false")
-                    .unwrap_or(true);
-                let max_concurrency = crate::owl::get_literal_property(conn, &node_iri, "foundation:maxConcurrency")
-                    .map_err(|e| e.to_string())?
-                    .and_then(|v| v.parse::<usize>().ok())
-                    .unwrap_or(4);
+                let called =
+                    crate::owl::get_iri_property(conn, &node_iri, "foundation:calledElement")
+                        .map_err(|e| e.to_string())?;
+                let loop_collection =
+                    crate::owl::get_literal_property(conn, &node_iri, "foundation:loopCollection")
+                        .map_err(|e| e.to_string())?;
+                let is_sequential =
+                    crate::owl::get_literal_property(conn, &node_iri, "foundation:isSequential")
+                        .map_err(|e| e.to_string())?
+                        .map(|v| v != "false")
+                        .unwrap_or(true);
+                let max_concurrency =
+                    crate::owl::get_literal_property(conn, &node_iri, "foundation:maxConcurrency")
+                        .map_err(|e| e.to_string())?
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(4);
                 Ok((called, loop_collection, is_sequential, max_concurrency))
             }
         })
         .await?;
 
     let Some(called) = called_iri else {
-        log_backend("warn", &format!(
-            "[executor] SubProcess {} has no calledElement — skipping (parent: {})",
-            node_iri, parent_process_iri
-        ));
+        log_backend(
+            "warn",
+            &format!(
+                "[executor] SubProcess {} has no calledElement — skipping (parent: {})",
+                node_iri, parent_process_iri
+            ),
+        );
         return Ok(());
     };
 
     let Some(collection_predicate) = loop_collection else {
         // Single-instance path: unchanged behaviour.
-        log_backend("info", &format!("[executor] SubProcess {} calling {}", node_iri, called));
+        log_backend(
+            "info",
+            &format!("[executor] SubProcess {} calling {}", node_iri, called),
+        );
         let end_event_iri = Box::pin(run_process_with_context(app, &called, ctx)).await?;
 
         if let Some(ref end_iri) = end_event_iri {
@@ -999,16 +1344,22 @@ async fn run_sub_process(
                 .await?;
 
             if let Some(next_iri) = next_node {
-                log_backend("info", &format!(
-                    "[executor] SubProcess {} routed via EndEvent {} → {}",
-                    node_iri, end_iri, next_iri
-                ));
+                log_backend(
+                    "info",
+                    &format!(
+                        "[executor] SubProcess {} routed via EndEvent {} → {}",
+                        node_iri, end_iri, next_iri
+                    ),
+                );
                 ctx.insert(SEGWAY_NEXT_KEY.to_string(), next_iri);
             } else {
-                log_backend("warn", &format!(
+                log_backend(
+                    "warn",
+                    &format!(
                     "[executor] SubProcess {} has no Segway for EndEvent {} — continuing linearly",
                     node_iri, end_iri
-                ));
+                ),
+                );
             }
         }
 
@@ -1029,17 +1380,27 @@ async fn run_sub_process(
         .await?;
 
     if items.is_empty() {
-        log_backend("info", &format!(
+        log_backend(
+            "info",
+            &format!(
             "[executor] SubProcess {} loop on '{}': collection empty — 0 iterations, continuing",
             node_iri, collection_predicate
-        ));
+        ),
+        );
         return Ok(());
     }
 
-    log_backend("info", &format!(
-        "[executor] SubProcess {} loop on '{}': {} items, sequential={}, max_concurrency={}",
-        node_iri, collection_predicate, items.len(), is_sequential, max_concurrency
-    ));
+    log_backend(
+        "info",
+        &format!(
+            "[executor] SubProcess {} loop on '{}': {} items, sequential={}, max_concurrency={}",
+            node_iri,
+            collection_predicate,
+            items.len(),
+            is_sequential,
+            max_concurrency
+        ),
+    );
 
     // Each iteration result: (child_control_instance_iri_or_empty, optional_error).
     let mut iteration_results: Vec<(String, Option<String>)> = Vec::with_capacity(items.len());
@@ -1052,10 +1413,16 @@ async fn run_sub_process(
             child_ctx.insert("__iterationIndex".to_string(), idx.to_string());
             child_ctx.insert("__iterationTotal".to_string(), items.len().to_string());
 
-            log_backend("info", &format!(
-                "[executor] SubProcess {} loop iteration {}/{}: item={}",
-                node_iri, idx + 1, items.len(), item
-            ));
+            log_backend(
+                "info",
+                &format!(
+                    "[executor] SubProcess {} loop iteration {}/{}: item={}",
+                    node_iri,
+                    idx + 1,
+                    items.len(),
+                    item
+                ),
+            );
 
             let outcome = Box::pin(run_process_with_context(app, &called, &mut child_ctx)).await;
             let child_self = child_ctx.get("self").cloned().unwrap_or_default();
@@ -1063,10 +1430,15 @@ async fn run_sub_process(
             match outcome {
                 Ok(_) => iteration_results.push((child_self, None)),
                 Err(e) => {
-                    log_backend("warn", &format!(
-                        "[executor] SubProcess {} loop iteration {} failed: {}",
-                        node_iri, idx + 1, e
-                    ));
+                    log_backend(
+                        "warn",
+                        &format!(
+                            "[executor] SubProcess {} loop iteration {} failed: {}",
+                            node_iri,
+                            idx + 1,
+                            e
+                        ),
+                    );
                     iteration_results.push((child_self, Some(e)));
                 }
             }
@@ -1091,11 +1463,16 @@ async fn run_sub_process(
                 .collect();
 
             for (i, ctx_ref) in child_ctxs.iter().enumerate() {
-                log_backend("info", &format!(
-                    "[executor] SubProcess {} loop iteration {}/{}: item={}",
-                    node_iri, base_idx + i + 1, total,
-                    ctx_ref.get("inputIRIs").cloned().unwrap_or_default()
-                ));
+                log_backend(
+                    "info",
+                    &format!(
+                        "[executor] SubProcess {} loop iteration {}/{}: item={}",
+                        node_iri,
+                        base_idx + i + 1,
+                        total,
+                        ctx_ref.get("inputIRIs").cloned().unwrap_or_default()
+                    ),
+                );
             }
 
             // Drive all futures in this window concurrently on the current task.
@@ -1128,10 +1505,15 @@ async fn run_sub_process(
                 match outcome {
                     Ok(_) => iteration_results.push((child_self, None)),
                     Err(e) => {
-                        log_backend("warn", &format!(
-                            "[executor] SubProcess {} loop iteration {} failed: {}",
-                            node_iri, base_idx + i + 1, e
-                        ));
+                        log_backend(
+                            "warn",
+                            &format!(
+                                "[executor] SubProcess {} loop iteration {} failed: {}",
+                                node_iri,
+                                base_idx + i + 1,
+                                e
+                            ),
+                        );
                         iteration_results.push((child_self, Some(e)));
                     }
                 }
@@ -1177,24 +1559,31 @@ async fn run_sub_process(
         let job_ids: Vec<String> = serde_json::from_str(&job_ids_json).unwrap_or_default();
         if let Some(worker) = app.try_state::<crate::owl::formula_worker::FormulaWorker>() {
             for job_id in job_ids {
-                let _ = worker.sender.try_send(
-                    crate::owl::formula_worker::WorkerCommand::Enqueue { job_id },
-                );
+                let _ = worker
+                    .sender
+                    .try_send(crate::owl::formula_worker::WorkerCommand::Enqueue { job_id });
             }
         }
     }
 
-    let failure_count = iteration_results.iter().filter(|(_, e)| e.is_some()).count();
+    let failure_count = iteration_results
+        .iter()
+        .filter(|(_, e)| e.is_some())
+        .count();
     if failure_count > 0 {
         log_backend("warn", &format!(
             "[executor] SubProcess {} loop completed: {}/{} iterations failed (errors captured for US3 aggregation)",
             node_iri, failure_count, iteration_results.len()
         ));
     } else {
-        log_backend("info", &format!(
-            "[executor] SubProcess {} loop completed: all {} iterations succeeded",
-            node_iri, iteration_results.len()
-        ));
+        log_backend(
+            "info",
+            &format!(
+                "[executor] SubProcess {} loop completed: all {} iterations succeeded",
+                node_iri,
+                iteration_results.len()
+            ),
+        );
     }
 
     Ok(())
@@ -1237,10 +1626,13 @@ async fn dispatch_ai_task(
 
     let resolved_description = interpolate(&description, ctx);
 
-    log_backend("info", &format!(
-        "[executor] Dispatching {} '{}' ({}) in process {} — description: {}",
-        node_type, label, node_iri, process_iri, resolved_description
-    ));
+    log_backend(
+        "info",
+        &format!(
+            "[executor] Dispatching {} '{}' ({}) in process {} — description: {}",
+            node_type, label, node_iri, process_iri, resolved_description
+        ),
+    );
 
     Ok(format!("output_of_{}", node_iri))
 }
@@ -1252,28 +1644,43 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
         .read({
             let exec_iri = exec_iri.to_string();
             move |conn| {
-                let process_iri = crate::owl::get_iri_property(conn, &exec_iri, "foundation:executesProcess")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("Execution {} has no executesProcess", exec_iri))?;
+                let process_iri =
+                    crate::owl::get_iri_property(conn, &exec_iri, "foundation:executesProcess")
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| format!("Execution {} has no executesProcess", exec_iri))?;
 
-                let step_iris = crate::owl::get_all_iri_properties(conn, &exec_iri, "foundation:hasStepExecutions")
-                    .unwrap_or_default();
+                let step_iris = crate::owl::get_all_iri_properties(
+                    conn,
+                    &exec_iri,
+                    "foundation:hasStepExecutions",
+                )
+                .unwrap_or_default();
 
                 for step_iri in step_iris {
-                    let status = crate::owl::get_iri_property(conn, &step_iri, "foundation:hasStatus")
-                        .map_err(|e| e.to_string())?;
+                    let status =
+                        crate::owl::get_iri_property(conn, &step_iri, "foundation:hasStatus")
+                            .map_err(|e| e.to_string())?;
                     if status.as_deref() != Some("foundation:InProgress") {
                         continue;
                     }
-                    let node_iri = crate::owl::get_iri_property(conn, &step_iri, "foundation:executesStep")
-                        .map_err(|e| e.to_string())?
-                        .ok_or_else(|| format!("Step {} has no executesStep", step_iri))?;
-                    let ctx_json = crate::owl::get_literal_property(conn, &step_iri, "foundation:inputContext")
-                        .map_err(|e| e.to_string())?
-                        .unwrap_or_else(|| "{}".to_string());
-                    let skip_json = crate::owl::get_literal_property(conn, &step_iri, "foundation:inputSkipSet")
-                        .map_err(|e| e.to_string())?
-                        .unwrap_or_else(|| "[]".to_string());
+                    let node_iri =
+                        crate::owl::get_iri_property(conn, &step_iri, "foundation:executesStep")
+                            .map_err(|e| e.to_string())?
+                            .ok_or_else(|| format!("Step {} has no executesStep", step_iri))?;
+                    let ctx_json = crate::owl::get_literal_property(
+                        conn,
+                        &step_iri,
+                        "foundation:inputContext",
+                    )
+                    .map_err(|e| e.to_string())?
+                    .unwrap_or_else(|| "{}".to_string());
+                    let skip_json = crate::owl::get_literal_property(
+                        conn,
+                        &step_iri,
+                        "foundation:inputSkipSet",
+                    )
+                    .map_err(|e| e.to_string())?
+                    .unwrap_or_else(|| "[]".to_string());
                     return Ok(Some((process_iri, step_iri, node_iri, ctx_json, skip_json)));
                 }
                 Ok(None)
@@ -1285,7 +1692,13 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
         executor
             .write({
                 let exec_iri = exec_iri.to_string();
-                move |conn| finish_execution_record(conn, &exec_iri, Some("Interrupted: no recoverable step found"))
+                move |conn| {
+                    finish_execution_record(
+                        conn,
+                        &exec_iri,
+                        Some("Interrupted: no recoverable step found"),
+                    )
+                }
             })
             .await?;
         return Ok(());
@@ -1294,7 +1707,9 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
     executor
         .write({
             let step_iri = step_iri.clone();
-            move |conn| finish_step_record(conn, &step_iri, None, Some("Interrupted: app was closed"))
+            move |conn| {
+                finish_step_record(conn, &step_iri, None, Some("Interrupted: app was closed"))
+            }
         })
         .await?;
 
@@ -1317,16 +1732,25 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
         .await?;
     ctx.insert("self".to_string(), control_self);
 
-    log_backend("info", &format!(
-        "[executor] Resuming execution {} from node {} (skip_set: {} nodes)",
-        exec_iri, node_iri, skip_set.len()
-    ));
+    log_backend(
+        "info",
+        &format!(
+            "[executor] Resuming execution {} from node {} (skip_set: {} nodes)",
+            exec_iri,
+            node_iri,
+            skip_set.len()
+        ),
+    );
 
-    app.emit("automation-execution-started", serde_json::json!({
-        "processIri": process_iri,
-        "executionIri": exec_iri,
-        "resumed": true,
-    })).ok();
+    app.emit(
+        "automation-execution-started",
+        serde_json::json!({
+            "processIri": process_iri,
+            "executionIri": exec_iri,
+            "resumed": true,
+        }),
+    )
+    .ok();
 
     if let Some(active) = app.try_state::<ActiveExecutions>() {
         active.insert(exec_iri);
@@ -1340,8 +1764,14 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
         .await?;
 
     let run_result = execute_nodes(
-        app, &process_iri, exec_iri, nodes, adjacency, &mut ctx,
-        skip_set, Some(node_iri),
+        app,
+        &process_iri,
+        exec_iri,
+        nodes,
+        adjacency,
+        &mut ctx,
+        skip_set,
+        Some(node_iri),
     )
     .await;
 
@@ -1355,23 +1785,43 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
             let error = run_result.as_ref().err().cloned();
             move |conn| {
                 finish_execution_record(conn, &exec_iri, error.as_deref())?;
-                let terminal_status = if error.is_none() { STATUS_COMPLETED } else { STATUS_FAILED };
-                if let Ok(Some(ci_iri)) = crate::owl::get_iri_property(conn, &exec_iri, "foundation:controlInstance") {
-                    crate::owl::replace_all_property_iris(conn, &ci_iri, "foundation:hasStatus", &[terminal_status], "process_automation")
-                        .map_err(|e| e.to_string())?;
+                let terminal_status = if error.is_none() {
+                    STATUS_COMPLETED
+                } else {
+                    STATUS_FAILED
+                };
+                if let Ok(Some(ci_iri)) =
+                    crate::owl::get_iri_property(conn, &exec_iri, "foundation:controlInstance")
+                {
+                    crate::owl::replace_all_property_iris(
+                        conn,
+                        &ci_iri,
+                        "foundation:hasStatus",
+                        &[terminal_status],
+                        "process_automation",
+                    )
+                    .map_err(|e| e.to_string())?;
                 }
                 Ok(exec_iri)
             }
         })
         .await?;
 
-    let finished_status = if run_result.is_ok() { "completed" } else { "failed" };
-    app.emit("automation-execution-finished", serde_json::json!({
-        "processIri": process_iri,
-        "executionIri": exec_iri,
-        "status": finished_status,
-        "error": run_result.as_ref().err().map(|e| e.as_str()),
-    })).ok();
+    let finished_status = if run_result.is_ok() {
+        "completed"
+    } else {
+        "failed"
+    };
+    app.emit(
+        "automation-execution-finished",
+        serde_json::json!({
+            "processIri": process_iri,
+            "executionIri": exec_iri,
+            "status": finished_status,
+            "error": run_result.as_ref().err().map(|e| e.as_str()),
+        }),
+    )
+    .ok();
 
     run_result.map(|_| ())
 }
@@ -1384,11 +1834,17 @@ pub async fn recover_interrupted_executions(app: &AppHandle) {
 
     let exec_iris: Vec<String> = executor
         .read(|conn| {
-            let all = crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:WorkflowExecution")
-                .map_err(|e| e.to_string())?;
+            let all = crate::owl::find_entities_with_property(
+                conn,
+                "rdf:type",
+                "foundation:WorkflowExecution",
+            )
+            .map_err(|e| e.to_string())?;
             let mut in_progress = Vec::new();
             for iri in all {
-                if let Ok(Some(status)) = crate::owl::get_iri_property(conn, &iri, "foundation:hasStatus") {
+                if let Ok(Some(status)) =
+                    crate::owl::get_iri_property(conn, &iri, "foundation:hasStatus")
+                {
                     if status == "foundation:InProgress" {
                         in_progress.push(iri);
                     }
@@ -1412,11 +1868,20 @@ pub async fn recover_interrupted_executions(app: &AppHandle) {
         return;
     }
 
-    log_backend("info", &format!("[executor] Recovering {} interrupted execution(s)", exec_iris.len()));
+    log_backend(
+        "info",
+        &format!(
+            "[executor] Recovering {} interrupted execution(s)",
+            exec_iris.len()
+        ),
+    );
 
     for exec_iri in exec_iris {
         if let Err(e) = resume_workflow_execution(app, &exec_iri).await {
-            log_backend("error", &format!("[executor] Failed to resume execution {}: {}", exec_iri, e));
+            log_backend(
+                "error",
+                &format!("[executor] Failed to resume execution {}: {}", exec_iri, e),
+            );
         }
     }
 }

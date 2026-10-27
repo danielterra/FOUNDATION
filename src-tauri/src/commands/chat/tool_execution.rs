@@ -1,8 +1,8 @@
-use crate::owl::DbExecutor;
-use crate::ai::functions::{execute_async_tool, is_async_tool, ToolCall};
-use crate::commands::chat_storage::{AIConversationMessage, ContentBlock, create_message};
 use super::super::log_backend;
-use super::trace::{TraceStep, make_step};
+use super::trace::{make_step, TraceStep};
+use crate::ai::functions::{execute_async_tool, is_async_tool, ToolCall};
+use crate::commands::chat_storage::{create_message, AIConversationMessage, ContentBlock};
+use crate::owl::DbExecutor;
 use tauri::Emitter;
 
 /// Returns `(tool_result_msg_iri, tool_result_msg, steps)`.
@@ -14,14 +14,18 @@ pub async fn execute_tools_from_message(
     conversation_id: &str,
     assistant_message: &AIConversationMessage,
 ) -> Result<(String, AIConversationMessage, Vec<TraceStep>), String> {
-    let has_any_tool_use = assistant_message.content.iter()
+    let has_any_tool_use = assistant_message
+        .content
+        .iter()
         .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
 
     if !has_any_tool_use {
         return Err("No tool use blocks found in message".to_string());
     }
 
-    let tool_use_ids: Vec<String> = assistant_message.content.iter()
+    let tool_use_ids: Vec<String> = assistant_message
+        .content
+        .iter()
         .filter_map(|b| match b {
             ContentBlock::ToolUse { id, .. } => Some(id.clone()),
             _ => None,
@@ -33,16 +37,23 @@ pub async fn execute_tools_from_message(
     // Single JOIN query per tool_use_id avoids loading all conversation messages (N+1).
     let conv_id_check = conversation_id.to_string();
     let ids_to_check = tool_use_ids;
-    let existing_iri = executor.read(move |conn| {
-        let found = ids_to_check.iter()
-            .find_map(|id| crate::core_ontology::chat::find_tool_result_message_iri(conn, id, &conv_id_check));
-        Ok(found)
-    }).await?;
+    let existing_iri = executor
+        .read(move |conn| {
+            let found = ids_to_check.iter().find_map(|id| {
+                crate::core_ontology::chat::find_tool_result_message_iri(conn, id, &conv_id_check)
+            });
+            Ok(found)
+        })
+        .await?;
 
     if let Some(iri) = existing_iri {
-        log_backend("warn", &format!(
-            "[CHAT] Skipping duplicate tool_result — results already stored in: {}", iri
-        ));
+        log_backend(
+            "warn",
+            &format!(
+                "[CHAT] Skipping duplicate tool_result — results already stored in: {}",
+                iri
+            ),
+        );
         let empty_msg = AIConversationMessage {
             iri: iri.clone(),
             role: "user".to_string(),
@@ -61,13 +72,25 @@ pub async fn execute_tools_from_message(
     let mut trace_steps = Vec::new();
 
     for block in &assistant_message.content {
-        if let ContentBlock::ToolUse { id, name, input, reason } = block {
+        if let ContentBlock::ToolUse {
+            id,
+            name,
+            input,
+            reason,
+        } = block
+        {
             if name == "ask_question" {
                 continue; // answered by user via UI — not executed automatically
             }
             if reason.is_none() {
                 let err_msg = "Missing required 'reason' field. Every tool call MUST include a 'reason' field with a ≤6 word PT-BR description of your intent. Retry the same tool call but include the 'reason' field this time.";
-                log_backend("warn", &format!("[ENGINE] tool '{}' rejected: missing 'reason' (id={})", name, id));
+                log_backend(
+                    "warn",
+                    &format!(
+                        "[ENGINE] tool '{}' rejected: missing 'reason' (id={})",
+                        name, id
+                    ),
+                );
                 trace_steps.push(make_step(0, name, input, err_msg, true, 0));
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: id.clone(),
@@ -77,14 +100,22 @@ pub async fn execute_tools_from_message(
                 });
                 continue;
             }
-            app.emit("ai-status", serde_json::json!({
-                "status": name,
-                "phase": "tool",
-                "conversationId": conversation_id,
-            })).ok();
+            app.emit(
+                "ai-status",
+                serde_json::json!({
+                    "status": name,
+                    "phase": "tool",
+                    "conversationId": conversation_id,
+                }),
+            )
+            .ok();
             let start = std::time::Instant::now();
-            log_backend("info", &format!("[ENGINE] tool '{}' started (id={})", name, id));
-            let (content, is_error) = execute_tool(executor, app, conversation_id, name, input).await;
+            log_backend(
+                "info",
+                &format!("[ENGINE] tool '{}' started (id={})", name, id),
+            );
+            let (content, is_error) =
+                execute_tool(executor, app, conversation_id, name, input).await;
             let duration_ms = start.elapsed().as_millis() as u64;
             log_backend(
                 "info",
@@ -123,7 +154,16 @@ pub async fn execute_tools_from_message(
         return Ok((assistant_message.iri.clone(), empty_msg, trace_steps));
     }
 
-    let iri = create_message(executor, conversation_id, "user", tool_results.clone(), None, None, None).await?;
+    let iri = create_message(
+        executor,
+        conversation_id,
+        "user",
+        tool_results.clone(),
+        None,
+        None,
+        None,
+    )
+    .await?;
 
     let tool_result_msg = AIConversationMessage {
         iri: iri.clone(),
@@ -137,7 +177,11 @@ pub async fn execute_tools_from_message(
         output_tokens: None,
     };
 
-    app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
+    app.emit(
+        "chat-message-added",
+        serde_json::json!({"conversationId": conversation_id}),
+    )
+    .ok();
     Ok((iri, tool_result_msg, trace_steps))
 }
 
@@ -161,10 +205,18 @@ async fn execute_tool(
             Err(e) => return (format!("{{\"success\":false,\"error\":\"{}\"}}", e), true),
         }
     } else {
-        match executor.write(move |conn| {
-            let result = crate::ai::functions::execute_tool(conn, &call, Some(&app_clone), Some(&conv_id));
-            serde_json::to_string(&result).map_err(|e| e.to_string())
-        }).await {
+        match executor
+            .write(move |conn| {
+                let result = crate::ai::functions::execute_tool(
+                    conn,
+                    &call,
+                    Some(&app_clone),
+                    Some(&conv_id),
+                );
+                serde_json::to_string(&result).map_err(|e| e.to_string())
+            })
+            .await
+        {
             Ok(json) => json,
             Err(e) => return (format!("{{\"success\":false,\"error\":\"{}\"}}", e), true),
         }
@@ -217,7 +269,8 @@ async fn execute_tool(
                 }
             }
         }
-        let content = tool_result.result
+        let content = tool_result
+            .result
             .map(|v| serde_json::to_string(&v).unwrap_or_else(|_| v.to_string()))
             .unwrap_or_default();
         (content, false)
@@ -225,4 +278,3 @@ async fn execute_tool(
         (result_json, true)
     }
 }
-

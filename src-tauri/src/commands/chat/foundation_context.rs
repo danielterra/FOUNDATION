@@ -166,7 +166,8 @@ fn render_list(items: &[(String, String, Option<String>)], empty_msg: &str) -> S
     if items.is_empty() {
         return format!("_{}_", empty_msg);
     }
-    items.iter()
+    items
+        .iter()
         .map(|(iri, label, comment)| match comment {
             Some(c) => format!("- `{}` ({}) — {}", iri, label, c),
             None => format!("- `{}` ({})", iri, label),

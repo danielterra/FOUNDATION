@@ -9,8 +9,7 @@
 /// Usage:
 ///   cargo run --bin migrate_retry_count             # dry-run (default)
 ///   cargo run --bin migrate_retry_count -- --apply  # applies the changes
-
-use rusqlite::{Connection, Result, params};
+use rusqlite::{params, Connection, Result};
 use std::path::PathBuf;
 
 fn get_db_path() -> PathBuf {
@@ -21,7 +20,9 @@ fn get_db_path() -> PathBuf {
 }
 
 fn get_or_create_origin(conn: &Connection, name: &str) -> Result<i64> {
-    match conn.query_row("SELECT id FROM origins WHERE name = ?", [name], |row| row.get(0)) {
+    match conn.query_row("SELECT id FROM origins WHERE name = ?", [name], |row| {
+        row.get(0)
+    }) {
         Ok(id) => Ok(id),
         Err(rusqlite::Error::QueryReturnedNoRows) => {
             conn.execute("INSERT INTO origins (name) VALUES (?)", [name])?;
@@ -48,7 +49,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Candidates: current retryCount triples whose datatype is not xsd:integer.
     // "Current" = highest tx for (subject, predicate) and is_current = 1.
     let candidates: Vec<(String, String)> = {
-        let mut stmt = conn.prepare("
+        let mut stmt = conn.prepare(
+            "
             SELECT t.subject, t.object_value
             FROM triples t
             WHERE t.predicate = 'foundation:retryCount'
@@ -60,9 +62,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
               )
               AND (t.object_datatype IS NULL OR t.object_datatype != 'xsd:integer')
             ORDER BY t.subject
-        ")?;
-        let rows: Vec<Result<(String, String)>> =
-            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect();
+        ",
+        )?;
+        let rows: Vec<Result<(String, String)>> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect();
         rows.into_iter().collect::<Result<Vec<_>>>()?
     };
 
@@ -73,7 +77,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     println!("\n{} triple(s) to migrate:\n", candidates.len());
     for (iri, value) in &candidates {
-        println!("  {} | retryCount=\"{}\" (string) → {} (integer)", iri, value, value);
+        println!(
+            "  {} | retryCount=\"{}\" (string) → {} (integer)",
+            iri, value, value
+        );
     }
 
     if !apply_mode {

@@ -1,10 +1,10 @@
 use crate::owl::DbExecutor;
 use crate::owl::{Individual, Object};
-use tauri::State;
+use base64::Engine;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tauri::State;
 use tokio::sync::Mutex;
-use base64::Engine;
 
 pub struct AttachmentData {
     pub mime_type: String,
@@ -33,7 +33,8 @@ pub async fn chat__attach_file(
     mime_type: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
-    let raw = tokio::fs::read(&file_path).await
+    let raw = tokio::fs::read(&file_path)
+        .await
         .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
 
     let token_estimate = if mime_type.starts_with("image/") {
@@ -58,12 +59,14 @@ pub async fn chat__attach_file(
 
     let permanent_path = {
         let attachments_dir = crate::paths::attachments_dir();
-        tokio::fs::create_dir_all(&attachments_dir).await
+        tokio::fs::create_dir_all(&attachments_dir)
+            .await
             .map_err(|e| format!("Failed to create attachments directory: {}", e))?;
         let safe_name = crate::files::sanitize_filename(&file_name);
         attachments_dir.join(format!("{}_{}", timestamp, safe_name))
     };
-    tokio::fs::copy(&file_path, &permanent_path).await
+    tokio::fs::copy(&file_path, &permanent_path)
+        .await
         .map_err(|e| format!("Failed to copy file to attachments folder: {}", e))?;
     // Portable path (e.g. "attachments/123_file.pdf") instead of the raw absolute
     // path so the DB can roam between machines.
@@ -81,79 +84,108 @@ pub async fn chat__attach_file(
     let mime_type_clone = mime_type.clone();
     let iri_clone = iri.clone();
 
-    executor.write(move |conn| {
-        let (class_iri, icon) = if csv_meta.is_some() {
-            ("foundation:CSVFile", "csv")
-        } else {
-            ("foundation:File", "attach_file")
-        };
+    executor
+        .write(move |conn| {
+            let (class_iri, icon) = if csv_meta.is_some() {
+                ("foundation:CSVFile", "csv")
+            } else {
+                ("foundation:File", "attach_file")
+            };
 
-        crate::files::assert_file_individual(conn, &crate::files::FileMetadata {
-            iri: &iri_clone,
-            class_iri,
-            icon,
-            file_name: &file_name_clone,
-            stored_path: &stored_path,
-            size,
-            hash: &hash,
-            mime_type: &mime_type_clone,
-            timestamp_ms: timestamp,
-            origin: "chat",
-        })?;
+            crate::files::assert_file_individual(
+                conn,
+                &crate::files::FileMetadata {
+                    iri: &iri_clone,
+                    class_iri,
+                    icon,
+                    file_name: &file_name_clone,
+                    stored_path: &stored_path,
+                    size,
+                    hash: &hash,
+                    mime_type: &mime_type_clone,
+                    timestamp_ms: timestamp,
+                    origin: "chat",
+                },
+            )?;
 
-        if let Some(ref csv) = csv_meta {
-            let ind = Individual::new(&iri_clone);
+            if let Some(ref csv) = csv_meta {
+                let ind = Individual::new(&iri_clone);
 
-            ind.add_property(conn, "foundation:csvDelimiter", vec![Object::Literal {
-                value: csv.delimiter.clone(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }], "chat").map_err(|e| format!("Failed to set csvDelimiter: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "foundation:csvDelimiter",
+                    vec![Object::Literal {
+                        value: csv.delimiter.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "chat",
+                )
+                .map_err(|e| format!("Failed to set csvDelimiter: {}", e))?;
 
-            ind.add_property(conn, "foundation:csvRowCount",
-                vec![Object::Integer(csv.row_count as i64)], "chat")
+                ind.add_property(
+                    conn,
+                    "foundation:csvRowCount",
+                    vec![Object::Integer(csv.row_count as i64)],
+                    "chat",
+                )
                 .map_err(|e| format!("Failed to set csvRowCount: {}", e))?;
 
-            if !csv.columns.is_empty() {
-                let col_objects: Vec<Object> = csv.columns.iter().map(|c| Object::Literal {
-                    value: c.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }).collect();
-                ind.add_property(conn, "foundation:csvColumns", col_objects, "chat")
-                    .map_err(|e| format!("Failed to set csvColumns: {}", e))?;
+                if !csv.columns.is_empty() {
+                    let col_objects: Vec<Object> = csv
+                        .columns
+                        .iter()
+                        .map(|c| Object::Literal {
+                            value: c.clone(),
+                            datatype: Some("xsd:string".to_string()),
+                            language: None,
+                        })
+                        .collect();
+                    ind.add_property(conn, "foundation:csvColumns", col_objects, "chat")
+                        .map_err(|e| format!("Failed to set csvColumns: {}", e))?;
+                }
             }
-        }
 
-        Ok(iri_clone)
-    }).await?;
+            Ok(iri_clone)
+        })
+        .await?;
 
-    PENDING_ATTACHMENTS.lock().await.insert(iri.clone(), AttachmentData {
-        mime_type,
-        data,
-        file_iri: iri.clone(),
-        file_name: file_name.clone(),
-        token_estimate,
-    });
+    PENDING_ATTACHMENTS.lock().await.insert(
+        iri.clone(),
+        AttachmentData {
+            mime_type,
+            data,
+            file_iri: iri.clone(),
+            file_name: file_name.clone(),
+            token_estimate,
+        },
+    );
 
-    super::log_backend("info", &format!(
-        "[CHAT] Persisted File entity and registered attachment: {} ({})", file_name, iri
-    ));
+    super::log_backend(
+        "info",
+        &format!(
+            "[CHAT] Persisted File entity and registered attachment: {} ({})",
+            file_name, iri
+        ),
+    );
 
     Ok(iri)
 }
 
 pub async fn save_camera_frame(base64_data: &str, index: usize) -> Result<String, String> {
-    let raw = base64::engine::general_purpose::STANDARD.decode(base64_data)
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(base64_data)
         .map_err(|e| format!("Failed to decode camera frame: {}", e))?;
 
     let timestamp = chrono::Utc::now().timestamp_millis();
     let attachments_dir = crate::paths::attachments_dir();
-    tokio::fs::create_dir_all(&attachments_dir).await
+    tokio::fs::create_dir_all(&attachments_dir)
+        .await
         .map_err(|e| format!("Failed to create attachments directory: {}", e))?;
 
     let path = attachments_dir.join(format!("camera_{}_{}.jpg", timestamp, index));
-    tokio::fs::write(&path, &raw).await
+    tokio::fs::write(&path, &raw)
+        .await
         .map_err(|e| format!("Failed to write camera frame: {}", e))?;
 
     // Caller writes this string into foundation:filePath; return portable form.
@@ -176,7 +208,10 @@ pub fn estimate_image_tokens(raw: &[u8]) -> usize {
     let (w, h) = if width > CLAUDE_MAX_IMAGE_DIM || height > CLAUDE_MAX_IMAGE_DIM {
         let scale = (CLAUDE_MAX_IMAGE_DIM as f64 / width as f64)
             .min(CLAUDE_MAX_IMAGE_DIM as f64 / height as f64);
-        ((width as f64 * scale) as usize, (height as f64 * scale) as usize)
+        (
+            (width as f64 * scale) as usize,
+            (height as f64 * scale) as usize,
+        )
     } else {
         (width, height)
     };
@@ -211,13 +246,25 @@ fn parse_csv_metadata(content: &str) -> CsvMetadata {
 
     let header_line = match lines.next() {
         Some(l) => l,
-        None => return CsvMetadata { delimiter: ",".to_string(), columns: vec![], row_count: 0 },
+        None => {
+            return CsvMetadata {
+                delimiter: ",".to_string(),
+                columns: vec![],
+                row_count: 0,
+            }
+        }
     };
 
     let delimiter = detect_delimiter(header_line);
     let columns = split_csv_line(header_line, delimiter)
         .into_iter()
-        .map(|c| c.trim().trim_matches('"').trim_matches('\'').trim().to_string())
+        .map(|c| {
+            c.trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .trim()
+                .to_string()
+        })
         .filter(|c| !c.is_empty())
         .collect();
 
@@ -233,7 +280,9 @@ fn parse_csv_metadata(content: &str) -> CsvMetadata {
 fn detect_delimiter(line: &str) -> char {
     let candidates = [(',', 0usize), (';', 0), ('\t', 0)];
     let counts = candidates.map(|(delim, _)| (delim, line.chars().filter(|&c| c == delim).count()));
-    counts.into_iter().max_by_key(|&(_, count)| count)
+    counts
+        .into_iter()
+        .max_by_key(|&(_, count)| count)
         .filter(|&(_, count)| count > 0)
         .map(|(delim, _)| delim)
         .unwrap_or(',')

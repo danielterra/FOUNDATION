@@ -1,11 +1,11 @@
+use mailparse::MailHeaderMap;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
-use mailparse::MailHeaderMap;
 
-use crate::imap::extractor::{ParsedAttachment, ParsedEmail, store_email};
+use crate::imap::extractor::{store_email, ParsedAttachment, ParsedEmail};
 use crate::owl::{DbExecutor, Individual, Object};
 
 struct FetchedEmail {
@@ -52,9 +52,8 @@ pub async fn start_account_sync(app: AppHandle, account_iri: String) {
 
     let account = match executor
         .read(move |conn| {
-            load_account_configs(conn).map(|accounts| {
-                accounts.into_iter().find(|a| a.iri == account_iri)
-            })
+            load_account_configs(conn)
+                .map(|accounts| accounts.into_iter().find(|a| a.iri == account_iri))
         })
         .await
     {
@@ -83,10 +82,13 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
     let mut failure_count: usize = 0;
 
     loop {
-        let _ = app.emit("imap-sync-started", serde_json::json!({
-            "accountIri": account.iri,
-            "accountLabel": account.username,
-        }));
+        let _ = app.emit(
+            "imap-sync-started",
+            serde_json::json!({
+                "accountIri": account.iri,
+                "accountLabel": account.username,
+            }),
+        );
 
         let account_clone = account.clone();
         let result =
@@ -99,10 +101,27 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
                     let iri = account.iri.clone();
                     executor
                         .write(move |conn| {
-                            Individual::clear_property(conn, &iri, "foundation:lastConnectionError", "imap").ok();
-                            Individual::clear_property(conn, &iri, "foundation:isConnected", "imap").ok();
+                            Individual::clear_property(
+                                conn,
+                                &iri,
+                                "foundation:lastConnectionError",
+                                "imap",
+                            )
+                            .ok();
+                            Individual::clear_property(
+                                conn,
+                                &iri,
+                                "foundation:isConnected",
+                                "imap",
+                            )
+                            .ok();
                             Individual::new(&iri)
-                                .add_property(conn, "foundation:isConnected", vec![bool_lit(true)], "imap")
+                                .add_property(
+                                    conn,
+                                    "foundation:isConnected",
+                                    vec![bool_lit(true)],
+                                    "imap",
+                                )
                                 .map_err(|e| e.to_string())?;
                             Ok(String::new())
                         })
@@ -115,7 +134,11 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
                 for fetched in emails {
                     let account_iri = account.iri.clone();
                     let subject_log = fetched.parsed.subject.chars().take(40).collect::<String>();
-                    let FetchedEmail { folder, uid, parsed } = fetched;
+                    let FetchedEmail {
+                        folder,
+                        uid,
+                        parsed,
+                    } = fetched;
                     let persisted = match executor
                         .write(move |conn| {
                             store_email(conn, &account_iri, &parsed)
@@ -123,9 +146,24 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
                         })
                         .await
                     {
-                        Ok(s) if !s.is_empty() => { stored_count += 1; true }
-                        Ok(_) => { crate::imap::log_error(&format!("IMAP: duplicate skipped: {}", subject_log)); true }
-                        Err(e) => { crate::imap::log_error(&format!("IMAP store_email error: {} — {}", subject_log, e)); false }
+                        Ok(s) if !s.is_empty() => {
+                            stored_count += 1;
+                            true
+                        }
+                        Ok(_) => {
+                            crate::imap::log_error(&format!(
+                                "IMAP: duplicate skipped: {}",
+                                subject_log
+                            ));
+                            true
+                        }
+                        Err(e) => {
+                            crate::imap::log_error(&format!(
+                                "IMAP store_email error: {} — {}",
+                                subject_log, e
+                            ));
+                            false
+                        }
                     };
                     if persisted {
                         seen_uids.entry(folder).or_default().push(uid);
@@ -134,16 +172,21 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
 
                 if !seen_uids.is_empty() {
                     let account_for_seen = account.clone();
-                    tokio::task::spawn_blocking(move || mark_seen_blocking(&account_for_seen, seen_uids))
-                        .await
-                        .ok();
+                    tokio::task::spawn_blocking(move || {
+                        mark_seen_blocking(&account_for_seen, seen_uids)
+                    })
+                    .await
+                    .ok();
                 }
 
-                let _ = app.emit("imap-sync-finished", serde_json::json!({
-                    "accountIri": account.iri,
-                    "accountLabel": account.username,
-                    "storedCount": stored_count,
-                }));
+                let _ = app.emit(
+                    "imap-sync-finished",
+                    serde_json::json!({
+                        "accountIri": account.iri,
+                        "accountLabel": account.username,
+                        "storedCount": stored_count,
+                    }),
+                );
 
                 let account_iri = account.iri.clone();
                 executor
@@ -153,7 +196,9 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
 
                 // After delivering emails, wait for server push notification before fetching again.
                 let account_for_idle = account.clone();
-                tokio::task::spawn_blocking(move || idle_wait_blocking(&account_for_idle)).await.ok();
+                tokio::task::spawn_blocking(move || idle_wait_blocking(&account_for_idle))
+                    .await
+                    .ok();
             }
             err => {
                 let msg = match err {
@@ -164,11 +209,14 @@ async fn run_account_loop(executor: DbExecutor, app: AppHandle, account: Account
 
                 failure_count += 1;
 
-                let _ = app.emit("imap-sync-finished", serde_json::json!({
-                    "accountIri": account.iri,
-                    "accountLabel": account.username,
-                    "error": msg,
-                }));
+                let _ = app.emit(
+                    "imap-sync-finished",
+                    serde_json::json!({
+                        "accountIri": account.iri,
+                        "accountLabel": account.username,
+                        "error": msg,
+                    }),
+                );
 
                 if failure_count >= MAX_FAILURES_BEFORE_ALERT {
                     failure_count = 0;
@@ -211,17 +259,37 @@ fn write_sync_log(
         .assert(conn, "foundation:IMAPSyncLog", &ts_iso, "history", "imap")
         .map_err(|e| format!("synclog: {}", e))?;
     Individual::new(&log_iri)
-        .add_property(conn, "foundation:syncStartedAt", vec![datetime_lit(&ts_iso)], "imap")
+        .add_property(
+            conn,
+            "foundation:syncStartedAt",
+            vec![datetime_lit(&ts_iso)],
+            "imap",
+        )
         .map_err(|e| e.to_string())?;
     Individual::new(&log_iri)
-        .add_property(conn, "foundation:syncEmailsImported", vec![Object::Integer(emails_imported)], "imap")
+        .add_property(
+            conn,
+            "foundation:syncEmailsImported",
+            vec![Object::Integer(emails_imported)],
+            "imap",
+        )
         .map_err(|e| e.to_string())?;
     Individual::new(&log_iri)
-        .add_property(conn, "foundation:syncForAccount", vec![Object::Iri(account_iri.to_string())], "imap")
+        .add_property(
+            conn,
+            "foundation:syncForAccount",
+            vec![Object::Iri(account_iri.to_string())],
+            "imap",
+        )
         .map_err(|e| e.to_string())?;
     if let Some(err) = error {
         Individual::new(&log_iri)
-            .add_property(conn, "foundation:syncErrorMessage", vec![str_lit(err)], "imap")
+            .add_property(
+                conn,
+                "foundation:syncErrorMessage",
+                vec![str_lit(err)],
+                "imap",
+            )
             .map_err(|e| e.to_string())?;
     }
 
@@ -229,7 +297,11 @@ fn write_sync_log(
 }
 
 fn datetime_lit(v: &str) -> Object {
-    Object::Literal { value: v.to_string(), datatype: Some("xsd:dateTime".to_string()), language: None }
+    Object::Literal {
+        value: v.to_string(),
+        datatype: Some("xsd:dateTime".to_string()),
+        language: None,
+    }
 }
 
 fn record_connection_error(
@@ -239,11 +311,21 @@ fn record_connection_error(
 ) -> Result<String, String> {
     Individual::clear_property(conn, account_iri, "foundation:lastConnectionError", "imap").ok();
     Individual::new(account_iri)
-        .add_property(conn, "foundation:lastConnectionError", vec![str_lit(error)], "imap")
+        .add_property(
+            conn,
+            "foundation:lastConnectionError",
+            vec![str_lit(error)],
+            "imap",
+        )
         .map_err(|e| e.to_string())?;
     Individual::clear_property(conn, account_iri, "foundation:isConnected", "imap").ok();
     Individual::new(account_iri)
-        .add_property(conn, "foundation:isConnected", vec![bool_lit(false)], "imap")
+        .add_property(
+            conn,
+            "foundation:isConnected",
+            vec![bool_lit(false)],
+            "imap",
+        )
         .map_err(|e| e.to_string())?;
 
     let ts = chrono::Utc::now().timestamp_millis();
@@ -253,27 +335,50 @@ fn record_connection_error(
         .assert(conn, "foundation:AINotification", title, "warning", "imap")
         .map_err(|e| format!("notif: {}", e))?;
     Individual::new(&notif_iri)
-        .add_property(conn, "foundation:hasStatus", vec![Object::Iri("foundation:Pending".to_string())], "imap")
+        .add_property(
+            conn,
+            "foundation:hasStatus",
+            vec![Object::Iri("foundation:Pending".to_string())],
+            "imap",
+        )
         .map_err(|e| e.to_string())?;
     Individual::new(&notif_iri)
         .add_property(conn, "rdfs:comment", vec![str_lit(error)], "imap")
         .map_err(|e| e.to_string())?;
     Individual::new(&notif_iri)
-        .add_property(conn, "foundation:notificationType", vec![str_lit("imap_connection_error")], "imap")
+        .add_property(
+            conn,
+            "foundation:notificationType",
+            vec![str_lit("imap_connection_error")],
+            "imap",
+        )
         .map_err(|e| e.to_string())?;
     Individual::new(&notif_iri)
-        .add_property(conn, "foundation:notificationSource", vec![Object::Iri(account_iri.to_string())], "imap")
+        .add_property(
+            conn,
+            "foundation:notificationSource",
+            vec![Object::Iri(account_iri.to_string())],
+            "imap",
+        )
         .map_err(|e| e.to_string())?;
 
     Ok(String::new())
 }
 
 fn str_lit(v: &str) -> Object {
-    Object::Literal { value: v.to_string(), datatype: Some("xsd:string".to_string()), language: None }
+    Object::Literal {
+        value: v.to_string(),
+        datatype: Some("xsd:string".to_string()),
+        language: None,
+    }
 }
 
 fn bool_lit(v: bool) -> Object {
-    Object::Literal { value: v.to_string(), datatype: Some("xsd:boolean".to_string()), language: None }
+    Object::Literal {
+        value: v.to_string(),
+        datatype: Some("xsd:boolean".to_string()),
+        language: None,
+    }
 }
 
 fn sync_account_blocking(account: &AccountConfig) -> Result<Vec<FetchedEmail>, String> {
@@ -291,7 +396,10 @@ fn mark_seen_blocking(account: &AccountConfig, seen_uids: HashMap<String, Vec<u3
         mark_seen_plain(account, &seen_uids)
     };
     if let Err(e) = result {
-        crate::imap::log_error(&format!("IMAP mark \\Seen error for {}: {}", account.iri, e));
+        crate::imap::log_error(&format!(
+            "IMAP mark \\Seen error for {}: {}",
+            account.iri, e
+        ));
     }
 }
 
@@ -317,10 +425,14 @@ fn tcp_connect(host: &str, port: u16) -> Result<TcpStream, String> {
 
 fn fetch_tls(account: &AccountConfig) -> Result<Vec<FetchedEmail>, String> {
     let tcp = tcp_connect(&account.host, account.port)?;
-    tcp.set_read_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
-    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
+    tcp.set_read_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS)))
+        .ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS)))
+        .ok();
     let tls = native_tls::TlsConnector::new().map_err(|e| e.to_string())?;
-    let tls_stream = tls.connect(&account.host, tcp).map_err(|e| format!("TLS: {}", e))?;
+    let tls_stream = tls
+        .connect(&account.host, tcp)
+        .map_err(|e| format!("TLS: {}", e))?;
     let mut session = imap::Client::new(tls_stream)
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
@@ -331,8 +443,10 @@ fn fetch_tls(account: &AccountConfig) -> Result<Vec<FetchedEmail>, String> {
 
 fn fetch_plain(account: &AccountConfig) -> Result<Vec<FetchedEmail>, String> {
     let tcp = tcp_connect(&account.host, account.port)?;
-    tcp.set_read_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
-    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
+    tcp.set_read_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS)))
+        .ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS)))
+        .ok();
     let mut session = imap::Client::new(tcp)
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
@@ -346,10 +460,14 @@ fn mark_seen_tls(
     seen_uids: &HashMap<String, Vec<u32>>,
 ) -> Result<(), String> {
     let tcp = tcp_connect(&account.host, account.port)?;
-    tcp.set_read_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
-    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
+    tcp.set_read_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS)))
+        .ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS)))
+        .ok();
     let tls = native_tls::TlsConnector::new().map_err(|e| e.to_string())?;
-    let tls_stream = tls.connect(&account.host, tcp).map_err(|e| format!("TLS: {}", e))?;
+    let tls_stream = tls
+        .connect(&account.host, tcp)
+        .map_err(|e| format!("TLS: {}", e))?;
     let mut session = imap::Client::new(tls_stream)
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
@@ -363,8 +481,10 @@ fn mark_seen_plain(
     seen_uids: &HashMap<String, Vec<u32>>,
 ) -> Result<(), String> {
     let tcp = tcp_connect(&account.host, account.port)?;
-    tcp.set_read_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
-    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
+    tcp.set_read_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS)))
+        .ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS)))
+        .ok();
     let mut session = imap::Client::new(tcp)
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
@@ -382,13 +502,21 @@ fn mark_seen_in_session<T: Read + Write>(
             continue;
         }
         if let Err(e) = session.select(folder) {
-            crate::imap::log_error(&format!("IMAP mark \\Seen select '{}' failed: {}", folder, e));
+            crate::imap::log_error(&format!(
+                "IMAP mark \\Seen select '{}' failed: {}",
+                folder, e
+            ));
             continue;
         }
-        let uid_set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+        let uid_set = uids
+            .iter()
+            .map(|u| u.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         if let Err(e) = session.uid_store(&uid_set, "+FLAGS (\\Seen)") {
             crate::imap::log_error(&format!(
-                "IMAP uid_store +Seen failed for folder '{}' uids={}: {}", folder, uid_set, e,
+                "IMAP uid_store +Seen failed for folder '{}' uids={}: {}",
+                folder, uid_set, e,
             ));
         }
     }
@@ -397,28 +525,38 @@ fn mark_seen_in_session<T: Read + Write>(
 
 fn idle_tls(account: &AccountConfig) -> Result<(), String> {
     let tcp = tcp_connect(&account.host, account.port)?;
-    tcp.set_read_timeout(Some(Duration::from_secs(IDLE_TCP_READ_TIMEOUT_SECS))).ok();
-    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
+    tcp.set_read_timeout(Some(Duration::from_secs(IDLE_TCP_READ_TIMEOUT_SECS)))
+        .ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS)))
+        .ok();
     let tls = native_tls::TlsConnector::new().map_err(|e| e.to_string())?;
-    let tls_stream = tls.connect(&account.host, tcp).map_err(|e| format!("TLS: {}", e))?;
+    let tls_stream = tls
+        .connect(&account.host, tcp)
+        .map_err(|e| format!("TLS: {}", e))?;
     let mut session = imap::Client::new(tls_stream)
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
     session.select("INBOX").map_err(|e| e.to_string())?;
-    let _ = session.idle().wait_while(imap::extensions::idle::stop_on_any);
+    let _ = session
+        .idle()
+        .wait_while(imap::extensions::idle::stop_on_any);
     session.logout().ok();
     Ok(())
 }
 
 fn idle_plain(account: &AccountConfig) -> Result<(), String> {
     let tcp = tcp_connect(&account.host, account.port)?;
-    tcp.set_read_timeout(Some(Duration::from_secs(IDLE_TCP_READ_TIMEOUT_SECS))).ok();
-    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS))).ok();
+    tcp.set_read_timeout(Some(Duration::from_secs(IDLE_TCP_READ_TIMEOUT_SECS)))
+        .ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(TCP_SESSION_READ_TIMEOUT_SECS)))
+        .ok();
     let mut session = imap::Client::new(tcp)
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
     session.select("INBOX").map_err(|e| e.to_string())?;
-    let _ = session.idle().wait_while(imap::extensions::idle::stop_on_any);
+    let _ = session
+        .idle()
+        .wait_while(imap::extensions::idle::stop_on_any);
     session.logout().ok();
     Ok(())
 }
@@ -450,7 +588,11 @@ fn fetch_unseen<T: Read + Write>(
     if uids.is_empty() {
         return Ok(vec![]);
     }
-    crate::imap::log_error(&format!("IMAP: found {} UNSEEN uid(s): {:?}", uids.len(), uids.iter().take(5).collect::<Vec<_>>()));
+    crate::imap::log_error(&format!(
+        "IMAP: found {} UNSEEN uid(s): {:?}",
+        uids.len(),
+        uids.iter().take(5).collect::<Vec<_>>()
+    ));
 
     let uid_set: String = uids
         .iter()
@@ -476,7 +618,11 @@ fn fetch_unseen<T: Read + Write>(
         };
         if let Some(body) = msg.body() {
             match parse_raw_email(body) {
-                Ok(parsed) => result.push(FetchedEmail { folder: folder.to_string(), uid, parsed }),
+                Ok(parsed) => result.push(FetchedEmail {
+                    folder: folder.to_string(),
+                    uid,
+                    parsed,
+                }),
                 Err(e) => crate::imap::log_error(&format!("IMAP parse error uid={}: {}", uid, e)),
             }
             continue;
@@ -489,14 +635,23 @@ fn fetch_unseen<T: Read + Write>(
             combined.extend_from_slice(b"\r\n");
             combined.extend_from_slice(txt);
             match parse_raw_email(&combined) {
-                Ok(parsed) => result.push(FetchedEmail { folder: folder.to_string(), uid, parsed }),
-                Err(e) => crate::imap::log_error(&format!("IMAP parse error (fallback) uid={}: {}", uid, e)),
+                Ok(parsed) => result.push(FetchedEmail {
+                    folder: folder.to_string(),
+                    uid,
+                    parsed,
+                }),
+                Err(e) => crate::imap::log_error(&format!(
+                    "IMAP parse error (fallback) uid={}: {}",
+                    uid, e
+                )),
             }
             continue;
         }
         crate::imap::log_error(&format!(
             "IMAP: uid={} no body, header={}, text={}",
-            uid, msg.header().is_some(), msg.text().is_some()
+            uid,
+            msg.header().is_some(),
+            msg.text().is_some()
         ));
     }
 
@@ -506,7 +661,9 @@ fn fetch_unseen<T: Read + Write>(
 fn extract_addr(s: &str) -> String {
     let s = s.trim();
     if let (Some(a), Some(b)) = (s.find('<'), s.rfind('>')) {
-        if a < b { return s[a+1..b].trim().to_lowercase(); }
+        if a < b {
+            return s[a + 1..b].trim().to_lowercase();
+        }
     }
     s.to_lowercase()
 }
@@ -521,14 +678,19 @@ fn parse_addr_list(header: &str) -> Vec<String> {
         let mut remaining = header;
         while let Some(a) = remaining.find('<') {
             if let Some(b) = remaining[a..].find('>') {
-                let addr = remaining[a+1..a+b].trim().to_lowercase();
-                if !addr.is_empty() { addrs.push(addr); }
-                remaining = &remaining[a+b+1..];
-            } else { break; }
+                let addr = remaining[a + 1..a + b].trim().to_lowercase();
+                if !addr.is_empty() {
+                    addrs.push(addr);
+                }
+                remaining = &remaining[a + b + 1..];
+            } else {
+                break;
+            }
         }
         addrs
     } else {
-        header.split(',')
+        header
+            .split(',')
             .map(|s| s.trim().to_lowercase())
             .filter(|s| !s.is_empty() && s.contains('@'))
             .collect()
@@ -551,9 +713,13 @@ fn parse_raw_email(raw: &[u8]) -> Result<ParsedEmail, String> {
 
     let from = extract_first_addr(&parsed.headers.get_first_value("From").unwrap_or_default());
 
-    let to: Vec<String> = parse_addr_list(&parsed.headers.get_first_value("To").unwrap_or_default());
+    let to: Vec<String> =
+        parse_addr_list(&parsed.headers.get_first_value("To").unwrap_or_default());
 
-    let subject = parsed.headers.get_first_value("Subject").unwrap_or_default();
+    let subject = parsed
+        .headers
+        .get_first_value("Subject")
+        .unwrap_or_default();
 
     let date = parsed
         .headers
@@ -567,7 +733,16 @@ fn parse_raw_email(raw: &[u8]) -> Result<ParsedEmail, String> {
     let (body, body_html) = extract_bodies(&parsed);
     let attachments = collect_attachments(&parsed);
 
-    Ok(ParsedEmail { message_id, from, to, subject, date, body, body_html, attachments })
+    Ok(ParsedEmail {
+        message_id,
+        from,
+        to,
+        subject,
+        date,
+        body,
+        body_html,
+        attachments,
+    })
 }
 
 /// Walks the full MIME tree and returns the first text/plain and text/html body
@@ -616,10 +791,7 @@ fn collect_attachments(mail: &mailparse::ParsedMail) -> Vec<ParsedAttachment> {
     out
 }
 
-fn collect_attachments_recursive(
-    mail: &mailparse::ParsedMail,
-    out: &mut Vec<ParsedAttachment>,
-) {
+fn collect_attachments_recursive(mail: &mailparse::ParsedMail, out: &mut Vec<ParsedAttachment>) {
     for part in &mail.subparts {
         if part_is_attachment(part) {
             if let Some(name) = extract_attachment_filename(part) {
@@ -633,7 +805,8 @@ fn collect_attachments_recursive(
                     }
                     Err(e) => {
                         crate::imap::log_error(&format!(
-                            "IMAP: attachment body decode failed for '{}': {}", name, e,
+                            "IMAP: attachment body decode failed for '{}': {}",
+                            name, e,
                         ));
                     }
                 }
@@ -669,7 +842,8 @@ fn part_is_attachment(part: &mailparse::ParsedMail) -> bool {
 
 fn extract_attachment_filename(part: &mailparse::ParsedMail) -> Option<String> {
     if let Some(disp) = part.headers.get_first_value("Content-Disposition") {
-        let from_disp = disp.split(';')
+        let from_disp = disp
+            .split(';')
             .find(|s| s.trim().to_lowercase().starts_with("filename="))
             .map(|s| {
                 s.trim()
@@ -687,7 +861,8 @@ fn extract_attachment_filename(part: &mailparse::ParsedMail) -> Option<String> {
         }
     }
 
-    part.headers.get_first_value("Content-Type")
+    part.headers
+        .get_first_value("Content-Type")
         .and_then(|ct| {
             ct.split(';')
                 .find(|s| s.trim().to_lowercase().starts_with("name="))
@@ -704,12 +879,9 @@ fn extract_attachment_filename(part: &mailparse::ParsedMail) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn load_account_configs(
-    conn: &crate::eavto::Connection,
-) -> Result<Vec<AccountConfig>, String> {
-    let iris =
-        crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:IMAPAccount")
-            .map_err(|e| e.to_string())?;
+fn load_account_configs(conn: &crate::eavto::Connection) -> Result<Vec<AccountConfig>, String> {
+    let iris = crate::owl::find_entities_with_property(conn, "rdf:type", "foundation:IMAPAccount")
+        .map_err(|e| e.to_string())?;
 
     let mut configs = vec![];
     for iri in iris {
@@ -734,19 +906,15 @@ fn load_account_configs(
                 .and_then(|s| s.parse::<i64>().ok())
                 .unwrap_or(DEFAULT_SYNC_INTERVAL_MINUTES);
 
-        let cred_iri =
-            match crate::owl::get_iri_property(conn, &iri, "foundation:hasCredential") {
-                Ok(Some(c)) => c,
-                _ => continue,
-            };
-        let password = match crate::owl::get_literal_property(
-            conn,
-            &cred_iri,
-            "foundation:credentialValue",
-        ) {
-            Ok(Some(p)) => p,
+        let cred_iri = match crate::owl::get_iri_property(conn, &iri, "foundation:hasCredential") {
+            Ok(Some(c)) => c,
             _ => continue,
         };
+        let password =
+            match crate::owl::get_literal_property(conn, &cred_iri, "foundation:credentialValue") {
+                Ok(Some(p)) => p,
+                _ => continue,
+            };
 
         let monitored_folders =
             crate::owl::get_all_literal_properties(conn, &iri, "foundation:imapMonitoredFolders")
@@ -799,15 +967,25 @@ RGF0ZSxBbW91bnQKMjAyNi0wNC0wOSwxMDAuMDAK\r\n\
         assert_eq!(att.file_name, "extrato.csv");
         assert_eq!(att.mime_type, "text/csv");
         let decoded = String::from_utf8(att.content.clone()).unwrap();
-        assert!(decoded.contains("Date,Amount"), "body bytes must be decoded; got: {}", decoded);
-        assert!(decoded.contains("2026-04-09,100.00"), "body bytes must be decoded");
+        assert!(
+            decoded.contains("Date,Amount"),
+            "body bytes must be decoded; got: {}",
+            decoded
+        );
+        assert!(
+            decoded.contains("2026-04-09,100.00"),
+            "body bytes must be decoded"
+        );
     }
 
     #[test]
     fn test_parse_raw_email_inline_part_is_not_attachment() {
         let parsed = parse_raw_email(MULTIPART_WITH_CSV).expect("parse should succeed");
         assert!(
-            parsed.attachments.iter().all(|a| a.file_name == "extrato.csv"),
+            parsed
+                .attachments
+                .iter()
+                .all(|a| a.file_name == "extrato.csv"),
             "inline text/plain part must not be collected as attachment"
         );
     }
@@ -847,25 +1025,40 @@ RGF0ZSxBbW91bnQK\r\n\
     #[test]
     fn test_parse_raw_email_collects_all_attachments_regardless_of_disposition() {
         let parsed = parse_raw_email(MULTIPART_MIXED_DISPOSITIONS).expect("parse should succeed");
-        let names: Vec<&str> = parsed.attachments.iter()
+        let names: Vec<&str> = parsed
+            .attachments
+            .iter()
             .map(|a| a.file_name.as_str())
             .collect();
 
-        assert_eq!(parsed.attachments.len(), 3,
-            "must collect all 3 attachments (got {:?})", names);
-        assert!(names.contains(&"extrato.pdf"),
-            "PDF (no Content-Disposition, only Content-Type name=) must be collected");
-        assert!(names.contains(&"extrato.ofx"),
-            "OFX (Content-Disposition: inline) must be collected");
-        assert!(names.contains(&"extrato.csv"),
-            "CSV (Content-Disposition: attachment) must still be collected");
+        assert_eq!(
+            parsed.attachments.len(),
+            3,
+            "must collect all 3 attachments (got {:?})",
+            names
+        );
+        assert!(
+            names.contains(&"extrato.pdf"),
+            "PDF (no Content-Disposition, only Content-Type name=) must be collected"
+        );
+        assert!(
+            names.contains(&"extrato.ofx"),
+            "OFX (Content-Disposition: inline) must be collected"
+        );
+        assert!(
+            names.contains(&"extrato.csv"),
+            "CSV (Content-Disposition: attachment) must still be collected"
+        );
     }
 
     #[test]
     fn test_parse_raw_email_text_plain_body_not_treated_as_attachment_with_mixed_dispositions() {
         let parsed = parse_raw_email(MULTIPART_MIXED_DISPOSITIONS).expect("parse should succeed");
         assert!(
-            parsed.attachments.iter().all(|a| a.mime_type != "text/plain"),
+            parsed
+                .attachments
+                .iter()
+                .all(|a| a.mime_type != "text/plain"),
             "text/plain body part must not be collected as attachment"
         );
     }
@@ -873,8 +1066,14 @@ RGF0ZSxBbW91bnQK\r\n\
     #[test]
     fn test_parse_raw_email_plain_only_has_no_html_body() {
         let parsed = parse_raw_email(MULTIPART_WITH_CSV).expect("parse should succeed");
-        assert!(parsed.body.contains("Segue o extrato"), "plain body must be extracted");
-        assert!(parsed.body_html.is_none(), "no text/html part means body_html must stay None");
+        assert!(
+            parsed.body.contains("Segue o extrato"),
+            "plain body must be extracted"
+        );
+        assert!(
+            parsed.body_html.is_none(),
+            "no text/html part means body_html must stay None"
+        );
     }
 
     // multipart/mixed wrapping a multipart/alternative (plain+html) plus an attachment.
@@ -908,13 +1107,26 @@ JVBERi0xLjQK\r\n\
 
     #[test]
     fn test_parse_raw_email_extracts_html_from_nested_alternative() {
-        let parsed = parse_raw_email(NESTED_ALTERNATIVE_WITH_ATTACHMENT).expect("parse should succeed");
-        assert!(parsed.body.contains("Visite"),
-            "plain body must be extracted from nested alternative; got: {:?}", parsed.body);
-        let html = parsed.body_html.expect("html body must be extracted from nested alternative");
-        assert!(html.contains("<a href=\"https://example.com\">"),
-            "body_html must be the text/html part; got: {}", html);
-        assert_eq!(parsed.attachments.len(), 1, "the pdf attachment must still be collected");
+        let parsed =
+            parse_raw_email(NESTED_ALTERNATIVE_WITH_ATTACHMENT).expect("parse should succeed");
+        assert!(
+            parsed.body.contains("Visite"),
+            "plain body must be extracted from nested alternative; got: {:?}",
+            parsed.body
+        );
+        let html = parsed
+            .body_html
+            .expect("html body must be extracted from nested alternative");
+        assert!(
+            html.contains("<a href=\"https://example.com\">"),
+            "body_html must be the text/html part; got: {}",
+            html
+        );
+        assert_eq!(
+            parsed.attachments.len(),
+            1,
+            "the pdf attachment must still be collected"
+        );
         assert_eq!(parsed.attachments[0].file_name, "doc.pdf");
     }
 }

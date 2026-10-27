@@ -1,10 +1,10 @@
-use crate::owl::{DbExecutor, Individual, Object};
-use crate::commands::chat_storage::{ContentBlock, create_message, load_conversation_history};
-use crate::commands::chat::settings::AgentConfig;
-use crate::ai::{AiProvider, ChatMessage, GenerateRequest};
-use crate::ai::providers::{ClaudeProvider, OpenRouterProvider};
-use crate::ai::local::LocalProvider;
 use super::super::log_backend;
+use crate::ai::local::LocalProvider;
+use crate::ai::providers::{ClaudeProvider, OpenRouterProvider};
+use crate::ai::{AiProvider, ChatMessage, GenerateRequest};
+use crate::commands::chat::settings::AgentConfig;
+use crate::commands::chat_storage::{create_message, load_conversation_history, ContentBlock};
+use crate::owl::{DbExecutor, Individual, Object};
 use tauri::Emitter;
 
 const COMPACTION_THRESHOLD: f64 = 0.80;
@@ -24,13 +24,19 @@ pub async fn run_compaction_if_needed(
         return;
     }
 
-    log_backend("info", &format!(
-        "[COMPACTION] Triggering compaction for {} ({}/{} tokens)",
-        conversation_id, total_tokens, cfg.max_tokens
-    ));
+    log_backend(
+        "info",
+        &format!(
+            "[COMPACTION] Triggering compaction for {} ({}/{} tokens)",
+            conversation_id, total_tokens, cfg.max_tokens
+        ),
+    );
 
     if let Err(e) = run_compaction(executor, app, conversation_id, cfg).await {
-        log_backend("warn", &format!("[COMPACTION] Failed (non-critical): {}", e));
+        log_backend(
+            "warn",
+            &format!("[COMPACTION] Failed (non-critical): {}", e),
+        );
     }
 }
 
@@ -63,46 +69,78 @@ async fn run_compaction(
     conversation_id: String,
     cfg: CompactionConfig,
 ) -> Result<(), String> {
-    app.emit("ai-status", serde_json::json!({
-        "status": "Compacting history...",
-        "conversationId": conversation_id
-    })).ok();
+    app.emit(
+        "ai-status",
+        serde_json::json!({
+            "status": "Compacting history...",
+            "conversationId": conversation_id
+        }),
+    )
+    .ok();
 
     // Load full history (no token budget — we want everything)
     let (history, _) = load_conversation_history(&executor, &conversation_id, usize::MAX).await?;
 
     // Only compact real persisted messages — exclude compaction summaries and synthetic
     // messages that load_conversation_history may inject on the compacted path.
-    let normal_msgs: Vec<_> = history.iter()
+    let normal_msgs: Vec<_> = history
+        .iter()
         .filter(|m| m.role != "compaction" && !m.iri.starts_with("synthetic:"))
         .collect();
 
     // Keep the most recent 10 messages intact so they remain as "live" context
     const TAIL_SIZE: usize = 10;
     if normal_msgs.len() <= TAIL_SIZE {
-        log_backend("info", "[COMPACTION] Not enough messages to compact, skipping");
-        app.emit("ai-status", serde_json::json!({"conversationId": conversation_id})).ok();
+        log_backend(
+            "info",
+            "[COMPACTION] Not enough messages to compact, skipping",
+        );
+        app.emit(
+            "ai-status",
+            serde_json::json!({"conversationId": conversation_id}),
+        )
+        .ok();
         return Ok(());
     }
 
     let to_compact = &normal_msgs[..normal_msgs.len() - TAIL_SIZE];
-    let summary_up_to_iri = to_compact.last()
+    let summary_up_to_iri = to_compact
+        .last()
         .map(|m| m.iri.clone())
         .ok_or("No messages to compact")?;
 
     // Build the summarization prompt from the messages to compact
-    let history_text: String = to_compact.iter().map(|msg| {
-        let text: String = msg.content.iter().filter_map(|b| match b {
-            ContentBlock::Text { text } => Some(text.as_str()),
-            _ => None,
-        }).collect::<Vec<_>>().join(" ");
-        format!("[{}]: {}", msg.role, text)
-    }).filter(|s| !s.trim_end_matches(|c| c == '[' || c == ']' || c == ' ' || c == ':').is_empty())
-    .collect::<Vec<_>>().join("\n");
+    let history_text: String = to_compact
+        .iter()
+        .map(|msg| {
+            let text: String = msg
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("[{}]: {}", msg.role, text)
+        })
+        .filter(|s| {
+            !s.trim_end_matches(|c| c == '[' || c == ']' || c == ' ' || c == ':')
+                .is_empty()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
     if history_text.trim().is_empty() {
-        log_backend("info", "[COMPACTION] Nothing meaningful to summarize, skipping");
-        app.emit("ai-status", serde_json::json!({"conversationId": conversation_id})).ok();
+        log_backend(
+            "info",
+            "[COMPACTION] Nothing meaningful to summarize, skipping",
+        );
+        app.emit(
+            "ai-status",
+            serde_json::json!({"conversationId": conversation_id}),
+        )
+        .ok();
         return Ok(());
     }
 
@@ -110,7 +148,8 @@ async fn run_compaction(
         "Create a compact summary of this conversation preserving: the user's goals, \
          decisions made, important technical context, and relevant IRIs/entities mentioned. \
          Write densely and factually, without introduction or conclusion.\n\n\
-         CONVERSATION:\n{}", history_text
+         CONVERSATION:\n{}",
+        history_text
     );
 
     let provider = build_provider(&cfg);
@@ -142,27 +181,51 @@ async fn run_compaction(
         None,
         None,
         None,
-    ).await?;
+    )
+    .await?;
 
-    log_backend("info", &format!(
-        "[COMPACTION] Saved compaction message {} (up to {})",
-        compaction_iri, summary_up_to_iri
-    ));
+    log_backend(
+        "info",
+        &format!(
+            "[COMPACTION] Saved compaction message {} (up to {})",
+            compaction_iri, summary_up_to_iri
+        ),
+    );
 
     // Replace (not append) summaryUpToMessage so exactly one value exists at all times.
     let conv_id_for_write = conversation_id.clone();
     let summary_up_to = summary_up_to_iri.clone();
-    executor.write(move |conn| {
-        Individual::clear_property(conn, &conv_id_for_write, "foundation:summaryUpToMessage", "ai")
+    executor
+        .write(move |conn| {
+            Individual::clear_property(
+                conn,
+                &conv_id_for_write,
+                "foundation:summaryUpToMessage",
+                "ai",
+            )
             .map_err(|e| format!("Failed to clear summaryUpToMessage: {}", e))?;
-        Individual::new(&conv_id_for_write)
-            .add_property(conn, "foundation:summaryUpToMessage", vec![Object::Iri(summary_up_to)], "ai")
-            .map_err(|e| format!("Failed to set summaryUpToMessage: {}", e))?;
-        Ok(String::new())
-    }).await?;
+            Individual::new(&conv_id_for_write)
+                .add_property(
+                    conn,
+                    "foundation:summaryUpToMessage",
+                    vec![Object::Iri(summary_up_to)],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set summaryUpToMessage: {}", e))?;
+            Ok(String::new())
+        })
+        .await?;
 
-    app.emit("chat-message-added", serde_json::json!({"conversationId": conversation_id})).ok();
-    app.emit("ai-status", serde_json::json!({"conversationId": conversation_id})).ok();
+    app.emit(
+        "chat-message-added",
+        serde_json::json!({"conversationId": conversation_id}),
+    )
+    .ok();
+    app.emit(
+        "ai-status",
+        serde_json::json!({"conversationId": conversation_id}),
+    )
+    .ok();
 
     Ok(())
 }

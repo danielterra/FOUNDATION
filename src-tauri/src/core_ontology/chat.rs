@@ -28,9 +28,13 @@ pub fn find_messages_by_conversation_since(
         )
         ORDER BY ts DESC
     ";
-    let mut stmt = conn.prepare(sql).map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+    let mut stmt = conn
+        .prepare(sql)
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
     let iris = stmt
-        .query_map(rusqlite::params![conversation_iri, since_rfc3339], |row| row.get(0))
+        .query_map(rusqlite::params![conversation_iri, since_rfc3339], |row| {
+            row.get(0)
+        })
         .map_err(|e| OwlError::DatabaseError(e.to_string()))?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
@@ -87,25 +91,39 @@ pub fn message_has_non_tool_result_block(conn: &Connection, message_iri: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eavto::{store, Triple, Object};
     use crate::eavto::test_helpers::setup_test_db;
+    use crate::eavto::{store, Object, Triple};
     use crate::owl::vocabulary::rdf;
 
     fn insert_message(conn: &mut Connection, iri: &str, conversation_iri: &str, sent_at_ms: i64) {
         let rfc3339 = chrono::DateTime::from_timestamp_millis(sent_at_ms)
             .unwrap_or_default()
             .to_rfc3339();
-        store::assert_triples(conn, &[
-            Triple::new(iri, rdf::TYPE, Object::Iri("foundation:AIConversationMessage".to_string())),
-            Triple::new(iri, "foundation:partOfConversation", Object::Iri(conversation_iri.to_string())),
-            Triple::new(iri, "foundation:sentAt", Object::DateTime(rfc3339)),
-        ], "test").unwrap();
+        store::assert_triples(
+            conn,
+            &[
+                Triple::new(
+                    iri,
+                    rdf::TYPE,
+                    Object::Iri("foundation:AIConversationMessage".to_string()),
+                ),
+                Triple::new(
+                    iri,
+                    "foundation:partOfConversation",
+                    Object::Iri(conversation_iri.to_string()),
+                ),
+                Triple::new(iri, "foundation:sentAt", Object::DateTime(rfc3339)),
+            ],
+            "test",
+        )
+        .unwrap();
     }
 
     #[test]
     fn find_messages_empty_db() {
         let conn = setup_test_db();
-        let result = find_messages_by_conversation(&conn, "foundation:ConvA", usize::MAX, 0).unwrap();
+        let result =
+            find_messages_by_conversation(&conn, "foundation:ConvA", usize::MAX, 0).unwrap();
         assert!(result.is_empty());
     }
 
@@ -115,7 +133,8 @@ mod tests {
         insert_message(&mut conn, "foundation:Msg1", "foundation:ConvA", 1_000);
         insert_message(&mut conn, "foundation:Msg2", "foundation:ConvA", 3_000);
         insert_message(&mut conn, "foundation:Msg3", "foundation:ConvA", 2_000);
-        let result = find_messages_by_conversation(&conn, "foundation:ConvA", usize::MAX, 0).unwrap();
+        let result =
+            find_messages_by_conversation(&conn, "foundation:ConvA", usize::MAX, 0).unwrap();
         assert_eq!(result.len(), 3);
         assert_eq!(result[0], "foundation:Msg2");
         assert_eq!(result[1], "foundation:Msg3");
@@ -140,7 +159,8 @@ mod tests {
         insert_message(&mut conn, "foundation:Msg1", "foundation:ConvA", 1_000);
         insert_message(&mut conn, "foundation:Msg2", "foundation:ConvA", 3_000);
         insert_message(&mut conn, "foundation:Msg3", "foundation:ConvA", 2_000);
-        let result = find_messages_by_conversation(&conn, "foundation:ConvA", usize::MAX, 1).unwrap();
+        let result =
+            find_messages_by_conversation(&conn, "foundation:ConvA", usize::MAX, 1).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], "foundation:Msg3");
         assert_eq!(result[1], "foundation:Msg1");
@@ -151,7 +171,8 @@ mod tests {
         let mut conn = setup_test_db();
         insert_message(&mut conn, "foundation:Msg1", "foundation:ConvA", 1_000);
         insert_message(&mut conn, "foundation:Msg2", "foundation:ConvB", 3_000);
-        let result = find_messages_by_conversation(&conn, "foundation:ConvA", usize::MAX, 0).unwrap();
+        let result =
+            find_messages_by_conversation(&conn, "foundation:ConvA", usize::MAX, 0).unwrap();
         assert_eq!(result, vec!["foundation:Msg1".to_string()]);
     }
 }

@@ -1,14 +1,23 @@
 use crate::owl::DbExecutor;
-use crate::owl::{Individual, Object, Triple, Connection};
+use crate::owl::{Connection, Individual, Object, Triple};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
-    Text { text: String },
-    Image { source: ImageSource },
-    CameraRef { file_path: String, token_estimate: usize },
-    Document { source: DocumentSource },
+    Text {
+        text: String,
+    },
+    Image {
+        source: ImageSource,
+    },
+    CameraRef {
+        file_path: String,
+        token_estimate: usize,
+    },
+    Document {
+        source: DocumentSource,
+    },
     FileRef {
         file_iri: String,
         file_name: String,
@@ -18,7 +27,13 @@ pub enum ContentBlock {
         #[serde(skip, default)]
         ai_summary: Option<String>,
     },
-    ToolUse { id: String, name: String, input: serde_json::Value, #[serde(skip_serializing_if = "Option::is_none")] reason: Option<String> },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
     ToolResult {
         tool_use_id: String,
         content: String,
@@ -41,7 +56,9 @@ pub enum ContentBlock {
         #[serde(default)]
         options: Vec<String>,
     },
-    CompactionSummary { text: String },
+    CompactionSummary {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,7 +96,9 @@ pub async fn create_user_message(
     conversation_id: &str,
     text: &str,
 ) -> Result<String, String> {
-    let blocks = vec![ContentBlock::Text { text: text.to_string() }];
+    let blocks = vec![ContentBlock::Text {
+        text: text.to_string(),
+    }];
     create_message(executor, conversation_id, "user", blocks, None, None, None).await
 }
 
@@ -113,8 +132,14 @@ pub async fn create_assistant_message(
         blocks,
         Some(model),
         Some(stop_reason),
-        Some((input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)),
-    ).await
+        Some((
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+        )),
+    )
+    .await
 }
 
 pub(crate) async fn create_message(
@@ -137,72 +162,158 @@ pub(crate) async fn create_message(
     let model_opt = model.map(|s| s.to_string());
     let stop_reason_opt = stop_reason.map(|s| s.to_string());
 
-    executor.write(move |conn| {
-        // Build all triples in memory first, then insert in a single append_triples call.
-        // This bypasses the OWL validation pipeline (has_prop + cardinality + domain/range
-        // checks) that add_property runs per-property. For a brand-new IRI every check
-        // trivially returns "no existing value", making them pure overhead.
-        let mut triples: Vec<Triple> = Vec::with_capacity(32);
-        let lit = |value: String, datatype: &str| Object::Literal {
-            value,
-            datatype: Some(datatype.to_string()),
-            language: None,
-        };
+    executor
+        .write(move |conn| {
+            // Build all triples in memory first, then insert in a single append_triples call.
+            // This bypasses the OWL validation pipeline (has_prop + cardinality + domain/range
+            // checks) that add_property runs per-property. For a brand-new IRI every check
+            // trivially returns "no existing value", making them pure overhead.
+            let mut triples: Vec<Triple> = Vec::with_capacity(32);
+            let lit = |value: String, datatype: &str| Object::Literal {
+                value,
+                datatype: Some(datatype.to_string()),
+                language: None,
+            };
 
-        triples.push(Triple::new(&msg_iri_clone, "rdf:type", Object::Iri("foundation:AIConversationMessage".to_string())));
-        triples.push(Triple::new(&msg_iri_clone, "rdfs:label", lit(format!("{} message", role_str), "xsd:string")));
-        triples.push(Triple::new(&msg_iri_clone, "foundation:role", lit(role_str.clone(), "xsd:string")));
-        triples.push(Triple::new(&msg_iri_clone, "foundation:sentAt",
-            Object::DateTime(chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_default().to_rfc3339())));
-        triples.push(Triple::new(&msg_iri_clone, "foundation:partOfConversation", Object::Iri(conversation_iri.clone())));
-        triples.push(Triple::new(&msg_iri_clone, "foundation:tokenCount", Object::Integer(token_count as i64)));
+            triples.push(Triple::new(
+                &msg_iri_clone,
+                "rdf:type",
+                Object::Iri("foundation:AIConversationMessage".to_string()),
+            ));
+            triples.push(Triple::new(
+                &msg_iri_clone,
+                "rdfs:label",
+                lit(format!("{} message", role_str), "xsd:string"),
+            ));
+            triples.push(Triple::new(
+                &msg_iri_clone,
+                "foundation:role",
+                lit(role_str.clone(), "xsd:string"),
+            ));
+            triples.push(Triple::new(
+                &msg_iri_clone,
+                "foundation:sentAt",
+                Object::DateTime(
+                    chrono::DateTime::from_timestamp_millis(timestamp)
+                        .unwrap_or_default()
+                        .to_rfc3339(),
+                ),
+            ));
+            triples.push(Triple::new(
+                &msg_iri_clone,
+                "foundation:partOfConversation",
+                Object::Iri(conversation_iri.clone()),
+            ));
+            triples.push(Triple::new(
+                &msg_iri_clone,
+                "foundation:tokenCount",
+                Object::Integer(token_count as i64),
+            ));
 
-        if role_str == "user" {
-            triples.push(Triple::new(&msg_iri_clone, "foundation:sender", Object::Iri("foundation:ThisUser".to_string())));
-            triples.push(Triple::new(&msg_iri_clone, "foundation:receiver", Object::Iri("foundation:LocalAIAssistant".to_string())));
-        } else {
-            triples.push(Triple::new(&msg_iri_clone, "foundation:sender", Object::Iri("foundation:LocalAIAssistant".to_string())));
-            triples.push(Triple::new(&msg_iri_clone, "foundation:receiver", Object::Iri("foundation:ThisUser".to_string())));
-        }
+            if role_str == "user" {
+                triples.push(Triple::new(
+                    &msg_iri_clone,
+                    "foundation:sender",
+                    Object::Iri("foundation:ThisUser".to_string()),
+                ));
+                triples.push(Triple::new(
+                    &msg_iri_clone,
+                    "foundation:receiver",
+                    Object::Iri("foundation:LocalAIAssistant".to_string()),
+                ));
+            } else {
+                triples.push(Triple::new(
+                    &msg_iri_clone,
+                    "foundation:sender",
+                    Object::Iri("foundation:LocalAIAssistant".to_string()),
+                ));
+                triples.push(Triple::new(
+                    &msg_iri_clone,
+                    "foundation:receiver",
+                    Object::Iri("foundation:ThisUser".to_string()),
+                ));
+            }
 
-        if let Some((input, output, cache_creation, cache_read)) = tokens {
-            triples.push(Triple::new(&msg_iri_clone, "foundation:inputTokens", Object::Integer(input as i64)));
-            triples.push(Triple::new(&msg_iri_clone, "foundation:outputTokens", Object::Integer(output as i64)));
-            triples.push(Triple::new(&msg_iri_clone, "foundation:cacheCreationTokens", Object::Integer(cache_creation as i64)));
-            triples.push(Triple::new(&msg_iri_clone, "foundation:cacheReadTokens", Object::Integer(cache_read as i64)));
-            if let Some(model_str) = &model_opt {
-                if let Some(cost) = estimate_call_cost(conn, model_str, input as u32, output as u32, cache_creation as u32, cache_read as u32) {
-                    triples.push(Triple::new(&msg_iri_clone, "foundation:estimatedCost", Object::Number(cost)));
+            if let Some((input, output, cache_creation, cache_read)) = tokens {
+                triples.push(Triple::new(
+                    &msg_iri_clone,
+                    "foundation:inputTokens",
+                    Object::Integer(input as i64),
+                ));
+                triples.push(Triple::new(
+                    &msg_iri_clone,
+                    "foundation:outputTokens",
+                    Object::Integer(output as i64),
+                ));
+                triples.push(Triple::new(
+                    &msg_iri_clone,
+                    "foundation:cacheCreationTokens",
+                    Object::Integer(cache_creation as i64),
+                ));
+                triples.push(Triple::new(
+                    &msg_iri_clone,
+                    "foundation:cacheReadTokens",
+                    Object::Integer(cache_read as i64),
+                ));
+                if let Some(model_str) = &model_opt {
+                    if let Some(cost) = estimate_call_cost(
+                        conn,
+                        model_str,
+                        input as u32,
+                        output as u32,
+                        cache_creation as u32,
+                        cache_read as u32,
+                    ) {
+                        triples.push(Triple::new(
+                            &msg_iri_clone,
+                            "foundation:estimatedCost",
+                            Object::Number(cost),
+                        ));
+                    }
                 }
             }
-        }
-        if let Some(model_str) = &model_opt {
-            triples.push(Triple::new(&msg_iri_clone, "foundation:model", lit(model_str.clone(), "xsd:string")));
-        }
-        if let Some(stop_str) = &stop_reason_opt {
-            triples.push(Triple::new(&msg_iri_clone, "foundation:stopReason", lit(stop_str.clone(), "xsd:string")));
-        }
+            if let Some(model_str) = &model_opt {
+                triples.push(Triple::new(
+                    &msg_iri_clone,
+                    "foundation:model",
+                    lit(model_str.clone(), "xsd:string"),
+                ));
+            }
+            if let Some(stop_str) = &stop_reason_opt {
+                triples.push(Triple::new(
+                    &msg_iri_clone,
+                    "foundation:stopReason",
+                    lit(stop_str.clone(), "xsd:string"),
+                ));
+            }
 
-        let block_iris = collect_block_triples(conn, &blocks, timestamp, &mut triples)?;
-        for block_iri in &block_iris {
-            triples.push(Triple::new(&msg_iri_clone, "foundation:hasContentBlock", Object::Iri(block_iri.clone())));
-        }
+            let block_iris = collect_block_triples(conn, &blocks, timestamp, &mut triples)?;
+            for block_iri in &block_iris {
+                triples.push(Triple::new(
+                    &msg_iri_clone,
+                    "foundation:hasContentBlock",
+                    Object::Iri(block_iri.clone()),
+                ));
+            }
 
-        crate::owl::batch_insert_triples(conn, &triples, "ai")
-            .map_err(|e| format!("Failed to create message: {}", e))?;
+            crate::owl::batch_insert_triples(conn, &triples, "ai")
+                .map_err(|e| format!("Failed to create message: {}", e))?;
 
-        crate::owl::touch(conn, &conversation_iri);
+            crate::owl::touch(conn, &conversation_iri);
 
-        Ok(msg_iri_clone)
-    }).await?;
+            Ok(msg_iri_clone)
+        })
+        .await?;
 
     let iri_for_reindex = message_iri.clone();
     let executor_for_reindex = executor.clone();
     tauri::async_runtime::spawn(async move {
-        let _ = executor_for_reindex.read(move |conn| {
-            crate::search::reindex_subjects(conn, &[iri_for_reindex]);
-            Ok(String::new())
-        }).await;
+        let _ = executor_for_reindex
+            .read(move |conn| {
+                crate::search::reindex_subjects(conn, &[iri_for_reindex]);
+                Ok(String::new())
+            })
+            .await;
     });
 
     Ok(message_iri)
@@ -226,90 +337,258 @@ fn collect_block_triples(
 
     for (index, block) in blocks.iter().enumerate() {
         let (class_iri, suffix) = match block {
-            ContentBlock::Text { .. }             => ("anthropic:TextBlock", "TextBlock"),
-            ContentBlock::ToolUse { .. }          => ("anthropic:ToolUseBlock", "ToolUseBlock"),
-            ContentBlock::ToolResult { .. }       => ("anthropic:ToolResultBlock", "ToolResultBlock"),
-            ContentBlock::Thinking { .. }         => ("anthropic:ThinkingBlock", "ThinkingBlock"),
-            ContentBlock::RedactedThinking { .. } => ("anthropic:RedactedThinkingBlock", "RedactedThinkingBlock"),
-            ContentBlock::Image { .. }            => ("anthropic:ImageBlock", "ImageBlock"),
-            ContentBlock::Document { .. }         => ("anthropic:DocumentBlock", "DocumentBlock"),
-            ContentBlock::QuestionOutput { .. }   => ("foundation:QuestionOutputBlock", "QuestionOutputBlock"),
-            ContentBlock::CameraRef { .. }        => ("foundation:CameraRefBlock", "CameraRefBlock"),
-            ContentBlock::FileRef { .. }          => ("foundation:FileRefBlock", "FileRefBlock"),
-            ContentBlock::CompactionSummary { .. } => ("foundation:CompactionSummaryBlock", "CompactionSummaryBlock"),
+            ContentBlock::Text { .. } => ("anthropic:TextBlock", "TextBlock"),
+            ContentBlock::ToolUse { .. } => ("anthropic:ToolUseBlock", "ToolUseBlock"),
+            ContentBlock::ToolResult { .. } => ("anthropic:ToolResultBlock", "ToolResultBlock"),
+            ContentBlock::Thinking { .. } => ("anthropic:ThinkingBlock", "ThinkingBlock"),
+            ContentBlock::RedactedThinking { .. } => {
+                ("anthropic:RedactedThinkingBlock", "RedactedThinkingBlock")
+            }
+            ContentBlock::Image { .. } => ("anthropic:ImageBlock", "ImageBlock"),
+            ContentBlock::Document { .. } => ("anthropic:DocumentBlock", "DocumentBlock"),
+            ContentBlock::QuestionOutput { .. } => {
+                ("foundation:QuestionOutputBlock", "QuestionOutputBlock")
+            }
+            ContentBlock::CameraRef { .. } => ("foundation:CameraRefBlock", "CameraRefBlock"),
+            ContentBlock::FileRef { .. } => ("foundation:FileRefBlock", "FileRefBlock"),
+            ContentBlock::CompactionSummary { .. } => (
+                "foundation:CompactionSummaryBlock",
+                "CompactionSummaryBlock",
+            ),
         };
         let prefix_end = class_iri.find(':').map(|i| i + 1).unwrap_or(0);
-        let block_iri = format!("{}{}_{}_{}", &class_iri[..prefix_end], suffix, message_timestamp, index);
+        let block_iri = format!(
+            "{}{}_{}_{}",
+            &class_iri[..prefix_end],
+            suffix,
+            message_timestamp,
+            index
+        );
 
-        out.push(Triple::new(&block_iri, "rdf:type", Object::Iri(class_iri.to_string())));
-        out.push(Triple::new(&block_iri, "rdfs:label", lit(suffix.to_string(), "xsd:string")));
-        out.push(Triple::new(&block_iri, "foundation:blockIndex", Object::Integer(index as i64)));
+        out.push(Triple::new(
+            &block_iri,
+            "rdf:type",
+            Object::Iri(class_iri.to_string()),
+        ));
+        out.push(Triple::new(
+            &block_iri,
+            "rdfs:label",
+            lit(suffix.to_string(), "xsd:string"),
+        ));
+        out.push(Triple::new(
+            &block_iri,
+            "foundation:blockIndex",
+            Object::Integer(index as i64),
+        ));
 
         match block {
             ContentBlock::Text { text } => {
-                out.push(Triple::new(&block_iri, "anthropic:text", lit(text.clone(), "xsd:string")));
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:text",
+                    lit(text.clone(), "xsd:string"),
+                ));
             }
-            ContentBlock::ToolUse { id, name, input, reason } => {
-                out.push(Triple::new(&block_iri, "anthropic:toolUseId", lit(id.clone(), "xsd:string")));
-                out.push(Triple::new(&block_iri, "anthropic:toolName", lit(name.clone(), "xsd:string")));
-                out.push(Triple::new(&block_iri, "anthropic:toolInput",
-                    lit(serde_json::to_string(input).unwrap_or_default(), "xsd:string")));
+            ContentBlock::ToolUse {
+                id,
+                name,
+                input,
+                reason,
+            } => {
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:toolUseId",
+                    lit(id.clone(), "xsd:string"),
+                ));
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:toolName",
+                    lit(name.clone(), "xsd:string"),
+                ));
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:toolInput",
+                    lit(
+                        serde_json::to_string(input).unwrap_or_default(),
+                        "xsd:string",
+                    ),
+                ));
                 if let Some(r) = reason {
-                    out.push(Triple::new(&block_iri, "foundation:toolCallReason", lit(r.clone(), "xsd:string")));
+                    out.push(Triple::new(
+                        &block_iri,
+                        "foundation:toolCallReason",
+                        lit(r.clone(), "xsd:string"),
+                    ));
                 }
             }
-            ContentBlock::ToolResult { tool_use_id, content, is_error, duration_ms } => {
-                out.push(Triple::new(&block_iri, "anthropic:resultContent", lit(content.clone(), "xsd:string")));
-                out.push(Triple::new(&block_iri, "anthropic:isError",
-                    lit(is_error.unwrap_or(false).to_string(), "xsd:boolean")));
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+                duration_ms,
+            } => {
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:resultContent",
+                    lit(content.clone(), "xsd:string"),
+                ));
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:isError",
+                    lit(is_error.unwrap_or(false).to_string(), "xsd:boolean"),
+                ));
                 if let Some(d) = duration_ms {
-                    out.push(Triple::new(&block_iri, "foundation:durationMs", lit(d.to_string(), "xsd:integer")));
+                    out.push(Triple::new(
+                        &block_iri,
+                        "foundation:durationMs",
+                        lit(d.to_string(), "xsd:integer"),
+                    ));
                 }
                 if !tool_use_id.is_empty() {
                     let found = Individual::find_by_class_and_properties(
-                        conn, "anthropic:ToolUseBlock", &[("anthropic:toolUseId", tool_use_id.as_str())],
-                    ).ok().and_then(|v| v.into_iter().next())
-                    .or_else(|| Individual::find_by_class_and_properties(
-                        conn, "foundation:QuestionOutputBlock", &[("foundation:questionToolUseId", tool_use_id.as_str())],
-                    ).ok().and_then(|v| v.into_iter().next()));
+                        conn,
+                        "anthropic:ToolUseBlock",
+                        &[("anthropic:toolUseId", tool_use_id.as_str())],
+                    )
+                    .ok()
+                    .and_then(|v| v.into_iter().next())
+                    .or_else(|| {
+                        Individual::find_by_class_and_properties(
+                            conn,
+                            "foundation:QuestionOutputBlock",
+                            &[("foundation:questionToolUseId", tool_use_id.as_str())],
+                        )
+                        .ok()
+                        .and_then(|v| v.into_iter().next())
+                    });
                     if let Some(ref_iri) = found {
-                        out.push(Triple::new(&block_iri, "anthropic:resultOf", Object::Iri(ref_iri)));
+                        out.push(Triple::new(
+                            &block_iri,
+                            "anthropic:resultOf",
+                            Object::Iri(ref_iri),
+                        ));
                     }
                 }
             }
-            ContentBlock::Thinking { thinking, signature } => {
-                out.push(Triple::new(&block_iri, "anthropic:thinking", lit(thinking.clone(), "xsd:string")));
-                out.push(Triple::new(&block_iri, "anthropic:signature", lit(signature.clone(), "xsd:string")));
+            ContentBlock::Thinking {
+                thinking,
+                signature,
+            } => {
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:thinking",
+                    lit(thinking.clone(), "xsd:string"),
+                ));
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:signature",
+                    lit(signature.clone(), "xsd:string"),
+                ));
             }
             ContentBlock::RedactedThinking { data } => {
-                out.push(Triple::new(&block_iri, "anthropic:redactedData", lit(data.clone(), "xsd:string")));
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:redactedData",
+                    lit(data.clone(), "xsd:string"),
+                ));
             }
             ContentBlock::Image { source } => {
-                out.push(Triple::new(&block_iri, "anthropic:mediaType", lit(source.media_type.clone(), "xsd:string")));
-                out.push(Triple::new(&block_iri, "anthropic:imageData", lit(source.data.clone(), "xsd:string")));
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:mediaType",
+                    lit(source.media_type.clone(), "xsd:string"),
+                ));
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:imageData",
+                    lit(source.data.clone(), "xsd:string"),
+                ));
             }
             ContentBlock::Document { source } => {
-                out.push(Triple::new(&block_iri, "anthropic:mediaType", lit(source.media_type.clone(), "xsd:string")));
-                out.push(Triple::new(&block_iri, "anthropic:documentData", lit(source.data.clone(), "xsd:string")));
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:mediaType",
+                    lit(source.media_type.clone(), "xsd:string"),
+                ));
+                out.push(Triple::new(
+                    &block_iri,
+                    "anthropic:documentData",
+                    lit(source.data.clone(), "xsd:string"),
+                ));
             }
-            ContentBlock::QuestionOutput { id, question, question_type, options } => {
-                out.push(Triple::new(&block_iri, "foundation:questionToolUseId", lit(id.clone(), "xsd:string")));
-                out.push(Triple::new(&block_iri, "foundation:questionText", lit(question.clone(), "xsd:string")));
-                out.push(Triple::new(&block_iri, "foundation:questionType", lit(question_type.clone(), "xsd:string")));
-                out.push(Triple::new(&block_iri, "foundation:questionOptions",
-                    lit(serde_json::to_string(options).unwrap_or_else(|_| "[]".to_string()), "xsd:string")));
+            ContentBlock::QuestionOutput {
+                id,
+                question,
+                question_type,
+                options,
+            } => {
+                out.push(Triple::new(
+                    &block_iri,
+                    "foundation:questionToolUseId",
+                    lit(id.clone(), "xsd:string"),
+                ));
+                out.push(Triple::new(
+                    &block_iri,
+                    "foundation:questionText",
+                    lit(question.clone(), "xsd:string"),
+                ));
+                out.push(Triple::new(
+                    &block_iri,
+                    "foundation:questionType",
+                    lit(question_type.clone(), "xsd:string"),
+                ));
+                out.push(Triple::new(
+                    &block_iri,
+                    "foundation:questionOptions",
+                    lit(
+                        serde_json::to_string(options).unwrap_or_else(|_| "[]".to_string()),
+                        "xsd:string",
+                    ),
+                ));
             }
-            ContentBlock::CameraRef { file_path, token_estimate } => {
-                out.push(Triple::new(&block_iri, "foundation:cameraFilePath", lit(file_path.clone(), "xsd:anyURI")));
-                out.push(Triple::new(&block_iri, "foundation:tokenEstimate", Object::Integer(*token_estimate as i64)));
+            ContentBlock::CameraRef {
+                file_path,
+                token_estimate,
+            } => {
+                out.push(Triple::new(
+                    &block_iri,
+                    "foundation:cameraFilePath",
+                    lit(file_path.clone(), "xsd:anyURI"),
+                ));
+                out.push(Triple::new(
+                    &block_iri,
+                    "foundation:tokenEstimate",
+                    Object::Integer(*token_estimate as i64),
+                ));
             }
-            ContentBlock::FileRef { file_iri, file_name, token_estimate, .. } => {
-                out.push(Triple::new(&block_iri, "foundation:fileRef", Object::Iri(file_iri.clone())));
-                out.push(Triple::new(&block_iri, "foundation:attachedFileName", lit(file_name.clone(), "xsd:string")));
-                out.push(Triple::new(&block_iri, "foundation:tokenEstimate", Object::Integer(*token_estimate as i64)));
+            ContentBlock::FileRef {
+                file_iri,
+                file_name,
+                token_estimate,
+                ..
+            } => {
+                out.push(Triple::new(
+                    &block_iri,
+                    "foundation:fileRef",
+                    Object::Iri(file_iri.clone()),
+                ));
+                out.push(Triple::new(
+                    &block_iri,
+                    "foundation:attachedFileName",
+                    lit(file_name.clone(), "xsd:string"),
+                ));
+                out.push(Triple::new(
+                    &block_iri,
+                    "foundation:tokenEstimate",
+                    Object::Integer(*token_estimate as i64),
+                ));
             }
             ContentBlock::CompactionSummary { text } => {
-                out.push(Triple::new(&block_iri, "foundation:summaryText", lit(text.clone(), "xsd:string")));
+                out.push(Triple::new(
+                    &block_iri,
+                    "foundation:summaryText",
+                    lit(text.clone(), "xsd:string"),
+                ));
             }
         }
 
@@ -331,21 +610,29 @@ pub fn save_content_blocks(
 
     for (index, block) in blocks.iter().enumerate() {
         let (class_iri, block_iri_suffix) = match block {
-            ContentBlock::Text { .. }           => ("anthropic:TextBlock", "TextBlock"),
-            ContentBlock::ToolUse { .. }        => ("anthropic:ToolUseBlock", "ToolUseBlock"),
-            ContentBlock::ToolResult { .. }     => ("anthropic:ToolResultBlock", "ToolResultBlock"),
-            ContentBlock::Thinking { .. }       => ("anthropic:ThinkingBlock", "ThinkingBlock"),
-            ContentBlock::RedactedThinking { .. } => ("anthropic:RedactedThinkingBlock", "RedactedThinkingBlock"),
-            ContentBlock::Image { .. }          => ("anthropic:ImageBlock", "ImageBlock"),
-            ContentBlock::Document { .. }       => ("anthropic:DocumentBlock", "DocumentBlock"),
-            ContentBlock::QuestionOutput { .. } => ("foundation:QuestionOutputBlock", "QuestionOutputBlock"),
-            ContentBlock::CameraRef { .. }      => ("foundation:CameraRefBlock", "CameraRefBlock"),
-            ContentBlock::FileRef { .. }        => ("foundation:FileRefBlock", "FileRefBlock"),
-            ContentBlock::CompactionSummary { .. } => ("foundation:CompactionSummaryBlock", "CompactionSummaryBlock"),
+            ContentBlock::Text { .. } => ("anthropic:TextBlock", "TextBlock"),
+            ContentBlock::ToolUse { .. } => ("anthropic:ToolUseBlock", "ToolUseBlock"),
+            ContentBlock::ToolResult { .. } => ("anthropic:ToolResultBlock", "ToolResultBlock"),
+            ContentBlock::Thinking { .. } => ("anthropic:ThinkingBlock", "ThinkingBlock"),
+            ContentBlock::RedactedThinking { .. } => {
+                ("anthropic:RedactedThinkingBlock", "RedactedThinkingBlock")
+            }
+            ContentBlock::Image { .. } => ("anthropic:ImageBlock", "ImageBlock"),
+            ContentBlock::Document { .. } => ("anthropic:DocumentBlock", "DocumentBlock"),
+            ContentBlock::QuestionOutput { .. } => {
+                ("foundation:QuestionOutputBlock", "QuestionOutputBlock")
+            }
+            ContentBlock::CameraRef { .. } => ("foundation:CameraRefBlock", "CameraRefBlock"),
+            ContentBlock::FileRef { .. } => ("foundation:FileRefBlock", "FileRefBlock"),
+            ContentBlock::CompactionSummary { .. } => (
+                "foundation:CompactionSummaryBlock",
+                "CompactionSummaryBlock",
+            ),
         };
 
         let prefix_end = class_iri.find(':').map(|i| i + 1).unwrap_or(0);
-        let block_iri = format!("{}{}_{}_{}",
+        let block_iri = format!(
+            "{}{}_{}_{}",
             &class_iri[..prefix_end],
             block_iri_suffix,
             message_timestamp,
@@ -356,64 +643,127 @@ pub fn save_content_blocks(
         ind.assert(conn, class_iri, block_iri_suffix, "chat", "ai")
             .map_err(|e| format!("Failed to assert block {}: {}", block_iri, e))?;
 
-        ind.add_property(conn, "foundation:blockIndex", vec![Object::Integer(index as i64)], "ai")
-            .map_err(|e| format!("Failed to set blockIndex: {}", e))?;
+        ind.add_property(
+            conn,
+            "foundation:blockIndex",
+            vec![Object::Integer(index as i64)],
+            "ai",
+        )
+        .map_err(|e| format!("Failed to set blockIndex: {}", e))?;
 
         match block {
             ContentBlock::Text { text } => {
-                ind.add_property(conn, "anthropic:text", vec![Object::Literal {
-                    value: text.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set text: {}", e))?;
-            }
-
-            ContentBlock::ToolUse { id, name, input, reason } => {
-                let input_str = serde_json::to_string(input).unwrap_or_default();
-                ind.add_property(conn, "anthropic:toolUseId", vec![Object::Literal {
-                    value: id.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set toolUseId: {}", e))?;
-                ind.add_property(conn, "anthropic:toolName", vec![Object::Literal {
-                    value: name.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set toolName: {}", e))?;
-                ind.add_property(conn, "anthropic:toolInput", vec![Object::Literal {
-                    value: input_str,
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set toolInput: {}", e))?;
-                if let Some(r) = reason {
-                    ind.add_property(conn, "foundation:toolCallReason", vec![Object::Literal {
-                        value: r.clone(),
+                ind.add_property(
+                    conn,
+                    "anthropic:text",
+                    vec![Object::Literal {
+                        value: text.clone(),
                         datatype: Some("xsd:string".to_string()),
                         language: None,
-                    }], "ai").map_err(|e| format!("Failed to set toolCallReason: {}", e))?;
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set text: {}", e))?;
+            }
+
+            ContentBlock::ToolUse {
+                id,
+                name,
+                input,
+                reason,
+            } => {
+                let input_str = serde_json::to_string(input).unwrap_or_default();
+                ind.add_property(
+                    conn,
+                    "anthropic:toolUseId",
+                    vec![Object::Literal {
+                        value: id.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set toolUseId: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "anthropic:toolName",
+                    vec![Object::Literal {
+                        value: name.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set toolName: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "anthropic:toolInput",
+                    vec![Object::Literal {
+                        value: input_str,
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set toolInput: {}", e))?;
+                if let Some(r) = reason {
+                    ind.add_property(
+                        conn,
+                        "foundation:toolCallReason",
+                        vec![Object::Literal {
+                            value: r.clone(),
+                            datatype: Some("xsd:string".to_string()),
+                            language: None,
+                        }],
+                        "ai",
+                    )
+                    .map_err(|e| format!("Failed to set toolCallReason: {}", e))?;
                 }
             }
 
-            ContentBlock::ToolResult { tool_use_id, content, is_error, duration_ms } => {
-                ind.add_property(conn, "anthropic:resultContent", vec![Object::Literal {
-                    value: content.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set resultContent: {}", e))?;
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+                duration_ms,
+            } => {
+                ind.add_property(
+                    conn,
+                    "anthropic:resultContent",
+                    vec![Object::Literal {
+                        value: content.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set resultContent: {}", e))?;
 
                 let error_val = is_error.unwrap_or(false);
-                ind.add_property(conn, "anthropic:isError", vec![Object::Literal {
-                    value: error_val.to_string(),
-                    datatype: Some("xsd:boolean".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set isError: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "anthropic:isError",
+                    vec![Object::Literal {
+                        value: error_val.to_string(),
+                        datatype: Some("xsd:boolean".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set isError: {}", e))?;
 
                 if let Some(d) = duration_ms {
-                    ind.add_property(conn, "foundation:durationMs", vec![Object::Literal {
-                        value: d.to_string(),
-                        datatype: Some("xsd:integer".to_string()),
-                        language: None,
-                    }], "ai").map_err(|e| format!("Failed to set durationMs: {}", e))?;
+                    ind.add_property(
+                        conn,
+                        "foundation:durationMs",
+                        vec![Object::Literal {
+                            value: d.to_string(),
+                            datatype: Some("xsd:integer".to_string()),
+                            language: None,
+                        }],
+                        "ai",
+                    )
+                    .map_err(|e| format!("Failed to set durationMs: {}", e))?;
                 }
 
                 if !tool_use_id.is_empty() {
@@ -421,123 +771,244 @@ pub fn save_content_blocks(
                         conn,
                         "anthropic:ToolUseBlock",
                         &[("anthropic:toolUseId", tool_use_id.as_str())],
-                    ).ok().and_then(|v| v.into_iter().next())
+                    )
+                    .ok()
+                    .and_then(|v| v.into_iter().next())
                     .or_else(|| {
                         Individual::find_by_class_and_properties(
                             conn,
                             "foundation:QuestionOutputBlock",
                             &[("foundation:questionToolUseId", tool_use_id.as_str())],
-                        ).ok().and_then(|v| v.into_iter().next())
+                        )
+                        .ok()
+                        .and_then(|v| v.into_iter().next())
                     });
                     if let Some(block_iri) = found_iri {
-                        ind.add_property(conn, "anthropic:resultOf",
-                            vec![Object::Iri(block_iri)], "ai")
-                            .map_err(|e| format!("Failed to set resultOf: {}", e))?;
+                        ind.add_property(
+                            conn,
+                            "anthropic:resultOf",
+                            vec![Object::Iri(block_iri)],
+                            "ai",
+                        )
+                        .map_err(|e| format!("Failed to set resultOf: {}", e))?;
                     }
                 }
             }
 
-            ContentBlock::Thinking { thinking, signature } => {
-                ind.add_property(conn, "anthropic:thinking", vec![Object::Literal {
-                    value: thinking.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set thinking: {}", e))?;
-                ind.add_property(conn, "anthropic:signature", vec![Object::Literal {
-                    value: signature.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set signature: {}", e))?;
+            ContentBlock::Thinking {
+                thinking,
+                signature,
+            } => {
+                ind.add_property(
+                    conn,
+                    "anthropic:thinking",
+                    vec![Object::Literal {
+                        value: thinking.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set thinking: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "anthropic:signature",
+                    vec![Object::Literal {
+                        value: signature.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set signature: {}", e))?;
             }
 
             ContentBlock::RedactedThinking { data } => {
-                ind.add_property(conn, "anthropic:redactedData", vec![Object::Literal {
-                    value: data.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set redactedData: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "anthropic:redactedData",
+                    vec![Object::Literal {
+                        value: data.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set redactedData: {}", e))?;
             }
 
             ContentBlock::Image { source } => {
-                ind.add_property(conn, "anthropic:mediaType", vec![Object::Literal {
-                    value: source.media_type.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set mediaType: {}", e))?;
-                ind.add_property(conn, "anthropic:imageData", vec![Object::Literal {
-                    value: source.data.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set imageData: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "anthropic:mediaType",
+                    vec![Object::Literal {
+                        value: source.media_type.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set mediaType: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "anthropic:imageData",
+                    vec![Object::Literal {
+                        value: source.data.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set imageData: {}", e))?;
             }
 
             ContentBlock::Document { source } => {
-                ind.add_property(conn, "anthropic:mediaType", vec![Object::Literal {
-                    value: source.media_type.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set mediaType: {}", e))?;
-                ind.add_property(conn, "anthropic:documentData", vec![Object::Literal {
-                    value: source.data.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set documentData: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "anthropic:mediaType",
+                    vec![Object::Literal {
+                        value: source.media_type.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set mediaType: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "anthropic:documentData",
+                    vec![Object::Literal {
+                        value: source.data.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set documentData: {}", e))?;
             }
 
-            ContentBlock::QuestionOutput { id, question, question_type, options } => {
-                let options_json = serde_json::to_string(options).unwrap_or_else(|_| "[]".to_string());
-                ind.add_property(conn, "foundation:questionToolUseId", vec![Object::Literal {
-                    value: id.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set questionToolUseId: {}", e))?;
-                ind.add_property(conn, "foundation:questionText", vec![Object::Literal {
-                    value: question.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set questionText: {}", e))?;
-                ind.add_property(conn, "foundation:questionType", vec![Object::Literal {
-                    value: question_type.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set questionType: {}", e))?;
-                ind.add_property(conn, "foundation:questionOptions", vec![Object::Literal {
-                    value: options_json,
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set questionOptions: {}", e))?;
+            ContentBlock::QuestionOutput {
+                id,
+                question,
+                question_type,
+                options,
+            } => {
+                let options_json =
+                    serde_json::to_string(options).unwrap_or_else(|_| "[]".to_string());
+                ind.add_property(
+                    conn,
+                    "foundation:questionToolUseId",
+                    vec![Object::Literal {
+                        value: id.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set questionToolUseId: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "foundation:questionText",
+                    vec![Object::Literal {
+                        value: question.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set questionText: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "foundation:questionType",
+                    vec![Object::Literal {
+                        value: question_type.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set questionType: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "foundation:questionOptions",
+                    vec![Object::Literal {
+                        value: options_json,
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set questionOptions: {}", e))?;
             }
 
-            ContentBlock::CameraRef { file_path, token_estimate } => {
-                ind.add_property(conn, "foundation:cameraFilePath", vec![Object::Literal {
-                    value: file_path.clone(),
-                    datatype: Some("xsd:anyURI".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set cameraFilePath: {}", e))?;
-                ind.add_property(conn, "foundation:tokenEstimate",
-                    vec![Object::Integer(*token_estimate as i64)], "ai")
-                    .map_err(|e| format!("Failed to set tokenEstimate: {}", e))?;
+            ContentBlock::CameraRef {
+                file_path,
+                token_estimate,
+            } => {
+                ind.add_property(
+                    conn,
+                    "foundation:cameraFilePath",
+                    vec![Object::Literal {
+                        value: file_path.clone(),
+                        datatype: Some("xsd:anyURI".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set cameraFilePath: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "foundation:tokenEstimate",
+                    vec![Object::Integer(*token_estimate as i64)],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set tokenEstimate: {}", e))?;
             }
 
-            ContentBlock::FileRef { file_iri, file_name, token_estimate, .. } => {
-                ind.add_property(conn, "foundation:fileRef",
-                    vec![Object::Iri(file_iri.clone())], "ai")
-                    .map_err(|e| format!("Failed to set fileRef: {}", e))?;
-                ind.add_property(conn, "foundation:attachedFileName", vec![Object::Literal {
-                    value: file_name.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set attachedFileName: {}", e))?;
-                ind.add_property(conn, "foundation:tokenEstimate",
-                    vec![Object::Integer(*token_estimate as i64)], "ai")
-                    .map_err(|e| format!("Failed to set tokenEstimate: {}", e))?;
+            ContentBlock::FileRef {
+                file_iri,
+                file_name,
+                token_estimate,
+                ..
+            } => {
+                ind.add_property(
+                    conn,
+                    "foundation:fileRef",
+                    vec![Object::Iri(file_iri.clone())],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set fileRef: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "foundation:attachedFileName",
+                    vec![Object::Literal {
+                        value: file_name.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set attachedFileName: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "foundation:tokenEstimate",
+                    vec![Object::Integer(*token_estimate as i64)],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set tokenEstimate: {}", e))?;
             }
             ContentBlock::CompactionSummary { text } => {
-                ind.add_property(conn, "foundation:summaryText", vec![Object::Literal {
-                    value: text.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                }], "ai").map_err(|e| format!("Failed to set summaryText: {}", e))?;
+                ind.add_property(
+                    conn,
+                    "foundation:summaryText",
+                    vec![Object::Literal {
+                        value: text.clone(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "ai",
+                )
+                .map_err(|e| format!("Failed to set summaryText: {}", e))?;
             }
         }
 
@@ -548,10 +1019,16 @@ pub fn save_content_blocks(
     // tx_id. triples_current uses MAX(tx) per (subject, predicate), so separate
     // calls would cause earlier blocks to be shadowed by the last one.
     if !block_iris.is_empty() {
-        msg.add_property(conn, "foundation:hasContentBlock",
-            block_iris.iter().map(|iri| Object::Iri(iri.clone())).collect(),
-            "ai")
-            .map_err(|e| format!("Failed to link blocks to message: {}", e))?;
+        msg.add_property(
+            conn,
+            "foundation:hasContentBlock",
+            block_iris
+                .iter()
+                .map(|iri| Object::Iri(iri.clone()))
+                .collect(),
+            "ai",
+        )
+        .map_err(|e| format!("Failed to link blocks to message: {}", e))?;
     }
 
     Ok(block_iris)
@@ -566,9 +1043,17 @@ pub fn load_content_blocks(
         .map_err(|e| format!("Failed to load message for blocks: {}", e))?
         .ok_or_else(|| format!("Message {} not found", message_iri))?;
 
-    let block_iris: Vec<String> = ind.properties.iter()
+    let block_iris: Vec<String> = ind
+        .properties
+        .iter()
         .filter(|(k, _)| k == "foundation:hasContentBlock")
-        .filter_map(|(_, v)| if let Object::Iri(iri) = v { Some(iri.clone()) } else { None })
+        .filter_map(|(_, v)| {
+            if let Object::Iri(iri) = v {
+                Some(iri.clone())
+            } else {
+                None
+            }
+        })
         .collect();
 
     if block_iris.is_empty() {
@@ -584,15 +1069,29 @@ pub fn load_content_blocks(
             Err(_) => continue,
         };
 
-        let block_index = block_ind.properties.iter()
+        let block_index = block_ind
+            .properties
+            .iter()
             .find(|(k, _)| k == "foundation:blockIndex")
-            .and_then(|(_, v)| if let Object::Integer(n) = v { Some(*n) } else { None })
+            .and_then(|(_, v)| {
+                if let Object::Integer(n) = v {
+                    Some(*n)
+                } else {
+                    None
+                }
+            })
             .unwrap_or(0);
 
-        let class_iri = block_ind.types.first().map(|t| t.iri.as_str()).unwrap_or("");
+        let class_iri = block_ind
+            .types
+            .first()
+            .map(|t| t.iri.as_str())
+            .unwrap_or("");
 
         let get_str = |prop: &str| -> Option<String> {
-            block_ind.properties.iter()
+            block_ind
+                .properties
+                .iter()
                 .find(|(k, _)| k == prop)
                 .and_then(|(_, v)| v.as_literal())
         };
@@ -607,35 +1106,59 @@ pub fn load_content_blocks(
                 let id = get_str("anthropic:toolUseId").unwrap_or_default();
                 let name = get_str("anthropic:toolName").unwrap_or_default();
                 let input_str = get_str("anthropic:toolInput").unwrap_or_else(|| "{}".to_string());
-                let input = serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Object(Default::default()));
+                let input = serde_json::from_str(&input_str)
+                    .unwrap_or(serde_json::Value::Object(Default::default()));
                 let reason = get_str("foundation:toolCallReason");
-                ContentBlock::ToolUse { id, name, input, reason }
+                ContentBlock::ToolUse {
+                    id,
+                    name,
+                    input,
+                    reason,
+                }
             }
 
             "anthropic:ToolResultBlock" => {
-                let tool_use_id = block_ind.properties.iter()
+                let tool_use_id = block_ind
+                    .properties
+                    .iter()
                     .find(|(k, _)| k == "anthropic:resultOf")
-                    .and_then(|(_, v)| if let Object::Iri(iri) = v { Some(iri.clone()) } else { None })
-                    .and_then(|result_of_iri| {
-                        Individual::get(conn, &result_of_iri).ok().flatten()
+                    .and_then(|(_, v)| {
+                        if let Object::Iri(iri) = v {
+                            Some(iri.clone())
+                        } else {
+                            None
+                        }
                     })
+                    .and_then(|result_of_iri| Individual::get(conn, &result_of_iri).ok().flatten())
                     .and_then(|tu_ind| {
-                        tu_ind.properties.iter()
-                            .find(|(k, _)| k == "anthropic:toolUseId" || k == "foundation:questionToolUseId")
+                        tu_ind
+                            .properties
+                            .iter()
+                            .find(|(k, _)| {
+                                k == "anthropic:toolUseId" || k == "foundation:questionToolUseId"
+                            })
                             .and_then(|(_, v)| v.as_literal())
                     })
                     .unwrap_or_default();
                 let content = get_str("anthropic:resultContent").unwrap_or_default();
                 let is_error = get_str("anthropic:isError").map(|s| s == "true");
-                let duration_ms = get_str("foundation:durationMs")
-                    .and_then(|s| s.parse::<u64>().ok());
-                ContentBlock::ToolResult { tool_use_id, content, is_error, duration_ms }
+                let duration_ms =
+                    get_str("foundation:durationMs").and_then(|s| s.parse::<u64>().ok());
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                    duration_ms,
+                }
             }
 
             "anthropic:ThinkingBlock" => {
                 let thinking = get_str("anthropic:thinking").unwrap_or_default();
                 let signature = get_str("anthropic:signature").unwrap_or_default();
-                ContentBlock::Thinking { thinking, signature }
+                ContentBlock::Thinking {
+                    thinking,
+                    signature,
+                }
             }
 
             "anthropic:RedactedThinkingBlock" => {
@@ -651,7 +1174,7 @@ pub fn load_content_blocks(
                         source_type: "base64".to_string(),
                         media_type,
                         data,
-                    }
+                    },
                 }
             }
 
@@ -663,7 +1186,7 @@ pub fn load_content_blocks(
                         source_type: "base64".to_string(),
                         media_type,
                         data,
-                    }
+                    },
                 }
             }
 
@@ -674,29 +1197,66 @@ pub fn load_content_blocks(
                 let options: Vec<String> = get_str("foundation:questionOptions")
                     .and_then(|s| serde_json::from_str(&s).ok())
                     .unwrap_or_default();
-                ContentBlock::QuestionOutput { id, question, question_type, options }
+                ContentBlock::QuestionOutput {
+                    id,
+                    question,
+                    question_type,
+                    options,
+                }
             }
 
             "foundation:CameraRefBlock" => {
                 let file_path = get_str("foundation:cameraFilePath").unwrap_or_default();
-                let token_estimate = block_ind.properties.iter()
+                let token_estimate = block_ind
+                    .properties
+                    .iter()
                     .find(|(k, _)| k == "foundation:tokenEstimate")
-                    .and_then(|(_, v)| if let Object::Integer(n) = v { Some(*n as usize) } else { None })
+                    .and_then(|(_, v)| {
+                        if let Object::Integer(n) = v {
+                            Some(*n as usize)
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(0);
-                ContentBlock::CameraRef { file_path, token_estimate }
+                ContentBlock::CameraRef {
+                    file_path,
+                    token_estimate,
+                }
             }
 
             "foundation:FileRefBlock" => {
-                let file_iri = block_ind.properties.iter()
+                let file_iri = block_ind
+                    .properties
+                    .iter()
                     .find(|(k, _)| k == "foundation:fileRef")
-                    .and_then(|(_, v)| if let Object::Iri(iri) = v { Some(iri.clone()) } else { None })
+                    .and_then(|(_, v)| {
+                        if let Object::Iri(iri) = v {
+                            Some(iri.clone())
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or_default();
                 let file_name = get_str("foundation:attachedFileName").unwrap_or_default();
-                let token_estimate = block_ind.properties.iter()
+                let token_estimate = block_ind
+                    .properties
+                    .iter()
                     .find(|(k, _)| k == "foundation:tokenEstimate")
-                    .and_then(|(_, v)| if let Object::Integer(n) = v { Some(*n as usize) } else { None })
+                    .and_then(|(_, v)| {
+                        if let Object::Integer(n) = v {
+                            Some(*n as usize)
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(0);
-                ContentBlock::FileRef { file_iri, file_name, token_estimate, ai_summary: None }
+                ContentBlock::FileRef {
+                    file_iri,
+                    file_name,
+                    token_estimate,
+                    ai_summary: None,
+                }
             }
 
             "foundation:CompactionSummaryBlock" => {
@@ -715,25 +1275,35 @@ pub fn load_content_blocks(
 }
 
 pub fn triple_str(triples: &[Triple], predicate: &str) -> Option<String> {
-    triples.iter()
+    triples
+        .iter()
         .find(|t| t.predicate == predicate)
         .and_then(|t| t.object.as_literal())
 }
 
 pub fn triple_int(triples: &[Triple], predicate: &str) -> Option<i64> {
-    triples.iter()
+    triples
+        .iter()
         .find(|t| t.predicate == predicate)
-        .and_then(|t| if let Object::Integer(n) = &t.object { Some(*n) } else { None })
+        .and_then(|t| {
+            if let Object::Integer(n) = &t.object {
+                Some(*n)
+            } else {
+                None
+            }
+        })
 }
 
 fn triple_iri<'a>(triples: &'a [Triple], predicate: &str) -> Option<&'a str> {
-    triples.iter()
+    triples
+        .iter()
         .find(|t| t.predicate == predicate)
         .and_then(|t| t.object.as_iri())
 }
 
 pub fn triple_iris(triples: &[Triple], predicate: &str) -> Vec<String> {
-    triples.iter()
+    triples
+        .iter()
         .filter(|t| t.predicate == predicate)
         .filter_map(|t| t.object.as_iri().map(|s| s.to_string()))
         .collect()
@@ -747,23 +1317,34 @@ pub fn parse_content_block_from_batch(
     let block_index = triple_int(block_triples, "foundation:blockIndex").unwrap_or(0);
 
     let block = match class_iri {
-        "anthropic:TextBlock" => {
-            ContentBlock::Text { text: triple_str(block_triples, "anthropic:text").unwrap_or_default() }
-        }
+        "anthropic:TextBlock" => ContentBlock::Text {
+            text: triple_str(block_triples, "anthropic:text").unwrap_or_default(),
+        },
         "anthropic:ToolUseBlock" => {
             let id = triple_str(block_triples, "anthropic:toolUseId").unwrap_or_default();
             let name = triple_str(block_triples, "anthropic:toolName").unwrap_or_default();
-            let input_str = triple_str(block_triples, "anthropic:toolInput").unwrap_or_else(|| "{}".to_string());
-            let input = serde_json::from_str(&input_str).unwrap_or(serde_json::Value::Object(Default::default()));
+            let input_str = triple_str(block_triples, "anthropic:toolInput")
+                .unwrap_or_else(|| "{}".to_string());
+            let input = serde_json::from_str(&input_str)
+                .unwrap_or(serde_json::Value::Object(Default::default()));
             let reason = triple_str(block_triples, "foundation:toolCallReason");
-            ContentBlock::ToolUse { id, name, input, reason }
+            ContentBlock::ToolUse {
+                id,
+                name,
+                input,
+                reason,
+            }
         }
         "anthropic:ToolResultBlock" => {
             let tool_use_id = triple_iri(block_triples, "anthropic:resultOf")
                 .and_then(|result_of_iri| tool_use_triples_map.get(result_of_iri))
                 .and_then(|tu_triples| {
-                    tu_triples.iter()
-                        .find(|t| t.predicate == "anthropic:toolUseId" || t.predicate == "foundation:questionToolUseId")
+                    tu_triples
+                        .iter()
+                        .find(|t| {
+                            t.predicate == "anthropic:toolUseId"
+                                || t.predicate == "foundation:questionToolUseId"
+                        })
                         .and_then(|t| t.object.as_literal())
                 })
                 .unwrap_or_default();
@@ -771,7 +1352,12 @@ pub fn parse_content_block_from_batch(
             let is_error = triple_str(block_triples, "anthropic:isError").map(|s| s == "true");
             let duration_ms = triple_str(block_triples, "foundation:durationMs")
                 .and_then(|s| s.parse::<u64>().ok());
-            ContentBlock::ToolResult { tool_use_id, content, is_error, duration_ms }
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+                duration_ms,
+            }
         }
         "anthropic:ThinkingBlock" => ContentBlock::Thinking {
             thinking: triple_str(block_triples, "anthropic:thinking").unwrap_or_default(),
@@ -785,14 +1371,14 @@ pub fn parse_content_block_from_batch(
                 source_type: "base64".to_string(),
                 media_type: triple_str(block_triples, "anthropic:mediaType").unwrap_or_default(),
                 data: triple_str(block_triples, "anthropic:imageData").unwrap_or_default(),
-            }
+            },
         },
         "anthropic:DocumentBlock" => ContentBlock::Document {
             source: DocumentSource {
                 source_type: "base64".to_string(),
                 media_type: triple_str(block_triples, "anthropic:mediaType").unwrap_or_default(),
                 data: triple_str(block_triples, "anthropic:documentData").unwrap_or_default(),
-            }
+            },
         },
         "foundation:QuestionOutputBlock" => ContentBlock::QuestionOutput {
             id: triple_str(block_triples, "foundation:questionToolUseId").unwrap_or_default(),
@@ -804,12 +1390,16 @@ pub fn parse_content_block_from_batch(
         },
         "foundation:CameraRefBlock" => ContentBlock::CameraRef {
             file_path: triple_str(block_triples, "foundation:cameraFilePath").unwrap_or_default(),
-            token_estimate: triple_int(block_triples, "foundation:tokenEstimate").unwrap_or(0) as usize,
+            token_estimate: triple_int(block_triples, "foundation:tokenEstimate").unwrap_or(0)
+                as usize,
         },
         "foundation:FileRefBlock" => ContentBlock::FileRef {
-            file_iri: triple_iri(block_triples, "foundation:fileRef").unwrap_or("").to_string(),
+            file_iri: triple_iri(block_triples, "foundation:fileRef")
+                .unwrap_or("")
+                .to_string(),
             file_name: triple_str(block_triples, "foundation:attachedFileName").unwrap_or_default(),
-            token_estimate: triple_int(block_triples, "foundation:tokenEstimate").unwrap_or(0) as usize,
+            token_estimate: triple_int(block_triples, "foundation:tokenEstimate").unwrap_or(0)
+                as usize,
             ai_summary: None,
         },
         "foundation:CompactionSummaryBlock" => ContentBlock::CompactionSummary {
@@ -829,11 +1419,14 @@ fn load_message_from_batch(
 ) -> Result<AIConversationMessage, String> {
     let role = triple_str(msg_triples, "foundation:role").ok_or("Missing role")?;
 
-    let timestamp = msg_triples.iter()
+    let timestamp = msg_triples
+        .iter()
         .find(|t| t.predicate == "foundation:sentAt")
         .and_then(|t| {
             if let Object::DateTime(rfc3339) = &t.object {
-                chrono::DateTime::parse_from_rfc3339(rfc3339).ok().map(|dt| dt.timestamp_millis())
+                chrono::DateTime::parse_from_rfc3339(rfc3339)
+                    .ok()
+                    .map(|dt| dt.timestamp_millis())
             } else {
                 None
             }
@@ -847,16 +1440,28 @@ fn load_message_from_batch(
     let output_tokens = triple_int(msg_triples, "foundation:outputTokens").map(|n| n as usize);
 
     let block_iris = triple_iris(msg_triples, "foundation:hasContentBlock");
-    let mut indexed_blocks: Vec<(i64, ContentBlock)> = block_iris.iter()
+    let mut indexed_blocks: Vec<(i64, ContentBlock)> = block_iris
+        .iter()
         .filter_map(|block_iri| {
-            block_triples_map.get(block_iri)
+            block_triples_map
+                .get(block_iri)
                 .and_then(|bt| parse_content_block_from_batch(bt, tool_use_triples_map))
         })
         .collect();
     indexed_blocks.sort_by_key(|(idx, _)| *idx);
     let content = indexed_blocks.into_iter().map(|(_, b)| b).collect();
 
-    Ok(AIConversationMessage { iri: iri.to_string(), role, content, timestamp, token_count, model, stop_reason, input_tokens, output_tokens })
+    Ok(AIConversationMessage {
+        iri: iri.to_string(),
+        role,
+        content,
+        timestamp,
+        token_count,
+        model,
+        stop_reason,
+        input_tokens,
+        output_tokens,
+    })
 }
 
 /// Load conversation history with token budget
@@ -865,9 +1470,13 @@ pub async fn load_conversation_history(
     conversation_id: &str,
     max_tokens: usize,
 ) -> Result<(Vec<AIConversationMessage>, usize), String> {
-    super::log_backend("info", &format!(
-        "[CHAT] Loading conversation history for: {}", conversation_id
-    ));
+    super::log_backend(
+        "info",
+        &format!(
+            "[CHAT] Loading conversation history for: {}",
+            conversation_id
+        ),
+    );
 
     let conversation_id = conversation_id.to_string();
     let t_read_start = std::time::Instant::now();
@@ -1123,27 +1732,36 @@ pub async fn load_conversation_history(
     let mut validated: Vec<AIConversationMessage> = Vec::with_capacity(selected.len());
 
     for msg in selected {
-        let pending_tool_ids: Vec<String> = validated.last()
+        let pending_tool_ids: Vec<String> = validated
+            .last()
             .filter(|prev| prev.role == "assistant")
-            .map(|prev| prev.content.iter()
-                .filter_map(|b| match b {
-                    ContentBlock::ToolUse { id, .. } => Some(id.clone()),
-                    ContentBlock::QuestionOutput { id, .. } => Some(id.clone()),
-                    _ => None,
-                })
-                .collect())
+            .map(|prev| {
+                prev.content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::ToolUse { id, .. } => Some(id.clone()),
+                        ContentBlock::QuestionOutput { id, .. } => Some(id.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
 
         if !pending_tool_ids.is_empty() {
-            let resolved_ids: std::collections::HashSet<&str> = msg.content.iter()
-                .filter_map(|b| if let ContentBlock::ToolResult { tool_use_id, .. } = b {
-                    Some(tool_use_id.as_str())
-                } else {
-                    None
+            let resolved_ids: std::collections::HashSet<&str> = msg
+                .content
+                .iter()
+                .filter_map(|b| {
+                    if let ContentBlock::ToolResult { tool_use_id, .. } = b {
+                        Some(tool_use_id.as_str())
+                    } else {
+                        None
+                    }
                 })
                 .collect();
 
-            let all_satisfied = pending_tool_ids.iter()
+            let all_satisfied = pending_tool_ids
+                .iter()
                 .all(|id| resolved_ids.contains(id.as_str()));
 
             if all_satisfied {
@@ -1156,7 +1774,9 @@ pub async fn load_conversation_history(
                     ));
                     prev.content.retain(|b| match b {
                         ContentBlock::ToolUse { .. } => false,
-                        ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => false,
+                        ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => {
+                            false
+                        }
                         _ => true,
                     });
                     if prev.content.is_empty() {
@@ -1166,7 +1786,9 @@ pub async fn load_conversation_history(
                 }
 
                 // Strip all orphaned tool_results (no matching tool_use).
-                let clean_content: Vec<ContentBlock> = msg.content.iter()
+                let clean_content: Vec<ContentBlock> = msg
+                    .content
+                    .iter()
                     .filter(|b| !matches!(b, ContentBlock::ToolResult { .. }))
                     .cloned()
                     .collect();
@@ -1177,16 +1799,22 @@ pub async fn load_conversation_history(
                     validated.push(clean_msg);
                 } else {
                     super::log_backend(
-                        "warn", "[CHAT] Dropped message with only orphaned tool_results",
+                        "warn",
+                        "[CHAT] Dropped message with only orphaned tool_results",
                     );
                 }
             }
         } else {
             if msg.role == "user"
-                && msg.content.iter().any(|b| matches!(b, ContentBlock::ToolResult { .. }))
+                && msg
+                    .content
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::ToolResult { .. }))
             {
                 // Strip all orphaned tool_results that have no matching tool_use in prev.
-                let clean_content: Vec<ContentBlock> = msg.content.iter()
+                let clean_content: Vec<ContentBlock> = msg
+                    .content
+                    .iter()
                     .filter(|b| !matches!(b, ContentBlock::ToolResult { .. }))
                     .cloned()
                     .collect();
@@ -1194,7 +1822,8 @@ pub async fn load_conversation_history(
                 let had_orphan = msg.content.len() > clean_content.len();
                 if had_orphan {
                     super::log_backend(
-                        "warn", "[CHAT] Stripping orphaned tool_result blocks (no preceding tool_use)",
+                        "warn",
+                        "[CHAT] Stripping orphaned tool_result blocks (no preceding tool_use)",
                     );
                 }
 
@@ -1218,10 +1847,13 @@ pub async fn load_conversation_history(
     for msg in final_cleaned {
         if let Some(prev) = merged.last_mut() {
             if prev.role == msg.role {
-                super::log_backend("warn", &format!(
-                    "[CHAT] Merging consecutive {} messages: {} into {}",
-                    msg.role, msg.iri, prev.iri
-                ));
+                super::log_backend(
+                    "warn",
+                    &format!(
+                        "[CHAT] Merging consecutive {} messages: {} into {}",
+                        msg.role, msg.iri, prev.iri
+                    ),
+                );
                 prev.content.extend(msg.content);
                 continue;
             }
@@ -1229,17 +1861,21 @@ pub async fn load_conversation_history(
         merged.push(msg);
     }
 
-    super::log_backend("info", &format!(
-        "[CHAT] history done: msgs_out={} tokens={}/{} read={}ms sanitize={}ms total={}ms",
-        merged.len(), total_tokens, max_tokens,
-        t_read_ms,
-        t_sanitize_start.elapsed().as_millis(),
-        t_read_start.elapsed().as_millis(),
-    ));
+    super::log_backend(
+        "info",
+        &format!(
+            "[CHAT] history done: msgs_out={} tokens={}/{} read={}ms sanitize={}ms total={}ms",
+            merged.len(),
+            total_tokens,
+            max_tokens,
+            t_read_ms,
+            t_sanitize_start.elapsed().as_millis(),
+            t_read_start.elapsed().as_millis(),
+        ),
+    );
 
     Ok((merged, total_tokens))
 }
-
 
 /// Log a single API call to the ontology as a foundation:AIAPICall entity
 pub async fn log_api_call(
@@ -1259,68 +1895,136 @@ pub async fn log_api_call(
     let conversation_iri = conversation_id.map(|s| s.to_string());
     let message_iri_opt = message_iri.map(|s| s.to_string());
 
-    executor.write(move |conn| {
-        // Build all triples in memory and insert in one bulk call — bypasses OWL
-        // validation (add_property runs has_prop + cardinality + domain/range checks
-        // per property; for a brand-new IRI every check is pure overhead, and
-        // generatedByConversation validation alone cost ~250ms, causing read-pool
-        // exhaustion under concurrent load).
-        let lit = |value: String, datatype: &str| Object::Literal {
-            value,
-            datatype: Some(datatype.to_string()),
-            language: None,
-        };
-        let called_at_dt = chrono::DateTime::from_timestamp_millis(timestamp)
-            .unwrap_or_default()
-            .to_rfc3339();
-        let cost = estimate_call_cost(
-            conn, &model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-        );
+    executor
+        .write(move |conn| {
+            // Build all triples in memory and insert in one bulk call — bypasses OWL
+            // validation (add_property runs has_prop + cardinality + domain/range checks
+            // per property; for a brand-new IRI every check is pure overhead, and
+            // generatedByConversation validation alone cost ~250ms, causing read-pool
+            // exhaustion under concurrent load).
+            let lit = |value: String, datatype: &str| Object::Literal {
+                value,
+                datatype: Some(datatype.to_string()),
+                language: None,
+            };
+            let called_at_dt = chrono::DateTime::from_timestamp_millis(timestamp)
+                .unwrap_or_default()
+                .to_rfc3339();
+            let cost = estimate_call_cost(
+                conn,
+                &model,
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+            );
 
-        let mut triples: Vec<Triple> = Vec::with_capacity(16);
-        triples.push(Triple::new(&iri, "rdf:type", Object::Iri("foundation:AIAPICall".to_string())));
-        triples.push(Triple::new(&iri, "rdfs:label", lit("AI API Call".to_string(), "xsd:string")));
-        triples.push(Triple::new(&iri, "foundation:model", lit(model.clone(), "xsd:string")));
-        triples.push(Triple::new(&iri, "foundation:inputTokens", Object::Integer(input_tokens as i64)));
-        triples.push(Triple::new(&iri, "foundation:outputTokens", Object::Integer(output_tokens as i64)));
-        triples.push(Triple::new(&iri, "foundation:cacheCreationTokens", Object::Integer(cache_creation_tokens as i64)));
-        triples.push(Triple::new(&iri, "foundation:cacheReadTokens", Object::Integer(cache_read_tokens as i64)));
-        triples.push(Triple::new(&iri, "foundation:calledAt", Object::DateTime(called_at_dt.clone())));
-        triples.push(Triple::new(&iri, "foundation:hasStartTime", Object::DateTime(called_at_dt.clone())));
-        triples.push(Triple::new(&iri, "foundation:hasEndTime", Object::DateTime(called_at_dt)));
-        if let Some(conv_iri) = conversation_iri {
-            triples.push(Triple::new(&iri, "foundation:generatedByConversation", Object::Iri(conv_iri)));
-        }
-        if let Some(msg_iri) = message_iri_opt {
-            triples.push(Triple::new(&iri, "foundation:generatedMessage", Object::Iri(msg_iri)));
-        }
-        if let Some(c) = cost {
-            triples.push(Triple::new(&iri, "foundation:estimatedCost", Object::Number(c)));
-        }
-
-        crate::owl::assert_raw_triples(conn, &triples, "ai")
-            .map_err(|e| format!("Failed to save AIAPICall: {}", e))?;
-
-        Ok(iri)
-    }).await
-    .map(|call_iri| {
-        if conversation_id.is_some() {
-            use crate::owl::formula_worker::{FormulaWorker, WorkerCommand, create_instance_recalc_jobs};
-            use tauri::Manager;
-            if let Some(worker) = app.try_state::<FormulaWorker>() {
-                let worker_sender = worker.sender.clone();
-                let executor_clone = executor.clone();
-                tauri::async_runtime::spawn(async move {
-                    let job_ids = executor_clone.read(move |conn| {
-                        Ok(create_instance_recalc_jobs(conn, &call_iri, "foundation:generatedByConversation"))
-                    }).await.unwrap_or_default();
-                    for job_id in job_ids {
-                        let _ = worker_sender.try_send(WorkerCommand::Enqueue { job_id });
-                    }
-                });
+            let mut triples: Vec<Triple> = Vec::with_capacity(16);
+            triples.push(Triple::new(
+                &iri,
+                "rdf:type",
+                Object::Iri("foundation:AIAPICall".to_string()),
+            ));
+            triples.push(Triple::new(
+                &iri,
+                "rdfs:label",
+                lit("AI API Call".to_string(), "xsd:string"),
+            ));
+            triples.push(Triple::new(
+                &iri,
+                "foundation:model",
+                lit(model.clone(), "xsd:string"),
+            ));
+            triples.push(Triple::new(
+                &iri,
+                "foundation:inputTokens",
+                Object::Integer(input_tokens as i64),
+            ));
+            triples.push(Triple::new(
+                &iri,
+                "foundation:outputTokens",
+                Object::Integer(output_tokens as i64),
+            ));
+            triples.push(Triple::new(
+                &iri,
+                "foundation:cacheCreationTokens",
+                Object::Integer(cache_creation_tokens as i64),
+            ));
+            triples.push(Triple::new(
+                &iri,
+                "foundation:cacheReadTokens",
+                Object::Integer(cache_read_tokens as i64),
+            ));
+            triples.push(Triple::new(
+                &iri,
+                "foundation:calledAt",
+                Object::DateTime(called_at_dt.clone()),
+            ));
+            triples.push(Triple::new(
+                &iri,
+                "foundation:hasStartTime",
+                Object::DateTime(called_at_dt.clone()),
+            ));
+            triples.push(Triple::new(
+                &iri,
+                "foundation:hasEndTime",
+                Object::DateTime(called_at_dt),
+            ));
+            if let Some(conv_iri) = conversation_iri {
+                triples.push(Triple::new(
+                    &iri,
+                    "foundation:generatedByConversation",
+                    Object::Iri(conv_iri),
+                ));
             }
-        }
-    })
+            if let Some(msg_iri) = message_iri_opt {
+                triples.push(Triple::new(
+                    &iri,
+                    "foundation:generatedMessage",
+                    Object::Iri(msg_iri),
+                ));
+            }
+            if let Some(c) = cost {
+                triples.push(Triple::new(
+                    &iri,
+                    "foundation:estimatedCost",
+                    Object::Number(c),
+                ));
+            }
+
+            crate::owl::assert_raw_triples(conn, &triples, "ai")
+                .map_err(|e| format!("Failed to save AIAPICall: {}", e))?;
+
+            Ok(iri)
+        })
+        .await
+        .map(|call_iri| {
+            if conversation_id.is_some() {
+                use crate::owl::formula_worker::{
+                    create_instance_recalc_jobs, FormulaWorker, WorkerCommand,
+                };
+                use tauri::Manager;
+                if let Some(worker) = app.try_state::<FormulaWorker>() {
+                    let worker_sender = worker.sender.clone();
+                    let executor_clone = executor.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let job_ids = executor_clone
+                            .read(move |conn| {
+                                Ok(create_instance_recalc_jobs(
+                                    conn,
+                                    &call_iri,
+                                    "foundation:generatedByConversation",
+                                ))
+                            })
+                            .await
+                            .unwrap_or_default();
+                        for job_id in job_ids {
+                            let _ = worker_sender.try_send(WorkerCommand::Enqueue { job_id });
+                        }
+                    });
+                }
+            }
+        })
 }
 
 fn estimate_call_cost(
@@ -1335,13 +2039,16 @@ fn estimate_call_cost(
         conn,
         "foundation:AIModel",
         &[("foundation:modelIdentifier", model_identifier)],
-    ).ok()?;
+    )
+    .ok()?;
 
     let model_iri = model_iris.into_iter().next()?;
     let model_ind = Individual::get(conn, &model_iri).ok().flatten()?;
 
     let get_price = |prop: &str| -> Option<f64> {
-        model_ind.properties.iter()
+        model_ind
+            .properties
+            .iter()
             .find(|(k, _)| k == prop)
             .and_then(|(_, v)| match v {
                 Object::Number(n) => Some(*n),
@@ -1358,7 +2065,8 @@ fn estimate_call_cost(
     let cost = (input_tokens as f64 * input_price
         + output_tokens as f64 * output_price
         + cache_creation_tokens as f64 * cache_write_price
-        + cache_read_tokens as f64 * cache_read_price) / 1_000_000.0;
+        + cache_read_tokens as f64 * cache_read_price)
+        / 1_000_000.0;
 
     Some(cost)
 }
@@ -1368,8 +2076,7 @@ fn get_tokenizer() -> Result<&'static tiktoken_rs::CoreBPE, String> {
     if let Some(bpe) = TOKENIZER.get() {
         return Ok(bpe);
     }
-    let bpe = tiktoken_rs::cl100k_base()
-        .map_err(|e| format!("Failed to load tokenizer: {}", e))?;
+    let bpe = tiktoken_rs::cl100k_base().map_err(|e| format!("Failed to load tokenizer: {}", e))?;
     Ok(TOKENIZER.get_or_init(|| bpe))
 }
 
@@ -1395,23 +2102,29 @@ pub fn calculate_content_tokens(blocks: &[ContentBlock]) -> usize {
             ContentBlock::Text { text } => bpe.encode_with_special_tokens(text).len(),
             ContentBlock::ToolUse { name, input, .. } => {
                 let json = serde_json::to_string(input).unwrap_or_default();
-                bpe.encode_with_special_tokens(name).len() +
-                bpe.encode_with_special_tokens(&json).len() + TOOL_TOKEN_OVERHEAD
-            },
+                bpe.encode_with_special_tokens(name).len()
+                    + bpe.encode_with_special_tokens(&json).len()
+                    + TOOL_TOKEN_OVERHEAD
+            }
             ContentBlock::ToolResult { content, .. } => {
                 bpe.encode_with_special_tokens(content).len() + TOOL_TOKEN_OVERHEAD
-            },
+            }
             ContentBlock::Image { .. } => 0,
             ContentBlock::CameraRef { token_estimate, .. } => *token_estimate,
             ContentBlock::Document { .. } => 0,
             ContentBlock::FileRef { token_estimate, .. } => *token_estimate,
-            ContentBlock::Thinking { thinking, .. } => bpe.encode_with_special_tokens(thinking).len(),
+            ContentBlock::Thinking { thinking, .. } => {
+                bpe.encode_with_special_tokens(thinking).len()
+            }
             ContentBlock::RedactedThinking { .. } => 0,
-            ContentBlock::QuestionOutput { question, options, .. } => {
+            ContentBlock::QuestionOutput {
+                question, options, ..
+            } => {
                 let opts = options.join(", ");
-                bpe.encode_with_special_tokens(question).len() +
-                bpe.encode_with_special_tokens(&opts).len() + TOOL_TOKEN_OVERHEAD
-            },
+                bpe.encode_with_special_tokens(question).len()
+                    + bpe.encode_with_special_tokens(&opts).len()
+                    + TOOL_TOKEN_OVERHEAD
+            }
             ContentBlock::CompactionSummary { text } => bpe.encode_with_special_tokens(text).len(),
         };
     }

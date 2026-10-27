@@ -1,5 +1,5 @@
-use FOUNDATION_tauri_app_lib::ai::{ChatMessage, GenerateRequest};
 use FOUNDATION_tauri_app_lib::ai::providers::ClaudeProvider;
+use FOUNDATION_tauri_app_lib::ai::{ChatMessage, GenerateRequest};
 
 fn large_system_prompt() -> String {
     // Target: clearly above 2048 tokens for all Claude models (including 4.x).
@@ -148,8 +148,8 @@ async fn test_cache_boundary_stable_across_turns() {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .expect("ANTHROPIC_API_KEY env var must be set to run this test");
 
-    let model = std::env::var("ANTHROPIC_MODEL")
-        .unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+    let model =
+        std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
 
     let provider = ClaudeProvider::with_model(api_key, model.clone(), 120);
 

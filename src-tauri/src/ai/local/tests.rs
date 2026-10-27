@@ -50,12 +50,15 @@ fn build_turns(
     tools: &[ToolDefinition],
     turns: Vec<(&str, MessageContent)>,
 ) -> Vec<(String, String)> {
-    let mut messages: Vec<(String, String)> = vec![
-        ("system".to_string(), format!("{}{}", system, format_tools_for_prompt(tools))),
-    ];
+    let mut messages: Vec<(String, String)> = vec![(
+        "system".to_string(),
+        format!("{}{}", system, format_tools_for_prompt(tools)),
+    )];
     for (role, content) in turns {
         let text = extract_text_content(&content);
-        if text.is_empty() { continue; }
+        if text.is_empty() {
+            continue;
+        }
         if let Some(last) = messages.last_mut() {
             if last.0 == role && role != "system" {
                 last.1.push('\n');
@@ -68,27 +71,37 @@ fn build_turns(
     messages
 }
 
-async fn run_and_parse(model_path: &str, messages: &[(String, String)])
-    -> (String, Option<String>, Option<String>)
-{
+async fn run_and_parse(
+    model_path: &str,
+    messages: &[(String, String)],
+) -> (String, Option<String>, Option<String>) {
     let model = load_model(model_path).await.expect("failed to load model");
     let mut raw = String::new();
-    run_inference(&model, messages, |p| { raw.push_str(&p); true })
-        .expect("inference failed");
+    run_inference(&model, messages, |p| {
+        raw.push_str(&p);
+        true
+    })
+    .expect("inference failed");
     println!("\n--- raw output ---\n{:?}\n---", raw);
     let tc = parse_all_tool_calls_from_output(&raw).into_iter().next();
     let name = tc.as_ref().map(|t| t.name.clone());
-    let msg = tc.as_ref().and_then(|t| t.input["message"].as_str().map(|s| s.to_string()));
+    let msg = tc
+        .as_ref()
+        .and_then(|t| t.input["message"].as_str().map(|s| s.to_string()));
     (raw, name, msg)
 }
 
-async fn run_and_parse_all(model_path: &str, messages: &[(String, String)])
-    -> (String, Vec<ToolCall>)
-{
+async fn run_and_parse_all(
+    model_path: &str,
+    messages: &[(String, String)],
+) -> (String, Vec<ToolCall>) {
     let model = load_model(model_path).await.expect("failed to load model");
     let mut raw = String::new();
-    run_inference(&model, messages, |p| { raw.push_str(&p); true })
-        .expect("inference failed");
+    run_inference(&model, messages, |p| {
+        raw.push_str(&p);
+        true
+    })
+    .expect("inference failed");
     println!("\n--- raw output (all calls) ---\n{:?}\n---", raw);
     let calls = parse_all_tool_calls_from_output(&raw);
     (raw, calls)
@@ -99,7 +112,8 @@ fn messages_with_injection(system: &str, user: &str) -> Vec<(String, String)> {
     let full_system = format!(
         "{}\n\nYou operate in a tool loop. Text responses are NEVER shown to the user \
          — use the speak tool to respond. NEVER output raw text.{}",
-        system, format_tools_for_prompt(&tools)
+        system,
+        format_tools_for_prompt(&tools)
     );
     vec![
         ("system".to_string(), full_system),
@@ -120,13 +134,17 @@ fn extract_text_from_text_variant() {
 #[test]
 fn extract_text_from_content_blocks_includes_text_and_tool_use() {
     let content = MessageContent::ContentBlocks(vec![
-        ContentBlock::Text { text: "first line".to_string() },
+        ContentBlock::Text {
+            text: "first line".to_string(),
+        },
         ContentBlock::ToolUse {
             id: "tu_1".to_string(),
             name: "search".to_string(),
             input: serde_json::json!({"query": "test"}),
         },
-        ContentBlock::Text { text: "second line".to_string() },
+        ContentBlock::Text {
+            text: "second line".to_string(),
+        },
     ]);
     let result = extract_text_content(&content);
     assert!(result.contains("first line"));
@@ -136,30 +154,35 @@ fn extract_text_from_content_blocks_includes_text_and_tool_use() {
 
 #[test]
 fn extract_text_tool_use_produces_native_format() {
-    let content = MessageContent::ContentBlocks(vec![
-        ContentBlock::ToolUse {
-            id: "tu_1".to_string(),
-            name: "describe_individual".to_string(),
-            input: serde_json::json!({"iris": ["foundation:X"]}),
-        },
-    ]);
+    let content = MessageContent::ContentBlocks(vec![ContentBlock::ToolUse {
+        id: "tu_1".to_string(),
+        name: "describe_individual".to_string(),
+        input: serde_json::json!({"iris": ["foundation:X"]}),
+    }]);
     let result = extract_text_content(&content);
-    assert!(result.contains("<|tool_call>call:describe_individual"), "should use the native format");
-    assert!(result.contains("<tool_call|>"), "should close with <tool_call|>");
+    assert!(
+        result.contains("<|tool_call>call:describe_individual"),
+        "should use the native format"
+    );
+    assert!(
+        result.contains("<tool_call|>"),
+        "should close with <tool_call|>"
+    );
     assert!(result.contains("foundation:X"), "should include the args");
 }
 
 #[test]
 fn extract_text_tool_result_produces_readable_text() {
-    let content = MessageContent::ContentBlocks(vec![
-        ContentBlock::ToolResult {
-            tool_use_id: "tu_1".to_string(),
-            content: serde_json::json!("Tool result goes here"),
-            is_error: None,
-        },
-    ]);
+    let content = MessageContent::ContentBlocks(vec![ContentBlock::ToolResult {
+        tool_use_id: "tu_1".to_string(),
+        content: serde_json::json!("Tool result goes here"),
+        is_error: None,
+    }]);
     let result = extract_text_content(&content);
-    assert!(result.contains("Tool result goes here"), "should include the result content");
+    assert!(
+        result.contains("Tool result goes here"),
+        "should include the result content"
+    );
 }
 
 // =========================================================================
@@ -226,7 +249,10 @@ fn parser_python_speak_with_iris_none_extracts_only_message() {
 #[test]
 fn parse_tool_call_speak_basic() {
     let raw = "<|tool_call>call:speak{message:<|\"|>Hi!<|\"|>}<tool_call|>";
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("should parse speak");
+    let tc = parse_all_tool_calls_from_output(raw)
+        .into_iter()
+        .next()
+        .expect("should parse speak");
     assert_eq!(tc.name, "speak");
     assert_eq!(tc.input["message"], "Hi!");
 }
@@ -234,7 +260,10 @@ fn parse_tool_call_speak_basic() {
 #[test]
 fn parse_tool_call_search() {
     let raw = "<|tool_call>call:search{query:<|\"|>capital of Brazil<|\"|>}<tool_call|>";
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("should parse search");
+    let tc = parse_all_tool_calls_from_output(raw)
+        .into_iter()
+        .next()
+        .expect("should parse search");
     assert_eq!(tc.name, "search");
     assert_eq!(tc.input["query"], "capital of Brazil");
 }
@@ -242,7 +271,10 @@ fn parse_tool_call_search() {
 #[test]
 fn parse_tool_call_ignores_eot_markers() {
     let raw = "<|tool_call>call:speak{message:<|\"|>ok<|\"|>}<tool_call|>\n<end_of_turn>";
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("should parse with EOT");
+    let tc = parse_all_tool_calls_from_output(raw)
+        .into_iter()
+        .next()
+        .expect("should parse with EOT");
     assert_eq!(tc.name, "speak");
     assert_eq!(tc.input["message"], "ok");
 }
@@ -250,7 +282,10 @@ fn parse_tool_call_ignores_eot_markers() {
 #[test]
 fn parse_tool_call_without_closing_tag() {
     let raw = "<|tool_call>call:search{query:<|\"|>test<|\"|>}";
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("should parse without closing tag");
+    let tc = parse_all_tool_calls_from_output(raw)
+        .into_iter()
+        .next()
+        .expect("should parse without closing tag");
     assert_eq!(tc.name, "search");
 }
 
@@ -277,7 +312,10 @@ fn parse_tool_call_multiple_returns_all() {
 #[test]
 fn parse_tool_call_with_iris_array() {
     let raw = "<|tool_call>call:speak{message:<|\"|>Here it is.<|\"|>,iris:[<|\"|>foundation:Task_1<|\"|>]}<tool_call|>";
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("should parse speak with iris");
+    let tc = parse_all_tool_calls_from_output(raw)
+        .into_iter()
+        .next()
+        .expect("should parse speak with iris");
     assert_eq!(tc.name, "speak");
     assert_eq!(tc.input["message"], "Here it is.");
     assert_eq!(tc.input["iris"][0], "foundation:Task_1");
@@ -286,7 +324,10 @@ fn parse_tool_call_with_iris_array() {
 #[test]
 fn parse_tool_call_legacy_format_as_fallback() {
     let raw = "tool_call\n{\"name\": \"speak\", \"input\": {\"message\": \"Hi!\"}}\n</tool_call>";
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("legacy format should work as fallback");
+    let tc = parse_all_tool_calls_from_output(raw)
+        .into_iter()
+        .next()
+        .expect("legacy format should work as fallback");
     assert_eq!(tc.name, "speak");
     assert_eq!(tc.input["message"], "Hi!");
 }
@@ -294,7 +335,10 @@ fn parse_tool_call_legacy_format_as_fallback() {
 #[test]
 fn parse_tool_call_xml_format_as_fallback() {
     let raw = r#"<tool_call>{"name": "speak", "input": {"message": "Hi!"}}</tool_call>"#;
-    let tc = parse_all_tool_calls_from_output(raw).into_iter().next().expect("XML format should work as fallback");
+    let tc = parse_all_tool_calls_from_output(raw)
+        .into_iter()
+        .next()
+        .expect("XML format should work as fallback");
     assert_eq!(tc.name, "speak");
     assert_eq!(tc.input["message"], "Hi!");
 }
@@ -311,14 +355,16 @@ fn gemma_args_simple_string() {
 
 #[test]
 fn gemma_args_multiple_fields() {
-    let val = parse_gemma_native_args("{query:<|\"|>test<|\"|>,class_iri:<|\"|>foundation:Task<|\"|>}");
+    let val =
+        parse_gemma_native_args("{query:<|\"|>test<|\"|>,class_iri:<|\"|>foundation:Task<|\"|>}");
     assert_eq!(val["query"], "test");
     assert_eq!(val["class_iri"], "foundation:Task");
 }
 
 #[test]
 fn gemma_args_with_array() {
-    let val = parse_gemma_native_args("{message:<|\"|>ok<|\"|>,iris:[<|\"|>foundation:Task_1<|\"|>]}");
+    let val =
+        parse_gemma_native_args("{message:<|\"|>ok<|\"|>,iris:[<|\"|>foundation:Task_1<|\"|>]}");
     assert_eq!(val["message"], "ok");
     assert_eq!(val["iris"][0], "foundation:Task_1");
 }
@@ -351,28 +397,61 @@ fn stream_processor_emits_normal_text() {
 #[test]
 fn stream_processor_suppresses_native_tool_call() {
     let mut p = StreamProcessor::new();
-    let tokens = ["<|tool_call>", "call:speak{message:", "<|\"|>", "ok", "<|\"|>}", "<tool_call|>"];
+    let tokens = [
+        "<|tool_call>",
+        "call:speak{message:",
+        "<|\"|>",
+        "ok",
+        "<|\"|>}",
+        "<tool_call|>",
+    ];
     let mut emitted = String::new();
     for tok in tokens {
         let (emit, _) = p.feed(tok);
-        if let Some(t) = emit { emitted.push_str(&t); }
+        if let Some(t) = emit {
+            emitted.push_str(&t);
+        }
     }
-    assert!(emitted.is_empty(), "no text should have been emitted: {:?}", emitted);
+    assert!(
+        emitted.is_empty(),
+        "no text should have been emitted: {:?}",
+        emitted
+    );
 }
 
 #[test]
 fn stream_processor_suppresses_xml_tool_call() {
     let mut p = StreamProcessor::new();
-    let tokens = ["<tool", "_call>", "{\"name\":", "\"speak\",", "\"input\":", "{\"message\":\"ok\"}}", "</tool_call>"];
+    let tokens = [
+        "<tool",
+        "_call>",
+        "{\"name\":",
+        "\"speak\",",
+        "\"input\":",
+        "{\"message\":\"ok\"}}",
+        "</tool_call>",
+    ];
     let mut emitted = String::new();
     let mut stopped = false;
     for tok in tokens {
         let (emit, stop) = p.feed(tok);
-        if let Some(t) = emit { emitted.push_str(&t); }
-        if stop { stopped = true; break; }
+        if let Some(t) = emit {
+            emitted.push_str(&t);
+        }
+        if stop {
+            stopped = true;
+            break;
+        }
     }
-    assert!(emitted.is_empty(), "no text should have been emitted: {:?}", emitted);
-    assert!(!stopped, "must not stop after </tool_call> — processing continues");
+    assert!(
+        emitted.is_empty(),
+        "no text should have been emitted: {:?}",
+        emitted
+    );
+    assert!(
+        !stopped,
+        "must not stop after </tool_call> — processing continues"
+    );
 }
 
 #[test]
@@ -431,7 +510,12 @@ fn truncate_removes_old_messages_keeping_system_and_last() {
     assert_eq!(msgs[0].0, "system");
     assert_eq!(msgs.last().unwrap().1, "last message");
     let total: usize = msgs.iter().map(|(_, c)| c.len()).sum();
-    assert!(total <= MAX_PROMPT_CHARS, "total {} > limit {}", total, MAX_PROMPT_CHARS);
+    assert!(
+        total <= MAX_PROMPT_CHARS,
+        "total {} > limit {}",
+        total,
+        MAX_PROMPT_CHARS
+    );
 }
 
 // =========================================================================
@@ -482,7 +566,10 @@ fn format_tools_multiple_tools() {
 async fn integration_model_loads_and_cache_works() {
     let m1 = load_model(MODEL_E4B).await.expect("failed to load model");
     let m2 = load_model(MODEL_E4B).await.expect("cache failure");
-    assert!(Arc::ptr_eq(&m1, &m2), "second call must return the same Arc");
+    assert!(
+        Arc::ptr_eq(&m1, &m2),
+        "second call must return the same Arc"
+    );
 }
 
 #[tokio::test]
@@ -492,12 +579,20 @@ async fn integration_model_uses_tool_call_format() {
     let msgs = messages_with_injection("You are a helpful assistant.", "Say only 'hello'.");
 
     let mut raw = String::new();
-    run_inference(&model, &msgs, |p| { raw.push_str(&p); true }).expect("inference failed");
+    run_inference(&model, &msgs, |p| {
+        raw.push_str(&p);
+        true
+    })
+    .expect("inference failed");
 
     println!("raw output: {:?}", raw);
 
     let tc = parse_all_tool_calls_from_output(&raw).into_iter().next();
-    assert!(tc.is_some(), "model did not generate a tool call. Output: {:?}", raw);
+    assert!(
+        tc.is_some(),
+        "model did not generate a tool call. Output: {:?}",
+        raw
+    );
     assert_eq!(tc.unwrap().name, "speak");
 }
 
@@ -508,18 +603,35 @@ async fn integration_parser_extracts_clean_message() {
     let msgs = messages_with_injection("You are a helpful assistant.", "Say only 'hello'.");
 
     let mut raw = String::new();
-    run_inference(&model, &msgs, |p| { raw.push_str(&p); true }).expect("inference failed");
+    run_inference(&model, &msgs, |p| {
+        raw.push_str(&p);
+        true
+    })
+    .expect("inference failed");
 
     println!("raw output: {:?}", raw);
 
     let tc = parse_all_tool_calls_from_output(&raw).into_iter().next();
-    assert!(tc.is_some(), "model did not generate a tool call. Output: {:?}", raw);
-    let message = tc.unwrap().input["message"].as_str().unwrap_or("").to_string();
+    assert!(
+        tc.is_some(),
+        "model did not generate a tool call. Output: {:?}",
+        raw
+    );
+    let message = tc.unwrap().input["message"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
 
     println!("parsed message: {:?}", message);
     assert!(!message.is_empty(), "parsed message is empty");
-    assert!(!message.contains("tool_call"), "tool_call tag leaked into the message");
-    assert!(!message.contains("<end_of_turn>"), "EOT marker was not removed");
+    assert!(
+        !message.contains("tool_call"),
+        "tool_call tag leaked into the message"
+    );
+    assert!(
+        !message.contains("<end_of_turn>"),
+        "EOT marker was not removed"
+    );
 }
 
 #[tokio::test]
@@ -532,7 +644,10 @@ async fn integration_model_returns_token_stats() {
 
     assert!(stats.prompt_tokens > 0, "prompt_tokens must be > 0");
     assert!(stats.completion_tokens > 0, "completion_tokens must be > 0");
-    println!("prompt: {} tokens, completion: {} tokens", stats.prompt_tokens, stats.completion_tokens);
+    println!(
+        "prompt: {} tokens, completion: {} tokens",
+        stats.prompt_tokens, stats.completion_tokens
+    );
 }
 
 #[tokio::test]
@@ -545,7 +660,11 @@ async fn integration_model_responds_in_portuguese() {
     );
 
     let mut raw = String::new();
-    run_inference(&model, &msgs, |p| { raw.push_str(&p); true }).expect("inference failed");
+    run_inference(&model, &msgs, |p| {
+        raw.push_str(&p);
+        true
+    })
+    .expect("inference failed");
 
     let message = parse_all_tool_calls_from_output(&raw)
         .into_iter()
@@ -557,7 +676,8 @@ async fn integration_model_responds_in_portuguese() {
     let lower = message.to_lowercase();
     assert!(
         lower.contains("brasília") || lower.contains("brasilia"),
-        "response did not mention Brasília. Got: {:?}", message
+        "response did not mention Brasília. Got: {:?}",
+        message
     );
 }
 
@@ -566,7 +686,11 @@ async fn integration_model_responds_in_portuguese() {
 async fn integration_model_not_found_returns_clear_error() {
     let result = load_model("/tmp/nonexistent_model.gguf").await;
     let err = result.expect_err("expected Err, but load_model returned Ok");
-    assert!(err.contains("not found"), "error should mention 'not found': {}", err);
+    assert!(
+        err.contains("not found"),
+        "error should mention 'not found': {}",
+        err
+    );
 }
 
 // =========================================================================
@@ -596,25 +720,34 @@ async fn scenario_speak_after_tool_result() {
         "You are a helpful assistant.",
         &tools,
         vec![
-            ("user", MessageContent::Text("Find all tasks due today.".into())),
-            ("assistant", MessageContent::ContentBlocks(vec![
-                ContentBlock::ToolUse {
+            (
+                "user",
+                MessageContent::Text("Find all tasks due today.".into()),
+            ),
+            (
+                "assistant",
+                MessageContent::ContentBlocks(vec![ContentBlock::ToolUse {
                     id: "t1".into(),
                     name: "search".into(),
                     input: serde_json::json!({"query": "tasks due today"}),
-                },
-            ])),
-            ("user", MessageContent::ContentBlocks(vec![
-                ContentBlock::ToolResult {
+                }]),
+            ),
+            (
+                "user",
+                MessageContent::ContentBlocks(vec![ContentBlock::ToolResult {
                     tool_use_id: "t1".into(),
                     content: serde_json::json!({"entities": [{"label": "Pay rent", "scheduledAt": "2026-04-15"}], "total": 1}),
                     is_error: None,
-                },
-            ])),
+                }]),
+            ),
         ],
     );
     let (_, name, msg) = run_and_parse(MODEL_E4B, &msgs).await;
-    assert_eq!(name.as_deref(), Some("speak"), "must call speak after having the result");
+    assert_eq!(
+        name.as_deref(),
+        Some("speak"),
+        "must call speak after having the result"
+    );
     let msg = msg.expect("speak must have message");
     println!("speak message: {:?}", msg);
     assert!(!msg.is_empty(), "message cannot be empty");
@@ -628,27 +761,40 @@ async fn scenario_no_tool_loop() {
         "You are a helpful assistant.",
         &tools,
         vec![
-            ("user", MessageContent::Text("Tell me about foundation:Task_123.".into())),
-            ("assistant", MessageContent::ContentBlocks(vec![
-                ContentBlock::ToolUse {
+            (
+                "user",
+                MessageContent::Text("Tell me about foundation:Task_123.".into()),
+            ),
+            (
+                "assistant",
+                MessageContent::ContentBlocks(vec![ContentBlock::ToolUse {
                     id: "t1".into(),
                     name: "describe_individual".into(),
                     input: serde_json::json!({"iris": ["foundation:Task_123"]}),
-                },
-            ])),
-            ("user", MessageContent::ContentBlocks(vec![
-                ContentBlock::ToolResult {
+                }]),
+            ),
+            (
+                "user",
+                MessageContent::ContentBlocks(vec![ContentBlock::ToolResult {
                     tool_use_id: "t1".into(),
                     content: serde_json::json!({"label": "Buy groceries", "status": "Pending", "scheduledAt": "2026-04-15"}),
                     is_error: None,
-                },
-            ])),
+                }]),
+            ),
         ],
     );
     let (_, name, msg) = run_and_parse(MODEL_E4B, &msgs).await;
-    assert_ne!(name.as_deref(), Some("describe_individual"),
-        "must not repeat describe_individual. Got: {:?}", name);
-    assert_eq!(name.as_deref(), Some("speak"), "must call speak with the summary");
+    assert_ne!(
+        name.as_deref(),
+        Some("describe_individual"),
+        "must not repeat describe_individual. Got: {:?}",
+        name
+    );
+    assert_eq!(
+        name.as_deref(),
+        Some("speak"),
+        "must call speak with the summary"
+    );
     let msg = msg.expect("speak must have message");
     println!("speak message: {:?}", msg);
     assert!(!msg.is_empty());
@@ -663,25 +809,32 @@ async fn scenario_multitool_in_same_response() {
          call describe_individual for each entity in a single response — emit one <tool_call> \
          per entity, all in the same reply.",
         &tools,
-        vec![
-            ("user", MessageContent::Text(
+        vec![(
+            "user",
+            MessageContent::Text(
                 "Describe both foundation:Task_A and foundation:Task_B right now. \
-                 Call describe_individual twice in this response.".into()
-            )),
-        ],
+                 Call describe_individual twice in this response."
+                    .into(),
+            ),
+        )],
     );
     let (raw, calls) = run_and_parse_all(MODEL_E4B, &msgs).await;
-    println!("tool calls ({} total): {:?}", calls.len(),
-        calls.iter().map(|c| &c.name).collect::<Vec<_>>());
+    println!(
+        "tool calls ({} total): {:?}",
+        calls.len(),
+        calls.iter().map(|c| &c.name).collect::<Vec<_>>()
+    );
     assert!(
         calls.len() >= 2,
         "must emit at least 2 tool_calls in the same response. Got {} — raw: {:?}",
-        calls.len(), raw
+        calls.len(),
+        raw
     );
     let names: Vec<&str> = calls.iter().map(|c| c.name.as_str()).collect();
     assert!(
         names.contains(&"describe_individual"),
-        "must call describe_individual. Got: {:?}", names
+        "must call describe_individual. Got: {:?}",
+        names
     );
 }
 
@@ -694,28 +847,39 @@ async fn scenario_speak_without_system_artifacts() {
         &tools,
         vec![
             ("user", MessageContent::Text("List my projects.".into())),
-            ("assistant", MessageContent::ContentBlocks(vec![
-                ContentBlock::ToolUse {
+            (
+                "assistant",
+                MessageContent::ContentBlocks(vec![ContentBlock::ToolUse {
                     id: "t1".into(),
                     name: "search".into(),
                     input: serde_json::json!({"class_iri": "foundation:Project"}),
-                },
-            ])),
-            ("user", MessageContent::ContentBlocks(vec![
-                ContentBlock::ToolResult {
+                }]),
+            ),
+            (
+                "user",
+                MessageContent::ContentBlocks(vec![ContentBlock::ToolResult {
                     tool_use_id: "t1".into(),
                     content: serde_json::json!({"entities": [{"label": "FOUNDATION"}, {"label": "Website"}], "total": 2}),
                     is_error: None,
-                },
-            ])),
+                }]),
+            ),
         ],
     );
     let (_, _, msg) = run_and_parse(MODEL_E4B, &msgs).await;
     let msg = msg.unwrap_or_default();
     println!("speak message: {:?}", msg);
-    assert!(!msg.contains("<start_of_turn>"), "<start_of_turn> artifact in speak");
-    assert!(!msg.contains("<end_of_turn>"), "<end_of_turn> artifact in speak");
-    assert!(!msg.contains("[called "), "[called] prefix leaked into speak");
+    assert!(
+        !msg.contains("<start_of_turn>"),
+        "<start_of_turn> artifact in speak"
+    );
+    assert!(
+        !msg.contains("<end_of_turn>"),
+        "<end_of_turn> artifact in speak"
+    );
+    assert!(
+        !msg.contains("[called "),
+        "[called] prefix leaked into speak"
+    );
     assert!(!msg.contains("<result>"), "<result> tag leaked into speak");
     assert!(!msg.contains("<action>"), "<action> tag leaked into speak");
 }

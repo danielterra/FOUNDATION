@@ -1,22 +1,25 @@
-use serde_json::Value;
-use rusqlite::Connection;
-use crate::owl::vocabulary::rdfs;
 use super::ToolResult;
+use crate::owl::vocabulary::rdfs;
+use rusqlite::Connection;
+use serde_json::Value;
 
 const MAX_DEPTH_CAP: usize = 5;
 
 pub fn get_class_graph(conn: &Connection, args: &Value) -> ToolResult {
     let class_iri = match args.get("class_iri").and_then(|v| v.as_str()) {
         Some(iri) if !iri.is_empty() => iri,
-        _ => return ToolResult {
-            success: false,
-            result: None,
-            error: Some("Missing required parameter: class_iri".to_string()),
-            concept: None,
-        },
+        _ => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some("Missing required parameter: class_iri".to_string()),
+                concept: None,
+            }
+        }
     };
 
-    let max_depth = args.get("max_depth")
+    let max_depth = args
+        .get("max_depth")
         .and_then(|v| v.as_u64())
         .map(|d| d as usize)
         .unwrap_or(2)
@@ -24,25 +27,30 @@ pub fn get_class_graph(conn: &Connection, args: &Value) -> ToolResult {
 
     match crate::owl::get_literal_property(conn, class_iri, rdfs::LABEL) {
         Ok(Some(_)) => {}
-        Ok(None) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(format!("entity_not_found: {class_iri}")),
-            concept: None,
-        },
-        Err(e) => return ToolResult {
-            success: false,
-            result: None,
-            error: Some(e.to_string()),
-            concept: None,
-        },
+        Ok(None) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(format!("entity_not_found: {class_iri}")),
+                concept: None,
+            }
+        }
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                result: None,
+                error: Some(e.to_string()),
+                concept: None,
+            }
+        }
     }
 
     let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut queue: std::collections::VecDeque<(String, usize)> = std::collections::VecDeque::new();
     let mut nodes: Vec<Value> = Vec::new();
     let mut edges: Vec<Value> = Vec::new();
-    let mut edge_set: std::collections::HashSet<(String, String, String)> = std::collections::HashSet::new();
+    let mut edge_set: std::collections::HashSet<(String, String, String)> =
+        std::collections::HashSet::new();
     let mut edge_counter = 0usize;
     let mut depth_reached = 0usize;
 
@@ -90,7 +98,13 @@ pub fn get_class_graph(conn: &Connection, args: &Value) -> ToolResult {
                     let edge_key = (prop_iri.clone(), current.clone(), range_iri.clone());
                     if edge_set.insert(edge_key) {
                         edge_counter += 1;
-                        edges.push(build_edge(conn, edge_counter, &prop_iri, &current, &range_iri));
+                        edges.push(build_edge(
+                            conn,
+                            edge_counter,
+                            &prop_iri,
+                            &current,
+                            &range_iri,
+                        ));
                     }
                     if !visited.contains(&range_iri) {
                         queue.push_back((range_iri, depth + 1));
@@ -112,7 +126,13 @@ pub fn get_class_graph(conn: &Connection, args: &Value) -> ToolResult {
                 let edge_key = (prop_iri.clone(), domain_iri.clone(), current.clone());
                 if edge_set.insert(edge_key) {
                     edge_counter += 1;
-                    edges.push(build_edge(conn, edge_counter, prop_iri, &domain_iri, &current));
+                    edges.push(build_edge(
+                        conn,
+                        edge_counter,
+                        prop_iri,
+                        &domain_iri,
+                        &current,
+                    ));
                 }
                 if !visited.contains(&domain_iri) {
                     queue.push_back((domain_iri, depth + 1));
@@ -187,10 +207,37 @@ mod tests {
 
     fn setup_two_classes_one_prop() -> crate::eavto::Connection {
         let mut conn = setup_test_db();
-        Class::new("test:A").assert(&mut conn, ClassType::OwlClass, "Class A", "circle", None, "test").unwrap();
-        Class::new("test:B").assert(&mut conn, ClassType::OwlClass, "Class B", "square", None, "test").unwrap();
+        Class::new("test:A")
+            .assert(
+                &mut conn,
+                ClassType::OwlClass,
+                "Class A",
+                "circle",
+                None,
+                "test",
+            )
+            .unwrap();
+        Class::new("test:B")
+            .assert(
+                &mut conn,
+                ClassType::OwlClass,
+                "Class B",
+                "square",
+                None,
+                "test",
+            )
+            .unwrap();
         Property::new("test:linksTo")
-            .assert(&mut conn, PropertyType::ObjectProperty, "Links To", None, &["test:A"], Some("test:B"), None, "test")
+            .assert(
+                &mut conn,
+                PropertyType::ObjectProperty,
+                "Links To",
+                None,
+                &["test:A"],
+                Some("test:B"),
+                None,
+                "test",
+            )
             .unwrap();
         conn
     }
@@ -210,9 +257,16 @@ mod tests {
     #[test]
     fn test_unknown_iri_returns_entity_not_found() {
         let conn = setup_test_db();
-        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:DoesNotExist"}));
+        let result = get_class_graph(
+            &conn,
+            &serde_json::json!({"class_iri": "test:DoesNotExist"}),
+        );
         assert!(!result.success);
-        assert!(result.error.as_deref().unwrap_or("").contains("entity_not_found"));
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("entity_not_found"));
     }
 
     // ── root node present ────────────────────────────────────────────────────
@@ -220,9 +274,14 @@ mod tests {
     #[test]
     fn test_root_node_always_in_result() {
         let conn = setup_two_classes_one_prop();
-        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 0}));
+        let result = get_class_graph(
+            &conn,
+            &serde_json::json!({"class_iri": "test:A", "max_depth": 0}),
+        );
         assert!(result.success);
-        let nodes = result.result.as_ref().unwrap()["graphNodes"].as_array().unwrap();
+        let nodes = result.result.as_ref().unwrap()["graphNodes"]
+            .as_array()
+            .unwrap();
         assert!(nodes.iter().any(|n| n["iri"] == "test:A"));
     }
 
@@ -231,16 +290,24 @@ mod tests {
     #[test]
     fn test_outbound_edge_via_direct_domain() {
         let conn = setup_two_classes_one_prop();
-        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 1}));
+        let result = get_class_graph(
+            &conn,
+            &serde_json::json!({"class_iri": "test:A", "max_depth": 1}),
+        );
         assert!(result.success);
         let r = result.result.as_ref().unwrap();
         let edges = r["graphEdges"].as_array().unwrap();
         assert!(
-            edges.iter().any(|e| e["source"] == "test:A" && e["target"] == "test:B" && e["property"] == "test:linksTo"),
+            edges.iter().any(|e| e["source"] == "test:A"
+                && e["target"] == "test:B"
+                && e["property"] == "test:linksTo"),
             "expected outbound edge test:A → test:linksTo → test:B"
         );
         let nodes = r["graphNodes"].as_array().unwrap();
-        assert!(nodes.iter().any(|n| n["iri"] == "test:B"), "test:B must be in nodes");
+        assert!(
+            nodes.iter().any(|n| n["iri"] == "test:B"),
+            "test:B must be in nodes"
+        );
     }
 
     // ── outbound traversal via inherited (superclass) domain ─────────────────
@@ -249,19 +316,62 @@ mod tests {
     fn test_outbound_edge_via_inherited_domain() {
         let mut conn = setup_test_db();
         // Parent class carries the property
-        Class::new("test:Parent").assert(&mut conn, ClassType::OwlClass, "Parent", "folder", None, "test").unwrap();
-        Class::new("test:Child").assert(&mut conn, ClassType::OwlClass, "Child", "file", Some("test:Parent"), "test").unwrap();
-        Class::new("test:Target").assert(&mut conn, ClassType::OwlClass, "Target", "target", None, "test").unwrap();
+        Class::new("test:Parent")
+            .assert(
+                &mut conn,
+                ClassType::OwlClass,
+                "Parent",
+                "folder",
+                None,
+                "test",
+            )
+            .unwrap();
+        Class::new("test:Child")
+            .assert(
+                &mut conn,
+                ClassType::OwlClass,
+                "Child",
+                "file",
+                Some("test:Parent"),
+                "test",
+            )
+            .unwrap();
+        Class::new("test:Target")
+            .assert(
+                &mut conn,
+                ClassType::OwlClass,
+                "Target",
+                "target",
+                None,
+                "test",
+            )
+            .unwrap();
         Property::new("test:parentProp")
-            .assert(&mut conn, PropertyType::ObjectProperty, "Parent Prop", None, &["test:Parent"], Some("test:Target"), None, "test")
+            .assert(
+                &mut conn,
+                PropertyType::ObjectProperty,
+                "Parent Prop",
+                None,
+                &["test:Parent"],
+                Some("test:Target"),
+                None,
+                "test",
+            )
             .unwrap();
 
         // Querying Child should still surface the edge because Parent is in Child's superclass chain
-        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:Child", "max_depth": 1}));
+        let result = get_class_graph(
+            &conn,
+            &serde_json::json!({"class_iri": "test:Child", "max_depth": 1}),
+        );
         assert!(result.success);
-        let edges = result.result.as_ref().unwrap()["graphEdges"].as_array().unwrap();
+        let edges = result.result.as_ref().unwrap()["graphEdges"]
+            .as_array()
+            .unwrap();
         assert!(
-            edges.iter().any(|e| e["source"] == "test:Child" && e["target"] == "test:Target"),
+            edges
+                .iter()
+                .any(|e| e["source"] == "test:Child" && e["target"] == "test:Target"),
             "expected inherited-domain edge test:Child → test:Target via test:parentProp"
         );
     }
@@ -271,18 +381,45 @@ mod tests {
     #[test]
     fn test_inbound_edge_when_class_is_range() {
         let mut conn = setup_test_db();
-        Class::new("test:Source").assert(&mut conn, ClassType::OwlClass, "Source", "source", None, "test").unwrap();
-        Class::new("test:Sink").assert(&mut conn, ClassType::OwlClass, "Sink", "sink", None, "test").unwrap();
+        Class::new("test:Source")
+            .assert(
+                &mut conn,
+                ClassType::OwlClass,
+                "Source",
+                "source",
+                None,
+                "test",
+            )
+            .unwrap();
+        Class::new("test:Sink")
+            .assert(&mut conn, ClassType::OwlClass, "Sink", "sink", None, "test")
+            .unwrap();
         Property::new("test:flowsTo")
-            .assert(&mut conn, PropertyType::ObjectProperty, "Flows To", None, &["test:Source"], Some("test:Sink"), None, "test")
+            .assert(
+                &mut conn,
+                PropertyType::ObjectProperty,
+                "Flows To",
+                None,
+                &["test:Source"],
+                Some("test:Sink"),
+                None,
+                "test",
+            )
             .unwrap();
 
         // Query from the range side: test:Sink — should see inbound edge from test:Source
-        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:Sink", "max_depth": 1}));
+        let result = get_class_graph(
+            &conn,
+            &serde_json::json!({"class_iri": "test:Sink", "max_depth": 1}),
+        );
         assert!(result.success);
-        let edges = result.result.as_ref().unwrap()["graphEdges"].as_array().unwrap();
+        let edges = result.result.as_ref().unwrap()["graphEdges"]
+            .as_array()
+            .unwrap();
         assert!(
-            edges.iter().any(|e| e["source"] == "test:Source" && e["target"] == "test:Sink"),
+            edges
+                .iter()
+                .any(|e| e["source"] == "test:Source" && e["target"] == "test:Sink"),
             "expected inbound edge test:Source → test:Sink"
         );
     }
@@ -292,7 +429,10 @@ mod tests {
     #[test]
     fn test_depth_zero_returns_only_root() {
         let conn = setup_two_classes_one_prop();
-        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 0}));
+        let result = get_class_graph(
+            &conn,
+            &serde_json::json!({"class_iri": "test:A", "max_depth": 0}),
+        );
         assert!(result.success);
         let r = result.result.as_ref().unwrap();
         assert_eq!(r["graphEdges"].as_array().unwrap().len(), 0);
@@ -304,9 +444,14 @@ mod tests {
     fn test_depth_cap_at_five() {
         let conn = setup_two_classes_one_prop();
         // max_depth: 99 must be silently capped — no panic or infinite loop
-        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 99}));
+        let result = get_class_graph(
+            &conn,
+            &serde_json::json!({"class_iri": "test:A", "max_depth": 99}),
+        );
         assert!(result.success);
-        let depth = result.result.as_ref().unwrap()["depthReached"].as_u64().unwrap();
+        let depth = result.result.as_ref().unwrap()["depthReached"]
+            .as_u64()
+            .unwrap();
         assert!(depth <= 5);
     }
 
@@ -316,11 +461,21 @@ mod tests {
     fn test_no_duplicate_edges() {
         // A → prop → B: when we visit B we would see A as an inbound domain — must not add the edge again
         let conn = setup_two_classes_one_prop();
-        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 2}));
+        let result = get_class_graph(
+            &conn,
+            &serde_json::json!({"class_iri": "test:A", "max_depth": 2}),
+        );
         assert!(result.success);
-        let edges = result.result.as_ref().unwrap()["graphEdges"].as_array().unwrap();
-        let matching: Vec<_> = edges.iter()
-            .filter(|e| e["source"] == "test:A" && e["target"] == "test:B" && e["property"] == "test:linksTo")
+        let edges = result.result.as_ref().unwrap()["graphEdges"]
+            .as_array()
+            .unwrap();
+        let matching: Vec<_> = edges
+            .iter()
+            .filter(|e| {
+                e["source"] == "test:A"
+                    && e["target"] == "test:B"
+                    && e["property"] == "test:linksTo"
+            })
             .collect();
         assert_eq!(matching.len(), 1, "edge must appear exactly once");
     }
@@ -330,10 +485,18 @@ mod tests {
     #[test]
     fn test_edge_includes_property_label() {
         let conn = setup_two_classes_one_prop();
-        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 1}));
+        let result = get_class_graph(
+            &conn,
+            &serde_json::json!({"class_iri": "test:A", "max_depth": 1}),
+        );
         assert!(result.success);
-        let edges = result.result.as_ref().unwrap()["graphEdges"].as_array().unwrap();
-        let edge = edges.iter().find(|e| e["property"] == "test:linksTo").unwrap();
+        let edges = result.result.as_ref().unwrap()["graphEdges"]
+            .as_array()
+            .unwrap();
+        let edge = edges
+            .iter()
+            .find(|e| e["property"] == "test:linksTo")
+            .unwrap();
         assert_eq!(edge["propertyLabel"], "Links To");
     }
 
@@ -342,9 +505,14 @@ mod tests {
     #[test]
     fn test_depth_reached_reflects_actual_depth() {
         let conn = setup_two_classes_one_prop();
-        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:A", "max_depth": 2}));
+        let result = get_class_graph(
+            &conn,
+            &serde_json::json!({"class_iri": "test:A", "max_depth": 2}),
+        );
         assert!(result.success);
-        let depth = result.result.as_ref().unwrap()["depthReached"].as_u64().unwrap();
+        let depth = result.result.as_ref().unwrap()["depthReached"]
+            .as_u64()
+            .unwrap();
         assert_eq!(depth, 1, "test:B is at depth 1 — depthReached must be 1");
     }
 
@@ -353,15 +521,33 @@ mod tests {
     #[test]
     fn test_owl_thing_not_in_nodes() {
         let mut conn = setup_test_db();
-        Class::new("test:X").assert(&mut conn, ClassType::OwlClass, "X", "x", None, "test").unwrap();
+        Class::new("test:X")
+            .assert(&mut conn, ClassType::OwlClass, "X", "x", None, "test")
+            .unwrap();
         // xsd:string range — must not appear as a node or enqueue owl:Thing
         Property::new("test:name")
-            .assert(&mut conn, PropertyType::DatatypeProperty, "Name", None, &["test:X"], Some("xsd:string"), None, "test")
+            .assert(
+                &mut conn,
+                PropertyType::DatatypeProperty,
+                "Name",
+                None,
+                &["test:X"],
+                Some("xsd:string"),
+                None,
+                "test",
+            )
             .unwrap();
-        let result = get_class_graph(&conn, &serde_json::json!({"class_iri": "test:X", "max_depth": 2}));
+        let result = get_class_graph(
+            &conn,
+            &serde_json::json!({"class_iri": "test:X", "max_depth": 2}),
+        );
         assert!(result.success);
-        let nodes = result.result.as_ref().unwrap()["graphNodes"].as_array().unwrap();
-        assert!(nodes.iter().all(|n| !n["iri"].as_str().unwrap_or("").starts_with("xsd:")));
+        let nodes = result.result.as_ref().unwrap()["graphNodes"]
+            .as_array()
+            .unwrap();
+        assert!(nodes
+            .iter()
+            .all(|n| !n["iri"].as_str().unwrap_or("").starts_with("xsd:")));
         assert!(nodes.iter().all(|n| n["iri"] != "owl:Thing"));
     }
 }

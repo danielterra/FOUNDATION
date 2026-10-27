@@ -1,7 +1,7 @@
-use tauri::Manager;
-use crate::owl::{Individual, Connection, DbExecutor, get_literal_property};
-use super::settings::load_agent_config;
 use super::cancellation::{AiCancellationState, ConversationProcessingState};
+use super::settings::load_agent_config;
+use crate::owl::{get_literal_property, Connection, DbExecutor, Individual};
+use tauri::Manager;
 
 pub fn delete_messages_from_timestamp(
     conn: &mut Connection,
@@ -13,7 +13,8 @@ pub fn delete_messages_from_timestamp(
         conn,
         "foundation:AIConversationMessage",
         &[("foundation:partOfConversation", conversation_iri)],
-    ).map_err(|e| format!("Failed to query messages: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to query messages: {}", e))?;
 
     for iri in message_iris {
         let ind = match Individual::get(conn, &iri) {
@@ -21,7 +22,9 @@ pub fn delete_messages_from_timestamp(
             _ => continue,
         };
 
-        let ts = match ind.properties.iter()
+        let ts = match ind
+            .properties
+            .iter()
             .find(|(k, _)| k == "foundation:sentAt")
             .and_then(|(_, v)| super::parse_timestamp(v))
         {
@@ -53,7 +56,12 @@ pub fn delete_messages_from_timestamp(
 /// stop after executing tools (engine terminates → last message is tool result →
 /// has_pending_user_message=true → engine starts again → repeat forever).
 pub fn has_pending_user_message(conn: &Connection, conversation_iri: &str) -> bool {
-    let iris = match crate::core_ontology::chat::find_messages_by_conversation(conn, conversation_iri, 1, 0) {
+    let iris = match crate::core_ontology::chat::find_messages_by_conversation(
+        conn,
+        conversation_iri,
+        1,
+        0,
+    ) {
         Ok(v) => v,
         Err(_) => return false,
     };
@@ -79,8 +87,9 @@ fn build_recovery_first_turn_ctx(
     conn: &Connection,
     conversation_id: &str,
 ) -> Option<super::engine::FirstTurnContext> {
-    let last_user_msg: String = conn.query_row(
-        "SELECT t_msg.subject FROM triples t_msg
+    let last_user_msg: String = conn
+        .query_row(
+            "SELECT t_msg.subject FROM triples t_msg
          JOIN triples t_role ON t_role.subject = t_msg.subject
              AND t_role.predicate = 'foundation:role'
              AND t_role.object_value = 'user' AND t_role.retracted = 0
@@ -89,18 +98,21 @@ fn build_recovery_first_turn_ctx(
          WHERE t_msg.predicate = 'foundation:partOfConversation'
              AND t_msg.object = ?1 AND t_msg.retracted = 0
          ORDER BY t_ts.object_datetime DESC LIMIT 1",
-        [conversation_id],
-        |row| row.get(0),
-    ).ok()?;
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .ok()?;
 
-    let json: String = conn.query_row(
-        "SELECT object_value FROM triples
+    let json: String = conn
+        .query_row(
+            "SELECT object_value FROM triples
          WHERE subject = ?1 AND predicate = 'foundation:subconsciousContext'
            AND retracted = 0
          ORDER BY tx DESC LIMIT 1",
-        [last_user_msg.as_str()],
-        |row| row.get(0),
-    ).ok()?;
+            [last_user_msg.as_str()],
+            |row| row.get(0),
+        )
+        .ok()?;
 
     let entities: Vec<super::subconscious::SubconsciousEntity> =
         serde_json::from_str(&json).ok()?;
@@ -122,25 +134,58 @@ pub async fn run_conversation_from_current_state(
     cancellation: &AiCancellationState,
     silent: bool,
 ) -> Result<(), String> {
+    let conv_id_for_validation = conversation_id.clone();
+    let is_active = executor
+        .read(move |conn| {
+            Ok(crate::core_ontology::conversation::is_active_conversation(
+                conn,
+                &conv_id_for_validation,
+            ))
+        })
+        .await?;
+    if !is_active {
+        crate::commands::log_backend(
+            "info",
+            &format!(
+                "[RECOVERY] Conversation {} is no longer active; skipping",
+                conversation_id,
+            ),
+        );
+        return Ok(());
+    }
+
     let conv_id_for_config = conversation_id.clone();
-    let agent_config = executor.read(move |conn| {
-        load_agent_config(conn, &conv_id_for_config)
-    }).await?;
+    let agent_config = executor
+        .read(move |conn| load_agent_config(conn, &conv_id_for_config))
+        .await?;
 
     // Re-inject stored subconscious context so retry/recovery behaves like a fresh send.
     let conv_id_for_sc = conversation_id.clone();
-    let first_turn_ctx = executor.read(move |conn| {
-        Ok(build_recovery_first_turn_ctx(conn, &conv_id_for_sc))
-    }).await.ok().flatten();
+    let first_turn_ctx = executor
+        .read(move |conn| Ok(build_recovery_first_turn_ctx(conn, &conv_id_for_sc)))
+        .await
+        .ok()
+        .flatten();
 
     super::engine::run_conversation_loop(
-        &app, &executor, &conversation_id,
-        &agent_config, first_turn_ctx, silent, false, cancellation,
-    ).await?;
+        &app,
+        &executor,
+        &conversation_id,
+        &agent_config,
+        first_turn_ctx,
+        silent,
+        false,
+        cancellation,
+    )
+    .await?;
 
     if !silent {
         use tauri::Emitter;
-        app.emit("ai-status", serde_json::json!({ "status": null, "conversationId": conversation_id })).ok();
+        app.emit(
+            "ai-status",
+            serde_json::json!({ "status": null, "conversationId": conversation_id }),
+        )
+        .ok();
     }
 
     Ok(())
@@ -156,14 +201,20 @@ pub async fn process_conversation_queue(
     let queue_state = match app.try_state::<ConversationProcessingState>() {
         Some(s) => s,
         None => {
-            crate::commands::log_backend("warn", "[conversation_queue] ConversationProcessingState not registered");
+            crate::commands::log_backend(
+                "warn",
+                "[conversation_queue] ConversationProcessingState not registered",
+            );
             return;
         }
     };
     let cancellation = match app.try_state::<AiCancellationState>() {
         Some(s) => s,
         None => {
-            crate::commands::log_backend("warn", "[conversation_queue] AiCancellationState not registered");
+            crate::commands::log_backend(
+                "warn",
+                "[conversation_queue] AiCancellationState not registered",
+            );
             return;
         }
     };
@@ -175,10 +226,13 @@ pub async fn process_conversation_queue(
             conversation_id.clone(),
             &cancellation,
             false,
-        ).await {
-            crate::commands::log_backend("warn", &format!(
-                "[conversation_queue] Failed for {}: {}", conversation_id, e
-            ));
+        )
+        .await
+        {
+            crate::commands::log_backend(
+                "warn",
+                &format!("[conversation_queue] Failed for {}: {}", conversation_id, e),
+            );
         }
 
         queue_state.release(&conversation_id);
@@ -200,44 +254,99 @@ pub async fn process_conversation_queue(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eavto::{store, Triple, Object};
     use crate::eavto::test_helpers::setup_test_db;
+    use crate::eavto::{store, Object, Triple};
 
     fn insert_msg(conn: &mut rusqlite::Connection, iri: &str, conv: &str, role: &str, ts: i64) {
         let rfc3339 = chrono::DateTime::from_timestamp_millis(ts)
             .unwrap_or_default()
             .to_rfc3339();
-        store::assert_triples(conn, &[
-            Triple::new(iri, "rdf:type", Object::Iri("foundation:AIConversationMessage".to_string())),
-            Triple::new(iri, "foundation:partOfConversation", Object::Iri(conv.to_string())),
-            Triple::new(iri, "foundation:role", Object::Literal {
-                value: role.to_string(),
-                datatype: Some("xsd:string".to_string()),
-                language: None,
-            }),
-            Triple::new(iri, "foundation:sentAt", Object::DateTime(rfc3339)),
-        ], "test").unwrap();
+        store::assert_triples(
+            conn,
+            &[
+                Triple::new(
+                    iri,
+                    "rdf:type",
+                    Object::Iri("foundation:AIConversationMessage".to_string()),
+                ),
+                Triple::new(
+                    iri,
+                    "foundation:partOfConversation",
+                    Object::Iri(conv.to_string()),
+                ),
+                Triple::new(
+                    iri,
+                    "foundation:role",
+                    Object::Literal {
+                        value: role.to_string(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(iri, "foundation:sentAt", Object::DateTime(rfc3339)),
+            ],
+            "test",
+        )
+        .unwrap();
     }
 
     fn attach_text_block(conn: &mut rusqlite::Connection, msg_iri: &str, block_iri: &str) {
-        store::assert_triples(conn, &[
-            Triple::new(block_iri, "rdf:type", Object::Iri("anthropic:TextBlock".to_string())),
-            Triple::new(msg_iri, "foundation:hasContentBlock", Object::Iri(block_iri.to_string())),
-        ], "test").unwrap();
+        store::assert_triples(
+            conn,
+            &[
+                Triple::new(
+                    block_iri,
+                    "rdf:type",
+                    Object::Iri("anthropic:TextBlock".to_string()),
+                ),
+                Triple::new(
+                    msg_iri,
+                    "foundation:hasContentBlock",
+                    Object::Iri(block_iri.to_string()),
+                ),
+            ],
+            "test",
+        )
+        .unwrap();
     }
 
     fn attach_tool_result_block(conn: &mut rusqlite::Connection, msg_iri: &str, block_iri: &str) {
-        store::assert_triples(conn, &[
-            Triple::new(block_iri, "rdf:type", Object::Iri("anthropic:ToolResultBlock".to_string())),
-            Triple::new(msg_iri, "foundation:hasContentBlock", Object::Iri(block_iri.to_string())),
-        ], "test").unwrap();
+        store::assert_triples(
+            conn,
+            &[
+                Triple::new(
+                    block_iri,
+                    "rdf:type",
+                    Object::Iri("anthropic:ToolResultBlock".to_string()),
+                ),
+                Triple::new(
+                    msg_iri,
+                    "foundation:hasContentBlock",
+                    Object::Iri(block_iri.to_string()),
+                ),
+            ],
+            "test",
+        )
+        .unwrap();
     }
 
     #[test]
     fn has_pending_user_message_returns_true_when_last_is_user_with_text() {
         let mut conn = setup_test_db();
-        insert_msg(&mut conn, "foundation:Msg1", "foundation:ConvA", "assistant", 1_000);
-        insert_msg(&mut conn, "foundation:Msg2", "foundation:ConvA", "user", 2_000);
+        insert_msg(
+            &mut conn,
+            "foundation:Msg1",
+            "foundation:ConvA",
+            "assistant",
+            1_000,
+        );
+        insert_msg(
+            &mut conn,
+            "foundation:Msg2",
+            "foundation:ConvA",
+            "user",
+            2_000,
+        );
         attach_text_block(&mut conn, "foundation:Msg2", "anthropic:Block1");
         assert!(has_pending_user_message(&conn, "foundation:ConvA"));
     }
@@ -245,19 +354,45 @@ mod tests {
     #[test]
     fn has_pending_user_message_returns_false_when_last_is_tool_result() {
         let mut conn = setup_test_db();
-        insert_msg(&mut conn, "foundation:Msg1", "foundation:ConvA", "assistant", 1_000);
-        insert_msg(&mut conn, "foundation:Msg2", "foundation:ConvA", "user", 2_000);
+        insert_msg(
+            &mut conn,
+            "foundation:Msg1",
+            "foundation:ConvA",
+            "assistant",
+            1_000,
+        );
+        insert_msg(
+            &mut conn,
+            "foundation:Msg2",
+            "foundation:ConvA",
+            "user",
+            2_000,
+        );
         attach_tool_result_block(&mut conn, "foundation:Msg2", "anthropic:Block1");
-        assert!(!has_pending_user_message(&conn, "foundation:ConvA"),
-            "a tool result message should not be treated as a pending user message");
+        assert!(
+            !has_pending_user_message(&conn, "foundation:ConvA"),
+            "a tool result message should not be treated as a pending user message"
+        );
     }
 
     #[test]
     fn has_pending_user_message_returns_false_when_last_is_assistant() {
         let mut conn = setup_test_db();
-        insert_msg(&mut conn, "foundation:Msg1", "foundation:ConvA", "user", 1_000);
+        insert_msg(
+            &mut conn,
+            "foundation:Msg1",
+            "foundation:ConvA",
+            "user",
+            1_000,
+        );
         attach_text_block(&mut conn, "foundation:Msg1", "anthropic:Block1");
-        insert_msg(&mut conn, "foundation:Msg2", "foundation:ConvA", "assistant", 2_000);
+        insert_msg(
+            &mut conn,
+            "foundation:Msg2",
+            "foundation:ConvA",
+            "assistant",
+            2_000,
+        );
         assert!(!has_pending_user_message(&conn, "foundation:ConvA"));
     }
 

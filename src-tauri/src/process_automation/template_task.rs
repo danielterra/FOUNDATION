@@ -1,8 +1,10 @@
 use tauri::{AppHandle, Manager};
 
-use crate::owl::{get_iri_property, get_literal_property, replace_all_property_literals, DbExecutor};
+use crate::owl::{
+    get_iri_property, get_literal_property, replace_all_property_literals, DbExecutor,
+};
 
-use super::executor::{ExecutionContext, interpolate_with_db};
+use super::executor::{interpolate_with_db, ExecutionContext};
 
 type Result<T> = std::result::Result<T, String>;
 

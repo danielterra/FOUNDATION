@@ -7,8 +7,7 @@
 /// Usage:
 ///   cargo run --bin migrate_due_date             # dry-run (default)
 ///   cargo run --bin migrate_due_date -- --apply  # applies the changes
-
-use rusqlite::{Connection, Result, params};
+use rusqlite::{params, Connection, Result};
 use std::path::PathBuf;
 
 fn get_db_path() -> PathBuf {
@@ -19,7 +18,9 @@ fn get_db_path() -> PathBuf {
 }
 
 fn get_or_create_origin(conn: &Connection, name: &str) -> Result<i64> {
-    match conn.query_row("SELECT id FROM origins WHERE name = ?", [name], |row| row.get(0)) {
+    match conn.query_row("SELECT id FROM origins WHERE name = ?", [name], |row| {
+        row.get(0)
+    }) {
         Ok(id) => Ok(id),
         Err(rusqlite::Error::QueryReturnedNoRows) => {
             conn.execute("INSERT INTO origins (name) VALUES (?)", [name])?;
@@ -54,7 +55,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Tasks with dueDate but no scheduledAt (latest dueDate value, ignoring retracted).
     let candidates: Vec<(String, String)> = {
-        let mut stmt = conn.prepare("
+        let mut stmt = conn.prepare(
+            "
             SELECT t.subject, t.object_value
             FROM triples t
             WHERE t.predicate = 'foundation:dueDate'
@@ -77,9 +79,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     AND t3.retracted = 0
               )
             ORDER BY t.subject
-        ")?;
-        let rows: Vec<Result<(String, String)>> =
-            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect();
+        ",
+        )?;
+        let rows: Vec<Result<(String, String)>> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect();
         rows.into_iter().collect::<Result<Vec<_>>>()?
     };
 
@@ -91,7 +95,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("\n{} task(s) to migrate:\n", candidates.len());
     for (iri, due_date) in &candidates {
         let scheduled_at = to_noon_datetime(due_date);
-        println!("  {} | dueDate={} → scheduledAt={}", iri, due_date, scheduled_at);
+        println!(
+            "  {} | dueDate={} → scheduledAt={}",
+            iri, due_date, scheduled_at
+        );
     }
 
     if !apply_mode {

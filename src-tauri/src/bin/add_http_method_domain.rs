@@ -15,8 +15,7 @@
 /// Usage:
 ///   cargo run --bin add_http_method_domain             # dry-run (default)
 ///   cargo run --bin add_http_method_domain -- --apply  # applies the change
-
-use rusqlite::{Connection, Result, params};
+use rusqlite::{params, Connection, Result};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -37,7 +36,9 @@ fn get_db_path() -> PathBuf {
 }
 
 fn get_or_create_origin(conn: &Connection, name: &str) -> Result<i64> {
-    match conn.query_row("SELECT id FROM origins WHERE name = ?", [name], |row| row.get(0)) {
+    match conn.query_row("SELECT id FROM origins WHERE name = ?", [name], |row| {
+        row.get(0)
+    }) {
         Ok(id) => Ok(id),
         Err(rusqlite::Error::QueryReturnedNoRows) => {
             conn.execute("INSERT INTO origins (name) VALUES (?)", [name])?;
@@ -53,9 +54,7 @@ fn current_domains(conn: &Connection, prop: &str) -> Result<HashSet<String>> {
         "SELECT object FROM triples_current
          WHERE subject = ?1 AND predicate = 'rdfs:domain'",
     )?;
-    let rows: Vec<Result<String>> = stmt
-        .query_map(params![prop], |row| row.get(0))?
-        .collect();
+    let rows: Vec<Result<String>> = stmt.query_map(params![prop], |row| row.get(0))?.collect();
     rows.into_iter().collect::<Result<HashSet<_>>>()
 }
 
@@ -83,7 +82,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let missing: Vec<&&str> = expected.iter()
+    let missing: Vec<&&str> = expected
+        .iter()
         .filter(|d| !current_strs.contains(*d))
         .collect();
     println!("Domains missing from the active set: {:?}", missing);
@@ -134,7 +134,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "\nDone. {} domains written for {} (tx={}).",
-        EXPECTED_DOMAINS.len(), PROP_IRI, tx_id
+        EXPECTED_DOMAINS.len(),
+        PROP_IRI,
+        tx_id
     );
     Ok(())
 }

@@ -1,11 +1,11 @@
-use crate::owl::{
-    Connection, Object, OwlError, Result, Thing,
-    icon_iri_to_display,
-    Class, Individual,
+use super::scoring::{
+    entity_type_matches, matched_properties_for_tokens, score_entity_against_tokens,
 };
-use crate::core_ontology::status::get_entity_status_info;
 use super::SearchResult;
-use super::scoring::{score_entity_against_tokens, matched_properties_for_tokens, entity_type_matches};
+use crate::core_ontology::status::get_entity_status_info;
+use crate::owl::{
+    icon_iri_to_display, Class, Connection, Individual, Object, OwlError, Result, Thing,
+};
 
 const BROWSE_PREFETCH_EXTRA: usize = 1000;
 
@@ -15,27 +15,32 @@ pub(super) fn enrich_from_triples(
     triples: &[crate::eavto::Triple],
     matched_properties: Vec<serde_json::Value>,
 ) -> SearchResult {
-    let label = triples.iter()
+    let label = triples
+        .iter()
         .find(|t| t.predicate == "rdfs:label")
         .and_then(|t| t.object.as_literal())
         .map(|s| s.to_string())
         .unwrap_or_else(|| iri.to_string());
 
-    let icon = triples.iter()
+    let icon = triples
+        .iter()
         .find(|t| t.predicate == "foundation:hasIcon")
         .and_then(|t| match &t.object {
             Object::Iri(iri) => icon_iri_to_display(conn, iri),
-            Object::Literal { value, .. } =>
-                Some(crate::owl::icon_literal_to_display(value)),
+            Object::Literal { value, .. } => Some(crate::owl::icon_literal_to_display(value)),
             _ => None,
         });
 
-    let type_iri = triples.iter()
+    let type_iri = triples
+        .iter()
         .filter(|t| t.predicate == "rdf:type")
         .filter_map(|t| t.object.as_iri())
-        .find(|iri| !iri.starts_with("owl:") && !iri.starts_with("rdf:") && !iri.starts_with("rdfs:"))
+        .find(|iri| {
+            !iri.starts_with("owl:") && !iri.starts_with("rdf:") && !iri.starts_with("rdfs:")
+        })
         .or_else(|| {
-            triples.iter()
+            triples
+                .iter()
                 .find(|t| t.predicate == "rdf:type")
                 .and_then(|t| t.object.as_iri())
         })
@@ -61,13 +66,14 @@ pub(super) fn enrich_from_triples(
         })
     };
 
-    let status = get_entity_status_info(conn, iri)
-        .map(|(s_iri, s_label, s_color, s_icon)| serde_json::json!({
+    let status = get_entity_status_info(conn, iri).map(|(s_iri, s_label, s_color, s_icon)| {
+        serde_json::json!({
             "iri": s_iri,
             "label": s_label,
             "icon": s_icon,
             "color": s_color,
-        }));
+        })
+    });
 
     SearchResult {
         id: iri.to_string(),
@@ -93,18 +99,32 @@ pub(super) fn search_structured(
     use crate::eavto::query;
 
     let candidate_iris: Vec<String> = if let Some(f) = filters {
-        let constraint_refs: Vec<crate::eavto::query::PropertyFilter> = f.iter()
-            .map(|(d, v, o)| crate::eavto::query::PropertyFilter::Compare(d.as_str(), v.as_str(), o.as_str()))
+        let constraint_refs: Vec<crate::eavto::query::PropertyFilter> = f
+            .iter()
+            .map(|(d, v, o)| {
+                crate::eavto::query::PropertyFilter::Compare(d.as_str(), v.as_str(), o.as_str())
+            })
             .collect();
         if let Some(concept) = class_iri {
             let (iris, _) = Individual::find_by_class_and_properties_with_options(
-                conn, concept, &constraint_refs, include_retracted, usize::MAX, 0, None,
+                conn,
+                concept,
+                &constraint_refs,
+                include_retracted,
+                usize::MAX,
+                0,
+                None,
             )?;
             iris
         } else {
             let (iris, _) = query::find_by_properties_with_options(
-                conn, &constraint_refs, include_retracted, usize::MAX, 0,
-            ).map_err(|e| OwlError::DatabaseError(e.to_string()))?;
+                conn,
+                &constraint_refs,
+                include_retracted,
+                usize::MAX,
+                0,
+            )
+            .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
             iris
         }
     } else if let Some(concept) = class_iri {
@@ -114,7 +134,9 @@ pub(super) fn search_structured(
             Class::get_instances(conn, concept)?
         }
     } else {
-        return Err(OwlError::InvalidOperation("structured search requires class_iri or filters".to_string()));
+        return Err(OwlError::InvalidOperation(
+            "structured search requires class_iri or filters".to_string(),
+        ));
     };
 
     let load_batch = |subjects: &[String]| -> Result<std::collections::HashMap<String, Vec<crate::eavto::Triple>>> {
@@ -139,13 +161,20 @@ pub(super) fn search_structured(
 
     if tokens.is_empty() {
         let total = candidate_iris.len();
-        let page: Vec<String> = candidate_iris.into_iter().skip(offset).take(limit).collect();
+        let page: Vec<String> = candidate_iris
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect();
         let batch = load_batch(&page)?;
-        let results: Vec<SearchResult> = page.iter().map(|iri| {
-            let empty = vec![];
-            let triples = batch.get(iri.as_str()).unwrap_or(&empty);
-            enrich_from_triples(conn, iri, triples, vec![])
-        }).collect();
+        let results: Vec<SearchResult> = page
+            .iter()
+            .map(|iri| {
+                let empty = vec![];
+                let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+                enrich_from_triples(conn, iri, triples, vec![])
+            })
+            .collect();
         return Ok((results, total));
     }
 
@@ -163,17 +192,25 @@ pub(super) fn search_structured(
     scored.sort_by(|a, b| b.1.cmp(&a.1));
 
     let total = scored.len();
-    let page: Vec<String> = scored.into_iter().skip(offset).take(limit).map(|(iri, _)| iri).collect();
+    let page: Vec<String> = scored
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(iri, _)| iri)
+        .collect();
 
     let page_batch = load_batch(&page)?;
 
-    let results: Vec<SearchResult> = page.iter().map(|iri| {
-        let empty = vec![];
-        let triples = page_batch.get(iri.as_str()).unwrap_or(&empty);
-        let mut matched_props = vec![];
-        score_entity_against_tokens(iri, triples, tokens, &mut matched_props);
-        enrich_from_triples(conn, iri, triples, matched_props)
-    }).collect();
+    let results: Vec<SearchResult> = page
+        .iter()
+        .map(|iri| {
+            let empty = vec![];
+            let triples = page_batch.get(iri.as_str()).unwrap_or(&empty);
+            let mut matched_props = vec![];
+            score_entity_against_tokens(iri, triples, tokens, &mut matched_props);
+            enrich_from_triples(conn, iri, triples, matched_props)
+        })
+        .collect();
 
     Ok((results, total))
 }
@@ -207,7 +244,8 @@ fn search_global_sql_fallback(
         }
         let empty = vec![];
         let triples = batch.get(iri.as_str()).unwrap_or(&empty);
-        let type_iri = triples.iter()
+        let type_iri = triples
+            .iter()
             .find(|t| t.predicate == "rdf:type")
             .and_then(|t| t.object.as_iri());
         super::scoring::entity_type_matches(type_iri, entity_type_filter)
@@ -219,15 +257,19 @@ fn search_global_sql_fallback(
         let page: Vec<String> = filtered.into_iter().skip(offset).take(limit).collect();
         let page_batch = query::batch_load_triples_for_subjects(conn, &page)
             .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
-        let results = page.iter().map(|iri| {
-            let empty = vec![];
-            let triples = page_batch.get(iri.as_str()).unwrap_or(&empty);
-            enrich_from_triples(conn, iri, triples, vec![])
-        }).collect();
+        let results = page
+            .iter()
+            .map(|iri| {
+                let empty = vec![];
+                let triples = page_batch.get(iri.as_str()).unwrap_or(&empty);
+                enrich_from_triples(conn, iri, triples, vec![])
+            })
+            .collect();
         return Ok((results, total));
     }
 
-    let mut scored: Vec<(String, i32)> = all_iris.iter()
+    let mut scored: Vec<(String, i32)> = all_iris
+        .iter()
         .filter(|iri| filter_entity_type(iri))
         .filter_map(|iri| {
             let empty = vec![];
@@ -240,16 +282,24 @@ fn search_global_sql_fallback(
     scored.sort_by(|a, b| b.1.cmp(&a.1));
 
     let total = scored.len();
-    let page: Vec<String> = scored.into_iter().skip(offset).take(limit).map(|(iri, _)| iri).collect();
+    let page: Vec<String> = scored
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(iri, _)| iri)
+        .collect();
     let page_batch = query::batch_load_triples_for_subjects(conn, &page)
         .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
-    let results = page.iter().map(|iri| {
-        let empty = vec![];
-        let triples = page_batch.get(iri.as_str()).unwrap_or(&empty);
-        let mut matched = vec![];
-        super::scoring::score_entity_against_tokens(iri, triples, tokens, &mut matched);
-        enrich_from_triples(conn, iri, triples, matched)
-    }).collect();
+    let results = page
+        .iter()
+        .map(|iri| {
+            let empty = vec![];
+            let triples = page_batch.get(iri.as_str()).unwrap_or(&empty);
+            let mut matched = vec![];
+            super::scoring::score_entity_against_tokens(iri, triples, tokens, &mut matched);
+            enrich_from_triples(conn, iri, triples, matched)
+        })
+        .collect();
 
     Ok((results, total))
 }
@@ -275,11 +325,14 @@ pub(super) fn search_global(
             let page: Vec<String> = all_iris.into_iter().skip(offset).take(limit).collect();
             let batch = query::batch_load_triples_for_subjects(conn, &page)
                 .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
-            let results: Vec<SearchResult> = page.iter().map(|iri| {
-                let empty = vec![];
-                let triples = batch.get(iri.as_str()).unwrap_or(&empty);
-                enrich_from_triples(conn, iri, triples, vec![])
-            }).collect();
+            let results: Vec<SearchResult> = page
+                .iter()
+                .map(|iri| {
+                    let empty = vec![];
+                    let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+                    enrich_from_triples(conn, iri, triples, vec![])
+                })
+                .collect();
             return Ok((results, total));
         }
 
@@ -290,14 +343,16 @@ pub(super) fn search_global(
         }
         let batch = query::batch_load_triples_for_subjects(conn, &iris)
             .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
-        let filtered: Vec<&String> = iris.iter()
+        let filtered: Vec<&String> = iris
+            .iter()
             .filter(|iri| {
                 if entity_type_filter.is_none() {
                     return true;
                 }
                 let empty = vec![];
                 let triples = batch.get(iri.as_str()).unwrap_or(&empty);
-                let type_iri = triples.iter()
+                let type_iri = triples
+                    .iter()
                     .find(|t| t.predicate == "rdf:type")
                     .and_then(|t| t.object.as_iri());
                 entity_type_matches(type_iri, entity_type_filter)
@@ -305,11 +360,14 @@ pub(super) fn search_global(
             .collect();
         let total = filtered.len();
         let page: Vec<&String> = filtered.into_iter().skip(offset).take(limit).collect();
-        let results: Vec<SearchResult> = page.iter().map(|iri| {
-            let empty = vec![];
-            let triples = batch.get(iri.as_str()).unwrap_or(&empty);
-            enrich_from_triples(conn, iri, triples, vec![])
-        }).collect();
+        let results: Vec<SearchResult> = page
+            .iter()
+            .map(|iri| {
+                let empty = vec![];
+                let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+                enrich_from_triples(conn, iri, triples, vec![])
+            })
+            .collect();
         return Ok((results, total));
     }
 
@@ -325,7 +383,8 @@ pub(super) fn search_global(
     let batch = query::batch_load_triples_for_subjects(conn, &iris)
         .map_err(|e| OwlError::DatabaseError(e.to_string()))?;
 
-    let filtered: Vec<&String> = iris.iter()
+    let filtered: Vec<&String> = iris
+        .iter()
         .filter(|iri| {
             let empty = vec![];
             let triples = batch.get(iri.as_str()).unwrap_or(&empty);
@@ -335,7 +394,8 @@ pub(super) fn search_global(
             if entity_type_filter.is_none() {
                 return true;
             }
-            let type_iri = triples.iter()
+            let type_iri = triples
+                .iter()
                 .find(|t| t.predicate == "rdf:type")
                 .and_then(|t| t.object.as_iri());
             entity_type_matches(type_iri, entity_type_filter)
@@ -345,12 +405,15 @@ pub(super) fn search_global(
     let total = filtered.len();
     let page: Vec<&String> = filtered.into_iter().skip(offset).take(limit).collect();
 
-    let results: Vec<SearchResult> = page.iter().map(|iri| {
-        let empty = vec![];
-        let triples = batch.get(iri.as_str()).unwrap_or(&empty);
-        let matched_props = matched_properties_for_tokens(iri, triples, tokens);
-        enrich_from_triples(conn, iri, triples, matched_props)
-    }).collect();
+    let results: Vec<SearchResult> = page
+        .iter()
+        .map(|iri| {
+            let empty = vec![];
+            let triples = batch.get(iri.as_str()).unwrap_or(&empty);
+            let matched_props = matched_properties_for_tokens(iri, triples, tokens);
+            enrich_from_triples(conn, iri, triples, matched_props)
+        })
+        .collect();
 
     Ok((results, total))
 }

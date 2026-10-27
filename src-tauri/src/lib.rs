@@ -9,32 +9,32 @@ mod namespaces;
 // existing `crate::eavto`, `crate::search`, etc. references continue to resolve.
 pub use foundation_core::diagnostics;
 pub use foundation_core::eavto;
-pub use foundation_core::search;
 pub use foundation_core::paths;
+pub use foundation_core::search;
 
 // `owl` is declared as a local module because the app crate adds two
 // tauri-dependent workers (formula_worker, query_worker) on top of the core.
 pub mod owl;
 
-mod commands;
-pub mod core_ontology;
 pub mod ai;
+mod commands;
+pub mod config;
+pub mod core_ontology;
+pub mod data_sync;
+pub mod files;
+pub mod imap;
 mod mcp;
 pub mod process_automation;
-pub mod imap;
-pub mod data_sync;
-pub mod config;
-pub mod files;
 pub mod realtime;
 
 #[derive(serde::Serialize)]
 pub struct TripleData {
     subject: String,
     predicate: String,
-    object: Option<String>,           // IRI or blank node (if object_type = 'iri' or 'blank')
-    object_value: Option<String>,      // Literal value (if object_type = 'literal')
-    object_type: String,               // 'iri', 'literal', or 'blank'
-    object_datatype: Option<String>,   // Datatype IRI for literals
+    object: Option<String>, // IRI or blank node (if object_type = 'iri' or 'blank')
+    object_value: Option<String>, // Literal value (if object_type = 'literal')
+    object_type: String,    // 'iri', 'literal', or 'blank'
+    object_datatype: Option<String>, // Datatype IRI for literals
     tx: i64,
     origin_id: i64,
     retracted: bool,
@@ -42,22 +42,22 @@ pub struct TripleData {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct DisplayTriple {
-    a: String,            // attribute (predicate)
-    v: String,            // value (object or object_value)
-    v_type: String,       // value type: 'ref' for IRIs, 'literal' for literals
-    v_label: Option<String>, // optional label for the value (when v_type is 'ref')
-    v_icon: Option<String>, // optional icon for the value (when v_type is 'ref')
-    a_comment: Option<String>, // optional comment for the predicate
-    domain: Option<String>, // optional domain class IRI for the predicate
+    a: String,                    // attribute (predicate)
+    v: String,                    // value (object or object_value)
+    v_type: String,               // value type: 'ref' for IRIs, 'literal' for literals
+    v_label: Option<String>,      // optional label for the value (when v_type is 'ref')
+    v_icon: Option<String>,       // optional icon for the value (when v_type is 'ref')
+    a_comment: Option<String>,    // optional comment for the predicate
+    domain: Option<String>,       // optional domain class IRI for the predicate
     domain_label: Option<String>, // optional label for the domain class
-    domain_icon: Option<String>, // optional icon for the domain class
+    domain_icon: Option<String>,  // optional icon for the domain class
 }
 
 #[derive(serde::Serialize)]
 pub struct GraphNode {
     id: String,
     label: String,
-    group: i32, // 1=Class, 6=Instance
+    group: i32,           // 1=Class, 6=Instance
     icon: Option<String>, // Material Symbols icon name
 }
 
@@ -114,16 +114,15 @@ pub struct SystemInfo {
 
 #[derive(Clone, serde::Serialize)]
 pub struct ImportProgress {
-    pub stage: String,       // "core", "dtype", "foundation"
+    pub stage: String,        // "core", "dtype", "foundation"
     pub current_file: String, // Name of the file being imported
-    pub current: u32,        // Current file (1-based)
-    pub total: u32,          // Total number of files
-    pub triples: u64,        // Total triples imported so far
+    pub current: u32,         // Current file (1-based)
+    pub total: u32,           // Total number of files
+    pub triples: u64,         // Total triples imported so far
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
@@ -140,7 +139,11 @@ pub fn run() {
             let app_handle = app.handle().clone();
             foundation_core::paths::configure("Foundation", "FOUNDATION.db", "org.w3id.foundation");
 
-            let window_config = app.config().app.windows.first()
+            let window_config = app
+                .config()
+                .app
+                .windows
+                .first()
                 .expect("tauri.conf.json must declare at least one window");
             let opener_handle = app_handle.clone();
             let nav_handle = app_handle.clone();
@@ -158,7 +161,10 @@ pub fn run() {
                     let scheme = url.scheme();
                     if scheme == "http" || scheme == "https" || scheme == "mailto" {
                         let host = url.host_str().unwrap_or("");
-                        if host == "localhost" || host == "ipc.localhost" || host == "asset.localhost" {
+                        if host == "localhost"
+                            || host == "ipc.localhost"
+                            || host == "asset.localhost"
+                        {
                             return true;
                         }
                         let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
@@ -264,6 +270,7 @@ pub fn run() {
             commands::connector__get_credential_summary,
             commands::connector__test_auth,
             commands::connector__get_oauth2_summary,
+            commands::connector__reveal_oauth2_client_secret,
             commands::connector__test_oauth2_auth,
             commands::connector__export_package,
             commands::connector__import_package,

@@ -6,7 +6,6 @@
 /// Usage:
 ///   cargo run --bin purge_retracted             # dry-run (default)
 ///   cargo run --bin purge_retracted -- --delete  # permanently delete retracted rows
-
 use rusqlite::Connection;
 use std::path::PathBuf;
 
@@ -30,15 +29,19 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let conn = Connection::open(&db_path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
 
-    let total_triples: i64 =
-        conn.query_row("SELECT COUNT(*) FROM triples", [], |r| r.get(0))?;
-    let retracted_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM triples WHERE retracted = 1", [], |r| r.get(0))?;
-    let db_size_kb: i64 = conn.query_row(
-        "SELECT page_count * page_size / 1024 FROM pragma_page_count(), pragma_page_size()",
+    let total_triples: i64 = conn.query_row("SELECT COUNT(*) FROM triples", [], |r| r.get(0))?;
+    let retracted_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM triples WHERE retracted = 1",
         [],
         |r| r.get(0),
-    ).unwrap_or(0);
+    )?;
+    let db_size_kb: i64 = conn
+        .query_row(
+            "SELECT page_count * page_size / 1024 FROM pragma_page_count(), pragma_page_size()",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     println!(
         "Total triples : {}\nRetracted     : {} ({:.1}%)\nDatabase size : {} KB",
@@ -69,11 +72,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Running VACUUM...");
     conn.execute_batch("VACUUM;")?;
 
-    let db_size_after_kb: i64 = conn.query_row(
-        "SELECT page_count * page_size / 1024 FROM pragma_page_count(), pragma_page_size()",
-        [],
-        |r| r.get(0),
-    ).unwrap_or(0);
+    let db_size_after_kb: i64 = conn
+        .query_row(
+            "SELECT page_count * page_size / 1024 FROM pragma_page_count(), pragma_page_size()",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     println!(
         "Done. Database size: {} KB → {} KB (freed {} KB).",

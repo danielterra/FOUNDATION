@@ -9,11 +9,32 @@ pub use foundation_core::owl::{OwlError, Result};
 pub mod formula_worker;
 pub mod query_worker;
 
+pub fn get_predicates_for_subjects(
+    conn: &Connection,
+    subjects: &[String],
+    predicates: &[&str],
+) -> Result<Vec<(String, String, Object)>> {
+    foundation_core::eavto::query::get_predicates_for_subjects(conn, subjects, predicates)
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))
+}
+
+pub fn get_first_iri_property_batch(
+    conn: &Connection,
+    subjects: &[String],
+    predicate: &str,
+) -> Result<std::collections::HashMap<String, String>> {
+    foundation_core::eavto::query::get_first_iri_property_batch(conn, subjects, predicate)
+        .map_err(|e| OwlError::DatabaseError(e.to_string()))
+}
+
 /// Initialize the database with Tauri AppHandle for progress emission.
 /// This wrapper lives in the app crate because it depends on tauri::AppHandle.
 pub fn initialize_with_progress(
     app: tauri::AppHandle,
-) -> std::result::Result<(foundation_core::eavto::Connection, std::path::PathBuf), foundation_core::eavto::connection::DbError> {
+) -> std::result::Result<
+    (foundation_core::eavto::Connection, std::path::PathBuf),
+    foundation_core::eavto::connection::DbError,
+> {
     use tauri::Emitter;
     let foundation_dir = crate::config::get_foundation_dir(&app);
     let db_path = foundation_core::eavto::connection::get_db_path_for_dir(&foundation_dir)?;
@@ -21,6 +42,7 @@ pub fn initialize_with_progress(
     let emit_fn = move |event: &str, payload: serde_json::Value| {
         let _ = app_clone.emit(event, payload);
     };
-    let conn = foundation_core::eavto::connection::initialize_db_with_emit(&db_path, Some(emit_fn))?;
+    let conn =
+        foundation_core::eavto::connection::initialize_db_with_emit(&db_path, Some(emit_fn))?;
     Ok((conn, db_path))
 }
