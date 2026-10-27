@@ -1,5 +1,10 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui/button';
+  import { isIconUrl, resolveIconSrc } from '$lib/utils/icon';
+
+  // Icons whose image failed to load fall back to the default ligature
+  // instead of leaving an empty slot in the row.
+  let brokenIcons = $state(new Set<string>());
 
   interface SidebarEntry {
     id: string;
@@ -56,10 +61,15 @@
         title={entry.isMinimized ? `(minimizado) ${entry.title}` : entry.title}
         onclick={() => onSelect(entry.id)}
       >
-        {#if entry.icon.startsWith('http://') || entry.icon.startsWith('https://') || entry.icon.startsWith('data:')}
-          <img src={entry.icon} alt="" class="entry-icon-img" />
+        {#if isIconUrl(entry.icon) && !brokenIcons.has(entry.id)}
+          <img
+            src={resolveIconSrc(entry.icon)}
+            alt=""
+            class="entry-icon-img"
+            onerror={() => { brokenIcons = new Set(brokenIcons).add(entry.id); }}
+          />
         {:else}
-          <span class="material-symbols-outlined entry-icon">{entry.icon}</span>
+          <span class="material-symbols-outlined entry-icon">{isIconUrl(entry.icon) ? 'widgets' : entry.icon}</span>
         {/if}
         <span class="entry-title">{entry.title}</span>
       </Button>

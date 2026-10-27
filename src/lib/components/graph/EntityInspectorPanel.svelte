@@ -1,6 +1,7 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
 	import { Card } from '$lib/components/ui/card';
+	import { isIconUrl, resolveIconSrc } from '$lib/utils/icon';
 	import { Button } from '$lib/components/ui/button';
 	import PropertyRow from '$lib/components/graph/PropertyRow.svelte';
 	import PropertyGroup from '$lib/components/graph/PropertyGroup.svelte';
@@ -20,15 +21,6 @@
 	let panel;
 	let entityData = $state(null);
 	let loading = $state(true);
-
-	function getIconType(icon) {
-		if (!icon) return null;
-		if (icon.startsWith('http://') || icon.startsWith('https://') ||
-		    icon.startsWith('file://') || icon.startsWith('data:')) {
-			return 'image';
-		}
-		return 'material-symbol';
-	}
 
 	function getTypeText(data) {
 		if (!data) return '';
@@ -157,10 +149,9 @@
 				<div class="panel-header-drag panel-drag-handle">
 					<span class="drag-handle">⋮⋮</span>
 					{#if entityIcon}
-						{@const iconType = getIconType(entityIcon)}
 						<div class="entity-icon">
-							{#if iconType === 'image'}
-								<img src={entityIcon} alt={entityLabel} />
+							{#if isIconUrl(entityIcon)}
+								<img src={resolveIconSrc(entityIcon)} alt={entityLabel} />
 							{:else}
 								<span class="material-symbols-outlined">{entityIcon}</span>
 							{/if}
@@ -225,10 +216,9 @@
 			<div class="panel-header">
 				<div class="panel-header-content">
 					{#if entityIcon}
-						{@const iconType = getIconType(entityIcon)}
 						<div class="entity-icon">
-							{#if iconType === 'image'}
-								<img src={entityIcon} alt={entityLabel} />
+							{#if isIconUrl(entityIcon)}
+								<img src={resolveIconSrc(entityIcon)} alt={entityLabel} />
 							{:else}
 								<span class="material-symbols-outlined">{entityIcon}</span>
 							{/if}

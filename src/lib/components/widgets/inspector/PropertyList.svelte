@@ -85,6 +85,7 @@
           isCalculated: prop.isCalculated ?? false,
           isQueryProperty: prop.isQueryProperty ?? false,
           isPropertyPicker: prop.isPropertyPicker ?? false,
+          dependsOnProperty: prop.dependsOnProperty ?? null,
           queryConfig: prop.queryConfig ?? null,
           isEmpty: prop.isEmpty ?? false,
           minCount: prop.minCount ?? null,
@@ -156,7 +157,29 @@
       const calculatedOther = calculated.filter(g => g.isEmpty || !isNumericType(g.datatype));
       const filled = nonCalculated.filter(g => !g.isEmpty);
       const empty = nonCalculated.filter(g => g.isEmpty);
-      const regularItems = [...filled, ...empty];
+
+      // A dependent field exists only once its parent has a value, and it belongs
+      // directly below that parent — not at the bottom with the other empty fields.
+      // A dependent whose parent is unset (or whose parent was itself dropped, in a
+      // chain) never enters the list at all.
+      const byIri = new Map(nonCalculated.map(g => [g.property, g]));
+      const dependentsOf = new Map();
+      const independent = [];
+      for (const group of [...filled, ...empty]) {
+        const parentIri = group.dependsOnProperty;
+        if (!parentIri) { independent.push(group); continue; }
+        const parent = byIri.get(parentIri);
+        if (!parent || parent.isEmpty) continue;
+        if (!dependentsOf.has(parentIri)) dependentsOf.set(parentIri, []);
+        dependentsOf.get(parentIri).push(group);
+      }
+      const regularItems = [];
+      for (const group of independent) {
+        regularItems.push(group);
+        for (const dependent of dependentsOf.get(group.property) ?? []) {
+          regularItems.push(dependent);
+        }
+      }
       return {
         mode: 'instance',
         calculatedNumeric,

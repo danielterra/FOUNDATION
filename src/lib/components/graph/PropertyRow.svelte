@@ -1,5 +1,6 @@
 <script>
 	import { Button } from '$lib/components/ui/button';
+	import { isIconUrl, resolveIconSrc } from '$lib/utils/icon';
 
 	let {
 		label = '',
@@ -11,15 +12,6 @@
 		unit = null,
 		unitLabel = null
 	} = $props();
-
-	function getIconType(icon) {
-		if (!icon) return null;
-		if (icon.startsWith('http://') || icon.startsWith('https://') ||
-		    icon.startsWith('file://') || icon.startsWith('data:')) {
-			return 'image';
-		}
-		return 'material-symbol';
-	}
 
 	const CURRENCY_CODES = new Set(['BRL', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'ARS', 'CLP', 'MXN', 'PEN', 'COP', 'UYU']);
 
@@ -38,14 +30,14 @@
 			? formatCurrency(value, unitLabel)
 			: (valueLabel || value)
 	);
-	const iconType = $derived(valueIcon ? getIconType(valueIcon) : null);
+	const iconSrc = $derived(isIconUrl(valueIcon) ? resolveIconSrc(valueIcon) : null);
 </script>
 
 {#snippet pillContent()}
 	{#if valueIcon}
 		<span class="value-icon">
-			{#if iconType === 'image'}
-				<img src={valueIcon} alt={displayValue} />
+			{#if iconSrc}
+				<img src={iconSrc} alt={displayValue} />
 			{:else}
 				<span class="material-symbols-outlined">{valueIcon}</span>
 			{/if}

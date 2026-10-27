@@ -215,9 +215,25 @@
     }
   }
 
+  // Clearing a parent field discards its dependents' values too: the inspector stops
+  // showing a dependent once the parent is empty, so a value left behind is orphaned
+  // data nobody can see or correct.
+  async function clearDependentsOf(propertyIri) {
+    const dependents = [...new Set(
+      (entityData?.properties ?? [])
+        .filter(p => p.dependsOnProperty === propertyIri && !p.isEmpty)
+        .map(p => p.property)
+    )];
+    for (const dependentIri of dependents) {
+      await invoke('widget_inspector__clear_property', { entityId, propertyIri: dependentIri });
+      await clearDependentsOf(dependentIri);
+    }
+  }
+
   async function clearProperty(propertyIri) {
     try {
       await invoke('widget_inspector__clear_property', { entityId, propertyIri });
+      await clearDependentsOf(propertyIri);
     } catch (err) {
       console.error('Failed to clear property:', err);
     }
@@ -226,6 +242,8 @@
   async function saveReferences(propertyIri, iris) {
     try {
       await invoke('widget_inspector__set_references', { entityId, propertyIri, iris });
+      // Emptying a reference field is a clear — the dependents go with it.
+      if (!iris || iris.length === 0) await clearDependentsOf(propertyIri);
     } catch (err) {
       console.error('Failed to update references:', err);
     }

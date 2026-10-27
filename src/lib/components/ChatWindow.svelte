@@ -277,22 +277,27 @@
 		const initializeApp = async () => {
 			const t0 = performance.now();
 			console.debug('[INIT] initializeApp start');
-			try {
-				await loadActiveModelInfo();
-				console.debug(`[INIT] loadActiveModelInfo=${Math.round(performance.now() - t0)}ms`);
-				await initializeAI();
-				console.debug(`[INIT] initializeAI=${Math.round(performance.now() - t0)}ms`);
-			} catch (err) {
-				console.error('Failed to initialize AI:', err);
-			}
-			await loadConversations();
+			await loadActiveModelInfo();
+			console.debug(`[INIT] loadActiveModelInfo=${Math.round(performance.now() - t0)}ms`);
+			const listedConversations = await loadConversations();
 			console.debug(`[INIT] loadConversations=${Math.round(performance.now() - t0)}ms`);
-			if (conversations.length > 0) {
+			if (!listedConversations) return;
+			if (listedConversations.length === 0) {
+				activeConversationIri = null;
+				const created = await createConversation({ loadMessagesAfterCreation: false });
+				if (!created) return;
+			} else {
 				const saved = localStorage.getItem('activeConversationIri');
-				const exists = saved && conversations.some(c => c.iri === saved);
-				activeConversationIri = exists ? saved : conversations[0].iri;
+				const currentExists = listedConversations.some(c => c.iri === activeConversationIri);
+				const savedExists = saved && listedConversations.some(c => c.iri === saved);
+				activeConversationIri = currentExists
+					? activeConversationIri
+					: savedExists ? saved : listedConversations[0].iri;
+				localStorage.setItem('activeConversationIri', activeConversationIri);
 				inputText = localStorage.getItem(`draft_${activeConversationIri}`) ?? '';
 			}
+			await initializeAI();
+			console.debug(`[INIT] initializeAI=${Math.round(performance.now() - t0)}ms`);
 			await loadMessages();
 			console.debug(`[INIT] loadMessages=${Math.round(performance.now() - t0)}ms — done`);
 			loadAgents();
@@ -471,23 +476,32 @@
 				listSub.setSinceTx(listSnapshotTx);
 				listSub.replayMissed();
 			}
+			return result.items;
 		} catch (err) {
 			console.error('Failed to load conversations:', err);
+			showError(err?.toString() ?? 'Failed to load conversations');
+			return null;
 		}
 	}
 
-	async function createConversation() {
+	async function createConversation({ loadMessagesAfterCreation = true } = {}) {
 		try {
 			const conv = await invoke('chat__create_conversation', { label: null });
+			clearStreaming();
+			loadMessagesVersion++;
 			activeConversationIri = conv.iri;
 			localStorage.setItem('activeConversationIri', conv.iri);
 			messages = [];
 			messageLimit = MESSAGE_PAGE_SIZE;
 			hasMoreMessages = true;
-			await loadConversations();
-			await loadMessages();
+			const listedConversations = await loadConversations();
+			if (!listedConversations) return null;
+			if (loadMessagesAfterCreation) await loadMessages();
+			return conv;
 		} catch (err) {
 			console.error('Failed to create conversation:', err);
+			showError(err?.toString() ?? 'Failed to create conversation');
+			return null;
 		}
 	}
 
@@ -998,7 +1012,7 @@
 		{agents}
 		onOpenAgentInspector={openAgentInspector}
 		onSwitchAgent={switchAgent}
-		onNewConversation={createConversation}
+		onNewConversation={() => createConversation()}
 		onDownloadChat={downloadChat}
 		{cameraEnabled}
 		onToggleCamera={toggleCamera}

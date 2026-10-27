@@ -89,8 +89,24 @@
     return SOURCE_PROPERTIES.flatMap(propIri =>
       findAllProps(props, propIri)
         .filter(p => p.value && p.value.trim() !== '' && !seen.has(p.value) && seen.add(p.value))
-        .map(p => ({ iri: p.value, label: p.value_label ?? p.value, icon: p.value_icon ?? 'link' }))
+        .map(p => {
+          const label = p.value_label ?? extractLocalName(p.value) ?? p.value;
+          const icon = p.value_icon ?? getIconFromIri(p.value);
+          return { iri: p.value, label, icon };
+        })
     );
+  }
+
+  function extractLocalName(iri) {
+    const match = iri.match(/[^#/:]+$/);
+    return match ? match[0].replace(/_/g, ' ') : null;
+  }
+
+  function getIconFromIri(iri) {
+    if (iri.includes('foundation:WorkflowExecution')) return 'play_arrow';
+    if (iri.includes('foundation:Email')) return 'mail';
+    if (iri.includes('foundation:Task')) return 'task';
+    return 'link';
   }
 
   function findProp(props, iri) {
@@ -676,6 +692,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    text-align: left;
   }
 
   .meta-time {
@@ -735,6 +752,7 @@
     color: var(--muted-foreground);
     white-space: pre-wrap;
     word-break: break-word;
+    text-align: left;
   }
 
   .source-list {

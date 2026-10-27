@@ -1,5 +1,4 @@
 <script>
-  import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import WidgetContainer from './WidgetContainer.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -29,8 +28,13 @@
   let oauth2Scopes = $state('');
   let oauth2ScopeInput = $state('');
   let oauth2ShowSecret = $state(false);
-  // IRI da credencial OAuth2 salva (retornado pelo save, usado para test/summary)
   let oauth2CredentialIri = $state('');
+  let oauth2HasClientSecret = $state(false);
+  let oauth2SecretLoaded = $state(false);
+  let oauth2SecretLoading = $state(false);
+  let oauth2RevealError = $state(null);
+  let loadGeneration = 0;
+  let revealGeneration = 0;
 
   function oauth2ScopeList() {
     return oauth2Scopes
@@ -53,31 +57,110 @@
     oauth2Scopes = oauth2ScopeList().filter(s => s !== scope).join(' ');
   }
 
-  async function loadConnector() {
-    if (!entityId) return;
-    try {
-      const resultStr = await invoke('inspector__get_entity', { entityId });
-      const data = JSON.parse(resultStr);
-      connectorLabel = data?.label ?? entityId;
+  function resetOauth2SecretState() {
+    revealGeneration += 1;
+    oauth2ClientSecret = '';
+    oauth2ShowSecret = false;
+    oauth2SecretLoaded = false;
+    oauth2SecretLoading = false;
+    oauth2RevealError = null;
+  }
 
-      const summary = await invoke('connector__get_credential_summary', { connectorIri: entityId });
+  async function revealOrHideSecret() {
+    if (oauth2ShowSecret) {
+      oauth2ShowSecret = false;
+      return;
+    }
+
+    if (oauth2SecretLoaded || oauth2ClientSecret || !oauth2CredentialIri || !oauth2HasClientSecret) {
+      oauth2ShowSecret = true;
+      return;
+    }
+
+    if (oauth2SecretLoading) return;
+    oauth2SecretLoading = true;
+    oauth2RevealError = null;
+    const credentialIri = oauth2CredentialIri;
+    const generation = ++revealGeneration;
+    try {
+      const secret = await invoke('connector__reveal_oauth2_client_secret', {
+        credIri: credentialIri,
+      });
+      if (generation !== revealGeneration || credentialIri !== oauth2CredentialIri || authType !== 'oauth2') return;
+      oauth2ClientSecret = String(secret);
+      oauth2SecretLoaded = true;
+      oauth2ShowSecret = true;
+    } catch {
+      if (generation !== revealGeneration || credentialIri !== oauth2CredentialIri || authType !== 'oauth2') return;
+      oauth2RevealError = true;
+      oauth2ShowSecret = false;
+    } finally {
+      if (generation === revealGeneration) oauth2SecretLoading = false;
+    }
+  }
+
+  function changeAuthType(value) {
+    if (!value || value === authType) return;
+    resetOauth2SecretState();
+    authType = value;
+  }
+
+  function clearConnectorState() {
+    connectorLabel = '';
+    authType = 'api_key';
+    isConfigured = false;
+    testResult = null;
+    saveError = null;
+    apiKeyValue = '';
+    tokenValue = '';
+    username = '';
+    password = '';
+    oauth2ClientId = '';
+    oauth2TokenUrl = '';
+    oauth2Scopes = '';
+    oauth2ScopeInput = '';
+    oauth2CredentialIri = '';
+    oauth2HasClientSecret = false;
+    resetOauth2SecretState();
+  }
+
+  async function loadConnector(connectorIri, generation) {
+    if (!connectorIri) return;
+    try {
+      const resultStr = await invoke('inspector__get_entity', { entityId: connectorIri });
+      if (generation !== loadGeneration) return;
+      const data = JSON.parse(resultStr);
+      connectorLabel = data?.label ?? connectorIri;
+
+      const summary = await invoke('connector__get_credential_summary', { connectorIri });
+      if (generation !== loadGeneration) return;
       isConfigured = summary.is_configured;
       if (summary.auth_type) authType = summary.auth_type;
 
       if (summary.auth_type === 'oauth2' && summary.credential_iri) {
-        oauth2CredentialIri = summary.credential_iri;
         const oauth2Summary = await invoke('connector__get_oauth2_summary', {
           credIri: summary.credential_iri,
         });
+        if (generation !== loadGeneration) return;
+        oauth2CredentialIri = oauth2Summary.credential_iri ?? summary.credential_iri;
         oauth2ClientId = oauth2Summary.client_id ?? '';
-        oauth2ClientSecret = oauth2Summary.client_secret ?? '';
         oauth2TokenUrl = oauth2Summary.token_url ?? '';
         oauth2Scopes = oauth2Summary.scopes ?? '';
+        oauth2HasClientSecret = Boolean(oauth2Summary.has_client_secret);
+        isConfigured = Boolean(oauth2Summary.is_configured);
+        resetOauth2SecretState();
       }
     } catch {
-      connectorLabel = entityId;
+      if (generation === loadGeneration) connectorLabel = connectorIri;
     }
   }
+
+  $effect(() => {
+    const connectorIri = entityId;
+    const generation = ++loadGeneration;
+    clearConnectorState();
+    if (connectorIri) void loadConnector(connectorIri, generation);
+  });
 
   async function saveCredential() {
     if (saving) return;
@@ -94,14 +177,19 @@
         credential.username = username;
         credential.password = password;
       } else if (authType === 'oauth2') {
+        if (!oauth2CredentialIri && !oauth2ClientSecret) {
+          saveError = 'Client Secret é obrigatório para criar uma credencial OAuth2.';
+          return;
+        }
         credential.client_id = oauth2ClientId;
-        credential.client_secret = oauth2ClientSecret;
+        if (oauth2ClientSecret) credential.client_secret = oauth2ClientSecret;
         credential.token_url = oauth2TokenUrl;
         if (oauth2Scopes.trim()) credential.scopes = oauth2Scopes.trim();
       }
       const result = await invoke('connector__save_credential', { connectorIri: entityId, credential });
       if (authType === 'oauth2') {
         oauth2CredentialIri = String(result);
+        oauth2HasClientSecret = oauth2HasClientSecret || Boolean(oauth2ClientSecret);
       }
       isConfigured = true;
     } catch (err) {
@@ -138,9 +226,6 @@
     }
   }
 
-  onMount(async () => {
-    await loadConnector();
-  });
 </script>
 
 <WidgetContainer
@@ -165,7 +250,7 @@
       <Select.Root
         type="single"
         value={authType}
-        onValueChange={(v) => { if (v) authType = v; }}
+        onValueChange={changeAuthType}
       >
         <Select.Trigger id="field-auth-type" class="select-trigger-override">
           <Select.Value />
@@ -241,7 +326,7 @@
             id="field-oauth2-client-secret"
             class="field-input secret-input"
             type={oauth2ShowSecret ? 'text' : 'password'}
-            placeholder={isConfigured && !oauth2ClientSecret ? '••••••••' : 'Client Secret…'}
+            placeholder={oauth2HasClientSecret && !oauth2ClientSecret ? '••••••••' : 'Client Secret…'}
             bind:value={oauth2ClientSecret}
             disabled={saving}
             autocomplete="new-password"
@@ -250,14 +335,20 @@
             variant="ghost"
             size="icon"
             type="button"
-            onclick={() => oauth2ShowSecret = !oauth2ShowSecret}
+            onclick={revealOrHideSecret}
             aria-label={oauth2ShowSecret ? 'Ocultar client secret' : 'Mostrar client secret'}
+            disabled={saving || oauth2SecretLoading}
           >
-            <span class="material-symbols-outlined">
-              {oauth2ShowSecret ? 'visibility_off' : 'visibility'}
+            <span class="material-symbols-outlined" class:spinning={oauth2SecretLoading}>
+              {oauth2SecretLoading ? 'progress_activity' : oauth2ShowSecret ? 'visibility_off' : 'visibility'}
             </span>
           </Button>
         </div>
+        {#if oauth2RevealError}
+          <div class="secret-error" role="alert" aria-live="assertive">
+            Não foi possível mostrar o Client Secret. Tente novamente.
+          </div>
+        {/if}
       </div>
       <div class="field-group">
         <label class="field-label" for="field-oauth2-token-url">Token URL</label>
@@ -483,6 +574,12 @@
 
   .secret-row :global([data-slot="button"] .material-symbols-outlined) {
     font-size: 18px !important;
+  }
+
+  .secret-error {
+    color: var(--color-error);
+    font-size: 12px;
+    padding-top: 4px;
   }
 
   .scopes-field {
