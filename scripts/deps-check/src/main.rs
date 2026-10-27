@@ -119,7 +119,7 @@ fn build_report(npm: &str, cargo: &str, day: u64) -> String {
          ### Frontend (npm — `package.json`)\n{npm_section}\n\n\
          ### Backend (Cargo — `src-tauri/Cargo.toml`, semver-compatível)\n{cargo_section}\n\n\
          > Bumps **major** de crates Rust não aparecem aqui (exigiriam `cargo-outdated`). \
-         Para reverificar a qualquer momento: `/deps-check` ou `npm run deps:check`."
+         Para reverificar a qualquer momento: `$deps-check` ou `npm run deps:check`."
     )
 }
 

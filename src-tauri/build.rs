@@ -28,7 +28,10 @@ fn generate_material_symbols_list() {
         .find_map(|line| {
             let trimmed = line.trim();
             if trimmed.starts_with("\"version\"") {
-                trimmed.split(':').nth(1).map(|v| v.trim().trim_matches(|c| c == '"' || c == ',').to_string())
+                trimmed
+                    .split(':')
+                    .nth(1)
+                    .map(|v| v.trim().trim_matches(|c| c == '"' || c == ',').to_string())
             } else {
                 None
             }
@@ -50,7 +53,11 @@ fn generate_material_symbols_list() {
     names.sort_unstable();
 
     let mut buf = String::new();
-    writeln!(buf, "pub static MATERIAL_SYMBOLS_VERSION: &str = \"{version}\";").unwrap();
+    writeln!(
+        buf,
+        "pub static MATERIAL_SYMBOLS_VERSION: &str = \"{version}\";"
+    )
+    .unwrap();
     writeln!(buf, "pub static MATERIAL_SYMBOLS: &[&str] = &[").unwrap();
     for name in &names {
         writeln!(buf, "    \"{name}\",").unwrap();
