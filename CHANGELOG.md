@@ -5,6 +5,28 @@ All notable changes to FOUNDATION will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-10-29
+
+### Added
+
+- Data Sync para fontes externas, com catálogo OpenRouter, registros brutos, transformações e histórico de execuções.
+- Automação local expandida, incluindo recorrência, reatores e acompanhamento de workflows.
+- Paginação estável por snapshot para coleções e ferramentas MCP de dados.
+
+### Changed
+
+- O núcleo ontológico foi extraído para o repositório `foundation-core` e fixado como dependência Git reproduzível.
+- O registro de ontologia agora é a fonte canônica para a exportação e verificação de IRIs.
+
+### Fixed
+
+- Configuração de credenciais OAuth e exibição do inspetor foram corrigidas.
+- Dependências de frontend foram atualizadas para remover vulnerabilidades altas e críticas.
+
+### Refactored
+
+- Camadas de Data Sync foram movidas para Core-Ontology, preservando o limite entre comandos, OWL e EAVTO.
+
 ## [0.18.1] - 2026-05-03
 
 ### Fixed
