@@ -14,7 +14,7 @@ pub fn mime_to_file_type_iri(mime_type: &str) -> Option<&'static str> {
         "image/svg+xml" => Some("foundation:FileType_SVG"),
         "application/pdf" => Some("foundation:FileType_PDF"),
         "text/plain" => Some("foundation:FileType_TXT"),
-        "text/csv" => Some("foundation:FileType_CSV"),
+        "text/csv" => Some("foundation:FileType_1793272906262"),
         _ => None,
     }
 }
@@ -150,4 +150,17 @@ pub fn assert_file_individual(
     .map_err(|e| format!("Failed to set uploadDate: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mime_to_file_type_iri;
+
+    #[test]
+    fn csv_uses_the_canonical_file_type_individual() {
+        assert_eq!(
+            mime_to_file_type_iri("text/csv"),
+            Some("foundation:FileType_1793272906262")
+        );
+    }
 }

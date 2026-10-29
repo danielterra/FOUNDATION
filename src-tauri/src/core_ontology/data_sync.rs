@@ -172,7 +172,7 @@ fn raw_record_query<'a>(
         type_predicate: TYPE_PREDICATE,
         class_iri: RAW_RECORD_CLASS,
         parent_predicate: SOURCE_PREDICATE,
-        parent_iri: data_source_iri,
+        parent_iri: Some(data_source_iri),
         state_predicate: STATUS_PREDICATE,
         state_iri: status_filter,
         snapshot_tx,
@@ -384,14 +384,22 @@ pub fn list_data_sources(
         data_source_iris.pop();
     }
 
-    let snapshot_parent = data_source_iris
-        .first()
-        .map(String::as_str)
-        .unwrap_or("foundation:NoDataSource");
-    let snapshot_tx =
-        list_records_page(conn, raw_record_query(snapshot_parent, None, None, None, 1))
-            .map_err(|e| e.to_string())?
-            .snapshot_tx;
+    let snapshot_tx = list_records_page(
+        conn,
+        RecordListQuery {
+            type_predicate: TYPE_PREDICATE,
+            class_iri: RAW_RECORD_CLASS,
+            parent_predicate: SOURCE_PREDICATE,
+            parent_iri: None,
+            state_predicate: STATUS_PREDICATE,
+            state_iri: None,
+            snapshot_tx: None,
+            after_tx: None,
+            limit: 1,
+        },
+    )
+    .map_err(|e| e.to_string())?
+    .snapshot_tx;
 
     let sources = data_source_iris
         .into_iter()
@@ -848,6 +856,17 @@ pub fn update_datasource_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eavto::test_helpers::setup_test_db;
+
+    #[test]
+    fn data_source_page_without_sources_has_a_snapshot() {
+        let conn = setup_test_db();
+
+        let page = list_data_sources(&conn, 10, 0).unwrap();
+
+        assert!(page.sources.is_empty());
+        assert!(page.snapshot_tx >= 0);
+    }
 
     #[test]
     fn deterministic_iri_stable_for_same_input() {

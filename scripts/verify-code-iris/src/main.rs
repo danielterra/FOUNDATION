@@ -19,6 +19,10 @@ const EXCLUDED_IRIS: &[&str] = &[
     "foundation:ClassName",
     "foundation:Optional_If_Matched",
     "foundation:File_1234567890",
+    "foundation:DataSource_123",
+    "foundation:EmailAttachment_1787310779670",
+    "foundation:FinancialObligation_123",
+    "foundation:Foo_123",
     "foundation:Project_42",
     "foundation:Task_1",
     "foundation:Task_A",
@@ -26,6 +30,7 @@ const EXCLUDED_IRIS: &[&str] = &[
     "foundation:Task_123",
     "foundation:Task_456",
     "foundation:Task_1234567890",
+    "foundation:UserStory_123",
     "foundation:Widget_inspector_Task_123",
     "foundation:bpmn_Process_123",
     "foundation:myProp",
@@ -33,9 +38,11 @@ const EXCLUDED_IRIS: &[&str] = &[
     // Doc-only example properties (referenced by name in MCP tool descriptions / examples,
     // never as real predicates or class IRIs in production code paths)
     "foundation:amount",
+    "foundation:attachedFile",
     "foundation:price",
     "foundation:deadline",
     "foundation:hasItems",
+    "foundation:hasMembers",
     "foundation:hasTasks",
     "foundation:icon",
     "foundation:rrule",
@@ -181,6 +188,10 @@ fn is_core_iri(conn: &Connection, iri: &str) -> bool {
                     'owl:Class', 'rdfs:Class', 'owl:ObjectProperty',
                     'owl:DatatypeProperty', 'owl:AnnotationProperty', 'rdf:Property'
                   )
+                  AND tx = (
+                    SELECT MAX(tx) FROM triples
+                    WHERE subject = ?1 AND predicate = 'rdf:type'
+                  )
             )",
             [iri],
             |r| r.get(0),
@@ -193,17 +204,83 @@ fn is_core_iri(conn: &Connection, iri: &str) -> bool {
 
     conn.query_row(
         "SELECT EXISTS(
-            SELECT 1 FROM triples t
-            JOIN origins o ON t.origin_id = o.id
-            WHERE t.retracted = 0
-              AND t.subject = ?1
-              AND t.predicate = 'rdf:type'
-              AND (o.name LIKE 'foundation:ontology:%' OR o.name = 'core')
+            SELECT 1 FROM triples
+            WHERE retracted = 0
+              AND subject = 'foundation:CoreOntologyRegistry'
+              AND predicate = 'foundation:includesIndividual'
+              AND object = ?1
+              AND tx = (
+                SELECT MAX(tx) FROM triples
+                WHERE subject = 'foundation:CoreOntologyRegistry'
+                  AND predicate = 'foundation:includesIndividual'
+              )
         )",
         [iri],
         |r| r.get(0),
     )
     .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_core_iri;
+    use rusqlite::Connection;
+
+    fn conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE triples (
+                subject TEXT NOT NULL,
+                predicate TEXT NOT NULL,
+                object TEXT,
+                tx INTEGER NOT NULL,
+                retracted INTEGER NOT NULL
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn recognizes_only_the_latest_registry_membership_set() {
+        let conn = conn();
+        conn.execute_batch(
+            "INSERT INTO triples VALUES
+                ('foundation:CoreOntologyRegistry', 'foundation:includesIndividual', 'foundation:Removed', 1, 0),
+                ('foundation:CoreOntologyRegistry', 'foundation:includesIndividual', 'foundation:Kept', 2, 0);",
+        )
+        .unwrap();
+
+        assert!(is_core_iri(&conn, "foundation:Kept"));
+        assert!(!is_core_iri(&conn, "foundation:Removed"));
+    }
+
+    #[test]
+    fn ignores_individuals_that_only_have_an_origin_style_type_fact() {
+        let conn = conn();
+        conn.execute(
+            "INSERT INTO triples VALUES (?1, 'rdf:type', 'owl:NamedIndividual', 1, 0)",
+            ["foundation:OriginOnly"],
+        )
+        .unwrap();
+
+        assert!(!is_core_iri(&conn, "foundation:OriginOnly"));
+    }
+
+    #[test]
+    fn recognizes_classes_only_at_the_latest_type_transaction() {
+        let conn = conn();
+        conn.execute_batch(
+            "INSERT INTO triples VALUES
+                ('foundation:OldClass', 'rdf:type', 'owl:Class', 1, 0),
+                ('foundation:OldClass', 'rdf:type', 'owl:NamedIndividual', 2, 0),
+                ('foundation:CurrentClass', 'rdf:type', 'owl:Class', 2, 0);",
+        )
+        .unwrap();
+
+        assert!(!is_core_iri(&conn, "foundation:OldClass"));
+        assert!(is_core_iri(&conn, "foundation:CurrentClass"));
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
