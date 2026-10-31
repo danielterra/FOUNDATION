@@ -19,14 +19,20 @@
   let searchComponent = $state();
   let activeConversationIri = $state(null);
   let activeBlackboardIri = $state(null);
+  let blackboardResolutionId = 0;
   let showSettings = $state(false);
 
   async function resolveBlackboard(conversationIri) {
+    const resolutionId = ++blackboardResolutionId;
+    activeBlackboardIri = null;
     try {
-      activeBlackboardIri = await invoke('widget_blackboard__resolve_blackboard', {
+      const blackboardIri = await invoke('widget_blackboard__resolve_blackboard', {
         conversationId: conversationIri ?? null
       });
+      if (resolutionId !== blackboardResolutionId) return;
+      activeBlackboardIri = blackboardIri;
     } catch (e) {
+      if (resolutionId !== blackboardResolutionId) return;
       console.error('Failed to resolve blackboard:', e);
       activeBlackboardIri = null;
     }
@@ -74,11 +80,13 @@
   $effect(() => { appState.activeConversationIri = activeConversationIri; });
 
   async function handleSearchResult(entityId) {
-    if (!activeBlackboardIri) return;
+    if (!activeBlackboardIri) return false;
     try {
       await openEntity(entityId, activeConversationIri);
+      return true;
     } catch (e) {
       console.error('Failed to open entity:', e);
+      return false;
     }
   }
 

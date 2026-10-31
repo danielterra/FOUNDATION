@@ -9,8 +9,6 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { deleteConfirm } from '$lib/stores/deleteConfirm';
-  import * as Dialog from '$lib/components/ui/dialog';
   import { Button } from '$lib/components/ui/button';
   import GlobalModal from '$lib/components/GlobalModal.svelte';
   import ThinkingDots from '$lib/components/ThinkingDots.svelte';
@@ -287,49 +285,6 @@
   </main>
 </div>
 
-<Dialog.Root open={$deleteConfirm !== null} onOpenChange={(o) => { if (!o) $deleteConfirm?.onCancel(); }}>
-  <Dialog.Content class="delete-confirm-content sm:max-w-[380px]" showCloseButton={false}>
-    {#if $deleteConfirm}
-      {@const dialog = $deleteConfirm}
-      {@const hasCascade = dialog.cascade_items.length > 0}
-      {@const hasImpact = hasCascade || dialog.backlink_count > 0}
-      <Dialog.Header class="items-center text-center gap-3">
-        <span class="material-symbols-outlined delete-dialog-icon">delete_forever</span>
-        <Dialog.Title class="delete-dialog-title">Excluir "{dialog.entityLabel}"?</Dialog.Title>
-      </Dialog.Header>
-      <div class="delete-dialog-body">
-        {#if hasImpact}
-          <div class="dialog-impact">
-            {#if hasCascade}
-              <p class="impact-heading">Também será excluído:</p>
-              <ul class="impact-list">
-                {#each dialog.cascade_items as item}
-                  <li>
-                    <span class="impact-item-label">{item.label}</span>
-                    {#if item.type_label}<span class="impact-item-type">{item.type_label}</span>{/if}
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-            {#if dialog.backlink_count > 0}
-              <p class="backlink-note">
-                {dialog.backlink_count} {dialog.backlink_count === 1 ? 'referência' : 'referências'} a esta entidade {dialog.backlink_count === 1 ? 'será removida' : 'serão removidas'} de outras entidades (que não serão excluídas).
-              </p>
-            {/if}
-            <p class="impact-warning">Esta ação não pode ser desfeita pela interface.</p>
-          </div>
-        {:else}
-          <p class="dialog-warning">Esta ação não pode ser desfeita pela interface.</p>
-        {/if}
-      </div>
-      <Dialog.Footer class="sm:justify-center gap-2">
-        <Button variant="outline" onclick={dialog.onCancel}>Cancelar</Button>
-        <Button variant="destructive" onclick={dialog.onConfirm}>Excluir</Button>
-      </Dialog.Footer>
-    {/if}
-  </Dialog.Content>
-</Dialog.Root>
-
 <GlobalModal />
 
 {#if automationRuns.length > 0 || retentionRunning || recalcJobs.length > 0 || taskNotifications.length > 0 || imapSyncs.length > 0 || imapExtractions.length > 0}
@@ -467,91 +422,6 @@
     display: flex;
     flex-direction: column;
     padding: 5px;
-  }
-
-  :global(.delete-confirm-content) {
-    text-align: center;
-  }
-
-  .delete-dialog-icon {
-    font-size: 36px;
-    color: var(--color-danger);
-  }
-
-  :global(.delete-dialog-title) {
-    font-size: 14px !important;
-    word-break: break-word;
-  }
-
-  .delete-dialog-body {
-    padding: 0 4px;
-  }
-
-  .dialog-warning {
-    font-size: 12px;
-    color: var(--color-neutral);
-    margin: 0;
-    opacity: 0.7;
-  }
-
-  .dialog-impact {
-    width: 100%;
-    background: color-mix(in srgb, var(--color-danger) 8%, transparent);
-    padding: 10px 14px;
-    border-radius: var(--radius);
-    text-align: left;
-  }
-
-  .impact-heading {
-    font-size: 11px;
-    font-weight: 700;
-    color: color-mix(in srgb, var(--color-danger) 80%, white);
-    margin: 0 0 6px 0;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .impact-list {
-    margin: 0 0 8px 0;
-    padding-left: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .impact-list li {
-    font-size: 12px;
-    color: var(--color-neutral-active);
-    line-height: 1.4;
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-  }
-
-  .impact-item-label {
-    font-weight: 500;
-  }
-
-  .impact-item-type {
-    font-size: 10px;
-    color: var(--color-neutral);
-    opacity: 0.8;
-    font-style: italic;
-  }
-
-  .backlink-note {
-    font-size: 11px;
-    color: var(--color-neutral);
-    margin: 0 0 6px 0;
-    line-height: 1.4;
-    opacity: 0.85;
-  }
-
-  .impact-warning {
-    font-size: 11px;
-    color: var(--color-neutral);
-    margin: 0;
-    opacity: 0.7;
   }
 
   .toast-stack {

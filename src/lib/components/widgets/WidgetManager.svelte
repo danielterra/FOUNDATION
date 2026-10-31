@@ -32,6 +32,8 @@
 
   let widgets = $state([]);
   let unlisteners = [];
+  let widgetLoadRequestId = 0;
+  let managerDestroyed = false;
   let draggedWidget = $state(null);
   let dragOffset = $state({ x: 0, y: 0 });
   let resizingWidget = $state(null);
@@ -121,12 +123,14 @@
   }
 
   async function loadWidgets(blackboardIri) {
+    const requestId = ++widgetLoadRequestId;
     if (!blackboardIri) {
       widgets = [];
       return;
     }
     try {
       const result = await invoke('widget_blackboard__get_widgets', { blackboardId: blackboardIri });
+      if (requestId !== widgetLoadRequestId || blackboardIri !== activeBlackboardIri) return;
       widgets = result.map((w, index) => ({
         ...w,
         zIndex: BASE_WIDGET_Z_INDEX + index
@@ -135,6 +139,7 @@
 
       updateViewportSize();
     } catch (error) {
+      if (requestId !== widgetLoadRequestId || blackboardIri !== activeBlackboardIri) return;
       console.error('Failed to load widgets:', error);
     }
   }
@@ -340,59 +345,85 @@
     }
   }
 
-  onMount(async () => {
+  function handleWidgetAdded(event) {
+    const w = event.payload;
+    if (w.blackboard_iri !== activeBlackboardIri) return;
+
+    widgetLoadRequestId += 1;
+    const existingIdx = widgets.findIndex(existing => existing.id === w.id);
+    if (existingIdx >= 0) {
+      bringToFront(w.id);
+      widgets = widgets.map(existing =>
+        existing.id === w.id ? { ...existing, refreshKey: (existing.refreshKey ?? 0) + 1 } : existing
+      );
+      loadWidgets(activeBlackboardIri);
+      return;
+    }
+
+    topZIndex = Math.min(topZIndex + 1, MAX_WIDGET_Z_INDEX);
+    const newWidget = { ...w, zIndex: topZIndex };
+    newWidget.position = constrainToBounds(newWidget.position, newWidget.size, newWidget.size.height);
+    widgets = [...widgets, newWidget];
+    loadWidgets(activeBlackboardIri);
+  }
+
+  function handleWidgetRemoved(event) {
+    widgetLoadRequestId += 1;
+    widgets = widgets.filter(w => w.id !== event.payload);
+    loadWidgets(activeBlackboardIri);
+  }
+
+  function handleWidgetsCleared() {
+    widgetLoadRequestId += 1;
+    widgets = [];
+  }
+
+  function removeListeners(listeners) {
+    for (const unlisten of listeners) unlisten();
+  }
+
+  async function initializeWidgetManager() {
     updateViewportSize();
+
+    const registeredListeners = await Promise.all([
+      listen('widget-added', handleWidgetAdded),
+      listen('widget-removed', handleWidgetRemoved),
+      listen('widgets-cleared', handleWidgetsCleared),
+    ]);
+    if (managerDestroyed) {
+      removeListeners(registeredListeners);
+      return;
+    }
+    unlisteners = registeredListeners;
 
     try {
       const defs = await invoke('widget_blackboard__list_widget_definitions', { classIri: null });
-      defs.forEach(d => {
-        widgetDefaultSize.set(d.widget_type, d.default_size);
-        widgetTypeInfo.set(d.widget_type, { description: d.description, icon: d.icon });
-      });
+      for (const definition of defs) {
+        widgetDefaultSize.set(definition.widget_type, definition.default_size);
+        widgetTypeInfo.set(definition.widget_type, {
+          description: definition.description,
+          icon: definition.icon,
+        });
+      }
     } catch (e) {
       console.error('Failed to load widget definitions:', e);
     }
 
-    const unlistenAdded = await listen('widget-added', (event) => {
-      const w = event.payload;
-      if (w.blackboard_iri !== activeBlackboardIri) return;
-
-      // e.g. duplicate entity-created event
-      const existingIdx = widgets.findIndex(existing => existing.id === w.id);
-      if (existingIdx >= 0) {
-        bringToFront(w.id);
-        widgets = widgets.map(existing =>
-          existing.id === w.id ? { ...existing, refreshKey: (existing.refreshKey ?? 0) + 1 } : existing
-        );
-        return;
-      }
-
-      topZIndex = Math.min(topZIndex + 1, MAX_WIDGET_Z_INDEX);
-      const newWidget = { ...w, zIndex: topZIndex };
-
-      newWidget.position = constrainToBounds(newWidget.position, newWidget.size, newWidget.size.height);
-      widgets = [...widgets, newWidget];
-    });
-
-    const unlistenRemoved = await listen('widget-removed', (event) => {
-      widgets = widgets.filter(w => w.id !== event.payload);
-    });
-
-    const unlistenCleared = await listen('widgets-cleared', () => {
-      widgets = [];
-    });
-
-    unlisteners = [unlistenAdded, unlistenRemoved, unlistenCleared];
+    if (managerDestroyed) return;
 
     document.addEventListener('mousemove', onDrag);
     document.addEventListener('mouseup', stopDrag);
-  });
+  }
 
-  onDestroy(() => {
-    unlisteners.forEach(unlisten => unlisten());
+  function cleanupWidgetManager() {
+    managerDestroyed = true;
+    removeListeners(unlisteners);
     document.removeEventListener('mousemove', onDrag);
     document.removeEventListener('mouseup', stopDrag);
-  });
+  }
+
+  onMount(initializeWidgetManager);
+  onDestroy(cleanupWidgetManager);
 </script>
 
 <div class="widget-manager-layout">

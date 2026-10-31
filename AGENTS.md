@@ -5,7 +5,9 @@
 - NEVER use project memory files (`memory/`, `MEMORY.md`). ALL project learnings, feedback and preferences live in THIS file (`AGENTS.md`) as the repository source of truth.
 - ALWAYS respond to the user in Portuguese.
 - ALWAYS ask one validation item at a time, NEVER several at once. Use structured input when available for optional choices; when an answer is required to proceed, ask one concise plain-text question.
-- NEVER touch git without an explicit order (no stash/checkout/reset/commit/push); validate fixes on the current working tree. Read-only git (status/diff/log) is free.
+- ALWAYS create a new branch when starting a new work item, naming it exactly for the target release version (`MAJOR.MINOR.PATCH`); default to the next minor version (`MAJOR.(MINOR+1).0`).
+- NEVER create a patch or major release branch unless the user explicitly requests that release type.
+- NEVER stash, reset, commit, or push without an explicit order; read-only git (status/diff/log) is free.
 - ALWAYS keep this file in en-US, terse, bullet-only with ALWAYS/NEVER prefixes, H1/H2 headers only, zero prose or boilerplate.
 - ALWAYS name skills as `entity-action` (e.g. `ontology-create`, `ontology-change`, `widget-remove`, `release-create`). NEVER use other naming patterns.
 
@@ -55,7 +57,7 @@
 - `architect` NEVER writes code, NEVER investigates bugs (that's `support`), NEVER closes items. Specialists never move status or persist plan/dossier — `architect` costura everything.
 - `support` is the bug entry point. Investigates (logs → messages → DB → code), produces dossier in `foundation:Bug`, moves to Pronto para Dev. NEVER edits code, NEVER picks the dev, NEVER closes the bug.
 - ALWAYS relate a reported problem to the specific `foundation:UserStory` of its feature BEFORE classifying it. Read the US + its `foundation:AcceptanceCriterion`: if behavior deviates from a defined AC → it is a **Bug** (defect); if it is behavior the US never specified → it is a **new UserStory or AcceptanceCriterion** (capability/enhancement), route to `product-owner`, NEVER to `support`/`$bug-fix`. Adding resilience/retry/tolerance the spec never required is a US, not a Bug.
-- `ux` is invoked by `architect` ONLY in Planejamento — by heuristic (US touches `src/**` or mentions interface/widget/screen/form). It writes the `## UX/UI` section of the plan (including a "Validação pelo usuário" checklist that the QA merges into `## Como testar`). `ux` does NOT enter Execução — there is no way for it to see the rendered screen; visual validation happens in QA with the human user. `ux` NEVER edits code.
+- ALWAYS route UX planning through `architect`, who invokes `ux` ONLY in Planejamento — by heuristic (US touches `src/**` or mentions interface/widget/screen/form). `ux` writes the `## UX/UI` section of the plan (including a "Validação pelo usuário" checklist that QA merges into `## Como testar`). `ux` does NOT enter Execução or validate the rendered screen; visual validation happens in the running app via visible Computer Use by the frontend developer and QA. `ux` NEVER edits code.
 - `developer-backend` owns `src-tauri/**` (Rust/Tauri, MCP, ontology mutations via MCP). NEVER touches `src/**`.
 - `developer-frontend` owns `src/**` (Svelte 5, TS, widgets, realtime subscriptions). NEVER touches `src-tauri/**`.
 - **`qa` is the SINGLE gate before Concluído — for User Stories AND Bugs.** NEVER move a US or Bug from Em Progresso / Em Validação (QA) directly to Concluído without `qa` validation. `qa` enters when `architect` finishes Execução / Triagem; `devops` enters after for code review / security / release. NEITHER edits feature code.
@@ -121,6 +123,14 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 
 ## Dev server lifecycle — Codex responsibility
 - Codex OWNS the dev server lifecycle via PM2 (process `foundation-dev`, defined in `ecosystem.config.cjs`). The user no longer manages it.
+- ALWAYS visually validate UI changes in the running Foundation app through visible, cursor-driven Computer Use; the frontend developer performs a smoke check and QA independently validates the acceptance criteria.
+- ALWAYS prefer the browser bridge at `http://localhost:1420/` when native Foundation cannot be bound by Computer Use. Keep the Tauri dev app running under PM2: its debug-only `tauri-plugin-dev-invoke` relays browser `invoke` calls to the local Rust backend.
+- ALWAYS perform browser-bridge visual validation in the Codex integrated browser; NEVER use Safari or another standalone browser unless the user explicitly requests it.
+- ALWAYS require the implementing developer to validate UI changes visually in the integrated browser before reporting implementation complete; if validation fails, the developer fixes the issue and repeats the validation.
+- ALWAYS close the Inspector widget for an entity after its deletion succeeds, remove that widget from the active blackboard, and keep unrelated widgets open.
+- ALWAYS confirm browser validation with a visible interaction and the resulting rendered state; NEVER claim success from screenshots or accessibility-tree inspection alone.
+- ALWAYS keep the dev bridge bound to loopback and the exact development origin, and configure `.serve_assets(false)`; NEVER expose it in release builds or enable its asset-serving endpoint.
+- ALWAYS use `$server-start` when the dev app is down and `$server-restart` when a clean restart is needed; NEVER substitute invisible input when the browser bridge or Computer Use is unavailable — report the concrete blocker.
 - ALWAYS use the skills: `$server-start`, `$server-stop`, `$server-restart` — NEVER spawn `npm run tauri dev` directly and NEVER `pm2 restart` (skips orphan sweep).
 - ALWAYS kill processes ONLY through the skills' managed paths (PM2 + targeted orphan sweep of `FOUNDATION.exe`); NEVER kill unrelated node/cargo processes.
 - If the app is down and Codex needs it (MCP, QA, validation), start it via `$server-start` — do not ask the user.
@@ -153,8 +163,10 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 
 ## Releases
 - ALWAYS use `$release-create` skill.
+- ALWAYS implement new work on its release-version branch; the target release branch is the workspace for that release's planned work.
 
 ## Blackboard / Lousa
+- ALWAYS place the Foundation entity or artifact being discussed on the relevant active conversation's blackboard so the user can inspect it visually.
 - `add_widget_to_blackboard` takes `blackboard_iri` (a `foundation:Blackboard`), NOT a conversation IRI. Omit → DefaultBlackboard.
 - ALWAYS resolve conversation → board: a conversation's board IRI is `foundation:Blackboard_for_<conversationIri with ':' → '_'>` (e.g. `foundation:Blackboard_for_foundation_Conversation_<id>`).
 - ALWAYS show user-facing widgets on the ACTIVE conversation's board, never DefaultBlackboard — EXCEPT when chat is off (no active conversation), then omit → DefaultBlackboard (app setting).
@@ -176,6 +188,7 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - MCP Foundation unavailable: FIRST check whether the dev server is alive (`pm2 describe foundation-dev` plus `pgrep -fl FOUNDATION` on macOS/Linux or `Get-Process FOUNDATION` on Windows). If it is down, Codex owns the lifecycle and starts it via `$server-start`. Only when the server is running treat the failure as transient: wait 60–180s and retry automatically. NEVER fall back to curl/SQLite and NEVER ask the user to reconnect. MCP availability is session-specific; if a subagent lacks a required Foundation tool, it returns the pending ontology operation to the primary agent or another MCP-capable role instead of inventing a fallback.
 
 ## Code style
+- ALWAYS use named functions; NEVER use closures in any circumstance.
 - ALWAYS paginate EVERY method/command/MCP tool that returns a collection with STABLE pagination = `snapshot_tx` + `ORDER BY` domain-key + offset/keyset INSIDE the snapshot. (1) Pin `snapshot_tx = MAX(tx)` on the FIRST page and echo it on every later page. (2) Read every page AS-OF snapshot_tx: BOTH membership as-of (the membership triple's `MAX(tx) <= snapshot_tx` and not retracted) AND the ordering-key value as-of (key's value at `MAX(tx) <= snapshot_tx`) — freezing only one re-introduces mid-scroll reordering. (3) `ORDER BY` the list's natural DOMAIN key (`foundation:lastUpdatedAt` for activity, `foundation:createdAt`, `rdfs:label`, `foundation:receivedAt`…), NEVER `tx`. (4) With the dataset frozen, offset is stable again (offset only broke because a new row entered the top — the snapshot removes that). Return `{ items, next_cursor, has_more, snapshot_tx }`. The frontend pins snapshot_tx on page 1 and passes it back. NEVER load-all-then-slice, NEVER return an unbounded list. Rationale + revision recorded in the pagination ADR (`foundation:ArchitectureDecisionRecord_1781556688201`).
 - `tx` is the ordering key ONLY for create-immutable entities whose natural order IS creation-recency (`RawDataRecord`, `AIAPICall`, IMAP sync log): there `ORDER BY creation_tx DESC` is the domain key and keyset-by-creation_tx is correct. NEVER use `tx` as the ordering key for lists ordered by a mutable/domain key (AI models by default/alpha, conversations by activity).
 - The pagination `snapshot_tx` and the realtime-replay `setSinceTx` share the value `MAX(tx)` but are DISTINCT in purpose (frozen past vs live future) — complementary, they converge in the UI. Do NOT conflate them.

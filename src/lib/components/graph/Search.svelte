@@ -17,6 +17,9 @@
 	let selectedIndex = $state(-1);
 	let inputElement = $state();
 	let debounceTimer;
+	let blurTimer = null;
+	let resultSelectionPending = false;
+	let resultOpenError = $state(null);
 
 	let activeClassFilter = $state(null);
 	let showClassAutocomplete = $state(false);
@@ -27,12 +30,18 @@
 
 	export function open() {
 		isOpen = true;
-		setTimeout(() => {
-			if (inputElement) inputElement.focus();
-		}, 0);
+		setTimeout(focusSearchInput, 0);
+	}
+
+	function focusSearchInput() {
+		if (inputElement) inputElement.focus();
 	}
 
 	export function close() {
+		if (blurTimer !== null) {
+			clearTimeout(blurTimer);
+			blurTimer = null;
+		}
 		isOpen = false;
 		searchQuery = '';
 		searchResults = [];
@@ -43,6 +52,7 @@
 		classResults = [];
 		classQuery = '';
 		classSelectedIndex = -1;
+		resultOpenError = null;
 	}
 
 	async function fetchClasses(query) {
@@ -95,6 +105,7 @@
 	}
 
 	function handleInput() {
+		resultOpenError = null;
 		if (debounceTimer) clearTimeout(debounceTimer);
 		if (classDebounceTimer) clearTimeout(classDebounceTimer);
 
@@ -141,11 +152,39 @@
 		performSearch(searchQuery);
 	}
 
-	function handleResultClick(result) {
-		if (onSelectResult) {
-			onSelectResult(result.id, result.label);
+	async function selectSearchResult(result) {
+		if (!onSelectResult) {
+			close();
+			return;
 		}
-		close();
+		resultSelectionPending = true;
+		resultOpenError = null;
+		try {
+			const opened = await onSelectResult(result.id, result.label);
+			if (opened === false) {
+				resultOpenError = 'Não foi possível abrir esta entidade. Verifique a conexão e tente novamente.';
+				focusSearchInput();
+				return;
+			}
+			close();
+		} catch (error) {
+			console.error('Failed to open search result:', error);
+			resultOpenError = 'Não foi possível abrir esta entidade. Verifique a conexão e tente novamente.';
+			focusSearchInput();
+		} finally {
+			resultSelectionPending = false;
+		}
+	}
+
+	function handleResultClick(event) {
+		const index = Number(event.currentTarget.dataset.resultIndex);
+		const result = searchResults[index];
+		if (!result) return;
+		if (blurTimer !== null) {
+			clearTimeout(blurTimer);
+			blurTimer = null;
+		}
+		selectSearchResult(result);
 	}
 
 	function scrollToClassSelected() {
@@ -217,7 +256,7 @@
 			case 'Enter':
 				e.preventDefault();
 				if (selectedIndex >= 0 && selectedIndex < searchResults.length) {
-					handleResultClick(searchResults[selectedIndex]);
+						selectSearchResult(searchResults[selectedIndex]);
 				}
 				break;
 			case 'Escape':
@@ -241,10 +280,15 @@
 		}, 0);
 	}
 
+	function closeSearchAfterBlur() {
+		blurTimer = null;
+		if (!resultSelectionPending) close();
+	}
+
 	function handleBlur() {
-		setTimeout(() => {
-			close();
-		}, 200);
+		if (resultSelectionPending) return;
+		if (blurTimer !== null) clearTimeout(blurTimer);
+		blurTimer = setTimeout(closeSearchAfterBlur, 200);
 	}
 
 	function handleFocus() {
@@ -276,10 +320,13 @@
 		return colonIndex >= 0 ? iri.slice(colonIndex + 1) : iri;
 	}
 
-	onDestroy(() => {
+	function cleanupSearch() {
 		if (debounceTimer) clearTimeout(debounceTimer);
 		if (classDebounceTimer) clearTimeout(classDebounceTimer);
-	});
+		if (blurTimer !== null) clearTimeout(blurTimer);
+	}
+
+	onDestroy(cleanupSearch);
 </script>
 
 {#if isOpen}
@@ -318,6 +365,9 @@
 					{/if}
 				</div>
 			</Card>
+			{#if resultOpenError}
+				<p class="result-open-error" role="alert">{resultOpenError}</p>
+			{/if}
 
 			{#if showClassAutocomplete && classResults.length > 0}
 				<div class="search-results">
@@ -358,7 +408,8 @@
 								<Button
 									variant="ghost"
 									class={`result-item${index === selectedIndex ? ' selected' : ''}`}
-									onclick={() => handleResultClick(result)}
+									data-result-index={index}
+									onclick={handleResultClick}
 								>
 									<div class="result-content">
 										{#if result.icon}
@@ -447,6 +498,15 @@
 		position: relative;
 		width: 480px;
 		height: fit-content;
+	}
+
+	.result-open-error {
+		margin: 0.5rem 0 0;
+		padding: 0.5rem 0.75rem;
+		border-radius: var(--radius);
+		background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+		color: var(--color-danger);
+		font-size: 0.75rem;
 	}
 
 	.search-input-wrapper {

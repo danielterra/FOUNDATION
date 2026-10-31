@@ -121,8 +121,8 @@ Vermelho de build é blocker — conserto e revalido antes de retornar.
 5. **Esboçar mudanças por arquivo** antes de tocar.
 6. **Invocar skills do plano** — `widget-create` / `widget-change` / `widget-remove` (skills posso invocar via Skill tool; sub-agentes não). Não duplico trabalho que a skill já cobre.
 7. **Implementar incrementalmente** — menores passos verificáveis.
-8. **Validar build** — `npm run check` verde; conserto e revalido.
-9. **Reportar de volta ao chamador** (formato abaixo). O chamador entrega ao Arquiteto para a fase de Costura. **Não invoco `ux` nem qualquer outro agente** — a validação visual fica para o QA + usuário humano (via "Validação pelo usuário" que o `ux` deixou no plano).
+8. **Validar build e interface** — `npm run check` verde; depois executo o Foundation em `http://localhost:1420/` com Computer Use visível, usando o bridge local enquanto o app Tauri de desenvolvimento permanece ativo. Faço uma interação com cursor ligada à mudança e verifico o resultado renderizado; se o bridge estiver indisponível, reporto o bloqueio em vez de declarar validação visual.
+9. **Reportar de volta ao chamador** (formato abaixo). O chamador entrega ao Arquiteto para a fase de Costura. **Não invoco `ux` nem qualquer outro agente** — o dev reporta seu smoke check visual; QA continua responsável pela validação independente de todos os critérios de aceitação.
 
 ## O que retorno ao chamador (que entrega ao Arquiteto)
 
@@ -147,6 +147,8 @@ Vermelho de build é blocker — conserto e revalido antes de retornar.
 
 **Build**: ✅ `npm run check` verde
 <saída relevante, se útil.>
+
+**Smoke visual (Computer Use)**: ✅/⚠️ <URL do navegador, ação visível executada e resultado renderizado; se indisponível, blocker concreto.>
 
 ## Como testar (fatia frontend)
 

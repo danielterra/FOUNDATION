@@ -90,6 +90,7 @@ Retornos dos devs (consolidados, no formato exato em que cada um devolveu):
 Tarefa: executar o Modo 2b (Costura) conforme a sua persona:
 - Validar que os builds estão verdes (vermelho de qualquer lado é blocker — me reporte).
 - Validar cobertura de AC (a soma das fatias cobre todos os AC).
+- Confirmar que o retorno do `developer-frontend` registra um smoke visual via Computer Use no navegador local; a validação independente dos ACs de UI fica com o `qa`, que também usa Computer Use visível.
 - Consolidar `## Como testar` mesclando os itens da lista "Validação pelo usuário" da seção `## UX/UI` do plano, quando existir.
 - Atualizar `foundation:changelog` via `add_property_values` com a entrega de hoje (data atual: <YYYY-MM-DD do contexto>).
 - Persistir plano (com `## Como testar` consolidado) + status `foundation:Status_1772600993751` (Em Validação (QA)) numa única `replace_property_values`.

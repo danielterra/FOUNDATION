@@ -1,7 +1,7 @@
 use crate::owl::{self, Class, Connection, DbExecutor, Individual, Object, Property};
 use serde::Serialize;
 use std::collections::HashMap;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 mod individual;
 
@@ -935,15 +935,34 @@ pub async fn widget_inspector__delete_individual(
     let entity_id_clone = entity_id.clone();
     let retracted_json = executor
         .write(move |conn| {
-            let iris = Individual::retract_collecting(conn, &entity_id_clone, "user")
+            let widget_iris =
+                crate::commands::widget::owl_find_widgets_for_entity(conn, &entity_id_clone)?;
+            let mut iris = Individual::retract_collecting(conn, &entity_id_clone, "user")
                 .map_err(|e| e.to_string())?;
-            serde_json::to_string(&iris).map_err(|e| e.to_string())
+
+            for widget_iri in &widget_iris {
+                if Individual::get(conn, widget_iri)
+                    .map_err(|e| e.to_string())?
+                    .is_some()
+                {
+                    iris.extend(
+                        Individual::retract_collecting(conn, widget_iri, "user")
+                            .map_err(|e| e.to_string())?,
+                    );
+                }
+            }
+
+            serde_json::to_string(&(iris, widget_iris)).map_err(|e| e.to_string())
         })
         .await?;
-    let all_retracted: Vec<String> = serde_json::from_str(&retracted_json).unwrap_or_default();
+    let (all_retracted, removed_widgets): (Vec<String>, Vec<String>) =
+        serde_json::from_str(&retracted_json).map_err(|e| e.to_string())?;
     crate::search::remove_from_index(&all_retracted);
     for iri in &all_retracted {
         crate::realtime::emit_entity_deleted(&app, iri);
+    }
+    for widget_iri in removed_widgets {
+        app.emit("widget-removed", widget_iri).ok();
     }
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())

@@ -5,7 +5,6 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { createEntitySubscription } from '$lib/realtime/subscriptions';
   import { openEntity } from '$lib/blackboard';
-  import { deleteConfirm } from '$lib/stores/deleteConfirm';
   import FilePreview from './inspector/FilePreview.svelte';
   import MetaFields from './inspector/MetaFields.svelte';
   import PropertyList from './inspector/PropertyList.svelte';
@@ -25,11 +24,12 @@
   let loadPending = false;
   let reloadWhenDone = false;
   let loadDebounceTimer = null;
+  let deleteCloseTimer = null;
   let widgetDefinitions = $state([]);
   // Snapshot tx cursor: max(tx) at the last successful loadEntity call.
   let snapshotTx = 0;
 
-  const entitySub = createEntitySubscription((event) => {
+  function handleEntityEvent(event) {
     const { type, entityId: updatedId } = event;
     if (type === 'updated') {
       if (updatedId === entityId) { scheduleLoad(); return; }
@@ -42,15 +42,26 @@
       return;
     }
     if (type === 'deleted') {
-      if (updatedId === entityId) { closeWidget(); return; }
+      if (updatedId === entityId) {
+        if (!deleteInProgress && !deleteSuccess) closeWidget();
+        return;
+      }
       if (entityData?.properties?.some(p => p.value === updatedId)) scheduleLoad();
     }
-  });
+  }
+
+  const entitySub = createEntitySubscription(handleEntityEvent);
   let applicableAutomations = $state([]);
   let runningAutomationIri = $state(null);
   let togglingLock = $state(false);
   let statusPickerOpen = $state(false);
   let deleteSuccess = $state(false);
+  let deleteInProgress = $state(false);
+  let deleteConfirmation = $state(null);
+  let deleteError = $state(false);
+  let deleteImpactLoading = $state(false);
+  let deleteImpactError = $state(false);
+  let deletePopoverOpen = $state(false);
   let showAddPropertyForm = $state(false);
   let savingClassProperty = $state(false);
   let removeConfirmProp = $state(null);
@@ -157,34 +168,69 @@
   }
 
   async function deleteIndividual() {
-    if (!entityData?.id) return;
+    if (!entityData?.id || deleteInProgress) return false;
+    deleteInProgress = true;
+    deleteError = false;
     try {
       await invoke('widget_inspector__delete_individual', { entityId: entityData.id });
       deleteSuccess = true;
-      setTimeout(() => closeWidget(), 1500);
+      return true;
     } catch (err) {
+      deleteError = true;
       console.error('Failed to delete individual:', err);
+      return false;
+    } finally {
+      deleteInProgress = false;
     }
   }
 
+  async function closeAfterDeleteFeedback() {
+    deleteCloseTimer = null;
+    await closeWidget();
+  }
+
   async function initiateDelete() {
-    if (!entityData?.id) return;
+    if (!entityData?.id || deleteImpactLoading) return;
+    deleteImpactLoading = true;
+    deleteImpactError = false;
     try {
       const raw = await invoke('widget_inspector__get_delete_impact', { entityId: entityData.id });
+      if (!deletePopoverOpen) return;
       const impact = JSON.parse(raw);
-      deleteConfirm.set({
+      deleteConfirmation = {
         entityId: entityData.id,
         entityLabel: entityData.label ?? entityData.id,
         cascade_items: impact.cascade_items ?? [],
         backlink_count: impact.backlink_count,
-        onConfirm: () => {
-          deleteConfirm.set(null);
-          deleteIndividual();
-        },
-        onCancel: () => deleteConfirm.set(null),
-      });
+      };
     } catch (err) {
+      deleteImpactError = true;
       console.error('Failed to get delete impact:', err);
+    } finally {
+      deleteImpactLoading = false;
+    }
+  }
+
+  function cancelDelete() {
+    deleteConfirmation = null;
+    deletePopoverOpen = false;
+  }
+
+  async function confirmDelete() {
+    const deleted = await deleteIndividual();
+    if (!deleted) return;
+    deleteConfirmation = null;
+    deletePopoverOpen = false;
+    deleteCloseTimer = setTimeout(closeAfterDeleteFeedback, 1500);
+  }
+
+  function handleDeletePopoverOpenChange(open) {
+    deletePopoverOpen = open;
+    if (open && deleteConfirmation === null) initiateDelete();
+    if (!open) {
+      deleteConfirmation = null;
+      deleteImpactError = false;
+      deleteError = false;
     }
   }
 
@@ -527,9 +573,12 @@
     if (entityId) entitySub.setIris([entityId]);
   });
 
-  onDestroy(() => {
+  function cleanupInspector() {
     entitySub.destroy();
-  });
+    if (deleteCloseTimer !== null) clearTimeout(deleteCloseTimer);
+  }
+
+  onDestroy(cleanupInspector);
 </script>
 
 <div class="inspector-wrapper">
@@ -621,11 +670,59 @@
       {/if}
       <Button variant="ghost" size="icon-xs" title="Copiar IRI" aria-label="Copiar IRI" onclick={copyEntityIri}><span class="material-symbols-outlined">content_copy</span></Button>
       {#if entityData && !entityData.isClass && !isLocked}
-        <Button variant="ghost" size="icon-xs" class="action-btn--danger"
-          title="Deletar entidade"
-          aria-label="Deletar entidade"
-          onclick={initiateDelete}
-        ><span class="material-symbols-outlined">delete_forever</span></Button>
+        <Popover.Root open={deletePopoverOpen} onOpenChange={handleDeletePopoverOpenChange}>
+          <Popover.Trigger class="delete-trigger action-btn--danger"
+              title="Deletar entidade"
+              aria-label="Deletar entidade"
+              aria-expanded={deletePopoverOpen}
+              aria-controls="inspector-delete-confirmation"
+          ><span class="material-symbols-outlined">delete_forever</span></Popover.Trigger>
+          <Popover.Content id="inspector-delete-confirmation" aria-labelledby="inspector-delete-title" aria-describedby="inspector-delete-description" align="end" side="bottom" class="delete-confirm-popover">
+            <div class="delete-confirm-heading">
+              <span class="material-symbols-outlined delete-confirm-icon" aria-hidden="true">delete_forever</span>
+              <div>
+                <h3 id="inspector-delete-title">Excluir {deleteConfirmation?.entityLabel ?? entityData.label ?? entityData.id}?</h3>
+                <p id="inspector-delete-description">Confirme para excluir esta entidade.</p>
+              </div>
+            </div>
+            {#if deleteImpactLoading}
+              <p class="delete-confirm-loading" role="status">Verificando o impacto da exclusão…</p>
+            {:else if deleteImpactError}
+              <p class="delete-confirm-loading" role="alert">Não foi possível verificar o impacto da exclusão.</p>
+              <Button variant="outline" size="sm" onclick={initiateDelete}>Tentar novamente</Button>
+            {:else if deleteError}
+              <p class="delete-confirm-loading" role="alert">Não foi possível excluir a entidade. Tente novamente.</p>
+            {:else if deleteConfirmation}
+              {@const hasCascade = deleteConfirmation.cascade_items.length > 0}
+              {@const hasImpact = hasCascade || deleteConfirmation.backlink_count > 0}
+              {#if hasImpact}
+                <div class="delete-confirm-impact">
+                  {#if hasCascade}
+                    <p class="impact-heading">Também será excluído ({deleteConfirmation.cascade_items.length}):</p>
+                    <ul class="impact-list" aria-label="Entidades que também serão excluídas">
+                      {#each deleteConfirmation.cascade_items as item}
+                        <li>
+                          <span class="impact-item-label">{item.label}</span>
+                          {#if item.type_label}<span class="impact-item-type">{item.type_label}</span>{/if}
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+                  {#if deleteConfirmation.backlink_count > 0}
+                    <p class="backlink-note">
+                      {deleteConfirmation.backlink_count} {deleteConfirmation.backlink_count === 1 ? 'referência' : 'referências'} a esta entidade {deleteConfirmation.backlink_count === 1 ? 'será removida' : 'serão removidas'} de outras entidades (que não serão excluídas).
+                    </p>
+                  {/if}
+                </div>
+              {/if}
+              <p class="delete-confirm-warning">Esta ação não pode ser desfeita pela interface.</p>
+            {/if}
+            <div class="delete-confirm-actions">
+              <Button variant="outline" size="sm" onclick={cancelDelete}>Cancelar</Button>
+              <Button variant="destructive" size="sm" disabled={deleteImpactLoading || deleteInProgress || deleteConfirmation === null} onclick={confirmDelete}>{deleteInProgress ? 'Excluindo…' : 'Excluir'}</Button>
+            </div>
+          </Popover.Content>
+        </Popover.Root>
       {/if}
     {/snippet}
 
@@ -745,14 +842,135 @@
   </WidgetContainer>
 
   {#if deleteSuccess}
-    <div class="delete-toast">
+    <div class="delete-toast" role="status" aria-live="polite">
       <span class="material-symbols-outlined">check_circle</span>
-      "{entityData?.label}" deleted
+      “{entityData?.label}” excluída com sucesso
     </div>
   {/if}
+
 </div>
 
 <style>
+  :global(.delete-trigger) {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  :global(.delete-trigger:hover) {
+    background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+    color: var(--color-danger);
+  }
+
+  :global(.delete-confirm-popover) {
+    width: min(340px, calc(100vw - 32px));
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .delete-confirm-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .delete-confirm-icon {
+    color: var(--color-danger);
+    font-size: 18px;
+    line-height: 1.4;
+  }
+
+  .delete-confirm-heading h3 {
+    margin: 0;
+    color: var(--color-neutral-active);
+    font-size: 13px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .delete-confirm-heading p,
+  .delete-confirm-loading {
+    margin: 2px 0 0;
+    color: var(--color-neutral);
+    font-size: 11px;
+  }
+
+  .delete-confirm-impact {
+    padding: 8px;
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  }
+
+  .impact-heading {
+    font-size: 11px;
+    font-weight: 700;
+    color: color-mix(in srgb, var(--color-danger) 80%, white);
+    margin: 0 0 6px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .impact-list {
+    max-height: 132px;
+    overflow-y: auto;
+    margin: 0 0 8px 0;
+    padding-left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .impact-list li {
+    font-size: 12px;
+    color: var(--color-neutral-active);
+    line-height: 1.4;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .impact-item-label {
+    font-weight: 500;
+  }
+
+  .impact-item-type {
+    font-size: 10px;
+    color: var(--color-neutral);
+    opacity: 0.8;
+    font-style: italic;
+  }
+
+  .backlink-note {
+    font-size: 11px;
+    color: var(--color-neutral);
+    margin: 0 0 6px 0;
+    line-height: 1.4;
+    opacity: 0.85;
+  }
+
+  .delete-confirm-warning {
+    font-size: 11px;
+    color: var(--color-neutral);
+    margin: 0;
+    opacity: 0.7;
+  }
+
+  .delete-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
   .inspector-wrapper {
     width: 100%;
     height: 100%;

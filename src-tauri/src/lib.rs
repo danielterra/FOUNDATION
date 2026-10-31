@@ -123,7 +123,25 @@ pub struct ImportProgress {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(debug_assertions)]
+    {
+        std::env::remove_var("DEV_INVOKE_HOST");
+        std::env::remove_var("DEV_INVOKE_PORT");
+        std::env::remove_var("DEV_INVOKE_ALLOWED_ORIGINS");
+        builder = builder.plugin(
+            tauri_plugin_dev_invoke::Builder::new()
+                .host([127, 0, 0, 1])
+                .port(3030)
+                .window("main")
+                .allow_origin("http://localhost:1420")
+                .serve_assets(false)
+                .build(),
+        );
+    }
+
+    let result = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -308,6 +326,13 @@ pub fn run() {
             realtime::events__set_subscriptions_v2,
             realtime::events__replay_since
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .run(tauri::generate_context!());
+
+    match result {
+        Ok(()) => {}
+        Err(error) => {
+            eprintln!("error while running tauri application: {error}");
+            std::process::exit(1);
+        }
+    }
 }

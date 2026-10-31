@@ -317,6 +317,25 @@ pub fn owl_get_widgets_for_blackboard_bounded(
     Ok(widgets)
 }
 
+pub fn owl_find_widgets_for_entity(
+    conn: &Connection,
+    entity_iri: &str,
+) -> Result<Vec<String>, String> {
+    let widget_iris = crate::owl::find_entities_with_predicate(conn, PRED_ENTITY_ID)
+        .map_err(|e| e.to_string())?;
+
+    let mut matching_widgets = Vec::new();
+    for widget_iri in widget_iris {
+        if let Some(widget) = Individual::get(conn, &widget_iri).map_err(|e| e.to_string())? {
+            if prop_str(&widget, PRED_ENTITY_ID).as_deref() == Some(entity_iri) {
+                matching_widgets.push(widget_iri);
+            }
+        }
+    }
+
+    Ok(matching_widgets)
+}
+
 pub fn owl_delete_widget(conn: &mut Connection, widget_id: &str) -> Result<(), String> {
     let exists = Individual::get(conn, widget_id)
         .map_err(|e| e.to_string())?
@@ -708,18 +727,15 @@ pub async fn widget_blackboard__remove_widget(
     widget_id: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<(), String> {
-    app.emit("widget-removed", widget_id.clone()).ok();
+    let widget_id_for_delete = widget_id.clone();
+    executor
+        .write(move |conn| {
+            owl_delete_widget(conn, &widget_id_for_delete)?;
+            Ok("deleted".to_string())
+        })
+        .await?;
 
-    let executor_clone = executor.inner().clone();
-    tokio::spawn(async move {
-        executor_clone
-            .write(move |conn| {
-                owl_delete_widget(conn, &widget_id)?;
-                Ok("deleted".to_string())
-            })
-            .await
-            .ok();
-    });
+    app.emit("widget-removed", widget_id).ok();
 
     Ok(())
 }
