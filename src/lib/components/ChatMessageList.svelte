@@ -78,12 +78,13 @@
 	}
 
 	.chat-messages {
-		flex: 1;
+		flex: 0 1 auto;
 		display: flex;
 		flex-direction: column-reverse;
 		overflow-y: auto;
 		overflow-x: hidden;
 		min-height: 0;
+		min-width: 0;
 		gap: 12px;
 		padding-bottom: 12px;
 	}

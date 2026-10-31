@@ -1065,16 +1065,20 @@
 <style>
 	.chat-panel {
 		width: 100%;
-		height: 100%;
+		height: auto;
+		max-height: 100%;
 		display: flex;
 		flex-direction: column;
-		background: var(--card);
+		background: color-mix(in srgb, var(--color-surface-1) 88%, transparent);
+		backdrop-filter: blur(8px);
 		border-radius: var(--radius);
 		overflow: hidden;
 	}
 
 	.chat-content {
-		flex: 1;
+		flex: 0 1 auto;
+		min-height: 0;
+		min-width: 0;
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;

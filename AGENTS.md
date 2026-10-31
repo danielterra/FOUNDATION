@@ -166,11 +166,12 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - ALWAYS implement new work on its release-version branch; the target release branch is the workspace for that release's planned work.
 
 ## Blackboard / Lousa
-- ALWAYS place the Foundation entity or artifact being discussed on the relevant active conversation's blackboard so the user can inspect it visually.
+- ALWAYS resolve the blackboard from the conversation currently open in the Foundation app UI; NEVER assume a hardcoded or main conversation is the active one.
+- ALWAYS verify newly created Foundation stories and artifacts are visibly present on that conversation's blackboard before reporting completion.
 - `add_widget_to_blackboard` takes `blackboard_iri` (a `foundation:Blackboard`), NOT a conversation IRI. Omit → DefaultBlackboard.
 - ALWAYS resolve conversation → board: a conversation's board IRI is `foundation:Blackboard_for_<conversationIri with ':' → '_'>` (e.g. `foundation:Blackboard_for_foundation_Conversation_<id>`).
 - ALWAYS show user-facing widgets on the ACTIVE conversation's board, never DefaultBlackboard — EXCEPT when chat is off (no active conversation), then omit → DefaultBlackboard (app setting).
-- MAIN conversation = `foundation:Conversation_1779893196496`; board = `foundation:Blackboard_for_foundation_Conversation_1779893196496`.
+- NEVER assume a fixed `MAIN conversation` IRI; resolve the conversation currently open in the Foundation UI and its board immediately before each board operation.
 - `InProgress` status does NOT uniquely mark the active conversation (many conversations share it).
 
 ## TODO doc filenames

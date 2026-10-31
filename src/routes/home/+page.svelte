@@ -94,6 +94,10 @@
     if (searchComponent) searchComponent.open();
   }
 
+  function toggleChat() {
+    isChatOpen = !isChatOpen;
+  }
+
   async function openAiCallHistory() {
     invoke('widget_blackboard__add_widget', {
       widgetType: 'ai_call_history',
@@ -140,7 +144,7 @@
   <Button variant="ghost" size="icon" title="Buscar (/)" onclick={openSearch}><span class="material-symbols-outlined">search</span></Button>
   <span class="header-spacer"></span>
   {#if chatEnabled}
-    <Button variant="ghost" size="icon" title="Conversa (Ctrl+S)" onclick={() => isChatOpen = !isChatOpen}><span class="material-symbols-outlined">forum</span></Button>
+    <Button variant="ghost" size="icon" title="Conversa (Ctrl+S)" aria-label="Conversa" aria-expanded={isChatOpen} aria-controls="home-chat-panel" onclick={toggleChat}><span class="material-symbols-outlined">forum</span></Button>
   {/if}
   <Button variant="ghost" size="icon" title="Consumo de IA" onclick={openAiCallHistory}><span class="material-symbols-outlined">payments</span></Button>
   <NotificationBell />
@@ -156,7 +160,7 @@
     </div>
 
     {#if chatEnabled && isChatOpen}
-      <div class="chat-slot" transition:fly={{ x: 500, duration: 250, easing: cubicOut }}>
+      <div id="home-chat-panel" class="chat-slot" role="region" aria-label="Conversa" transition:fly={{ x: 500, duration: 250, easing: cubicOut }}>
         <ChatWindow bind:activeConversationIri bind:isOpen={isChatOpen} />
       </div>
     {/if}
@@ -182,23 +186,29 @@
 
   .content-area {
     flex: 1;
-    display: flex;
+    position: relative;
     overflow: hidden;
     min-height: 0;
-    gap: 5px;
   }
 
   .canvas-area {
-    flex: 1;
-    position: relative;
+    position: absolute;
+    inset: 0;
     overflow: hidden;
   }
 
   .chat-slot {
-    width: 30%;
-    min-width: 500px;
-    height: 100%;
-    flex-shrink: 0;
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    max-height: calc(100% - 16px);
+    width: min(500px, 36vw, calc(100% - 16px));
+    min-width: min(320px, calc(100% - 16px));
     display: flex;
+    z-index: calc(var(--z-widget-max) + 1);
+  }
+
+  :global(.chat-slot .chat-panel) {
+    box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 40%, transparent);
   }
 </style>
