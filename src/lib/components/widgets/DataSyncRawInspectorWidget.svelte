@@ -498,8 +498,8 @@
   }
 
   .filter-chip.active {
-    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
-    color: var(--color-interactive);
+    background: var(--color-selection-subtle);
+    color: var(--color-selection);
   }
 
   .chip-count {
@@ -642,12 +642,12 @@
 
   .record-row:hover,
   .record-row:focus-visible {
-    background: color-mix(in srgb, var(--color-interactive) 8%, transparent);
+    background: color-mix(in srgb, var(--color-selection) 8%, transparent);
     outline: none;
   }
 
   .record-row.selected {
-    background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
+    background: color-mix(in srgb, var(--color-selection) 12%, transparent);
   }
 
   .record-row td {

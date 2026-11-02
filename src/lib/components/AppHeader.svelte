@@ -18,7 +18,8 @@
     height: var(--app-header-height, 36px);
     display: flex;
     align-items: stretch;
-    background: var(--card);
+    background: var(--color-surface-0);
+    border-bottom: 1px solid var(--color-surface-3);
     flex-shrink: 0;
     z-index: 200;
     user-select: none;
@@ -27,10 +28,9 @@
   .logo {
     display: flex;
     align-items: center;
-    padding: 0 1rem;
+    padding: 0 var(--spacing-widget-header-inline);
     font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--accent-foreground);
+    color: var(--color-interactive);
     letter-spacing: 0.08em;
   }
 
@@ -38,7 +38,7 @@
     flex: 1;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--spacing-inline-related);
     min-width: 0;
     padding-right: 0.5rem;
   }

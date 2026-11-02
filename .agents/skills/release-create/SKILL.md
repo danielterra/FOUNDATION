@@ -15,6 +15,10 @@ Execute `sqlite3 ~/Documents/Foundation/FOUNDATION.db "SELECT t_ver.object_value
 
 ## Instructions
 
+### Step 0 — Product status integrity gate
+
+Run `$product-integrity-audit` against `foundation:FoundationProduct` before changing release files. The audit is read-only. Stop release preparation while it reports any Blocker; route code/criteria drift through `$feature-code-sync`, planning through `$userstory-plan`, and incomplete validation through QA. Resolve scope questions explicitly and retain the audit report with the release work notes.
+
 ### Step 1 — Determine the next version
 
 Analyze the commits since the last tag:

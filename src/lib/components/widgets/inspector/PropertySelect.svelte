@@ -171,7 +171,7 @@
   }
 
   :global([data-slot="button"].result.selected) {
-    background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
+    background: var(--color-selection-subtle);
   }
 
   :global([data-slot="button"].result .material-symbols-outlined) {

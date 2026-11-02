@@ -633,7 +633,7 @@
   }
 
   .notification-item.selected {
-    background: color-mix(in srgb, var(--primary) 10%, transparent);
+    background: color-mix(in srgb, var(--color-selection) 10%, transparent);
   }
 
   .notif-header-row {

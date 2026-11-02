@@ -37,7 +37,7 @@
     <div class="sidebar-header-actions">
       <Button
         variant="ghost"
-        size="icon-sm"
+        size="icon-touch"
         disabled={!hasOpenWidgets}
         onclick={() => onMinimizeAll?.()}
         title="Minimizar todos os widgets"
@@ -45,7 +45,7 @@
       ><span class="material-symbols-outlined">vertical_align_bottom</span></Button>
       <Button
         variant="ghost"
-        size="icon-sm"
+        size="icon-touch"
         disabled={!hasMinimizedWidgets}
         onclick={() => onRestoreAll?.()}
         title="Restaurar todos os widgets"
@@ -79,59 +79,72 @@
 
 <style>
   .widget-sidebar {
+    position: absolute;
+    bottom: 8px;
+    left: 8px;
+    z-index: calc(var(--z-widget-max) + 1);
     display: flex;
     flex-direction: column;
-    background: var(--card);
-    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--color-surface-1) var(--opacity-widget-surface), transparent);
+    backdrop-filter: blur(var(--blur-widget-surface));
+    border: 0;
+    border-radius: 0;
     overflow: hidden;
-    flex-shrink: 0;
     width: 270px;
+    max-height: calc(100% - 16px);
+    box-shadow: 0 16px 40px color-mix(in srgb, var(--color-black) 86%, transparent);
   }
 
   .sidebar-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 6px;
-    padding: 4px 6px 4px 10px;
-    border-bottom: 1px solid var(--border);
+    gap: var(--spacing-inline-related);
+    padding: var(--spacing-inline-tight) var(--spacing-control-internal);
+    border-bottom: 1px solid var(--color-hud-line-subtle);
     flex-shrink: 0;
   }
 
   .sidebar-header-label {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    color: var(--muted-foreground);
+    font-size: var(--type-label);
+    letter-spacing: var(--tracking-hud-label);
+    color: var(--text-secondary);
     text-transform: uppercase;
   }
 
   .sidebar-header-actions {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--spacing-inline-tight);
+  }
+
+  .sidebar-header-actions :global(.material-symbols-outlined) {
+    font-size: var(--type-icon-medium);
+    line-height: 1;
   }
 
   .sidebar-list {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding: 6px 4px;
+    gap: var(--spacing-inline-tight);
+    padding: var(--spacing-control-internal) var(--spacing-inline-tight);
     overflow-y: auto;
     overflow-x: hidden;
-    flex: 1;
+    flex: 0 1 auto;
     min-height: 0;
+    max-height: min(60vh, 480px);
   }
 
   :global([data-slot="button"].sidebar-entry) {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
+    gap: var(--spacing-inline-related);
+    padding: var(--spacing-control-internal);
+    min-height: var(--size-touch-target);
     border-radius: var(--radius);
     background: transparent;
-    color: var(--muted-foreground);
+    color: var(--text-secondary);
     min-width: 0;
     width: 100%;
     height: auto;
@@ -147,18 +160,17 @@
   }
 
   :global([data-slot="button"].sidebar-entry.is-focused) {
-    background: color-mix(in srgb, var(--primary) 20%, transparent);
-    color: var(--primary);
+    background: var(--color-selection-subtle);
+    color: var(--color-selection);
   }
 
   :global([data-slot="button"].sidebar-entry.is-focused:hover) {
-    background: color-mix(in srgb, var(--primary) 30%, transparent);
-    color: var(--primary);
+    background: var(--color-selection-hover-subtle);
+    color: var(--color-selection);
   }
 
   :global([data-slot="button"].sidebar-entry.is-minimized) {
     opacity: 0.5;
-    font-style: italic;
   }
 
   :global([data-slot="button"].sidebar-entry.is-minimized:hover) {
@@ -166,7 +178,7 @@
   }
 
   .entry-icon {
-    font-size: 18px;
+    font-size: var(--type-icon-medium);
     line-height: 1;
     flex-shrink: 0;
   }
@@ -180,7 +192,7 @@
 
   .entry-title {
     flex: 1;
-    font-size: 12px;
+    font-size: var(--type-caption);
     line-height: 1.2;
     overflow: hidden;
     text-overflow: ellipsis;

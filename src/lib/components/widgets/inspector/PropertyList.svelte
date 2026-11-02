@@ -280,8 +280,8 @@
   .details-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    margin-bottom: 16px;
+    gap: var(--spacing-section);
+    margin-bottom: var(--spacing-section);
   }
 
   .section {
@@ -292,9 +292,9 @@
   .section-header {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 2px;
-    margin-bottom: 6px;
+    gap: var(--spacing-inline-related);
+    padding: var(--spacing-control-internal) 0;
+    margin-bottom: var(--spacing-field-group);
     z-index: 2;
     background: var(--color-surface-1);
   }
@@ -320,7 +320,7 @@
   .section-body {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: var(--spacing-field-group);
   }
 
   .source-separator {
@@ -328,15 +328,15 @@
     font-size: 10px;
     font-weight: 600;
     color: color-mix(in srgb, var(--color-neutral) 40%, transparent);
-    padding: 6px 2px 2px;
-    margin-top: 4px;
+    padding: var(--spacing-field-group) 0 var(--spacing-control-internal);
+    margin-top: var(--spacing-control-internal);
     z-index: 1;
     background: var(--color-surface-1);
   }
 
   .source-separator:first-child {
     margin-top: 0;
-    padding-top: 2px;
+    padding-top: var(--spacing-control-internal);
   }
 
   .section-calc-icon {
@@ -349,6 +349,6 @@
   .big-numbers-grid {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-field-group);
   }
 </style>

@@ -327,7 +327,7 @@
 
     {#if retentionRunning}
       <div class="system-toast">
-        <span class="material-symbols-outlined" style="font-size:15px;opacity:0.7">cleaning_services</span>
+        <span class="material-symbols-outlined toast-icon">cleaning_services</span>
         <span>Cleaning up old data…</span>
       </div>
     {/if}
@@ -426,135 +426,168 @@
 
   .toast-stack {
     position: fixed;
-    bottom: 16px;
-    left: 16px;
+    top: calc(var(--app-header-height) + var(--space-4));
+    right: var(--space-4);
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    z-index: 9999;
+    gap: var(--space-2);
+    width: min(var(--size-toast-max-width), calc(100vw - var(--space-6)));
+    max-height: var(--size-toast-stack-max-height);
+    overflow-y: auto;
+    padding: var(--space-1);
+    z-index: var(--z-toast);
   }
 
   .automation-toast {
-    background: var(--color-surface-2);
-    border-radius: var(--radius);
-    color: var(--color-neutral);
-    padding: 10px 14px;
+    position: relative;
+    background: var(--color-toast-surface);
+    border-top: var(--size-toast-edge) solid var(--color-toast-edge);
+    color: var(--text-body);
+    padding: var(--space-3) var(--space-4);
     display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    min-width: 220px;
-    max-width: 340px;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: var(--size-toast-min-width);
+    max-width: var(--size-toast-max-width);
     pointer-events: auto;
     cursor: pointer;
+    backdrop-filter: blur(var(--blur-widget-surface));
+    box-shadow: 0 var(--size-toast-shadow-y) var(--size-toast-shadow-blur) color-mix(in srgb, var(--color-black) 55%, transparent);
+    transition: background-color 160ms ease, border-color 160ms ease;
+  }
+
+  .automation-toast:hover {
+    background: var(--color-surface-3);
+  }
+
+  .automation-toast:focus-visible {
+    outline: var(--size-hud-grid-dot) solid var(--color-selection);
+    outline-offset: var(--space-1);
   }
 
   .automation-toast.running {
-    background: color-mix(in srgb, var(--color-transition) 10%, var(--color-surface-2));
-    animation: toast-pulse 1.5s ease-in-out infinite;
+    border-top-color: var(--color-toast-running);
   }
 
-  @keyframes toast-pulse {
-    0%, 100% { background: color-mix(in srgb, var(--color-transition) 10%, var(--color-surface-2)); }
-    50% { background: color-mix(in srgb, var(--color-transition) 18%, var(--color-surface-2)); }
+  .automation-toast.failed {
+    border-top-color: var(--color-toast-error);
+  }
+
+  .automation-toast.done {
+    border-top-color: var(--color-toast-complete);
   }
 
   .toast-icon {
-    font-size: 18px;
+    font-size: var(--type-icon-medium);
     flex-shrink: 0;
-    margin-top: 1px;
+    color: var(--color-interactive);
   }
 
   .toast-thinking {
     display: flex;
     align-items: center;
     flex-shrink: 0;
-    margin-top: 3px;
+    margin-top: 0;
   }
 
-  .automation-toast.failed .toast-icon { color: var(--color-danger); }
-  .automation-toast.done .toast-icon { color: var(--color-success); }
+  .automation-toast.failed .toast-icon { color: var(--color-toast-error); }
+  .automation-toast.done .toast-icon { color: var(--color-toast-complete); }
 
   .toast-body {
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    font-size: 12px;
+    gap: var(--space-1);
+    font-size: var(--type-body);
     min-width: 0;
     flex: 1;
   }
 
   .toast-label {
-    line-height: 1.4;
+    color: var(--text-primary);
+    line-height: 1.45;
     word-break: break-word;
   }
 
   .toast-detail {
-    font-size: 11px;
-    color: var(--color-neutral);
-    opacity: 0.8;
+    font-size: var(--type-body-compact);
+    color: var(--color-toast-detail);
     word-break: break-word;
-    line-height: 1.4;
+    line-height: 1.45;
   }
 
   :global([data-slot="button"].toast-action-btn) {
-    margin-top: 4px;
-    color: var(--color-success);
+    margin-top: var(--space-1);
+    color: var(--color-interactive);
     font-family: var(--font-body);
-    font-size: 11px;
-    font-weight: 600;
-    padding: 3px 8px;
+    font-size: var(--type-label);
+    padding: var(--space-1) var(--space-2);
     height: auto;
     align-self: flex-start;
   }
 
   :global([data-slot="button"].toast-action-btn:hover) {
     background: transparent;
-    color: var(--color-success);
-    opacity: 0.8;
+    color: var(--color-interactive-hover);
   }
 
   .toast-error {
-    font-size: 11px;
-    color: color-mix(in srgb, var(--color-danger) 80%, white);
+    font-size: var(--type-body-compact);
+    color: var(--text-danger);
     word-break: break-word;
   }
 
   :global([data-slot="button"].toast-close) {
-    color: var(--color-neutral-disabled);
+    color: var(--text-secondary);
     flex-shrink: 0;
     align-self: flex-start;
   }
 
   :global([data-slot="button"].toast-close:hover) {
     background: transparent;
-    color: var(--color-neutral);
+    color: var(--text-primary);
   }
 
   :global([data-slot="button"].toast-close .material-symbols-outlined) {
-    font-size: 16px;
+    font-size: var(--type-icon-small);
   }
 
   .system-toast {
-    background: var(--color-surface-2);
-    border-radius: var(--radius);
-    color: var(--color-neutral);
-    padding: 8px 14px;
+    background: var(--color-toast-surface);
+    border-top: var(--size-toast-edge) solid var(--color-toast-edge);
+    color: var(--text-body);
+    padding: var(--space-2) var(--space-4);
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 12px;
+    gap: var(--space-2);
+    font-size: var(--type-body);
     pointer-events: none;
-    animation: toast-pulse 1.5s ease-in-out infinite;
+    backdrop-filter: blur(var(--blur-widget-surface));
+    box-shadow: 0 var(--size-toast-shadow-y) var(--size-toast-shadow-blur) color-mix(in srgb, var(--color-black) 55%, transparent);
   }
 
   .system-toast.done {
-    animation: none;
-    opacity: 0.6;
+    border-top-color: var(--color-toast-complete);
+  }
+
+  .system-toast .recalc-label {
+    color: var(--text-primary);
+  }
+
+  @media (max-width: 480px) {
+    .toast-stack {
+      right: var(--space-2);
+      width: calc(100vw - var(--space-4));
+    }
+
+    .automation-toast {
+      min-width: 0;
+      max-width: none;
+    }
   }
 
   .recalc-pct {
-    font-weight: 600;
-    min-width: 36px;
+    font-size: var(--type-caption);
+    min-width: var(--size-toast-recalc-min-width);
     text-align: right;
   }
 </style>

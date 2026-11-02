@@ -14,38 +14,35 @@
  * Use these instead of redefining locally to keep visual hierarchy consistent.
  * ============================================================================ */
 
-/* First-level title (e.g. entity name in Inspector, section heading in
- * Settings panel). Big, bold, prominent — anchors the page/panel/section. */
+/* First-level title anchors the page, panel, or section. */
 .section-title {
   font-family: var(--font-title);
-  font-size: 16px;
-  font-weight: 700;
+  font-size: var(--type-body-prominent);
   color: var(--color-neutral-active);
   margin: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .section-title .material-symbols-outlined {
-  font-size: 18px;
+  font-size: var(--type-heading);
 }
 
 /* Field / property label (e.g. "Provedor", "Última Atualização em").
- * Bright, prominent — this is where the user's eye lands. */
+ * Clear and prominent — this is where the user's eye lands. */
 .field-label {
   font-family: var(--font-title);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: var(--type-label);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--color-neutral-active);
   margin: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .field-label .material-symbols-outlined {
-  font-size: 14px;
+  font-size: var(--type-body);
 }

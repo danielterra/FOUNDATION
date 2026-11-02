@@ -43,14 +43,15 @@
    * Todas as outras cores derivam destas
    * -------------------------------------------------------- */
 
-  --color-interactive-base: #ff8c42;
-  --color-transition-base:  #a855f7;
+  --color-interactive-base: #8ceaf2;
+  --color-transition-base:  #63cfe3;
+  --color-selection-base:   #f28c28;
   --color-danger-base:      #ff3b3b;
   --color-warning-base:     #fbbf24;
   --color-success-base:     #4caf50;
   --color-error-base:       #f44336;
   --color-black:            rgb(0, 0, 0);
-  --color-white:            rgb(255, 255, 255);
+  --color-white:            rgb(242, 253, 255);
 
   /* --------------------------------------------------------
    * INTERACTIVE — elementos com os quais o usuário interage
@@ -60,6 +61,59 @@
   --color-interactive-hover:    color-mix(in srgb, var(--color-interactive-base) 85%, white);
   --color-interactive-active:   color-mix(in srgb, var(--color-interactive-base) 70%, white);
   --color-interactive-disabled: color-mix(in srgb, var(--color-interactive-base) 30%, black);
+
+  /* Selection and keyboard focus use the warm Expanse-inspired accent. */
+  --color-selection:        var(--color-selection-base);
+  --color-selection-hover:  color-mix(in srgb, var(--color-selection-base) 85%, white);
+  --color-selection-active: color-mix(in srgb, var(--color-selection-base) 70%, white);
+  --color-selection-subtle: color-mix(in srgb, var(--color-selection-base) 20%, transparent);
+  --color-selection-hover-subtle: color-mix(in srgb, var(--color-selection-base) 30%, transparent);
+  --color-selection-glow:   color-mix(in srgb, var(--color-selection-base) 80%, transparent);
+  --color-surface-hover-subtle: color-mix(in srgb, var(--color-white) 5%, transparent);
+  --color-hud-line-subtle: color-mix(in srgb, var(--color-interactive) 38%, transparent);
+  --color-hud-line: color-mix(in srgb, var(--color-interactive) 58%, transparent);
+  --color-hud-point: color-mix(in srgb, var(--color-interactive) 78%, transparent);
+  --color-hud-grid-dot: color-mix(in srgb, var(--color-interactive) 20%, transparent);
+  --color-hud-glow: color-mix(in srgb, var(--color-interactive) 32%, transparent);
+  --color-widget-surface-front: color-mix(in srgb, var(--color-surface-4) 34%, var(--color-black));
+  --color-widget-surface-back: color-mix(in srgb, var(--color-surface-2) 30%, var(--color-black));
+  --color-scrollbar-track: color-mix(in srgb, var(--color-surface-1) 60%, transparent);
+  --color-scrollbar-thumb: color-mix(in srgb, var(--color-interactive) 42%, transparent);
+  --color-scrollbar-thumb-hover: var(--color-interactive);
+  --color-scrollbar-thumb-active: var(--color-selection);
+  --color-chat-bubble-user: color-mix(in srgb, var(--color-surface-3) 70%, transparent);
+  --color-chat-bubble-assistant: color-mix(in srgb, var(--color-surface-2) 82%, transparent);
+  --color-chat-bubble-streaming-rule: var(--color-interactive);
+  --color-toast-surface: color-mix(in srgb, var(--color-surface-2) 96%, transparent);
+  --color-toast-edge: color-mix(in srgb, var(--color-interactive) 28%, transparent);
+  --color-toast-running: var(--color-interactive);
+  --color-toast-complete: var(--color-interactive);
+  --color-toast-error: var(--color-danger);
+  --color-toast-detail: var(--text-secondary);
+  --opacity-widget-surface: 82%;
+  --opacity-startup-grid: 55%;
+  --blur-widget-surface: 12px;
+  --size-scrollbar: 8px;
+  --size-scrollbar-thumb-inset: 2px;
+  --size-scrollbar-track-rule: 1px;
+  --size-hud-frame-run: 18px;
+  --size-hud-frame-line: 1px;
+  --size-hud-marker: 3px;
+  --size-hud-grid: 24px;
+  --size-hud-grid-dot: 1px;
+  --size-startup-panel-width: 480px;
+  --size-startup-progress-height: 3px;
+  --size-startup-progress-sweep: 35%;
+  --size-chat-bubble-streaming-rule: 1px;
+  --size-toast-edge: 2px;
+  --size-toast-min-width: 260px;
+  --size-toast-max-width: 380px;
+  --size-toast-stack-max-height: calc(100vh - var(--app-header-height) - var(--space-6));
+  --size-toast-shadow-y: 8px;
+  --size-toast-shadow-blur: 24px;
+  --size-toast-recalc-min-width: 36px;
+  --size-hud-glow-blur: 1px;
+  --tracking-hud-label: 0.08em;
 
   /* --------------------------------------------------------
    * TRANSITION — elementos em transição / carregamento
@@ -94,8 +148,17 @@
   --color-neutral-active:       var(--color-white);
   --color-neutral-disabled:     color-mix(in srgb, var(--color-white) 30%, black);
   --color-neutral-on-interactive: var(--color-black);
-  --color-neutral-secondary:    color-mix(in srgb, var(--color-white) 55%, black);
+  --color-neutral-secondary:    color-mix(in srgb, var(--color-white) 72%, black);
   --color-neutral-dark:         color-mix(in srgb, var(--color-white) 15%, black);
+
+  /* Text roles separate reading priority from true disabled states. */
+  --text-primary:   var(--color-neutral-active);
+  --text-body:      var(--color-neutral);
+  --text-secondary: var(--color-neutral-secondary);
+  --text-tertiary:  color-mix(in srgb, var(--color-white) 58%, black);
+  --text-disabled:  var(--color-neutral-disabled);
+  --text-accent:    var(--color-interactive);
+  --text-danger:    color-mix(in srgb, var(--color-danger) 80%, white);
 
   /* --------------------------------------------------------
    * SUCCESS — confirmação, sucesso
@@ -115,11 +178,11 @@
    * Cada nível ~5% mais claro que o anterior.
    * -------------------------------------------------------- */
 
-  --color-surface-0: var(--color-black);
-  --color-surface-1: color-mix(in srgb, var(--color-white)  5%, var(--color-black));
-  --color-surface-2: color-mix(in srgb, var(--color-white) 10%, var(--color-black));
-  --color-surface-3: color-mix(in srgb, var(--color-white) 15%, var(--color-black));
-  --color-surface-4: color-mix(in srgb, var(--color-white) 20%, var(--color-black));
+  --color-surface-0: #000000;
+  --color-surface-1: #050708;
+  --color-surface-2: #090c0e;
+  --color-surface-3: #182024;
+  --color-surface-4: #253138;
 
   /* --------------------------------------------------------
    * ACCENT — hover de item em lista elevada (= surface-4)
@@ -134,6 +197,46 @@
    * -------------------------------------------------------- */
 
   --app-header-height: 44px;
+
+  /* Semantic typography scale shared by every component. */
+  --type-overline: 10px;
+  --type-label: 12px;
+  --type-caption: 12px;
+  --type-body-compact: 13px;
+  --type-body: 14px;
+  --type-body-prominent: 16px;
+  --type-heading: 18px;
+  --type-title: 20px;
+  --type-display: 28px;
+  --type-micro: 9px;
+  --type-caption-compact: 11px;
+  --type-icon-small: 14px;
+  --type-icon-medium: 18px;
+  --type-icon-large: 48px;
+  --line-height-hud-compact: 1.15;
+  --size-touch-target: 44px;
+
+  /* Shared spacing scale, based on 4 px. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Semantic spacing roles used by inspector and widget layouts. */
+  --spacing-control-internal: var(--space-2);
+  --spacing-inline-tight: var(--space-1);
+  --spacing-inline-related: var(--space-2);
+  --spacing-label-to-value: 2px;
+  --spacing-field-group: var(--space-3);
+  --spacing-field-block: var(--space-3);
+  --spacing-section: var(--space-5);
+  --spacing-widget-inset: var(--space-4);
+  --spacing-widget-header-block: var(--space-3);
+  --spacing-widget-header-inline: var(--space-4);
+  --spacing-chat-inset-block: var(--space-4);
+  --spacing-chat-inset-inline: var(--space-6);
 
   /* --------------------------------------------------------
    * LEGADOS ELEVADOS — tokens com fallback, agora canônicos
@@ -258,6 +361,41 @@
     color: var(--foreground);
   }
 
+  :root {
+    scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
+    scrollbar-width: thin;
+  }
+
+  *::-webkit-scrollbar {
+    width: var(--size-scrollbar);
+    height: var(--size-scrollbar);
+  }
+
+  *::-webkit-scrollbar-track {
+    background:
+      linear-gradient(var(--color-hud-line-subtle), var(--color-hud-line-subtle)) center / var(--size-scrollbar-track-rule) 100% no-repeat,
+      var(--color-scrollbar-track);
+  }
+
+  *::-webkit-scrollbar-thumb {
+    border: var(--size-scrollbar-thumb-inset) solid transparent;
+    border-radius: 0;
+    background-color: var(--color-scrollbar-thumb);
+    background-clip: content-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-scrollbar-thumb-hover);
+  }
+
+  *::-webkit-scrollbar-thumb:active {
+    background-color: var(--color-scrollbar-thumb-active);
+  }
+
+  *::-webkit-scrollbar-corner {
+    background: var(--color-scrollbar-track);
+  }
+
   .dark {
     /* Superfícies — hierarquia de elevação crescente */
     --background: var(--color-surface-0);
@@ -270,10 +408,10 @@
     --foreground:         var(--color-neutral);
     --card-foreground:    var(--color-neutral);
     --popover-foreground: var(--color-neutral);
-    --muted-foreground:   var(--color-neutral-disabled);
+    --muted-foreground:   var(--text-secondary);
     --accent-foreground:  var(--color-neutral-active);
 
-    /* Interação — laranja semântico */
+    /* Interface ciano-claro, com cores semânticas preservadas */
     --primary:            var(--color-interactive);
     --primary-foreground: var(--color-neutral-on-interactive);
 
@@ -290,7 +428,7 @@
     --input:  var(--color-surface-2);
 
     /* Foco-visível unificado */
-    --ring: var(--color-interactive);
+    --ring: var(--color-selection);
 
     --radius: 10px;
   }

@@ -119,6 +119,7 @@ search("label do que pretendo criar")
 - Campos **obrigatórios**: `rdfs:label` (enunciado curto imperativo), `foundation:howToTest` (passos concretos), `foundation:successResult` (o que se observa quando passa), `foundation:failureResult` (sintoma quando falha).
 - Uso `foundation:hasAcceptanceCriterion` na UserStory pai — **nunca** `foundation:acceptanceCriteria` (legado, será removido).
 - Começa em `foundation:Pending`.
+- Ao adicionar ou alterar AC de uma US em QA ou Concluída, registro o motivo no changelog e aviso o chamador para acionar o Arquiteto e mover a US para Mudança Pendente antes de novo planejamento; não avanço status de implementação.
 
 ### 6. Consulta de regras da classe antes de criar
 Sempre que tiver dúvida sobre propriedades ou comportamento esperado de uma classe, consulto via:

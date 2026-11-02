@@ -481,23 +481,21 @@
   .detail-values-group {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-field-group);
   }
 
   .detail-value {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px;
-    border: 1px solid #ffffff05;
-    border-radius: 5px;
+    gap: var(--spacing-inline-related);
+    padding: var(--spacing-field-block) 0;
   }
 
   .value-large {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: var(--spacing-inline-related);
     min-width: 0;
   }
 
@@ -506,7 +504,7 @@
     font-size: 11px;
     color: var(--color-neutral-active);
     background: color-mix(in srgb, var(--color-black) 40%, transparent);
-    padding: 8px;
+    padding: var(--spacing-control-internal);
     max-height: 200px;
     overflow-y: auto;
     white-space: pre-wrap;
@@ -588,7 +586,6 @@
     color: var(--color-neutral);
     opacity: 0.6;
     font-family: var(--font-body);
-    font-style: italic;
   }
 
   :global([data-slot="button"].url-value) {
@@ -627,15 +624,13 @@
   .inline-status-label {
     font-family: var(--font-body);
     font-size: 10px;
-    font-weight: 600;
     color: var(--status-color);
     white-space: nowrap;
   }
 
   .detail-value.calculated {
-    font-style: italic;
     background: color-mix(in srgb, var(--color-accent) 7%, transparent);
-    padding-left: 8px;
+    padding-left: 0;
   }
 
   .detail-value.calculated .value-text {

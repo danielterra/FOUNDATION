@@ -98,15 +98,16 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 10px 14px;
+		padding: var(--spacing-chat-inset-block) var(--spacing-widget-header-inline);
 		flex-shrink: 0;
-		gap: 8px;
+		gap: var(--spacing-inline-related);
+		border-bottom: 1px solid var(--color-hud-line-subtle);
 	}
 
 	.chat-header-left {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: var(--spacing-inline-related);
 		min-width: 0;
 		flex: 1;
 	}
@@ -116,30 +117,30 @@
 		flex-shrink: 0;
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: var(--spacing-control-internal);
 	}
 
 	:global([data-slot="button"].agent-avatar) {
-		width: 36px;
-		height: 36px;
-		background: color-mix(in srgb, var(--primary) 18%, transparent);
+		width: var(--size-touch-target);
+		height: var(--size-touch-target);
+		background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
 		border-radius: var(--radius);
-		color: var(--primary);
+		color: var(--color-interactive);
 		padding: 0;
 		flex-shrink: 0;
 	}
 
 	:global([data-slot="button"].agent-avatar:hover) {
-		background: color-mix(in srgb, var(--primary) 28%, transparent);
-		color: var(--primary);
+		background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
+		color: var(--color-interactive);
 	}
 
 	:global([data-slot="button"].agent-avatar.picker-open) {
-		background: color-mix(in srgb, var(--primary) 28%, transparent);
+		background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
 	}
 
 	:global([data-slot="button"].agent-avatar .material-symbols-outlined) {
-		font-size: 18px;
+		font-size: var(--type-icon-medium);
 	}
 
 	:global([data-slot="button"].agent-avatar.has-image) {
@@ -170,28 +171,27 @@
 
 	.agent-name {
 		display: block;
-		font-size: 14px;
-		font-weight: 600;
-		color: var(--accent-foreground);
+		font-size: var(--type-body);
+		color: var(--color-neutral);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 
 	.agent-model {
-		font-size: 10px;
-		color: var(--foreground);
+		font-size: var(--type-micro);
+		color: var(--color-neutral-secondary);
 		white-space: nowrap;
 	}
 
 	:global([data-slot="button"].agent-name-btn:hover) .agent-name {
-		color: var(--primary);
+		color: var(--color-interactive);
 	}
 
 	.chat-header-right {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: var(--spacing-inline-tight);
 		flex-shrink: 0;
 	}
 

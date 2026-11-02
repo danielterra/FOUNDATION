@@ -31,6 +31,7 @@ Em paralelo:
 1. `describe_individual([<FeatureIRI>])` — pega `partOfProject`, `partOfProduct`, `solvesProblem`, `successCriteria`, `hasStatus` e os backlinks.
 2. `search(class_iri: "foundation:UserStory", filters: [{detail: "foundation:partOfFeature", value: "<FeatureIRI>"}], limit: 100)` — lista todas as US filhas.
 3. Resolva `partOfProject` → `describe_individual([<ProjectIRI>])` para o contexto do plano.
+4. Leia `foundation:hasStatus` de cada US e de cada AC atual via MCP; confirme que nenhum está sem status e identifique explicitamente quais US fazem parte do escopo sendo planejado.
 
 Valide:
 
@@ -44,6 +45,7 @@ Valide:
   - `foundation:Status_1773581282341` (Mudança Pendente) — replanejamento após mudança de escopo.
   - `foundation:Status_1772596341042` (Planejado) — replanejamento explícito; confirme com o usuário antes.
 - Se já estiver em `InProgress`, `Testando`, `Completed`, `Cancelado` ou `Rejected`, **pare** e avise.
+- Não avance o status da Feature se a lista de filhos estiver incompleta, houver status ausente, ou o escopo de histórias planejadas versus expansões não estiver claro.
 
 ### Passo 2 — Mapear gap de cobertura
 

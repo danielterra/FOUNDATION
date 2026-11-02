@@ -5,7 +5,6 @@
   import { listen } from "@tauri-apps/api/event";
   import SetupWizard from "$lib/components/SetupWizard.svelte";
   import ImportProgress from "$lib/components/ImportProgress.svelte";
-  import Activity from "$lib/components/Activity.svelte";
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
 
@@ -528,7 +527,27 @@
     {/if}
 
   {:else if importing === null}
-    <Activity message={`${startupStage} · ${formatElapsed(startupElapsedSec)}`} progress={null} />
+    <section class="startup-screen">
+      <div class="startup-grid" aria-hidden="true"></div>
+      <div class="startup-panel">
+        <div class="startup-panel-header">
+          <span class="startup-system-label"><span class="startup-signal"></span> SEQUÊNCIA DE INICIALIZAÇÃO</span>
+          <span class="startup-local-label">NÚCLEO LOCAL</span>
+        </div>
+
+        <div class="startup-copy">
+          <p class="startup-kicker">STATUS DO PROCESSO</p>
+          <h1 aria-live="polite" aria-atomic="true">{startupStage}</h1>
+        </div>
+
+        <div class="startup-progress" aria-hidden="true"><span></span></div>
+
+        <div class="startup-panel-footer">
+          <span>PREPARANDO A SESSÃO</span>
+          <span class="startup-elapsed" aria-hidden="true">{formatElapsed(startupElapsedSec)}</span>
+        </div>
+      </div>
+    </section>
 
   {:else if importing === true}
     <ImportProgress onComplete={handleImportComplete} />
@@ -551,6 +570,134 @@
     justify-content: center;
     height: 100%;
     background: var(--color-black);
+  }
+
+  .startup-screen {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--color-black);
+  }
+
+  .startup-grid {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    background-image: radial-gradient(circle, var(--color-hud-line-subtle) var(--size-hud-grid-dot), transparent var(--size-hud-grid-dot));
+    background-size: var(--size-hud-grid) var(--size-hud-grid);
+    opacity: var(--opacity-startup-grid);
+  }
+
+  .startup-panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    width: min(var(--size-startup-panel-width), calc(100vw - var(--space-6) * 2));
+    padding: var(--space-5);
+    background: color-mix(in srgb, var(--color-surface-1) var(--opacity-widget-surface), transparent);
+    backdrop-filter: blur(var(--blur-widget-surface));
+  }
+
+  .startup-panel::before {
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(var(--color-interactive), var(--color-interactive)) top left / var(--size-hud-frame-run) var(--size-hud-frame-line) no-repeat,
+      linear-gradient(var(--color-interactive), var(--color-interactive)) top left / var(--size-hud-frame-line) var(--size-hud-frame-run) no-repeat,
+      linear-gradient(var(--color-interactive), var(--color-interactive)) top right / var(--size-hud-frame-run) var(--size-hud-frame-line) no-repeat,
+      linear-gradient(var(--color-interactive), var(--color-interactive)) top right / var(--size-hud-frame-line) var(--size-hud-frame-run) no-repeat,
+      linear-gradient(var(--color-interactive), var(--color-interactive)) bottom left / var(--size-hud-frame-run) var(--size-hud-frame-line) no-repeat,
+      linear-gradient(var(--color-interactive), var(--color-interactive)) bottom left / var(--size-hud-frame-line) var(--size-hud-frame-run) no-repeat,
+      linear-gradient(var(--color-interactive), var(--color-interactive)) bottom right / var(--size-hud-frame-run) var(--size-hud-frame-line) no-repeat,
+      linear-gradient(var(--color-interactive), var(--color-interactive)) bottom right / var(--size-hud-frame-line) var(--size-hud-frame-run) no-repeat;
+    content: '';
+    pointer-events: none;
+  }
+
+  .startup-panel-header,
+  .startup-panel-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .startup-system-label,
+  .startup-local-label,
+  .startup-panel-footer {
+    font-family: var(--font-mono);
+    font-size: var(--type-overline);
+    letter-spacing: var(--tracking-hud-label);
+    color: var(--color-neutral-secondary);
+  }
+
+  .startup-system-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--color-interactive);
+  }
+
+  .startup-signal {
+    width: var(--size-hud-marker);
+    height: var(--size-hud-marker);
+    background: var(--color-interactive);
+    animation: startup-signal 1.8s ease-in-out infinite;
+  }
+
+  .startup-copy {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-label-to-value);
+  }
+
+  .startup-kicker {
+    margin: 0;
+    color: var(--color-neutral-secondary);
+    font-size: var(--type-caption);
+    letter-spacing: var(--tracking-hud-label);
+  }
+
+  .startup-copy h1 {
+    margin: 0;
+    color: var(--color-neutral-active);
+    font-size: var(--type-heading);
+    line-height: 1.4;
+  }
+
+  .startup-progress {
+    position: relative;
+    height: var(--size-startup-progress-height);
+    overflow: hidden;
+    background: var(--color-surface-3);
+  }
+
+  .startup-progress span {
+    position: absolute;
+    inset-block: 0;
+    left: calc(-1 * var(--size-startup-progress-sweep));
+    width: var(--size-startup-progress-sweep);
+    background: linear-gradient(90deg, transparent, var(--color-interactive), transparent);
+    animation: startup-sweep 2.4s ease-in-out infinite;
+  }
+
+  .startup-elapsed {
+    color: var(--color-neutral-active);
+    font-variant-numeric: tabular-nums;
+  }
+
+  @keyframes startup-signal {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  @keyframes startup-sweep {
+    to { left: 100%; }
   }
 
   .redirecting {

@@ -80,7 +80,11 @@ Adicione (via `add_property_values`) ao `foundation:changelog` da Feature uma li
 <YYYY-MM-DD> — code-sync executado. Criadas: <N>. Atualizadas: <N>. Sem código: <N>.
 ```
 
-**Não mude o `hasStatus` da Feature** — sync não promove nem rebaixa o status da Feature em si. Se as US ficaram em Mudança Pendente e o usuário quiser refletir isso na Feature, ele move manualmente ou roda `$feature-plan` depois.
+Avalie o status da Feature somente depois de reconciliar as US:
+
+- Se uma US mudou para Mudança Pendente porque o código diverge de um `successCriteria` já entregue, mova também a Feature para `foundation:Status_1773581282341` e registre no changelog a lacuna com `path:linha` e AC relacionado.
+- Se a US for uma expansão fora do escopo entregue, preserve o status da Feature e registre a distinção de escopo; vínculo por si só não prova que a Feature regrediu.
+- Nunca marque Feature Concluída por inferência a partir do código. Confirme o escopo e os status QA de todas as US entregues.
 
 ### Passo 5 — Reportar
 
@@ -114,6 +118,8 @@ Mantenha o relatório navegável — IRIs como `foundation:UserStory_xxx`, paths
 
 - **NEVER** retract User Stories aqui — apenas mude status. Retract definitivo é responsabilidade de `$feature-remove` ou ação explícita do usuário.
 - **NEVER** mude a Feature para `Cancelado`/`Concluído` automaticamente.
+- **NEVER** marque Acceptance Criterion como Concluído só porque encontrou implementação; só QA com evidência do comportamento pode fazê-lo.
+- **ALWAYS** execute `$product-integrity-audit` após a reconciliação e resolva os bloqueios estruturais antes de reportar a Feature.
 - **NEVER** invente arquivos ou linhas — toda referência a código deve vir de busca real (Grep/Glob/Read).
 - **NEVER** sobrescreva `capability`/`benefit` de US existente — só atualize `acceptanceCriteria` quando o código justifica.
 - **NEVER** invoque `$userstory-plan` ou `$userstory-implement` daqui — sync entrega o backlog atualizado e termina.

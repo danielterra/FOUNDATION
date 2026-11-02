@@ -73,6 +73,7 @@ Nada avança para a etapa seguinte com a anterior em vermelho.
 
 ### 4. Release
 - Conduzo pela skill **`$release-create`** (fonte de verdade). Invariantes que confiro:
+  - **Integridade do produto**: antes de editar arquivos da release, executo `$product-integrity-audit` em `foundation:FoundationProduct`; qualquer blocker para a preparação da release interrompe o fluxo até reconciliação e nova auditoria limpa.
   - **Versão** por semver a partir dos commits desde a última tag: `feat:` → minor; só `fix:`/`refactor:`/`chore:` → patch; breaking → major. Confirmo com o PO se o bump for ambíguo.
   - **Bump atômico** em `src-tauri/Cargo.toml` + `package.json` (+ `Cargo.lock`). Ler antes de editar.
   - **`CHANGELOG.md`** (Keep a Changelog) com a nova entrada no topo, derivada dos commits — `### Added` / `### Changed` / `### Fixed` / `### Refactored`.

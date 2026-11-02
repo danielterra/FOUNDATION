@@ -602,6 +602,7 @@
     {/if}
   </div>
 
+  <div class="detail-content">
   {#if editingCardinalityKey === detailGroup.property}
     <div class="cardinality-edit-form">
       <div class="cardinality-edit-row">
@@ -830,24 +831,44 @@
       <span class="save-error-text">{saveError}</span>
     </div>
   {/if}
+  </div>
 </div>
 
 <style>
   .detail-item {
-    padding: 15px 0px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-label-to-value);
+    padding: var(--spacing-field-block) 0;
+    border-bottom: 1px solid var(--color-hud-line-subtle);
   }
 
   .detail-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 6px;
-    gap: 4px;
+    justify-content: space-between;
+    gap: var(--spacing-inline-related);
+    min-width: 0;
   }
 
-  /* .detail-name layout-only adjustments; typography comes from global .field-label */
   .detail-name {
-    flex: 1;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--spacing-inline-related);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+    min-width: 0;
+    font-size: var(--type-label);
+    letter-spacing: var(--tracking-hud-label);
+    text-transform: uppercase;
+  }
+
+  .detail-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-inline-related);
     min-width: 0;
   }
 
@@ -866,13 +887,13 @@
   }
 
   :global(.prop-info-trigger:focus-visible) {
-    outline: 1px solid var(--color-interactive);
+    outline: 1px solid var(--color-selection);
     outline-offset: 1px;
   }
 
   .prop-info {
-    font-size: 14px;
-    color: var(--color-neutral);
+    font-size: var(--type-body);
+    color: var(--text-tertiary);
     opacity: 0.45;
     user-select: none;
     flex-shrink: 0;
@@ -898,7 +919,7 @@
   }
 
   :global(.prop-hint-content .prop-hint-desc) {
-    font-size: 11px;
+    font-size: var(--type-caption-compact);
     color: var(--color-neutral-active);
     line-height: 1.5;
     margin: 0;
@@ -920,23 +941,21 @@
     gap: 4px;
     padding: 2px 7px 2px 5px;
     background: color-mix(in srgb, var(--color-neutral) 14%, transparent);
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--color-neutral);
+    font-size: var(--type-overline);
+    color: var(--text-secondary);
     border-radius: 4px;
   }
 
   :global(.prop-hint-content .prop-hint-chip-icon) {
-    font-size: 12px;
+    font-size: var(--type-label);
     opacity: 0.8;
   }
 
   .detail-type {
-    font-size: 10px;
+    font-size: var(--type-overline);
     padding: 2px 6px;
     background: color-mix(in srgb, var(--color-neutral) 20%, transparent);
-    color: var(--color-neutral);
-    font-weight: 600;
+    color: var(--text-secondary);
   }
 
   .detail-type-object {
@@ -946,23 +965,21 @@
   }
 
   .detail-type-icon {
-    font-size: 11px;
+    font-size: var(--type-caption-compact);
   }
 
   .detail-count {
-    font-size: 10px;
+    font-size: var(--type-overline);
     padding: 2px 6px;
     background: color-mix(in srgb, var(--color-accent) 20%, transparent);
     color: var(--color-accent);
-    font-weight: 600;
   }
 
   .cardinality-badge {
-    font-size: 10px;
+    font-size: var(--type-overline);
     padding: 2px 6px;
     background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
     color: var(--color-interactive);
-    font-weight: 600;
     font-family: var(--font-mono, monospace);
   }
 
@@ -982,8 +999,7 @@
   }
 
   .cardinality-edit-label {
-    font-size: 11px;
-    font-weight: 700;
+    font-size: var(--type-caption-compact);
     color: var(--color-neutral);
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -996,7 +1012,7 @@
     background: color-mix(in srgb, var(--color-white) 5%, transparent);
     border: none;
     padding: 4px 8px;
-    font-size: 14px;
+    font-size: var(--type-body);
     color: var(--color-neutral-active);
     outline: none;
     box-shadow: none;
@@ -1025,8 +1041,8 @@
   }
 
   :global([data-slot="button"].edit-btn.active) {
-    color: var(--color-interactive);
-    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
+    color: var(--color-selection);
+    background: var(--color-selection-subtle);
   }
 
   .prop-actions {
@@ -1047,7 +1063,7 @@
 
   .empty-value {
     font-family: var(--font-body);
-    font-size: 14px;
+    font-size: var(--type-body);
     color: var(--color-neutral);
     opacity: 0.35;
     padding: 2px 0;
@@ -1080,15 +1096,14 @@
   }
 
   .qc-icon {
-    font-size: 14px;
+    font-size: var(--type-body);
     color: var(--color-interactive);
   }
 
   .qc-class {
     font-family: var(--font-mono, monospace);
-    font-size: 13px;
+    font-size: var(--type-body-compact);
     color: var(--color-neutral-active);
-    font-weight: 600;
   }
 
   .qc-filters {
@@ -1100,7 +1115,7 @@
 
   .qc-filter-line {
     font-family: var(--font-mono, monospace);
-    font-size: 12px;
+    font-size: var(--type-label);
     color: var(--color-neutral);
   }
 
@@ -1108,8 +1123,7 @@
     display: inline-flex;
     align-items: center;
     gap: 3px;
-    font-size: 10px;
-    font-weight: 700;
+    font-size: var(--type-overline);
     letter-spacing: 0.04em;
     padding: 2px 8px 2px 5px;
     background: color-mix(in srgb, var(--color-accent) 18%, transparent);
@@ -1119,7 +1133,7 @@
   }
 
   .calculated-icon {
-    font-size: 13px;
+    font-size: var(--type-body-compact);
     line-height: 1;
   }
 
@@ -1151,7 +1165,7 @@
     border: none;
     color: var(--color-neutral-active);
     font-family: var(--font-body);
-    font-size: 14px;
+    font-size: var(--type-body);
     padding: 6px 8px;
     outline: none;
     box-shadow: none;
@@ -1177,7 +1191,7 @@
     margin-top: 6px;
     color: var(--color-interactive);
     opacity: 0.7;
-    font-size: 12px;
+    font-size: var(--type-label);
     padding-inline: 0;
   }
 
@@ -1195,7 +1209,7 @@
   }
 
   .save-error-icon {
-    font-size: 14px;
+    font-size: var(--type-body);
     color: var(--color-error);
     flex-shrink: 0;
     line-height: 1.4;
@@ -1203,7 +1217,7 @@
 
   .save-error-text {
     font-family: var(--font-mono, monospace);
-    font-size: 12px;
+    font-size: var(--type-label);
     color: var(--color-error);
     line-height: 1.4;
     word-break: break-word;

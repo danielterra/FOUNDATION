@@ -24,6 +24,9 @@
 - ALWAYS surface any design tension that tempts a fallback and ask the user before adding one.
 - NEVER add a fallback/default branch in render dispatch maps either (e.g. a `bpmn_FlowNode → NodeTask` catch-all in a frontend node-type map) — fix the real cause so every concrete type maps to its own component; a missing mapping is a bug to fix, not to mask.
 
+## Visual language
+- ALWAYS preserve the reviewed Oblivion canvas texture: a black field with a subtle, evenly spaced cyan dot grid behind widgets.
+
 ## Foundation vocabulary — domain entities
 - `foundation:Project` / `foundation:SoftwareFeature` / `foundation:UserStory` / `foundation:ArchitectureDecisionRecord` (ADR) — work planning.
 - `foundation:SoftwareAgent` — product-side agent personas only: NOVA (`foundation:LocalAIAssistant`), Automator, etc. **Dev-process personas (architect, support, ux, developer-backend, developer-frontend, qa, devops) live in [.codex/agents/](.codex/agents/) — NEVER in the ontology**. Process roles are tooling, not product.
@@ -49,6 +52,19 @@
 - `foundation:Rejected` — Rejeitado.
 - `foundation:Status_1772570972069` — Cancelado.
 
+## Product status integrity
+- ALWAYS read the current Feature → UserStory → AcceptanceCriterion graph through Foundation MCP before changing a status.
+- ALWAYS keep status separate from implementation evidence; source code or a changelog alone NEVER proves an AcceptanceCriterion passed.
+- ALWAYS record concrete QA evidence for every AcceptanceCriterion moved to `foundation:Completed`.
+- ALWAYS let QA set a UserStory to `foundation:Completed` only after every current in-scope AcceptanceCriterion is Completed, none is Pending or Rejected, and required automated and visual checks pass.
+- ALWAYS return a Completed or QA UserStory to `foundation:Status_1773581282341` before planning when an AcceptanceCriterion is added or changed after validation.
+- ALWAYS return a Feature to `foundation:Status_1773581282341` when a verified change contradicts its delivered `successCriteria`; record the code and criterion evidence in its changelog.
+- ALWAYS confirm the explicitly delivered scope before setting a Feature to `foundation:Completed`; membership alone does not prove every linked story belongs to that scope.
+- ALWAYS run `$product-integrity-audit` before release work and after `$feature-code-sync`; resolve all blockers before release.
+- NEVER infer or roll up a Feature or UserStory status from child statuses without verifying scope and evidence.
+- NEVER move a UserStory to Completed outside the QA gate.
+- NEVER let the read-only product integrity audit mutate entities or statuses.
+
 ## Development process — PO → Architect → specialists
 - Roles: **PO** (Codex principal / user) → **architect** (single coordination point) → **ux** + **developer-backend** + **developer-frontend** → **qa** → **devops**. **Bug flow** adds **support** before `architect`: Bug → **support** (technical dossier) → **architect** (Modo Triagem) → dev → **qa** → Concluído.
 - ALWAYS delegate to the specialist agent — the main loop (PO) ONLY orchestrates (dispatches agents, relays to the user, decides between options). NEVER do a specialist's work yourself when an agent exists for it: bug investigation/code reading-for-diagnosis → `support`; create/refine `SoftwareProduct`/`SoftwareFeature`/`UserStory`/`AcceptanceCriterion` (and discovery: searching/describing product entities) → `product-owner`; architecture/codebase mapping & planning → `architect`; UX spec → `ux`; code → `developer-backend`/`developer-frontend`; validation → `qa`; review/merge/release → `devops`. The PO does NOT grep/read code to investigate, NOT write ontology entities, NOT plan, NOT implement.
@@ -63,6 +79,7 @@
 - **`qa` is the SINGLE gate before Concluído — for User Stories AND Bugs.** NEVER move a US or Bug from Em Progresso / Em Validação (QA) directly to Concluído without `qa` validation. `qa` enters when `architect` finishes Execução / Triagem; `devops` enters after for code review / security / release. NEITHER edits feature code.
 - Skills `$userstory-plan`, `$userstory-implement`, `$bug-fix` are thin proxies: they invoke `architect` (and `support` for bugs). NEVER duplicate the protocol inside the skills.
 - Skills `$feature-plan` and `$feature-implement` orchestrate per-US via the userstory skills, so they inherit the hierarchy automatically.
+- ALWAYS use `.agents/skills/product-integrity-audit/SKILL.md` as the read-only status audit procedure; release and code-sync workflows invoke it.
 
 ## Debugging order
 - ALWAYS investigate in this order: logs → message history → DB → code.
@@ -164,6 +181,7 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 ## Releases
 - ALWAYS use `$release-create` skill.
 - ALWAYS implement new work on its release-version branch; the target release branch is the workspace for that release's planned work.
+- ALWAYS continue work on branch `0.22.0` until the user publishes it; NEVER create a new release branch before publication.
 
 ## Blackboard / Lousa
 - ALWAYS resolve the blackboard from the conversation currently open in the Foundation app UI; NEVER assume a hardcoded or main conversation is the active one.
@@ -197,6 +215,40 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - EXCEPTIONS (still NOT snapshot-paginated; a NEW one needs PO sign-off + an ADR note): (1) relevance-ranked search (`search` / `owl__search_entities` / `describe_property` query mode) — bounded top-N, re-ranked per query, NO cursor; bound applied in SQL. (2) graph/BFS traversals (`class_graph`) — bounded by `max_depth`, no linear cursor. (3) `chat__get_recent_messages` scroll-back stays offset — realtime replay-since-tx already covers incremental advance.
 - For MCP tools, declare `snapshot_tx` (echoed) + the page param in the code `ToolTemplate` (`ai/functions/definitions.rs`); the AI MUST echo the returned `snapshot_tx` (and `next_cursor` where keyset) to keep the dataset frozen across pages. The MCP-exposed `inputSchema` is built from the code `ToolTemplate` (`mcp/mod.rs::to_mcp_tool`), NOT from the `foundation:MCPTool` individual (whose `foundation:inputSchema` is documentation-only and is NEVER read at runtime); after changing a tool's params the MCP CLIENT must re-list tools (reconnect) before sending the new arg.
 - ALWAYS write scripts in Rust — never Node, Python, or shell.
+
+## Visual style
+- ALWAYS keep the blackboard canvas black and high-contrast; confine Oblivion-inspired cyan/ice colors to projected widgets and active UI elements.
+- ALWAYS preserve the reviewed black canvas texture: an evenly spaced, subtle cyan dot grid across the full canvas behind widgets.
+- NEVER tint all application surfaces cyan or soften foreground items into a washed-out glass look.
+- ALWAYS keep the open-widgets panel floating over the blackboard, anchored to the bottom edge, content-height by default, with the chat's subtle translucent background.
+- ALWAYS keep widget surfaces dark enough to preserve readable text over bright content; balance translucency and blur against contrast instead of letting light background widgets wash through.
+- ALWAYS style Oblivion-inspired widget frames with restrained cyan corner marks and thin separators, preserving the black canvas and dark widget bodies.
+- NEVER retain a continuous card outline or broad outer glow on projected widgets; corner marks define their frame.
+- ALWAYS scale widgets progressively by stacking depth: the rearmost open widget is 30%, the frontmost is 100%, and intermediate widgets are evenly spaced; selecting one animates it to full scale with a subtle lift.
+- ALWAYS place inspector property labels above their values to preserve horizontal space; align each value's left edge with its label and keep consistent vertical spacing between them.
+- ALWAYS keep the chat panel and open-widgets menu visually consistent with widget frames: dark square surfaces and restrained cyan corner accents.
+- ALWAYS define color and typography-size tokens only in `src/app.css`; components consume semantic tokens and never declare ad hoc colors or font sizes.
+- ALWAYS define spacing tokens semantically in `src/app.css`; components consume those tokens for control internals, related items, field groups, and section separation instead of ad hoc spacing values.
+- ALWAYS keep a field label visually close to its value/content; use minimal spacing within a related label-value pair and reserve larger spacing for separate fields or sections.
+- ALWAYS keep widget-control glyphs aligned to the sidebar icon size and give touch-operated icon buttons at least a 44px target.
+- ALWAYS right-align widget window controls and submenu actions with the same semantic gap and 44px touch targets for icon actions.
+- ALWAYS show the complete editable entity title in the Inspector header; NEVER duplicate it as a field in the body.
+- ALWAYS keep the inspector's editable entity title and status visible; missing either is a regression.
+- ALWAYS style the inspector's entity class in the header as readable secondary context: smaller and less prominent than the entity title, but not faint or tiny.
+- ALWAYS allow long inspector class names up to two compact lines, truncate overflow with an ellipsis, and expose the complete name in a hover tooltip.
+- NEVER draw borders around text values in inspector fields; use spacing and typography to define the content instead.
+- ALWAYS use restrained cyan line-and-point framing around widgets, with generous outer spacing, dark translucent surfaces, and uppercase for concise semantic labels; keep titles and body text in sentence case for readability.
+- ALWAYS make the Oblivion frame language read as thin connected guide lines, sparse registration points, and measured spacing; NEVER rely on bright isolated corner brackets as the primary frame, broad colored borders, or near-opaque widget fills.
+- ALWAYS extend widget guide lines to the frame edges and let registration points meet those edges; omit separate L-shaped corner strokes.
+- ALWAYS keep conversation and open-widget panels free of corner brackets; use edge-spanning horizontal rules and endpoint marks instead of a boxed outline.
+- ALWAYS place HUD point markers only at guide-line endpoints; NEVER add intermediate points along a frame edge.
+- ALWAYS style native browser scrollbars through semantic design-system tokens: dark tracks, fine cyan indicators, square geometry, and orange active feedback.
+- ALWAYS keep chat message bubbles on restrained near-black neutral surfaces; use cyan only for a fine streaming/status rule and reserve orange for selection or focus.
+- ALWAYS place activity toasts in the upper-right corner and style them as compact, high-contrast dark HUD panels with readable body text and restrained status accents.
+- ALWAYS give the application startup screen the same black high-contrast canvas, restrained cyan HUD framing, semantic status hierarchy, and orange only for focused actions.
+- ALWAYS use the semantic Expanse-inspired orange selection accent to show the currently selected item and the user's keyboard focus; keep cyan for non-selected interactive accents.
+- ALWAYS prioritize smooth, legible text on dark widget surfaces, including widgets scaled back in the depth stack.
+- NEVER use bold font weights or italic font styles while the visual system is being established; communicate hierarchy through semantic size and color tokens.
 - Comments: WHY only. NEVER write WHAT comments, commented-out code, or TODO/FIXME markers.
 - NEVER suppress warnings or errors.
 - NEVER add redundant wrapper functions — if existing functions cover it, don't wrap.

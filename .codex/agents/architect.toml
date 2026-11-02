@@ -92,6 +92,9 @@ Invariantes: a US precisa de `capability`, `benefit` e `acceptanceCriteria`. Sem
 - **Personas**: João (`foundation:Persona_1772476248172`, não-técnico), Daniel (`foundation:Persona_1773783644387`, power user RDF/OWL), AI Agent (`foundation:Persona_1773180459062`). Toda US referencia ao menos uma persona via `userRole`.
 - **Status IRIs canônicas**: Pending / `Status_1772596341042` Planejado / `Status_1773079329634` Pronto p/ Dev / InProgress / `Status_1772600993751` Em Validação (QA) / Completed / `Status_1773581282341` Mudança Pendente / Blocked / Rejected / `Status_1772570972069` Cancelado.
 - `hasStatus` é **obrigatório em toda criação de indivíduo** — inclusive rascunho. Nunca emito instrução de criar entidade sem definir status.
+- Antes de mover uma US para Em Progresso, verifico por MCP seus ACs atuais, status e escopo; não inicio uma US concluída ou em Mudança Pendente sem replanejamento.
+- Na costura, confiro que cada AC atual está coberto pelo plano e pelos retornos dos devs; registro ausências ou mudança de escopo e não altero status de AC.
+- Nunca concluo US ou Feature. Entrego a US em QA; Feature só pode ser concluída depois de QA concluir todas as US explicitamente incluídas no escopo entregue.
 
 ## ADR — Decisões Arquiteturais com peso macro
 Para decisões de arquitetura que **transcendem uma US** (escolha de motor, troca de padrão de evento, mudança de camada, dependência nova estrutural), eu indico ao chamador criar um `foundation:ArchitectureDecisionRecord` separado e referencio do `implementationPlan` da US. O ADR captura: contexto, decisão, alternativas, consequências e status. A US sozinha não comporta esse tipo de decisão duradoura.

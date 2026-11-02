@@ -1064,14 +1064,17 @@
 
 <style>
 	.chat-panel {
+		position: relative;
 		width: 100%;
 		height: auto;
 		max-height: 100%;
 		display: flex;
 		flex-direction: column;
-		background: color-mix(in srgb, var(--color-surface-1) 88%, transparent);
-		backdrop-filter: blur(8px);
-		border-radius: var(--radius);
+		background: color-mix(in srgb, var(--color-surface-1) var(--opacity-widget-surface), transparent);
+		backdrop-filter: blur(var(--blur-widget-surface));
+		border: 0;
+		box-shadow: 0 16px 40px color-mix(in srgb, var(--color-black) 86%, transparent);
+		border-radius: 0;
 		overflow: hidden;
 	}
 
@@ -1082,7 +1085,7 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		padding: 16px 24px;
+		padding: var(--spacing-chat-inset-block) var(--spacing-chat-inset-inline);
 	}
 
 </style>

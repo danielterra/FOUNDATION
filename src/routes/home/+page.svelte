@@ -195,6 +195,7 @@
     position: absolute;
     inset: 0;
     overflow: hidden;
+    background: var(--color-black);
   }
 
   .chat-slot {

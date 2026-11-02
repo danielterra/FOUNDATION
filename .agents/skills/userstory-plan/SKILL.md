@@ -30,7 +30,8 @@ A skill recebe a IRI da User Story como argumento (ex. `foundation:UserStory_177
 
 Antes de chamar o architect, faça uma leitura rápida da US:
 
-1. `describe_individual([<US IRI>])` — capture `capability`, `acceptanceCriteria`, `userRole`.
+1. `describe_individual([<US IRI>])` — capture `capability`, `acceptanceCriteria`, `userRole`, `partOfFeature` e `hasStatus`; leia também IRIs e status de cada AC atual.
+2. Confirme que a US está em Pendente, Mudança Pendente ou em replanejamento explicitamente solicitado, que a lista de AC está completa e que todos os ACs têm status. Se um AC foi criado ou alterado após QA/conclusão, assegure a transição da US para Mudança Pendente antes de planejar.
 
 A **heurística de UX dispara** quando QUALQUER destes for verdadeiro:
 

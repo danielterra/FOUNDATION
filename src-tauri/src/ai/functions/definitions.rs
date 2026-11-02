@@ -688,7 +688,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "unzip_file".to_string(),
             array_mode: false,
-            description: "Extract the contents of a ZIP foundation:File. Called without extract_path it lists the entries and reports whether the archive is password-protected; called with extract_path it returns that entry's text content, file name, MIME type and line count. Pass `password` for protected archives. Use it to reach CSV bank statements that arrive zipped (C6 Bank, for example) before importing them.".to_string(),
+            description: "Two-step ZIP workflow: (1) call with only `file_iri` to list entries; a successful result containing `files` and `encrypted` is only a listing and does not attempt password verification or extract anything. (2) To read an entry, call again with `extract_path` copied exactly from `files`; if `encrypted` is true, also include `password`. The result then contains the entry's text, file name, MIME type and line count. Do not treat the listing response as a failed password attempt. Do not omit `extract_path` when asking to extract.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "file_iri".to_string(),
@@ -700,14 +700,14 @@ Example — find all active Tasks whose due date is before this Project's deadli
                 Parameter {
                     name: "extract_path".to_string(),
                     param_type: "string".to_string(),
-                    description: "Optional. Path of the entry to extract, as returned in `files` (e.g. 'extrato.csv'). A bare file name is accepted when it identifies exactly one entry. Omit it to list the archive contents.".to_string(),
+                    description: "Required for extraction: copy the entry path exactly as returned in `files` (e.g. 'extrato.csv'). A bare file name is accepted when it identifies exactly one entry. Omit only to list the archive; with no `extract_path`, no file is extracted and the password is not tested.".to_string(),
                     required: false,
                     schema: None,
                 },
                 Parameter {
                     name: "password".to_string(),
                     param_type: "string".to_string(),
-                    description: "Optional. Password of a protected archive. The listing call reports `encrypted: true` when one is needed; the password is normally stated in the email that carried the attachment (C6 Bank uses the first 6 digits of the account holder's CPF).".to_string(),
+                    description: "Password for extracting a protected entry; only used when `extract_path` is supplied. For C6 Bank, use the first 6 digits of the account holder's CPF. Supplying a password without `extract_path` only lists entries and does not validate the password.".to_string(),
                     required: false,
                     schema: None,
                 },

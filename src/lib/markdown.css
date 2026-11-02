@@ -5,7 +5,6 @@
 .markdown-content h5,
 .markdown-content h6 {
   margin: 1.2em 0 0.6em 0;
-  font-weight: 600;
   color: var(--color-neutral-active);
 }
 
@@ -72,7 +71,6 @@
   padding-left: 12px;
   margin: 0.5em 0;
   color: var(--color-neutral);
-  font-style: italic;
 }
 
 .markdown-content a {
@@ -90,7 +88,7 @@
 }
 
 .markdown-content em {
-  font-style: italic;
+  font-style: normal;
 }
 
 .markdown-content hr {
@@ -124,5 +122,4 @@
 
 .markdown-content th {
   background: color-mix(in srgb, var(--color-white) 8%, transparent);
-  font-weight: 600;
 }

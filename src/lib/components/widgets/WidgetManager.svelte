@@ -26,6 +26,7 @@
   const BASE_WIDGET_Z_INDEX = 100;
   const MAX_WIDGET_Z_INDEX = 9000;
   const WIDGET_FLY_DURATION = 600;
+  const WIDGET_BACKGROUND_SHADE_SCALE = 500;
   const MIN_WIDGET_WIDTH = 200;
   const MIN_WIDGET_HEIGHT = 100;
   const CANVAS_PADDING = 3;
@@ -46,6 +47,33 @@
   const widgetDefaultSize = new Map();
 
   const widgetTypeInfo = new Map();
+
+  function widgetBackgroundDarkness(y) {
+    return `${(1 - Math.exp(-Math.max(y, 0) / WIDGET_BACKGROUND_SHADE_SCALE)) * 100}%`;
+  }
+
+  function isOpenWidget(widget) {
+    return widget.window_state !== 'minimized';
+  }
+
+  function compareWidgetDepth(a, b) {
+    return a.zIndex - b.zIndex;
+  }
+
+  function widgetDepthScale(widget) {
+    const openWidgets = widgets.filter(isOpenWidget).sort(compareWidgetDepth);
+    if (openWidgets.length <= 1) return 1;
+
+    let depthIndex = 0;
+    for (let index = 0; index < openWidgets.length; index += 1) {
+      if (openWidgets[index].id === widget.id) {
+        depthIndex = index;
+        break;
+      }
+    }
+
+    return 0.3 + (depthIndex / (openWidgets.length - 1)) * 0.7;
+  }
 
   let entityResolutionByIri = $state(new Map());
 
@@ -443,11 +471,14 @@
     class="widget-container"
     class:dragging={draggedWidget?.id === widget.id}
     class:resizing={resizingWidget?.id === widget.id}
+    class:is-front={widget.zIndex === topZIndex}
     style:left="{widget.position.x}px"
     style:top="{widget.position.y}px"
     style:width="{widget.size.width}px"
     style:height="{widget.size.height}px"
     style:z-index={widget.zIndex}
+    style:--widget-background-darkness={widgetBackgroundDarkness(widget.position.y)}
+    style:--widget-depth-scale={widgetDepthScale(widget)}
     onmousedown={(e) => startDrag(e, widget)}
     onclick={() => bringToFront(widget.id)}
     onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && bringToFront(widget.id)}
@@ -500,6 +531,7 @@
 
 <style>
   .widget-manager-layout {
+    position: relative;
     display: flex;
     flex-direction: row;
     width: 100%;
@@ -513,12 +545,26 @@
     flex: 1;
     height: 100%;
     min-width: 0;
+    background-image: radial-gradient(var(--color-hud-grid-dot) var(--size-hud-grid-dot), transparent var(--size-hud-grid-dot));
+    background-size: var(--size-hud-grid) var(--size-hud-grid);
   }
 
   .widget-container {
     position: absolute;
-    transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s;
+    transform: scale(var(--widget-depth-scale));
+    transform-origin: center center;
+    transition:
+      height 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 560ms cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 560ms cubic-bezier(0.16, 1, 0.3, 1);
     box-shadow: 0px 0px 10px var(--background);
+  }
+
+  .widget-container.is-front {
+    --widget-selection-accent: var(--color-selection);
+    --widget-selection-glow: var(--color-selection-glow);
+    transform: translateY(-10px) scale(1);
+    box-shadow: 0 16px 40px color-mix(in srgb, var(--color-black) 58%, transparent);
   }
 
   .widget-container.dragging,

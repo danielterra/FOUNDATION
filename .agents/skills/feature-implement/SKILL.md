@@ -35,6 +35,7 @@ Em paralelo:
 Valide:
 
 - O `hasStatus` da Feature deve ser `foundation:Status_1772596341042` (Planejado) ou `foundation:Status_1773079329634` (Pronto para Dev). Em qualquer outro status, **pare** e avise — replanejar via `$feature-plan` se for "Mudança Pendente".
+- Identifique e registre quais US fazem parte do escopo que está sendo entregue. Não trate toda US vinculada como escopo ativo sem confirmar sua relação com `successCriteria`.
 - Devem existir US filhas em status `Planejado` ou `Pronto para Dev` (US implementáveis). Se nenhuma existir, **pare** — provavelmente a Feature precisa de `$feature-plan` antes.
 - Cada US a ser implementada DEVE ter `implementationPlan` preenchido. Se alguma não tiver, **pare** e peça `$userstory-plan` para ela.
 
@@ -101,7 +102,7 @@ Mostre ao usuário, em até 10 linhas:
 - Status anterior → `Em Progresso` → `Testando`.
 - Quantas US foram implementadas, quantas ignoradas e por quê.
 - Lista das US entregues (IRI + label) com link para validação.
-- **Convite explícito** para validar: "Para cada US, execute a seção 'Como testar' do `implementationPlan` e mova para `Concluído` se ok, ou `Mudança Pendente` se houver divergência. Quando todas estiverem `Concluído`, mova a Feature para `Concluído`."
+- **Convite explícito** para validar: QA valida cada US e é o único papel que pode movê-la para `foundation:Completed`; só depois de todas as US explicitamente no escopo estarem Concluídas, o chamador pode atualizar a Feature. Registre a conferência de escopo e os resultados QA no changelog da Feature.
 
 Não faça commit nem push automático — `$code-commit` é skill separada.
 
@@ -111,7 +112,8 @@ Não faça commit nem push automático — `$code-commit` é skill separada.
 
 - **NEVER** invente IRIs de status — use `foundation:InProgress` (Em Progresso) e `foundation:Status_1772600993751` (Testando).
 - **NEVER** continue implementando US se uma US falhou — pare e reporte para o usuário decidir.
-- **NEVER** mova a Feature direto para `Concluído` — quem valida é o usuário.
+- **NEVER** mova a Feature direto para `Concluído` com base apenas na implementação; o usuário/PO confirma os `successCriteria` depois do QA de todas as US em escopo.
+- **NEVER** mova uma Feature para `Concluído` enquanto alguma US do escopo entregue não tiver passado pelo gate de QA.
 - **NEVER** rode `npm run tauri dev` / `npm run build` (AGENTS.md). A skill `$userstory-implement` cuida do `cargo check`/`cargo build`.
 - **ALWAYS** entre em `Em Progresso` antes de tocar código e saia para `Testando` apenas após **todas** as US elegíveis estarem em `Testando`.
 - **ALWAYS** rode `$userstory-implement` sequencialmente, uma US por vez.

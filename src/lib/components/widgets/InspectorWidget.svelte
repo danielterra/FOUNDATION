@@ -11,7 +11,9 @@
   import InspectorClassView from './inspector/InspectorClassView.svelte';
   import WidgetContainer from './WidgetContainer.svelte';
   import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
   import * as Popover from '$lib/components/ui/popover';
+  import * as Tooltip from '$lib/components/ui/tooltip';
 
   let {
     entityId, widgetId, refreshKey = 0, windowState = 'normal',
@@ -62,6 +64,9 @@
   let deleteImpactLoading = $state(false);
   let deleteImpactError = $state(false);
   let deletePopoverOpen = $state(false);
+  let editingEntityLabel = $state(false);
+  let entityLabelDraft = $state('');
+  let entityLabelInput = $state(null);
   let showAddPropertyForm = $state(false);
   let savingClassProperty = $state(false);
   let removeConfirmProp = $state(null);
@@ -72,6 +77,38 @@
   let savingDisjoint = $state(false);
   let disjointError = $state(null);
   let removeDisjointConfirm = $state(null);
+
+  function requestEntityLabelEdit() {
+    if (isLocked || !entityData) return;
+    entityLabelDraft = entityData.label ?? '';
+    editingEntityLabel = true;
+  }
+
+  function cancelEntityLabelEdit() {
+    editingEntityLabel = false;
+    entityLabelDraft = '';
+  }
+
+  async function saveEntityLabelEdit() {
+    if (!editingEntityLabel) return;
+    const nextLabel = entityLabelDraft.trim();
+    editingEntityLabel = false;
+    if (nextLabel && nextLabel !== entityData?.label) await saveProperty('rdfs:label', nextLabel);
+  }
+
+  function handleEntityLabelKeydown(event) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelEntityLabelEdit();
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      saveEntityLabelEdit();
+    }
+  }
+
+  $effect(() => {
+    if (editingEntityLabel && entityLabelInput) entityLabelInput.focus();
+  });
 
   async function reloadAutomations() {
     const typeIris = (entityData?.types ?? []).map(t => t.iri).filter(Boolean);
@@ -503,6 +540,11 @@
     await openEntity(entityIri, conversationIri).catch(err => console.error('Failed to open entity:', err));
   }
 
+  function openClassInspector(event) {
+    const classIri = event.currentTarget.dataset.classIri;
+    if (classIri) openEntityInspector(classIri);
+  }
+
   async function openWidgetForEntity(widgetType) {
     try {
       await invoke('widget_blackboard__add_widget', {
@@ -586,20 +628,57 @@
     icon={entityData?.icon && !isIconUrl(entityData.icon) ? entityData.icon : 'info'}
     iconSrc={entityData?.icon && isIconUrl(entityData.icon) ? getIconSrc(entityData.icon) : null}
     title={entityData?.label ?? 'Inspector'}
+    showTitle={true}
     {windowState}
     {onWindowStateChange}
     onClose={closeWidget}
     canOpenInspector={false}
     canCopyId={false}
   >
+    {#snippet headerTitle()}
+      {#if editingEntityLabel}
+        <Input
+          class="inspector-title-input"
+          aria-label="Nome da entidade"
+          bind:value={entityLabelDraft}
+          bind:ref={entityLabelInput}
+          onkeydown={handleEntityLabelKeydown}
+          onblur={saveEntityLabelEdit}
+        />
+      {:else}
+        <button
+          class="inspector-title"
+          class:editable={!isLocked}
+          title={isLocked ? entityData?.label : 'Editar nome da entidade'}
+          aria-label={isLocked ? entityData?.label : 'Editar nome da entidade'}
+          onclick={requestEntityLabelEdit}
+          disabled={isLocked}
+        >{entityData?.label ?? 'Inspector'}</button>
+      {/if}
+    {/snippet}
+
     {#snippet headerSubtitle()}
       {#if entityData?.types?.length > 0}
-        <div class="header-types">
-          {#each entityData.types as type, idx}
-            {#if idx > 0}<span class="type-separator">·</span>{/if}
-            <Button variant="ghost" class="type-link" onclick={() => openEntityInspector(type.iri)}>{type.label}</Button>
-          {/each}
-        </div>
+        <Tooltip.Provider delayDuration={200}>
+          <div class="header-types">
+            {#each entityData.types as type, idx}
+              {#if idx > 0}<span class="type-separator">·</span>{/if}
+              <Tooltip.Root>
+                <Tooltip.Trigger
+                  class="type-link"
+                  aria-label="Abrir inspetor da classe {type.label}"
+                  data-class-iri={type.iri}
+                  onclick={openClassInspector}
+                >
+                  {type.label}
+                </Tooltip.Trigger>
+                <Tooltip.Content class="type-tooltip">
+                  {type.label}
+                </Tooltip.Content>
+              </Tooltip.Root>
+            {/each}
+          </div>
+        </Tooltip.Provider>
       {/if}
     {/snippet}
 
@@ -654,21 +733,21 @@
       {/if}
       <div style="flex: 1"></div>
       {#each widgetDefinitions as def}
-        <Button variant="ghost" size="icon-xs"
+        <Button variant="ghost" size="icon-touch"
           title={def.description}
           aria-label={def.description}
           onclick={() => openWidgetForEntity(def.widget_type)}
         ><span class="material-symbols-outlined">{def.icon || 'open_in_new'}</span></Button>
       {/each}
       {#if entityData}
-        <Button variant="ghost" size="icon-xs"
+        <Button variant="ghost" size="icon-touch"
           title={isLocked ? 'Desbloquear entidade' : 'Bloquear entidade'}
           aria-label={isLocked ? 'Desbloquear entidade' : 'Bloquear entidade'}
           disabled={togglingLock}
           onclick={toggleSystemLock}
         ><span class="material-symbols-outlined">{isLocked ? 'lock' : 'lock_open'}</span></Button>
       {/if}
-      <Button variant="ghost" size="icon-xs" title="Copiar IRI" aria-label="Copiar IRI" onclick={copyEntityIri}><span class="material-symbols-outlined">content_copy</span></Button>
+      <Button variant="ghost" size="icon-touch" title="Copiar IRI" aria-label="Copiar IRI" onclick={copyEntityIri}><span class="material-symbols-outlined">content_copy</span></Button>
       {#if entityData && !entityData.isClass && !isLocked}
         <Popover.Root open={deletePopoverOpen} onOpenChange={handleDeletePopoverOpenChange}>
           <Popover.Trigger class="delete-trigger action-btn--danger"
@@ -748,7 +827,6 @@
           </div>
         {/if}
         <MetaFields
-          label={entityData?.label}
           comment={entityData?.comment}
           onSave={isLocked ? null : saveProperty}
           {openEntityInspector}
@@ -851,6 +929,46 @@
 </div>
 
 <style>
+  :global(.inspector-title) {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--type-body-prominent);
+    line-height: 1.25;
+    text-align: left;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+  }
+
+  :global(.inspector-title.editable) {
+    cursor: text;
+  }
+
+  :global(.inspector-title.editable:hover) {
+    color: var(--color-interactive);
+  }
+
+  :global(.inspector-title-input) {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: var(--type-body-prominent);
+    line-height: 1.25;
+    box-shadow: none;
+  }
+
   :global(.delete-trigger) {
     display: inline-flex;
     width: 28px;
@@ -874,27 +992,26 @@
     width: min(340px, calc(100vw - 32px));
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 12px;
+    gap: var(--spacing-field-group);
+    padding: var(--spacing-field-group);
   }
 
   .delete-confirm-heading {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
+    gap: var(--spacing-inline-related);
   }
 
   .delete-confirm-icon {
     color: var(--color-danger);
-    font-size: 18px;
+    font-size: var(--type-icon-medium);
     line-height: 1.4;
   }
 
   .delete-confirm-heading h3 {
     margin: 0;
     color: var(--color-neutral-active);
-    font-size: 13px;
-    font-weight: 600;
+    font-size: var(--type-body-compact);
     overflow-wrap: anywhere;
   }
 
@@ -902,20 +1019,19 @@
   .delete-confirm-loading {
     margin: 2px 0 0;
     color: var(--color-neutral);
-    font-size: 11px;
+    font-size: var(--type-caption-compact);
   }
 
   .delete-confirm-impact {
-    padding: 8px;
+    padding: var(--spacing-control-internal);
     border-radius: var(--radius);
     background: color-mix(in srgb, var(--color-danger) 8%, transparent);
   }
 
   .impact-heading {
-    font-size: 11px;
-    font-weight: 700;
-    color: color-mix(in srgb, var(--color-danger) 80%, white);
-    margin: 0 0 6px 0;
+    font-size: var(--type-caption-compact);
+    color: var(--text-danger);
+    margin: 0 0 var(--spacing-inline-tight) 0;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -923,43 +1039,38 @@
   .impact-list {
     max-height: 132px;
     overflow-y: auto;
-    margin: 0 0 8px 0;
+    margin: 0 0 var(--spacing-control-internal) 0;
     padding-left: 16px;
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: var(--spacing-inline-tight);
   }
 
   .impact-list li {
-    font-size: 12px;
+    font-size: var(--type-label);
     color: var(--color-neutral-active);
     line-height: 1.4;
     display: flex;
     align-items: baseline;
-    gap: 6px;
-  }
-
-  .impact-item-label {
-    font-weight: 500;
+    gap: var(--spacing-control-internal);
   }
 
   .impact-item-type {
-    font-size: 10px;
+    font-size: var(--type-overline);
     color: var(--color-neutral);
     opacity: 0.8;
-    font-style: italic;
   }
 
   .backlink-note {
-    font-size: 11px;
+    font-size: var(--type-caption-compact);
     color: var(--color-neutral);
-    margin: 0 0 6px 0;
+    margin: 0 0 var(--spacing-inline-tight) 0;
     line-height: 1.4;
     opacity: 0.85;
   }
 
   .delete-confirm-warning {
-    font-size: 11px;
+    font-size: var(--type-caption-compact);
     color: var(--color-neutral);
     margin: 0;
     opacity: 0.7;
@@ -968,7 +1079,7 @@
   .delete-confirm-actions {
     display: flex;
     justify-content: flex-end;
-    gap: 6px;
+    gap: var(--spacing-control-internal);
   }
 
   .inspector-wrapper {
@@ -980,29 +1091,48 @@
   .header-types {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--spacing-control-internal);
     flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
   }
 
-  :global([data-slot="button"].type-link) {
+  :global(.type-link) {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    white-space: normal;
     padding: 0;
     height: auto;
     font-family: var(--font-body);
-    font-size: 11px;
-    color: var(--color-neutral-active);
-    opacity: 0.7;
+    font-size: var(--type-body-compact);
+    color: var(--text-secondary);
+    letter-spacing: var(--tracking-hud-label);
+    line-height: var(--line-height-hud-compact);
+    text-align: left;
+    text-transform: uppercase;
   }
 
-  :global([data-slot="button"].type-link:hover) {
+  :global(.type-link:hover) {
     background: transparent;
-    opacity: 1;
-    color: var(--color-neutral-active);
+    color: var(--color-interactive);
+  }
+
+  :global(.type-tooltip) {
+    max-width: 32ch;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   .type-separator {
     color: var(--color-neutral);
     opacity: 0.4;
-    font-size: 11px;
+    font-size: var(--type-caption-compact);
   }
 
   .status-badge {
@@ -1021,20 +1151,19 @@
   }
 
   .status-badge-icon {
-    font-size: 14px;
+    font-size: var(--type-icon-small);
     color: var(--status-color);
   }
 
   .status-badge-label {
     font-family: var(--font-body);
-    font-size: 11px;
-    font-weight: 600;
+    font-size: var(--type-caption-compact);
     color: var(--status-color);
     white-space: nowrap;
   }
 
   .status-badge-chevron {
-    font-size: 14px;
+    font-size: var(--type-icon-small);
     color: var(--status-color);
     opacity: 0.7;
   }
@@ -1042,8 +1171,8 @@
   :global([data-slot="button"].status-picker-item) {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 5px 8px;
+    gap: var(--spacing-control-internal);
+    padding: var(--spacing-inline-tight) var(--spacing-control-internal);
     height: auto;
     width: 100%;
     justify-content: flex-start;
@@ -1060,33 +1189,33 @@
   }
 
   :global(.status-picker-content) {
-    padding: 4px;
+    padding: var(--spacing-inline-tight);
     min-width: 160px;
   }
 
   :global(.status-picker-list) {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--spacing-inline-tight);
   }
 
   .content-scroll {
     flex: 1;
     overflow-y: auto;
-    padding: 16px;
+    padding: var(--spacing-widget-inset);
   }
 
   .locked-banner {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
-    padding: 10px 12px;
-    margin-bottom: 14px;
+    gap: var(--spacing-inline-related);
+    padding: var(--spacing-field-group) var(--spacing-control-internal);
+    margin-bottom: var(--spacing-field-group);
     background: color-mix(in srgb, var(--color-warning) 10%, transparent);
   }
 
   .locked-banner-icon {
-    font-size: 18px;
+    font-size: var(--type-icon-medium);
     color: var(--color-warning);
     flex-shrink: 0;
     padding-top: 1px;
@@ -1095,19 +1224,18 @@
   .locked-banner-body {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--spacing-inline-tight);
   }
 
   .locked-banner-title {
     font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 700;
+    font-size: var(--type-label);
     color: var(--color-warning);
   }
 
   .locked-banner-desc {
     font-family: var(--font-body);
-    font-size: 12px;
+    font-size: var(--type-label);
     color: var(--color-neutral);
     line-height: 1.4;
   }
@@ -1117,15 +1245,15 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 12px;
-    padding: 40px;
+    gap: var(--spacing-field-group);
+    padding: var(--spacing-widget-inset);
     text-align: center;
     color: var(--color-neutral);
   }
 
   .loading .material-symbols-outlined,
   .error .material-symbols-outlined {
-    font-size: 48px;
+    font-size: var(--type-icon-large);
     opacity: 0.5;
   }
 
@@ -1141,20 +1269,19 @@
   .actions-bar {
     display: flex;
     flex-direction: row;
-    gap: 6px;
+    gap: var(--spacing-control-internal);
     padding: 0px;
     background: color-mix(in srgb, var(--color-black) 60%, transparent);
     flex-wrap: 1;
   }
 
   :global([data-slot="button"].action-bar-btn) {
-    gap: 6px;
-    padding: 8px 12px;
+    gap: var(--spacing-control-internal);
+    padding: var(--spacing-control-internal);
     background: color-mix(in srgb, var(--color-interactive) 12%, transparent);
     color: var(--color-interactive);
     font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
+    font-size: var(--type-label);
     height: auto;
     flex-shrink: 0;
     border-radius: 0;
@@ -1163,7 +1290,7 @@
   }
 
   :global([data-slot="button"].action-bar-btn .material-symbols-outlined) {
-    font-size: 16px;
+    font-size: var(--type-body-prominent);
     flex-shrink: 0;
   }
 
@@ -1184,12 +1311,11 @@
     transform: translateX(-50%);
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 14px;
+    gap: var(--spacing-control-internal);
+    padding: var(--spacing-control-internal) var(--spacing-section);
     background: color-mix(in srgb, var(--color-success) 20%, var(--color-black));
     font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 600;
+    font-size: var(--type-label);
     color: var(--color-success);
     white-space: nowrap;
     z-index: 101;
@@ -1197,7 +1323,7 @@
   }
 
   .delete-toast .material-symbols-outlined {
-    font-size: 16px;
+    font-size: var(--type-body-prominent);
   }
 
 </style>

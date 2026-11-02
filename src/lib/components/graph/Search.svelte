@@ -187,6 +187,11 @@
 		selectSearchResult(result);
 	}
 
+  function handleResultMouseDown(event) {
+    event.preventDefault();
+    handleResultClick(event);
+  }
+
 	function scrollToClassSelected() {
 		setTimeout(() => {
 			const el = document.querySelector('.class-item.selected');
@@ -409,7 +414,7 @@
 									variant="ghost"
 									class={`result-item${index === selectedIndex ? ' selected' : ''}`}
 									data-result-index={index}
-									onclick={handleResultClick}
+									onmousedown={handleResultMouseDown}
 								>
 									<div class="result-content">
 										{#if result.icon}

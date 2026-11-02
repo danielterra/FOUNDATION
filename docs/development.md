@@ -67,6 +67,17 @@ Repetitive workflows (creating widgets, MCP tools, releases, code review) are en
 | Releases | [release-create](../.claude/skills/release-create/SKILL.md) | — | — |
 | Code review / commit | — | [code-review](../.claude/skills/code-review/SKILL.md), [code-commit](../.claude/skills/code-commit/SKILL.md) | — |
 
+## Product status integrity
+
+`AGENTS.md` is the normative source for Feature, User Story, and Acceptance Criterion status rules. The status-changing workflows in `.codex/agents/` and `.agents/skills/` must follow it.
+
+- QA records evidence for each Acceptance Criterion and is the only role that can move a User Story to `Concluído`.
+- A User Story cannot be completed while an in-scope criterion is pending, rejected, or unverified.
+- A Feature can be completed only after QA has completed every User Story in the explicitly confirmed delivery scope. A linked expansion outside that scope does not automatically reopen the Feature.
+- Run `$product-integrity-audit` after code synchronization and before release preparation. The audit is read-only; resolve reported blockers before continuing.
+
+These checks are enforced by the Codex workflow. They do not technically block direct status writes from other clients; application-level write validation would be a separate implementation.
+
 ## Running the Project
 
 ```bash

@@ -396,15 +396,16 @@
 	}
 
 	.message.user .message-bubble {
-		background: color-mix(in srgb, var(--color-white) 16%, transparent);
+		background: var(--color-chat-bubble-user);
 	}
 
 	.message.ai .message-bubble {
-		background: color-mix(in srgb, var(--color-white) 4%, transparent);
+		background: var(--color-chat-bubble-assistant);
 	}
 
 	.message.ai .message-bubble.streaming {
-		background: color-mix(in srgb, var(--color-transition) 14%, transparent);
+		background: var(--color-chat-bubble-assistant);
+		box-shadow: inset var(--size-chat-bubble-streaming-rule) 0 0 var(--color-chat-bubble-streaming-rule);
 	}
 
 	.message-text {
